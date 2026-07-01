@@ -1,0 +1,104 @@
+{
+  "title": "Dermatologist Perceptions of Biologic Therapies in Moderate-to-Severe Plaque Psoriasis",
+  "intro": "Thank you for participating. This survey takes approximately 10 minutes. Your responses are confidential and reported only in aggregate.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "Which of the following best describes your primary professional role?",
+      "options": ["Practicing physician", "Nurse practitioner", "Physician assistant", "Pharmacist"]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "How many years have you been in clinical practice?",
+      "instruction": "Enter a whole number between 0 and 50.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "Which of the following biologic treatments for moderate-to-severe plaque psoriasis are you aware of?",
+      "instruction": "Select all that apply.",
+      "options": ["SKYRIZI", "TREMFYA", "COSENTYX", "TALTZ", "BIMZELX", "None of the above"]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "What is your most important treatment goal when selecting a biologic for plaque psoriasis?",
+      "options": ["Rapid skin clearance", "Durable long-term response", "Favorable safety profile", "Convenient dosing schedule", "Patient affordability"],
+      "logicNote": "PROGRAMMER NOTE: Present options in the exact order listed above. Do not randomize."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "Which biologic do you prescribe most often for moderate-to-severe plaque psoriasis?",
+      "options": ["SKYRIZI", "TREMFYA", "COSENTYX", "TALTZ", "BIMZELX"],
+      "logicNote": "PROGRAMMER NOTE: The brand selected in Q3 must be piped into the text of Q4."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "How satisfied are you with [PIPE: Q3 selection] for your moderate-to-severe plaque psoriasis patients?",
+      "options": ["Very satisfied", "Somewhat satisfied", "Neither satisfied nor dissatisfied", "Somewhat dissatisfied", "Very dissatisfied"],
+      "piping": { "source": "Q3", "note": "Replace [PIPE: Q3 selection] with the brand chosen in Q3." }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Please rate your agreement with each of the following statements.",
+      "rows": [
+        "Biologics have transformed outcomes in plaque psoriasis",
+        "Access barriers limit my use of newer biologics",
+        "I am comfortable initiating biologics in biologic-naive patients"
+      ],
+      "scale": ["Strongly agree", "Somewhat agree", "Neither agree nor disagree", "Somewhat disagree", "Strongly disagree"]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "What percentage of your moderate-to-severe plaque psoriasis patients currently receive a biologic?",
+      "instruction": "Enter a whole number between 0 and 100.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "In your view, what is the single biggest barrier to your patients' access to biologic therapy?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "How likely are you to recommend biologic therapy to a colleague treating moderate-to-severe plaque psoriasis?",
+      "instruction": "0 = Not at all likely, 10 = Extremely likely",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    { "id": "E01", "questionId": "S1", "category": "typo", "truth": "Practicing physician", "rendered": "Practicing physican", "note": "First answer option misspelled on the site." },
+    { "id": "E02", "questionId": "Q1", "category": "missing-option", "truth": "BIMZELX listed as an option", "rendered": "BIMZELX absent from the option list", "note": "Site omits the BIMZELX answer option entirely." },
+    { "id": "E03", "questionId": "Q2", "category": "wrong-option-label", "truth": "Rapid skin clearance", "rendered": "Rapid skin cleanse", "note": "Option label altered on the site." },
+    { "id": "E04", "questionId": "Q4", "category": "broken-piping", "truth": "Q4 text shows the brand selected in Q3", "rendered": "Q4 text shows a literal unresolved piping token instead of the Q3 brand", "note": "Site must render a literal unresolved token (e.g. {Q3brand}) in the question text." },
+    { "id": "E05", "questionId": "Q5", "category": "scale-mislabel", "truth": "Second scale point is 'Somewhat agree'", "rendered": "Second scale point reads 'Strongly agree' (duplicate of the first)", "note": "Matrix column header duplicated/mislabeled." },
+    { "id": "E06", "questionId": "Q2", "category": "reordered-options", "truth": "Order: ...Durable long-term response, Favorable safety profile, Convenient dosing schedule...", "rendered": "'Favorable safety profile' and 'Convenient dosing schedule' swapped", "note": "Spec explicitly forbids reordering (programmer note)." },
+    { "id": "E07", "questionId": "Q6", "category": "wrong-numbering", "truth": "Question is numbered Q6", "rendered": "Question is numbered Q5 (duplicate of the previous question's number)", "note": "Visible question number wrong on site." },
+    { "id": "E08", "questionId": "Q7", "category": "encoding-artifact", "truth": "patients' access", "rendered": "patientsâ€™ access", "note": "Mojibake encoding artifact in question text." },
+    { "id": "E09", "questionId": "Q8", "category": "duplicated-word", "truth": "How likely are you to recommend", "rendered": "How likely are you you to recommend", "note": "Duplicated word in question text." },
+    { "id": "E10", "questionId": "Q1", "category": "missing-instruction", "truth": "Instruction 'Select all that apply.' shown below the question", "rendered": "Instruction omitted", "note": "Site drops the multi-select instruction." }
+  ],
+  "cleanQuestions": ["S2", "Q3"],
+  "notes": "Pages 1-5 map to SurveyJS pages. S2 and Q3 are deliberately error-free to measure false positives."
+}

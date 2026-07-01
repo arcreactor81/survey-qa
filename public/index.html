@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Survey QA — Language Check PoC</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      max-width: 720px;
+      margin: 2.5rem auto;
+      padding: 0 1rem;
+      color: #1a1a1a;
+      line-height: 1.5;
+    }
+    h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+    p.lead { color: #444; margin-top: 0; }
+    fieldset {
+      border: 1px solid #d0d0d0;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin: 1.5rem 0;
+    }
+    legend { font-weight: 600; padding: 0 0.4rem; }
+    label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
+    label.inline { display: inline; font-weight: 400; margin: 0; }
+    input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.45rem 0.6rem;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      font-size: 0.95rem;
+    }
+    .checkbox-row { margin: 0.9rem 0; }
+    button {
+      background: #f38020;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 0.55rem 1.4rem;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    #status { margin-top: 1rem; font-weight: 600; }
+    #status.error { color: #b00020; }
+    #reportLink { margin-top: 0.5rem; display: none; }
+    pre {
+      background: #f6f6f6;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      padding: 0.75rem;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    a { color: #0b57d0; }
+  </style>
+</head>
+<body>
+  <h1>Survey QA — Language Check PoC</h1>
+  <p class="lead">
+    Automated language QA for programmed surveys. A headless browser walks every page of the
+    survey under test, then two LLMs (Claude and DeepSeek) compare the rendered text against the
+    questionnaire document (.docx) and report discrepancies — typos, missing options, broken
+    piping, mislabeled scales, and more — with verified quotes and a seeded-error scorecard.
+  </p>
+
+  <p>
+    Survey under test: <a href="/survey.html" target="_blank" rel="noopener">/survey.html</a>
+    (contains 10 deliberately seeded errors).
+  </p>
+
+  <form id="runForm">
+    <fieldset>
+      <legend>Run a QA check</legend>
+
+      <label for="surveyUrl">Survey URL</label>
+      <input type="text" id="surveyUrl" name="surveyUrl" value="/survey.html">
+
+      <div class="checkbox-row">
+        <input type="checkbox" id="useSample" checked>
+        <label class="inline" for="useSample">use bundled sample questionnaire.docx</label>
+      </div>
+
+      <label for="docx">Or upload a different questionnaire (.docx)</label>
+      <input type="file" id="docx" name="docx" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+
+      <p><button type="submit" id="runBtn">Run QA check</button></p>
+    </fieldset>
+  </form>
+
+  <div id="status"></div>
+  <div id="reportLink"></div>
+  <pre id="result" hidden></pre>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var form = document.getElementById("runForm");
+      var runBtn = document.getElementById("runBtn");
+      var statusEl = document.getElementById("status");
+      var reportLinkEl = document.getElementById("reportLink");
+      var resultEl = document.getElementById("result");
+
+      function setStatus(message, isError) {
+        statusEl.textContent = message;
+        statusEl.className = isError ? "error" : "";
+      }
+
+      function reportHref(data) {
+        if (data && typeof data.reportUrl === "string" && data.reportUrl) {
+          return data.reportUrl;
+        }
+        if (data && typeof data.runId === "string" && data.runId) {
+          return "/reports/" + encodeURIComponent(data.runId);
+        }
+        return null;
+      }
+
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+
+        var formData = new FormData();
+        formData.append("surveyUrl", document.getElementById("surveyUrl").value);
+        formData.append("useSample", document.getElementById("useSample").checked ? "true" : "false");
+        var fileInput = document.getElementById("docx");
+        if (fileInput.files && fileInput.files.length > 0) {
+          formData.append("docx", fileInput.files[0]);
+        }
+
+        runBtn.disabled = true;
+        setStatus("Running… the browser walker and both models can take a minute or two.", false);
+        reportLinkEl.style.display = "none";
+        reportLinkEl.textContent = "";
+        resultEl.hidden = true;
+        resultEl.textContent = "";
+
+        fetch("/api/run", { method: "POST", body: formData })
+          .then(function (response) {
+            return response.text().then(function (text) {
+              var data = null;
+              try { data = JSON.parse(text); } catch (e) { /* non-JSON error body */ }
+
+              if (!response.ok) {
+                setStatus("Run failed (HTTP " + response.status + ").", true);
+                resultEl.textContent = data ? JSON.stringify(data, null, 2) : text;
+                resultEl.hidden = false;
+                return;
+              }
+
+              var runId = data && data.runId ? data.runId : "(unknown)";
+              setStatus("Run complete. runId: " + runId, false);
+
+              var href = reportHref(data);
+              if (href) {
+                var a = document.createElement("a");
+                a.href = href;
+                a.target = "_blank";
+                a.rel = "noopener";
+                a.textContent = "View report: " + href;
+                reportLinkEl.appendChild(a);
+                reportLinkEl.style.display = "block";
+              }
+
+              resultEl.textContent = data ? JSON.stringify(data, null, 2) : text;
+              resultEl.hidden = false;
+            });
+          })
+          .catch(function (err) {
+            setStatus("Request error: " + (err && err.message ? err.message : String(err)), true);
+          })
+          .then(function () {
+            runBtn.disabled = false;
+          });
+      });
+    })();
+  </script>
+</body>
+</html>
