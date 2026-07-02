@@ -1,7 +1,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { extractDocxText } from "./docx";
 import { walkSurvey } from "./walker";
-import { runDeepseekCompares, computeCost } from "./compare";
+import { runDeepseekCompares, runWorkersaiCompares, computeCost } from "./compare";
 import { claudeCompare } from "./llm/claude";
 import { verifyFindings, buildScorecard } from "./verify";
 import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
@@ -60,6 +60,15 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         );
       }
 
+      let workersai: { findings: Finding[]; stats: ModelRunStats } | null = null;
+      if (env.AI) {
+        workersai = await step.do(
+          "workersai-compare",
+          { retries: { limit: 1, delay: "10 seconds" }, timeout: "10 minutes" },
+          async () => runWorkersaiCompares(env, specText, pages)
+        );
+      }
+
       let claude: { findings: Finding[]; stats: ModelRunStats } | null = null;
       if (env.ANTHROPIC_API_KEY) {
         claude = await step.do(
@@ -75,9 +84,15 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         const report = envelope.report;
         report.specText = specText;
         report.pages = pages;
-        const all: Finding[] = [...(deepseek?.findings ?? []), ...(claude?.findings ?? [])];
+        const all: Finding[] = [
+          ...(deepseek?.findings ?? []),
+          ...(workersai?.findings ?? []),
+          ...(claude?.findings ?? []),
+        ];
         report.findings = verifyFindings(all, specText, pages);
-        report.stats = [deepseek?.stats, claude?.stats].filter(Boolean) as ModelRunStats[];
+        report.stats = [deepseek?.stats, workersai?.stats, claude?.stats].filter(
+          Boolean
+        ) as ModelRunStats[];
         report.scorecard = seeded
           ? buildScorecard(report.findings, MANIFESTS[lang ?? "en"] ?? MANIFESTS.en)
           : null;

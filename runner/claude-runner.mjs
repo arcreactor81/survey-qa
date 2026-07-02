@@ -91,6 +91,21 @@ async function fetchText(url) {
   return res.text();
 }
 
+/**
+ * JSON.parse with a recovery pass: models occasionally emit raw control
+ * characters (literal newlines/tabs) inside string literals, which strict
+ * JSON rejects ("Bad control character in string literal"). Replacing every
+ * control char with a space is structurally safe (whitespace is legal
+ * between tokens) and merely soft-wraps the offending string content.
+ */
+function parseJsonLenient(t) {
+  try {
+    return JSON.parse(t);
+  } catch {
+    return JSON.parse(t.replace(/[\u0000-\u001F]+/g, " "));
+  }
+}
+
 /** Strip Markdown code fences and extract the JSON object from model text. */
 function extractJson(text) {
   let t = String(text ?? "").trim();
@@ -98,13 +113,13 @@ function extractJson(text) {
   const fenced = t.match(/^```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```\s*$/);
   if (fenced) t = fenced[1].trim();
   try {
-    return JSON.parse(t);
+    return parseJsonLenient(t);
   } catch {
     // Fall back to the outermost {...} in case of surrounding prose.
     const start = t.indexOf("{");
     const end = t.lastIndexOf("}");
     if (start !== -1 && end > start) {
-      return JSON.parse(t.slice(start, end + 1));
+      return parseJsonLenient(t.slice(start, end + 1));
     }
     throw new Error("no parseable JSON object in model output");
   }

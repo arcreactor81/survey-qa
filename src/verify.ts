@@ -14,7 +14,7 @@ export interface SeededError {
   rendered: string;
 }
 
-const MODELS: readonly ModelName[] = ["deepseek", "claude"];
+const MODELS: readonly ModelName[] = ["deepseek", "claude", "workersai"];
 
 /** Categories where the defect is an ABSENCE on the site, so siteQuote is legitimately "". */
 const ABSENCE_CATEGORIES: ReadonlySet<Finding["category"]> = new Set<Finding["category"]>([
@@ -149,8 +149,8 @@ export function buildScorecard(
     };
   });
 
-  const recall: Record<ModelName, number> = { deepseek: 0, claude: 0 };
-  const falsePositives: Record<ModelName, number> = { deepseek: 0, claude: 0 };
+  const recall: Record<ModelName, number> = { deepseek: 0, claude: 0, workersai: 0 };
+  const falsePositives: Record<ModelName, number> = { deepseek: 0, claude: 0, workersai: 0 };
 
   for (const model of MODELS) {
     const caught = entries.filter((entry) => entry.caughtBy.includes(model)).length;

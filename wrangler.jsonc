@@ -9,6 +9,7 @@
     "run_worker_first": ["/api/*", "/reports/*"]
   },
   "browser": { "binding": "BROWSER" },
+  "ai": { "binding": "AI" },
   "r2_buckets": [
     { "binding": "ARTIFACTS", "bucket_name": "survey-qa-artifacts" }
   ],
@@ -21,7 +22,10 @@
     "CLAUDE_INPUT_USD_PER_MTOK": "5",
     "CLAUDE_OUTPUT_USD_PER_MTOK": "25",
     "DEEPSEEK_INPUT_USD_PER_MTOK": "0.28",
-    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.42"
+    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.42",
+    "WORKERSAI_MODEL": "@cf/zai-org/glm-4.7-flash",
+    "WORKERSAI_INPUT_USD_PER_MTOK": "0.06",
+    "WORKERSAI_OUTPUT_USD_PER_MTOK": "0.40"
   },
   "observability": { "enabled": true }
 }

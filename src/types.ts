@@ -5,10 +5,12 @@ export interface Env {
   BROWSER: Fetcher; // Browser Rendering binding (puppeteer.launch(env.BROWSER))
   ARTIFACTS: R2Bucket;
   RUN_WORKFLOW: Workflow; // Cloudflare Workflows binding (durable run processing)
+  AI?: Ai; // Workers AI binding (third comparison pillar, no key needed)
   ANTHROPIC_API_KEY?: string;
   DEEPSEEK_API_KEY?: string;
   CLAUDE_MODEL?: string; // default "claude-opus-4-8"
   DEEPSEEK_MODEL?: string; // default "deepseek-v4-pro"
+  WORKERSAI_MODEL?: string; // default "@cf/zai-org/glm-4.7-flash"
   CF_AIG_ACCOUNT_ID?: string; // optional AI Gateway routing for DeepSeek
   CF_AIG_GATEWAY_ID?: string;
   CF_AIG_TOKEN?: string;
@@ -17,9 +19,11 @@ export interface Env {
   CLAUDE_OUTPUT_USD_PER_MTOK?: string; // default "25"
   DEEPSEEK_INPUT_USD_PER_MTOK?: string; // default "0.28"
   DEEPSEEK_OUTPUT_USD_PER_MTOK?: string; // default "0.42"
+  WORKERSAI_INPUT_USD_PER_MTOK?: string; // default "0.06"
+  WORKERSAI_OUTPUT_USD_PER_MTOK?: string; // default "0.40"
 }
 
-export type ModelName = "deepseek" | "claude";
+export type ModelName = "deepseek" | "claude" | "workersai";
 
 /** One survey page captured by the Browser Rendering walker. */
 export interface PageCapture {

@@ -2,12 +2,14 @@
 // page loop (Workers subrequest safety — no parallel fan-out).
 
 import { deepseekCompare } from "./llm/deepseek";
+import { workersaiCompare } from "./llm/workersai";
 import type { Env, Finding, ModelName, ModelRunStats, PageCapture } from "./types";
 
 // Defaults mirror the *_USD_PER_MTOK comments in src/types.ts / wrangler.jsonc vars.
 const DEFAULT_RATES: Record<ModelName, { input: number; output: number }> = {
   claude: { input: 5, output: 25 },
   deepseek: { input: 0.28, output: 0.42 },
+  workersai: { input: 0.06, output: 0.4 },
 };
 
 function parseRate(value: string | undefined, fallback: number): number {
@@ -24,14 +26,13 @@ export function computeCost(
   env: Env,
 ): number {
   const defaults = DEFAULT_RATES[model];
-  const inputRate =
-    model === "claude"
-      ? parseRate(env.CLAUDE_INPUT_USD_PER_MTOK, defaults.input)
-      : parseRate(env.DEEPSEEK_INPUT_USD_PER_MTOK, defaults.input);
-  const outputRate =
-    model === "claude"
-      ? parseRate(env.CLAUDE_OUTPUT_USD_PER_MTOK, defaults.output)
-      : parseRate(env.DEEPSEEK_OUTPUT_USD_PER_MTOK, defaults.output);
+  const envRates: Record<ModelName, [string | undefined, string | undefined]> = {
+    claude: [env.CLAUDE_INPUT_USD_PER_MTOK, env.CLAUDE_OUTPUT_USD_PER_MTOK],
+    deepseek: [env.DEEPSEEK_INPUT_USD_PER_MTOK, env.DEEPSEEK_OUTPUT_USD_PER_MTOK],
+    workersai: [env.WORKERSAI_INPUT_USD_PER_MTOK, env.WORKERSAI_OUTPUT_USD_PER_MTOK],
+  };
+  const inputRate = parseRate(envRates[model][0], defaults.input);
+  const outputRate = parseRate(envRates[model][1], defaults.output);
   return (inputTokens / 1_000_000) * inputRate + (outputTokens / 1_000_000) * outputRate;
 }
 
@@ -84,5 +85,55 @@ export async function runDeepseekCompares(
   }
 
   stats.costUsd = computeCost("deepseek", stats.inputTokens, stats.outputTokens, env);
+  return { findings, stats };
+}
+
+/**
+ * Run the Workers AI compare over all pages sequentially (same shape as the
+ * DeepSeek loop). Requires the AI binding; no API key.
+ */
+export async function runWorkersaiCompares(
+  env: Env,
+  specText: string,
+  pages: PageCapture[],
+): Promise<{ findings: Finding[]; stats: ModelRunStats }> {
+  const findings: Finding[] = [];
+  const stats: ModelRunStats = {
+    model: "workersai",
+    modelId: env.WORKERSAI_MODEL ?? "@cf/zai-org/glm-4.7-flash",
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    latencyMsTotal: 0,
+    errors: 0,
+  };
+
+  for (const page of pages) {
+    stats.calls += 1;
+    try {
+      const result = await workersaiCompare(env, specText, page);
+      stats.inputTokens += result.inputTokens;
+      stats.outputTokens += result.outputTokens;
+      stats.latencyMsTotal += result.latencyMs;
+      for (const finding of result.findings) {
+        findings.push({
+          ...finding,
+          model: "workersai",
+          pageIndex: page.pageIndex,
+          quoteVerified: false,
+        });
+      }
+    } catch (err) {
+      stats.errors += 1;
+      console.error(
+        `workersai compare failed for page ${page.pageIndex}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  stats.costUsd = computeCost("workersai", stats.inputTokens, stats.outputTokens, env);
   return { findings, stats };
 }

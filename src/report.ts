@@ -31,9 +31,10 @@ function esc(value: string | number | null | undefined): string {
 const MODEL_LABEL: Record<ModelName, string> = {
   deepseek: "DeepSeek",
   claude: "Claude",
+  workersai: "Workers AI",
 };
 
-const CANONICAL_MODELS: ModelName[] = ["deepseek", "claude"];
+const CANONICAL_MODELS: ModelName[] = ["deepseek", "claude", "workersai"];
 
 const SEVERITY_RANK: Record<Finding["severity"], number> = {
   high: 0,
