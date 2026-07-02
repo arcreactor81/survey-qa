@@ -1,6 +1,26 @@
 # HANDOFF — survey-qa build state
 
-## STATE AS OF 2026-07-02 ~14:10 (autonomous session, user away)
+## STATE AS OF 2026-07-02 ~15:30 (active session)
+- Hackathon Access Score submission ACCEPTED → advanced to next round.
+- Landing crash (syncOverlay undefined) FIXED + deployed (commit 1019ce5); dark mode on all 3 surfaces deployed.
+- Adversarial review DONE: 58 confirmed findings (6 high / 24 med / 28 low) — full detail in
+  scratchpad/confirmed-findings.json; parsed by scratchpad/parse-review2.mjs.
+- Theme redesign: 3 directions in spec/theme-directions.md (Clinical Slate / Deep Teal Terminal /
+  Editorial Refined) — awaiting user pick (recommended: Clinical Slate). NOT yet applied (would collide
+  with the pipeline-ux agent editing index.html; apply after it lands + user picks).
+
+**TWO WORKFLOWS RUNNING (integrate when done; they touch DISJOINT files):**
+1. fix-pipeline-ux (wf_fada0e1a-2fb) → public/index.html: auto-open overlay on submit, make the
+   estimated pipeline advance visibly (90s walk-stage dwell + live pulse), remove the "ghost line"
+   connector artifact. Smoke-test validated.
+2. apply-review-fixes (wf_9ba4eff2-76b) → 6 agents on disjoint backend files (verify/prompt, walker,
+   index.ts, llm+compare+workflow, docx+store, runner+scripts+survey.js). Fixes the confirmed findings
+   with demo-safe security defaults + preserved signatures.
+
+**AFTER both land:** typecheck → ONE consolidated deploy (announce first; NO deploy while a /api/run is
+active — DO reset kills runs, already bit the user twice) → regression: full 3-way run (Claude via
+runner) to confirm still 10/10 / no walk regression → commit → then apply chosen theme across all 3
+surfaces as final pass. Continuation cron 4005c671 (~17:05) is the limit-cutoff safety net.
 Product fully working & deployed. **3-way comparison achieved** (run 19564527):
 Claude 10/10 (subscription $0), DeepSeek 9/10 ($0.008/run), Workers AI glm-4.7-flash 7/10 ($0.006/run).
 Six-language Claude scorecards all 10/10 (en/es/fr/de/zh/ja). DEEPSEEK_API_KEY set in account
