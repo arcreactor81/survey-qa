@@ -7,7 +7,8 @@ export interface Env {
   RUN_WORKFLOW: Workflow; // Cloudflare Workflows binding (durable run processing)
   AI?: Ai; // Workers AI binding (third comparison pillar, no key needed)
   ANTHROPIC_API_KEY?: string;
-  DEEPSEEK_API_KEY?: string;
+  // Plain worker secret OR an account-level Secrets Store binding (read via .get()).
+  DEEPSEEK_API_KEY?: string | SecretBinding;
   CLAUDE_MODEL?: string; // default "claude-opus-4-8"
   DEEPSEEK_MODEL?: string; // default "deepseek-v4-pro"
   WORKERSAI_MODEL?: string; // default "@cf/zai-org/glm-4.7-flash"
@@ -24,6 +25,29 @@ export interface Env {
 }
 
 export type ModelName = "deepseek" | "claude" | "workersai";
+
+/** Cloudflare Secrets Store binding: account-level secret exposed via .get(). */
+export interface SecretBinding {
+  get(): Promise<string>;
+}
+
+/**
+ * Resolve a secret that may be a plain string (per-worker secret / var) or a
+ * Secrets Store binding. Returns undefined when unset, empty, or when the
+ * store has no value yet (a bound-but-empty secret must not crash the run).
+ */
+export async function resolveSecret(
+  v: string | SecretBinding | undefined
+): Promise<string | undefined> {
+  if (!v) return undefined;
+  if (typeof v === "string") return v.trim() || undefined;
+  try {
+    const s = await v.get();
+    return s && s.trim() ? s.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** One survey page captured by the Browser Rendering walker. */
 export interface PageCapture {

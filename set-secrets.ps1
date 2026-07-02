@@ -8,10 +8,9 @@ if (Test-Path $nodeDir) { $env:PATH = "$nodeDir;" + $env:PATH }
 $wrangler = Join-Path $PSScriptRoot "node_modules\.bin\wrangler.cmd"
 if (-not (Test-Path $wrangler)) { Write-Error "wrangler not found — run npm install first"; exit 1 }
 
-Write-Host "DeepSeek API key (required for the DeepSeek comparison leg):"
-$ds = Read-Host -AsSecureString "DEEPSEEK_API_KEY"
-$dsPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($ds))
-if ($dsPlain) { $dsPlain | & $wrangler secret put DEEPSEEK_API_KEY }
+Write-Host "DeepSeek API key -> ACCOUNT-LEVEL Secrets Store (shared by all Workers)."
+Write-Host "wrangler will prompt for the value interactively:"
+& $wrangler secrets-store secret create 55e6ce4174d645cfa68a6c27eef7847f --name DEEPSEEK_API_KEY --scopes workers --remote
 
 Write-Host ""
 Write-Host "Anthropic API key (OPTIONAL — leave empty to skip; the Claude leg normally runs via the local"

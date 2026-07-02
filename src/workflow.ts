@@ -6,6 +6,7 @@ import { claudeCompare } from "./llm/claude";
 import { verifyFindings, buildScorecard } from "./verify";
 import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
 import { MANIFESTS } from "./manifests";
+import { resolveSecret } from "./types";
 import type { Env, Finding, ModelRunStats, PageCapture } from "./types";
 
 export interface RunParams {
@@ -52,7 +53,7 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       );
 
       let deepseek: { findings: Finding[]; stats: ModelRunStats } | null = null;
-      if (env.DEEPSEEK_API_KEY) {
+      if (await resolveSecret(env.DEEPSEEK_API_KEY)) {
         deepseek = await step.do(
           "deepseek-compare",
           { retries: { limit: 1, delay: "10 seconds" }, timeout: "10 minutes" },

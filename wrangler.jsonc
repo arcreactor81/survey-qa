@@ -16,6 +16,13 @@
   "workflows": [
     { "name": "survey-qa-run", "binding": "RUN_WORKFLOW", "class_name": "RunWorkflow" }
   ],
+  "secrets_store_secrets": [
+    {
+      "binding": "DEEPSEEK_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "DEEPSEEK_API_KEY"
+    }
+  ],
   "vars": {
     "CLAUDE_MODEL": "claude-opus-4-8",
     "DEEPSEEK_MODEL": "deepseek-v4-pro",

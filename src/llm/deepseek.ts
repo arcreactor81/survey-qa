@@ -2,7 +2,7 @@
 // optionally routed through a Cloudflare AI Gateway.
 
 import { buildComparePrompt } from "../prompt";
-import { COMPARE_SCHEMA } from "../types";
+import { COMPARE_SCHEMA, resolveSecret } from "../types";
 import type { CompareResult, Env, Finding, PageCapture } from "../types";
 
 type RawFinding = CompareResult["findings"][number];
@@ -94,7 +94,8 @@ export async function deepseekCompare(
   outputTokens: number;
   latencyMs: number;
 }> {
-  if (!env.DEEPSEEK_API_KEY) {
+  const apiKey = await resolveSecret(env.DEEPSEEK_API_KEY);
+  if (!apiKey) {
     throw new Error("DEEPSEEK_API_KEY is not set");
   }
 
@@ -105,7 +106,7 @@ export async function deepseekCompare(
       : "https://api.deepseek.com";
 
   const headers: Record<string, string> = {
-    authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
+    authorization: `Bearer ${apiKey}`,
     "content-type": "application/json",
     "cf-aig-metadata": JSON.stringify({ feature: "survey-qa" }),
   };
