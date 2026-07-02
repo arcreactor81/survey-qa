@@ -71,6 +71,20 @@ export function processingPage(runId: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<script>
+/* Theme bootstrap — runs before first paint to avoid a flash of the wrong theme. */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("sqa-theme"); } catch (e) { /* storage unavailable */ }
+  if (t !== "light" && t !== "dark") {
+    t = "light";
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
+    } catch (e) { /* matchMedia unavailable */ }
+  }
+  document.documentElement.dataset.theme = t;
+})();
+</script>
 <title>Run ${id} — Survey QA</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&display=swap" rel="stylesheet">
 <style>
@@ -83,24 +97,68 @@ export function processingPage(runId: string): string {
     --ok: #1E7F4F;
     --slate: #5B6B7F;
     --border: #E4DFD5;
+    --text: #26374B;
+    --muted: #8C96A3;
+    --band-bg: #101D31;
+    --band-title: #FFFFFF;
+    --band-text: #F4F1EA;
+    --band-link: #EFB88F;
+    --band-soft: #C9D3E0;
+    --tint: #F6F2E9;
+    --stage-bg: #FDFCF8;
+    --dot-idle: #CFC8BA;
+    --done-border: #BFDCCB;
+    --done-bg: #FBFDFC;
+    --focus-ring: rgba(194, 87, 27, 0.45);
+    --focus-soft: rgba(194, 87, 27, 0.13);
+    --pulse: rgba(194, 87, 27, 0.45);
     --serif: "Fraunces", Georgia, "Times New Roman", serif;
     --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
     --shadow: 0 1px 2px rgba(16, 29, 49, 0.04), 0 10px 28px rgba(16, 29, 49, 0.06);
+  }
+  /* Dark palette — scoped to screen so print always renders the light theme. */
+  @media screen {
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --ink: #F5F1E8;
+      --paper: #0D1626;
+      --card: #182640;
+      --accent: #E8824A;
+      --ok: #4CAF7D;
+      --slate: #9DABBF;
+      --border: #2B3B55;
+      --text: #EDE9DF;
+      --muted: #9DABBF;
+      --band-bg: #0A111D;
+      --band-title: #F5F1E8;
+      --band-text: #EDE9DF;
+      --band-link: #EFB88F;
+      --band-soft: #B9C4D4;
+      --tint: #131F36;
+      --stage-bg: #14213A;
+      --dot-idle: #33445F;
+      --done-border: #2E5A44;
+      --done-bg: rgba(76, 175, 125, 0.1);
+      --focus-ring: rgba(232, 130, 74, 0.55);
+      --focus-soft: rgba(232, 130, 74, 0.22);
+      --pulse: rgba(232, 130, 74, 0.4);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.45);
+    }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     font-family: var(--sans);
     background: var(--paper);
-    color: #26374B;
+    color: var(--text);
     line-height: 1.55;
     font-size: 14px;
   }
   .wrap { max-width: 920px; margin: 0 auto; padding: 0 28px; }
   .num { font-variant-numeric: tabular-nums; }
   button:focus-visible {
-    outline: 3px solid rgba(194, 87, 27, 0.45);
+    outline: 3px solid var(--focus-ring);
     outline-offset: 2px;
     border-radius: 6px;
   }
@@ -131,22 +189,22 @@ export function processingPage(runId: string): string {
 
   /* ---------- header band ---------- */
   .band {
-    background: var(--ink);
-    color: #F4F1EA;
+    background: var(--band-bg);
+    color: var(--band-text);
     padding: 44px 0 38px;
     border-bottom: 4px solid var(--accent);
   }
-  .band .kicker { color: #EFB88F; }
+  .band .kicker { color: var(--band-link); }
   .brand {
     font-family: var(--serif);
     font-weight: 600;
     font-size: 36px;
     line-height: 1.1;
     margin: 0;
-    color: #FFFFFF;
+    color: var(--band-title);
   }
-  .brand code { font-family: var(--mono); font-size: 27px; color: #EFB88F; }
-  .subtitle { margin: 10px 0 0; font-size: 15px; color: #C9D3E0; }
+  .brand code { font-family: var(--mono); font-size: 27px; color: var(--band-link); }
+  .subtitle { margin: 10px 0 0; font-size: 15px; color: var(--band-soft); }
   .elapsed-chip {
     display: inline-block;
     margin-left: 12px;
@@ -154,7 +212,7 @@ export function processingPage(runId: string): string {
     border: 1px solid rgba(244, 241, 234, 0.3);
     border-radius: 999px;
     font-size: 12.5px;
-    color: #F4F1EA;
+    color: var(--band-text);
   }
 
   /* ---------- layout ---------- */
@@ -173,7 +231,7 @@ export function processingPage(runId: string): string {
     flex: none;
     padding: 3px 11px;
     border-radius: 999px;
-    background: #F6F2E9;
+    background: var(--tint);
     border: 1px solid var(--border);
     font-size: 10.5px;
     font-weight: 700;
@@ -208,30 +266,30 @@ export function processingPage(runId: string): string {
     align-items: center;
     gap: 7px;
     text-align: center;
-    background: #FDFCF8;
+    background: var(--stage-bg);
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 15px 10px 13px;
     transition: border-color 0.4s ease, background 0.4s ease, box-shadow 0.4s ease;
   }
   .stage-icon { font-size: 22px; line-height: 1; filter: grayscale(0.9); opacity: 0.55; transition: filter 0.4s ease, opacity 0.4s ease; }
-  .stage-name { font-size: 12px; font-weight: 600; line-height: 1.3; color: #8C96A3; transition: color 0.4s ease; }
-  .stage-dot { width: 10px; height: 10px; border-radius: 50%; background: #CFC8BA; }
+  .stage-name { font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--muted); transition: color 0.4s ease; }
+  .stage-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dot-idle); }
   .stage.is-cur {
-    background: #FFFFFF;
+    background: var(--card);
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(194, 87, 27, 0.13);
+    box-shadow: 0 0 0 3px var(--focus-soft);
   }
   .stage.is-cur .stage-icon, .stage.is-done .stage-icon { filter: none; opacity: 1; }
   .stage.is-cur .stage-name, .stage.is-done .stage-name { color: var(--ink); }
   .stage.is-cur .stage-dot { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
-  .stage.is-done { border-color: #BFDCCB; background: #FBFDFC; }
+  .stage.is-done { border-color: var(--done-border); background: var(--done-bg); }
   .stage.is-done .stage-dot { background: var(--ok); }
   @keyframes pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(194, 87, 27, 0.45); }
-    50% { box-shadow: 0 0 0 7px rgba(194, 87, 27, 0); }
+    0%, 100% { box-shadow: 0 0 0 0 var(--pulse); }
+    50% { box-shadow: 0 0 0 7px transparent; }
   }
-  .pipe-note { margin: 16px 0 0; font-size: 12px; color: #8C96A3; }
+  .pipe-note { margin: 16px 0 0; font-size: 12px; color: var(--muted); }
   @media (max-width: 720px) {
     .pipeline { flex-direction: column; gap: 10px; }
     .pipeline::before { display: none; }
@@ -250,7 +308,7 @@ export function processingPage(runId: string): string {
     max-width: 660px;
     font-size: 15px;
     line-height: 1.6;
-    color: #26374B;
+    color: var(--text);
     transition: opacity 0.4s ease;
   }
   .trivia.is-fading { opacity: 0; }
@@ -311,13 +369,43 @@ export function processingPage(runId: string): string {
     max-width: 240px;
   }
   .squash-chip strong { display: block; font-size: 13px; color: var(--ink); }
-  .squash-chip small { display: block; font-size: 11px; color: #8C96A3; margin-top: 2px; }
+  .squash-chip small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
 
   footer {
     text-align: center;
     font-size: 12px;
     color: var(--slate);
     padding: 0 28px 96px;
+  }
+
+  /* ---------- theme toggle ---------- */
+  .theme-toggle {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 260;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--card);
+    box-shadow: var(--shadow);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle .tt-sun { display: none; }
+  html[data-theme="dark"] .theme-toggle .tt-sun { display: block; }
+  html[data-theme="dark"] .theme-toggle .tt-moon { display: none; }
+
+  /* ---------- print ---------- */
+  @media print {
+    .theme-toggle { display: none !important; }
   }
 
   /* ---------- reduced motion ---------- */
@@ -332,6 +420,11 @@ export function processingPage(runId: string): string {
 </style>
 </head>
 <body>
+
+<button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+  <span class="tt-moon" aria-hidden="true">&#127769;</span>
+  <span class="tt-sun" aria-hidden="true">&#9728;&#65039;</span>
+</button>
 
 <header class="band">
   <div class="wrap">
@@ -519,6 +612,19 @@ export function processingPage(runId: string): string {
       scheduleBug();
     }, 4500 + Math.random() * 5000);
   })();
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  var toggle = document.getElementById("themeToggle");
+  if (!toggle) return;
+  toggle.addEventListener("click", function () {
+    var cur = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    var next = cur === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("sqa-theme", next); } catch (e) { /* storage unavailable */ }
+  });
 })();
 </script>
 </body>

@@ -466,6 +466,20 @@ export function buildHtmlReport(run: RunReport): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+/* Theme bootstrap — runs before first paint to avoid a flash of the wrong theme. */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("sqa-theme"); } catch (e) { /* storage unavailable */ }
+  if (t !== "light" && t !== "dark") {
+    t = "light";
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
+    } catch (e) { /* matchMedia unavailable */ }
+  }
+  document.documentElement.dataset.theme = t;
+})();
+</script>
 <title>Survey QA &mdash; ${esc(run.runId)}</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&amp;display=swap" rel="stylesheet">
 <style>
@@ -475,21 +489,100 @@ export function buildHtmlReport(run: RunReport): string {
     --paper: #FAF8F3;
     --card: #FFFFFF;
     --accent: #C2571B;
+    --accent-dark: #A84A15;
     --ok: #1E7F4F;
     --bad: #B3362B;
     --slate: #5B6B7F;
     --border: #E4DFD5;
+    --text: #26374B;
+    --muted: #8C96A3;
+    --band-bg: #101D31;
+    --band-title: #FFFFFF;
+    --band-text: #F4F1EA;
+    --band-muted: #9FB0C4;
+    --band-dt: #8FA0B5;
+    --band-link: #EFB88F;
+    --notice-bg: rgba(194, 87, 27, 0.14);
+    --notice-border: rgba(194, 87, 27, 0.55);
+    --notice-text: #F3D9C4;
+    --notice-code: #FFFFFF;
+    --tint: #F6F2E9;
+    --table-border: #EFEAE0;
+    --row-hover: #FBF7EF;
+    --mark-missed: #A9B2BD;
+    --chip-cat-bg: #EFEBE2;
+    --bad-bg: #F7E3E0;
+    --sev-med-bg: #F8E8D8;
+    --sev-med-text: #9A4E12;
+    --sev-low-bg: #E7EBF0;
+    --ok-bg: #E2F1E8;
+    --badge-muted-bg: #ECEDEA;
+    --spec-bg: #EDF5EF;
+    --spec-border: #CBE0D2;
+    --site-bg: #F9ECEA;
+    --site-border: #E9CCC6;
+    --shot-bg: #F1EDE4;
+    --note-text: #7A4A12;
+    --note-bg: #F8EFDD;
+    --note-border: #EBD9B7;
     --serif: "Fraunces", Georgia, "Times New Roman", serif;
     --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
     --shadow: 0 1px 2px rgba(16, 29, 49, 0.04), 0 10px 28px rgba(16, 29, 49, 0.06);
+  }
+  /* Dark palette — scoped to screen so print always renders the light theme. */
+  @media screen {
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --ink: #F5F1E8;
+      --paper: #0D1626;
+      --card: #182640;
+      --accent: #E8824A;
+      --accent-dark: #F0925C;
+      --ok: #4CAF7D;
+      --bad: #E06456;
+      --slate: #9DABBF;
+      --border: #2B3B55;
+      --text: #EDE9DF;
+      --muted: #9DABBF;
+      --band-bg: #0A111D;
+      --band-title: #F5F1E8;
+      --band-text: #EDE9DF;
+      --band-muted: #9DABBF;
+      --band-dt: #9DABBF;
+      --band-link: #EFB88F;
+      --notice-bg: rgba(232, 130, 74, 0.16);
+      --notice-border: rgba(232, 130, 74, 0.5);
+      --notice-text: #F2C9A6;
+      --notice-code: #F5F1E8;
+      --tint: #131F36;
+      --table-border: #26344C;
+      --row-hover: rgba(255, 255, 255, 0.04);
+      --mark-missed: #6B7A90;
+      --chip-cat-bg: rgba(157, 171, 191, 0.16);
+      --bad-bg: rgba(224, 100, 86, 0.18);
+      --sev-med-bg: rgba(232, 130, 74, 0.18);
+      --sev-med-text: #F0A97E;
+      --sev-low-bg: rgba(157, 171, 191, 0.14);
+      --ok-bg: rgba(76, 175, 125, 0.16);
+      --badge-muted-bg: rgba(157, 171, 191, 0.16);
+      --spec-bg: rgba(76, 175, 125, 0.12);
+      --spec-border: rgba(76, 175, 125, 0.38);
+      --site-bg: rgba(224, 100, 86, 0.12);
+      --site-border: rgba(224, 100, 86, 0.4);
+      --shot-bg: #0F1B30;
+      --note-text: #F0C9A9;
+      --note-bg: rgba(232, 130, 74, 0.14);
+      --note-border: rgba(232, 130, 74, 0.35);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.45);
+    }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     font-family: var(--sans);
     background: var(--paper);
-    color: #26374B;
+    color: var(--text);
     line-height: 1.55;
     font-size: 14px;
   }
@@ -498,8 +591,8 @@ export function buildHtmlReport(run: RunReport): string {
 
   /* ---------- header band ---------- */
   .band {
-    background: var(--ink);
-    color: #F4F1EA;
+    background: var(--band-bg);
+    color: var(--band-text);
     padding: 44px 0 40px;
     border-bottom: 4px solid var(--accent);
   }
@@ -510,13 +603,13 @@ export function buildHtmlReport(run: RunReport): string {
     font-size: 34px;
     letter-spacing: 0.2px;
     margin: 0;
-    color: #FFFFFF;
+    color: var(--band-title);
   }
   .tagline {
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: #9FB0C4;
+    color: var(--band-muted);
   }
   .band .meta {
     display: grid;
@@ -527,7 +620,7 @@ export function buildHtmlReport(run: RunReport): string {
     max-width: 780px;
   }
   .band .meta dt {
-    color: #8FA0B5;
+    color: var(--band-dt);
     font-weight: 600;
     font-size: 11px;
     text-transform: uppercase;
@@ -535,19 +628,19 @@ export function buildHtmlReport(run: RunReport): string {
     padding-top: 2px;
   }
   .band .meta dd { margin: 0; word-break: break-all; font-variant-numeric: tabular-nums; }
-  .band .meta a { color: #EFB88F; text-decoration: none; }
+  .band .meta a { color: var(--band-link); text-decoration: none; }
   .band .meta a:hover { text-decoration: underline; }
   .notice {
     margin-top: 22px;
-    background: rgba(194, 87, 27, 0.14);
-    color: #F3D9C4;
-    border: 1px solid rgba(194, 87, 27, 0.55);
+    background: var(--notice-bg);
+    color: var(--notice-text);
+    border: 1px solid var(--notice-border);
     border-radius: 10px;
     padding: 12px 16px;
     font-size: 13px;
     max-width: 780px;
   }
-  .notice code { display: block; margin-top: 6px; color: #FFFFFF; word-break: break-all; }
+  .notice code { display: block; margin-top: 6px; color: var(--notice-code); word-break: break-all; }
 
   /* ---------- layout ---------- */
   main { padding: 30px 0 56px; }
@@ -585,7 +678,7 @@ export function buildHtmlReport(run: RunReport): string {
   .sub { font-family: var(--sans); font-size: 12px; font-weight: 400; color: var(--slate); margin-left: 10px; }
   .mono { font-family: var(--mono); }
   .small { font-size: 11px; }
-  .muted { color: #8C96A3; }
+  .muted { color: var(--muted); }
   .num { font-variant-numeric: tabular-nums; }
 
   /* ---------- KPI row ---------- */
@@ -619,12 +712,12 @@ export function buildHtmlReport(run: RunReport): string {
     font-variant-numeric: tabular-nums;
   }
   .kpi-denom { font-size: 20px; color: var(--slate); font-weight: 400; }
-  .kpi-sub { font-size: 11.5px; color: #8C96A3; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .kpi-sub { font-size: 11.5px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
 
   /* ---------- tables ---------- */
   .table-scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #EFEAE0; vertical-align: top; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
   thead th {
     font-size: 10.5px;
     font-weight: 700;
@@ -635,14 +728,14 @@ export function buildHtmlReport(run: RunReport): string {
     white-space: nowrap;
     background: transparent;
   }
-  tbody tr:hover { background: #FBF7EF; }
+  tbody tr:hover { background: var(--row-hover); }
   td.num, th.num { font-variant-numeric: tabular-nums; }
   .center { text-align: center; }
   .err { color: var(--bad); font-weight: 700; }
   .mark-caught { color: var(--ok); font-weight: 700; font-size: 15px; }
-  .mark-missed { color: #A9B2BD; font-weight: 700; font-size: 15px; }
+  .mark-missed { color: var(--mark-missed); font-weight: 700; font-size: 15px; }
   tfoot .summary-row td {
-    background: #F6F2E9;
+    background: var(--tint);
     border-top: 2px solid var(--border);
     border-bottom: none;
     font-weight: 600;
@@ -661,10 +754,10 @@ export function buildHtmlReport(run: RunReport): string {
     letter-spacing: 0.06em;
     white-space: nowrap;
   }
-  .chip-cat { background: #EFEBE2; color: var(--slate); }
-  .sev-high { background: #F7E3E0; color: var(--bad); }
-  .sev-medium { background: #F8E8D8; color: #9A4E12; }
-  .sev-low { background: #E7EBF0; color: var(--slate); }
+  .chip-cat { background: var(--chip-cat-bg); color: var(--slate); }
+  .sev-high { background: var(--bad-bg); color: var(--bad); }
+  .sev-medium { background: var(--sev-med-bg); color: var(--sev-med-text); }
+  .sev-low { background: var(--sev-low-bg); color: var(--slate); }
   .badge {
     display: inline-block;
     padding: 2px 9px;
@@ -674,9 +767,9 @@ export function buildHtmlReport(run: RunReport): string {
     letter-spacing: 0.04em;
     white-space: nowrap;
   }
-  .badge-ok { background: #E2F1E8; color: var(--ok); }
-  .badge-bad { background: #F7E3E0; color: var(--bad); }
-  .badge-muted { background: #ECEDEA; color: var(--slate); }
+  .badge-ok { background: var(--ok-bg); color: var(--ok); }
+  .badge-bad { background: var(--bad-bg); color: var(--bad); }
+  .badge-muted { background: var(--badge-muted-bg); color: var(--slate); }
 
   /* ---------- findings diff ---------- */
   .findings-table .desc-cell { min-width: 240px; }
@@ -707,8 +800,8 @@ export function buildHtmlReport(run: RunReport): string {
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .diff-spec code.quote { background: #EDF5EF; border: 1px solid #CBE0D2; }
-  .diff-site code.quote { background: #F9ECEA; border: 1px solid #E9CCC6; }
+  .diff-spec code.quote { background: var(--spec-bg); border: 1px solid var(--spec-border); }
+  .diff-site code.quote { background: var(--site-bg); border: 1px solid var(--site-border); }
   @media (max-width: 720px) { .diff { grid-template-columns: 1fr; } }
 
   /* ---------- pages strip ---------- */
@@ -750,7 +843,7 @@ export function buildHtmlReport(run: RunReport): string {
     object-position: top;
     border: 1px solid var(--border);
     border-radius: 8px;
-    background: #F1EDE4;
+    background: var(--shot-bg);
   }
   .shot-empty {
     height: 190px;
@@ -759,15 +852,15 @@ export function buildHtmlReport(run: RunReport): string {
     justify-content: center;
     border: 1px dashed var(--border);
     border-radius: 8px;
-    background: #F6F2E9;
+    background: var(--tint);
     text-align: center;
     padding: 0 14px;
   }
   .page-notes {
     font-size: 12px;
-    color: #7A4A12;
-    background: #F8EFDD;
-    border: 1px solid #EBD9B7;
+    color: var(--note-text);
+    background: var(--note-bg);
+    border: 1px solid var(--note-border);
     border-radius: 8px;
     padding: 6px 10px;
     margin: 10px 0 0;
@@ -777,7 +870,7 @@ export function buildHtmlReport(run: RunReport): string {
   pre.captured {
     font-family: var(--mono);
     font-size: 11.5px;
-    background: #F6F2E9;
+    background: var(--tint);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px;
@@ -796,8 +889,34 @@ export function buildHtmlReport(run: RunReport): string {
     font-variant-numeric: tabular-nums;
   }
 
+  /* ---------- theme toggle ---------- */
+  .theme-toggle {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 260;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--card);
+    box-shadow: var(--shadow);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle .tt-sun { display: none; }
+  html[data-theme="dark"] .theme-toggle .tt-sun { display: block; }
+  html[data-theme="dark"] .theme-toggle .tt-moon { display: none; }
+
   /* ---------- print ---------- */
   @media print {
+    .theme-toggle { display: none !important; }
     body { background: #FFFFFF; }
     .band {
       background: #FFFFFF;
@@ -818,6 +937,10 @@ export function buildHtmlReport(run: RunReport): string {
 </style>
 </head>
 <body>
+<button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+  <span class="tt-moon" aria-hidden="true">&#127769;</span>
+  <span class="tt-sun" aria-hidden="true">&#9728;&#65039;</span>
+</button>
 <header class="band">
   <div class="wrap">
     <div class="brand-row">
@@ -844,6 +967,19 @@ export function buildHtmlReport(run: RunReport): string {
   </div>
 </main>
 <footer>Generated by Survey QA on Cloudflare Workers &middot; ${esc(generatedAt)}</footer>
+<script>
+(function () {
+  "use strict";
+  var toggle = document.getElementById("themeToggle");
+  if (!toggle) return;
+  toggle.addEventListener("click", function () {
+    var cur = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    var next = cur === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("sqa-theme", next); } catch (e) { /* storage unavailable */ }
+  });
+})();
+</script>
 </body>
 </html>`;
 }

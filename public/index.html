@@ -1206,12 +1206,181 @@
       });
   }
 
-  /* ----- copy button (delegated: status card re-renders) ----- */
+  /* ----- fullscreen takeover overlay ----- */
 
-  statusBody.addEventListener("click", function (ev) {
+  function overlayStatusHtml() {
+    if (currentState === "processing") {
+      return (
+        '<span class="state-badge is-wait">Processing</span>' +
+        '<div class="run-state">' +
+          '<div class="spinner" aria-hidden="true"></div>' +
+          '<div><div class="state-title">Run <code>' + esc(runId) + '</code> in progress</div>' +
+          '<div class="state-stage"><span id="ovStageText">' + esc(stageText()) + '</span></div></div>' +
+        '</div>' +
+        '<p class="state-note">Status refreshes every 5 seconds. Minimize (or press Escape) to return to the page.</p>'
+      );
+    }
+    if (currentState === "awaiting") {
+      return (
+        '<span class="state-badge is-wait">Awaiting Claude leg</span>' +
+        '<div class="state-title">Browser walk and DeepSeek comparison done</div>' +
+        '<p class="state-stage" style="margin:6px 0 0;">The interim report is live: ' +
+          '<a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;↗</a>. ' +
+          'To finish the dual-LLM comparison, run this from the repo root:</p>' +
+        '<div class="cmd"><code id="ovCmdCode">' + esc(claudeCommand()) + '</code>' +
+          '<button type="button" class="copy-btn">Copy</button></div>' +
+        '<p class="cmd-caption">runs the Claude comparison leg locally on your Claude subscription</p>' +
+        '<p class="state-note">This page keeps polling and will switch to “complete” automatically once the runner submits its findings.</p>'
+      );
+    }
+    if (currentState === "complete") {
+      return (
+        '<span class="state-badge is-ok">Complete</span>' +
+        '<div class="state-title">Run <code>' + esc(runId) + '</code> finished</div>' +
+        '<p class="state-stage" style="margin:6px 0 14px;">Both model legs are in — scorecard, findings and page evidence are ready.</p>' +
+        '<p class="report-cta"><a class="btn tk-cta" href="' + esc(reportUrl) + '" target="_blank" rel="noopener">View report</a></p>'
+      );
+    }
+    if (currentState === "failed") {
+      return (
+        '<span class="state-badge is-bad">Failed</span>' +
+        '<div class="state-title">' + esc(lastFailMsg || "Run failed") + '</div>' +
+        (lastErrorDetail ? '<pre class="error-detail">' + esc(lastErrorDetail) + '</pre>' : '')
+      );
+    }
+    return '<div class="state-stage">No run in progress yet.</div>';
+  }
+
+  /* Advance the overlay's full-size pipeline. Estimated while processing;
+     pinned to the last stage while awaiting the Claude leg; all done on complete. */
+  function updateOvPipe() {
+    var cur;
+    if (currentState === "complete") {
+      cur = PIPE_ICONS.length; /* past the end: everything reads done */
+    } else if (currentState === "awaiting") {
+      cur = PIPE_ICONS.length - 1;
+    } else {
+      cur = 0;
+      var e = elapsedSec();
+      for (var i = 0; i < PIPE_AT.length; i++) { if (e >= PIPE_AT[i]) cur = i; }
+    }
+    var hasCur = currentState === "processing" || currentState === "awaiting";
+    for (var j = 0; j < PIPE_ICONS.length; j++) {
+      var el = document.getElementById("ovStage" + j);
+      if (!el) continue;
+      el.className = "stage" + (j < cur ? " is-done" : (hasCur && j === cur ? " is-cur" : ""));
+    }
+  }
+
+  /* Bring every overlay pane in line with the current run state. Cheap enough
+     to run even while the overlay is hidden, so its content is always ready. */
+  function syncOverlay() {
+    if (expandBtn) expandBtn.hidden = !runId;
+    if (ovRunId) ovRunId.textContent = runId || "…";
+    if (ovStatus) ovStatus.innerHTML = overlayStatusHtml();
+    if (ovElapsed && startedAt) ovElapsed.textContent = fmtElapsed(elapsedSec());
+    if (ovTrivia && !ovTrivia.textContent) ovTrivia.textContent = TRIVIA[triviaIdx];
+    updateOvPipe();
+  }
+
+  function openOverlay() {
+    if (overlayOpen || !overlay) return;
+    overlayOpen = true;
+    overlay.hidden = false;
+    document.body.classList.add("tk-lock");
+    syncOverlay();
+    scheduleBug();
+    if (minimizeBtn) minimizeBtn.focus();
+  }
+
+  function closeOverlay() {
+    if (!overlayOpen || !overlay) return;
+    overlayOpen = false;
+    overlay.hidden = true;
+    document.body.classList.remove("tk-lock");
+    if (overlayAnimTimer) { clearTimeout(overlayAnimTimer); overlayAnimTimer = null; }
+    if (ovBugLayer) {
+      var bugs = ovBugLayer.querySelectorAll(".bug");
+      for (var i = 0; i < bugs.length; i++) {
+        if (bugs[i].parentNode) bugs[i].parentNode.removeChild(bugs[i]);
+      }
+    }
+    if (expandBtn && !expandBtn.hidden) expandBtn.focus();
+  }
+
+  if (expandBtn) expandBtn.addEventListener("click", openOverlay);
+  if (minimizeBtn) minimizeBtn.addEventListener("click", closeOverlay);
+  document.addEventListener("keydown", function (ev) {
+    if (overlayOpen && (ev.key === "Escape" || ev.key === "Esc")) closeOverlay();
+  });
+
+  /* ----- bug squash mini-game (runs while the overlay is open) -----
+     Mirrors the implementation on the /reports processing page. */
+
+  function removeBug(btn) {
+    if (btn.parentNode) btn.parentNode.removeChild(btn);
+  }
+
+  function squashBug(btn, escapeTimer) {
+    if (btn.getAttribute("data-dead")) return;
+    btn.setAttribute("data-dead", "1");
+    if (escapeTimer) clearTimeout(escapeTimer);
+    btn.className = "bug is-squashed";
+    btn.innerHTML = '<span aria-hidden="true">💥</span>';
+    squashed++;
+    if (ovSquashCount) ovSquashCount.textContent = String(squashed);
+    setTimeout(function () { removeBug(btn); }, 480);
+  }
+
+  function spawnBug() {
+    if (!ovBugLayer || !overlayOpen) return;
+    var w = ovBugLayer.clientWidth;
+    var h = ovBugLayer.clientHeight;
+    if (w < 120 || h < 120) return;
+    if (ovBugLayer.querySelectorAll(".bug").length >= 3) return;
+
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "bug";
+    btn.setAttribute("aria-label", "squash the bug");
+    var glyph = Math.random() < 0.5 ? "🐛" : "🪲";
+    btn.innerHTML = '<span aria-hidden="true">' + glyph + '</span>';
+    btn.style.top = Math.floor(h * (0.08 + Math.random() * 0.78)) + "px";
+
+    var escapeTimer;
+    if (REDUCED) {
+      /* No motion: the bug simply appears somewhere and leaves after a while. */
+      btn.style.left = Math.floor(w * (0.1 + Math.random() * 0.7)) + "px";
+      escapeTimer = setTimeout(function () { removeBug(btn); }, 6000);
+    } else {
+      var ltr = Math.random() < 0.5;
+      var durMs = 5200 + Math.floor(Math.random() * 3800);
+      btn.style.setProperty("--x0", (ltr ? -60 : w + 60) + "px");
+      btn.style.setProperty("--x1", (ltr ? w + 60 : -60) + "px");
+      btn.style.setProperty("--y1", Math.floor((Math.random() - 0.5) * 90) + "px");
+      btn.style.setProperty("--dur", durMs + "ms");
+      if (!ltr) btn.style.setProperty("--flip", "-1");
+      escapeTimer = setTimeout(function () { removeBug(btn); }, durMs + 300);
+    }
+    btn.addEventListener("click", function () { squashBug(btn, escapeTimer); });
+    ovBugLayer.appendChild(btn);
+  }
+
+  function scheduleBug() {
+    if (overlayAnimTimer) clearTimeout(overlayAnimTimer);
+    overlayAnimTimer = setTimeout(function () {
+      if (!overlayOpen) { overlayAnimTimer = null; return; }
+      spawnBug();
+      scheduleBug();
+    }, 4500 + Math.random() * 5000);
+  }
+
+  /* ----- copy button (delegated: status card and overlay both re-render) ----- */
+
+  function handleCopyClick(ev, codeId) {
     var btn = ev.target && ev.target.closest ? ev.target.closest(".copy-btn") : null;
     if (!btn) return;
-    var code = document.getElementById("cmdCode");
+    var code = document.getElementById(codeId);
     if (!code) return;
     var text = code.textContent;
     function done() {
@@ -1238,7 +1407,10 @@
     } else {
       fallback();
     }
-  });
+  }
+
+  statusBody.addEventListener("click", function (ev) { handleCopyClick(ev, "cmdCode"); });
+  if (ovStatus) ovStatus.addEventListener("click", function (ev) { handleCopyClick(ev, "ovCmdCode"); });
 
   /* ----- submit ----- */
 
@@ -1254,13 +1426,18 @@
     formData.append("lang", langSelect.value);
 
     stopTimers();
+    closeOverlay();
     currentState = null;
     runId = null;
     reportUrl = null;
+    startedAt = 0;
     failStreak = 0;
     triviaLastAt = 0;
     triviaFading = false;
+    lastFailMsg = null;
+    lastErrorDetail = null;
     runBtn.disabled = true;
+    expandBtn.hidden = true;
     renderSubmitting();
 
     fetch("/api/run", { method: "POST", body: formData })
@@ -1272,10 +1449,10 @@
           if (!response.ok || !data || !data.runId) {
             runBtn.disabled = false;
             currentState = "failed";
-            renderFailed(
-              "Run could not start (HTTP " + response.status + ")",
-              data ? JSON.stringify(data, null, 2) : text
-            );
+            lastFailMsg = "Run could not start (HTTP " + response.status + ")";
+            lastErrorDetail = data ? JSON.stringify(data, null, 2) : text;
+            renderFailed(lastFailMsg, lastErrorDetail);
+            syncOverlay();
             return;
           }
 
@@ -1292,7 +1469,10 @@
       .catch(function (err) {
         runBtn.disabled = false;
         currentState = "failed";
-        renderFailed("Request error", err && err.message ? err.message : String(err));
+        lastFailMsg = "Request error";
+        lastErrorDetail = err && err.message ? err.message : String(err);
+        renderFailed(lastFailMsg, lastErrorDetail);
+        syncOverlay();
       });
   });
 
