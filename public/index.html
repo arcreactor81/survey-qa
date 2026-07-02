@@ -3,6 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+/* Theme bootstrap — runs before first paint to avoid a flash of the wrong theme. */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("sqa-theme"); } catch (e) { /* storage unavailable */ }
+  if (t !== "light" && t !== "dark") {
+    t = "light";
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
+    } catch (e) { /* matchMedia unavailable */ }
+  }
+  document.documentElement.dataset.theme = t;
+})();
+</script>
 <title>Survey QA &mdash; Automated questionnaire-to-website verification</title>
 <meta name="description" content="Survey QA automates vendor survey link-testing: it parses the Word questionnaire, walks every survey page with a real browser, runs a dual-LLM comparison with verbatim-quote verification, and delivers a findings report with a seeded-error scorecard.">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&display=swap" rel="stylesheet">
@@ -18,17 +32,87 @@
     --bad: #B3362B;
     --slate: #5B6B7F;
     --border: #E4DFD5;
+    --text: #101D31;
+    --muted: #5B6B7F;
+    --btn-text: #FFFFFF;
+    --band-bg: #101D31;
+    --band-title: #FFFFFF;
+    --band-text: #F4F1EA;
+    --band-muted: #9FB0C4;
+    --band-soft: #C9D3E0;
+    --band-link: #EFB88F;
+    --tint: #F6F2E9;
+    --tint-soft: #FDFCF8;
+    --code-bg: #101D31;
+    --code-text: #F4F1EA;
+    --input-bg: #FFFFFF;
+    --input-border: #D9D2C5;
+    --focus-ring: rgba(194, 87, 27, 0.45);
+    --focus-soft: rgba(194, 87, 27, 0.18);
+    --pulse: rgba(194, 87, 27, 0.35);
+    --wait-bg: #F8E8D8;
+    --wait-text: #9A4E12;
+    --ok-bg: #E2F1E8;
+    --bad-bg: #F7E3E0;
+    --done-border: #BFDCCB;
+    --done-bg: #F2F8F4;
+    --err-bg: #F9ECEA;
+    --err-border: #E9CCC6;
+    --err-text: #7A2A21;
     --serif: "Fraunces", Georgia, "Times New Roman", serif;
     --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
     --shadow: 0 1px 2px rgba(16, 29, 49, 0.04), 0 10px 28px rgba(16, 29, 49, 0.06);
+  }
+  /* Dark palette — scoped to screen so print always renders the light theme. */
+  @media screen {
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --ink: #F5F1E8;
+      --paper: #0D1626;
+      --card: #182640;
+      --accent: #E8824A;
+      --accent-dark: #F0925C;
+      --ok: #4CAF7D;
+      --bad: #E06456;
+      --slate: #9DABBF;
+      --border: #2B3B55;
+      --text: #EDE9DF;
+      --muted: #9DABBF;
+      --btn-text: #16202F;
+      --band-bg: #0A111D;
+      --band-title: #F5F1E8;
+      --band-text: #EDE9DF;
+      --band-muted: #9DABBF;
+      --band-soft: #B9C4D4;
+      --band-link: #EFB88F;
+      --tint: #131F36;
+      --tint-soft: #14213A;
+      --code-bg: #0F1B30;
+      --code-text: #EDE9DF;
+      --input-bg: #0F1B30;
+      --input-border: #33445F;
+      --focus-ring: rgba(232, 130, 74, 0.55);
+      --focus-soft: rgba(232, 130, 74, 0.25);
+      --pulse: rgba(232, 130, 74, 0.4);
+      --wait-bg: rgba(232, 130, 74, 0.16);
+      --wait-text: #F0A97E;
+      --ok-bg: rgba(76, 175, 125, 0.16);
+      --bad-bg: rgba(224, 100, 86, 0.16);
+      --done-border: #2E5A44;
+      --done-bg: rgba(76, 175, 125, 0.1);
+      --err-bg: rgba(224, 100, 86, 0.12);
+      --err-border: rgba(224, 100, 86, 0.4);
+      --err-text: #F1A99F;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.45);
+    }
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     font-family: var(--sans);
     background: var(--paper);
-    color: #26374B;
+    color: var(--text);
     line-height: 1.55;
     font-size: 14px;
   }
@@ -39,7 +123,7 @@
   input:focus-visible,
   select:focus-visible,
   summary:focus-visible {
-    outline: 3px solid rgba(194, 87, 27, 0.45);
+    outline: 3px solid var(--focus-ring);
     outline-offset: 2px;
     border-radius: 4px;
   }
@@ -65,8 +149,8 @@
 
   /* ---------- hero band ---------- */
   .band {
-    background: var(--ink);
-    color: #F4F1EA;
+    background: var(--band-bg);
+    color: var(--band-text);
     padding: 60px 0 54px;
     border-bottom: 4px solid var(--accent);
   }
@@ -78,30 +162,30 @@
     line-height: 1.05;
     letter-spacing: 0.2px;
     margin: 0;
-    color: #FFFFFF;
+    color: var(--band-title);
   }
   .tagline {
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: #9FB0C4;
+    color: var(--band-muted);
   }
   .value-prop {
     max-width: 760px;
     margin: 22px 0 0;
     font-size: 16.5px;
     line-height: 1.65;
-    color: #C9D3E0;
+    color: var(--band-soft);
   }
-  .value-prop strong { color: #FFFFFF; font-weight: 600; }
+  .value-prop strong { color: var(--band-title); font-weight: 600; }
   .hero-ctas { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 30px; align-items: center; }
-  .band a { color: #EFB88F; }
+  .band a { color: var(--band-link); }
 
   /* ---------- buttons ---------- */
   .btn {
     display: inline-block;
     background: var(--accent);
-    color: #FFFFFF !important;
+    color: var(--btn-text) !important;
     border: 1px solid var(--accent);
     border-radius: 8px;
     padding: 11px 24px;
@@ -118,7 +202,7 @@
   .btn-ghost {
     background: transparent;
     border: 1px solid rgba(244, 241, 234, 0.35);
-    color: #F4F1EA !important;
+    color: var(--band-text) !important;
   }
   .btn-ghost:hover { background: rgba(244, 241, 234, 0.08); border-color: rgba(244, 241, 234, 0.6); }
 
@@ -142,7 +226,7 @@
   }
   .step {
     position: relative;
-    background: #FDFCF8;
+    background: var(--tint-soft);
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 18px 16px 16px;
@@ -202,34 +286,34 @@
   input[type="text"], select {
     width: 100%;
     padding: 10px 12px;
-    border: 1px solid #CFC8BA;
+    border: 1px solid var(--input-border);
     border-radius: 8px;
-    background: #FFFFFF;
+    background: var(--input-bg);
     font-family: var(--sans);
     font-size: 14px;
-    color: #26374B;
+    color: var(--text);
   }
   input[type="text"] { font-family: var(--mono); font-size: 13px; }
   input[type="text"]:focus, select:focus {
     border-color: var(--accent);
     outline: none;
-    box-shadow: 0 0 0 3px rgba(194, 87, 27, 0.18);
+    box-shadow: 0 0 0 3px var(--focus-soft);
   }
   input[type="file"] {
     width: 100%;
     font-size: 13px;
     color: var(--slate);
     padding: 7px 8px;
-    border: 1px dashed #CFC8BA;
+    border: 1px dashed var(--input-border);
     border-radius: 8px;
-    background: #FDFCF8;
+    background: var(--tint-soft);
   }
   input[type="file"]::file-selector-button {
     font-family: var(--sans);
     font-size: 12.5px;
     font-weight: 600;
     color: var(--ink);
-    background: #FFFFFF;
+    background: var(--card);
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 6px 12px;
@@ -242,7 +326,7 @@
     display: flex;
     align-items: flex-start;
     gap: 10px;
-    background: #F6F2E9;
+    background: var(--tint);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 12px 14px;
@@ -260,11 +344,11 @@
     letter-spacing: normal;
     font-size: 13.5px;
     font-weight: 500;
-    color: #26374B;
+    color: var(--text);
     margin: 0;
     cursor: pointer;
   }
-  .hint { font-size: 12px; color: #8C96A3; margin: 6px 0 0; }
+  .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
   .submit-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 4px; }
 
   /* ---------- status card ---------- */
@@ -280,9 +364,9 @@
     white-space: nowrap;
     margin-bottom: 12px;
   }
-  .state-badge.is-wait { background: #F8E8D8; color: #9A4E12; }
-  .state-badge.is-ok { background: #E2F1E8; color: var(--ok); }
-  .state-badge.is-bad { background: #F7E3E0; color: var(--bad); }
+  .state-badge.is-wait { background: var(--wait-bg); color: var(--wait-text); }
+  .state-badge.is-ok { background: var(--ok-bg); color: var(--ok); }
+  .state-badge.is-bad { background: var(--bad-bg); color: var(--bad); }
   .run-state { display: flex; align-items: flex-start; gap: 16px; }
   .spinner {
     flex: none;
@@ -300,6 +384,12 @@
     .mp-stage { transition: none; }
     .mp-stage.is-cur { animation: none; }
     .trivia-line { transition: none; }
+    .takeover { transition: none !important; }
+    .stage, .stage-icon, .stage-name { transition: none; }
+    .stage.is-cur .stage-dot { animation: none; }
+    .bug { animation: none; }
+    .bug > span { animation: none; }
+    .bug.is-squashed > span { animation: none; opacity: 0.35; }
   }
   .state-title {
     font-family: var(--serif);
@@ -310,8 +400,8 @@
   }
   .state-title code { font-family: var(--mono); font-size: 15px; color: var(--accent); }
   .state-stage { font-size: 13.5px; color: var(--slate); }
-  .state-elapsed { margin-left: 10px; color: #8C96A3; font-variant-numeric: tabular-nums; font-size: 12.5px; }
-  .state-note { font-size: 12px; color: #8C96A3; margin: 14px 0 0; }
+  .state-elapsed { margin-left: 10px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+  .state-note { font-size: 12px; color: var(--muted); margin: 14px 0 0; }
 
   /* compact pipeline + rotating trivia (processing state only) */
   .mini-pipe { display: flex; align-items: center; gap: 6px; margin: 16px 0 0; flex-wrap: wrap; }
@@ -323,29 +413,29 @@
     height: 34px;
     border: 1px solid var(--border);
     border-radius: 10px;
-    background: #FDFCF8;
+    background: var(--tint-soft);
     font-size: 16px;
     line-height: 1;
     opacity: 0.45;
     transition: opacity 0.4s ease, border-color 0.4s ease, background 0.4s ease;
   }
-  .mp-stage.is-done { opacity: 1; border-color: #BFDCCB; background: #F2F8F4; }
+  .mp-stage.is-done { opacity: 1; border-color: var(--done-border); background: var(--done-bg); }
   .mp-stage.is-cur {
     opacity: 1;
     border-color: var(--accent);
-    background: #FFFFFF;
+    background: var(--card);
     animation: mp-pulse 1.5s ease-in-out infinite;
   }
   @keyframes mp-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(194, 87, 27, 0.35); }
-    50% { box-shadow: 0 0 0 6px rgba(194, 87, 27, 0); }
+    0%, 100% { box-shadow: 0 0 0 0 var(--pulse); }
+    50% { box-shadow: 0 0 0 6px transparent; }
   }
   .mp-link { flex: none; width: 14px; height: 2px; background: var(--border); }
-  .mp-note { font-size: 11px; color: #8C96A3; margin-left: 8px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .mp-note { font-size: 11px; color: var(--muted); margin-left: 8px; text-transform: uppercase; letter-spacing: 0.08em; }
   .trivia-line {
     font-size: 13px;
     color: var(--slate);
-    background: #F6F2E9;
+    background: var(--tint);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 10px 14px;
@@ -359,7 +449,7 @@
     display: flex;
     align-items: stretch;
     gap: 10px;
-    background: var(--ink);
+    background: var(--code-bg);
     border-radius: 10px;
     padding: 13px 14px;
     margin: 14px 0 0;
@@ -370,7 +460,7 @@
     font-family: var(--mono);
     font-size: 12.5px;
     line-height: 1.55;
-    color: #F4F1EA;
+    color: var(--code-text);
     word-break: break-all;
     align-self: center;
   }
@@ -378,7 +468,7 @@
     flex: none;
     align-self: center;
     background: transparent;
-    color: #F4F1EA;
+    color: var(--code-text);
     border: 1px solid rgba(244, 241, 234, 0.3);
     border-radius: 6px;
     padding: 6px 14px;
@@ -394,9 +484,9 @@
   .error-detail {
     font-family: var(--mono);
     font-size: 12px;
-    background: #F9ECEA;
-    border: 1px solid #E9CCC6;
-    color: #7A2A21;
+    background: var(--err-bg);
+    border: 1px solid var(--err-border);
+    color: var(--err-text);
     border-radius: 8px;
     padding: 12px 14px;
     margin: 12px 0 0;
@@ -406,6 +496,242 @@
     overflow: auto;
   }
   .report-cta { margin-top: 6px; }
+
+  /* ---------- theme toggle ---------- */
+  .theme-toggle {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    z-index: 260;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--card);
+    box-shadow: var(--shadow);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .theme-toggle:hover { border-color: var(--accent); }
+  .theme-toggle .tt-sun { display: none; }
+  html[data-theme="dark"] .theme-toggle .tt-sun { display: block; }
+  html[data-theme="dark"] .theme-toggle .tt-moon { display: none; }
+
+  /* ---------- status card head + expand ---------- */
+  .status-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .expand-btn {
+    flex: none;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--accent);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .expand-btn:hover { border-color: var(--accent); }
+  .expand-btn[hidden] { display: none; }
+
+  /* ---------- fullscreen run-status takeover ---------- */
+  body.tk-lock { overflow: hidden; }
+  .takeover {
+    position: fixed;
+    inset: 0;
+    z-index: 240;
+    background: var(--paper);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .takeover[hidden] { display: none; }
+  .tk-inner { position: relative; z-index: 2; max-width: 920px; margin: 0 auto; padding: 54px 28px 130px; }
+  .min-btn {
+    position: fixed;
+    top: 14px;
+    right: 66px;
+    z-index: 260;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    padding: 9px 14px;
+    cursor: pointer;
+  }
+  .min-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .tk-head { margin-bottom: 24px; }
+  .tk-title {
+    margin: 6px 0 0;
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 34px;
+    line-height: 1.15;
+    color: var(--ink);
+  }
+  .tk-title code { font-family: var(--mono); font-size: 25px; color: var(--accent); }
+  .tk-elapsed {
+    margin-top: 8px;
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 52px;
+    line-height: 1;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+  .tk-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 28px 26px;
+    margin-bottom: 22px;
+    box-shadow: var(--shadow);
+  }
+  .tk-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .tk-card h2 { margin-bottom: 0; font-size: 22px; }
+  .badge-est {
+    flex: none;
+    padding: 3px 11px;
+    border-radius: 999px;
+    background: var(--tint);
+    border: 1px solid var(--border);
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--slate);
+  }
+  .tk-cta { font-size: 16px; padding: 14px 30px; }
+  .z-top { position: relative; z-index: 6; pointer-events: none; }
+  .z-top a { pointer-events: auto; }
+
+  /* full-size animated pipeline (matches the processing page) */
+  .pipeline {
+    list-style: none;
+    display: flex;
+    gap: 16px;
+    position: relative;
+    margin: 22px 0 0;
+    padding: 0;
+  }
+  .pipeline::before {
+    content: "";
+    position: absolute;
+    left: 3%; right: 3%; top: 50%;
+    height: 2px;
+    background: var(--border);
+    z-index: 0;
+  }
+  .stage {
+    position: relative;
+    z-index: 1;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 7px;
+    text-align: center;
+    background: var(--tint-soft);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 15px 10px 13px;
+    transition: border-color 0.4s ease, background 0.4s ease, box-shadow 0.4s ease;
+  }
+  .stage-icon { font-size: 22px; line-height: 1; filter: grayscale(0.9); opacity: 0.55; transition: filter 0.4s ease, opacity 0.4s ease; }
+  .stage-name { font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--muted); transition: color 0.4s ease; }
+  .stage-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--input-border); }
+  .stage.is-cur {
+    background: var(--card);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--focus-soft);
+  }
+  .stage.is-cur .stage-icon, .stage.is-done .stage-icon { filter: none; opacity: 1; }
+  .stage.is-cur .stage-name, .stage.is-done .stage-name { color: var(--ink); }
+  .stage.is-cur .stage-dot { background: var(--accent); animation: tk-pulse 1.4s ease-in-out infinite; }
+  .stage.is-done { border-color: var(--done-border); background: var(--done-bg); }
+  .stage.is-done .stage-dot { background: var(--ok); }
+  @keyframes tk-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--pulse); }
+    50% { box-shadow: 0 0 0 7px transparent; }
+  }
+  .pipe-note { margin: 16px 0 0; font-size: 12px; color: var(--muted); }
+  @media (max-width: 720px) {
+    .pipeline { flex-direction: column; gap: 10px; }
+    .pipeline::before { display: none; }
+    .stage { flex-direction: row; text-align: left; padding: 12px 16px; }
+    .stage-dot { margin-left: auto; }
+  }
+
+  /* ---------- bug mini-game (inside the takeover) ---------- */
+  #ovBugLayer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .bug {
+    position: absolute;
+    left: 0;
+    top: 0;
+    border: 0;
+    margin: 0;
+    padding: 5px;
+    background: transparent;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    pointer-events: auto;
+    animation: scurry var(--dur, 7s) linear forwards;
+    will-change: transform;
+  }
+  @keyframes scurry {
+    from { transform: translateX(var(--x0, -60px)) translateY(0); }
+    to   { transform: translateX(var(--x1, 100vw)) translateY(var(--y1, 0px)); }
+  }
+  .bug > span {
+    display: inline-block;
+    animation: bob 0.5s ease-in-out infinite alternate;
+  }
+  @keyframes bob {
+    from { transform: scaleX(var(--flip, 1)) translateY(-3px) rotate(-6deg); }
+    to   { transform: scaleX(var(--flip, 1)) translateY(3px) rotate(6deg); }
+  }
+  .bug.is-squashed { animation-play-state: paused; }
+  .bug.is-squashed > span { animation: pop 0.45s ease forwards; }
+  @keyframes pop {
+    from { transform: scale(1.5); opacity: 1; }
+    to   { transform: scale(0.4); opacity: 0; }
+  }
+  .squash-chip {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 250;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 10px 16px;
+    max-width: 240px;
+  }
+  .squash-chip strong { display: block; font-size: 13px; color: var(--ink); }
+  .squash-chip small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* ---------- print ---------- */
+  @media print {
+    .theme-toggle, .takeover, .expand-btn { display: none !important; }
+  }
 
   /* ---------- footer ---------- */
   footer {
@@ -418,6 +744,11 @@
 </style>
 </head>
 <body>
+
+<button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+  <span class="tt-moon" aria-hidden="true">&#127769;</span>
+  <span class="tt-sun" aria-hidden="true">&#9728;&#65039;</span>
+</button>
 
 <header class="band">
   <div class="wrap">
@@ -524,8 +855,13 @@
     </section>
 
     <section id="statusCard" hidden aria-labelledby="status-title">
-      <div class="kicker">Run status</div>
-      <h2 id="status-title">This run</h2>
+      <div class="status-head">
+        <div>
+          <div class="kicker">Run status</div>
+          <h2 id="status-title">This run</h2>
+        </div>
+        <button type="button" id="expandBtn" class="expand-btn" aria-label="Expand run status to full screen" hidden>Expand&nbsp;&#9974;</button>
+      </div>
       <div id="statusBody" aria-live="polite"></div>
     </section>
 
@@ -536,6 +872,53 @@
   Survey QA &middot; Runs on <a href="https://workers.cloudflare.com" target="_blank" rel="noopener">Cloudflare Workers</a>
   &mdash; Browser Rendering + Workflows + R2
 </footer>
+
+<div id="overlay" class="takeover" hidden role="dialog" aria-modal="true" aria-label="Run status — mission control">
+  <button type="button" id="minimizeBtn" class="min-btn" aria-label="Minimize run status back to the page">&minus;&nbsp;Minimize</button>
+  <div class="tk-inner">
+    <div class="tk-head">
+      <div class="kicker">Survey QA &middot; Mission control</div>
+      <h2 class="tk-title">Run <code id="ovRunId">&hellip;</code></h2>
+      <div class="tk-elapsed num" id="ovElapsed">0:00</div>
+    </div>
+
+    <div class="tk-card">
+      <div class="tk-card-head">
+        <div>
+          <div class="kicker">Pipeline</div>
+          <h2 id="ov-pipe-title">Where your run is</h2>
+        </div>
+        <span class="badge-est">estimated</span>
+      </div>
+      <ol class="pipeline" aria-labelledby="ov-pipe-title">
+        <li class="stage" id="ovStage0"><span class="stage-icon" aria-hidden="true">&#128196;</span><span class="stage-name">Parse docx</span><span class="stage-dot" aria-hidden="true"></span></li>
+        <li class="stage" id="ovStage1"><span class="stage-icon" aria-hidden="true">&#127760;</span><span class="stage-name">Browser walks pages</span><span class="stage-dot" aria-hidden="true"></span></li>
+        <li class="stage" id="ovStage2"><span class="stage-icon" aria-hidden="true">&#129504;</span><span class="stage-name">LLM compare</span><span class="stage-dot" aria-hidden="true"></span></li>
+        <li class="stage" id="ovStage3"><span class="stage-icon" aria-hidden="true">&#128269;</span><span class="stage-name">Quote verification</span><span class="stage-dot" aria-hidden="true"></span></li>
+        <li class="stage" id="ovStage4"><span class="stage-icon" aria-hidden="true">&#128202;</span><span class="stage-name">Report</span><span class="stage-dot" aria-hidden="true"></span></li>
+      </ol>
+      <p class="pipe-note">The status API doesn't report stage-by-stage progress, so this indicator
+        advances on typical timings &mdash; the browser walk is the long stretch.</p>
+    </div>
+
+    <div class="tk-card">
+      <div id="ovStatus" aria-live="polite"></div>
+    </div>
+
+    <div class="tk-card">
+      <div class="z-top">
+        <div class="kicker">Meanwhile</div>
+        <p class="trivia-line" id="ovTrivia" aria-hidden="true"></p>
+      </div>
+    </div>
+  </div>
+
+  <div id="ovBugLayer"></div>
+  <div class="squash-chip">
+    <strong>&#128027; Bugs squashed: <span id="ovSquashCount" class="num">0</span></strong>
+    <small>(the real ones are being caught server-side)</small>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -550,6 +933,21 @@
   var langSelect = document.getElementById("lang");
   var statusCard = document.getElementById("statusCard");
   var statusBody = document.getElementById("statusBody");
+  var expandBtn = document.getElementById("expandBtn");
+  var overlay = document.getElementById("overlay");
+  var minimizeBtn = document.getElementById("minimizeBtn");
+  var ovRunId = document.getElementById("ovRunId");
+  var ovElapsed = document.getElementById("ovElapsed");
+  var ovStatus = document.getElementById("ovStatus");
+  var ovTrivia = document.getElementById("ovTrivia");
+  var ovBugLayer = document.getElementById("ovBugLayer");
+  var ovSquashCount = document.getElementById("ovSquashCount");
+  var themeToggle = document.getElementById("themeToggle");
+
+  var REDUCED = false;
+  try {
+    REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch (e) { /* no matchMedia — assume motion is fine */ }
 
   var runId = null;
   var reportUrl = null;
@@ -558,6 +956,11 @@
   var pollTimer = null;
   var tickTimer = null;
   var failStreak = 0;
+  var overlayOpen = false;
+  var overlayAnimTimer = null;
+  var lastFailMsg = null;
+  var lastErrorDetail = null;
+  var squashed = 0;
 
   var STAGES = [
     { after: 0,   text: "Parsing the questionnaire (.docx)…" },
@@ -615,17 +1018,24 @@
   }
 
   function rotateTrivia() {
+    if (triviaFading) return;
     var el = document.getElementById("triviaLine");
-    if (!el || triviaFading) return;
+    if (!el && !ovTrivia) return;
     triviaFading = true;
-    el.classList.add("is-fading");
+    if (el) el.classList.add("is-fading");
+    if (ovTrivia) ovTrivia.classList.add("is-fading");
     setTimeout(function () {
       triviaFading = false;
-      var el2 = document.getElementById("triviaLine");
-      if (!el2) return;
       triviaIdx = (triviaIdx + 1) % TRIVIA.length;
-      el2.textContent = TRIVIA[triviaIdx];
-      el2.classList.remove("is-fading");
+      var el2 = document.getElementById("triviaLine");
+      if (el2) {
+        el2.textContent = TRIVIA[triviaIdx];
+        el2.classList.remove("is-fading");
+      }
+      if (ovTrivia) {
+        ovTrivia.textContent = TRIVIA[triviaIdx];
+        ovTrivia.classList.remove("is-fading");
+      }
     }, 350);
   }
 
@@ -755,17 +1165,24 @@
     } else if (state === "failed") {
       stopTimers();
       runBtn.disabled = false;
-      renderFailed("Run " + (runId || "") + " failed", detail || "No error detail was recorded.");
+      lastFailMsg = "Run " + (runId || "") + " failed";
+      lastErrorDetail = detail || "No error detail was recorded.";
+      renderFailed(lastFailMsg, lastErrorDetail);
     }
+    syncOverlay();
   }
 
   function tick() {
+    if (ovElapsed && startedAt) ovElapsed.textContent = fmtElapsed(elapsedSec());
     if (currentState !== "processing") return;
     var st = document.getElementById("stageText");
     var el = document.getElementById("elapsedText");
     if (st) st.textContent = stageText();
     if (el) el.textContent = fmtElapsed(elapsedSec());
+    var ost = document.getElementById("ovStageText");
+    if (ost) ost.textContent = stageText();
     updateMiniPipe();
+    updateOvPipe();
     var e = elapsedSec();
     if (e > 0 && e - triviaLastAt >= 6) {
       triviaLastAt = e;
@@ -878,6 +1295,16 @@
         renderFailed("Request error", err && err.message ? err.message : String(err));
       });
   });
+
+  /* Theme toggle: flip data-theme and persist to localStorage. */
+  if (themeToggle) {
+    themeToggle.addEventListener("click", function () {
+      var cur = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+      var next = cur === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem("sqa-theme", next); } catch (e) { /* storage unavailable */ }
+    });
+  }
 })();
 </script>
 </body>
