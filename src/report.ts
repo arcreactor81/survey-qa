@@ -449,10 +449,16 @@ export function buildHtmlReport(run: RunReport): string {
   const duration = runDuration(run);
   const generatedAt = fmtTimestamp(new Date().toISOString());
 
+  let workerOrigin = "<worker-url>";
+  try {
+    workerOrigin = new URL(run.surveyUrl).origin;
+  } catch {
+    // keep placeholder if surveyUrl is not absolute
+  }
   const pendingNotice = hasClaude
     ? ""
     : `<div class="notice">Claude comparison pending &mdash; run the local runner:
-        <code class="mono">node runner/claude-runner.mjs --worker-url &lt;worker-url&gt; --run ${esc(run.runId)}</code>
+        <code class="mono">node runner/claude-runner.mjs --worker-url ${esc(workerOrigin)} --run ${esc(run.runId)}</code>
       </div>`;
 
   return `<!DOCTYPE html>

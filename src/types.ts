@@ -39,11 +39,16 @@ export interface SecretBinding {
 export async function resolveSecret(
   v: string | SecretBinding | undefined
 ): Promise<string | undefined> {
+  const clean = (s: string | undefined): string | undefined => {
+    const t = (s ?? "").trim();
+    // "PLACEHOLDER" seeds the Secrets Store so the binding can deploy before
+    // the real key exists; treat it as unset.
+    return t && t !== "PLACEHOLDER" ? t : undefined;
+  };
   if (!v) return undefined;
-  if (typeof v === "string") return v.trim() || undefined;
+  if (typeof v === "string") return clean(v);
   try {
-    const s = await v.get();
-    return s && s.trim() ? s.trim() : undefined;
+    return clean(await v.get());
   } catch {
     return undefined;
   }

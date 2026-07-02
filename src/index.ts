@@ -3,6 +3,7 @@ import { verifyFindings, buildScorecard } from "./verify";
 import { buildHtmlReport } from "./report";
 import { processingPage } from "./processing";
 import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
+import { workersaiCompare } from "./llm/workersai";
 import { MANIFESTS, SUPPORTED_LANGS } from "./manifests";
 import type { Env, Finding, ModelRunStats, RunReport } from "./types";
 
@@ -209,6 +210,35 @@ export default {
       }
 
       if (path === "/api/health") return json({ ok: true, name: "survey-qa" });
+
+      // Cheap end-to-end probe of the Workers AI leg (no key required).
+      if (path === "/api/health/workersai" && req.method === "GET") {
+        try {
+          const fakePage = {
+            pageIndex: 0,
+            text: "S1. Which option do you prefer?\nOption A\nOptoin B",
+            navOk: true,
+          };
+          const r = await workersaiCompare(
+            env,
+            "S1. Which option do you prefer?\n- Option A\n- Option B",
+            fakePage
+          );
+          return json({
+            ok: true,
+            model: env.WORKERSAI_MODEL ?? "@cf/zai-org/glm-4.7-flash",
+            findings: r.findings,
+            inputTokens: r.inputTokens,
+            outputTokens: r.outputTokens,
+            latencyMs: r.latencyMs,
+          });
+        } catch (err) {
+          return json(
+            { ok: false, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) },
+            500
+          );
+        }
+      }
 
       // Everything else falls through to static assets.
       return env.ASSETS.fetch(req);

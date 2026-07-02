@@ -9,8 +9,9 @@ $wrangler = Join-Path $PSScriptRoot "node_modules\.bin\wrangler.cmd"
 if (-not (Test-Path $wrangler)) { Write-Error "wrangler not found — run npm install first"; exit 1 }
 
 Write-Host "DeepSeek API key -> ACCOUNT-LEVEL Secrets Store (shared by all Workers)."
-Write-Host "wrangler will prompt for the value interactively:"
-& $wrangler secrets-store secret create 55e6ce4174d645cfa68a6c27eef7847f --name DEEPSEEK_API_KEY --scopes workers --remote
+Write-Host "The DEEPSEEK_API_KEY store entry already exists (seeded with a placeholder);"
+Write-Host "wrangler will prompt for the REAL value interactively. No redeploy needed after."
+& $wrangler secrets-store secret update 55e6ce4174d645cfa68a6c27eef7847f --secret-id 39b18b474f4e4bb8b3d018dccde3b564 --remote
 
 Write-Host ""
 Write-Host "Anthropic API key (OPTIONAL — leave empty to skip; the Claude leg normally runs via the local"
