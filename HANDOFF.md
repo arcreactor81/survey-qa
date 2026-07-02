@@ -1,5 +1,25 @@
 # HANDOFF — survey-qa build state
 
+## STATE AS OF 2026-07-02 ~14:10 (autonomous session, user away)
+Product fully working & deployed. **3-way comparison achieved** (run 19564527):
+Claude 10/10 (subscription $0), DeepSeek 9/10 ($0.008/run), Workers AI glm-4.7-flash 7/10 ($0.006/run).
+Six-language Claude scorecards all 10/10 (en/es/fr/de/zh/ja). DEEPSEEK_API_KEY set in account
+Secrets Store (real value). Landing page: full dark mode + fullscreen takeover DONE & deployed
+(commit 2ce9856 — fixed the agent's circular CSS vars and missing toggle click handler).
+
+**TWO BACKGROUND WORKFLOWS RUNNING (check results, integrate):**
+1. Adversarial code review (6 lenses + skeptic verify). Script:
+   ...\workflows\scripts\adversarial-code-review-wf_99405c67-72e.js — triage confirmed findings,
+   fix genuine bugs/security, note demo-acceptable ones. (Known suspects: unauthenticated
+   POST /api/runs/:id/findings and /api/run — no auth/rate limit; arbitrary surveyUrl = SSRF surface.)
+2. report.ts + processing.ts dark mode. Script:
+   ...\workflows\scripts\report-processing-darkmode-wf_57d70c9e-d85.js — after it lands: typecheck,
+   deploy (NO active runs), verify report renders, commit.
+
+Continuation cron 4005c671 set for ~17:05 as limit-cutoff insurance.
+DEPLOY RULE: never deploy while a /api/run workflow is active (Durable Object reset kills the run).
+
+
 _Last updated: 2026-07-02 02:55 local. Purpose: resume point for the automated continuation._
 
 ## ✅ MILESTONE REACHED (02:50)
