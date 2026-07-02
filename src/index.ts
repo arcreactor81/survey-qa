@@ -1,6 +1,7 @@
 import { buildComparePrompt } from "./prompt";
 import { verifyFindings, buildScorecard } from "./verify";
 import { buildHtmlReport } from "./report";
+import { processingPage } from "./processing";
 import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
 import { MANIFESTS, SUPPORTED_LANGS } from "./manifests";
 import type { Env, Finding, ModelRunStats, RunReport } from "./types";
@@ -147,14 +148,6 @@ async function handleSubmitFindings(req: Request, env: Env, runId: string): Prom
   return json({ ok: true, accepted: verified.length, verified: claudeVerified, status: envelope.status });
 }
 
-const PROCESSING_PAGE = (runId: string) => `<!doctype html>
-<html><head><meta charset="utf-8"><meta http-equiv="refresh" content="5">
-<title>Run ${runId} — processing</title>
-<style>body{font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0;background:#f6f7f9}
-.card{background:#fff;padding:2rem 3rem;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);text-align:center}</style>
-</head><body><div class="card"><h2>Run ${runId} is processing&hellip;</h2>
-<p>Walking the survey and running the model comparison.<br>This page refreshes automatically.</p></div></body></html>`;
-
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -194,7 +187,7 @@ export default {
       if (m && req.method === "GET") {
         const envelope = await getRun(env, m[1]);
         if (!envelope) return html("<h1>Run not found</h1>", 404);
-        if (envelope.status === "processing") return html(PROCESSING_PAGE(m[1]));
+        if (envelope.status === "processing") return html(processingPage(m[1]));
         if (envelope.status === "failed") {
           return html(`<h1>Run ${m[1]} failed</h1><pre>${(envelope.error ?? "unknown").replace(/</g, "&lt;")}</pre>`, 500);
         }

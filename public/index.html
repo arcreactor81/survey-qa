@@ -297,6 +297,9 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) {
     .spinner { animation-duration: 2.5s; }
+    .mp-stage { transition: none; }
+    .mp-stage.is-cur { animation: none; }
+    .trivia-line { transition: none; }
   }
   .state-title {
     font-family: var(--serif);
@@ -309,6 +312,49 @@
   .state-stage { font-size: 13.5px; color: var(--slate); }
   .state-elapsed { margin-left: 10px; color: #8C96A3; font-variant-numeric: tabular-nums; font-size: 12.5px; }
   .state-note { font-size: 12px; color: #8C96A3; margin: 14px 0 0; }
+
+  /* compact pipeline + rotating trivia (processing state only) */
+  .mini-pipe { display: flex; align-items: center; gap: 6px; margin: 16px 0 0; flex-wrap: wrap; }
+  .mp-stage {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #FDFCF8;
+    font-size: 16px;
+    line-height: 1;
+    opacity: 0.45;
+    transition: opacity 0.4s ease, border-color 0.4s ease, background 0.4s ease;
+  }
+  .mp-stage.is-done { opacity: 1; border-color: #BFDCCB; background: #F2F8F4; }
+  .mp-stage.is-cur {
+    opacity: 1;
+    border-color: var(--accent);
+    background: #FFFFFF;
+    animation: mp-pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes mp-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(194, 87, 27, 0.35); }
+    50% { box-shadow: 0 0 0 6px rgba(194, 87, 27, 0); }
+  }
+  .mp-link { flex: none; width: 14px; height: 2px; background: var(--border); }
+  .mp-note { font-size: 11px; color: #8C96A3; margin-left: 8px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .trivia-line {
+    font-size: 13px;
+    color: var(--slate);
+    background: #F6F2E9;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin: 12px 0 0;
+    max-width: 640px;
+    min-height: 40px;
+    transition: opacity 0.35s ease;
+  }
+  .trivia-line.is-fading { opacity: 0; }
   .cmd {
     display: flex;
     align-items: stretch;
@@ -520,6 +566,69 @@
     { after: 150, text: "Verifying quotes and assembling the report…" }
   ];
 
+  /* Same copy as src/processing.ts TRIVIA_LINES — keep the two in sync. */
+  var TRIVIA = [
+    "A headless Chrome instance is clicking through every page of your survey right now.",
+    "Each finding must quote the questionnaire verbatim — if the quote doesn't match, we throw it out.",
+    "Two models — Claude and DeepSeek — read every page independently. Then we compare notes.",
+    "Every survey page is captured three ways: extracted text, a screenshot, and a PDF. Evidence beats vibes.",
+    "Survey research 101: every extra minute of questionnaire length measurably increases drop-off.",
+    "A routing error caught after fielding can mean re-fielding at full cost. Catching it now costs a coffee break.",
+    "Mojibake (â€™ where ' should be) happens when UTF-8 bytes get read as CP1252. Surveys cross that boundary constantly.",
+    "Routing and skip-logic mistakes are the most common survey programming defects — and the hardest to spot by eye.",
+    "Translated surveys get back-translation QA: translate the translation back, then compare it with the original.",
+    "Long answer grids invite straight-lining — respondents pick a column and coast. Quality fades before they quit.",
+    "Ã© walks into a bar. The bartender says: you look like you've been through a bad encoding.",
+    "Our robot has never once experienced survey fatigue.",
+    "Somewhere, a {Q3brand} token is about to be caught red-handed.",
+    "The browser reads your survey the way respondents do — except it actually reads all the instructions.",
+    "Seeded-error scorecards are fire drills for QA: hide known bugs, then measure how many the models catch.",
+    "A scale labeled only at its endpoints and one labeled at every point yield different data. Wording is everything."
+  ];
+  var triviaIdx = Math.floor(Math.random() * TRIVIA.length);
+  var triviaLastAt = 0;
+  var triviaFading = false;
+
+  var PIPE_ICONS = ["📄", "🌐", "🧠", "🔍", "📊"];
+  var PIPE_TITLES = ["Parse docx", "Browser walks pages", "LLM compare", "Quote verification", "Report"];
+  var PIPE_AT = [0, 3, 93, 130, 160];
+
+  function miniPipeHtml() {
+    var html = '<div class="mini-pipe" aria-hidden="true">';
+    for (var i = 0; i < PIPE_ICONS.length; i++) {
+      if (i > 0) html += '<span class="mp-link"></span>';
+      html += '<span class="mp-stage" id="mpStage' + i + '" title="' + esc(PIPE_TITLES[i]) + '">' + PIPE_ICONS[i] + '</span>';
+    }
+    html += '<span class="mp-note">estimated</span></div>';
+    return html;
+  }
+
+  function updateMiniPipe() {
+    var e = elapsedSec();
+    var cur = 0;
+    for (var i = 0; i < PIPE_AT.length; i++) { if (e >= PIPE_AT[i]) cur = i; }
+    for (var j = 0; j < PIPE_ICONS.length; j++) {
+      var el = document.getElementById("mpStage" + j);
+      if (!el) return;
+      el.className = "mp-stage" + (j < cur ? " is-done" : (j === cur ? " is-cur" : ""));
+    }
+  }
+
+  function rotateTrivia() {
+    var el = document.getElementById("triviaLine");
+    if (!el || triviaFading) return;
+    triviaFading = true;
+    el.classList.add("is-fading");
+    setTimeout(function () {
+      triviaFading = false;
+      var el2 = document.getElementById("triviaLine");
+      if (!el2) return;
+      triviaIdx = (triviaIdx + 1) % TRIVIA.length;
+      el2.textContent = TRIVIA[triviaIdx];
+      el2.classList.remove("is-fading");
+    }, 350);
+  }
+
   function esc(s) {
     return String(s === null || s === undefined ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -593,8 +702,11 @@
         '<div class="state-stage"><span id="stageText">' + esc(stageText()) + '</span>' +
         '<span class="state-elapsed" id="elapsedText">' + esc(fmtElapsed(elapsedSec())) + '</span></div></div>' +
       '</div>' +
+      miniPipeHtml() +
+      '<p class="trivia-line" id="triviaLine" aria-hidden="true">' + esc(TRIVIA[triviaIdx]) + '</p>' +
       '<p class="state-note">Leave this tab open — status refreshes every 5 seconds.</p>'
     );
+    updateMiniPipe();
   }
 
   function renderAwaiting() {
@@ -653,6 +765,12 @@
     var el = document.getElementById("elapsedText");
     if (st) st.textContent = stageText();
     if (el) el.textContent = fmtElapsed(elapsedSec());
+    updateMiniPipe();
+    var e = elapsedSec();
+    if (e > 0 && e - triviaLastAt >= 6) {
+      triviaLastAt = e;
+      rotateTrivia();
+    }
   }
 
   function poll() {
@@ -723,6 +841,8 @@
     runId = null;
     reportUrl = null;
     failStreak = 0;
+    triviaLastAt = 0;
+    triviaFading = false;
     runBtn.disabled = true;
     renderSubmitting();
 
