@@ -56,9 +56,10 @@ declare const document: {
 export async function walkSurvey(
   env: Env,
   url: string,
-): Promise<{ captures: PageCapture[]; screenshots: Uint8Array[] }> {
+): Promise<{ captures: PageCapture[]; screenshots: Uint8Array[]; pdfs: Uint8Array[] }> {
   const captures: PageCapture[] = [];
   const screenshots: Uint8Array[] = [];
+  const pdfs: Uint8Array[] = [];
 
   // Env types BROWSER as Fetcher; the puppeteer binding type is structurally a
   // fetch-capable service binding, so the cast is safe.
@@ -79,9 +80,10 @@ export async function walkSurvey(
       }
       await sleep(SETTLE_MS);
 
-      // 2. Capture visible text and a full-page screenshot of the current page.
+      // 2. Capture visible text, a full-page screenshot, and a PDF rendition.
       const text = await captureText(page);
       screenshots.push(await captureScreenshot(page));
+      pdfs.push(await capturePdf(page, notes));
 
       // Defensive: if we are already looking at the completion page (e.g. a
       // zero-question survey), record it and stop.
@@ -133,6 +135,7 @@ export async function walkSurvey(
         // just answered, then the completion page itself, and stop.
         captures.push({ pageIndex: captures.length, text, navOk: true, notes: joinNotes(notes) });
         screenshots.push(await captureScreenshot(page));
+        pdfs.push(await capturePdf(page, notes));
         captures.push({
           pageIndex: captures.length,
           text: afterText,
@@ -156,7 +159,7 @@ export async function walkSurvey(
     await browser.close();
   }
 
-  return { captures, screenshots };
+  return { captures, screenshots, pdfs };
 }
 
 /* ------------------------------------------------------------------------- */
@@ -170,6 +173,17 @@ async function captureText(page: Page): Promise<string> {
 async function captureScreenshot(page: Page): Promise<Uint8Array> {
   const shot = await page.screenshot({ type: "png", fullPage: true });
   return new Uint8Array(shot);
+}
+
+/** PDF rendition of the current page (Browser Rendering supports page.pdf). */
+async function capturePdf(page: Page, notes: string[]): Promise<Uint8Array> {
+  try {
+    const pdf = await page.pdf({ format: "a4", printBackground: true });
+    return new Uint8Array(pdf);
+  } catch (err) {
+    notes.push(`PDF capture failed: ${describeError(err)}`);
+    return new Uint8Array(0);
+  }
 }
 
 async function isCompletionPage(page: Page): Promise<boolean> {

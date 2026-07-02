@@ -9,6 +9,7 @@ export interface RunEnvelope {
 
 export const runKey = (id: string) => `runs/${id}/run.json`;
 export const shotKey = (id: string, i: number) => `runs/${id}/shot-${i}.png`;
+export const pagePdfKey = (id: string, i: number) => `runs/${id}/page-${i}.pdf`;
 export const docxKey = (id: string) => `runs/${id}/questionnaire.docx`;
 
 export async function getRun(env: Env, id: string): Promise<RunEnvelope | null> {

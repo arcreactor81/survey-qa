@@ -1,0 +1,117 @@
+{
+  "lang": "es",
+  "title": "Percepciones de los dermatólogos sobre las terapias biológicas en la psoriasis en placas de moderada a grave",
+  "intro": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "¿Cuál de las siguientes opciones describe mejor su función profesional principal?",
+      "options": ["Médico en ejercicio", "Enfermero de práctica avanzada", "Asistente médico", "Farmacéutico"]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "¿Cuántos años lleva usted en la práctica clínica?",
+      "instruction": "Introduzca un número entero entre 0 y 50.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "¿Cuáles de los siguientes tratamientos biológicos para la psoriasis en placas de moderada a grave conoce usted?",
+      "instruction": "Seleccione todas las opciones que correspondan.",
+      "options": ["SKYRIZI", "TREMFYA", "COSENTYX", "TALTZ", "BIMZELX", "Ninguno de los anteriores"]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "¿Cuál es su objetivo terapéutico más importante al seleccionar un biológico para la psoriasis en placas?",
+      "options": ["Aclaramiento rápido de la piel", "Respuesta duradera a largo plazo", "Perfil de seguridad favorable", "Pauta de dosificación cómoda", "Asequibilidad para el paciente"],
+      "logicNote": "NOTA PARA EL PROGRAMADOR: Presente las opciones en el orden exacto indicado anteriormente. No aleatorizar."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "¿Qué biológico prescribe usted con mayor frecuencia para la psoriasis en placas de moderada a grave?",
+      "options": ["SKYRIZI", "TREMFYA", "COSENTYX", "TALTZ", "BIMZELX"],
+      "logicNote": "NOTA PARA EL PROGRAMADOR: La marca seleccionada en Q3 debe insertarse en el texto de Q4."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "¿Cuál es su grado de satisfacción con [PIPE: Q3 selection] para sus pacientes con psoriasis en placas de moderada a grave?",
+      "options": ["Muy satisfecho", "Algo satisfecho", "Ni satisfecho ni insatisfecho", "Algo insatisfecho", "Muy insatisfecho"],
+      "piping": { "source": "Q3", "note": "Sustituya [PIPE: Q3 selection] por la marca elegida en Q3." }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Indique su grado de acuerdo con cada una de las siguientes afirmaciones.",
+      "rows": [
+        "Los biológicos han transformado los resultados en la psoriasis en placas",
+        "Las barreras de acceso limitan mi uso de los biológicos más recientes",
+        "Me siento cómodo iniciando biológicos en pacientes sin tratamiento biológico previo"
+      ],
+      "scale": ["Totalmente de acuerdo", "Algo de acuerdo", "Ni de acuerdo ni en desacuerdo", "Algo en desacuerdo", "Totalmente en desacuerdo"]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "¿Qué porcentaje de sus pacientes con psoriasis en placas de moderada a grave recibe actualmente un biológico?",
+      "instruction": "Introduzca un número entero entre 0 y 100.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "En su opinión, ¿cuál es la mayor barrera para el acceso de sus pacientes a la terapia biológica?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "¿Qué probabilidad hay de que usted recomiende la terapia biológica a un colega que trata la psoriasis en placas de moderada a grave?",
+      "instruction": "0 = Nada probable, 10 = Extremadamente probable",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    { "id": "E01", "questionId": "S1", "category": "typo", "truth": "Médico en ejercicio", "rendered": "Médico en ejercico", "note": "First answer option misspelled on the site (dropped 'i' in 'ejercicio' — plausible native Spanish typo)." },
+    { "id": "E02", "questionId": "Q1", "category": "missing-option", "truth": "BIMZELX listed as an option", "rendered": "BIMZELX absent from the option list", "note": "Site omits the BIMZELX answer option entirely." },
+    { "id": "E03", "questionId": "Q2", "category": "wrong-option-label", "truth": "Aclaramiento rápido de la piel", "rendered": "Limpieza rápida de la piel", "note": "Option label altered on the site: 'skin clearance' mistranslated as 'skin cleansing', which changes the clinical meaning." },
+    { "id": "E04", "questionId": "Q4", "category": "broken-piping", "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])", "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand", "note": "Site renders the literal unresolved token {Q3brand} in the question text." },
+    { "id": "E05", "questionId": "Q5", "category": "scale-mislabel", "truth": "Second scale point is 'Algo de acuerdo'", "rendered": "Second scale point reads 'Totalmente de acuerdo' (duplicate of the first)", "note": "Matrix column header duplicated/mislabeled." },
+    { "id": "E06", "questionId": "Q2", "category": "reordered-options", "truth": "Order: ...Respuesta duradera a largo plazo, Perfil de seguridad favorable, Pauta de dosificación cómoda...", "rendered": "'Perfil de seguridad favorable' and 'Pauta de dosificación cómoda' swapped", "note": "Spec explicitly forbids reordering (programmer note)." },
+    { "id": "E07", "questionId": "Q6", "category": "wrong-numbering", "truth": "Question is numbered Q6", "rendered": "Question is numbered Q5 (duplicate of the previous question's number)", "note": "Visible question number wrong on site." },
+    { "id": "E08", "questionId": "Q7", "category": "encoding-artifact", "truth": "opinión", "rendered": "opiniÃ³n", "note": "Mojibake: UTF-8 bytes of 'ó' (0xC3 0xB3) displayed as cp1252, so 'En su opinión' appears as 'En su opiniÃ³n'." },
+    { "id": "E09", "questionId": "Q8", "category": "duplicated-word", "truth": "de que usted recomiende", "rendered": "de que usted usted recomiende", "note": "Duplicated word 'usted' in question text." },
+    { "id": "E10", "questionId": "Q1", "category": "missing-instruction", "truth": "Instruction 'Seleccione todas las opciones que correspondan.' shown below the question", "rendered": "Instruction omitted", "note": "Site drops the multi-select instruction." }
+  ],
+  "mutations": [
+    { "errorId": "E01", "op": "replaceOption", "questionId": "S1", "find": "Médico en ejercicio", "replace": "Médico en ejercico" },
+    { "errorId": "E02", "op": "removeOption", "questionId": "Q1", "option": "BIMZELX" },
+    { "errorId": "E03", "op": "replaceOption", "questionId": "Q2", "find": "Aclaramiento rápido de la piel", "replace": "Limpieza rápida de la piel" },
+    { "errorId": "E04", "op": "replaceInTitle", "questionId": "Q4", "find": "{Q3}", "replace": "{Q3brand}" },
+    { "errorId": "E05", "op": "replaceColumn", "questionId": "Q5", "find": "Algo de acuerdo", "replace": "Totalmente de acuerdo" },
+    { "errorId": "E06", "op": "swapOptions", "questionId": "Q2", "a": "Perfil de seguridad favorable", "b": "Pauta de dosificación cómoda" },
+    { "errorId": "E07", "op": "replaceInTitle", "questionId": "Q6", "find": "Q6.", "replace": "Q5." },
+    { "errorId": "E08", "op": "replaceInTitle", "questionId": "Q7", "find": "opinión", "replace": "opiniÃ³n" },
+    { "errorId": "E09", "op": "replaceInTitle", "questionId": "Q8", "find": "que usted recomiende", "replace": "que usted usted recomiende" },
+    { "errorId": "E10", "op": "removeInstruction", "questionId": "Q1" }
+  ],
+  "cleanQuestions": ["S2", "Q3"],
+  "notes": "Spanish (Spain, formal usted) localization; mutations transform the correct translated content into the seeded site build; S2 and Q3 remain deliberately error-free."
+}

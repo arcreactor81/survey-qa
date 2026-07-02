@@ -1,6 +1,40 @@
 # HANDOFF — survey-qa build state
 
-_Last updated: 2026-07-02 02:25 local. Purpose: resume point for the automated continuation._
+_Last updated: 2026-07-02 02:55 local. Purpose: resume point for the automated continuation._
+
+## ✅ MILESTONE REACHED (02:50)
+E2E demo works: run `9d63ad9c` → **Claude caught 10/10 seeded errors, all quote-verified, 1 false positive**
+(the Q5 matrix title renders twice — SurveyJS artifact), $0 subscription cost, 139s.
+Report: https://survey-qa.arcreactor81.workers.dev/reports/9d63ad9c
+Fix that mattered: runner spawns `claude` with ANTHROPIC_*/CLAUDECODE env vars stripped (else the CLI
+prefers the API key over the claude.ai login and exits 1). PDF capture per page added + deployed.
+
+## IN FLIGHT at handoff time (check completion, then integrate)
+1. **Localization workflow** (`localize-survey-canons`): 5 agents writing `spec/canon.{es,fr,de,zh,ja}.json`
+   (translated questionnaire + localized seeded errors + machine-appliable `mutations` ops).
+2. **Frontend workflow** (`frontend-upgrade`): rewriting `public/index.html` (landing page w/ lang selector)
+   and `src/report.ts` (consulting-grade report). After it lands: typecheck + redeploy + eyeball.
+
+## MULTI-LANGUAGE INTEGRATION (next big task — user requirement)
+User wants the demo to work across languages (es/fr/de/zh/ja) since non-English link testing is the weak
+spot of manual QA. Steps:
+1. Write `scripts/gen-survey.mjs`: reads a canon.<lang>.json, builds the CORRECT SurveyJS page model from
+   `questions` (same mapping as public/survey.js: titles prefixed "S1. ", showQuestionNumbers off,
+   isRequired false, values = display text, Q4 title gets "[PIPE: Q3 selection]" replaced by "{Q3}"),
+   then applies the 10 `mutations` ops (replaceInTitle/replaceOption/removeOption/swapOptions/
+   replaceColumn/removeInstruction) to seed the errors. Output all languages to `public/survey-models.json`
+   ({es: <surveyJSON>, ...}). VALIDATE: every mutation's find/a/b/option matched something — throw if not.
+2. Extend `scripts/gen-docx.mjs` to loop `spec/canon*.json` → `spec/questionnaire.<lang>.docx` +
+   copy to `public/sample/questionnaire.<lang>.docx` (English keeps existing name).
+3. `public/survey.js`: if location.search has lang≠en, fetch /survey-models.json and use models[lang].
+4. Worker `src/index.ts` /api/run: accept `lang` field (default en); sample docx path
+   `/sample/questionnaire.<lang>.docx` for non-en; scorecard manifest per lang (import all canon files
+   statically, pick seededErrors by lang; store lang in the run envelope).
+5. Deploy, then E2E per language: POST /api/run with lang=<code> & surveyUrl=/survey.html?lang=<code>,
+   poll, then `node runner/claude-runner.mjs --worker-url https://survey-qa.arcreactor81.workers.dev --run <id>`
+   for each. Record per-language scorecards; fix walker/prompt issues (CJK innerText should be fine, but
+   verify E08 mojibake strings survive innerText capture).
+6. Landing page: link per-language reports; commit everything; write wake-up summary.
 
 ## Environment gotchas (read first)
 - **No system Node.** Portable node lives at

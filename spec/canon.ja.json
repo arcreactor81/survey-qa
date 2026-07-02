@@ -1,0 +1,117 @@
+{
+  "lang": "ja",
+  "title": "中等症から重症の尋常性乾癬における生物学的製剤に対する皮膚科医の認識",
+  "intro": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+      "options": ["臨床医", "ナースプラクティショナー", "フィジシャンアシスタント", "薬剤師"]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "臨床に従事されて何年になりますか。",
+      "instruction": "0から50までの整数を入力してください。",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "中等症から重症の尋常性乾癬に対する生物学的製剤のうち、あなたがご存知のものは次のどれですか。",
+      "instruction": "当てはまるものをすべて選択してください。",
+      "options": ["SKYRIZI", "TREMFYA", "COSENTYX", "TALTZ", "BIMZELX", "上記のいずれでもない"]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "尋常性乾癬に対する生物学的製剤を選択する際に、あなたにとって最も重要な治療目標は何ですか。",
+      "options": ["皮疹の迅速な消失", "長期にわたる持続的な効果", "良好な安全性プロファイル", "利便性の高い投与スケジュール", "患者さんの経済的負担の少なさ"],
+      "logicNote": "プログラマー注：選択肢は上記に記載された順序のとおりに提示してください。ランダム化しないでください。"
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "中等症から重症の尋常性乾癬に対して、あなたが最も頻繁に処方する生物学的製剤はどれですか。",
+      "options": ["SKYRIZI", "TREMFYA", "COSENTYX", "TALTZ", "BIMZELX"],
+      "logicNote": "プログラマー注：Q3で選択されたブランド名をQ4の質問文にパイプ（差し込み）する必要があります。"
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "中等症から重症の尋常性乾癬の患者さんに対する[PIPE: Q3 selection]について、どの程度満足していますか。",
+      "options": ["非常に満足している", "やや満足している", "どちらともいえない", "やや不満である", "非常に不満である"],
+      "piping": { "source": "Q3", "note": "[PIPE: Q3 selection]をQ3で選択されたブランド名に置き換えてください。" }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+      "rows": [
+        "生物学的製剤は尋常性乾癬の治療成績を大きく変えた",
+        "アクセス上の障壁により、より新しい生物学的製剤の使用が制限されている",
+        "生物学的製剤未使用（バイオナイーブ）の患者さんへの生物学的製剤の導入に抵抗はない"
+      ],
+      "scale": ["強くそう思う", "ややそう思う", "どちらともいえない", "あまりそう思わない", "全くそう思わない"]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "あなたの中等症から重症の尋常性乾癬患者さんのうち、現在生物学的製剤による治療を受けている方の割合は何パーセントですか。",
+      "instruction": "0から100までの整数を入力してください。",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "あなたのお考えでは、患者さんが生物学的製剤による治療を受ける上での最大の障壁は何ですか。"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "中等症から重症の尋常性乾癬を治療している同僚に、生物学的製剤による治療をどの程度勧めたいと思いますか。",
+      "instruction": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    { "id": "E01", "questionId": "S1", "category": "typo", "truth": "臨床医", "rendered": "臨症医", "note": "First answer option misspelled on the site via a plausible wrong-kanji IME conversion (床→症, both read しょう)." },
+    { "id": "E02", "questionId": "Q1", "category": "missing-option", "truth": "BIMZELX listed as an option", "rendered": "BIMZELX absent from the option list", "note": "Site omits the BIMZELX answer option entirely (brand names stay in Latin caps in the Japanese version)." },
+    { "id": "E03", "questionId": "Q2", "category": "wrong-option-label", "truth": "皮疹の迅速な消失", "rendered": "皮疹の迅速な洗浄", "note": "Option label altered on the site: 消失 (clearance/resolution) replaced with 洗浄 (washing/cleansing), changing the clinical meaning." },
+    { "id": "E04", "questionId": "Q4", "category": "broken-piping", "truth": "Q4 text shows the brand selected in Q3 in place of the {Q3} token", "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand", "note": "Site renders a literal unresolved piping token {Q3brand} inside the Japanese question text." },
+    { "id": "E05", "questionId": "Q5", "category": "scale-mislabel", "truth": "Second scale point is 'ややそう思う'", "rendered": "Second scale point reads '強くそう思う' (duplicate of the first)", "note": "Matrix column header duplicated/mislabeled: the second column repeats the first column's label." },
+    { "id": "E06", "questionId": "Q2", "category": "reordered-options", "truth": "Order: ...長期にわたる持続的な効果、良好な安全性プロファイル、利便性の高い投与スケジュール...", "rendered": "「良好な安全性プロファイル」と「利便性の高い投与スケジュール」が入れ替わって表示される", "note": "Spec explicitly forbids reordering (programmer note); the safety-profile and dosing-schedule options are swapped." },
+    { "id": "E07", "questionId": "Q6", "category": "wrong-numbering", "truth": "Question is numbered Q6.", "rendered": "Question is numbered Q5. (duplicate of the previous question's number)", "note": "Visible question number wrong on site." },
+    { "id": "E08", "questionId": "Q7", "category": "encoding-artifact", "truth": "患者さん", "rendered": "æ‚£è€…さん", "note": "Mojibake in the Q7 text: the word 患者 shown as its UTF-8 bytes misread as Latin-1/cp1252 (患者 → æ‚£è€…)." },
+    { "id": "E09", "questionId": "Q8", "category": "duplicated-word", "truth": "同僚に、生物学的製剤", "rendered": "同僚にに、生物学的製剤", "note": "Duplicated particle に after 同僚 in the Japanese question text (同僚に → 同僚にに)." },
+    { "id": "E10", "questionId": "Q1", "category": "missing-instruction", "truth": "Instruction '当てはまるものをすべて選択してください。' shown below the question", "rendered": "Instruction omitted", "note": "Site drops the Japanese multi-select instruction." }
+  ],
+  "mutations": [
+    { "errorId": "E01", "op": "replaceOption", "questionId": "S1", "find": "臨床医", "replace": "臨症医" },
+    { "errorId": "E02", "op": "removeOption", "questionId": "Q1", "option": "BIMZELX" },
+    { "errorId": "E03", "op": "replaceOption", "questionId": "Q2", "find": "皮疹の迅速な消失", "replace": "皮疹の迅速な洗浄" },
+    { "errorId": "E04", "op": "replaceInTitle", "questionId": "Q4", "find": "{Q3}", "replace": "{Q3brand}" },
+    { "errorId": "E05", "op": "replaceColumn", "questionId": "Q5", "find": "ややそう思う", "replace": "強くそう思う" },
+    { "errorId": "E06", "op": "swapOptions", "questionId": "Q2", "a": "良好な安全性プロファイル", "b": "利便性の高い投与スケジュール" },
+    { "errorId": "E07", "op": "replaceInTitle", "questionId": "Q6", "find": "Q6.", "replace": "Q5." },
+    { "errorId": "E08", "op": "replaceInTitle", "questionId": "Q7", "find": "患者", "replace": "æ‚£è€…" },
+    { "errorId": "E09", "op": "replaceInTitle", "questionId": "Q8", "find": "同僚に、", "replace": "同僚にに、" },
+    { "errorId": "E10", "op": "removeInstruction", "questionId": "Q1" }
+  ],
+  "cleanQuestions": ["S2", "Q3"],
+  "notes": "Japanese (ja, polite desu/masu) localization; pages 1-5 map to SurveyJS pages; brand names kept in Latin caps; S2 and Q3 are deliberately error-free to measure false positives."
+}

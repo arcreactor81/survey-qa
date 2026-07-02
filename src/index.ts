@@ -1,7 +1,7 @@
 import { buildComparePrompt } from "./prompt";
 import { verifyFindings, buildScorecard } from "./verify";
 import { buildHtmlReport } from "./report";
-import { getRun, putRun, shotKey, docxKey } from "./store";
+import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
 import canon from "../spec/canon.json";
 import type { Env, Finding, ModelRunStats, RunReport } from "./types";
 
@@ -197,6 +197,13 @@ export default {
         const obj = await env.ARTIFACTS.get(shotKey(m[1], Number(m[2])));
         if (!obj) return new Response("not found", { status: 404 });
         return new Response(obj.body, { headers: { "content-type": "image/png", "cache-control": "public, max-age=3600" } });
+      }
+
+      m = path.match(/^\/reports\/([\w-]+)\/pdf\/(\d+)\.pdf$/);
+      if (m && req.method === "GET") {
+        const obj = await env.ARTIFACTS.get(pagePdfKey(m[1], Number(m[2])));
+        if (!obj) return new Response("not found", { status: 404 });
+        return new Response(obj.body, { headers: { "content-type": "application/pdf", "cache-control": "public, max-age=3600" } });
       }
 
       if (path === "/api/health") return json({ ok: true, name: "survey-qa" });

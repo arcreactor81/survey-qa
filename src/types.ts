@@ -26,6 +26,7 @@ export interface PageCapture {
   pageIndex: number; // 0-based
   text: string; // rendered visible text (innerText of the survey container/body)
   screenshotKey?: string; // R2 key of the PNG, set by the caller after storing
+  pdfKey?: string; // R2 key of the PDF rendition, set by the caller after storing
   navOk: boolean; // Next/Complete click succeeded and page advanced
   notes?: string; // walker anomalies (validation blocked, timeout, etc.)
 }

@@ -4,7 +4,7 @@ import { walkSurvey } from "./walker";
 import { runDeepseekCompares, computeCost } from "./compare";
 import { claudeCompare } from "./llm/claude";
 import { verifyFindings, buildScorecard } from "./verify";
-import { getRun, putRun, shotKey, docxKey } from "./store";
+import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
 import canon from "../spec/canon.json";
 import type { Env, Finding, ModelRunStats, PageCapture } from "./types";
 
@@ -31,13 +31,19 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         "walk-survey",
         { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "8 minutes" },
         async (): Promise<PageCapture[]> => {
-          const { captures, screenshots } = await walkSurvey(env, surveyUrl);
+          const { captures, screenshots, pdfs } = await walkSurvey(env, surveyUrl);
           for (let i = 0; i < captures.length; i++) {
             const shot = screenshots[i];
             if (shot && shot.length > 0) {
               const key = shotKey(runId, captures[i].pageIndex);
               await env.ARTIFACTS.put(key, shot, { httpMetadata: { contentType: "image/png" } });
               captures[i].screenshotKey = key;
+            }
+            const pdf = pdfs[i];
+            if (pdf && pdf.length > 0) {
+              const key = pagePdfKey(runId, captures[i].pageIndex);
+              await env.ARTIFACTS.put(key, pdf, { httpMetadata: { contentType: "application/pdf" } });
+              captures[i].pdfKey = key;
             }
           }
           return captures;

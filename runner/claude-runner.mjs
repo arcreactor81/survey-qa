@@ -143,6 +143,22 @@ function normalizeFinding(raw, pageIndex) {
   };
 }
 
+/**
+ * Environment for the claude CLI child: strip API-key/auth env vars so the CLI
+ * authenticates with the user's claude.ai subscription login (the whole point
+ * of this runner). An inherited ANTHROPIC_API_KEY takes precedence otherwise
+ * and the CLI errors out.
+ */
+function cleanEnv() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) {
+    if (/^ANTHROPIC_/i.test(k) || k === "CLAUDE_API_KEY" || k === "CLAUDECODE" || k === "CLAUDE_CODE_ENTRYPOINT") {
+      delete env[k];
+    }
+  }
+  return env;
+}
+
 /** Run the claude CLI headless with the prompt on stdin; return parsed output. */
 function runClaude(prompt) {
   const started = Date.now();
@@ -153,6 +169,7 @@ function runClaude(prompt) {
     shell: true,
     maxBuffer: MAX_BUFFER,
     windowsHide: true,
+    env: cleanEnv(),
   });
   const latencyMs = Date.now() - started;
 

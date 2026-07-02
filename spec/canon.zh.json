@@ -1,0 +1,117 @@
+{
+  "lang": "zh",
+  "title": "皮肤科医生对中重度斑块状银屑病生物制剂治疗的认知",
+  "intro": "感谢您的参与。本次调查约需10分钟。您的回答将予以严格保密，仅以汇总形式报告。",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "以下哪一项最能描述您的主要职业角色？",
+      "options": ["执业医师", "执业护师", "医师助理", "药剂师"]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "您从事临床工作已有多少年？",
+      "instruction": "请输入0至50之间的整数。",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "您知晓以下哪些用于治疗中重度斑块状银屑病的生物制剂？",
+      "instruction": "请选择所有适用项。",
+      "options": ["SKYRIZI", "TREMFYA", "COSENTYX", "TALTZ", "BIMZELX", "以上均无"]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "在为斑块状银屑病患者选择生物制剂时，您最重要的治疗目标是什么？",
+      "options": ["快速清除皮损", "持久的长期应答", "良好的安全性", "便捷的给药方案", "患者可负担性"],
+      "logicNote": "程序员注意：请严格按照上述顺序呈现选项，不得随机排列。"
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "对于中重度斑块状银屑病，您最常处方哪种生物制剂？",
+      "options": ["SKYRIZI", "TREMFYA", "COSENTYX", "TALTZ", "BIMZELX"],
+      "logicNote": "程序员注意：必须将Q3中所选的品牌插入Q4的题干文本中。"
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "对于您的中重度斑块状银屑病患者，您对[PIPE: Q3 selection]的满意度如何？",
+      "options": ["非常满意", "比较满意", "既不满意也非不满意", "不太满意", "非常不满意"],
+      "piping": { "source": "Q3", "note": "请将[PIPE: Q3 selection]替换为Q3中所选的品牌。" }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "请评价您对以下各项陈述的同意程度。",
+      "rows": [
+        "生物制剂彻底改变了斑块状银屑病的治疗结局",
+        "可及性障碍限制了我对较新生物制剂的使用",
+        "对于未使用过生物制剂的患者，我能够放心地启动生物制剂治疗"
+      ],
+      "scale": ["非常同意", "比较同意", "既不同意也不反对", "不太同意", "非常不同意"]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "在您的中重度斑块状银屑病患者中，目前有多大比例正在接受生物制剂治疗（百分比）？",
+      "instruction": "请输入0至100之间的整数。",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "在您看来，您的患者获得生物制剂治疗的最大障碍是什么？"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "您向治疗中重度斑块状银屑病的同事推荐生物制剂治疗的可能性有多大？",
+      "instruction": "0 = 完全不可能，10 = 极有可能",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    { "id": "E01", "questionId": "S1", "category": "typo", "truth": "执业医师", "rendered": "职业医师", "note": "网站上第一个答案选项出现同音别字（执→职）。" },
+    { "id": "E02", "questionId": "Q1", "category": "missing-option", "truth": "选项列表中包含BIMZELX", "rendered": "选项列表中缺少BIMZELX", "note": "网站完全遗漏了BIMZELX这一答案选项。" },
+    { "id": "E03", "questionId": "Q2", "category": "wrong-option-label", "truth": "快速清除皮损", "rendered": "快速清洁皮肤", "note": "选项标签在网站上被改动，语义发生变化（清除皮损→清洁皮肤）。" },
+    { "id": "E04", "questionId": "Q4", "category": "broken-piping", "truth": "Q4题干显示Q3中所选的品牌（管道标记{Q3}已正确解析）", "rendered": "Q4题干中显示字面未解析的管道标记{Q3brand}，而非Q3所选品牌", "note": "网站必须在题干中呈现未解析的字面标记{Q3brand}。" },
+    { "id": "E05", "questionId": "Q5", "category": "scale-mislabel", "truth": "第二个量表刻度为“比较同意”", "rendered": "第二个量表刻度显示为“非常同意”（与第一列重复）", "note": "矩阵列标题重复/标注错误。" },
+    { "id": "E06", "questionId": "Q2", "category": "reordered-options", "truth": "顺序：…持久的长期应答、良好的安全性、便捷的给药方案…", "rendered": "“良好的安全性”与“便捷的给药方案”位置互换", "note": "规范明确禁止调整选项顺序（见程序员注意）。" },
+    { "id": "E07", "questionId": "Q6", "category": "wrong-numbering", "truth": "问题编号为Q6.", "rendered": "问题编号显示为Q5.（与上一题编号重复）", "note": "网站上可见的题号错误。" },
+    { "id": "E08", "questionId": "Q7", "category": "encoding-artifact", "truth": "您的患者获得生物制剂治疗", "rendered": "您的æ‚£è€…获得生物制剂治疗", "note": "问题文本出现乱码（UTF-8字节按Latin-1读取：患者→æ‚£è€…）。" },
+    { "id": "E09", "questionId": "Q8", "category": "duplicated-word", "truth": "治疗中重度斑块状银屑病的同事", "rendered": "治疗中重度斑块状银屑病的的同事", "note": "问题文本中出现重复字（的的）。" },
+    { "id": "E10", "questionId": "Q1", "category": "missing-instruction", "truth": "问题下方显示说明“请选择所有适用项。”", "rendered": "说明文字被省略", "note": "网站遗漏了多选说明文字。" }
+  ],
+  "mutations": [
+    { "op": "replaceOption", "questionId": "S1", "find": "执业医师", "replace": "职业医师", "errorId": "E01" },
+    { "op": "removeOption", "questionId": "Q1", "option": "BIMZELX", "errorId": "E02" },
+    { "op": "replaceOption", "questionId": "Q2", "find": "快速清除皮损", "replace": "快速清洁皮肤", "errorId": "E03" },
+    { "op": "replaceInTitle", "questionId": "Q4", "find": "{Q3}", "replace": "{Q3brand}", "errorId": "E04" },
+    { "op": "replaceColumn", "questionId": "Q5", "find": "比较同意", "replace": "非常同意", "errorId": "E05" },
+    { "op": "swapOptions", "questionId": "Q2", "a": "良好的安全性", "b": "便捷的给药方案", "errorId": "E06" },
+    { "op": "replaceInTitle", "questionId": "Q6", "find": "Q6.", "replace": "Q5.", "errorId": "E07" },
+    { "op": "replaceInTitle", "questionId": "Q7", "find": "患者", "replace": "æ‚£è€…", "errorId": "E08" },
+    { "op": "replaceInTitle", "questionId": "Q8", "find": "的同事", "replace": "的的同事", "errorId": "E09" },
+    { "op": "removeInstruction", "questionId": "Q1", "errorId": "E10" }
+  ],
+  "cleanQuestions": ["S2", "Q3"],
+  "notes": "简体中文（中国大陆，专业语体）本地化版本；品牌名保留拉丁大写原文，S2与Q3无植入错误，用于测量误报。"
+}

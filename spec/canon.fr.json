@@ -1,0 +1,117 @@
+{
+  "lang": "fr",
+  "title": "Perceptions des dermatologues sur les traitements biologiques dans le psoriasis en plaques modéré à sévère",
+  "intro": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+      "options": ["Médecin en exercice", "Infirmier en pratique avancée", "Assistant médical", "Pharmacien"]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "Depuis combien d'années exercez-vous en pratique clinique ?",
+      "instruction": "Saisissez un nombre entier entre 0 et 50.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "Parmi les traitements biologiques suivants du psoriasis en plaques modéré à sévère, lesquels connaissez-vous ?",
+      "instruction": "Sélectionnez toutes les réponses qui s'appliquent.",
+      "options": ["SKYRIZI", "TREMFYA", "COSENTYX", "TALTZ", "BIMZELX", "Aucun des traitements ci-dessus"]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "Quel est votre objectif thérapeutique le plus important lors du choix d'un traitement biologique pour le psoriasis en plaques ?",
+      "options": ["Blanchiment cutané rapide", "Réponse durable à long terme", "Profil de tolérance favorable", "Schéma posologique pratique", "Accessibilité financière pour le patient"],
+      "logicNote": "NOTE AU PROGRAMMEUR : Présenter les options dans l'ordre exact indiqué ci-dessus. Ne pas randomiser."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "Quel traitement biologique prescrivez-vous le plus souvent pour le psoriasis en plaques modéré à sévère ?",
+      "options": ["SKYRIZI", "TREMFYA", "COSENTYX", "TALTZ", "BIMZELX"],
+      "logicNote": "NOTE AU PROGRAMMEUR : La marque sélectionnée en Q3 doit être insérée dans le texte de la Q4."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "Dans quelle mesure êtes-vous satisfait(e) de [PIPE: Q3 selection] pour vos patients atteints de psoriasis en plaques modéré à sévère ?",
+      "options": ["Très satisfait(e)", "Plutôt satisfait(e)", "Ni satisfait(e) ni insatisfait(e)", "Plutôt insatisfait(e)", "Très insatisfait(e)"],
+      "piping": { "source": "Q3", "note": "Remplacer [PIPE: Q3 selection] par la marque choisie en Q3." }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+      "rows": [
+        "Les traitements biologiques ont transformé les résultats thérapeutiques dans le psoriasis en plaques",
+        "Les difficultés d'accès limitent mon utilisation des traitements biologiques les plus récents",
+        "Je suis à l'aise pour instaurer un traitement biologique chez les patients naïfs de traitement biologique"
+      ],
+      "scale": ["Tout à fait d'accord", "Plutôt d'accord", "Ni d'accord ni pas d'accord", "Plutôt pas d'accord", "Pas du tout d'accord"]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "Quel pourcentage de vos patients atteints de psoriasis en plaques modéré à sévère reçoit actuellement un traitement biologique ?",
+      "instruction": "Saisissez un nombre entier entre 0 et 100.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "Selon vous, quel est le principal obstacle à l'accès de vos patients aux traitements biologiques ?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "Quelle est la probabilité que vous recommandiez les traitements biologiques à un confrère traitant le psoriasis en plaques modéré à sévère ?",
+      "instruction": "0 = Pas du tout probable, 10 = Extrêmement probable",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    { "id": "E01", "questionId": "S1", "category": "typo", "truth": "Médecin en exercice", "rendered": "Médecin en exercise", "note": "First answer option misspelled on the site: 'exercise' instead of 'exercice' — a common, plausible French misspelling." },
+    { "id": "E02", "questionId": "Q1", "category": "missing-option", "truth": "BIMZELX listed as an option", "rendered": "BIMZELX absent from the option list", "note": "Site omits the BIMZELX answer option entirely." },
+    { "id": "E03", "questionId": "Q2", "category": "wrong-option-label", "truth": "Blanchiment cutané rapide", "rendered": "Nettoyage cutané rapide", "note": "Option label altered on the site: 'Nettoyage' (cleansing) replaces 'Blanchiment' (clearance), changing the clinical meaning." },
+    { "id": "E04", "questionId": "Q4", "category": "broken-piping", "truth": "Q4 text shows the brand selected in Q3 (resolved [PIPE: Q3 selection] token)", "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand", "note": "Site renders a literal unresolved piping token in the question text." },
+    { "id": "E05", "questionId": "Q5", "category": "scale-mislabel", "truth": "Second scale point is 'Plutôt d'accord'", "rendered": "Second scale point reads 'Tout à fait d'accord' (duplicate of the first)", "note": "Matrix column header duplicated/mislabeled: the first column's label appears twice." },
+    { "id": "E06", "questionId": "Q2", "category": "reordered-options", "truth": "Order: ...Réponse durable à long terme, Profil de tolérance favorable, Schéma posologique pratique...", "rendered": "'Profil de tolérance favorable' and 'Schéma posologique pratique' swapped", "note": "Spec explicitly forbids reordering (programmer note)." },
+    { "id": "E07", "questionId": "Q6", "category": "wrong-numbering", "truth": "Question is numbered 'Q6.'", "rendered": "Question is displayed as 'Q5.' (duplicate of the previous question's number)", "note": "Visible question number wrong on site." },
+    { "id": "E08", "questionId": "Q7", "category": "encoding-artifact", "truth": "l'accès de vos patients", "rendered": "l'accÃ¨s de vos patients", "note": "Mojibake: the 'è' of 'accès' is shown as its UTF-8 bytes read as cp1252 ('Ã¨')." },
+    { "id": "E09", "questionId": "Q8", "category": "duplicated-word", "truth": "que vous recommandiez", "rendered": "que vous vous recommandiez", "note": "Duplicated word 'vous' in the question text — reads like a plausible reflexive construction." },
+    { "id": "E10", "questionId": "Q1", "category": "missing-instruction", "truth": "Instruction 'Sélectionnez toutes les réponses qui s'appliquent.' shown below the question", "rendered": "Instruction omitted", "note": "Site drops the multi-select instruction." }
+  ],
+  "mutations": [
+    { "errorId": "E01", "op": "replaceOption", "questionId": "S1", "find": "Médecin en exercice", "replace": "Médecin en exercise" },
+    { "errorId": "E02", "op": "removeOption", "questionId": "Q1", "option": "BIMZELX" },
+    { "errorId": "E03", "op": "replaceOption", "questionId": "Q2", "find": "Blanchiment cutané rapide", "replace": "Nettoyage cutané rapide" },
+    { "errorId": "E04", "op": "replaceInTitle", "questionId": "Q4", "find": "{Q3}", "replace": "{Q3brand}" },
+    { "errorId": "E05", "op": "replaceColumn", "questionId": "Q5", "find": "Plutôt d'accord", "replace": "Tout à fait d'accord" },
+    { "errorId": "E06", "op": "swapOptions", "questionId": "Q2", "a": "Profil de tolérance favorable", "b": "Schéma posologique pratique" },
+    { "errorId": "E07", "op": "replaceInTitle", "questionId": "Q6", "find": "Q6.", "replace": "Q5." },
+    { "errorId": "E08", "op": "replaceInTitle", "questionId": "Q7", "find": "accès", "replace": "accÃ¨s" },
+    { "errorId": "E09", "op": "replaceInTitle", "questionId": "Q8", "find": "que vous recommandiez", "replace": "que vous vous recommandiez" },
+    { "errorId": "E10", "op": "removeInstruction", "questionId": "Q1" }
+  ],
+  "cleanQuestions": ["S2", "Q3"],
+  "notes": "Traduction française (France, vouvoiement) du canon anglais ; les 10 erreurs E01-E10 sont localisées ; S2 et Q3 restent volontairement sans erreur."
+}
