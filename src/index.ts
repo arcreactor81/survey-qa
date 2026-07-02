@@ -20,6 +20,119 @@ function html(body: string, status = 200): Response {
   return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
+// ---------------------------------------------------------------------------
+// Request hardening: rate limiting, SSRF validation, input sanitizing.
+// Limits are deliberately demo-safe — the bundled same-origin sample survey
+// and the local Claude runner must always keep working.
+// ---------------------------------------------------------------------------
+
+const MAX_UPLOAD_BODY_BYTES = 25 * 1024 * 1024; // whole multipart body
+const MAX_DOCX_BYTES = 10 * 1024 * 1024; // generous for a questionnaire .docx
+const MAX_FINDINGS_PER_SUBMISSION = 500;
+const MAX_TEXT_FIELD_CHARS = 4000;
+
+// Generous per-IP sliding windows: a human clicking around the demo stays far
+// below these; only a runaway curl loop trips them.
+const RUN_RATE = { windowMs: 60_000, max: 10 };
+const HEALTH_RATE = { windowMs: 60_000, max: 6 };
+
+// Per-isolate, KV-less counters. Reset on isolate recycle — fine, the goal is
+// stopping denial-of-wallet loops, not perfect global accounting.
+const rateHits = new Map<string, number[]>();
+
+function allowRequest(key: string, limit: { windowMs: number; max: number }): boolean {
+  const now = Date.now();
+  if (rateHits.size > 5000) {
+    // Opportunistic prune so the map cannot grow without bound.
+    rateHits.forEach((hits, k) => {
+      if ((hits[hits.length - 1] ?? 0) < now - 10 * 60_000) rateHits.delete(k);
+    });
+  }
+  const cutoff = now - limit.windowMs;
+  const hits = (rateHits.get(key) ?? []).filter((t) => t >= cutoff);
+  if (hits.length >= limit.max) {
+    rateHits.set(key, hits);
+    return false;
+  }
+  hits.push(now);
+  rateHits.set(key, hits);
+  return true;
+}
+
+const clientIp = (req: Request): string => req.headers.get("cf-connecting-ip") ?? "unknown";
+
+/**
+ * True when the hostname points at loopback/private/link-local/metadata space —
+ * anything Browser Rendering must never be aimed at. The WHATWG URL parser has
+ * already normalized decimal/hex/octal IPv4 host forms to dotted quads.
+ */
+function isBlockedHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) return true;
+
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4) {
+    const a = Number(v4[1]);
+    const b = Number(v4[2]);
+    return (
+      a === 0 || // 0.0.0.0/8 "this network"
+      a === 10 || // 10.0.0.0/8 private
+      a === 127 || // loopback
+      (a === 100 && b >= 64 && b <= 127) || // 100.64.0.0/10 CGNAT
+      (a === 169 && b === 254) || // link-local / cloud metadata (169.254.169.254)
+      (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12 private
+      (a === 192 && b === 168) || // 192.168.0.0/16 private
+      a >= 224 // multicast + reserved
+    );
+  }
+
+  // IPv6 literals: URL.hostname keeps the surrounding brackets.
+  const v6 = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (v6.includes(":")) {
+    if (v6 === "::" || v6 === "::1") return true; // unspecified / loopback
+    if (v6.startsWith("fc") || v6.startsWith("fd")) return true; // fc00::/7 ULA
+    if (/^fe[89ab]/.test(v6)) return true; // fe80::/10 link-local
+    if (v6.includes("::ffff:")) return true; // IPv4-mapped
+  }
+  return false;
+}
+
+/**
+ * Resolve and validate the requested survey URL. Same-origin targets (the
+ * bundled demo survey, including relative paths like "/survey.html") are
+ * always allowed; external targets must be public http(s) hosts.
+ */
+function resolveSurveyUrl(
+  surveyUrl: string,
+  origin: string
+): { ok: true; url: string } | { ok: false; error: string } {
+  const raw = surveyUrl.startsWith("http") ? surveyUrl : origin + surveyUrl;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { ok: false, error: "surveyUrl is not a valid URL" };
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { ok: false, error: "surveyUrl must be an http(s) URL" };
+  }
+  if (parsed.origin === origin) return { ok: true, url: raw }; // same-origin demo/sample path
+  if (parsed.username || parsed.password) {
+    return { ok: false, error: "surveyUrl must not embed credentials" };
+  }
+  if (isBlockedHostname(parsed.hostname)) {
+    return { ok: false, error: "surveyUrl host is not allowed (private, loopback, and link-local addresses are blocked)" };
+  }
+  return { ok: true, url: raw };
+}
+
+/** Strip stack frames from a stored error: clients get the message line only. */
+function firstLine(detail: string | undefined): string | undefined {
+  if (!detail) return detail;
+  const line = detail.split("\n", 1)[0] ?? "";
+  return line.trim() || "run failed (see server logs)";
+}
+
 async function handleCreateRun(req: Request, env: Env): Promise<Response> {
   const origin = new URL(req.url).origin;
   let surveyUrl = "";
@@ -28,6 +141,11 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
   let docxBytes: ArrayBuffer | null = null;
   let docxName = "";
 
+  const declaredBytes = Number(req.headers.get("content-length") ?? "0");
+  if (declaredBytes > MAX_UPLOAD_BODY_BYTES) {
+    return json({ error: `request body too large (max ${MAX_UPLOAD_BODY_BYTES / (1024 * 1024)} MB)` }, 413);
+  }
+
   const contentType = req.headers.get("content-type") ?? "";
   if (contentType.includes("multipart/form-data")) {
     const form = await req.formData();
@@ -35,11 +153,15 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
     useSample = String(form.get("useSample") ?? "true") === "true";
     lang = String(form.get("lang") ?? "en").toLowerCase() || "en";
     const file = form.get("docx");
-    if (!useSample && file && typeof file === "object" && "arrayBuffer" in file) {
+    if (file && typeof file === "object" && "arrayBuffer" in file) {
       const f = file as File;
+      if (f.size > MAX_DOCX_BYTES) {
+        return json({ error: `docx too large (max ${MAX_DOCX_BYTES / (1024 * 1024)} MB)` }, 413);
+      }
       if (f.size > 0) {
         docxBytes = await f.arrayBuffer();
         docxName = f.name;
+        useSample = false; // an attached docx always means "use my upload"
       }
     }
   } else {
@@ -53,7 +175,9 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
   if (!SUPPORTED_LANGS.includes(lang)) {
     return json({ error: `unsupported lang "${lang}" (supported: ${SUPPORTED_LANGS.join(", ")})` }, 400);
   }
-  const resolvedUrl = surveyUrl.startsWith("http") ? surveyUrl : origin + surveyUrl;
+  const resolved = resolveSurveyUrl(surveyUrl, origin);
+  if (!resolved.ok) return json({ error: resolved.error }, 400);
+  const resolvedUrl = resolved.url;
 
   if (!docxBytes) {
     const samplePath = lang === "en" ? "/sample/questionnaire.docx" : `/sample/questionnaire.${lang}.docx`;
@@ -67,7 +191,7 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
   // The seeded-error scorecard only applies to the bundled sample pair.
   const seeded = useSample && resolvedUrl.includes("/survey.html");
 
-  const runId = crypto.randomUUID().slice(0, 8);
+  const runId = crypto.randomUUID();
   const report: RunReport = {
     runId,
     surveyUrl: resolvedUrl,
@@ -84,7 +208,21 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
     httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
   });
   await putRun(env, runId, { status: "processing", seeded, lang, report });
-  await env.RUN_WORKFLOW.create({ id: runId, params: { runId, surveyUrl: resolvedUrl, docxName, seeded, lang } });
+  try {
+    await env.RUN_WORKFLOW.create({ id: runId, params: { runId, surveyUrl: resolvedUrl, docxName, seeded, lang } });
+  } catch (err) {
+    // Don't strand the run in "processing" — mark it failed so the report
+    // page and the findings endpoint reflect reality.
+    console.error(`RUN_WORKFLOW.create failed for run ${runId}:`, err);
+    await putRun(env, runId, {
+      status: "failed",
+      seeded,
+      lang,
+      error: "the analysis workflow could not be started",
+      report,
+    });
+    return json({ error: "failed to start the analysis workflow; please retry" }, 500);
+  }
 
   return json({
     runId,
@@ -95,10 +233,29 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
   });
 }
 
+const VALID_CATEGORIES: ReadonlySet<string> = new Set([
+  "typo", "missing-option", "wrong-option-label", "broken-piping",
+  "scale-mislabel", "reordered-options", "wrong-numbering",
+  "encoding-artifact", "duplicated-word", "missing-instruction",
+  "missing-question", "other",
+]);
+const VALID_SEVERITIES: ReadonlySet<string> = new Set(["high", "medium", "low"]);
+
+const finiteNumber = (v: unknown): number => {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const boundedText = (v: unknown, max = MAX_TEXT_FIELD_CHARS): string =>
+  typeof v === "string" ? v.slice(0, max) : "";
+
 async function handleSubmitFindings(req: Request, env: Env, runId: string): Promise<Response> {
   const envelope = await getRun(env, runId);
   if (!envelope) return json({ error: "run not found" }, 404);
   if (envelope.status === "processing") return json({ error: "run still processing" }, 409);
+  if (envelope.status === "failed") {
+    return json({ error: "run failed before analysis completed; findings are not accepted" }, 409);
+  }
 
   const body = (await req.json().catch(() => null)) as {
     model?: string;
@@ -109,35 +266,48 @@ async function handleSubmitFindings(req: Request, env: Env, runId: string): Prom
   if (!body || body.model !== "claude" || !Array.isArray(body.findings)) {
     return json({ error: "expected { model: 'claude', findings: [...], stats: {...} }" }, 400);
   }
+  if (body.findings.length > MAX_FINDINGS_PER_SUBMISSION) {
+    return json({ error: `too many findings (max ${MAX_FINDINGS_PER_SUBMISSION})` }, 400);
+  }
 
   const report = envelope.report;
   // Replace any previous claude results (idempotent re-runs).
   report.findings = report.findings.filter((f) => f.model !== "claude");
   report.stats = report.stats.filter((s) => s.model !== "claude");
 
-  const incoming: Finding[] = body.findings.map((f) => ({
-    model: "claude",
-    pageIndex: Number(f.pageIndex ?? 0),
-    questionId: typeof f.questionId === "string" ? f.questionId : null,
-    category: (f.category as Finding["category"]) ?? "other",
-    severity: (f.severity as Finding["severity"]) ?? "medium",
-    description: String(f.description ?? ""),
-    specQuote: String(f.specQuote ?? ""),
-    siteQuote: String(f.siteQuote ?? ""),
-    quoteVerified: false,
-  }));
+  const maxPageIndex = Math.max(report.pages.length - 1, 0);
+  const incoming: Finding[] = body.findings.map((f) => {
+    const rawPage = Number(f.pageIndex ?? 0);
+    return {
+      model: "claude" as const,
+      pageIndex: Number.isInteger(rawPage) ? Math.min(Math.max(rawPage, 0), maxPageIndex) : 0,
+      questionId: typeof f.questionId === "string" ? f.questionId.slice(0, 200) : null,
+      category:
+        typeof f.category === "string" && VALID_CATEGORIES.has(f.category)
+          ? (f.category as Finding["category"])
+          : "other",
+      severity:
+        typeof f.severity === "string" && VALID_SEVERITIES.has(f.severity)
+          ? (f.severity as Finding["severity"])
+          : "medium",
+      description: boundedText(f.description),
+      specQuote: boundedText(f.specQuote),
+      siteQuote: boundedText(f.siteQuote),
+      quoteVerified: false,
+    };
+  });
 
   const verified = verifyFindings(incoming, report.specText, report.pages);
   report.findings.push(...verified);
   report.stats.push({
     model: "claude",
-    modelId: String(body.stats?.modelId ?? body.modelId ?? "claude-code (subscription)"),
-    calls: Number(body.stats?.calls ?? 0),
-    inputTokens: Number(body.stats?.inputTokens ?? 0),
-    outputTokens: Number(body.stats?.outputTokens ?? 0),
-    costUsd: Number(body.stats?.costUsd ?? 0),
-    latencyMsTotal: Number(body.stats?.latencyMsTotal ?? 0),
-    errors: Number(body.stats?.errors ?? 0),
+    modelId: String(body.stats?.modelId ?? body.modelId ?? "claude-code (subscription)").slice(0, 200),
+    calls: finiteNumber(body.stats?.calls),
+    inputTokens: finiteNumber(body.stats?.inputTokens),
+    outputTokens: finiteNumber(body.stats?.outputTokens),
+    costUsd: finiteNumber(body.stats?.costUsd),
+    latencyMsTotal: finiteNumber(body.stats?.latencyMsTotal),
+    errors: finiteNumber(body.stats?.errors),
   });
   report.scorecard = envelope.seeded
     ? buildScorecard(report.findings, MANIFESTS[envelope.lang ?? "en"] ?? MANIFESTS.en)
@@ -156,6 +326,9 @@ export default {
 
     try {
       if (path === "/api/run" && req.method === "POST") {
+        if (!allowRequest(`run:${clientIp(req)}`, RUN_RATE)) {
+          return json({ error: "rate limit exceeded; wait a minute and retry" }, 429);
+        }
         return await handleCreateRun(req, env);
       }
 
@@ -164,7 +337,13 @@ export default {
         const envelope = await getRun(env, m[1]);
         if (!envelope) return json({ error: "run not found" }, 404);
         // Flattened shape: the local runner reads .pages/.specText directly.
-        return json({ ...envelope.report, status: envelope.status, seeded: envelope.seeded, error: envelope.error });
+        // envelope.error is trimmed to its message line (no stack traces).
+        return json({
+          ...envelope.report,
+          status: envelope.status,
+          seeded: envelope.seeded,
+          error: firstLine(envelope.error),
+        });
       }
 
       m = path.match(/^\/api\/runs\/([\w-]+)\/prompt\/(\d+)$/);
@@ -190,7 +369,9 @@ export default {
         if (!envelope) return html("<h1>Run not found</h1>", 404);
         if (envelope.status === "processing") return html(processingPage(m[1]));
         if (envelope.status === "failed") {
-          return html(`<h1>Run ${m[1]} failed</h1><pre>${(envelope.error ?? "unknown").replace(/</g, "&lt;")}</pre>`, 500);
+          console.error(`run ${m[1]} failed:`, envelope.error);
+          const detail = (firstLine(envelope.error) ?? "unknown").replace(/</g, "&lt;");
+          return html(`<h1>Run ${m[1]} failed</h1><pre>${detail}</pre>`, 500);
         }
         return html(buildHtmlReport(envelope.report));
       }
@@ -212,7 +393,11 @@ export default {
       if (path === "/api/health") return json({ ok: true, name: "survey-qa" });
 
       // Cheap end-to-end probe of the Workers AI leg (no key required).
+      // Rate-limited: each hit runs one real (billable) inference.
       if (path === "/api/health/workersai" && req.method === "GET") {
+        if (!allowRequest(`health:${clientIp(req)}`, HEALTH_RATE)) {
+          return json({ error: "rate limit exceeded; wait a minute and retry" }, 429);
+        }
         try {
           const fakePage = {
             pageIndex: 0,
@@ -233,10 +418,8 @@ export default {
             latencyMs: r.latencyMs,
           });
         } catch (err) {
-          return json(
-            { ok: false, error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) },
-            500
-          );
+          console.error("workersai health probe failed:", err);
+          return json({ ok: false, error: "workers ai probe failed (see server logs)" }, 500);
         }
       }
 
@@ -244,7 +427,7 @@ export default {
       return env.ASSETS.fetch(req);
     } catch (err) {
       console.error("unhandled error:", err);
-      return json({ error: err instanceof Error ? err.message : String(err) }, 500);
+      return json({ error: "internal error (see server logs)" }, 500);
     }
   },
 } satisfies ExportedHandler<Env>;

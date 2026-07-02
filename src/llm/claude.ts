@@ -3,8 +3,34 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { buildComparePrompt } from "../prompt";
-import { COMPARE_SCHEMA } from "../types";
+import { COMPARE_SCHEMA, resolveSecret } from "../types";
 import type { CompareResult, Env, Finding, PageCapture } from "../types";
+
+/**
+ * Per-request cap: without an explicit timeout the SDK applies a 10-minute
+ * non-streaming default, so one hung page could eat most of the 15-minute
+ * claude-compare step. maxRetries 1 keeps a quick per-page retry while the
+ * workflow step's own retries:{limit:1} covers the leg-level retry.
+ */
+const REQUEST_TIMEOUT_MS = 60_000;
+const SDK_MAX_RETRIES = 1;
+
+// Cache the client per isolate (keyed by API key) instead of constructing a
+// fresh Anthropic instance for every page.
+let cachedClient: Anthropic | null = null;
+let cachedApiKey = "";
+
+function getClient(apiKey: string): Anthropic {
+  if (cachedClient === null || cachedApiKey !== apiKey) {
+    cachedClient = new Anthropic({
+      apiKey,
+      timeout: REQUEST_TIMEOUT_MS,
+      maxRetries: SDK_MAX_RETRIES,
+    });
+    cachedApiKey = apiKey;
+  }
+  return cachedClient;
+}
 
 type RawFinding = CompareResult["findings"][number];
 
@@ -87,11 +113,14 @@ export async function claudeCompare(
   outputTokens: number;
   latencyMs: number;
 }> {
-  if (!env.ANTHROPIC_API_KEY) {
+  // Same cleaning as the DeepSeek gate: whitespace-only / "PLACEHOLDER" seeds
+  // count as unset instead of producing a client that fails on every page.
+  const apiKey = await resolveSecret(env.ANTHROPIC_API_KEY);
+  if (!apiKey) {
     throw new Error("ANTHROPIC_API_KEY is not set");
   }
 
-  const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  const client = getClient(apiKey);
   const model = env.CLAUDE_MODEL ?? "claude-opus-4-8";
 
   const startedAt = Date.now();
@@ -111,6 +140,12 @@ export async function claudeCompare(
     ],
   });
   const latencyMs = Date.now() - startedAt;
+
+  // Surface truncation distinctly instead of letting it fail as a generic
+  // (or worse, silently partial) JSON parse downstream.
+  if (response.stop_reason === "max_tokens") {
+    throw new Error("Claude response truncated (stop_reason: max_tokens); output is incomplete");
+  }
 
   let content = "";
   for (const block of response.content) {

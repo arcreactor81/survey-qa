@@ -20,6 +20,14 @@ const COMPLETED_HTML = {
   ja: "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p>",
 };
 
+// Language-agnostic completion cue appended to every localized completedHtml:
+// the walker's text-based completion fallback only recognizes the English
+// phrase "thank you", so without this line localized runs depend entirely on
+// the SurveyJS completed-page CSS class. Kept small/muted so it does not
+// distract from the localized message.
+const COMPLETION_MARKER_EN =
+  '<p lang="en" style="color:#999;font-size:0.85em">Thank you for completing the survey.</p>';
+
 function buildElement(q) {
   const title = `${q.id}. ${q.text.replace("[PIPE: Q3 selection]", "{Q3}")}`;
   const base = { name: q.id, title, isRequired: false };
@@ -59,7 +67,10 @@ function applyMutation(model, m) {
   switch (m.op) {
     case "replaceInTitle": {
       if (!el.title.includes(m.find)) fail(`title does not contain ${JSON.stringify(m.find)}`);
-      el.title = el.title.replace(m.find, m.replace);
+      // Literal all-occurrences replace: String.replace with a string arg only
+      // touches the FIRST occurrence and interprets $-patterns ($&, $1, ...)
+      // in the replacement; split/join does neither.
+      el.title = el.title.split(m.find).join(m.replace);
       break;
     }
     case "replaceOption": {
@@ -108,7 +119,7 @@ for (const file of canonFiles) {
     description: canon.intro,
     showQuestionNumbers: "off",
     focusFirstQuestionAutomatic: false,
-    completedHtml: COMPLETED_HTML[lang] ?? "<h3>Thank you.</h3>",
+    completedHtml: (COMPLETED_HTML[lang] ?? "<h3>Thank you.</h3>") + COMPLETION_MARKER_EN,
     pages: pageNumbers.map((n) => ({
       name: `page${n}`,
       elements: canon.questions.filter((q) => q.page === n).map(buildElement),

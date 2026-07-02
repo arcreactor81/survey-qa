@@ -1,7 +1,12 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { extractDocxText } from "./docx";
 import { walkSurvey } from "./walker";
-import { runDeepseekCompares, runWorkersaiCompares, computeCost } from "./compare";
+import {
+  runDeepseekCompares,
+  runWorkersaiCompares,
+  computeCost,
+  assertLegNotFullyFailed,
+} from "./compare";
 import { claudeCompare } from "./llm/claude";
 import { verifyFindings, buildScorecard } from "./verify";
 import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
@@ -34,6 +39,15 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "8 minutes" },
         async (): Promise<PageCapture[]> => {
           const { captures, screenshots, pdfs } = await walkSurvey(env, surveyUrl);
+          // Purge page artifacts from any earlier (failed) attempt of this step:
+          // keys are deterministic per pageIndex, so a shorter retry would
+          // otherwise orphan higher-index screenshots/PDFs in R2.
+          for (const prefix of [`runs/${runId}/shot-`, `runs/${runId}/page-`]) {
+            const listed = await env.ARTIFACTS.list({ prefix });
+            if (listed.objects.length > 0) {
+              await env.ARTIFACTS.delete(listed.objects.map((o) => o.key));
+            }
+          }
           for (let i = 0; i < captures.length; i++) {
             const shot = screenshots[i];
             if (shot && shot.length > 0) {
@@ -71,7 +85,10 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       }
 
       let claude: { findings: Finding[]; stats: ModelRunStats } | null = null;
-      if (env.ANTHROPIC_API_KEY) {
+      // Same gate as DEEPSEEK: resolveSecret trims whitespace and treats the
+      // "PLACEHOLDER" seed as unset, so a seeded-but-empty key correctly falls
+      // through to the external runner path instead of erroring on every page.
+      if (await resolveSecret(env.ANTHROPIC_API_KEY)) {
         claude = await step.do(
           "claude-compare",
           { retries: { limit: 1, delay: "10 seconds" }, timeout: "15 minutes" },
@@ -82,6 +99,11 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       await step.do("finalize", async () => {
         const envelope = await getRun(env, runId);
         if (!envelope) throw new Error(`run ${runId} missing during finalize`);
+        // Idempotency guard: workflow steps are at-least-once. If a finalize
+        // re-run finds the envelope already terminal (e.g. the external Claude
+        // runner submitted findings and set "complete" in the meantime), do not
+        // clobber those findings/stats or downgrade the status.
+        if (envelope.status === "complete") return;
         const report = envelope.report;
         report.specText = specText;
         report.pages = pages;
@@ -132,6 +154,7 @@ async function runClaudeInWorker(
     latencyMsTotal: 0,
     errors: 0,
   };
+  let lastError: string | undefined;
   for (const page of pages) {
     try {
       const r = await claudeCompare(env, specText, page);
@@ -145,9 +168,12 @@ async function runClaudeInWorker(
     } catch (err) {
       stats.calls++;
       stats.errors++;
+      lastError = err instanceof Error ? err.message : String(err);
       console.error(`claude compare failed on page ${page.pageIndex}:`, err);
     }
   }
+  // A total outage must fail the step loudly, not resolve as "0 findings".
+  assertLegNotFullyFailed("claude", stats, pages.length, lastError);
   stats.costUsd = computeCost("claude", stats.inputTokens, stats.outputTokens, env);
   return { findings, stats };
 }

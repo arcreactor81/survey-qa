@@ -37,8 +37,29 @@ export function computeCost(
 }
 
 /**
+ * Guard against a total leg outage being reported as a healthy "0 findings"
+ * run: if EVERY page errored, throw so the workflow step fails (its configured
+ * retry fires, and a persistent outage marks the run failed) instead of
+ * resolving with an empty-but-successful-looking result. Partial failures
+ * still degrade gracefully via stats.errors.
+ */
+export function assertLegNotFullyFailed(
+  leg: ModelName,
+  stats: ModelRunStats,
+  pageCount: number,
+  lastError: string | undefined,
+): void {
+  if (pageCount > 0 && stats.errors === pageCount) {
+    throw new Error(
+      `${leg} compare failed on all ${pageCount} page(s) — leg is down, not "0 findings". Last error: ${lastError ?? "unknown"}`,
+    );
+  }
+}
+
+/**
  * Run the DeepSeek compare over all pages sequentially.
- * A page-level failure increments stats.errors and the run continues.
+ * A page-level failure increments stats.errors and the run continues;
+ * if ALL pages fail the leg throws (total outage must be loud).
  * Findings are stamped model:"deepseek", pageIndex, quoteVerified:false
  * (verification happens later in verify.ts).
  */
@@ -59,6 +80,7 @@ export async function runDeepseekCompares(
     errors: 0,
   };
 
+  let lastError: string | undefined;
   for (const page of pages) {
     stats.calls += 1;
     try {
@@ -76,14 +98,12 @@ export async function runDeepseekCompares(
       }
     } catch (err) {
       stats.errors += 1;
-      console.error(
-        `deepseek compare failed for page ${page.pageIndex}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+      lastError = err instanceof Error ? err.message : String(err);
+      console.error(`deepseek compare failed for page ${page.pageIndex}: ${lastError}`);
     }
   }
 
+  assertLegNotFullyFailed("deepseek", stats, pages.length, lastError);
   stats.costUsd = computeCost("deepseek", stats.inputTokens, stats.outputTokens, env);
   return { findings, stats };
 }
@@ -109,6 +129,7 @@ export async function runWorkersaiCompares(
     errors: 0,
   };
 
+  let lastError: string | undefined;
   for (const page of pages) {
     stats.calls += 1;
     try {
@@ -126,14 +147,12 @@ export async function runWorkersaiCompares(
       }
     } catch (err) {
       stats.errors += 1;
-      console.error(
-        `workersai compare failed for page ${page.pageIndex}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
+      lastError = err instanceof Error ? err.message : String(err);
+      console.error(`workersai compare failed for page ${page.pageIndex}: ${lastError}`);
     }
   }
 
+  assertLegNotFullyFailed("workersai", stats, pages.length, lastError);
   stats.costUsd = computeCost("workersai", stats.inputTokens, stats.outputTokens, env);
   return { findings, stats };
 }

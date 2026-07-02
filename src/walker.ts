@@ -67,10 +67,31 @@ export async function walkSurvey(
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 1600 });
-    await page.goto(url, { waitUntil: "networkidle0", timeout: GOTO_TIMEOUT_MS });
+
+    // A page that keeps a connection open (analytics heartbeat, websocket,
+    // long-poll) never satisfies networkidle0. Treat that timeout as
+    // non-fatal: the per-page waitForSelector below handles readiness. Any
+    // other navigation error (DNS, connection refused) still fails loudly.
+    const gotoNotes: string[] = [];
+    try {
+      await page.goto(url, { waitUntil: "networkidle0", timeout: GOTO_TIMEOUT_MS });
+    } catch (err) {
+      if (err instanceof Error && err.name === "TimeoutError") {
+        gotoNotes.push(
+          "Initial navigation timed out waiting for network idle; attempting walk anyway.",
+        );
+      } else {
+        throw err;
+      }
+    }
+
+    // Set to false by every deliberate stop (completion, nav failure,
+    // validation block). If it survives the loop, the iteration budget ran
+    // out and the survey may have uncaptured pages — surface that.
+    let loopExhausted = true;
 
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-      const notes: string[] = [];
+      const notes: string[] = iteration === 0 ? [...gotoNotes] : [];
 
       // 1. Wait for the SurveyJS page to render, then let it settle.
       try {
@@ -80,8 +101,10 @@ export async function walkSurvey(
       }
       await sleep(SETTLE_MS);
 
-      // 2. Capture visible text, a full-page screenshot, and a PDF rendition.
+      // 2. Capture visible text, a structural page signature, a full-page
+      //    screenshot, and a PDF rendition.
       const text = await captureText(page);
+      const signature = await capturePageSignature(page);
       screenshots.push(await captureScreenshot(page));
       pdfs.push(await capturePdf(page, notes));
 
@@ -90,6 +113,7 @@ export async function walkSurvey(
       if (await isCompletionPage(page)) {
         notes.push("Completion page.");
         captures.push({ pageIndex: captures.length, text, navOk: true, notes: joinNotes(notes) });
+        loopExhausted = false;
         break;
       }
 
@@ -113,21 +137,28 @@ export async function walkSurvey(
       if (clickedLabel === null) {
         notes.push("No Next/Complete button found; stopping walk.");
         captures.push({ pageIndex: captures.length, text, navOk: false, notes: joinNotes(notes) });
+        loopExhausted = false;
         break;
       }
 
-      // 5. Give the survey time to react, then detect what happened.
+      // 5. Give the survey time to react, then detect what happened. Prefer
+      //    the structural page signature (SurveyJS page/question identity)
+      //    over full-text hashing: injected validation errors or animated
+      //    text mutate innerText without a page change, and two distinct
+      //    pages can render identical text.
       await sleep(POST_CLICK_MS);
       let afterText = await captureText(page);
+      let afterSignature = await capturePageSignature(page);
       let completed = await isCompletionPage(page);
-      let advanced = hashText(afterText) !== hashText(text);
+      let advanced = didAdvance(signature, afterSignature, text, afterText);
 
       // One short retry in case the transition is slow.
       if (!advanced && !completed) {
         await sleep(POST_CLICK_RETRY_MS);
         afterText = await captureText(page);
+        afterSignature = await capturePageSignature(page);
         completed = await isCompletionPage(page);
-        advanced = hashText(afterText) !== hashText(text);
+        advanced = didAdvance(signature, afterSignature, text, afterText);
       }
 
       if (completed) {
@@ -142,18 +173,37 @@ export async function walkSurvey(
           navOk: true,
           notes: "Completion page.",
         });
+        loopExhausted = false;
         break;
       }
 
       if (!advanced) {
+        let validationVisible = false;
+        try {
+          validationVisible = await page.evaluate(detectValidationErrorsInPage);
+        } catch {
+          // Detection is best-effort; fall back to the generic note.
+        }
         notes.push(
-          `Clicked "${clickedLabel}" but the page content did not change (likely a validation block); stopping walk.`,
+          validationVisible
+            ? `Clicked "${clickedLabel}" but validation errors are blocking navigation; stopping walk.`
+            : `Clicked "${clickedLabel}" but the page content did not change (likely a validation block); stopping walk.`,
         );
         captures.push({ pageIndex: captures.length, text, navOk: false, notes: joinNotes(notes) });
+        loopExhausted = false;
         break;
       }
 
       captures.push({ pageIndex: captures.length, text, navOk: true, notes: joinNotes(notes) });
+    }
+
+    // The loop ran out of iterations while the survey was still advancing:
+    // flag the truncation so downstream reporting doesn't read a cut-off
+    // walk as a completed survey.
+    if (loopExhausted && captures.length > 0) {
+      const last = captures[captures.length - 1];
+      const truncationNote = `Reached MAX_ITERATIONS (${MAX_ITERATIONS}); the survey may have more pages that were not captured.`;
+      last.notes = last.notes !== undefined ? `${last.notes} | ${truncationNote}` : truncationNote;
     }
   } finally {
     await browser.close();
@@ -190,6 +240,36 @@ async function isCompletionPage(page: Page): Promise<boolean> {
   return page.evaluate(detectCompletionInPage);
 }
 
+/**
+ * Structural identity of the currently rendered survey page. Empty string
+ * when no structural signal is available (non-SurveyJS markup, evaluate
+ * failure) — callers must fall back to text hashing in that case.
+ */
+async function capturePageSignature(page: Page): Promise<string> {
+  try {
+    return await page.evaluate(capturePageSignatureInPage);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Decide whether clicking Next actually advanced to a different page.
+ * Prefers the structural signature (question/page identity is unique across
+ * a SurveyJS survey, and is unaffected by injected error text or animated
+ * copy); falls back to comparing full-text hashes when either side lacks a
+ * signature.
+ */
+function didAdvance(
+  beforeSig: string,
+  afterSig: string,
+  beforeText: string,
+  afterText: string,
+): boolean {
+  if (beforeSig !== "" && afterSig !== "") return beforeSig !== afterSig;
+  return hashText(afterText) !== hashText(beforeText);
+}
+
 function joinNotes(notes: string[]): string | undefined {
   return notes.length > 0 ? notes.join(" | ") : undefined;
 }
@@ -221,7 +301,10 @@ function hashText(text: string): number {
 /**
  * Detect the SurveyJS completion page. The survey intro also contains
  * "Thank you …", so bare text matching would false-positive on page 1; we only
- * treat "thank you" text as completion when no answerable inputs remain.
+ * treat "thank you" text as completion when no answerable inputs remain AND
+ * there is no navigation button left to advance. An intro/welcome page can
+ * legitimately have zero inputs, but it still offers a Start/Next button —
+ * a real completion page offers nothing to click.
  */
 function detectCompletionInPage(): boolean {
   if (document.querySelector(".sd-completedpage, .sv-completedpage, .sv_completed_page")) {
@@ -230,9 +313,58 @@ function detectCompletionInPage(): boolean {
   const text = (document.body.innerText || "").toLowerCase();
   if (!text.includes("thank you")) return false;
   const inputs = document.querySelectorAll(
-    "input[type=radio], input[type=checkbox], input[type=text], input[type=number], textarea",
+    "input[type=radio], input[type=checkbox], input[type=text], input[type=number], textarea, select",
   );
-  return inputs.length === 0;
+  if (inputs.length > 0) return false;
+  // SurveyJS navigation buttons present => not a completion page.
+  if (
+    document.querySelector(
+      '.sd-navigation__next-btn, .sd-navigation__complete-btn, .sd-navigation__start-btn, .sd-navigation__preview-btn, input[value="Next"], input[value="Complete"], input[value="Start"]',
+    )
+  ) {
+    return false;
+  }
+  // Generic nav-labelled buttons (intro pages often use "Start"/"Begin").
+  const navLabels = ["next", "complete", "submit", "continue", "finish", "done", "start", "begin"];
+  const buttons = Array.from(
+    document.querySelectorAll("input[type=button][value], input[type=submit][value], button"),
+  );
+  for (const el of buttons) {
+    const label = (el.value || el.textContent || "").trim().toLowerCase();
+    if (navLabels.indexOf(label) !== -1) return false;
+  }
+  return true;
+}
+
+/**
+ * Build a structural identity string for the currently rendered page: the
+ * active SurveyJS page's data-name/id plus every question data-name in the
+ * DOM. Question names are unique across a SurveyJS survey, so this changes
+ * exactly when the rendered page changes — unlike innerText, which mutates
+ * on validation errors, timers, or animated copy. Returns "" when no
+ * structural signal exists. Must be fully self-contained (it is serialized).
+ */
+function capturePageSignatureInPage(): string {
+  const pageEl = document.querySelector(".sd-page, .sv-page, .sv_p_root");
+  const pagePart =
+    pageEl !== null ? pageEl.getAttribute("data-name") || pageEl.getAttribute("id") || "" : "";
+  const names = Array.from(document.querySelectorAll("[data-name]"))
+    .map((el) => el.getAttribute("data-name") || "")
+    .filter((n) => n.length > 0)
+    .join(String.fromCharCode(1));
+  if (pagePart === "" && names === "") return "";
+  return pagePart + String.fromCharCode(2) + names;
+}
+
+/**
+ * True when SurveyJS is showing at least one non-empty validation error box.
+ * Must be fully self-contained (it is serialized).
+ */
+function detectValidationErrorsInPage(): boolean {
+  const boxes = Array.from(
+    document.querySelectorAll(".sd-question__erbox, .sv-question__erbox, .sv_qstn_error, .sd-error"),
+  );
+  return boxes.filter((b) => (b.textContent || "").trim().length > 0).length > 0;
 }
 
 /**
@@ -270,6 +402,32 @@ function fillAnswersInPage(): string[] {
     const mode = (el.getAttribute("inputmode") || "").toLowerCase();
     if (mode === "numeric" || mode === "decimal") return true;
     return el.getAttribute("min") !== null || el.getAttribute("max") !== null;
+  };
+
+  // Pick a numeric answer that respects the element's min/max constraints
+  // (a bare "10" fails validation on e.g. a 1-5 rating with max=5).
+  const numericValueFor = (el: InPageElement): string => {
+    const parseAttr = (name: string): number | null => {
+      const raw = el.getAttribute(name);
+      if (raw === null || raw === "") return null;
+      const n = parseFloat(raw);
+      return isNaN(n) ? null : n;
+    };
+    const min = parseAttr("min");
+    const max = parseAttr("max");
+    let v = 10;
+    if (max !== null && v > max) v = max;
+    if (min !== null && v < min) v = min;
+    return String(v);
+  };
+
+  // Format-valid answers per input type; email/tel/url reject plain prose.
+  const textValueFor = (el: InPageElement): string => {
+    const type = (el.getAttribute("type") || "").toLowerCase();
+    if (type === "email") return "qa@example.com";
+    if (type === "tel") return "5555555555";
+    if (type === "url") return "https://example.com";
+    return looksNumeric(el) ? numericValueFor(el) : "Automated QA test response";
   };
 
   const questionRoots = Array.from(
@@ -325,12 +483,54 @@ function fillAnswersInPage(): string[] {
     // Number inputs.
     try {
       const numbers = Array.from(q.querySelectorAll("input[type=number]"));
-      for (const input of numbers) setValue(input, "10");
+      for (const input of numbers) setValue(input, numericValueFor(input));
     } catch (err) {
       notes.push(`Failed to answer number input in ${name}: ${String(err)}`);
     }
 
-    // Text inputs and textareas.
+    // Native <select> dropdowns: choose the first real (non-placeholder,
+    // non-disabled) option and fire change so SurveyJS registers the answer.
+    try {
+      const selects = Array.from(q.querySelectorAll("select"));
+      for (const sel of selects) {
+        if (sel.disabled) continue;
+        const options = Array.from(sel.querySelectorAll("option"));
+        const usable = options.filter(
+          (o) => !o.disabled && (o.value || "").trim().length > 0,
+        );
+        if (usable.length > 0 && sel.value !== usable[0].value) {
+          setValue(sel, usable[0].value);
+        }
+      }
+    } catch (err) {
+      notes.push(`Failed to answer select in ${name}: ${String(err)}`);
+    }
+
+    // Date/time inputs need a format-valid value.
+    try {
+      const dateValues: Record<string, string> = {
+        date: "2024-06-15",
+        time: "12:30",
+        month: "2024-06",
+        week: "2024-W24",
+        "datetime-local": "2024-06-15T12:30",
+      };
+      const dateInputs = Array.from(
+        q.querySelectorAll(
+          "input[type=date], input[type=time], input[type=month], input[type=week], input[type=datetime-local]",
+        ),
+      );
+      for (const input of dateInputs) {
+        const type = (input.getAttribute("type") || "").toLowerCase();
+        const value: string | undefined = dateValues[type];
+        if (value !== undefined) setValue(input, value);
+      }
+    } catch (err) {
+      notes.push(`Failed to answer date/time input in ${name}: ${String(err)}`);
+    }
+
+    // Text inputs and textareas (type-aware: email/tel/url get format-valid
+    // values, numeric-in-disguise inputs get an in-range number).
     try {
       const texts = Array.from(
         q.querySelectorAll(
@@ -338,7 +538,7 @@ function fillAnswersInPage(): string[] {
         ),
       );
       for (const input of texts) {
-        setValue(input, looksNumeric(input) ? "10" : "Automated QA test response");
+        setValue(input, textValueFor(input));
       }
       const textareas = Array.from(q.querySelectorAll("textarea"));
       for (const area of textareas) setValue(area, "Automated QA test response");

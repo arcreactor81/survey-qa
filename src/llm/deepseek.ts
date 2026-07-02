@@ -18,9 +18,12 @@ const VALID_SEVERITIES = new Set<string>(
 );
 
 interface DeepseekChatResponse {
-  choices?: Array<{ message?: { content?: string | null } }>;
+  choices?: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
+
+/** Per-request cap so a hung provider/gateway fails this page fast instead of stalling the step. */
+const REQUEST_TIMEOUT_MS = 60_000;
 
 /** Coerce one raw model-emitted entry into a valid finding, or null to drop it. */
 function sanitizeFinding(entry: unknown): RawFinding | null {
@@ -100,18 +103,22 @@ export async function deepseekCompare(
   }
 
   const model = env.DEEPSEEK_MODEL ?? "deepseek-v4-pro";
-  const baseUrl =
-    env.CF_AIG_ACCOUNT_ID && env.CF_AIG_GATEWAY_ID
-      ? `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_ID}/deepseek`
-      : "https://api.deepseek.com";
+  const usingGateway = Boolean(env.CF_AIG_ACCOUNT_ID && env.CF_AIG_GATEWAY_ID);
+  const baseUrl = usingGateway
+    ? `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_ID}/deepseek`
+    : "https://api.deepseek.com";
 
   const headers: Record<string, string> = {
     authorization: `Bearer ${apiKey}`,
     "content-type": "application/json",
-    "cf-aig-metadata": JSON.stringify({ feature: "survey-qa" }),
   };
-  if (env.CF_AIG_TOKEN) {
-    headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+  // AI Gateway headers are Cloudflare-specific: only attach them when actually
+  // routing through the gateway (never leak CF_AIG_TOKEN to api.deepseek.com).
+  if (usingGateway) {
+    headers["cf-aig-metadata"] = JSON.stringify({ feature: "survey-qa" });
+    if (env.CF_AIG_TOKEN) {
+      headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+    }
   }
 
   const body = {
@@ -130,6 +137,7 @@ export async function deepseekCompare(
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const rawBody = await res.text();
   const latencyMs = Date.now() - startedAt;
@@ -148,6 +156,12 @@ export async function deepseekCompare(
   const content = data.choices?.[0]?.message?.content ?? "";
   if (content.trim().length === 0) {
     throw new Error("DeepSeek returned empty content");
+  }
+  // Surface truncation distinctly from a generic parse failure.
+  if (data.choices?.[0]?.finish_reason === "length") {
+    throw new Error(
+      `DeepSeek response truncated at max_tokens (${body.max_tokens}); output is incomplete JSON`,
+    );
   }
 
   return {

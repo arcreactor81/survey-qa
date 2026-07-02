@@ -4,7 +4,7 @@
     "description": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
     "showQuestionNumbers": "off",
     "focusFirstQuestionAutomatic": false,
-    "completedHtml": "<h3>Vielen Dank für die Teilnahme an der Umfrage.</h3><p>Ihre Antworten wurden gespeichert.</p>",
+    "completedHtml": "<h3>Vielen Dank für die Teilnahme an der Umfrage.</h3><p>Ihre Antworten wurden gespeichert.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
     "pages": [
       {
         "name": "page1",
@@ -155,7 +155,7 @@
     "description": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
     "showQuestionNumbers": "off",
     "focusFirstQuestionAutomatic": false,
-    "completedHtml": "<h3>Gracias por completar la encuesta.</h3><p>Sus respuestas han sido registradas.</p>",
+    "completedHtml": "<h3>Gracias por completar la encuesta.</h3><p>Sus respuestas han sido registradas.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
     "pages": [
       {
         "name": "page1",
@@ -306,7 +306,7 @@
     "description": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
     "showQuestionNumbers": "off",
     "focusFirstQuestionAutomatic": false,
-    "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p>",
+    "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
     "pages": [
       {
         "name": "page1",
@@ -457,7 +457,7 @@
     "description": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
     "showQuestionNumbers": "off",
     "focusFirstQuestionAutomatic": false,
-    "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p>",
+    "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
     "pages": [
       {
         "name": "page1",
@@ -608,7 +608,7 @@
     "description": "感谢您的参与。本次调查约需10分钟。您的回答将予以严格保密，仅以汇总形式报告。",
     "showQuestionNumbers": "off",
     "focusFirstQuestionAutomatic": false,
-    "completedHtml": "<h3>感谢您完成本次调查。</h3><p>您的回答已被记录。</p>",
+    "completedHtml": "<h3>感谢您完成本次调查。</h3><p>您的回答已被记录。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
     "pages": [
       {
         "name": "page1",

@@ -19,6 +19,8 @@ const MODEL_NAME = "claude";
 const MODEL_ID = "claude-code/opus (subscription)";
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const MAX_BUFFER = 32 * 1024 * 1024; // 32 MB
+const CLAUDE_TIMEOUT_MS = 5 * 60 * 1000; // kill a hung claude call after 5 minutes
+const MAX_PAGE_ATTEMPTS = 2; // initial try + 1 retry per page for transient failures
 
 const VALID_SEVERITIES = new Set(["high", "medium", "low"]);
 const VALID_CATEGORIES = new Set([
@@ -162,12 +164,23 @@ function normalizeFinding(raw, pageIndex) {
  * Environment for the claude CLI child: strip API-key/auth env vars so the CLI
  * authenticates with the user's claude.ai subscription login (the whole point
  * of this runner). An inherited ANTHROPIC_API_KEY takes precedence otherwise
- * and the CLI errors out.
+ * and the CLI errors out. Also strip the Bedrock/Vertex routing toggles and
+ * their cloud-credential companions (AWS_*, GOOGLE_*, gcloud CLOUDSDK_*,
+ * CLOUD_ML_REGION) so an inherited CLAUDE_CODE_USE_BEDROCK/VERTEX cannot
+ * silently reroute usage to metered third-party billing.
  */
 function cleanEnv() {
   const env = { ...process.env };
   for (const k of Object.keys(env)) {
-    if (/^ANTHROPIC_/i.test(k) || k === "CLAUDE_API_KEY" || k === "CLAUDECODE" || k === "CLAUDE_CODE_ENTRYPOINT") {
+    if (
+      /^ANTHROPIC_/i.test(k) ||
+      /^CLAUDE_CODE_USE_/i.test(k) || // CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX
+      /^AWS_/i.test(k) ||             // Bedrock credentials/region/profile
+      /^GOOGLE_/i.test(k) ||          // Vertex credentials (GOOGLE_APPLICATION_CREDENTIALS, ...)
+      /^CLOUDSDK_/i.test(k) ||        // gcloud SDK configuration
+      k === "CLOUD_ML_REGION" ||      // Vertex region
+      k === "CLAUDE_API_KEY" || k === "CLAUDECODE" || k === "CLAUDE_CODE_ENTRYPOINT"
+    ) {
       delete env[k];
     }
   }
@@ -184,13 +197,20 @@ function runClaude(prompt) {
     shell: true,
     maxBuffer: MAX_BUFFER,
     windowsHide: true,
+    timeout: CLAUDE_TIMEOUT_MS,
+    killSignal: "SIGTERM",
     env: cleanEnv(),
   });
   const latencyMs = Date.now() - started;
 
   if (proc.error) {
+    const timedOut = proc.error.code === "ETIMEDOUT";
     throw Object.assign(
-      new Error(`failed to launch claude CLI: ${proc.error.message}`),
+      new Error(
+        timedOut
+          ? `claude CLI timed out after ${Math.round(CLAUDE_TIMEOUT_MS / 1000)}s`
+          : `failed to launch claude CLI: ${proc.error.message}`
+      ),
       { latencyMs }
     );
   }
@@ -254,44 +274,62 @@ async function main() {
     const pageIndex = Number.isInteger(pages[i]?.pageIndex) ? pages[i].pageIndex : i;
     const label = `[page ${i + 1}/${pages.length}]`;
 
-    let prompt;
-    try {
-      prompt = await fetchText(
-        `${workerUrl}/api/runs/${encodeURIComponent(runId)}/prompt/${pageIndex}`
-      );
-    } catch (err) {
-      stats.errors += 1;
-      console.error(`${label} failed to fetch prompt: ${err.message}`);
-      continue;
+    // Bounded per-page retry: a transient prompt-fetch or claude failure gets
+    // one more attempt before the page is written off, so a single blip does
+    // not silently turn into "claude missed everything on this page".
+    let succeeded = false;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= MAX_PAGE_ATTEMPTS && !succeeded; attempt++) {
+      let prompt;
+      try {
+        prompt = await fetchText(
+          `${workerUrl}/api/runs/${encodeURIComponent(runId)}/prompt/${pageIndex}`
+        );
+      } catch (err) {
+        lastErr = err;
+        if (attempt < MAX_PAGE_ATTEMPTS) {
+          console.error(`${label} failed to fetch prompt (attempt ${attempt}/${MAX_PAGE_ATTEMPTS}): ${err.message}; retrying...`);
+        }
+        continue;
+      }
+
+      if (dryRun) {
+        console.log(`${label} prompt for pageIndex ${pageIndex} (${prompt.length} chars):`);
+        console.log("-".repeat(72));
+        console.log(prompt);
+        console.log("-".repeat(72));
+        succeeded = true;
+        break;
+      }
+
+      try {
+        const { rawFindings, inputTokens, outputTokens, latencyMs } = runClaude(prompt);
+        stats.calls += 1;
+        stats.inputTokens += inputTokens;
+        stats.outputTokens += outputTokens;
+        stats.latencyMsTotal += latencyMs;
+
+        const findings = rawFindings
+          .map((f) => normalizeFinding(f, pageIndex))
+          .filter((f) => f !== null);
+        allFindings.push(...findings);
+
+        console.log(
+          `${label} claude -> ${findings.length} finding${findings.length === 1 ? "" : "s"}, ${(latencyMs / 1000).toFixed(1)}s`
+        );
+        succeeded = true;
+      } catch (err) {
+        lastErr = err;
+        stats.latencyMsTotal += Number.isFinite(err.latencyMs) ? err.latencyMs : 0;
+        if (attempt < MAX_PAGE_ATTEMPTS) {
+          console.error(`${label} claude failed (attempt ${attempt}/${MAX_PAGE_ATTEMPTS}): ${err.message}; retrying...`);
+        }
+      }
     }
 
-    if (dryRun) {
-      console.log(`${label} prompt for pageIndex ${pageIndex} (${prompt.length} chars):`);
-      console.log("-".repeat(72));
-      console.log(prompt);
-      console.log("-".repeat(72));
-      continue;
-    }
-
-    try {
-      const { rawFindings, inputTokens, outputTokens, latencyMs } = runClaude(prompt);
-      stats.calls += 1;
-      stats.inputTokens += inputTokens;
-      stats.outputTokens += outputTokens;
-      stats.latencyMsTotal += latencyMs;
-
-      const findings = rawFindings
-        .map((f) => normalizeFinding(f, pageIndex))
-        .filter((f) => f !== null);
-      allFindings.push(...findings);
-
-      console.log(
-        `${label} claude -> ${findings.length} finding${findings.length === 1 ? "" : "s"}, ${(latencyMs / 1000).toFixed(1)}s`
-      );
-    } catch (err) {
+    if (!succeeded) {
       stats.errors += 1;
-      stats.latencyMsTotal += Number.isFinite(err.latencyMs) ? err.latencyMs : 0;
-      console.error(`${label} claude failed: ${err.message}`);
+      console.error(`${label} giving up after ${MAX_PAGE_ATTEMPTS} attempt(s): ${lastErr ? lastErr.message : "unknown error"}`);
     }
   }
 
@@ -303,6 +341,13 @@ async function main() {
   if (stats.calls === 0) {
     console.error("\nEvery page failed; not posting findings.");
     process.exit(1);
+  }
+
+  if (stats.errors > 0) {
+    console.error(
+      `\nWarning: ${stats.errors} page(s) failed after ${MAX_PAGE_ATTEMPTS} attempts each; ` +
+        `posting PARTIAL results (claude never ran on those pages).`
+    );
   }
 
   const payload = {

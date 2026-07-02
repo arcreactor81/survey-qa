@@ -37,8 +37,10 @@ function fragmentOf(text: string): string {
  * Set quoteVerified on every finding:
  * - specQuote must appear (whitespace-normalized) in specText — always required.
  * - siteQuote must appear in THAT page's text (matched by finding.pageIndex).
- * - Absence categories pass with an empty siteQuote; a non-empty siteQuote is
- *   still checked against the page.
+ * - Absence categories pass with an empty siteQuote, but ONLY if the
+ *   claimed-missing specQuote is actually ABSENT from the rendered page text
+ *   (a "missing X" claim is refuted when X is present on the page). A
+ *   non-empty siteQuote is still checked against the page.
  * - Non-absence findings with an empty siteQuote fail verification.
  * Returns new Finding objects; the input array is not mutated.
  */
@@ -48,6 +50,14 @@ export function verifyFindings(
   pages: PageCapture[],
 ): Finding[] {
   const normalizedSpec = normalizeWhitespace(specText);
+  if (normalizedSpec.length === 0) {
+    // Every finding will fail spec grounding below; make the silent-zeroing
+    // failure mode (e.g. docx extraction produced no text) visible in logs.
+    console.warn(
+      "verifyFindings: specText is empty — all findings will fail verification; " +
+        "docx extraction may have produced no text",
+    );
+  }
   const pageTextByIndex = new Map<number, string>();
   for (const page of pages) {
     pageTextByIndex.set(page.pageIndex, normalizeWhitespace(page.text));
@@ -60,7 +70,25 @@ export function verifyFindings(
     const siteNeedle = normalizeWhitespace(finding.siteQuote);
     let siteOk: boolean;
     if (siteNeedle.length === 0) {
-      siteOk = ABSENCE_CATEGORIES.has(finding.category);
+      if (!ABSENCE_CATEGORIES.has(finding.category)) {
+        siteOk = false;
+      } else {
+        // Absence claim: verify the claimed-missing spec text does NOT
+        // appear on the page it is claimed missing from. Without this, an
+        // absence finding is unfalsifiable (spec-side check alone would
+        // credit a hallucinated "missing" claim even when the text is
+        // present on the page).
+        const pageText = pageTextByIndex.get(finding.pageIndex);
+        if (pageText !== undefined) {
+          siteOk = specNeedle.length > 0 && !pageText.includes(specNeedle);
+        } else {
+          // Unknown page index: fall back to requiring absence from every
+          // captured page (if the text appears nowhere, the claim holds).
+          siteOk =
+            specNeedle.length > 0 &&
+            ![...pageTextByIndex.values()].some((text) => text.includes(specNeedle));
+        }
+      }
     } else {
       const pageText = pageTextByIndex.get(finding.pageIndex);
       siteOk = pageText !== undefined && pageText.includes(siteNeedle);
@@ -78,6 +106,10 @@ export function verifyFindings(
  *   (category matches exactly, OR siteQuote/description contain a distinctive
  *    fragment of seeded.rendered, OR specQuote/description contain a distinctive
  *    fragment of seeded.truth).
+ * Fallback when no questionId signal is present anywhere (models may legally
+ * emit questionId: null for option/instruction-level defects): still match on
+ * STRONG evidence only — exact category AND a verbatim-quote fragment hit
+ * (quotes only; the looser description-based hits are not accepted here).
  */
 function findingMatchesSeeded(finding: Finding, seeded: SeededError): boolean {
   const seededQid = seeded.questionId.toLowerCase();
@@ -92,7 +124,15 @@ function findingMatchesSeeded(finding: Finding, seeded: SeededError): boolean {
       description.includes(seededQid) ||
       siteQuote.includes(seededQid) ||
       specQuote.includes(seededQid));
-  if (!questionMatch) return false;
+  if (!questionMatch) {
+    if (finding.category !== seeded.category) return false;
+    const renderedFrag = fragmentOf(seeded.rendered);
+    const truthFrag = fragmentOf(seeded.truth);
+    return (
+      (renderedFrag.length > 0 && siteQuote.includes(renderedFrag)) ||
+      (truthFrag.length > 0 && specQuote.includes(truthFrag))
+    );
+  }
 
   if (finding.category === seeded.category) return true;
 
@@ -120,6 +160,13 @@ function findingMatchesSeeded(finding: Finding, seeded: SeededError): boolean {
  * Only VERIFIED findings (quoteVerified === true) count — run verifyFindings first.
  * recall = caught / total seeded (per model).
  * falsePositives = that model's verified findings not matched to any seeded error.
+ *
+ * Assignment is one-to-one per model: each verified finding can credit at most
+ * ONE seeded entry, so a single vague finding cannot inflate recall across
+ * several entries. Exact-category matches are assigned first, so a
+ * fragment-only cross-match (e.g. a reordering finding whose quotes happen to
+ * contain another seed's option text) never takes credit that belongs to — or
+ * substitutes for — the finding that actually detected the defect.
  */
 export function buildScorecard(
   findings: Finding[],
@@ -134,20 +181,38 @@ export function buildScorecard(
 ): Scorecard {
   const verified = findings.filter((finding) => finding.quoteVerified);
 
-  const entries: ScorecardEntry[] = seeded.map((error) => {
-    const caughtBy = MODELS.filter((model) =>
-      verified.some(
-        (finding) => finding.model === model && findingMatchesSeeded(finding, error),
-      ),
-    );
-    return {
-      errorId: error.id,
-      questionId: error.questionId,
-      category: error.category,
-      note: error.note,
-      caughtBy,
+  const caughtSets: Array<Set<ModelName>> = seeded.map(() => new Set<ModelName>());
+  for (const model of MODELS) {
+    const modelFindings = verified.filter((finding) => finding.model === model);
+    const consumed = new Set<Finding>();
+
+    const assign = (requireExactCategory: boolean): void => {
+      for (let i = 0; i < seeded.length; i++) {
+        const error = seeded[i];
+        if (caughtSets[i].has(model)) continue;
+        const match = modelFindings.find(
+          (finding) =>
+            !consumed.has(finding) &&
+            (!requireExactCategory || finding.category === error.category) &&
+            findingMatchesSeeded(finding, error),
+        );
+        if (match !== undefined) {
+          consumed.add(match);
+          caughtSets[i].add(model);
+        }
+      }
     };
-  });
+    assign(true); // pass 1: exact-category matches claim their entries first
+    assign(false); // pass 2: remaining entries may use fragment/loose matches
+  }
+
+  const entries: ScorecardEntry[] = seeded.map((error, i) => ({
+    errorId: error.id,
+    questionId: error.questionId,
+    category: error.category,
+    note: error.note,
+    caughtBy: MODELS.filter((model) => caughtSets[i].has(model)),
+  }));
 
   const recall: Record<ModelName, number> = { deepseek: 0, claude: 0, workersai: 0 };
   const falsePositives: Record<ModelName, number> = { deepseek: 0, claude: 0, workersai: 0 };

@@ -48,7 +48,13 @@ async function generate(canonFile, outName) {
     for (const opt of q.options ?? []) {
       p({ bullet: { level: 0 }, children: [new TextRun({ text: opt })] });
     }
-    if (q.rows) {
+    if (q.type === "matrix") {
+      if (!Array.isArray(q.rows) || !Array.isArray(q.scale)) {
+        throw new Error(
+          `${canonFile}: matrix question ${q.id} must have array "rows" and "scale" ` +
+            `(got rows=${JSON.stringify(q.rows)}, scale=${JSON.stringify(q.scale)})`
+        );
+      }
       p({ children: [new TextRun({ text: "[GRID — STATEMENTS AS ROWS:]", italics: true })] });
       for (const row of q.rows) p({ bullet: { level: 0 }, children: [new TextRun({ text: row })] });
       p({ children: [new TextRun({ text: "[SCALE — COLUMNS, IN THIS ORDER:]", italics: true })] });
