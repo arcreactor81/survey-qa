@@ -9,11 +9,21 @@ Report: https://survey-qa.arcreactor81.workers.dev/reports/9d63ad9c
 Fix that mattered: runner spawns `claude` with ANTHROPIC_*/CLAUDECODE env vars stripped (else the CLI
 prefers the API key over the claude.ai login and exits 1). PDF capture per page added + deployed.
 
-## IN FLIGHT at handoff time (check completion, then integrate)
-1. **Localization workflow** (`localize-survey-canons`): 5 agents writing `spec/canon.{es,fr,de,zh,ja}.json`
-   (translated questionnaire + localized seeded errors + machine-appliable `mutations` ops).
-2. **Frontend workflow** (`frontend-upgrade`): rewriting `public/index.html` (landing page w/ lang selector)
-   and `src/report.ts` (consulting-grade report). After it lands: typecheck + redeploy + eyeball.
+## LIMIT CUTOFF (03:00) — what survived, what to resume
+Session limit hit at ~03:00 (resets 5:40am IST); all 7 in-flight agents died, BUT files written before
+death were kept, validated, deployed, and committed (13cb320):
+- ✅ spec/canon.{es,fr,ja,zh}.json — valid (10 q / 10 err / 10 mutations each). **canon.de.json MISSING.**
+- ✅ src/report.ts redesign — typechecked + deployed.
+- ❌ public/index.html landing redesign — never written (still the plain version).
+
+**FIRST ACTIONS on wake (5:48): resume the two workflows** (completed agents are cached; only dead ones re-run):
+1. Workflow({scriptPath: "C:\\Users\\arcreactor81\\.claude\\projects\\E--Claude-Hackathon\\aaeecb2b-533e-4fce-a43a-8f5f2a6db69f\\workflows\\scripts\\localize-survey-canons-wf_b63a3cbe-b62.js", resumeFromRunId: "wf_b63a3cbe-b62"})
+   → but note es/fr/ja/zh canon FILES already exist on disk; if the resumed agents would redo them, it is
+   harmless (they write the same files); the only truly missing one is **de**.
+2. Workflow({scriptPath: "C:\\Users\\arcreactor81\\.claude\\projects\\E--Claude-Hackathon\\aaeecb2b-533e-4fce-a43a-8f5f2a6db69f\\workflows\\scripts\\frontend-upgrade-wf_4f2beab5-45f.js", resumeFromRunId: "wf_4f2beab5-45f"})
+   → report-redesign already done on disk (don't let a re-run clobber it — if the resumed agent rewrites
+   src/report.ts equivalently that's fine, but verify typecheck after). The landing-page agent must run.
+Then continue with the MULTI-LANGUAGE INTEGRATION section below, then per-language E2E runs, commit, wake-up summary.
 
 ## MULTI-LANGUAGE INTEGRATION (next big task — user requirement)
 User wants the demo to work across languages (es/fr/de/zh/ja) since non-English link testing is the weak

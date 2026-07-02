@@ -2,7 +2,7 @@ import { buildComparePrompt } from "./prompt";
 import { verifyFindings, buildScorecard } from "./verify";
 import { buildHtmlReport } from "./report";
 import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
-import canon from "../spec/canon.json";
+import { MANIFESTS, SUPPORTED_LANGS } from "./manifests";
 import type { Env, Finding, ModelRunStats, RunReport } from "./types";
 
 export { RunWorkflow } from "./workflow";
@@ -22,6 +22,7 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
   const origin = new URL(req.url).origin;
   let surveyUrl = "";
   let useSample = true;
+  let lang = "en";
   let docxBytes: ArrayBuffer | null = null;
   let docxName = "";
 
@@ -30,6 +31,7 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
     const form = await req.formData();
     surveyUrl = String(form.get("surveyUrl") ?? "");
     useSample = String(form.get("useSample") ?? "true") === "true";
+    lang = String(form.get("lang") ?? "en").toLowerCase() || "en";
     const file = form.get("docx");
     if (!useSample && file && typeof file === "object" && "arrayBuffer" in file) {
       const f = file as File;
@@ -42,16 +44,21 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     surveyUrl = String(body.surveyUrl ?? "");
     useSample = body.useSample !== false;
+    lang = String(body.lang ?? "en").toLowerCase() || "en";
   }
 
   if (!surveyUrl) return json({ error: "surveyUrl is required" }, 400);
+  if (!SUPPORTED_LANGS.includes(lang)) {
+    return json({ error: `unsupported lang "${lang}" (supported: ${SUPPORTED_LANGS.join(", ")})` }, 400);
+  }
   const resolvedUrl = surveyUrl.startsWith("http") ? surveyUrl : origin + surveyUrl;
 
   if (!docxBytes) {
-    const res = await env.ASSETS.fetch(new Request(origin + "/sample/questionnaire.docx"));
-    if (!res.ok) return json({ error: "bundled sample questionnaire.docx not found" }, 500);
+    const samplePath = lang === "en" ? "/sample/questionnaire.docx" : `/sample/questionnaire.${lang}.docx`;
+    const res = await env.ASSETS.fetch(new Request(origin + samplePath));
+    if (!res.ok) return json({ error: `bundled sample ${samplePath} not found` }, 500);
     docxBytes = await res.arrayBuffer();
-    docxName = "questionnaire.docx (bundled sample)";
+    docxName = `questionnaire${lang === "en" ? "" : "." + lang}.docx (bundled sample)`;
     useSample = true;
   }
 
@@ -74,8 +81,8 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
   await env.ARTIFACTS.put(docxKey(runId), docxBytes, {
     httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
   });
-  await putRun(env, runId, { status: "processing", seeded, report });
-  await env.RUN_WORKFLOW.create({ id: runId, params: { runId, surveyUrl: resolvedUrl, docxName, seeded } });
+  await putRun(env, runId, { status: "processing", seeded, lang, report });
+  await env.RUN_WORKFLOW.create({ id: runId, params: { runId, surveyUrl: resolvedUrl, docxName, seeded, lang } });
 
   return json({
     runId,
@@ -130,7 +137,9 @@ async function handleSubmitFindings(req: Request, env: Env, runId: string): Prom
     latencyMsTotal: Number(body.stats?.latencyMsTotal ?? 0),
     errors: Number(body.stats?.errors ?? 0),
   });
-  report.scorecard = envelope.seeded ? buildScorecard(report.findings, canon.seededErrors) : null;
+  report.scorecard = envelope.seeded
+    ? buildScorecard(report.findings, MANIFESTS[envelope.lang ?? "en"] ?? MANIFESTS.en)
+    : null;
   envelope.status = "complete";
   await putRun(env, runId, envelope);
 

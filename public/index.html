@@ -1,183 +1,764 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Survey QA — Language Check PoC</title>
-  <style>
-    body {
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      max-width: 720px;
-      margin: 2.5rem auto;
-      padding: 0 1rem;
-      color: #1a1a1a;
-      line-height: 1.5;
-    }
-    h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
-    p.lead { color: #444; margin-top: 0; }
-    fieldset {
-      border: 1px solid #d0d0d0;
-      border-radius: 8px;
-      padding: 1rem 1.25rem;
-      margin: 1.5rem 0;
-    }
-    legend { font-weight: 600; padding: 0 0.4rem; }
-    label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 600; }
-    label.inline { display: inline; font-weight: 400; margin: 0; }
-    input[type="text"] {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 0.45rem 0.6rem;
-      border: 1px solid #bbb;
-      border-radius: 6px;
-      font-size: 0.95rem;
-    }
-    .checkbox-row { margin: 0.9rem 0; }
-    button {
-      background: #f38020;
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      padding: 0.55rem 1.4rem;
-      font-size: 1rem;
-      cursor: pointer;
-    }
-    button:disabled { opacity: 0.6; cursor: wait; }
-    #status { margin-top: 1rem; font-weight: 600; }
-    #status.error { color: #b00020; }
-    #reportLink { margin-top: 0.5rem; display: none; }
-    pre {
-      background: #f6f6f6;
-      border: 1px solid #e0e0e0;
-      border-radius: 6px;
-      padding: 0.75rem;
-      overflow-x: auto;
-      font-size: 0.85rem;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    a { color: #0b57d0; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Survey QA &mdash; Automated questionnaire-to-website verification</title>
+<meta name="description" content="Survey QA automates vendor survey link-testing: it parses the Word questionnaire, walks every survey page with a real browser, runs a dual-LLM comparison with verbatim-quote verification, and delivers a findings report with a seeded-error scorecard.">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --ink: #101D31;
+    --paper: #FAF8F3;
+    --card: #FFFFFF;
+    --accent: #C2571B;
+    --accent-dark: #A84A15;
+    --ok: #1E7F4F;
+    --bad: #B3362B;
+    --slate: #5B6B7F;
+    --border: #E4DFD5;
+    --serif: "Fraunces", Georgia, "Times New Roman", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
+    --shadow: 0 1px 2px rgba(16, 29, 49, 0.04), 0 10px 28px rgba(16, 29, 49, 0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    background: var(--paper);
+    color: #26374B;
+    line-height: 1.55;
+    font-size: 14px;
+  }
+  .wrap { max-width: 1140px; margin: 0 auto; padding: 0 28px; }
+  a { color: var(--accent); }
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  summary:focus-visible {
+    outline: 3px solid rgba(194, 87, 27, 0.45);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  .mono { font-family: var(--mono); }
+  .num { font-variant-numeric: tabular-nums; }
+  .kicker {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  h2 {
+    margin: 0 0 18px;
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 24px;
+    color: var(--ink);
+    letter-spacing: 0.1px;
+  }
+  .sub { font-family: var(--sans); font-size: 12px; font-weight: 400; color: var(--slate); margin-left: 10px; }
+
+  /* ---------- hero band ---------- */
+  .band {
+    background: var(--ink);
+    color: #F4F1EA;
+    padding: 60px 0 54px;
+    border-bottom: 4px solid var(--accent);
+  }
+  .brand-row { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  .brand {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 46px;
+    line-height: 1.05;
+    letter-spacing: 0.2px;
+    margin: 0;
+    color: #FFFFFF;
+  }
+  .tagline {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: #9FB0C4;
+  }
+  .value-prop {
+    max-width: 760px;
+    margin: 22px 0 0;
+    font-size: 16.5px;
+    line-height: 1.65;
+    color: #C9D3E0;
+  }
+  .value-prop strong { color: #FFFFFF; font-weight: 600; }
+  .hero-ctas { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 30px; align-items: center; }
+  .band a { color: #EFB88F; }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #FFFFFF !important;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 11px 24px;
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .btn:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+  .btn:disabled { opacity: 0.55; cursor: wait; }
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid rgba(244, 241, 234, 0.35);
+    color: #F4F1EA !important;
+  }
+  .btn-ghost:hover { background: rgba(244, 241, 234, 0.08); border-color: rgba(244, 241, 234, 0.6); }
+
+  /* ---------- layout ---------- */
+  main { padding: 34px 0 56px; }
+  section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 26px 30px 30px;
+    margin-bottom: 26px;
+    box-shadow: var(--shadow);
+  }
+
+  /* ---------- how it works ---------- */
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 16px;
+    counter-reset: step;
+  }
+  .step {
+    position: relative;
+    background: #FDFCF8;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 16px 16px;
+  }
+  .step:not(:last-child)::after {
+    content: "\2192";
+    position: absolute;
+    right: -15px;
+    top: 16px;
+    color: var(--accent);
+    font-size: 15px;
+    font-weight: 700;
+    z-index: 1;
+  }
+  .step-num {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 26px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .step h3 {
+    margin: 10px 0 6px;
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 15.5px;
+    color: var(--ink);
+    line-height: 1.3;
+  }
+  .step p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--slate); }
+  @media (max-width: 960px) {
+    .steps { grid-template-columns: repeat(2, 1fr); }
+    .step:not(:last-child)::after { display: none; }
+  }
+  @media (max-width: 540px) { .steps { grid-template-columns: 1fr; } }
+
+  /* ---------- demo form ---------- */
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px 26px;
+    max-width: 820px;
+  }
+  .field { margin: 0; }
+  .field-full { grid-column: 1 / -1; }
+  @media (max-width: 680px) { .form-grid { grid-template-columns: 1fr; } .field { grid-column: auto; } }
+  label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.11em;
+    color: var(--slate);
+    margin-bottom: 7px;
+  }
+  input[type="text"], select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #CFC8BA;
+    border-radius: 8px;
+    background: #FFFFFF;
+    font-family: var(--sans);
+    font-size: 14px;
+    color: #26374B;
+  }
+  input[type="text"] { font-family: var(--mono); font-size: 13px; }
+  input[type="text"]:focus, select:focus {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(194, 87, 27, 0.18);
+  }
+  input[type="file"] {
+    width: 100%;
+    font-size: 13px;
+    color: var(--slate);
+    padding: 7px 8px;
+    border: 1px dashed #CFC8BA;
+    border-radius: 8px;
+    background: #FDFCF8;
+  }
+  input[type="file"]::file-selector-button {
+    font-family: var(--sans);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink);
+    background: #FFFFFF;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    margin-right: 10px;
+    cursor: pointer;
+  }
+  input[type="file"]:disabled { opacity: 0.5; cursor: not-allowed; }
+  .field.is-disabled label { opacity: 0.55; }
+  .check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: #F6F2E9;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .check-row input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 17px;
+    height: 17px;
+    margin: 2px 0 0;
+    flex: none;
+    cursor: pointer;
+  }
+  .check-row label {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: #26374B;
+    margin: 0;
+    cursor: pointer;
+  }
+  .hint { font-size: 12px; color: #8C96A3; margin: 6px 0 0; }
+  .submit-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 4px; }
+
+  /* ---------- status card ---------- */
+  #statusCard[hidden] { display: none; }
+  .state-badge {
+    display: inline-block;
+    padding: 3px 11px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    white-space: nowrap;
+    margin-bottom: 12px;
+  }
+  .state-badge.is-wait { background: #F8E8D8; color: #9A4E12; }
+  .state-badge.is-ok { background: #E2F1E8; color: var(--ok); }
+  .state-badge.is-bad { background: #F7E3E0; color: var(--bad); }
+  .run-state { display: flex; align-items: flex-start; gap: 16px; }
+  .spinner {
+    flex: none;
+    width: 26px;
+    height: 26px;
+    margin-top: 3px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.85s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation-duration: 2.5s; }
+  }
+  .state-title {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 18px;
+    color: var(--ink);
+    margin-bottom: 3px;
+  }
+  .state-title code { font-family: var(--mono); font-size: 15px; color: var(--accent); }
+  .state-stage { font-size: 13.5px; color: var(--slate); }
+  .state-elapsed { margin-left: 10px; color: #8C96A3; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+  .state-note { font-size: 12px; color: #8C96A3; margin: 14px 0 0; }
+  .cmd {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    background: var(--ink);
+    border-radius: 10px;
+    padding: 13px 14px;
+    margin: 14px 0 0;
+    max-width: 780px;
+  }
+  .cmd code {
+    flex: 1;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: #F4F1EA;
+    word-break: break-all;
+    align-self: center;
+  }
+  .copy-btn {
+    flex: none;
+    align-self: center;
+    background: transparent;
+    color: #F4F1EA;
+    border: 1px solid rgba(244, 241, 234, 0.3);
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+  }
+  .copy-btn:hover { border-color: rgba(244, 241, 234, 0.7); background: rgba(244, 241, 234, 0.08); }
+  .copy-btn.copied { border-color: #4CAF87; color: #7FDDB1; }
+  .cmd-caption { font-size: 12px; color: var(--slate); margin: 8px 0 0; }
+  .error-detail {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: #F9ECEA;
+    border: 1px solid #E9CCC6;
+    color: #7A2A21;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 12px 0 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 260px;
+    overflow: auto;
+  }
+  .report-cta { margin-top: 6px; }
+
+  /* ---------- footer ---------- */
+  footer {
+    text-align: center;
+    font-size: 12px;
+    color: var(--slate);
+    padding: 0 28px 40px;
+  }
+  footer a { color: var(--accent); }
+</style>
 </head>
 <body>
-  <h1>Survey QA — Language Check PoC</h1>
-  <p class="lead">
-    Automated language QA for programmed surveys. A headless browser walks every page of the
-    survey under test, then two LLMs (Claude and DeepSeek) compare the rendered text against the
-    questionnaire document (.docx) and report discrepancies — typos, missing options, broken
-    piping, mislabeled scales, and more — with verified quotes and a seeded-error scorecard.
-  </p>
 
-  <p>
-    Survey under test: <a href="/survey.html" target="_blank" rel="noopener">/survey.html</a>
-    (contains 10 deliberately seeded errors).
-  </p>
+<header class="band">
+  <div class="wrap">
+    <div class="brand-row">
+      <h1 class="brand">Survey QA</h1>
+      <span class="tagline">Automated questionnaire-to-website verification</span>
+    </div>
+    <p class="value-prop">
+      Survey QA automates the link-testing step of market-research fieldwork. Point it at the
+      <strong>Word questionnaire</strong> and the programmed survey URL: it parses the .docx into a
+      canonical spec, <strong>walks every survey page with a real browser</strong>, has two
+      LLMs&nbsp;&mdash; Claude and DeepSeek&nbsp;&mdash; independently compare the rendered survey
+      against the spec, <strong>verifies every finding with verbatim quotes</strong>, and delivers a
+      findings report with a <strong>seeded-error scorecard</strong>. Typos, missing options, broken
+      piping, mislabeled scales&nbsp;&mdash; caught before a single respondent sees them.
+    </p>
+    <div class="hero-ctas">
+      <a class="btn" href="#demo">Run the demo</a>
+      <a class="btn btn-ghost" href="/survey.html" target="_blank" rel="noopener">Preview the demo survey&nbsp;&#8599;</a>
+    </div>
+  </div>
+</header>
 
-  <form id="runForm">
-    <fieldset>
-      <legend>Run a QA check</legend>
+<main>
+  <div class="wrap">
 
-      <label for="surveyUrl">Survey URL</label>
-      <input type="text" id="surveyUrl" name="surveyUrl" value="/survey.html">
-
-      <div class="checkbox-row">
-        <input type="checkbox" id="useSample" checked>
-        <label class="inline" for="useSample">use bundled sample questionnaire.docx</label>
+    <section id="how" aria-labelledby="how-title">
+      <div class="kicker">Pipeline</div>
+      <h2 id="how-title">How it works</h2>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3>Questionnaire parsed</h3>
+          <p>The Word document (.docx) is parsed into a spec: questions, options, scales, piping and programmer notes.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3>Browser walks the pages</h3>
+          <p>A real headless browser steps through every page of the live survey, capturing text, screenshots and PDFs.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3>Dual-LLM comparison</h3>
+          <p>Claude and DeepSeek independently compare each rendered page against the spec and flag discrepancies.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <h3>Quote verification</h3>
+          <p>Every finding must cite verbatim quotes from spec and site &mdash; each quote is mechanically checked before it counts.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">5</div>
+          <h3>Scored report</h3>
+          <p>A findings report with a seeded-error scorecard: recall per model, false positives, cost and latency.</p>
+        </div>
       </div>
+    </section>
 
-      <label for="docx">Or upload a different questionnaire (.docx)</label>
-      <input type="file" id="docx" name="docx" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+    <section id="demo" aria-labelledby="demo-title">
+      <div class="kicker">Live demo</div>
+      <h2 id="demo-title">Run a QA check <span class="sub">against this deployment</span></h2>
+      <form id="runForm" novalidate>
+        <div class="form-grid">
+          <div class="field field-full">
+            <label for="surveyUrl">Survey URL</label>
+            <input type="text" id="surveyUrl" name="surveyUrl" value="/survey.html" autocomplete="off" spellcheck="false">
+            <p class="hint">Relative paths resolve against this deployment.
+              <a href="/survey.html" target="_blank" rel="noopener">Preview the demo survey&nbsp;&#8599;</a></p>
+          </div>
 
-      <p><button type="submit" id="runBtn">Run QA check</button></p>
-    </fieldset>
-  </form>
+          <div class="field field-full">
+            <div class="check-row">
+              <input type="checkbox" id="useSample" checked>
+              <label for="useSample">Use bundled sample questionnaire (.docx) with 10 seeded errors</label>
+            </div>
+          </div>
 
-  <div id="status"></div>
-  <div id="reportLink"></div>
-  <pre id="result" hidden></pre>
+          <div class="field is-disabled" id="docxField">
+            <label for="docx">Or upload a questionnaire (.docx)</label>
+            <input type="file" id="docx" name="docx" disabled
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+            <p class="hint">Enabled when the sample checkbox is unticked.</p>
+          </div>
 
-  <script>
-    (function () {
-      "use strict";
+          <div class="field">
+            <label for="lang">Survey language</label>
+            <select id="lang" name="lang">
+              <option value="en" selected>English</option>
+              <option value="es">Espa&ntilde;ol</option>
+              <option value="fr">Fran&ccedil;ais</option>
+              <option value="de">Deutsch</option>
+              <option value="zh">&#20013;&#25991;</option>
+              <option value="ja">&#26085;&#26412;&#35486;</option>
+            </select>
+            <p class="hint">Non-English picks point the survey URL at a translated build.</p>
+          </div>
 
-      var form = document.getElementById("runForm");
-      var runBtn = document.getElementById("runBtn");
-      var statusEl = document.getElementById("status");
-      var reportLinkEl = document.getElementById("reportLink");
-      var resultEl = document.getElementById("result");
+          <div class="field field-full submit-row">
+            <button type="submit" id="runBtn" class="btn">Run QA check</button>
+            <span class="hint">A run takes roughly 1&ndash;3 minutes: browser walk, model comparison, quote verification.</span>
+          </div>
+        </div>
+      </form>
+    </section>
 
-      function setStatus(message, isError) {
-        statusEl.textContent = message;
-        statusEl.className = isError ? "error" : "";
-      }
+    <section id="statusCard" hidden aria-labelledby="status-title">
+      <div class="kicker">Run status</div>
+      <h2 id="status-title">This run</h2>
+      <div id="statusBody" aria-live="polite"></div>
+    </section>
 
-      function reportHref(data) {
-        if (data && typeof data.reportUrl === "string" && data.reportUrl) {
-          return data.reportUrl;
-        }
-        if (data && typeof data.runId === "string" && data.runId) {
-          return "/reports/" + encodeURIComponent(data.runId);
-        }
-        return null;
-      }
+  </div>
+</main>
 
-      form.addEventListener("submit", function (event) {
-        event.preventDefault();
+<footer>
+  Survey QA &middot; Runs on <a href="https://workers.cloudflare.com" target="_blank" rel="noopener">Cloudflare Workers</a>
+  &mdash; Browser Rendering + Workflows + R2
+</footer>
 
-        var formData = new FormData();
-        formData.append("surveyUrl", document.getElementById("surveyUrl").value);
-        formData.append("useSample", document.getElementById("useSample").checked ? "true" : "false");
-        var fileInput = document.getElementById("docx");
-        if (fileInput.files && fileInput.files.length > 0) {
-          formData.append("docx", fileInput.files[0]);
-        }
+<script>
+(function () {
+  "use strict";
 
-        runBtn.disabled = true;
-        setStatus("Running… the browser walker and both models can take a minute or two.", false);
-        reportLinkEl.style.display = "none";
-        reportLinkEl.textContent = "";
-        resultEl.hidden = true;
-        resultEl.textContent = "";
+  var form = document.getElementById("runForm");
+  var runBtn = document.getElementById("runBtn");
+  var surveyUrlInput = document.getElementById("surveyUrl");
+  var useSample = document.getElementById("useSample");
+  var docxInput = document.getElementById("docx");
+  var docxField = document.getElementById("docxField");
+  var langSelect = document.getElementById("lang");
+  var statusCard = document.getElementById("statusCard");
+  var statusBody = document.getElementById("statusBody");
 
-        fetch("/api/run", { method: "POST", body: formData })
-          .then(function (response) {
-            return response.text().then(function (text) {
-              var data = null;
-              try { data = JSON.parse(text); } catch (e) { /* non-JSON error body */ }
+  var runId = null;
+  var reportUrl = null;
+  var startedAt = 0;
+  var currentState = null;
+  var pollTimer = null;
+  var tickTimer = null;
+  var failStreak = 0;
 
-              if (!response.ok) {
-                setStatus("Run failed (HTTP " + response.status + ").", true);
-                resultEl.textContent = data ? JSON.stringify(data, null, 2) : text;
-                resultEl.hidden = false;
-                return;
-              }
+  var STAGES = [
+    { after: 0,   text: "Parsing the questionnaire (.docx)…" },
+    { after: 8,   text: "Walking every survey page with a headless browser…" },
+    { after: 70,  text: "Running the DeepSeek comparison…" },
+    { after: 150, text: "Verifying quotes and assembling the report…" }
+  ];
 
-              var runId = data && data.runId ? data.runId : "(unknown)";
-              setStatus("Run complete. runId: " + runId, false);
+  function esc(s) {
+    return String(s === null || s === undefined ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
 
-              var href = reportHref(data);
-              if (href) {
-                var a = document.createElement("a");
-                a.href = href;
-                a.target = "_blank";
-                a.rel = "noopener";
-                a.textContent = "View report: " + href;
-                reportLinkEl.appendChild(a);
-                reportLinkEl.style.display = "block";
-              }
+  /* ----- form behaviors ----- */
 
-              resultEl.textContent = data ? JSON.stringify(data, null, 2) : text;
-              resultEl.hidden = false;
-            });
-          })
-          .catch(function (err) {
-            setStatus("Request error: " + (err && err.message ? err.message : String(err)), true);
-          })
-          .then(function () {
-            runBtn.disabled = false;
-          });
+  langSelect.addEventListener("change", function () {
+    surveyUrlInput.value = langSelect.value === "en"
+      ? "/survey.html"
+      : "/survey.html?lang=" + langSelect.value;
+  });
+
+  useSample.addEventListener("change", function () {
+    docxInput.disabled = useSample.checked;
+    docxField.classList.toggle("is-disabled", useSample.checked);
+  });
+
+  /* ----- state machine ----- */
+
+  function stopTimers() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+  }
+
+  function elapsedSec() { return Math.max(0, Math.floor((Date.now() - startedAt) / 1000)); }
+
+  function fmtElapsed(s) {
+    var m = Math.floor(s / 60);
+    var r = s % 60;
+    return m + ":" + (r < 10 ? "0" : "") + r;
+  }
+
+  function stageText() {
+    var e = elapsedSec();
+    var text = STAGES[0].text;
+    for (var i = 0; i < STAGES.length; i++) {
+      if (e >= STAGES[i].after) text = STAGES[i].text;
+    }
+    if (failStreak >= 3) text += " (status endpoint slow to respond — still trying)";
+    return text;
+  }
+
+  function show(html) {
+    statusCard.hidden = false;
+    statusBody.innerHTML = html;
+  }
+
+  function claudeCommand() {
+    return "node runner/claude-runner.mjs --worker-url " + location.origin + " --run " + runId;
+  }
+
+  function renderSubmitting() {
+    show(
+      '<div class="run-state">' +
+        '<div class="spinner" aria-hidden="true"></div>' +
+        '<div><div class="state-title">Submitting run…</div>' +
+        '<div class="state-stage">Uploading the questionnaire and queueing the workflow.</div></div>' +
+      '</div>'
+    );
+    statusCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function renderProcessing() {
+    show(
+      '<span class="state-badge is-wait">Processing</span>' +
+      '<div class="run-state">' +
+        '<div class="spinner" aria-hidden="true"></div>' +
+        '<div><div class="state-title">Run <code>' + esc(runId) + '</code> in progress</div>' +
+        '<div class="state-stage"><span id="stageText">' + esc(stageText()) + '</span>' +
+        '<span class="state-elapsed" id="elapsedText">' + esc(fmtElapsed(elapsedSec())) + '</span></div></div>' +
+      '</div>' +
+      '<p class="state-note">Leave this tab open — status refreshes every 5 seconds.</p>'
+    );
+  }
+
+  function renderAwaiting() {
+    show(
+      '<span class="state-badge is-wait">Awaiting Claude leg</span>' +
+      '<div class="state-title">Run <code>' + esc(runId) + '</code> — browser walk and DeepSeek comparison done</div>' +
+      '<p class="state-stage" style="margin:6px 0 0;">The interim report is live: ' +
+        '<a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;↗</a>. ' +
+        'To finish the dual-LLM comparison, run this from the repo root:</p>' +
+      '<div class="cmd"><code id="cmdCode">' + esc(claudeCommand()) + '</code>' +
+        '<button type="button" class="copy-btn">Copy</button></div>' +
+      '<p class="cmd-caption">runs the Claude comparison leg locally on your Claude subscription</p>' +
+      '<p class="state-note">This page keeps polling and will switch to “complete” automatically once the runner submits its findings.</p>'
+    );
+  }
+
+  function renderComplete() {
+    show(
+      '<span class="state-badge is-ok">Complete</span>' +
+      '<div class="state-title">Run <code>' + esc(runId) + '</code> finished</div>' +
+      '<p class="state-stage" style="margin:6px 0 14px;">Both model legs are in — scorecard, findings and page evidence are ready.</p>' +
+      '<p class="report-cta"><a class="btn" href="' + esc(reportUrl) + '" target="_blank" rel="noopener">View report</a></p>'
+    );
+  }
+
+  function renderFailed(message, detail) {
+    var html =
+      '<span class="state-badge is-bad">Failed</span>' +
+      '<div class="state-title">' + esc(message) + '</div>';
+    if (detail) html += '<pre class="error-detail">' + esc(detail) + '</pre>';
+    show(html);
+  }
+
+  function setState(state, detail) {
+    if (state === currentState) return;
+    currentState = state;
+    if (state === "processing") {
+      renderProcessing();
+    } else if (state === "awaiting") {
+      runBtn.disabled = false;
+      renderAwaiting();
+    } else if (state === "complete") {
+      stopTimers();
+      runBtn.disabled = false;
+      renderComplete();
+    } else if (state === "failed") {
+      stopTimers();
+      runBtn.disabled = false;
+      renderFailed("Run " + (runId || "") + " failed", detail || "No error detail was recorded.");
+    }
+  }
+
+  function tick() {
+    if (currentState !== "processing") return;
+    var st = document.getElementById("stageText");
+    var el = document.getElementById("elapsedText");
+    if (st) st.textContent = stageText();
+    if (el) el.textContent = fmtElapsed(elapsedSec());
+  }
+
+  function poll() {
+    fetch("/api/runs/" + encodeURIComponent(runId))
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        failStreak = 0;
+        var st = data && data.status;
+        if (st === "processing") setState("processing");
+        else if (st === "awaiting-claude") setState("awaiting");
+        else if (st === "complete") setState("complete");
+        else if (st === "failed") setState("failed", data && data.error);
+      })
+      .catch(function () {
+        failStreak++;
       });
-    })();
-  </script>
+  }
+
+  /* ----- copy button (delegated: status card re-renders) ----- */
+
+  statusBody.addEventListener("click", function (ev) {
+    var btn = ev.target && ev.target.closest ? ev.target.closest(".copy-btn") : null;
+    if (!btn) return;
+    var code = document.getElementById("cmdCode");
+    if (!code) return;
+    var text = code.textContent;
+    function done() {
+      btn.textContent = "Copied";
+      btn.classList.add("copied");
+      setTimeout(function () {
+        btn.textContent = "Copy";
+        btn.classList.remove("copied");
+      }, 1600);
+    }
+    function fallback() {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); done(); } catch (e) { /* give up quietly */ }
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else {
+      fallback();
+    }
+  });
+
+  /* ----- submit ----- */
+
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+
+    var formData = new FormData();
+    formData.append("surveyUrl", surveyUrlInput.value);
+    formData.append("useSample", useSample.checked ? "true" : "false");
+    if (!useSample.checked && docxInput.files && docxInput.files.length > 0) {
+      formData.append("docx", docxInput.files[0]);
+    }
+    formData.append("lang", langSelect.value);
+
+    stopTimers();
+    currentState = null;
+    runId = null;
+    reportUrl = null;
+    failStreak = 0;
+    runBtn.disabled = true;
+    renderSubmitting();
+
+    fetch("/api/run", { method: "POST", body: formData })
+      .then(function (response) {
+        return response.text().then(function (text) {
+          var data = null;
+          try { data = JSON.parse(text); } catch (e) { /* non-JSON error body */ }
+
+          if (!response.ok || !data || !data.runId) {
+            runBtn.disabled = false;
+            currentState = "failed";
+            renderFailed(
+              "Run could not start (HTTP " + response.status + ")",
+              data ? JSON.stringify(data, null, 2) : text
+            );
+            return;
+          }
+
+          runId = data.runId;
+          reportUrl = (typeof data.reportUrl === "string" && data.reportUrl)
+            ? data.reportUrl
+            : location.origin + "/reports/" + encodeURIComponent(runId);
+          startedAt = Date.now();
+          setState("processing");
+          pollTimer = setInterval(poll, 5000);
+          tickTimer = setInterval(tick, 1000);
+        });
+      })
+      .catch(function (err) {
+        runBtn.disabled = false;
+        currentState = "failed";
+        renderFailed("Request error", err && err.message ? err.message : String(err));
+      });
+  });
+})();
+</script>
 </body>
 </html>

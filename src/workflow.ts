@@ -5,7 +5,7 @@ import { runDeepseekCompares, computeCost } from "./compare";
 import { claudeCompare } from "./llm/claude";
 import { verifyFindings, buildScorecard } from "./verify";
 import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
-import canon from "../spec/canon.json";
+import { MANIFESTS } from "./manifests";
 import type { Env, Finding, ModelRunStats, PageCapture } from "./types";
 
 export interface RunParams {
@@ -13,11 +13,12 @@ export interface RunParams {
   surveyUrl: string;
   docxName: string;
   seeded: boolean;
+  lang?: string;
 }
 
 export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
   async run(event: WorkflowEvent<RunParams>, step: WorkflowStep): Promise<void> {
-    const { runId, surveyUrl, docxName, seeded } = event.payload;
+    const { runId, surveyUrl, docxName, seeded, lang } = event.payload;
     const env = this.env;
 
     try {
@@ -77,7 +78,9 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         const all: Finding[] = [...(deepseek?.findings ?? []), ...(claude?.findings ?? [])];
         report.findings = verifyFindings(all, specText, pages);
         report.stats = [deepseek?.stats, claude?.stats].filter(Boolean) as ModelRunStats[];
-        report.scorecard = seeded ? buildScorecard(report.findings, canon.seededErrors) : null;
+        report.scorecard = seeded
+          ? buildScorecard(report.findings, MANIFESTS[lang ?? "en"] ?? MANIFESTS.en)
+          : null;
         report.finishedAt = new Date().toISOString();
         report.docxName = docxName;
         envelope.status = claude ? "complete" : "awaiting-claude";

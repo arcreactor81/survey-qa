@@ -3,6 +3,7 @@ import type { Env, RunReport } from "./types";
 export interface RunEnvelope {
   status: "processing" | "awaiting-claude" | "complete" | "failed";
   seeded: boolean;
+  lang?: string; // questionnaire/survey language (default "en")
   error?: string;
   report: RunReport;
 }

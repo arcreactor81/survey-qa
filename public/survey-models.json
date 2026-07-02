@@ -1,0 +1,757 @@
+{
+  "de": {
+    "title": "Wahrnehmungen von Dermatologen zu Biologika-Therapien bei mittelschwerer bis schwerer Plaque-Psoriasis",
+    "description": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+    "showQuestionNumbers": "off",
+    "focusFirstQuestionAutomatic": false,
+    "completedHtml": "<h3>Vielen Dank für die Teilnahme an der Umfrage.</h3><p>Ihre Antworten wurden gespeichert.</p>",
+    "pages": [
+      {
+        "name": "page1",
+        "elements": [
+          {
+            "name": "S1",
+            "title": "S1. Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "Praktizierender Artz",
+              "Pflegefachkraft",
+              "Arztassistent",
+              "Apotheker"
+            ]
+          },
+          {
+            "name": "S2",
+            "title": "S2. Wie viele Jahre sind Sie bereits klinisch tätig?",
+            "isRequired": false,
+            "description": "Geben Sie eine ganze Zahl zwischen 0 und 50 ein.",
+            "type": "text",
+            "inputType": "number",
+            "min": 0,
+            "max": 50
+          }
+        ]
+      },
+      {
+        "name": "page2",
+        "elements": [
+          {
+            "name": "Q1",
+            "title": "Q1. Welche der folgenden Biologika zur Behandlung der mittelschweren bis schweren Plaque-Psoriasis sind Ihnen bekannt?",
+            "isRequired": false,
+            "type": "checkbox",
+            "choices": [
+              "SKYRIZI",
+              "TREMFYA",
+              "COSENTYX",
+              "TALTZ",
+              "Keine der oben genannten"
+            ]
+          },
+          {
+            "name": "Q2",
+            "title": "Q2. Was ist Ihr wichtigstes Behandlungsziel bei der Auswahl eines Biologikums für die Plaque-Psoriasis?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "Rasche Hautreinigung",
+              "Dauerhaftes Langzeitansprechen",
+              "Bequemes Dosierungsschema",
+              "Günstiges Sicherheitsprofil",
+              "Erschwinglichkeit für den Patienten"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "page3",
+        "elements": [
+          {
+            "name": "Q3",
+            "title": "Q3. Welches Biologikum verschreiben Sie am häufigsten bei mittelschwerer bis schwerer Plaque-Psoriasis?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "SKYRIZI",
+              "TREMFYA",
+              "COSENTYX",
+              "TALTZ",
+              "BIMZELX"
+            ]
+          },
+          {
+            "name": "Q4",
+            "title": "Q4. Wie zufrieden sind Sie mit {Q3brand} bei Ihren Patienten mit mittelschwerer bis schwerer Plaque-Psoriasis?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "Sehr zufrieden",
+              "Eher zufrieden",
+              "Weder zufrieden noch unzufrieden",
+              "Eher unzufrieden",
+              "Sehr unzufrieden"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "page4",
+        "elements": [
+          {
+            "name": "Q5",
+            "title": "Q5. Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+            "isRequired": false,
+            "type": "matrix",
+            "rows": [
+              "Biologika haben die Behandlungsergebnisse bei der Plaque-Psoriasis grundlegend verändert",
+              "Zugangsbarrieren schränken meinen Einsatz neuerer Biologika ein",
+              "Ich fühle mich sicher dabei, Biologika bei Biologika-naiven Patienten einzuleiten"
+            ],
+            "columns": [
+              "Stimme voll und ganz zu",
+              "Stimme voll und ganz zu",
+              "Weder Zustimmung noch Ablehnung",
+              "Stimme eher nicht zu",
+              "Stimme überhaupt nicht zu"
+            ]
+          },
+          {
+            "name": "Q6",
+            "title": "Q5. Wie viel Prozent Ihrer Patienten mit mittelschwerer bis schwerer Plaque-Psoriasis erhalten derzeit ein Biologikum?",
+            "isRequired": false,
+            "description": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+            "type": "text",
+            "inputType": "number",
+            "min": 0,
+            "max": 100
+          }
+        ]
+      },
+      {
+        "name": "page5",
+        "elements": [
+          {
+            "name": "Q7",
+            "title": "Q7. Was ist Ihrer Ansicht nach das grÃ¶ÃŸte einzelne Hindernis für den Zugang Ihrer Patienten zu einer Biologika-Therapie?",
+            "isRequired": false,
+            "type": "comment"
+          },
+          {
+            "name": "Q8",
+            "title": "Q8. Wie wahrscheinlich ist es, dass Sie Sie einem Kollegen, der mittelschwere bis schwere Plaque-Psoriasis behandelt, eine Biologika-Therapie empfehlen?",
+            "isRequired": false,
+            "description": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+            "type": "rating",
+            "rateMin": 0,
+            "rateMax": 10
+          }
+        ]
+      }
+    ]
+  },
+  "es": {
+    "title": "Percepciones de los dermatólogos sobre las terapias biológicas en la psoriasis en placas de moderada a grave",
+    "description": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
+    "showQuestionNumbers": "off",
+    "focusFirstQuestionAutomatic": false,
+    "completedHtml": "<h3>Gracias por completar la encuesta.</h3><p>Sus respuestas han sido registradas.</p>",
+    "pages": [
+      {
+        "name": "page1",
+        "elements": [
+          {
+            "name": "S1",
+            "title": "S1. ¿Cuál de las siguientes opciones describe mejor su función profesional principal?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "Médico en ejercico",
+              "Enfermero de práctica avanzada",
+              "Asistente médico",
+              "Farmacéutico"
+            ]
+          },
+          {
+            "name": "S2",
+            "title": "S2. ¿Cuántos años lleva usted en la práctica clínica?",
+            "isRequired": false,
+            "description": "Introduzca un número entero entre 0 y 50.",
+            "type": "text",
+            "inputType": "number",
+            "min": 0,
+            "max": 50
+          }
+        ]
+      },
+      {
+        "name": "page2",
+        "elements": [
+          {
+            "name": "Q1",
+            "title": "Q1. ¿Cuáles de los siguientes tratamientos biológicos para la psoriasis en placas de moderada a grave conoce usted?",
+            "isRequired": false,
+            "type": "checkbox",
+            "choices": [
+              "SKYRIZI",
+              "TREMFYA",
+              "COSENTYX",
+              "TALTZ",
+              "Ninguno de los anteriores"
+            ]
+          },
+          {
+            "name": "Q2",
+            "title": "Q2. ¿Cuál es su objetivo terapéutico más importante al seleccionar un biológico para la psoriasis en placas?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "Limpieza rápida de la piel",
+              "Respuesta duradera a largo plazo",
+              "Pauta de dosificación cómoda",
+              "Perfil de seguridad favorable",
+              "Asequibilidad para el paciente"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "page3",
+        "elements": [
+          {
+            "name": "Q3",
+            "title": "Q3. ¿Qué biológico prescribe usted con mayor frecuencia para la psoriasis en placas de moderada a grave?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "SKYRIZI",
+              "TREMFYA",
+              "COSENTYX",
+              "TALTZ",
+              "BIMZELX"
+            ]
+          },
+          {
+            "name": "Q4",
+            "title": "Q4. ¿Cuál es su grado de satisfacción con {Q3brand} para sus pacientes con psoriasis en placas de moderada a grave?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "Muy satisfecho",
+              "Algo satisfecho",
+              "Ni satisfecho ni insatisfecho",
+              "Algo insatisfecho",
+              "Muy insatisfecho"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "page4",
+        "elements": [
+          {
+            "name": "Q5",
+            "title": "Q5. Indique su grado de acuerdo con cada una de las siguientes afirmaciones.",
+            "isRequired": false,
+            "type": "matrix",
+            "rows": [
+              "Los biológicos han transformado los resultados en la psoriasis en placas",
+              "Las barreras de acceso limitan mi uso de los biológicos más recientes",
+              "Me siento cómodo iniciando biológicos en pacientes sin tratamiento biológico previo"
+            ],
+            "columns": [
+              "Totalmente de acuerdo",
+              "Totalmente de acuerdo",
+              "Ni de acuerdo ni en desacuerdo",
+              "Algo en desacuerdo",
+              "Totalmente en desacuerdo"
+            ]
+          },
+          {
+            "name": "Q6",
+            "title": "Q5. ¿Qué porcentaje de sus pacientes con psoriasis en placas de moderada a grave recibe actualmente un biológico?",
+            "isRequired": false,
+            "description": "Introduzca un número entero entre 0 y 100.",
+            "type": "text",
+            "inputType": "number",
+            "min": 0,
+            "max": 100
+          }
+        ]
+      },
+      {
+        "name": "page5",
+        "elements": [
+          {
+            "name": "Q7",
+            "title": "Q7. En su opiniÃ³n, ¿cuál es la mayor barrera para el acceso de sus pacientes a la terapia biológica?",
+            "isRequired": false,
+            "type": "comment"
+          },
+          {
+            "name": "Q8",
+            "title": "Q8. ¿Qué probabilidad hay de que usted usted recomiende la terapia biológica a un colega que trata la psoriasis en placas de moderada a grave?",
+            "isRequired": false,
+            "description": "0 = Nada probable, 10 = Extremadamente probable",
+            "type": "rating",
+            "rateMin": 0,
+            "rateMax": 10
+          }
+        ]
+      }
+    ]
+  },
+  "fr": {
+    "title": "Perceptions des dermatologues sur les traitements biologiques dans le psoriasis en plaques modéré à sévère",
+    "description": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+    "showQuestionNumbers": "off",
+    "focusFirstQuestionAutomatic": false,
+    "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p>",
+    "pages": [
+      {
+        "name": "page1",
+        "elements": [
+          {
+            "name": "S1",
+            "title": "S1. Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "Médecin en exercise",
+              "Infirmier en pratique avancée",
+              "Assistant médical",
+              "Pharmacien"
+            ]
+          },
+          {
+            "name": "S2",
+            "title": "S2. Depuis combien d'années exercez-vous en pratique clinique ?",
+            "isRequired": false,
+            "description": "Saisissez un nombre entier entre 0 et 50.",
+            "type": "text",
+            "inputType": "number",
+            "min": 0,
+            "max": 50
+          }
+        ]
+      },
+      {
+        "name": "page2",
+        "elements": [
+          {
+            "name": "Q1",
+            "title": "Q1. Parmi les traitements biologiques suivants du psoriasis en plaques modéré à sévère, lesquels connaissez-vous ?",
+            "isRequired": false,
+            "type": "checkbox",
+            "choices": [
+              "SKYRIZI",
+              "TREMFYA",
+              "COSENTYX",
+              "TALTZ",
+              "Aucun des traitements ci-dessus"
+            ]
+          },
+          {
+            "name": "Q2",
+            "title": "Q2. Quel est votre objectif thérapeutique le plus important lors du choix d'un traitement biologique pour le psoriasis en plaques ?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "Nettoyage cutané rapide",
+              "Réponse durable à long terme",
+              "Schéma posologique pratique",
+              "Profil de tolérance favorable",
+              "Accessibilité financière pour le patient"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "page3",
+        "elements": [
+          {
+            "name": "Q3",
+            "title": "Q3. Quel traitement biologique prescrivez-vous le plus souvent pour le psoriasis en plaques modéré à sévère ?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "SKYRIZI",
+              "TREMFYA",
+              "COSENTYX",
+              "TALTZ",
+              "BIMZELX"
+            ]
+          },
+          {
+            "name": "Q4",
+            "title": "Q4. Dans quelle mesure êtes-vous satisfait(e) de {Q3brand} pour vos patients atteints de psoriasis en plaques modéré à sévère ?",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "Très satisfait(e)",
+              "Plutôt satisfait(e)",
+              "Ni satisfait(e) ni insatisfait(e)",
+              "Plutôt insatisfait(e)",
+              "Très insatisfait(e)"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "page4",
+        "elements": [
+          {
+            "name": "Q5",
+            "title": "Q5. Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+            "isRequired": false,
+            "type": "matrix",
+            "rows": [
+              "Les traitements biologiques ont transformé les résultats thérapeutiques dans le psoriasis en plaques",
+              "Les difficultés d'accès limitent mon utilisation des traitements biologiques les plus récents",
+              "Je suis à l'aise pour instaurer un traitement biologique chez les patients naïfs de traitement biologique"
+            ],
+            "columns": [
+              "Tout à fait d'accord",
+              "Tout à fait d'accord",
+              "Ni d'accord ni pas d'accord",
+              "Plutôt pas d'accord",
+              "Pas du tout d'accord"
+            ]
+          },
+          {
+            "name": "Q6",
+            "title": "Q5. Quel pourcentage de vos patients atteints de psoriasis en plaques modéré à sévère reçoit actuellement un traitement biologique ?",
+            "isRequired": false,
+            "description": "Saisissez un nombre entier entre 0 et 100.",
+            "type": "text",
+            "inputType": "number",
+            "min": 0,
+            "max": 100
+          }
+        ]
+      },
+      {
+        "name": "page5",
+        "elements": [
+          {
+            "name": "Q7",
+            "title": "Q7. Selon vous, quel est le principal obstacle à l'accÃ¨s de vos patients aux traitements biologiques ?",
+            "isRequired": false,
+            "type": "comment"
+          },
+          {
+            "name": "Q8",
+            "title": "Q8. Quelle est la probabilité que vous vous recommandiez les traitements biologiques à un confrère traitant le psoriasis en plaques modéré à sévère ?",
+            "isRequired": false,
+            "description": "0 = Pas du tout probable, 10 = Extrêmement probable",
+            "type": "rating",
+            "rateMin": 0,
+            "rateMax": 10
+          }
+        ]
+      }
+    ]
+  },
+  "ja": {
+    "title": "中等症から重症の尋常性乾癬における生物学的製剤に対する皮膚科医の認識",
+    "description": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+    "showQuestionNumbers": "off",
+    "focusFirstQuestionAutomatic": false,
+    "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p>",
+    "pages": [
+      {
+        "name": "page1",
+        "elements": [
+          {
+            "name": "S1",
+            "title": "S1. あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "臨症医",
+              "ナースプラクティショナー",
+              "フィジシャンアシスタント",
+              "薬剤師"
+            ]
+          },
+          {
+            "name": "S2",
+            "title": "S2. 臨床に従事されて何年になりますか。",
+            "isRequired": false,
+            "description": "0から50までの整数を入力してください。",
+            "type": "text",
+            "inputType": "number",
+            "min": 0,
+            "max": 50
+          }
+        ]
+      },
+      {
+        "name": "page2",
+        "elements": [
+          {
+            "name": "Q1",
+            "title": "Q1. 中等症から重症の尋常性乾癬に対する生物学的製剤のうち、あなたがご存知のものは次のどれですか。",
+            "isRequired": false,
+            "type": "checkbox",
+            "choices": [
+              "SKYRIZI",
+              "TREMFYA",
+              "COSENTYX",
+              "TALTZ",
+              "上記のいずれでもない"
+            ]
+          },
+          {
+            "name": "Q2",
+            "title": "Q2. 尋常性乾癬に対する生物学的製剤を選択する際に、あなたにとって最も重要な治療目標は何ですか。",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "皮疹の迅速な洗浄",
+              "長期にわたる持続的な効果",
+              "利便性の高い投与スケジュール",
+              "良好な安全性プロファイル",
+              "患者さんの経済的負担の少なさ"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "page3",
+        "elements": [
+          {
+            "name": "Q3",
+            "title": "Q3. 中等症から重症の尋常性乾癬に対して、あなたが最も頻繁に処方する生物学的製剤はどれですか。",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "SKYRIZI",
+              "TREMFYA",
+              "COSENTYX",
+              "TALTZ",
+              "BIMZELX"
+            ]
+          },
+          {
+            "name": "Q4",
+            "title": "Q4. 中等症から重症の尋常性乾癬の患者さんに対する{Q3brand}について、どの程度満足していますか。",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "非常に満足している",
+              "やや満足している",
+              "どちらともいえない",
+              "やや不満である",
+              "非常に不満である"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "page4",
+        "elements": [
+          {
+            "name": "Q5",
+            "title": "Q5. 以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+            "isRequired": false,
+            "type": "matrix",
+            "rows": [
+              "生物学的製剤は尋常性乾癬の治療成績を大きく変えた",
+              "アクセス上の障壁により、より新しい生物学的製剤の使用が制限されている",
+              "生物学的製剤未使用（バイオナイーブ）の患者さんへの生物学的製剤の導入に抵抗はない"
+            ],
+            "columns": [
+              "強くそう思う",
+              "強くそう思う",
+              "どちらともいえない",
+              "あまりそう思わない",
+              "全くそう思わない"
+            ]
+          },
+          {
+            "name": "Q6",
+            "title": "Q5. あなたの中等症から重症の尋常性乾癬患者さんのうち、現在生物学的製剤による治療を受けている方の割合は何パーセントですか。",
+            "isRequired": false,
+            "description": "0から100までの整数を入力してください。",
+            "type": "text",
+            "inputType": "number",
+            "min": 0,
+            "max": 100
+          }
+        ]
+      },
+      {
+        "name": "page5",
+        "elements": [
+          {
+            "name": "Q7",
+            "title": "Q7. あなたのお考えでは、æ‚£è€…さんが生物学的製剤による治療を受ける上での最大の障壁は何ですか。",
+            "isRequired": false,
+            "type": "comment"
+          },
+          {
+            "name": "Q8",
+            "title": "Q8. 中等症から重症の尋常性乾癬を治療している同僚にに、生物学的製剤による治療をどの程度勧めたいと思いますか。",
+            "isRequired": false,
+            "description": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+            "type": "rating",
+            "rateMin": 0,
+            "rateMax": 10
+          }
+        ]
+      }
+    ]
+  },
+  "zh": {
+    "title": "皮肤科医生对中重度斑块状银屑病生物制剂治疗的认知",
+    "description": "感谢您的参与。本次调查约需10分钟。您的回答将予以严格保密，仅以汇总形式报告。",
+    "showQuestionNumbers": "off",
+    "focusFirstQuestionAutomatic": false,
+    "completedHtml": "<h3>感谢您完成本次调查。</h3><p>您的回答已被记录。</p>",
+    "pages": [
+      {
+        "name": "page1",
+        "elements": [
+          {
+            "name": "S1",
+            "title": "S1. 以下哪一项最能描述您的主要职业角色？",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "职业医师",
+              "执业护师",
+              "医师助理",
+              "药剂师"
+            ]
+          },
+          {
+            "name": "S2",
+            "title": "S2. 您从事临床工作已有多少年？",
+            "isRequired": false,
+            "description": "请输入0至50之间的整数。",
+            "type": "text",
+            "inputType": "number",
+            "min": 0,
+            "max": 50
+          }
+        ]
+      },
+      {
+        "name": "page2",
+        "elements": [
+          {
+            "name": "Q1",
+            "title": "Q1. 您知晓以下哪些用于治疗中重度斑块状银屑病的生物制剂？",
+            "isRequired": false,
+            "type": "checkbox",
+            "choices": [
+              "SKYRIZI",
+              "TREMFYA",
+              "COSENTYX",
+              "TALTZ",
+              "以上均无"
+            ]
+          },
+          {
+            "name": "Q2",
+            "title": "Q2. 在为斑块状银屑病患者选择生物制剂时，您最重要的治疗目标是什么？",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "快速清洁皮肤",
+              "持久的长期应答",
+              "便捷的给药方案",
+              "良好的安全性",
+              "患者可负担性"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "page3",
+        "elements": [
+          {
+            "name": "Q3",
+            "title": "Q3. 对于中重度斑块状银屑病，您最常处方哪种生物制剂？",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "SKYRIZI",
+              "TREMFYA",
+              "COSENTYX",
+              "TALTZ",
+              "BIMZELX"
+            ]
+          },
+          {
+            "name": "Q4",
+            "title": "Q4. 对于您的中重度斑块状银屑病患者，您对{Q3brand}的满意度如何？",
+            "isRequired": false,
+            "type": "radiogroup",
+            "choices": [
+              "非常满意",
+              "比较满意",
+              "既不满意也非不满意",
+              "不太满意",
+              "非常不满意"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "page4",
+        "elements": [
+          {
+            "name": "Q5",
+            "title": "Q5. 请评价您对以下各项陈述的同意程度。",
+            "isRequired": false,
+            "type": "matrix",
+            "rows": [
+              "生物制剂彻底改变了斑块状银屑病的治疗结局",
+              "可及性障碍限制了我对较新生物制剂的使用",
+              "对于未使用过生物制剂的患者，我能够放心地启动生物制剂治疗"
+            ],
+            "columns": [
+              "非常同意",
+              "非常同意",
+              "既不同意也不反对",
+              "不太同意",
+              "非常不同意"
+            ]
+          },
+          {
+            "name": "Q6",
+            "title": "Q5. 在您的中重度斑块状银屑病患者中，目前有多大比例正在接受生物制剂治疗（百分比）？",
+            "isRequired": false,
+            "description": "请输入0至100之间的整数。",
+            "type": "text",
+            "inputType": "number",
+            "min": 0,
+            "max": 100
+          }
+        ]
+      },
+      {
+        "name": "page5",
+        "elements": [
+          {
+            "name": "Q7",
+            "title": "Q7. 在您看来，您的æ‚£è€…获得生物制剂治疗的最大障碍是什么？",
+            "isRequired": false,
+            "type": "comment"
+          },
+          {
+            "name": "Q8",
+            "title": "Q8. 您向治疗中重度斑块状银屑病的的同事推荐生物制剂治疗的可能性有多大？",
+            "isRequired": false,
+            "description": "0 = 完全不可能，10 = 极有可能",
+            "type": "rating",
+            "rateMin": 0,
+            "rateMax": 10
+          }
+        ]
+      }
+    ]
+  }
+}
