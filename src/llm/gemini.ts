@@ -127,10 +127,10 @@ export async function geminiCompare(
   const body = {
     model,
     response_format: { type: "json_object" },
-    // Thinking ON at low effort to sharpen the diff. max_tokens is generous so
-    // reasoning never starves the JSON answer — Gemini 2.5 Flash bills thinking
-    // against the completion budget, and too small a cap returns empty content.
-    reasoning_effort: "low",
+    // Thinking ON at MEDIUM effort (tuning up from low to chase recall). max_tokens
+    // is generous so reasoning never starves the JSON answer — Gemini 2.5 Flash bills
+    // thinking against the completion budget, and too small a cap returns empty content.
+    reasoning_effort: "medium",
     max_tokens: 32000,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },

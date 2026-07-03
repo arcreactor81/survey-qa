@@ -127,10 +127,10 @@ export async function grokCompare(
   const body = {
     model,
     response_format: { type: "json_object" },
-    // Thinking ON at low effort to sharpen the diff. max_tokens is generous so
-    // reasoning never starves the JSON answer (reasoning tokens share the output
-    // budget on grok-4.3).
-    reasoning_effort: "low",
+    // Thinking ON at MEDIUM effort (tuning up from low to chase recall). max_tokens
+    // is generous so reasoning never starves the JSON answer (reasoning tokens share
+    // the output budget on grok-4.3).
+    reasoning_effort: "medium",
     max_tokens: 32000,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
