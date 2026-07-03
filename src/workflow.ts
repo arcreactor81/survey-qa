@@ -77,14 +77,15 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
 
       let workersai: { findings: Finding[]; stats: ModelRunStats } | null = null;
       if (env.AI) {
-        // Tight timeout: each page-call is capped at 60s inside workersaiCompare,
-        // and healthy calls take seconds, so 3 minutes comfortably covers a demo
-        // run while guaranteeing a total Workers AI outage lands the run in a
-        // terminal state (awaiting-claude with this leg errored) within minutes
-        // instead of hanging through a 10-minute timeout plus retry.
+        // The infinite-hang guard is the 60s-per-call race INSIDE workersaiCompare.
+        // This step timeout only needs to bound the SUM of 6 finite page-calls:
+        // worst case 6 × 60s = 360s. A healthy leg has been observed at ~200s and
+        // Workers AI can brown out to ~45s/call, so 3 minutes was too tight (it
+        // failed even healthy legs). 7 minutes covers 6 near-cap calls; a truly
+        // hung call still errors out at 60s so a total outage surfaces well under it.
         workersai = await step.do(
           "workersai-compare",
-          { retries: { limit: 1, delay: "10 seconds" }, timeout: "3 minutes" },
+          { retries: { limit: 1, delay: "10 seconds" }, timeout: "7 minutes" },
           async () => runWorkersaiCompares(env, specText, pages)
         );
       }

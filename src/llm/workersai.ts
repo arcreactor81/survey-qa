@@ -103,13 +103,14 @@ export async function workersaiCompare(
   env: Env,
   specText: string,
   page: PageCapture,
+  modelOverride?: string,
 ): Promise<{
   findings: CompareResult["findings"];
   inputTokens: number;
   outputTokens: number;
   latencyMs: number;
 }> {
-  const model = env.WORKERSAI_MODEL ?? "@cf/zai-org/glm-4.7-flash";
+  const model = modelOverride ?? env.WORKERSAI_MODEL ?? "@cf/zai-org/glm-4.7-flash";
   const started = Date.now();
   // The Ai binding's model catalog typing is a string-literal union that lags
   // the live catalog; the runtime accepts any valid model id string.
