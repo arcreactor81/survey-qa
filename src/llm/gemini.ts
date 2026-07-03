@@ -1,6 +1,7 @@
-// Gemini compare call — raw fetch to the Google AI Studio OpenAI-compatibility
-// endpoint. Cloned from deepseek.ts; thinking is DISABLED (reasoning_effort:
-// "none") so reasoning can never eat the output budget.
+// Gemini compare call — OpenAI-compat fetch, optionally routed through the
+// Cloudflare AI Gateway (google-ai-studio provider). Cloned from deepseek.ts;
+// thinking is ON at low effort with a generous max_tokens so reasoning sharpens
+// the diff without starving the JSON answer.
 
 import { buildComparePrompt } from "../prompt";
 import { COMPARE_SCHEMA, resolveSecret } from "../types";
@@ -106,20 +107,31 @@ export async function geminiCompare(
   }
 
   const model = modelOverride ?? env.GEMINI_MODEL ?? "gemini-2.5-flash";
-  const baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai";
+  // Route through the Cloudflare AI Gateway (google-ai-studio provider) when
+  // CF_AIG_ACCOUNT_ID + CF_AIG_GATEWAY_ID are set (unified logging, caching,
+  // cost tracking, retries); else hit Google's OpenAI-compat endpoint directly.
+  const usingGateway = Boolean(env.CF_AIG_ACCOUNT_ID && env.CF_AIG_GATEWAY_ID);
+  const baseUrl = usingGateway
+    ? `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_ID}/google-ai-studio/v1beta/openai`
+    : "https://generativelanguage.googleapis.com/v1beta/openai";
 
   const headers: Record<string, string> = {
     authorization: `Bearer ${apiKey}`,
     "content-type": "application/json",
   };
+  if (usingGateway) {
+    headers["cf-aig-metadata"] = JSON.stringify({ feature: "survey-qa" });
+    if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+  }
 
   const body = {
     model,
     response_format: { type: "json_object" },
-    // Disable thinking: with reasoning_effort "none" the model spends no tokens
-    // on a reasoning trace, so it can never eat the answer budget below.
-    reasoning_effort: "none",
-    max_tokens: 8000,
+    // Thinking ON at low effort to sharpen the diff. max_tokens is generous so
+    // reasoning never starves the JSON answer — Gemini 2.5 Flash bills thinking
+    // against the completion budget, and too small a cap returns empty content.
+    reasoning_effort: "low",
+    max_tokens: 32000,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: buildComparePrompt(specText, page.text, page.pageIndex) },

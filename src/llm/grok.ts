@@ -1,6 +1,7 @@
-// Grok compare call — raw fetch to the xAI OpenAI-compatible API. Cloned from
-// deepseek.ts; thinking is DISABLED (reasoning_effort: "none") so reasoning can
-// never eat the output budget. grok-4.3 accepts none/low/medium/high.
+// Grok compare call — OpenAI-compat fetch, optionally routed through the
+// Cloudflare AI Gateway (grok provider). Cloned from deepseek.ts; thinking is
+// ON at low effort with a generous max_tokens so reasoning sharpens the diff
+// without starving the JSON answer. grok-4.3 accepts none/low/medium/high.
 
 import { buildComparePrompt } from "../prompt";
 import { COMPARE_SCHEMA, resolveSecret } from "../types";
@@ -106,21 +107,31 @@ export async function grokCompare(
   }
 
   const model = modelOverride ?? env.GROK_MODEL ?? "grok-4.3";
-  const baseUrl = "https://api.x.ai/v1";
+  // Route through the Cloudflare AI Gateway (grok provider) when
+  // CF_AIG_ACCOUNT_ID + CF_AIG_GATEWAY_ID are set (unified logging, caching,
+  // cost tracking, retries); else hit the xAI OpenAI-compat endpoint directly.
+  const usingGateway = Boolean(env.CF_AIG_ACCOUNT_ID && env.CF_AIG_GATEWAY_ID);
+  const baseUrl = usingGateway
+    ? `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_ID}/grok/v1`
+    : "https://api.x.ai/v1";
 
   const headers: Record<string, string> = {
     authorization: `Bearer ${apiKey}`,
     "content-type": "application/json",
   };
+  if (usingGateway) {
+    headers["cf-aig-metadata"] = JSON.stringify({ feature: "survey-qa" });
+    if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
+  }
 
   const body = {
     model,
     response_format: { type: "json_object" },
-    // Disable reasoning: grok-4.3 accepts none/low/medium/high; "none" means the
-    // model spends no tokens on a reasoning trace, so it can never eat the answer
-    // budget below.
-    reasoning_effort: "none",
-    max_tokens: 8000,
+    // Thinking ON at low effort to sharpen the diff. max_tokens is generous so
+    // reasoning never starves the JSON answer (reasoning tokens share the output
+    // budget on grok-4.3).
+    reasoning_effort: "low",
+    max_tokens: 32000,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: buildComparePrompt(specText, page.text, page.pageIndex) },
