@@ -42,6 +42,12 @@ function buildElement(q) {
     case "text":
       return { ...base, type: "comment" };
     case "matrix":
+      if (!Array.isArray(q.rows) || !Array.isArray(q.scale)) {
+        throw new Error(
+          `matrix question ${q.id} must have array "rows" and "scale" ` +
+            `(got rows=${JSON.stringify(q.rows)}, scale=${JSON.stringify(q.scale)})`
+        );
+      }
       return { ...base, type: "matrix", rows: [...q.rows], columns: [...q.scale] };
     case "nps":
       return { ...base, type: "rating", rateMin: q.min, rateMax: q.max };
@@ -113,6 +119,19 @@ const canonFiles = readdirSync(specDir).filter((f) => /^canon\.[a-z]{2}\.json$/.
 for (const file of canonFiles) {
   const canon = JSON.parse(readFileSync(join(specDir, file), "utf8"));
   const lang = canon.lang;
+  // Cross-check the canon's declared lang against the one in its filename. The
+  // output map is keyed by canon.lang, so a copy-paste slip (e.g. canon.fr.json
+  // declaring "lang":"de") would silently misfile the French model under "de"
+  // and clobber the real German one. Fail the build loudly instead.
+  const fileLang = file.match(/^canon\.([a-z]{2})\.json$/)[1];
+  if (lang !== fileLang) {
+    throw new Error(
+      `${file}: canon.lang "${lang}" does not match filename language "${fileLang}"`
+    );
+  }
+  if (models[lang]) {
+    throw new Error(`${file}: duplicate model for language "${lang}"`);
+  }
   const pageNumbers = [...new Set(canon.questions.map((q) => q.page))].sort((a, b) => a - b);
   const model = {
     title: canon.title,

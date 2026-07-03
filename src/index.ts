@@ -2,7 +2,7 @@ import { buildComparePrompt } from "./prompt";
 import { verifyFindings, buildScorecard } from "./verify";
 import { buildHtmlReport } from "./report";
 import { processingPage } from "./processing";
-import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
+import { getRun, putRun, updateRun, shotKey, pagePdfKey, docxKey } from "./store";
 import { workersaiCompare } from "./llm/workersai";
 import { isBlockedHostname } from "./net-guard";
 import { MANIFESTS, SUPPORTED_LANGS } from "./manifests";
@@ -37,8 +37,14 @@ const MAX_TEXT_FIELD_CHARS = 4000;
 const RUN_RATE = { windowMs: 60_000, max: 10 };
 const HEALTH_RATE = { windowMs: 60_000, max: 6 };
 
-// Per-isolate, KV-less counters. Reset on isolate recycle — fine, the goal is
-// stopping denial-of-wallet loops, not perfect global accounting.
+// Per-isolate, KV-less counters. KNOWN LIMITATION: this Map lives in a single
+// Worker isolate's memory, so the limit is NOT global — concurrent requests
+// routed to different isolates each get their own budget, and counters reset
+// on isolate recycle. That is deliberate for the demo: the goal is stopping a
+// runaway denial-of-wallet loop from one client, not perfect global accounting.
+// A true cross-isolate global limit needs shared state — a KV counter, a
+// Durable Object, or the Workers Rate Limiting binding — which is out of scope
+// here to keep the demo dependency-free.
 const rateHits = new Map<string, number[]>();
 
 function allowRequest(key: string, limit: { windowMs: number; max: number }): boolean {
@@ -93,6 +99,16 @@ function resolveSurveyUrl(
     return { ok: false, error: "surveyUrl host is not allowed (private, loopback, and link-local addresses are blocked)" };
   }
   return { ok: true, url: raw };
+}
+
+/** Escape a string for safe interpolation into HTML text/attribute context. */
+function htmlEscape(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /** Strip stack frames from a stored error: clients get the message line only. */
@@ -219,10 +235,13 @@ const boundedText = (v: unknown, max = MAX_TEXT_FIELD_CHARS): string =>
   typeof v === "string" ? v.slice(0, max) : "";
 
 async function handleSubmitFindings(req: Request, env: Env, runId: string): Promise<Response> {
-  const envelope = await getRun(env, runId);
-  if (!envelope) return json({ error: "run not found" }, 404);
-  if (envelope.status === "processing") return json({ error: "run still processing" }, 409);
-  if (envelope.status === "failed") {
+  // Fast-path status check for a clean 404/409 before parsing the body. The
+  // authoritative, race-safe check is repeated inside the updateRun mutator
+  // below (the run could change between this read and the write).
+  const pre = await getRun(env, runId);
+  if (!pre) return json({ error: "run not found" }, 404);
+  if (pre.status === "processing") return json({ error: "run still processing" }, 409);
+  if (pre.status === "failed") {
     return json({ error: "run failed before analysis completed; findings are not accepted" }, 409);
   }
 
@@ -238,54 +257,76 @@ async function handleSubmitFindings(req: Request, env: Env, runId: string): Prom
   if (body.findings.length > MAX_FINDINGS_PER_SUBMISSION) {
     return json({ error: `too many findings (max ${MAX_FINDINGS_PER_SUBMISSION})` }, 400);
   }
+  const rawFindings = body.findings;
+  const rawStats = body.stats;
+  const claudeModelId = String(rawStats?.modelId ?? body.modelId ?? "claude-code (subscription)").slice(0, 200);
 
-  const report = envelope.report;
-  // Replace any previous claude results (idempotent re-runs).
-  report.findings = report.findings.filter((f) => f.model !== "claude");
-  report.stats = report.stats.filter((s) => s.model !== "claude");
+  // Apply the submission under optimistic concurrency so a finalize retry (or a
+  // duplicate runner POST) racing this write cannot silently drop either side's
+  // update. The mutator re-checks status against the freshly-read envelope.
+  let conflict: string | null = null;
+  let accepted = 0;
+  let claudeVerified = 0;
+  const result = await updateRun(env, runId, (envelope) => {
+    if (envelope.status === "processing") {
+      conflict = "run still processing";
+      return false;
+    }
+    if (envelope.status === "failed") {
+      conflict = "run failed before analysis completed; findings are not accepted";
+      return false;
+    }
 
-  const maxPageIndex = Math.max(report.pages.length - 1, 0);
-  const incoming: Finding[] = body.findings.map((f) => {
-    const rawPage = Number(f.pageIndex ?? 0);
-    return {
-      model: "claude" as const,
-      pageIndex: Number.isInteger(rawPage) ? Math.min(Math.max(rawPage, 0), maxPageIndex) : 0,
-      questionId: typeof f.questionId === "string" ? f.questionId.slice(0, 200) : null,
-      category:
-        typeof f.category === "string" && VALID_CATEGORIES.has(f.category)
-          ? (f.category as Finding["category"])
-          : "other",
-      severity:
-        typeof f.severity === "string" && VALID_SEVERITIES.has(f.severity)
-          ? (f.severity as Finding["severity"])
-          : "medium",
-      description: boundedText(f.description),
-      specQuote: boundedText(f.specQuote),
-      siteQuote: boundedText(f.siteQuote),
-      quoteVerified: false,
-    };
+    const report = envelope.report;
+    // Replace any previous claude results (idempotent re-runs).
+    report.findings = report.findings.filter((f) => f.model !== "claude");
+    report.stats = report.stats.filter((s) => s.model !== "claude");
+
+    const maxPageIndex = Math.max(report.pages.length - 1, 0);
+    const incoming: Finding[] = rawFindings.map((f) => {
+      const rawPage = Number(f.pageIndex ?? 0);
+      return {
+        model: "claude" as const,
+        pageIndex: Number.isInteger(rawPage) ? Math.min(Math.max(rawPage, 0), maxPageIndex) : 0,
+        questionId: typeof f.questionId === "string" ? f.questionId.slice(0, 200) : null,
+        category:
+          typeof f.category === "string" && VALID_CATEGORIES.has(f.category)
+            ? (f.category as Finding["category"])
+            : "other",
+        severity:
+          typeof f.severity === "string" && VALID_SEVERITIES.has(f.severity)
+            ? (f.severity as Finding["severity"])
+            : "medium",
+        description: boundedText(f.description),
+        specQuote: boundedText(f.specQuote),
+        siteQuote: boundedText(f.siteQuote),
+        quoteVerified: false,
+      };
+    });
+
+    const verified = verifyFindings(incoming, report.specText, report.pages);
+    report.findings.push(...verified);
+    report.stats.push({
+      model: "claude",
+      modelId: claudeModelId,
+      calls: finiteNumber(rawStats?.calls),
+      inputTokens: finiteNumber(rawStats?.inputTokens),
+      outputTokens: finiteNumber(rawStats?.outputTokens),
+      costUsd: finiteNumber(rawStats?.costUsd),
+      latencyMsTotal: finiteNumber(rawStats?.latencyMsTotal),
+      errors: finiteNumber(rawStats?.errors),
+    });
+    report.scorecard = envelope.seeded
+      ? buildScorecard(report.findings, MANIFESTS[envelope.lang ?? "en"] ?? MANIFESTS.en)
+      : null;
+    envelope.status = "complete";
+    accepted = verified.length;
+    claudeVerified = verified.filter((f) => f.quoteVerified).length;
   });
 
-  const verified = verifyFindings(incoming, report.specText, report.pages);
-  report.findings.push(...verified);
-  report.stats.push({
-    model: "claude",
-    modelId: String(body.stats?.modelId ?? body.modelId ?? "claude-code (subscription)").slice(0, 200),
-    calls: finiteNumber(body.stats?.calls),
-    inputTokens: finiteNumber(body.stats?.inputTokens),
-    outputTokens: finiteNumber(body.stats?.outputTokens),
-    costUsd: finiteNumber(body.stats?.costUsd),
-    latencyMsTotal: finiteNumber(body.stats?.latencyMsTotal),
-    errors: finiteNumber(body.stats?.errors),
-  });
-  report.scorecard = envelope.seeded
-    ? buildScorecard(report.findings, MANIFESTS[envelope.lang ?? "en"] ?? MANIFESTS.en)
-    : null;
-  envelope.status = "complete";
-  await putRun(env, runId, envelope);
-
-  const claudeVerified = verified.filter((f) => f.quoteVerified).length;
-  return json({ ok: true, accepted: verified.length, verified: claudeVerified, status: envelope.status });
+  if (result === null) return json({ error: "run not found" }, 404);
+  if (conflict) return json({ error: conflict }, 409);
+  return json({ ok: true, accepted, verified: claudeVerified, status: "complete" });
 }
 
 export default {
@@ -339,8 +380,10 @@ export default {
         if (envelope.status === "processing") return html(processingPage(m[1]));
         if (envelope.status === "failed") {
           console.error(`run ${m[1]} failed:`, envelope.error);
-          const detail = (firstLine(envelope.error) ?? "unknown").replace(/</g, "&lt;");
-          return html(`<h1>Run ${m[1]} failed</h1><pre>${detail}</pre>`, 500);
+          // Full HTML-escape: the error text can contain '>', '&', quotes, and
+          // upstream snippets — escaping only '<' would leave those unescaped.
+          const detail = htmlEscape(firstLine(envelope.error) ?? "unknown");
+          return html(`<h1>Run ${htmlEscape(m[1])} failed</h1><pre>${detail}</pre>`, 500);
         }
         return html(buildHtmlReport(envelope.report));
       }

@@ -22,6 +22,15 @@ const VALID_SEVERITIES = new Set<Finding["severity"]>(["high", "medium", "low"])
  * single hung page-call reject fast; the per-page try/catch in
  * runWorkersaiCompares records it in stats.errors and the leg moves on.
  * Mirrors the 60s REQUEST_TIMEOUT_MS on the DeepSeek/Claude legs.
+ *
+ * KNOWN RESIDUAL (not mitigable here): the timer only unblocks the AWAIT — it
+ * cannot cancel the underlying ai.run, because the Workers AI binding exposes
+ * no abort/cancellation handle. After a timeout the real call keeps running to
+ * completion in the background and is still billed (a "zombie" call); we merely
+ * stop waiting on it. `runWithTimeout` attaches a no-op .catch so its eventual
+ * (post-race) settlement does not raise an unhandled rejection. There is no
+ * cheap fix until the binding gains an AbortSignal parameter; the only guard is
+ * choosing a cheap default model to bound the wasted spend.
  */
 const AI_RUN_TIMEOUT_MS = 60_000;
 
@@ -135,7 +144,7 @@ export async function workersaiCompare(
         response?: string;
         // OpenAI chat.completion shape (returned by glm-4.7-flash and other
         // OpenAI-compatible catalog models)
-        choices?: Array<{ message?: { content?: string } }>;
+        choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
         usage?: { prompt_tokens?: number; completion_tokens?: number };
       };
   const latencyMs = Date.now() - started;
@@ -150,6 +159,21 @@ export async function workersaiCompare(
   if (!text.trim()) {
     throw new Error(
       `Workers AI returned empty response; raw shape: ${JSON.stringify(res).slice(0, 800)}`
+    );
+  }
+
+  // Truncation guard: with max_tokens=4096 a long page can hit the cap, leaving
+  // the JSON body cut off. parseLenient's brace-recovery can then silently drop
+  // the trailing (unclosed) findings, understating this leg's recall with no
+  // error. Detect the provider's length/truncation signal and surface it, so a
+  // silently-partial result is at least visible in logs rather than scored as a
+  // clean, complete pass.
+  const finishReason =
+    typeof res === "object" ? res.choices?.[0]?.finish_reason : undefined;
+  if (finishReason === "length" || finishReason === "max_tokens") {
+    console.warn(
+      `workersaiCompare: response for page ${page.pageIndex} was truncated ` +
+        `(finish_reason=${finishReason}, max_tokens=4096); findings may be incomplete.`,
     );
   }
   const findings = sanitize(parseLenient(text));

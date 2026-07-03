@@ -108,8 +108,8 @@ export function processingPage(runId: string): string {
     --band-link: #7CE8C9;
     --band-soft: #B4C8C3;
     --tint: #E5EEEC;
-    --stage-bg: #FDFCF8;
-    --dot-idle: #CFC8BA;
+    --stage-bg: #F7FAF9;
+    --dot-idle: #C5D3D0;
     --done-border: #B2DAC3;
     --done-bg: #EFF8F2;
     --focus-ring: rgba(9, 102, 88, 0.45);
@@ -139,10 +139,13 @@ export function processingPage(runId: string): string {
       --band-link: #7CE8C9;
       --band-soft: #B4C8C3;
       --tint: #122023;
-      --stage-bg: #14213A;
-      --dot-idle: #33445F;
+      --stage-bg: #14262A;
+      --dot-idle: #33484D;
       --done-border: #2C5B41;
-      --done-bg: rgba(116, 211, 137, 0.1);
+      /* Opaque equivalent of rgba(116,211,137,0.1) over the card (#101E21).
+         Must stay opaque: done stages sit on top of the .pipeline::before
+         connector line — a translucent fill lets it ghost through. */
+      --done-bg: #1A302B;
       --focus-ring: rgba(53, 211, 172, 0.55);
       --focus-soft: rgba(53, 211, 172, 0.2);
       --pulse: rgba(53, 211, 172, 0.38);
@@ -500,9 +503,24 @@ export function processingPage(runId: string): string {
     REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   } catch (e) { /* no matchMedia — assume motion is fine */ }
 
+  /* Elapsed clock baseline. Date.now() is only a first guess: the status
+     API reports the run's real startedAt, which poll() adopts as soon as it
+     arrives — so the clock and the estimated pipeline stage survive page
+     refreshes instead of resetting to zero on every load. */
   var startedAt = Date.now();
+  var startedAtLocked = false;
   var curStage = -1;
   var squashed = 0;
+
+  function adoptStartedAt(iso) {
+    if (startedAtLocked || typeof iso !== "string") return;
+    var t = Date.parse(iso);
+    if (!isNaN(t) && t <= Date.now()) {
+      startedAt = t;
+      startedAtLocked = true;
+      tick(); /* re-render the clock and stage against the real baseline */
+    }
+  }
 
   function elapsedSec() { return Math.max(0, Math.floor((Date.now() - startedAt) / 1000)); }
   function fmtElapsed(s) {
@@ -556,11 +574,14 @@ export function processingPage(runId: string): string {
     fetch("/api/runs/" + RUN_ID)
       .then(function (res) { return res.json(); })
       .then(function (data) {
-        if (data && data.status && data.status !== "processing") location.reload();
+        if (!data) return;
+        adoptStartedAt(data.startedAt);
+        if (data.status && data.status !== "processing") location.reload();
       })
       .catch(function () { /* transient network error — keep polling */ });
   }
   setInterval(poll, 5000);
+  poll(); /* immediately, so the elapsed clock adopts the run's real startedAt */
 
   /* ----- bug squash mini-game ----- */
 

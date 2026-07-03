@@ -9,7 +9,7 @@ import {
 } from "./compare";
 import { claudeCompare } from "./llm/claude";
 import { verifyFindings, buildScorecard } from "./verify";
-import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
+import { updateRun, shotKey, pagePdfKey, docxKey } from "./store";
 import { MANIFESTS } from "./manifests";
 import { resolveSecret } from "./types";
 import type { Env, Finding, ModelRunStats, PageCapture } from "./types";
@@ -84,8 +84,20 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       const legOutages: string[] = [];
       let enabledLegs = 0;
 
+      // Resolve which legs are enabled ONCE, inside a step, so the decision is
+      // memoized in workflow state. resolveSecret can read an async Secrets
+      // Store binding; if that value (or env.AI's presence) changed between the
+      // original run and a replay, evaluating the gates inline would make leg
+      // selection non-deterministic across replays (a leg could appear/vanish
+      // mid-run). Pinning the booleans here keeps every replay consistent.
+      const legGates = await step.do("resolve-leg-gates", async () => ({
+        deepseek: (await resolveSecret(env.DEEPSEEK_API_KEY)) !== undefined,
+        workersai: env.AI !== undefined,
+        claude: (await resolveSecret(env.ANTHROPIC_API_KEY)) !== undefined,
+      }));
+
       let deepseek: { findings: Finding[]; stats: ModelRunStats } | null = null;
-      if (await resolveSecret(env.DEEPSEEK_API_KEY)) {
+      if (legGates.deepseek) {
         enabledLegs++;
         try {
           deepseek = await step.do(
@@ -102,7 +114,7 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       }
 
       let workersai: { findings: Finding[]; stats: ModelRunStats } | null = null;
-      if (env.AI) {
+      if (legGates.workersai) {
         enabledLegs++;
         try {
           workersai = await step.do(
@@ -122,7 +134,7 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       // Same gate as DEEPSEEK: resolveSecret trims whitespace and treats the
       // "PLACEHOLDER" seed as unset, so a seeded-but-empty key correctly falls
       // through to the external runner path instead of erroring on every page.
-      if (await resolveSecret(env.ANTHROPIC_API_KEY)) {
+      if (legGates.claude) {
         enabledLegs++;
         try {
           claude = await step.do(
@@ -147,48 +159,67 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         );
       }
 
-      await step.do("finalize", async () => {
-        const envelope = await getRun(env, runId);
-        if (!envelope) throw new Error(`run ${runId} missing during finalize`);
-        // Idempotency guard: workflow steps are at-least-once. If a finalize
-        // re-run finds the envelope already terminal (e.g. the external Claude
-        // runner submitted findings and set "complete" in the meantime), do not
-        // clobber those findings/stats or downgrade the status.
-        if (envelope.status === "complete") return;
-        const report = envelope.report;
-        report.specText = specText;
-        report.pages = pages;
-        const all: Finding[] = [
-          ...(deepseek?.findings ?? []),
-          ...(workersai?.findings ?? []),
-          ...(claude?.findings ?? []),
-        ];
-        report.findings = verifyFindings(all, specText, pages);
-        report.stats = [deepseek?.stats, workersai?.stats, claude?.stats].filter(
-          Boolean
-        ) as ModelRunStats[];
-        report.scorecard = seeded
-          ? buildScorecard(report.findings, MANIFESTS[lang ?? "en"] ?? MANIFESTS.en)
-          : null;
-        report.finishedAt = new Date().toISOString();
-        report.docxName = docxName;
-        // Surface any degraded legs loudly on the envelope without failing the
-        // run: the report is still valid, just missing that leg's pillar.
-        envelope.error =
-          legOutages.length > 0
-            ? `degraded run — ${legOutages.length} leg(s) unavailable: ${legOutages.join("; ")}`
-            : undefined;
-        envelope.status = claude ? "complete" : "awaiting-claude";
-        await putRun(env, runId, envelope);
+      const finalized = await step.do("finalize", async () => {
+        // updateRun re-reads under an etag guard and retries on a losing race,
+        // so a finalize retry can never clobber a concurrent runner POST that
+        // completed the run. The mutator's "already terminal" check makes the
+        // whole read-modify-write idempotent: at-least-once step semantics mean
+        // finalize may re-run after the external Claude runner has already set
+        // "complete" and pushed its findings/stats — in that case we must NOT
+        // overwrite them or downgrade the status.
+        return updateRun(env, runId, (envelope) => {
+          if (envelope.status === "complete") return false; // don't clobber a completed run
+          const report = envelope.report;
+          report.specText = specText;
+          report.pages = pages;
+          const all: Finding[] = [
+            ...(deepseek?.findings ?? []),
+            ...(workersai?.findings ?? []),
+            ...(claude?.findings ?? []),
+          ];
+          report.findings = verifyFindings(all, specText, pages);
+          report.stats = [deepseek?.stats, workersai?.stats, claude?.stats].filter(
+            Boolean
+          ) as ModelRunStats[];
+          report.scorecard = seeded
+            ? buildScorecard(report.findings, MANIFESTS[lang ?? "en"] ?? MANIFESTS.en)
+            : null;
+          report.finishedAt = new Date().toISOString();
+          report.docxName = docxName;
+          // Surface any degraded legs loudly on the envelope without failing the
+          // run: the report is still valid, just missing that leg's pillar.
+          envelope.error =
+            legOutages.length > 0
+              ? `degraded run — ${legOutages.length} leg(s) unavailable: ${legOutages.join("; ")}`
+              : undefined;
+          envelope.status = claude ? "complete" : "awaiting-claude";
+        });
       });
+      if (finalized === null) throw new Error(`run ${runId} missing during finalize`);
     } catch (err) {
-      // Terminal failure: surface it on the run record instead of leaving "processing".
-      const envelope = await getRun(env, runId);
-      if (envelope) {
-        envelope.status = "failed";
-        envelope.error = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
-        envelope.report.finishedAt = new Date().toISOString();
-        await putRun(env, runId, envelope);
+      // Terminal failure: surface it on the run record instead of leaving the
+      // run stranded in "processing". This persistence runs OUTSIDE the failing
+      // step, so a transient R2 error here would otherwise strand the run — do
+      // it in its own retrying step, and never let a persistence failure mask
+      // the original error (we always re-throw `err`). The status guard means a
+      // run the runner already completed is not downgraded to "failed".
+      const detail =
+        err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
+      try {
+        await step.do(
+          "mark-failed",
+          { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
+          async () => {
+            await updateRun(env, runId, (envelope) => {
+              if (envelope.status === "complete") return false;
+              envelope.status = "failed";
+              envelope.error = detail;
+              envelope.report.finishedAt = new Date().toISOString();
+            });
+          }
+        );
+      } catch (persistErr) {
+        console.error(`failed to persist terminal failure for run ${runId}:`, persistErr);
       }
       throw err;
     }

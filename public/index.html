@@ -101,10 +101,10 @@
       --ok-bg: rgba(116, 211, 137, 0.14);
       --bad-bg: rgba(249, 133, 118, 0.16);
       --done-border: #2C5B41;
-      /* Opaque equivalent of rgba(76,175,125,0.1) over the card (#182640).
+      /* Opaque equivalent of rgba(116,211,137,0.1) over the card (#101E21).
          Must stay opaque: done stages sit on top of the .pipeline::before
          connector line — a translucent fill lets it ghost through the card. */
-      --done-bg: rgba(116, 211, 137, 0.1);
+      --done-bg: #1A302B;
       --err-bg: rgba(249, 133, 118, 0.12);
       --err-border: rgba(249, 133, 118, 0.4);
       --err-text: #FFAFA4;
@@ -853,7 +853,7 @@
 
           <div class="field field-full submit-row">
             <button type="submit" id="runBtn" class="btn">Run QA check</button>
-            <span class="hint">A run takes roughly 1&ndash;3 minutes: browser walk, two automatic model comparisons (DeepSeek + Workers AI), quote verification.</span>
+            <span class="hint">A run takes roughly 2&ndash;3 minutes: browser walk (the long stretch, ~90&nbsp;s), two automatic model comparisons (DeepSeek + Workers AI), quote verification.</span>
           </div>
         </div>
       </form>
@@ -1269,19 +1269,52 @@
     }
   }
 
+  /* Give up after ~2 minutes of consecutive bad polls instead of spinning forever. */
+  var MAX_FAIL_STREAK = 24;
+  function bumpFailStreak(detail) {
+    failStreak++;
+    if (failStreak >= MAX_FAIL_STREAK) {
+      setState("failed", "Status polling gave up after " + failStreak +
+        " consecutive failed checks. Last error: " + detail);
+    }
+  }
+
   function poll() {
-    fetch("/api/runs/" + encodeURIComponent(runId))
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
-        failStreak = 0;
-        var st = data && data.status;
-        if (st === "processing") setState("processing");
-        else if (st === "awaiting-claude") setState("awaiting");
-        else if (st === "complete") setState("complete");
-        else if (st === "failed") setState("failed", data && data.error);
+    /* Guard against a stale in-flight response hijacking a newer run's UI:
+       capture the run id this poll was issued for and drop the response if
+       a different run (or none) owns the page by the time it arrives. */
+    var pollRunId = runId;
+    fetch("/api/runs/" + encodeURIComponent(pollRunId))
+      .then(function (res) {
+        if (res.status === 404) {
+          var e = new Error("run not found");
+          e.notFound = true;
+          throw e;
+        }
+        if (!res.ok) throw new Error("status endpoint returned HTTP " + res.status);
+        return res.json();
       })
-      .catch(function () {
-        failStreak++;
+      .then(function (data) {
+        if (pollRunId !== runId) return; /* stale response from a previous run */
+        var st = data && data.status;
+        if (st === "processing") { failStreak = 0; setState("processing"); }
+        else if (st === "awaiting-claude") { failStreak = 0; setState("awaiting"); }
+        else if (st === "complete") { failStreak = 0; setState("complete"); }
+        else if (st === "failed") { failStreak = 0; setState("failed", data && data.error); }
+        else {
+          /* Unknown status value — count it like a failed poll so an API
+             shape change can't leave the spinner running forever. */
+          bumpFailStreak('unknown status "' + String(st) + '"');
+        }
+      })
+      .catch(function (err) {
+        if (pollRunId !== runId) return; /* stale response from a previous run */
+        if (err && err.notFound) {
+          setState("failed", "The server no longer knows run " + pollRunId +
+            " (HTTP 404) — it may have expired or been evicted. Start a new run.");
+          return;
+        }
+        bumpFailStreak(err && err.message ? err.message : String(err));
       });
   }
 
@@ -1341,11 +1374,60 @@
     updateTrackers();
   }
 
+  /* While the takeover is open the page behind it must be inert: not
+     focusable, not clickable, hidden from assistive tech. The theme toggle
+     stays live (it renders above the overlay), so it joins the focus trap. */
+  var lastFocusBeforeOverlay = null;
+
+  function setBackgroundInert(on) {
+    var els = document.querySelectorAll("header.band, main, footer");
+    for (var i = 0; i < els.length; i++) {
+      if (on) {
+        els[i].setAttribute("inert", "");
+        els[i].setAttribute("aria-hidden", "true"); /* fallback where inert is unsupported */
+      } else {
+        els[i].removeAttribute("inert");
+        els[i].removeAttribute("aria-hidden");
+      }
+    }
+  }
+
+  function overlayFocusables() {
+    var list = [];
+    if (themeToggle) list.push(themeToggle); /* fixed above the overlay, still operable */
+    if (!overlay) return list;
+    var nodes = overlay.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (el.disabled) continue;
+      if (!el.getClientRects().length) continue; /* hidden or display:none */
+      list.push(el);
+    }
+    return list;
+  }
+
+  /* Keep Tab cycling inside the dialog (plus the theme toggle above it). */
+  function trapFocus(ev) {
+    var list = overlayFocusables();
+    if (list.length === 0) return;
+    var idx = list.indexOf(document.activeElement);
+    if (ev.shiftKey) {
+      if (idx <= 0) { ev.preventDefault(); list[list.length - 1].focus(); }
+    } else if (idx === -1 || idx === list.length - 1) {
+      ev.preventDefault();
+      list[0].focus();
+    }
+  }
+
   function openOverlay() {
     if (overlayOpen || !overlay) return;
     overlayOpen = true;
+    lastFocusBeforeOverlay = document.activeElement;
     overlay.hidden = false;
     document.body.classList.add("tk-lock");
+    setBackgroundInert(true);
     syncOverlay();
     scheduleBug();
     if (minimizeBtn) minimizeBtn.focus();
@@ -1356,6 +1438,7 @@
     overlayOpen = false;
     overlay.hidden = true;
     document.body.classList.remove("tk-lock");
+    setBackgroundInert(false);
     if (overlayAnimTimer) { clearTimeout(overlayAnimTimer); overlayAnimTimer = null; }
     if (ovBugLayer) {
       var bugs = ovBugLayer.querySelectorAll(".bug");
@@ -1363,13 +1446,21 @@
         if (bugs[i].parentNode) bugs[i].parentNode.removeChild(bugs[i]);
       }
     }
-    if (expandBtn && !expandBtn.hidden) expandBtn.focus();
+    if (expandBtn && !expandBtn.hidden) {
+      expandBtn.focus();
+    } else if (lastFocusBeforeOverlay && typeof lastFocusBeforeOverlay.focus === "function" &&
+               document.contains(lastFocusBeforeOverlay)) {
+      lastFocusBeforeOverlay.focus();
+    }
+    lastFocusBeforeOverlay = null;
   }
 
   if (expandBtn) expandBtn.addEventListener("click", openOverlay);
   if (minimizeBtn) minimizeBtn.addEventListener("click", closeOverlay);
   document.addEventListener("keydown", function (ev) {
-    if (overlayOpen && (ev.key === "Escape" || ev.key === "Esc")) closeOverlay();
+    if (!overlayOpen) return;
+    if (ev.key === "Escape" || ev.key === "Esc") { closeOverlay(); return; }
+    if (ev.key === "Tab") trapFocus(ev);
   });
 
   /* ----- bug squash mini-game (runs while the overlay is open) -----

@@ -46,6 +46,15 @@ declare const document: {
   querySelectorAll(selector: string): ArrayLike<InPageElement>;
 };
 
+// Minimal `window` surface for the socket-egress guard (below). Only the
+// constructors we neuter are declared; typed `unknown` so we can overwrite them.
+declare const window: {
+  WebSocket?: unknown;
+  EventSource?: unknown;
+  RTCPeerConnection?: unknown;
+  webkitRTCPeerConnection?: unknown;
+};
+
 /**
  * Walk a SurveyJS survey at `url`: capture text + screenshot of every page,
  * answer questions generically, and advance until the completion page, a
@@ -149,31 +158,34 @@ export async function walkSurvey(
       //    text mutate innerText without a page change, and two distinct
       //    pages can render identical text.
       await sleep(POST_CLICK_MS);
-      let afterText = await captureText(page);
-      let afterSignature = await capturePageSignature(page);
-      let completed = await isCompletionPage(page);
-      let advanced = didAdvance(signature, afterSignature, text, afterText);
+      let { afterText, afterSignature, completed, contextLost } = await capturePostClickState(page);
+      // A destroyed execution context means the click caused a real navigation,
+      // which is itself an advance.
+      let advanced = contextLost || didAdvance(signature, afterSignature, text, afterText);
 
       // One short retry in case the transition is slow.
-      if (!advanced && !completed) {
+      if (!advanced && !completed && !contextLost) {
         await sleep(POST_CLICK_RETRY_MS);
-        afterText = await captureText(page);
-        afterSignature = await capturePageSignature(page);
-        completed = await isCompletionPage(page);
-        advanced = didAdvance(signature, afterSignature, text, afterText);
+        ({ afterText, afterSignature, completed, contextLost } = await capturePostClickState(page));
+        advanced = contextLost || didAdvance(signature, afterSignature, text, afterText);
       }
 
       if (completed) {
         // The click advanced us onto the completion page: record the page we
-        // just answered, then the completion page itself, and stop.
+        // just answered (its screenshot/PDF were captured at the top of this
+        // iteration), then the completion page itself, and stop.
         captures.push({ pageIndex: captures.length, text, navOk: true, notes: joinNotes(notes) });
+        // Capture the completion page's artifacts under their OWN notes array so
+        // a capturePdf failure note here is retained — the answered page's notes
+        // were already serialized just above.
+        const completionNotes: string[] = ["Completion page."];
         screenshots.push(await captureScreenshot(page));
-        pdfs.push(await capturePdf(page, notes));
+        pdfs.push(await capturePdf(page, completionNotes));
         captures.push({
           pageIndex: captures.length,
           text: afterText,
           navOk: true,
-          notes: "Completion page.",
+          notes: joinNotes(completionNotes),
         });
         loopExhausted = false;
         break;
@@ -231,6 +243,16 @@ export async function walkSurvey(
  * page hangs, so the handler always resolves each request and validation
  * failures fail closed (abort). If interception itself cannot be enabled we
  * throw: the walk must never proceed unprotected.
+ *
+ * LIMITATION: CDP request interception (Fetch domain) covers HTTP(S) requests
+ * — including fetch/XHR and EventSource, which are plain HTTP GETs — but does
+ * NOT intercept WebSocket handshakes or WebRTC (RTCPeerConnection) data
+ * channels, so those remain an out-of-band egress path that isBlockedUrl can
+ * never see. As a defense-in-depth mitigation we also neuter those page-side
+ * constructors before any survey script runs (installSocketEgressGuard). The
+ * walker only needs to render and read the survey, never a live socket, so
+ * this is safe for the same-origin demo (which uses none of them). It is
+ * best-effort: a real fix would require a network-layer egress allowlist.
  */
 async function enableSsrfGuard(page: Page): Promise<void> {
   try {
@@ -238,6 +260,7 @@ async function enableSsrfGuard(page: Page): Promise<void> {
   } catch (err) {
     throw new Error(`Could not enable request interception (SSRF guard): ${describeError(err)}`);
   }
+  await installSocketEgressGuard(page);
   page.on("request", (request) => {
     let blocked = true; // fail closed if validation itself throws
     try {
@@ -254,6 +277,28 @@ async function enableSsrfGuard(page: Page): Promise<void> {
       console.error(`SSRF guard could not settle request ${request.url()}: ${describeError(err)}`);
     });
   });
+}
+
+/**
+ * Install a page-context guard that disables the egress APIs the CDP request
+ * interceptor cannot see (WebSocket / EventSource / WebRTC). Runs on every new
+ * document via evaluateOnNewDocument so it is in place before any survey script
+ * executes. Non-fatal: unlike request interception this is defense-in-depth, so
+ * if the API is unavailable we log and continue rather than aborting the walk.
+ */
+async function installSocketEgressGuard(page: Page): Promise<void> {
+  const initCapable = page as unknown as {
+    evaluateOnNewDocument?: (fn: () => void) => Promise<unknown>;
+  };
+  if (typeof initCapable.evaluateOnNewDocument !== "function") {
+    console.warn("Socket-egress guard unavailable: evaluateOnNewDocument not supported.");
+    return;
+  }
+  try {
+    await initCapable.evaluateOnNewDocument(blockSocketEgressInPage);
+  } catch (err) {
+    console.warn(`Could not install socket-egress guard: ${describeError(err)}`);
+  }
 }
 
 async function captureText(page: Page): Promise<string> {
@@ -310,6 +355,43 @@ function didAdvance(
   return hashText(afterText) !== hashText(beforeText);
 }
 
+/**
+ * True when an error is the puppeteer/CDP "execution context was destroyed"
+ * family, thrown when a click triggers a real (full-document) navigation and
+ * tears down the frame's JS context mid-evaluate. That is itself proof the page
+ * changed, so callers treat it as a successful advance rather than a failure.
+ */
+function isExecutionContextDestroyed(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /execution context (?:was destroyed|is not available)|context destroyed|detached frame|target closed|session closed|frame (?:was )?detached|navigating/i.test(
+    msg,
+  );
+}
+
+/**
+ * Capture the post-click page state (text, structural signature, completion
+ * flag). A real navigation can destroy the execution context between these
+ * evaluate calls; rather than let that reject out of walkSurvey, we treat a
+ * context-destroyed error as a genuine page change (contextLost:true) so the
+ * loop advances to re-capture the new document on its next iteration. Any other
+ * error is rethrown (a real fault should still surface).
+ */
+async function capturePostClickState(
+  page: Page,
+): Promise<{ afterText: string; afterSignature: string; completed: boolean; contextLost: boolean }> {
+  try {
+    const afterText = await captureText(page);
+    const afterSignature = await capturePageSignature(page);
+    const completed = await isCompletionPage(page);
+    return { afterText, afterSignature, completed, contextLost: false };
+  } catch (err) {
+    if (isExecutionContextDestroyed(err)) {
+      return { afterText: "", afterSignature: "", completed: false, contextLost: true };
+    }
+    throw err;
+  }
+}
+
 function joinNotes(notes: string[]): string | undefined {
   return notes.length > 0 ? notes.join(" | ") : undefined;
 }
@@ -351,7 +433,10 @@ function detectCompletionInPage(): boolean {
     return true;
   }
   const text = (document.body.innerText || "").toLowerCase();
-  if (!text.includes("thank you")) return false;
+  // Localized "thank you" phrases from SurveyJS's default completedHtml
+  // (es/fr/de/zh/ja) so a non-English completion page is still recognized.
+  const thanks = ["thank you", "gracias", "merci", "danke", "dank", "感谢", "谢谢", "ありがとう"];
+  if (!thanks.some((t) => text.indexOf(t) !== -1)) return false;
   const inputs = document.querySelectorAll(
     "input[type=radio], input[type=checkbox], input[type=text], input[type=number], textarea, select",
   );
@@ -365,7 +450,23 @@ function detectCompletionInPage(): boolean {
     return false;
   }
   // Generic nav-labelled buttons (intro pages often use "Start"/"Begin").
-  const navLabels = ["next", "complete", "submit", "continue", "finish", "done", "start", "begin"];
+  // Localized for es/fr/de/zh/ja so a non-English intro page (which offers a
+  // Start/Next button) isn't misread as a completion page.
+  const navLabels = [
+    // English
+    "next", "complete", "submit", "continue", "finish", "done", "start", "begin",
+    // Spanish
+    "siguiente", "completar", "finalizar", "terminar", "enviar", "continuar", "comenzar", "empezar",
+    // French
+    "suivant", "suivante", "terminer", "envoyer", "valider", "continuer", "commencer", "démarrer",
+    // German
+    "weiter", "abschließen", "abschliessen", "absenden", "senden", "fertig", "fertigstellen",
+    "fortfahren", "beenden", "starten",
+    // Chinese
+    "下一页", "下一步", "完成", "提交", "继续", "结束", "开始",
+    // Japanese
+    "次へ", "次のページ", "次", "完了", "送信", "続行", "続ける", "終了", "開始", "はじめる",
+  ];
   const buttons = Array.from(
     document.querySelectorAll("input[type=button][value], input[type=submit][value], button"),
   );
@@ -408,6 +509,40 @@ function detectValidationErrorsInPage(): boolean {
 }
 
 /**
+ * Disable the socket egress APIs the request interceptor cannot police. The
+ * walked survey never needs a live socket, so replacing these constructors
+ * with a throwing stub closes the out-of-band channel without affecting normal
+ * HTTP(S) rendering. Each assignment is wrapped so a non-configurable property
+ * (or a missing constructor) can't abort the guard. Must be self-contained (it
+ * is serialized and injected via evaluateOnNewDocument).
+ */
+function blockSocketEgressInPage(): void {
+  const denied = function denied(): never {
+    throw new Error("Blocked by SSRF guard: direct socket egress is disabled during automated walk.");
+  };
+  try {
+    window.WebSocket = denied;
+  } catch {
+    /* non-configurable — leave as-is */
+  }
+  try {
+    window.EventSource = denied;
+  } catch {
+    /* non-configurable — leave as-is */
+  }
+  try {
+    window.RTCPeerConnection = denied;
+  } catch {
+    /* non-configurable — leave as-is */
+  }
+  try {
+    window.webkitRTCPeerConnection = denied;
+  } catch {
+    /* non-configurable — leave as-is */
+  }
+}
+
+/**
  * Generically answer every question on the current page. Returns notes for any
  * per-question failures. Must be fully self-contained (it is serialized).
  */
@@ -428,10 +563,38 @@ function fillAnswersInPage(): string[] {
     fire(el, "change");
   };
 
+  // Assign via the native prototype value setter, not `el.value = ...`.
+  // React-rendered SurveyJS installs its own "value" setter that updates an
+  // internal value-tracker; assigning through it makes React's onChange see
+  // oldValue === newValue and ignore the input, so typed answers never
+  // register. Calling the *prototype* setter writes the value without touching
+  // the tracker, so the input/change events below are seen as a real change.
+  // For knockout/vanilla SurveyJS (the demo) this is equivalent to a direct
+  // assignment. Falls back to a direct assignment if no setter is found.
+  const setNativeValue = (el: InPageElement, value: string): void => {
+    let protoSetter: ((v: string) => void) | undefined;
+    try {
+      const proto = Object.getPrototypeOf(el) as object | null;
+      if (proto !== null) {
+        const desc = Object.getOwnPropertyDescriptor(proto, "value");
+        if (desc !== undefined && typeof desc.set === "function") {
+          protoSetter = desc.set as (v: string) => void;
+        }
+      }
+    } catch {
+      protoSetter = undefined;
+    }
+    if (protoSetter !== undefined) {
+      protoSetter.call(el, value);
+    } else {
+      el.value = value;
+    }
+  };
+
   const setValue = (el: InPageElement, value: string): void => {
     if (el.disabled || el.readOnly) return;
     el.focus();
-    el.value = value;
+    setNativeValue(el, value);
     fire(el, "input");
     fire(el, "change");
   };
@@ -468,6 +631,29 @@ function fillAnswersInPage(): string[] {
     if (type === "tel") return "5555555555";
     if (type === "url") return "https://example.com";
     return looksNumeric(el) ? numericValueFor(el) : "Automated QA test response";
+  };
+
+  // A modern SurveyJS dropdown/tagbox renders a search box (the "filter string"
+  // input) that matches the generic text selector. Filling it with prose is
+  // never a valid selection and blocks navigation, so it must be excluded from
+  // the plain-text fill and answered via the combobox handler instead.
+  const isComboboxFilterInput = (el: InPageElement): boolean => {
+    const cls = el.className || "";
+    if (cls.indexOf("dropdown__filter") !== -1 || cls.indexOf("tagbox__filter") !== -1) return true;
+    const role = (el.getAttribute("role") || "").toLowerCase();
+    if (role === "combobox" || role === "searchbox") return true;
+    if (el.getAttribute("aria-autocomplete") !== null) return true;
+    return el.closest(".sd-dropdown, .sv-dropdown, .sd-tagbox, .sv-tagbox") !== null;
+  };
+
+  // Pick a usable option label from an opened SurveyJS list popup, skipping
+  // placeholders / "none" / "select all" / "other" entries that don't count as
+  // a real answer for a required question.
+  const isUsableItemLabel = (label: string): boolean => {
+    const t = label.trim().toLowerCase();
+    if (t.length === 0) return false;
+    const skip = ["none", "select all", "other", "other (describe)", "ninguno", "aucun", "keine"];
+    return skip.indexOf(t) === -1;
   };
 
   const questionRoots = Array.from(
@@ -546,6 +732,36 @@ function fillAnswersInPage(): string[] {
       notes.push(`Failed to answer select in ${name}: ${String(err)}`);
     }
 
+    // Modern SurveyJS custom dropdown / tagbox (a combobox with no native
+    // <select>). Best-effort: open it, then click the first usable list item.
+    // The popup list is rendered lazily, so if no items are present yet we
+    // toggle the control closed again so its overlay doesn't cover the Next
+    // button, and leave the field unanswered (better than poisoning it with
+    // invalid filter text, which is a guaranteed validation block).
+    try {
+      const combos = Array.from(
+        q.querySelectorAll(".sd-dropdown, .sv-dropdown, .sd-tagbox, .sv-tagbox"),
+      ).filter((dd) => dd.querySelector("select") === null);
+      for (const dd of combos) {
+        const control = dd.querySelector("[role=combobox], input, .sd-dropdown__value") || dd;
+        control.click();
+        const items = Array.from(
+          document.querySelectorAll(
+            ".sv-list__item-body, .sd-list__item-body, li[role=option], [role=option]",
+          ),
+        );
+        const target = items.filter((it) => isUsableItemLabel(it.textContent || ""))[0];
+        if (target !== undefined) {
+          target.click();
+        } else {
+          // Nothing selectable yet — close the popup so it can't block nav.
+          control.click();
+        }
+      }
+    } catch (err) {
+      notes.push(`Failed to answer dropdown in ${name}: ${String(err)}`);
+    }
+
     // Date/time inputs need a format-valid value.
     try {
       const dateValues: Record<string, string> = {
@@ -574,9 +790,9 @@ function fillAnswersInPage(): string[] {
     try {
       const texts = Array.from(
         q.querySelectorAll(
-          "input[type=text], input:not([type]), input[type=email], input[type=tel], input[type=url]",
+          "input[type=text], input:not([type]), input[type=email], input[type=tel], input[type=url], input[type=search]",
         ),
-      );
+      ).filter((el) => !isComboboxFilterInput(el));
       for (const input of texts) {
         setValue(input, textValueFor(input));
       }
@@ -612,7 +828,24 @@ function clickNavButtonInPage(): string | null {
   ).forEach(add);
 
   // Generic fallback: any button-ish element whose label suggests navigation.
-  const navLabels = ["next", "complete", "submit", "continue", "finish", "done"];
+  // Includes SurveyJS's localized Next/Complete/Submit words for the supported
+  // languages (es/fr/de/zh/ja) so a non-English survey still advances. Careful
+  // NOT to include any "Previous/Back" word (would walk backwards).
+  const navLabels = [
+    // English
+    "next", "complete", "submit", "continue", "finish", "done",
+    // Spanish
+    "siguiente", "completar", "finalizar", "terminar", "enviar", "continuar",
+    // French
+    "suivant", "suivante", "terminer", "envoyer", "valider", "continuer",
+    // German
+    "weiter", "abschließen", "abschliessen", "absenden", "senden", "fertig",
+    "fertigstellen", "fortfahren", "beenden",
+    // Chinese
+    "下一页", "下一步", "完成", "提交", "继续", "结束",
+    // Japanese
+    "次へ", "次のページ", "次", "完了", "送信", "続行", "続ける", "終了",
+  ];
   Array.from(
     document.querySelectorAll("input[type=button][value], input[type=submit][value], button"),
   ).forEach((el) => {

@@ -97,12 +97,19 @@ function navBadge(ok: boolean): string {
     : `<span class="badge badge-bad">nav failed</span>`;
 }
 
+/** Coerce a page index from stored (JSON) data to a safe non-negative
+ *  integer before it is interpolated into HTML or a URL. */
+function pageIdx(value: number): number {
+  const n = Math.trunc(Number(value));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
 function shotUrl(runId: string, pageIndex: number): string {
-  return `/reports/${encodeURIComponent(runId)}/shot/${pageIndex}.png`;
+  return `/reports/${encodeURIComponent(runId)}/shot/${pageIdx(pageIndex)}.png`;
 }
 
 function pdfUrl(runId: string, pageIndex: number): string {
-  return `/reports/${encodeURIComponent(runId)}/pdf/${pageIndex}.pdf`;
+  return `/reports/${encodeURIComponent(runId)}/pdf/${pageIdx(pageIndex)}.pdf`;
 }
 
 /** Models to show as columns/sections, in canonical order. */
@@ -404,14 +411,15 @@ function pagesSection(run: RunReport): string {
 
   const cards = run.pages
     .map((p: PageCapture) => {
-      const png = shotUrl(run.runId, p.pageIndex);
+      const idx = pageIdx(p.pageIndex);
+      const png = shotUrl(run.runId, idx);
       const shot = p.screenshotKey
         ? `<a class="shot-link" href="${png}" target="_blank" rel="noopener" title="Open full-size screenshot">
-            <img class="shot" src="${png}" alt="Screenshot of page ${p.pageIndex}" loading="lazy">
+            <img class="shot" src="${png}" alt="Screenshot of page ${idx}" loading="lazy">
           </a>`
         : `<div class="shot-empty muted small">No screenshot captured for this page.</div>`;
       const pdfLink = p.pdfKey
-        ? `<a class="pdf-link" href="${pdfUrl(run.runId, p.pageIndex)}" target="_blank" rel="noopener">PDF</a>`
+        ? `<a class="pdf-link" href="${pdfUrl(run.runId, idx)}" target="_blank" rel="noopener">PDF</a>`
         : "";
       const notes = p.notes
         ? `<p class="page-notes"><strong>Notes:</strong> ${esc(p.notes)}</p>`
@@ -419,7 +427,7 @@ function pagesSection(run: RunReport): string {
       return `
     <article class="page-card">
       <div class="page-head">
-        <span class="page-num">Page ${p.pageIndex}</span>
+        <span class="page-num">Page ${idx}</span>
         ${navBadge(p.navOk)}
         ${pdfLink}
       </div>
@@ -454,18 +462,17 @@ export function buildHtmlReport(run: RunReport): string {
   const duration = runDuration(run);
   const generatedAt = fmtTimestamp(new Date().toISOString());
 
-  let workerOrigin = "<worker-url>";
-  try {
-    workerOrigin = new URL(run.surveyUrl).origin;
-  } catch {
-    // keep placeholder if surveyUrl is not absolute
-  }
+  // The report page is always served by the Worker itself, so the page's own
+  // origin (location.origin) IS the Worker origin. run.surveyUrl may point at
+  // a different host entirely, so deriving the runner URL from it would hand
+  // the user a command aimed at the wrong server. Render a placeholder
+  // server-side; the inline script below fills in location.origin.
   const pendingNotice = hasClaude
     ? ""
     : `<div class="notice">Third model leg pending &mdash; DeepSeek and Workers AI (gpt-oss-120b) have
         reported; Claude Opus 4.8 runs locally on your Claude subscription ($0, no metered API key).
         Run the local runner:
-        <code class="mono">node runner/claude-runner.mjs --worker-url ${esc(workerOrigin)} --run ${esc(run.runId)}</code>
+        <code class="mono" id="runnerCmd" data-run-id="${esc(run.runId)}">node runner/claude-runner.mjs --worker-url &lt;this-worker-url&gt; --run ${esc(run.runId)}</code>
       </div>`;
 
   return `<!DOCTYPE html>
@@ -508,31 +515,31 @@ export function buildHtmlReport(run: RunReport): string {
     --band-title: #FFFFFF;
     --band-text: #DCE7E5;
     --band-muted: #85999B;
-    --band-dt: #8FA0B5;
+    --band-dt: #8FA6A2;
     --band-link: #7CE8C9;
-    --notice-bg: rgba(194, 87, 27, 0.14);
-    --notice-border: rgba(194, 87, 27, 0.55);
-    --notice-text: #F3D9C4;
+    --notice-bg: rgba(124, 232, 201, 0.1);
+    --notice-border: rgba(124, 232, 201, 0.45);
+    --notice-text: #C7E8DC;
     --notice-code: #FFFFFF;
     --tint: #E5EEEC;
-    --table-border: #EFEAE0;
-    --row-hover: #FBF7EF;
-    --mark-missed: #A9B2BD;
-    --chip-cat-bg: #EFEBE2;
+    --table-border: #E2EAE8;
+    --row-hover: #F0F6F4;
+    --mark-missed: #5A716D;
+    --chip-cat-bg: #E5EEEC;
     --bad-bg: #FBE9E6;
-    --sev-med-bg: #F8E8D8;
-    --sev-med-text: #9A4E12;
-    --sev-low-bg: #E7EBF0;
+    --sev-med-bg: #F7EFD3;
+    --sev-med-text: #674D0C;
+    --sev-low-bg: #E6EDEB;
     --ok-bg: #DDF2E4;
-    --badge-muted-bg: #ECEDEA;
+    --badge-muted-bg: #E5EEEC;
     --spec-bg: #EDF5EF;
     --spec-border: #CBE0D2;
-    --site-bg: #F9ECEA;
-    --site-border: #E9CCC6;
-    --shot-bg: #F1EDE4;
-    --note-text: #7A4A12;
-    --note-bg: #F8EFDD;
-    --note-border: #EBD9B7;
+    --site-bg: #FBECEA;
+    --site-border: #EDCBC5;
+    --shot-bg: #E9F0EE;
+    --note-text: #435659;
+    --note-bg: #EDF4F2;
+    --note-border: #CFE0DC;
     --serif: "Space Grotesk", "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
     --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
     --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -557,31 +564,31 @@ export function buildHtmlReport(run: RunReport): string {
       --band-title: #EDF5F3;
       --band-text: #DCE7E5;
       --band-muted: #7E9490;
-      --band-dt: #9DABBF;
+      --band-dt: #93A9A5;
       --band-link: #7CE8C9;
-      --notice-bg: rgba(232, 130, 74, 0.16);
-      --notice-border: rgba(232, 130, 74, 0.5);
-      --notice-text: #F2C9A6;
-      --notice-code: #F5F1E8;
+      --notice-bg: rgba(53, 211, 172, 0.12);
+      --notice-border: rgba(53, 211, 172, 0.4);
+      --notice-text: #B8E6D2;
+      --notice-code: #EDF5F3;
       --tint: #122023;
-      --table-border: #26344C;
+      --table-border: #24363A;
       --row-hover: rgba(255, 255, 255, 0.04);
-      --mark-missed: #6B7A90;
-      --chip-cat-bg: rgba(157, 171, 191, 0.16);
+      --mark-missed: #8FA6A2;
+      --chip-cat-bg: rgba(143, 166, 162, 0.16);
       --bad-bg: rgba(249, 133, 118, 0.16);
-      --sev-med-bg: rgba(232, 130, 74, 0.18);
-      --sev-med-text: #F0A97E;
-      --sev-low-bg: rgba(157, 171, 191, 0.14);
+      --sev-med-bg: rgba(242, 206, 114, 0.15);
+      --sev-med-text: #F2CE72;
+      --sev-low-bg: rgba(143, 166, 162, 0.14);
       --ok-bg: rgba(116, 211, 137, 0.14);
-      --badge-muted-bg: rgba(157, 171, 191, 0.16);
+      --badge-muted-bg: rgba(143, 166, 162, 0.16);
       --spec-bg: rgba(76, 175, 125, 0.12);
       --spec-border: rgba(76, 175, 125, 0.38);
       --site-bg: rgba(224, 100, 86, 0.12);
       --site-border: rgba(224, 100, 86, 0.4);
-      --shot-bg: #0F1B30;
-      --note-text: #F0C9A9;
-      --note-bg: rgba(232, 130, 74, 0.14);
-      --note-border: rgba(232, 130, 74, 0.35);
+      --shot-bg: #0F1B1E;
+      --note-text: #B4C8C3;
+      --note-bg: rgba(143, 166, 162, 0.12);
+      --note-border: rgba(143, 166, 162, 0.32);
       --shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 10px 28px rgba(0, 0, 0, 0.5);
     }
   }
@@ -982,6 +989,13 @@ export function buildHtmlReport(run: RunReport): string {
 <script>
 (function () {
   "use strict";
+  /* Fill in the local-runner command with the Worker origin — this page is
+     served by the Worker, so location.origin is the correct target. */
+  var cmd = document.getElementById("runnerCmd");
+  if (cmd) {
+    cmd.textContent = "node runner/claude-runner.mjs --worker-url " + location.origin +
+      " --run " + (cmd.getAttribute("data-run-id") || "");
+  }
   var toggle = document.getElementById("themeToggle");
   if (!toggle) return;
   toggle.addEventListener("click", function () {

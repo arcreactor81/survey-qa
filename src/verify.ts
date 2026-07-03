@@ -28,10 +28,26 @@ function normalizeWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/** Escape regex metacharacters so a value can be used as a literal pattern. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Distinctive fragment: first 15 chars, whitespace-normalized, lowercased. */
 function fragmentOf(text: string): string {
   return normalizeWhitespace(text).toLowerCase().slice(0, 15);
 }
+
+/**
+ * Minimum length of a whitespace-normalized specQuote for an absence claim to
+ * be verifiable. Below this, the quote is not distinctive enough: a common
+ * short token ("a", "Yes", "the") is trivially "absent" from a sparse page and
+ * would credit a hallucinated absence finding. Kept at 4 so genuinely
+ * distinctive short spec tokens still qualify (e.g. the "BIMZELX" brand option,
+ * 7 chars, which is a real seeded missing-option). Do NOT raise this above the
+ * shortest legitimate absent token, or real absence findings will be dropped.
+ */
+const MIN_ABSENCE_SPEC_LEN = 4;
 
 /**
  * Set quoteVerified on every finding:
@@ -70,23 +86,32 @@ export function verifyFindings(
     const siteNeedle = normalizeWhitespace(finding.siteQuote);
     let siteOk: boolean;
     if (siteNeedle.length === 0) {
+      // Absence claim: verify the claimed-missing spec text does NOT appear on
+      // the site. Without this, an absence finding is unfalsifiable (a spec-side
+      // check alone would credit a hallucinated "missing" claim even when the
+      // text is actually present on the page).
       if (!ABSENCE_CATEGORIES.has(finding.category)) {
         siteOk = false;
+      } else if (specNeedle.length < MIN_ABSENCE_SPEC_LEN) {
+        // Not distinctive enough to verify an absence — see MIN_ABSENCE_SPEC_LEN.
+        siteOk = false;
+      } else if (pageTextByIndex.size === 0) {
+        // No captured page text: absence cannot be confirmed from evidence.
+        siteOk = false;
+      } else if (finding.category === "missing-question") {
+        // A whole question is "missing" only when it is absent from EVERY
+        // captured page — a per-page check would falsely verify a question that
+        // merely moved to a different page. Require absence across all pages.
+        siteOk = ![...pageTextByIndex.values()].some((text) => text.includes(specNeedle));
       } else {
-        // Absence claim: verify the claimed-missing spec text does NOT
-        // appear on the page it is claimed missing from. Without this, an
-        // absence finding is unfalsifiable (spec-side check alone would
-        // credit a hallucinated "missing" claim even when the text is
-        // present on the page).
+        // Page-local absence (missing-option / missing-instruction): the defect
+        // is scoped to one question on one page. Check the claimed page; if its
+        // index is unknown, fall back to requiring absence from every page.
         const pageText = pageTextByIndex.get(finding.pageIndex);
         if (pageText !== undefined) {
-          siteOk = specNeedle.length > 0 && !pageText.includes(specNeedle);
+          siteOk = !pageText.includes(specNeedle);
         } else {
-          // Unknown page index: fall back to requiring absence from every
-          // captured page (if the text appears nowhere, the claim holds).
-          siteOk =
-            specNeedle.length > 0 &&
-            ![...pageTextByIndex.values()].some((text) => text.includes(specNeedle));
+          siteOk = ![...pageTextByIndex.values()].some((text) => text.includes(specNeedle));
         }
       }
     } else {
@@ -118,12 +143,19 @@ function findingMatchesSeeded(finding: Finding, seeded: SeededError): boolean {
   const siteQuote = normalizeWhitespace(finding.siteQuote).toLowerCase();
   const specQuote = normalizeWhitespace(finding.specQuote).toLowerCase();
 
+  // Free-text mention of the seeded id must be a WHOLE token, not a substring:
+  // a plain includes() lets short ids over-match ("q1" inside "q10"/"q11", "s1"
+  // inside "s10" or "hips1"), crediting the wrong seeded error. \b treats the
+  // alphanumeric id as a word so "q1" matches "q1" / "(q1)" but not "q10".
+  const qidMentioned = (haystack: string): boolean =>
+    new RegExp(`\\b${escapeRegExp(seededQid)}\\b`).test(haystack);
+
   const questionMatch =
     seededQid.length > 0 &&
     (findingQid === seededQid ||
-      description.includes(seededQid) ||
-      siteQuote.includes(seededQid) ||
-      specQuote.includes(seededQid));
+      qidMentioned(description) ||
+      qidMentioned(siteQuote) ||
+      qidMentioned(specQuote));
   if (!questionMatch) {
     if (finding.category !== seeded.category) return false;
     const renderedFrag = fragmentOf(seeded.rendered);
@@ -159,7 +191,8 @@ function findingMatchesSeeded(finding: Finding, seeded: SeededError): boolean {
  * Score both models against the seeded-error manifest.
  * Only VERIFIED findings (quoteVerified === true) count — run verifyFindings first.
  * recall = caught / total seeded (per model).
- * falsePositives = that model's verified findings not matched to any seeded error.
+ * falsePositives = that model's verified findings NOT assigned to a seeded error
+ * by the one-to-one matching below.
  *
  * Assignment is one-to-one per model: each verified finding can credit at most
  * ONE seeded entry, so a single vague finding cannot inflate recall across
@@ -167,6 +200,13 @@ function findingMatchesSeeded(finding: Finding, seeded: SeededError): boolean {
  * fragment-only cross-match (e.g. a reordering finding whose quotes happen to
  * contain another seed's option text) never takes credit that belongs to — or
  * substitutes for — the finding that actually detected the defect.
+ *
+ * falsePositives is derived from the SAME assignment (unassigned = false
+ * positive), not recomputed independently. This reconciles a duplicate finding
+ * that hits an already-credited seeded error: it neither earns recall (its
+ * entry is already consumed) nor escapes the count (it is a redundant, unmatched
+ * report), so it is correctly charged as a false positive — matching the
+ * standard "each ground-truth item credits one retrieval; extras are FPs" rule.
  */
 export function buildScorecard(
   findings: Finding[],
@@ -182,6 +222,8 @@ export function buildScorecard(
   const verified = findings.filter((finding) => finding.quoteVerified);
 
   const caughtSets: Array<Set<ModelName>> = seeded.map(() => new Set<ModelName>());
+  const falsePositives: Record<ModelName, number> = { deepseek: 0, claude: 0, workersai: 0 };
+
   for (const model of MODELS) {
     const modelFindings = verified.filter((finding) => finding.model === model);
     const consumed = new Set<Finding>();
@@ -204,6 +246,12 @@ export function buildScorecard(
     };
     assign(true); // pass 1: exact-category matches claim their entries first
     assign(false); // pass 2: remaining entries may use fragment/loose matches
+
+    // A verified finding that the assignment never consumed is a false positive:
+    // it matched no still-unclaimed seeded error (either it matches none, or its
+    // seeded error was already credited to a distinct finding — a redundant
+    // duplicate). Deriving FP from `consumed` keeps it consistent with recall.
+    falsePositives[model] = modelFindings.length - consumed.size;
   }
 
   const entries: ScorecardEntry[] = seeded.map((error, i) => ({
@@ -215,16 +263,9 @@ export function buildScorecard(
   }));
 
   const recall: Record<ModelName, number> = { deepseek: 0, claude: 0, workersai: 0 };
-  const falsePositives: Record<ModelName, number> = { deepseek: 0, claude: 0, workersai: 0 };
-
   for (const model of MODELS) {
     const caught = entries.filter((entry) => entry.caughtBy.includes(model)).length;
     recall[model] = seeded.length > 0 ? caught / seeded.length : 0;
-    falsePositives[model] = verified.filter(
-      (finding) =>
-        finding.model === model &&
-        !seeded.some((error) => findingMatchesSeeded(finding, error)),
-    ).length;
   }
 
   return { entries, recall, falsePositives };

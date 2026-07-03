@@ -7,12 +7,12 @@
 // fetches them, runs Claude locally, and posts findings back.
 //
 // Requirements: Node >= 18 (global fetch), the `claude` CLI on PATH.
-// Zero npm dependencies: global fetch + node:child_process spawnSync only.
+// Zero npm dependencies: global fetch + node:child_process (spawn/spawnSync) only.
 //
 // Usage:
 //   node claude-runner.mjs --worker-url https://survey-qa.<subdomain>.workers.dev --run <runId> [--dry-run]
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import process from "node:process";
 
 const MODEL_NAME = "claude";
@@ -21,6 +21,11 @@ const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const MAX_BUFFER = 32 * 1024 * 1024; // 32 MB
 const CLAUDE_TIMEOUT_MS = 5 * 60 * 1000; // kill a hung claude call after 5 minutes
 const MAX_PAGE_ATTEMPTS = 2; // initial try + 1 retry per page for transient failures
+const FETCH_TIMEOUT_MS = 30 * 1000; // abort a stalled Worker request after 30s
+// The Worker rejects a findings submission larger than this (see
+// MAX_FINDINGS_PER_SUBMISSION in src/index.ts). Cap locally so a large run is
+// still accepted instead of the whole claude leg being lost to an HTTP 400.
+const MAX_FINDINGS = 500;
 
 const VALID_SEVERITIES = new Set(["high", "medium", "low"]);
 const VALID_CATEGORIES = new Set([
@@ -77,8 +82,25 @@ function parseArgs(argv) {
   return opts;
 }
 
+/**
+ * fetch with a bounded AbortSignal.timeout so a hung/black-holed Worker request
+ * fails fast instead of stalling the single-threaded runner forever. Node's
+ * global fetch has no default timeout, so without this a stuck connection would
+ * hang the whole run with no recovery.
+ */
+async function fetchWithTimeout(url, opts, timeoutMs) {
+  try {
+    return await fetch(url, { ...opts, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    if (err && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new Error(`request to ${url} timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw err;
+  }
+}
+
 async function fetchJson(url) {
-  const res = await fetch(url, { headers: { accept: "application/json" } });
+  const res = await fetchWithTimeout(url, { headers: { accept: "application/json" } }, FETCH_TIMEOUT_MS);
   if (!res.ok) {
     throw new Error(`GET ${url} -> HTTP ${res.status} ${res.statusText}`);
   }
@@ -86,7 +108,7 @@ async function fetchJson(url) {
 }
 
 async function fetchText(url) {
-  const res = await fetch(url, { headers: { accept: "text/plain" } });
+  const res = await fetchWithTimeout(url, { headers: { accept: "text/plain" } }, FETCH_TIMEOUT_MS);
   if (!res.ok) {
     throw new Error(`GET ${url} -> HTTP ${res.status} ${res.statusText}`);
   }
@@ -168,6 +190,14 @@ function normalizeFinding(raw, pageIndex) {
  * their cloud-credential companions (AWS_*, GOOGLE_*, gcloud CLOUDSDK_*,
  * CLOUD_ML_REGION) so an inherited CLAUDE_CODE_USE_BEDROCK/VERTEX cannot
  * silently reroute usage to metered third-party billing.
+ *
+ * We also strip CLAUDE_CODE_OAUTH_TOKEN: an inherited long-lived token (from a
+ * `claude setup-token` in CI, or a different account/org) would override the
+ * user's interactive claude.ai login and reroute usage/billing to that other
+ * identity — the opposite of this runner's intent. Removing it forces the CLI
+ * back onto the local interactive subscription login. NOTE: a settings.json
+ * `apiKeyHelper` can still inject an API key and cannot be neutralized via env
+ * here; that is out of scope for this runner and must be handled by the caller.
  */
 function cleanEnv() {
   const env = { ...process.env };
@@ -179,6 +209,7 @@ function cleanEnv() {
       /^GOOGLE_/i.test(k) ||          // Vertex credentials (GOOGLE_APPLICATION_CREDENTIALS, ...)
       /^CLOUDSDK_/i.test(k) ||        // gcloud SDK configuration
       k === "CLOUD_ML_REGION" ||      // Vertex region
+      k === "CLAUDE_CODE_OAUTH_TOKEN" || // inherited OAuth token can reroute billing/identity
       k === "CLAUDE_API_KEY" || k === "CLAUDECODE" || k === "CLAUDE_CODE_ENTRYPOINT"
     ) {
       delete env[k];
@@ -187,61 +218,173 @@ function cleanEnv() {
   return env;
 }
 
-/** Run the claude CLI headless with the prompt on stdin; return parsed output. */
+const IS_WINDOWS = process.platform === "win32";
+
+/**
+ * Quote CLAUDE_BIN for the shell when it contains whitespace (e.g. an install
+ * under "C:\\Program Files\\..."). With shell:true Node joins the command and
+ * args into one string handed to the shell, so an unquoted path with spaces
+ * would be split into bogus argv. A bare "claude" (the default) is returned
+ * unchanged.
+ */
+function shellQuoteBin(bin) {
+  if (!/\s/.test(bin)) return bin;
+  if (IS_WINDOWS) {
+    return /^".*"$/.test(bin) ? bin : `"${bin}"`;
+  }
+  return /^['"].*['"]$/.test(bin) ? bin : `'${bin.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Classify a CLI failure as fatal (unrecoverable — abort the whole run) vs
+ * transient (retry this page). Not-logged-in, missing/again-not-found binary,
+ * and auth failures will fail identically on every page, so retrying them per
+ * page just wastes time; detect and abort fast instead.
+ */
+function isFatalCliFailure(text) {
+  if (!text) return false;
+  return /not logged in|please run\s+\/?login|\blog ?in\b|authenticat|unauthorized|invalid api key|invalid (?:oauth )?token|expired token|\b401\b|\b403\b|no active session|command not found|is not recognized|no such file|enoent|permission denied|eacces/i.test(
+    text,
+  );
+}
+
+/**
+ * Best-effort kill of the whole process tree. With shell:true the direct child
+ * is the shell (cmd.exe / sh); the real `claude` process is a grandchild. A
+ * plain child.kill() on Windows reaps only the shell and ORPHANS claude — which
+ * keeps running and keeps billing. taskkill /t kills the tree; on POSIX the
+ * child is its own process-group leader (detached) so we signal the group.
+ */
+function killTree(child) {
+  if (!child || child.pid == null) return;
+  try {
+    if (IS_WINDOWS) {
+      spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true });
+    } else {
+      try {
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
+      const t = setTimeout(() => {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {}
+      }, 2000);
+      if (typeof t.unref === "function") t.unref();
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
+ * Run the claude CLI headless with the prompt on stdin; resolve parsed output.
+ * Uses async spawn (not spawnSync) so a hung call can be killed at the TREE
+ * level on timeout — spawnSync's own timeout would only reap the shell wrapper
+ * and leave the billable claude grandchild orphaned on Windows.
+ */
 function runClaude(prompt) {
   const started = Date.now();
-  // shell: true so `claude.cmd` resolves on Windows.
-  const proc = spawnSync(CLAUDE_BIN, ["-p", "--output-format", "json", "--model", "opus"], {
-    input: prompt,
-    encoding: "utf8",
-    shell: true,
-    maxBuffer: MAX_BUFFER,
-    windowsHide: true,
-    timeout: CLAUDE_TIMEOUT_MS,
-    killSignal: "SIGTERM",
-    env: cleanEnv(),
+  return new Promise((resolve, reject) => {
+    // shell: true so `claude.cmd` resolves on Windows; detached on POSIX so the
+    // child leads its own process group and the tree can be signalled at once.
+    const child = spawn(shellQuoteBin(CLAUDE_BIN), ["-p", "--output-format", "json", "--model", "opus"], {
+      shell: true,
+      windowsHide: true,
+      env: cleanEnv(),
+      detached: !IS_WINDOWS,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let stdoutBytes = 0;
+    let settled = false;
+    let timedOut = false;
+    let overflowed = false;
+
+    const done = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(arg);
+    };
+    const fail = (message, extra) =>
+      done(reject, Object.assign(new Error(message), { latencyMs: Date.now() - started, ...extra }));
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child);
+    }, CLAUDE_TIMEOUT_MS);
+
+    child.on("error", (err) => {
+      // Spawn-level failure (binary missing / not executable): fatal.
+      fail(`failed to launch claude CLI: ${err.message}`, { fatal: true });
+    });
+
+    if (child.stdout) {
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => {
+        stdoutBytes += Buffer.byteLength(chunk, "utf8");
+        if (stdoutBytes > MAX_BUFFER) {
+          overflowed = true;
+          killTree(child);
+          return;
+        }
+        stdout += chunk;
+      });
+    }
+    if (child.stderr) {
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk) => {
+        if (stderr.length < 64 * 1024) stderr += chunk;
+      });
+    }
+
+    child.on("close", (code, signal) => {
+      if (overflowed) return fail(`claude CLI output exceeded ${MAX_BUFFER} bytes; aborted`);
+      if (timedOut) return fail(`claude CLI timed out after ${Math.round(CLAUDE_TIMEOUT_MS / 1000)}s`);
+      if (code !== 0) {
+        const errText = (stderr || "").trim();
+        return fail(
+          `claude CLI exited with code ${code}${signal ? ` (signal ${signal})` : ""}${errText ? `: ${errText.slice(0, 500)}` : ""}`,
+          { fatal: isFatalCliFailure(errText) },
+        );
+      }
+
+      let envelope;
+      try {
+        envelope = JSON.parse(stdout);
+      } catch {
+        return fail(`claude CLI stdout was not valid JSON: ${String(stdout).slice(0, 200)}`);
+      }
+      if (envelope.is_error) {
+        const detail = String(envelope.result ?? envelope.subtype ?? "unknown");
+        return fail(`claude CLI reported an error: ${detail.slice(0, 300)}`, { fatal: isFatalCliFailure(detail) });
+      }
+
+      const { input, output } = sumUsage(envelope.usage);
+      let rawFindings;
+      try {
+        const parsed = extractJson(envelope.result);
+        rawFindings = Array.isArray(parsed?.findings) ? parsed.findings : [];
+      } catch (err) {
+        return fail(`could not parse findings JSON from claude output: ${err.message}`);
+      }
+      done(resolve, { rawFindings, inputTokens: input, outputTokens: output, latencyMs: Date.now() - started });
+    });
+
+    // Feed the prompt on stdin. Guard against EPIPE if the child already died.
+    if (child.stdin) {
+      child.stdin.on("error", () => {});
+      try {
+        child.stdin.write(prompt);
+        child.stdin.end();
+      } catch {
+        /* child gone; the error/close handler will settle the promise */
+      }
+    }
   });
-  const latencyMs = Date.now() - started;
-
-  if (proc.error) {
-    const timedOut = proc.error.code === "ETIMEDOUT";
-    throw Object.assign(
-      new Error(
-        timedOut
-          ? `claude CLI timed out after ${Math.round(CLAUDE_TIMEOUT_MS / 1000)}s`
-          : `failed to launch claude CLI: ${proc.error.message}`
-      ),
-      { latencyMs }
-    );
-  }
-  if (proc.status !== 0) {
-    const stderr = (proc.stderr || "").trim().slice(0, 500);
-    throw Object.assign(
-      new Error(`claude CLI exited with code ${proc.status}${stderr ? `: ${stderr}` : ""}`),
-      { latencyMs }
-    );
-  }
-
-  let envelope;
-  try {
-    envelope = JSON.parse(proc.stdout);
-  } catch {
-    throw Object.assign(
-      new Error(`claude CLI stdout was not valid JSON: ${String(proc.stdout).slice(0, 200)}`),
-      { latencyMs }
-    );
-  }
-  if (envelope.is_error) {
-    throw Object.assign(
-      new Error(`claude CLI reported an error: ${String(envelope.result ?? envelope.subtype ?? "unknown").slice(0, 300)}`),
-      { latencyMs }
-    );
-  }
-
-  const { input, output } = sumUsage(envelope.usage);
-  const parsed = extractJson(envelope.result);
-  const rawFindings = Array.isArray(parsed?.findings) ? parsed.findings : [];
-  return { rawFindings, inputTokens: input, outputTokens: output, latencyMs };
 }
 
 async function main() {
@@ -269,8 +412,9 @@ async function main() {
     errors: 0,
   };
   const allFindings = [];
+  let fatalError = null;
 
-  for (let i = 0; i < pages.length; i++) {
+  for (let i = 0; i < pages.length && !fatalError; i++) {
     const pageIndex = Number.isInteger(pages[i]?.pageIndex) ? pages[i].pageIndex : i;
     const label = `[page ${i + 1}/${pages.length}]`;
 
@@ -279,7 +423,7 @@ async function main() {
     // not silently turn into "claude missed everything on this page".
     let succeeded = false;
     let lastErr = null;
-    for (let attempt = 1; attempt <= MAX_PAGE_ATTEMPTS && !succeeded; attempt++) {
+    for (let attempt = 1; attempt <= MAX_PAGE_ATTEMPTS && !succeeded && !fatalError; attempt++) {
       let prompt;
       try {
         prompt = await fetchText(
@@ -303,7 +447,7 @@ async function main() {
       }
 
       try {
-        const { rawFindings, inputTokens, outputTokens, latencyMs } = runClaude(prompt);
+        const { rawFindings, inputTokens, outputTokens, latencyMs } = await runClaude(prompt);
         stats.calls += 1;
         stats.inputTokens += inputTokens;
         stats.outputTokens += outputTokens;
@@ -321,13 +465,20 @@ async function main() {
       } catch (err) {
         lastErr = err;
         stats.latencyMsTotal += Number.isFinite(err.latencyMs) ? err.latencyMs : 0;
+        // A fatal failure (not-logged-in, missing binary, auth) will recur
+        // identically on every page — abort the whole run fast instead of
+        // grinding through pages × retries against a CLI that cannot work.
+        if (err.fatal) {
+          fatalError = err;
+          break;
+        }
         if (attempt < MAX_PAGE_ATTEMPTS) {
           console.error(`${label} claude failed (attempt ${attempt}/${MAX_PAGE_ATTEMPTS}): ${err.message}; retrying...`);
         }
       }
     }
 
-    if (!succeeded) {
+    if (!succeeded && !fatalError) {
       stats.errors += 1;
       console.error(`${label} giving up after ${MAX_PAGE_ATTEMPTS} attempt(s): ${lastErr ? lastErr.message : "unknown error"}`);
     }
@@ -338,16 +489,38 @@ async function main() {
     return;
   }
 
-  if (stats.calls === 0) {
-    console.error("\nEvery page failed; not posting findings.");
+  // Fatal CLI failure: the claude leg never really ran. Do NOT post (a partial
+  // or empty set would clobber any complete prior claude leg on the Worker) and
+  // exit non-zero so an orchestrating script sees the failure.
+  if (fatalError) {
+    console.error(
+      `\nAborting: the claude CLI is not usable (${fatalError.message}). ` +
+        `Not posting findings; fix the CLI (e.g. log in) and re-run.`
+    );
     process.exit(1);
   }
 
+  // Any page that failed after retries means an INCOMPLETE claude leg. Posting
+  // it would overwrite a complete prior result on the Worker and understate
+  // recall (a seeded error on a failed page looks "missed by claude" rather
+  // than "claude never ran there"). Refuse to post and exit non-zero; the
+  // orchestrator can re-run the whole leg cleanly.
   if (stats.errors > 0) {
     console.error(
-      `\nWarning: ${stats.errors} page(s) failed after ${MAX_PAGE_ATTEMPTS} attempts each; ` +
-        `posting PARTIAL results (claude never ran on those pages).`
+      `\n${stats.errors} of ${pages.length} page(s) failed after ${MAX_PAGE_ATTEMPTS} attempts each. ` +
+        `Refusing to post a PARTIAL claude leg (it would overwrite a complete prior result and skew the scorecard). ` +
+        `Re-run once the underlying issue is resolved.`
     );
+    process.exit(1);
+  }
+
+  // Cap to the Worker's per-submission limit so a large run is still accepted
+  // rather than rejected wholesale with an HTTP 400 (losing the entire leg).
+  if (allFindings.length > MAX_FINDINGS) {
+    console.error(
+      `\nCapping ${allFindings.length} findings to the Worker limit of ${MAX_FINDINGS} before posting.`
+    );
+    allFindings.length = MAX_FINDINGS;
   }
 
   const payload = {
@@ -358,11 +531,15 @@ async function main() {
   };
 
   const postUrl = `${workerUrl}/api/runs/${encodeURIComponent(runId)}/findings`;
-  const res = await fetch(postUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const res = await fetchWithTimeout(
+    postUrl,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    FETCH_TIMEOUT_MS
+  );
   if (!res.ok) {
     const body = (await res.text().catch(() => "")).slice(0, 300);
     console.error(`POST ${postUrl} -> HTTP ${res.status} ${res.statusText} ${body}`);

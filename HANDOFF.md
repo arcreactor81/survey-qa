@@ -1,5 +1,28 @@
 # HANDOFF — survey-qa build state
 
+## STATE AS OF 2026-07-03 (active session — most current, read this block first)
+LIVE & committed (commit 071e947, deployed version 25ad91ec): Deep Teal Terminal theme (contrast-corrected,
+Space Grotesk/JetBrains Mono, smooth 220ms transition), verbose model-aware pipeline stage tracker (replaced
+the broken --p fill), accurate 3-way copy (DeepSeek + Workers AI gpt-oss-120b + Claude Opus 4.8), Workers AI
+pillar swapped glm-4.7-flash -> gpt-oss-120b (bakeoff: consistent 9/10 vs flaky 7/10), and the 4 review-3
+security/resilience HIGHS (verified: 18/18 net-guard SSRF tests, workflow build-error caught & fixed):
+removed denial-of-wallet /api/eval-model; SSRF closed (same-origin surveyUrl + NAT64/6to4 IPv6 blocking);
+per-leg resilience (a Workers AI brownout degrades to a 2-leg report, not a failed run); page-scaled timeouts.
+
+THREE adversarial reviews done (findings: scratchpad/confirmed-findings.json = review-1's 58; review-3's 51
+in scratchpad and its task output). review-3 highs = DONE (above). review-3 mediums/lows = IN PROGRESS.
+
+**ACTIVELY RUNNING NOW:**
+- Regression run (poll task) confirming gpt-oss-120b live score + graceful degradation.
+- fix-review3-medlow (wf_9d5a4623-ff1): 5 agents on DISJOINT files — walker.ts (Opus), verify+docx+workersai
+  (Opus), index+workflow+compare+net-guard+store (Opus), runner+gen-survey+gen-docx (Opus), frontend polish +
+  Deep Teal chip retint on report.ts/processing.ts/index.html/survey.js (Fable).
+
+**AFTER med/low lands:** integrate -> full tsc -> commit -> deploy (announce; no deploy while a /api/run is
+active) -> regression. **THEN (user-requested FINAL GATE):** launch ONE Fable agent that CROSS-VALIDATES the
+entire body of work for COHERENCE — that no fix undid another, the theme/copy/model/security changes are
+mutually consistent, and the whole thing hangs together end-to-end. This runs LAST, on the final settled state.
+
 ## STATE AS OF 2026-07-02 ~15:30 (active session)
 - Hackathon Access Score submission ACCEPTED → advanced to next round.
 - Landing crash (syncOverlay undefined) FIXED + deployed (commit 1019ce5); dark mode on all 3 surfaces deployed.

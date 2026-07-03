@@ -215,10 +215,20 @@
       return;
     }
     var model = new Survey.Model(json);
+    var rendered = false;
     if (typeof model.render === "function") {
       model.render(container);
+      rendered = true;
     } else if (typeof SurveyUI !== "undefined" && typeof SurveyUI.renderSurvey === "function") {
       SurveyUI.renderSurvey(model, container);
+      rendered = true;
+    }
+    if (!rendered) {
+      // Neither render entry point exists (unexpected SurveyJS build):
+      // surface the failure and leave window.survey unset so the walker
+      // never mistakes an unrendered model for a live survey.
+      renderError("the loaded SurveyJS build exposes no render entry point; the survey cannot be rendered.");
+      return;
     }
     // Expose for the automated walker / manual debugging.
     window.survey = model;
@@ -229,9 +239,16 @@
     return m ? m[1].toLowerCase() : "en";
   }
 
+  /** Primary language subtag: "fr-ca" -> "fr", "zh-CN" (lowercased) -> "zh". */
+  function baseLang(lang) {
+    var i = lang.indexOf("-");
+    return i === -1 ? lang : lang.slice(0, i);
+  }
+
   function init() {
     var lang = getLang();
-    if (lang === "en") {
+    // Region-coded English ("en-us", "en-GB", ...) is still English.
+    if (lang === "en" || baseLang(lang) === "en") {
       renderModel(surveyJson);
       return;
     }
@@ -239,20 +256,32 @@
     // scripts/gen-survey.mjs into /survey-models.json. A failure here must
     // NOT fall back to the English model: the Worker would then compare an
     // English survey against a localized docx and produce a garbage QA run.
-    // Retry once for transient failures, then surface a visible error.
+    // Retry once (with a short backoff) for transient failures only — a 4xx
+    // is deterministic and retrying it would just repeat the same answer.
     function fetchModels() {
       return fetch("/survey-models.json").then(function (r) {
-        if (!r.ok) throw new Error("survey-models.json fetch failed: " + r.status);
+        if (!r.ok) {
+          var err = new Error("survey-models.json fetch failed: " + r.status);
+          err.httpStatus = r.status;
+          throw err;
+        }
         return r.json();
       });
     }
     fetchModels()
-      .catch(function () {
-        return fetchModels(); // one retry for transient network errors
+      .catch(function (err) {
+        if (err && err.httpStatus >= 400 && err.httpStatus < 500) {
+          throw err; // deterministic client error — do not retry
+        }
+        // Transient (network error, 5xx, parse failure): back off, retry once.
+        return new Promise(function (resolve) { setTimeout(resolve, 750); })
+          .then(fetchModels);
       })
       .then(function (models) {
-        if (models && models[lang]) {
-          renderModel(models[lang]);
+        // Exact match first, then base-language fallback (fr-ca -> fr).
+        var localized = models && (models[lang] || models[baseLang(lang)]);
+        if (localized) {
+          renderModel(localized);
         } else {
           renderError(
             'no localized survey model exists for lang="' + lang + '"' +

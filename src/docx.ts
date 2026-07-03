@@ -14,9 +14,9 @@
 // but that is a convention, not a requirement. We scan with "w:" first (the
 // overwhelmingly common case) and, if nothing matches, detect the actual
 // prefix bound to the WordprocessingML namespace and rescan. If extraction
-// still finds no paragraphs in a non-empty document we throw instead of
-// silently returning "" (an empty spec would make every downstream comparison
-// a false pass).
+// finds no paragraphs — whether the document.xml was empty/whitespace-only or
+// used an unsupported namespace binding — we throw instead of returning "" (an
+// empty spec would make every downstream comparison a silent false pass).
 
 import { unzipSync, type UnzipFileInfo } from "fflate";
 
@@ -170,7 +170,15 @@ export function extractDocxText(data: ArrayBuffer | Uint8Array): string {
   }
 
   if (blocks.length === 0) {
-    if (xml.trim().length === 0) return "";
+    if (xml.trim().length === 0) {
+      // An empty/whitespace-only document.xml carries no spec text. Returning
+      // "" here would make every downstream model comparison a silent false
+      // pass ("no discrepancies"), so fail loudly instead.
+      throw new Error(
+        `extractDocxText: "${DOCUMENT_XML_PATH}" is empty (no XML content); ` +
+          "the .docx contains no document body to compare against.",
+      );
+    }
     throw new Error(
       `extractDocxText: no paragraphs could be parsed from "${DOCUMENT_XML_PATH}" (${xml.length} chars of XML); ` +
         "the document may use an unsupported WordprocessingML namespace binding or be malformed.",
@@ -320,6 +328,26 @@ function extractParagraphText(paragraphXml: string, wml: WmlSyntax): string {
   return parts.join("");
 }
 
+/**
+ * True for a codepoint permitted by the XML 1.0 Char production:
+ *   #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
+ * This excludes NUL and the C0 control block (except tab/LF/CR), the surrogate
+ * range D800–DFFF (String.fromCodePoint would otherwise emit a lone surrogate,
+ * corrupting the text), the non-characters FFFE/FFFF, and anything above the
+ * Unicode ceiling. Such references are invalid in a well-formed .docx, so we
+ * refuse to materialize them.
+ */
+function isValidXmlChar(code: number): boolean {
+  return (
+    code === 0x9 ||
+    code === 0xa ||
+    code === 0xd ||
+    (code >= 0x20 && code <= 0xd7ff) ||
+    (code >= 0xe000 && code <= 0xfffd) ||
+    (code >= 0x10000 && code <= 0x10ffff)
+  );
+}
+
 /** Decode the five predefined XML entities plus numeric (&#NNN; / &#xHHH;) references. */
 function decodeXmlEntities(text: string): string {
   return text.replace(ENTITY_RE, (match: string, entity: string): string => {
@@ -339,10 +367,10 @@ function decodeXmlEntities(text: string): string {
           entity[1] === "x" || entity[1] === "X"
             ? Number.parseInt(entity.slice(2), 16)
             : Number.parseInt(entity.slice(1), 10);
-        if (Number.isInteger(code) && code >= 0 && code <= 0x10ffff) {
+        if (Number.isInteger(code) && isValidXmlChar(code)) {
           return String.fromCodePoint(code);
         }
-        return match; // malformed reference — leave as-is
+        return match; // malformed or XML-illegal reference — leave as-is
       }
     }
   });
