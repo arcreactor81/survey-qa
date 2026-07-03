@@ -20,14 +20,17 @@ const SDK_MAX_RETRIES = 1;
 let cachedClient: Anthropic | null = null;
 let cachedApiKey = "";
 
-function getClient(apiKey: string): Anthropic {
-  if (cachedClient === null || cachedApiKey !== apiKey) {
+function getClient(apiKey: string, baseURL?: string): Anthropic {
+  const cacheKey = `${apiKey}|${baseURL ?? ""}`;
+  if (cachedClient === null || cachedApiKey !== cacheKey) {
     cachedClient = new Anthropic({
       apiKey,
+      // Route through the Cloudflare AI Gateway (anthropic provider) when set.
+      ...(baseURL ? { baseURL } : {}),
       timeout: REQUEST_TIMEOUT_MS,
       maxRetries: SDK_MAX_RETRIES,
     });
-    cachedApiKey = apiKey;
+    cachedApiKey = cacheKey;
   }
   return cachedClient;
 }
@@ -120,7 +123,14 @@ export async function claudeCompare(
     throw new Error("ANTHROPIC_API_KEY is not set");
   }
 
-  const client = getClient(apiKey);
+  // Route through the Cloudflare AI Gateway (anthropic provider) when configured,
+  // so this optional in-Worker Claude path shares the same gateway as the other
+  // legs. (An authenticated gateway would also need cf-aig-authorization headers.)
+  const baseURL =
+    env.CF_AIG_ACCOUNT_ID && env.CF_AIG_GATEWAY_ID
+      ? `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_ID}/anthropic`
+      : undefined;
+  const client = getClient(apiKey, baseURL);
   const model = env.CLAUDE_MODEL ?? "claude-opus-4-8";
 
   const startedAt = Date.now();

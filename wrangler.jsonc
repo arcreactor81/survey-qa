@@ -48,7 +48,9 @@
     "GEMINI_OUTPUT_USD_PER_MTOK": "2.50",
     "GROK_MODEL": "grok-4.3",
     "GROK_INPUT_USD_PER_MTOK": "1.25",
-    "GROK_OUTPUT_USD_PER_MTOK": "2.50"
+    "GROK_OUTPUT_USD_PER_MTOK": "2.50",
+    "CF_AIG_ACCOUNT_ID": "f0cbb2076e484454e6567789b9be85d8",
+    "CF_AIG_GATEWAY_ID": "firstgateway"
   },
   "observability": { "enabled": true }
 }

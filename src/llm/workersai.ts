@@ -35,16 +35,17 @@ const VALID_SEVERITIES = new Set<Finding["severity"]>(["high", "medium", "low"])
 const AI_RUN_TIMEOUT_MS = 60_000;
 
 interface AiRunner {
-  run(model: string, options: Record<string, unknown>): Promise<unknown>;
+  run(model: string, inputs: Record<string, unknown>, options?: Record<string, unknown>): Promise<unknown>;
 }
 
 async function runWithTimeout(
   ai: AiRunner,
   model: string,
-  options: Record<string, unknown>,
+  inputs: Record<string, unknown>,
+  options?: Record<string, unknown>,
 ): Promise<unknown> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const call = ai.run(model, options);
+  const call = options ? ai.run(model, inputs, options) : ai.run(model, inputs);
   // If the call loses the race and rejects later, don't surface an unhandled
   // rejection — the race result is what callers observe.
   call.catch(() => {});
@@ -120,6 +121,10 @@ export async function workersaiCompare(
   latencyMs: number;
 }> {
   const model = modelOverride ?? env.WORKERSAI_MODEL ?? "@cf/openai/gpt-oss-120b";
+  // Route through the Cloudflare AI Gateway when CF_AIG_GATEWAY_ID is set
+  // (unified logging/caching/cost across all legs). env.AI.run takes the gateway
+  // in its options (3rd) arg; the binding is already account-scoped.
+  const aiOptions = env.CF_AIG_GATEWAY_ID ? { gateway: { id: env.CF_AIG_GATEWAY_ID } } : undefined;
   const started = Date.now();
   // The Ai binding's model catalog typing is a string-literal union that lags
   // the live catalog; the runtime accepts any valid model id string.
@@ -135,7 +140,7 @@ export async function workersaiCompare(
     ],
     max_tokens: 4096,
     temperature: 0,
-  })) as
+  }, aiOptions)) as
     | string
     | null
     | undefined
