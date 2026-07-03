@@ -8,17 +8,21 @@ survey website faithfully matches the Word questionnaire it was built from.
 ```
 questionnaire.docx ──► Worker parses docx (fflate, in-Worker)
                               │
-survey URL ──► Browser Rendering walks every page (text + screenshot per page)
+survey URL ──► Browser Rendering walks every page (text + screenshot + PDF per page)
                               │
-              per-page LLM comparison, two independent legs:
-                ├── DeepSeek (in-Worker, via AI Gateway when configured)
-                └── Claude   (local runner → `claude -p` on your Claude subscription)
+              per-page comparison, THREE independent model legs:
+                ├── DeepSeek  (deepseek-v4-pro, in-Worker via AI Gateway; metered ~1¢/run)
+                ├── Workers AI (gpt-oss-120b, in-Worker native binding; free/bundled)
+                └── Claude    (Opus 4.8, local runner → `claude -p` on your subscription; $0)
                               │
               server-side verbatim-quote verification kills hallucinated findings
                               │
               HTML report: findings, seeded-error scorecard (recall + false positives),
-              per-model token/cost comparison, page screenshots
+              per-model token/cost comparison, page screenshots + PDFs
 ```
+
+DeepSeek and Workers AI run automatically inside the Worker; Claude runs on-demand from your
+machine so it bills to your flat-rate Claude subscription instead of a metered API key ($0).
 
 The demo pair is self-contained: `spec/questionnaire.docx` (ground truth, generated from
 `spec/canon.json`) and `/survey.html` (SurveyJS site with **10 deliberately seeded errors** —
@@ -30,8 +34,9 @@ error-free on purpose to measure false positives.
 
 1. `npm install` and `npx wrangler deploy` (Node 22+; on this machine use the portable node —
    see `set-secrets.ps1` header for the path).
-2. `powershell -File .\set-secrets.ps1` — sets `DEEPSEEK_API_KEY` (required) and optionally
-   `ANTHROPIC_API_KEY` (not needed when using the subscription runner).
+2. `powershell -File .\set-secrets.ps1` — sets `DEEPSEEK_API_KEY` (optional; the run degrades
+   gracefully to a Workers AI + Claude report without it) and optionally `ANTHROPIC_API_KEY`
+   (not needed when using the subscription runner). Workers AI needs no key (native binding).
 3. Open the Worker URL → landing page → "Run QA" (bundled sample docx + /survey.html), or:
    `curl -X POST https://survey-qa.<subdomain>.workers.dev/api/run -F surveyUrl=/survey.html -F useSample=true`
 4. When the report shows "Claude comparison pending", run the Claude leg on your subscription:

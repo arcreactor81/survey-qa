@@ -1,8 +1,8 @@
 // Workers AI comparison leg — the zero-key third pillar. Runs on the native
-// AI binding (bundled Workers AI allocation), default model glm-4.7-flash per
-// the July-2026 third-pillar research (cheapest input, distinct model lineage
-// from Claude/DeepSeek). No JSON mode on this model: JSON is prompt-enforced
-// and parsed leniently, with quote verification downstream as the backstop.
+// AI binding (bundled Workers AI allocation), default model gpt-oss-120b —
+// chosen by the empirical model bakeoff (consistent 9/10 recall with zero
+// errors, replacing the flaky glm-4.7-flash). No documented JSON mode, so JSON
+// is prompt-enforced and parsed leniently, with quote verification downstream.
 
 import { buildComparePrompt } from "../prompt";
 import type { CompareResult, Env, Finding, PageCapture } from "../types";
@@ -119,7 +119,7 @@ export async function workersaiCompare(
   outputTokens: number;
   latencyMs: number;
 }> {
-  const model = modelOverride ?? env.WORKERSAI_MODEL ?? "@cf/zai-org/glm-4.7-flash";
+  const model = modelOverride ?? env.WORKERSAI_MODEL ?? "@cf/openai/gpt-oss-120b";
   const started = Date.now();
   // The Ai binding's model catalog typing is a string-literal union that lags
   // the live catalog; the runtime accepts any valid model id string.
@@ -142,7 +142,7 @@ export async function workersaiCompare(
     | {
         // classic Workers AI shape
         response?: string;
-        // OpenAI chat.completion shape (returned by glm-4.7-flash and other
+        // OpenAI chat.completion shape (returned by gpt-oss-120b and other
         // OpenAI-compatible catalog models)
         choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
         usage?: { prompt_tokens?: number; completion_tokens?: number };

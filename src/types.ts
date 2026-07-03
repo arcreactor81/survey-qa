@@ -11,7 +11,7 @@ export interface Env {
   DEEPSEEK_API_KEY?: string | SecretBinding;
   CLAUDE_MODEL?: string; // default "claude-opus-4-8"
   DEEPSEEK_MODEL?: string; // default "deepseek-v4-pro"
-  WORKERSAI_MODEL?: string; // default "@cf/zai-org/glm-4.7-flash"
+  WORKERSAI_MODEL?: string; // default "@cf/openai/gpt-oss-120b"
   CF_AIG_ACCOUNT_ID?: string; // optional AI Gateway routing for DeepSeek
   CF_AIG_GATEWAY_ID?: string;
   CF_AIG_TOKEN?: string;
@@ -20,8 +20,8 @@ export interface Env {
   CLAUDE_OUTPUT_USD_PER_MTOK?: string; // default "25"
   DEEPSEEK_INPUT_USD_PER_MTOK?: string; // default "0.28"
   DEEPSEEK_OUTPUT_USD_PER_MTOK?: string; // default "0.42"
-  WORKERSAI_INPUT_USD_PER_MTOK?: string; // default "0.06"
-  WORKERSAI_OUTPUT_USD_PER_MTOK?: string; // default "0.40"
+  WORKERSAI_INPUT_USD_PER_MTOK?: string; // default "0.35"
+  WORKERSAI_OUTPUT_USD_PER_MTOK?: string; // default "0.75"
 }
 
 export type ModelName = "deepseek" | "claude" | "workersai";

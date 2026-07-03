@@ -5,11 +5,12 @@ import { deepseekCompare } from "./llm/deepseek";
 import { workersaiCompare } from "./llm/workersai";
 import type { Env, Finding, ModelName, ModelRunStats, PageCapture } from "./types";
 
-// Defaults mirror the *_USD_PER_MTOK comments in src/types.ts / wrangler.jsonc vars.
+// Defaults mirror the *_USD_PER_MTOK vars in wrangler.jsonc (env vars win at
+// runtime; these fallbacks apply only if a rate var is unset).
 const DEFAULT_RATES: Record<ModelName, { input: number; output: number }> = {
   claude: { input: 5, output: 25 },
   deepseek: { input: 0.28, output: 0.42 },
-  workersai: { input: 0.06, output: 0.4 },
+  workersai: { input: 0.35, output: 0.75 },
 };
 
 function parseRate(value: string | undefined, fallback: number): number {
@@ -120,7 +121,7 @@ export async function runWorkersaiCompares(
   const findings: Finding[] = [];
   const stats: ModelRunStats = {
     model: "workersai",
-    modelId: env.WORKERSAI_MODEL ?? "@cf/zai-org/glm-4.7-flash",
+    modelId: env.WORKERSAI_MODEL ?? "@cf/openai/gpt-oss-120b",
     calls: 0,
     inputTokens: 0,
     outputTokens: 0,

@@ -423,7 +423,7 @@ export default {
           );
           return json({
             ok: true,
-            model: env.WORKERSAI_MODEL ?? "@cf/zai-org/glm-4.7-flash",
+            model: env.WORKERSAI_MODEL ?? "@cf/openai/gpt-oss-120b",
             findings: r.findings,
             inputTokens: r.inputTokens,
             outputTokens: r.outputTokens,
