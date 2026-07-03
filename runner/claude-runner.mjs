@@ -53,13 +53,20 @@ function usage(message) {
 }
 
 function parseArgs(argv) {
-  const opts = { workerUrl: null, runId: null, dryRun: false };
+  // model defaults to the "opus" alias (the quality anchor). Pass a FULL id to
+  // A/B a cheaper tier — e.g. --model claude-sonnet-4-6 or
+  // --model claude-haiku-4-5-20251001. Do NOT use the bare "sonnet"/"haiku"
+  // aliases: "sonnet" resolves to Sonnet 5 (excluded, expensive) and the CLI's
+  // "haiku" alias is bugged (silently serves Sonnet) — pin the snapshot id.
+  const opts = { workerUrl: null, runId: null, dryRun: false, model: "opus" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--worker-url") {
       opts.workerUrl = argv[++i];
     } else if (a === "--run") {
       opts.runId = argv[++i];
+    } else if (a === "--model") {
+      opts.model = argv[++i];
     } else if (a === "--dry-run") {
       opts.dryRun = true;
     } else if (a === "--help" || a === "-h") {
@@ -284,12 +291,12 @@ function killTree(child) {
  * level on timeout — spawnSync's own timeout would only reap the shell wrapper
  * and leave the billable claude grandchild orphaned on Windows.
  */
-function runClaude(prompt) {
+function runClaude(prompt, model) {
   const started = Date.now();
   return new Promise((resolve, reject) => {
     // shell: true so `claude.cmd` resolves on Windows; detached on POSIX so the
     // child leads its own process group and the tree can be signalled at once.
-    const child = spawn(shellQuoteBin(CLAUDE_BIN), ["-p", "--output-format", "json", "--model", "opus"], {
+    const child = spawn(shellQuoteBin(CLAUDE_BIN), ["-p", "--output-format", "json", "--model", model], {
       shell: true,
       windowsHide: true,
       env: cleanEnv(),
@@ -388,11 +395,12 @@ function runClaude(prompt) {
 }
 
 async function main() {
-  const { workerUrl, runId, dryRun } = parseArgs(process.argv.slice(2));
+  const { workerUrl, runId, dryRun, model } = parseArgs(process.argv.slice(2));
 
   console.log(`survey-qa claude runner`);
   console.log(`  worker : ${workerUrl}`);
   console.log(`  run    : ${runId}`);
+  console.log(`  model  : ${model}`);
   if (dryRun) console.log(`  mode   : DRY RUN (prompts printed, claude not invoked)`);
   console.log("");
 
@@ -447,7 +455,7 @@ async function main() {
       }
 
       try {
-        const { rawFindings, inputTokens, outputTokens, latencyMs } = await runClaude(prompt);
+        const { rawFindings, inputTokens, outputTokens, latencyMs } = await runClaude(prompt, model);
         stats.calls += 1;
         stats.inputTokens += inputTokens;
         stats.outputTokens += outputTokens;
@@ -525,7 +533,7 @@ async function main() {
 
   const payload = {
     model: MODEL_NAME,
-    modelId: MODEL_ID,
+    modelId: `claude-code/${model} (subscription)`,
     findings: allFindings,
     stats,
   };
