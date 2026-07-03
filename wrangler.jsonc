@@ -30,9 +30,9 @@
     "CLAUDE_OUTPUT_USD_PER_MTOK": "25",
     "DEEPSEEK_INPUT_USD_PER_MTOK": "0.28",
     "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.42",
-    "WORKERSAI_MODEL": "@cf/zai-org/glm-4.7-flash",
-    "WORKERSAI_INPUT_USD_PER_MTOK": "0.06",
-    "WORKERSAI_OUTPUT_USD_PER_MTOK": "0.40"
+    "WORKERSAI_MODEL": "@cf/openai/gpt-oss-120b",
+    "WORKERSAI_INPUT_USD_PER_MTOK": "0.35",
+    "WORKERSAI_OUTPUT_USD_PER_MTOK": "0.75"
   },
   "observability": { "enabled": true }
 }

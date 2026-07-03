@@ -66,28 +66,56 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         }
       );
 
+      // Each compare leg is INDEPENDENT and best-effort: a leg that fully fails
+      // (e.g. a Workers AI brownout makes assertLegNotFullyFailed throw) must
+      // degrade to null — absent from the report — WITHOUT aborting the run and
+      // discarding the OTHER legs' good findings. Only a NON-leg step
+      // (extract-spec / walk-survey), or ALL enabled legs failing, marks the
+      // run failed. Outages are still recorded loudly in `legOutages` and
+      // surfaced on the run envelope during finalize.
+      //
+      // Step timeouts are PAGE-COUNT-AWARE (legStepTimeout): the real
+      // infinite-hang guard is the 60s-per-call race inside each leg, so the
+      // step only needs to cover pages.length sequential ~60s calls. The walker
+      // can emit up to ~13 pages (far more than the ~6-page demo), so a fixed
+      // "7/10 minutes" could cut off a healthy long run; scaling with page
+      // count keeps a generous, safe bound.
+      const stepTimeout = legStepTimeout(pages.length);
+      const legOutages: string[] = [];
+      let enabledLegs = 0;
+
       let deepseek: { findings: Finding[]; stats: ModelRunStats } | null = null;
       if (await resolveSecret(env.DEEPSEEK_API_KEY)) {
-        deepseek = await step.do(
-          "deepseek-compare",
-          { retries: { limit: 1, delay: "10 seconds" }, timeout: "10 minutes" },
-          async () => runDeepseekCompares(env, specText, pages)
-        );
+        enabledLegs++;
+        try {
+          deepseek = await step.do(
+            "deepseek-compare",
+            { retries: { limit: 1, delay: "10 seconds" }, timeout: stepTimeout },
+            async () => runDeepseekCompares(env, specText, pages)
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          legOutages.push(`deepseek: ${msg}`);
+          console.error(`deepseek leg failed — degrading to no deepseek findings: ${msg}`);
+          deepseek = null;
+        }
       }
 
       let workersai: { findings: Finding[]; stats: ModelRunStats } | null = null;
       if (env.AI) {
-        // The infinite-hang guard is the 60s-per-call race INSIDE workersaiCompare.
-        // This step timeout only needs to bound the SUM of 6 finite page-calls:
-        // worst case 6 × 60s = 360s. A healthy leg has been observed at ~200s and
-        // Workers AI can brown out to ~45s/call, so 3 minutes was too tight (it
-        // failed even healthy legs). 7 minutes covers 6 near-cap calls; a truly
-        // hung call still errors out at 60s so a total outage surfaces well under it.
-        workersai = await step.do(
-          "workersai-compare",
-          { retries: { limit: 1, delay: "10 seconds" }, timeout: "7 minutes" },
-          async () => runWorkersaiCompares(env, specText, pages)
-        );
+        enabledLegs++;
+        try {
+          workersai = await step.do(
+            "workersai-compare",
+            { retries: { limit: 1, delay: "10 seconds" }, timeout: stepTimeout },
+            async () => runWorkersaiCompares(env, specText, pages)
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          legOutages.push(`workersai: ${msg}`);
+          console.error(`workersai leg failed — degrading to no workersai findings: ${msg}`);
+          workersai = null;
+        }
       }
 
       let claude: { findings: Finding[]; stats: ModelRunStats } | null = null;
@@ -95,13 +123,27 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       // "PLACEHOLDER" seed as unset, so a seeded-but-empty key correctly falls
       // through to the external runner path instead of erroring on every page.
       if (await resolveSecret(env.ANTHROPIC_API_KEY)) {
-        // claudeCompare caps each call at 60s with one SDK retry (~2 min/page
-        // worst case), so 8 minutes bounds a total outage without cutting off
-        // a healthy multi-page run.
-        claude = await step.do(
-          "claude-compare",
-          { retries: { limit: 1, delay: "10 seconds" }, timeout: "8 minutes" },
-          async () => runClaudeInWorker(env, specText, pages)
+        enabledLegs++;
+        try {
+          claude = await step.do(
+            "claude-compare",
+            { retries: { limit: 1, delay: "10 seconds" }, timeout: stepTimeout },
+            async () => runClaudeInWorker(env, specText, pages)
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          legOutages.push(`claude: ${msg}`);
+          console.error(`claude leg failed — degrading to no claude findings: ${msg}`);
+          claude = null;
+        }
+      }
+
+      // Total wipeout: every enabled leg failed. Nothing to report, so fail the
+      // run loudly (the top-level catch marks it "failed"). A partial outage
+      // (>=1 leg succeeded) continues to finalize with whatever we have.
+      if (enabledLegs > 0 && !deepseek && !workersai && !claude) {
+        throw new Error(
+          `all ${enabledLegs} enabled compare leg(s) failed: ${legOutages.join("; ")}`
         );
       }
 
@@ -130,6 +172,12 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
           : null;
         report.finishedAt = new Date().toISOString();
         report.docxName = docxName;
+        // Surface any degraded legs loudly on the envelope without failing the
+        // run: the report is still valid, just missing that leg's pillar.
+        envelope.error =
+          legOutages.length > 0
+            ? `degraded run — ${legOutages.length} leg(s) unavailable: ${legOutages.join("; ")}`
+            : undefined;
         envelope.status = claude ? "complete" : "awaiting-claude";
         await putRun(env, runId, envelope);
       });
@@ -145,6 +193,19 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       throw err;
     }
   }
+}
+
+/**
+ * Page-count-aware step timeout for an LLM compare leg. The real infinite-hang
+ * guard is the 60s-per-call race INSIDE each leg's compare loop, so this step
+ * only needs to bound the SUM of pageCount sequential ~60s calls — a generous
+ * per-step budget is therefore safe. ~70s/page (headroom over a near-cap call)
+ * + a 30s buffer, clamped to a [120s, 900s] floor/ceiling. The ~6-page demo
+ * lands at ~450s; the walker's ~13-page max is capped at 900s.
+ */
+function legStepTimeout(pageCount: number): WorkflowSleepDuration {
+  const seconds = Math.min(900, Math.max(120, Math.ceil(pageCount * 70) + 30));
+  return `${seconds} seconds`;
 }
 
 async function runClaudeInWorker(

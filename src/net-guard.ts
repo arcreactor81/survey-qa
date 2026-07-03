@@ -132,9 +132,26 @@ function isBlockedIpv6(groups: number[]): boolean {
   // original hostname check did for "::ffff:". No legitimate survey host is
   // reached via an IPv6-embedded IPv4 literal.
   if (zeroThrough(5) && (groups[5] === 0xffff || groups[5] === 0)) return true;
-  // NAT64 well-known prefix 64:ff9b::/96 — translates to the embedded IPv4.
-  if (g0 === 0x0064 && groups[1] === 0xff9b && zeroThrough(6)) {
+  // NAT64 well-known prefix 64:ff9b::/96 — translates to the embedded IPv4 in
+  // the final 32 bits (groups[6..7]). The /96 prefix means groups[2..5] are
+  // zero; groups[0..1] are the 64:ff9b marker (NOT zero), so this must check
+  // the middle groups explicitly rather than a zeroThrough over the marker.
+  if (
+    g0 === 0x0064 &&
+    groups[1] === 0xff9b &&
+    groups[2] === 0 &&
+    groups[3] === 0 &&
+    groups[4] === 0 &&
+    groups[5] === 0
+  ) {
     return isBlockedIpv4(groups[6] >> 8, groups[6] & 0xff);
+  }
+  // 6to4 (2002::/16) embeds the IPv4 in the next 32 bits (groups[1..2]); a
+  // 6to4 address wrapping a private/link-local IPv4 must be blocked exactly as
+  // the bare IPv4 would be. The first two octets (groups[1]) fully determine
+  // every blocked IPv4 range.
+  if (g0 === 0x2002) {
+    return isBlockedIpv4(groups[1] >> 8, groups[1] & 0xff);
   }
   return false;
 }

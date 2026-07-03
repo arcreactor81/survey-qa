@@ -3,10 +3,15 @@
 // resource is the Google Fonts stylesheet) from a RunReport. All user/model-
 // derived strings are HTML-escaped via esc().
 //
-// Design language: editorial-technical consulting deliverable.
-//   ink navy #101D31 · warm paper #FAF8F3 · white cards · accent #C2571B
-//   success #1E7F4F · fail #B3362B · slate #5B6B7F · borders #E4DFD5
-//   Fraunces (serif display, Georgia fallback) for headings, system-ui for body.
+// Three model legs feed a report: DeepSeek (deepseek-v4-pro, via AI Gateway)
+// and Workers AI (gpt-oss-120b, native binding) run automatically in-Worker;
+// Claude Opus 4.8 runs via the user's local runner on their Claude
+// subscription ($0), then POSTs findings back.
+//
+// Design language: editorial-technical consulting deliverable (Deep Teal Terminal).
+//   ink #0F2422 · cool paper #F1F6F5 · white cards · accent #096658
+//   success #156B3F · fail #A63220 · slate #435659 · borders #D8E2E0
+//   Space Grotesk (display, Segoe UI fallback) for headings, system-ui for body.
 
 import type {
   Finding,
@@ -457,7 +462,9 @@ export function buildHtmlReport(run: RunReport): string {
   }
   const pendingNotice = hasClaude
     ? ""
-    : `<div class="notice">Claude comparison pending &mdash; run the local runner:
+    : `<div class="notice">Third model leg pending &mdash; DeepSeek and Workers AI (gpt-oss-120b) have
+        reported; Claude Opus 4.8 runs locally on your Claude subscription ($0, no metered API key).
+        Run the local runner:
         <code class="mono">node runner/claude-runner.mjs --worker-url ${esc(workerOrigin)} --run ${esc(run.runId)}</code>
       </div>`;
 
@@ -478,44 +485,45 @@ export function buildHtmlReport(run: RunReport): string {
     } catch (e) { /* matchMedia unavailable */ }
   }
   document.documentElement.dataset.theme = t;
+  requestAnimationFrame(function(){requestAnimationFrame(function(){document.documentElement.classList.add("theme-ready");});});
 })();
 </script>
 <title>Survey QA &mdash; ${esc(run.runId)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: light;
-    --ink: #101D31;
-    --paper: #FAF8F3;
+    --ink: #0F2422;
+    --paper: #F1F6F5;
     --card: #FFFFFF;
-    --accent: #C2571B;
-    --accent-dark: #A84A15;
-    --ok: #1E7F4F;
-    --bad: #B3362B;
-    --slate: #5B6B7F;
-    --border: #E4DFD5;
-    --text: #26374B;
-    --muted: #8C96A3;
-    --band-bg: #101D31;
+    --accent: #096658;
+    --accent-dark: #07564A;
+    --ok: #156B3F;
+    --bad: #A63220;
+    --slate: #435659;
+    --border: #D8E2E0;
+    --text: #14282A;
+    --muted: #435659;
+    --band-bg: #071012;
     --band-title: #FFFFFF;
-    --band-text: #F4F1EA;
-    --band-muted: #9FB0C4;
+    --band-text: #DCE7E5;
+    --band-muted: #85999B;
     --band-dt: #8FA0B5;
-    --band-link: #EFB88F;
+    --band-link: #7CE8C9;
     --notice-bg: rgba(194, 87, 27, 0.14);
     --notice-border: rgba(194, 87, 27, 0.55);
     --notice-text: #F3D9C4;
     --notice-code: #FFFFFF;
-    --tint: #F6F2E9;
+    --tint: #E5EEEC;
     --table-border: #EFEAE0;
     --row-hover: #FBF7EF;
     --mark-missed: #A9B2BD;
     --chip-cat-bg: #EFEBE2;
-    --bad-bg: #F7E3E0;
+    --bad-bg: #FBE9E6;
     --sev-med-bg: #F8E8D8;
     --sev-med-text: #9A4E12;
     --sev-low-bg: #E7EBF0;
-    --ok-bg: #E2F1E8;
+    --ok-bg: #DDF2E4;
     --badge-muted-bg: #ECEDEA;
     --spec-bg: #EDF5EF;
     --spec-border: #CBE0D2;
@@ -525,46 +533,46 @@ export function buildHtmlReport(run: RunReport): string {
     --note-text: #7A4A12;
     --note-bg: #F8EFDD;
     --note-border: #EBD9B7;
-    --serif: "Fraunces", Georgia, "Times New Roman", serif;
+    --serif: "Space Grotesk", "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
     --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
-    --shadow: 0 1px 2px rgba(16, 29, 49, 0.04), 0 10px 28px rgba(16, 29, 49, 0.06);
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --shadow: 0 1px 2px rgba(7, 16, 18, 0.05), 0 10px 28px rgba(7, 16, 18, 0.07);
   }
   /* Dark palette — scoped to screen so print always renders the light theme. */
   @media screen {
     html[data-theme="dark"] {
       color-scheme: dark;
-      --ink: #F5F1E8;
-      --paper: #0D1626;
-      --card: #182640;
-      --accent: #E8824A;
-      --accent-dark: #F0925C;
-      --ok: #4CAF7D;
-      --bad: #E06456;
-      --slate: #9DABBF;
-      --border: #2B3B55;
-      --text: #EDE9DF;
-      --muted: #9DABBF;
-      --band-bg: #0A111D;
-      --band-title: #F5F1E8;
-      --band-text: #EDE9DF;
-      --band-muted: #9DABBF;
+      --ink: #EDF5F3;
+      --paper: #0B1416;
+      --card: #101E21;
+      --accent: #35D3AC;
+      --accent-dark: #5FE0BF;
+      --ok: #74D389;
+      --bad: #F98576;
+      --slate: #8FA6A2;
+      --border: #24363A;
+      --text: #DCE7E5;
+      --muted: #93A9A5;
+      --band-bg: #060D0F;
+      --band-title: #EDF5F3;
+      --band-text: #DCE7E5;
+      --band-muted: #7E9490;
       --band-dt: #9DABBF;
-      --band-link: #EFB88F;
+      --band-link: #7CE8C9;
       --notice-bg: rgba(232, 130, 74, 0.16);
       --notice-border: rgba(232, 130, 74, 0.5);
       --notice-text: #F2C9A6;
       --notice-code: #F5F1E8;
-      --tint: #131F36;
+      --tint: #122023;
       --table-border: #26344C;
       --row-hover: rgba(255, 255, 255, 0.04);
       --mark-missed: #6B7A90;
       --chip-cat-bg: rgba(157, 171, 191, 0.16);
-      --bad-bg: rgba(224, 100, 86, 0.18);
+      --bad-bg: rgba(249, 133, 118, 0.16);
       --sev-med-bg: rgba(232, 130, 74, 0.18);
       --sev-med-text: #F0A97E;
       --sev-low-bg: rgba(157, 171, 191, 0.14);
-      --ok-bg: rgba(76, 175, 125, 0.16);
+      --ok-bg: rgba(116, 211, 137, 0.14);
       --badge-muted-bg: rgba(157, 171, 191, 0.16);
       --spec-bg: rgba(76, 175, 125, 0.12);
       --spec-border: rgba(76, 175, 125, 0.38);
@@ -574,7 +582,7 @@ export function buildHtmlReport(run: RunReport): string {
       --note-text: #F0C9A9;
       --note-bg: rgba(232, 130, 74, 0.14);
       --note-border: rgba(232, 130, 74, 0.35);
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.45);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 10px 28px rgba(0, 0, 0, 0.5);
     }
   }
   * { box-sizing: border-box; }
@@ -934,6 +942,10 @@ export function buildHtmlReport(run: RunReport): string {
     tbody tr:hover { background: transparent; }
     a { text-decoration: none; }
   }
+
+  /* ---------- smooth theme transition (added after first paint via .theme-ready) ---------- */
+  html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: background-color 220ms ease, color 220ms ease, border-color 220ms ease, box-shadow 220ms ease, fill 220ms ease, stroke 220ms ease; }
+  @media (prefers-reduced-motion: reduce) { html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: none !important; } }
 </style>
 </head>
 <body>

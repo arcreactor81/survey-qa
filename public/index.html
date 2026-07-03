@@ -15,99 +15,100 @@
     } catch (e) { /* matchMedia unavailable */ }
   }
   document.documentElement.dataset.theme = t;
+  requestAnimationFrame(function(){requestAnimationFrame(function(){document.documentElement.classList.add("theme-ready");});});
 })();
 </script>
 <title>Survey QA &mdash; Automated questionnaire-to-website verification</title>
-<meta name="description" content="Survey QA automates vendor survey link-testing: it parses the Word questionnaire, walks every survey page with a real browser, runs a dual-LLM comparison with verbatim-quote verification, and delivers a findings report with a seeded-error scorecard.">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&display=swap" rel="stylesheet">
+<meta name="description" content="Survey QA automates vendor survey link-testing: it parses the Word questionnaire, walks every survey page with a real browser, has three models — DeepSeek, Workers AI (gpt-oss-120b) and Claude Opus 4.8 — independently compare every page, keeps only verbatim-quote-verified findings, and delivers a report with a seeded-error scorecard.">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: light;
-    --ink: #101D31;
-    --paper: #FAF8F3;
+    --ink: #0F2422;
+    --paper: #F1F6F5;
     --card: #FFFFFF;
-    --accent: #C2571B;
-    --accent-dark: #A84A15;
-    --ok: #1E7F4F;
-    --bad: #B3362B;
-    --slate: #5B6B7F;
-    --border: #E4DFD5;
-    --text: #101D31;
-    --muted: #5B6B7F;
+    --accent: #096658;
+    --accent-dark: #07564A;
+    --ok: #156B3F;
+    --bad: #A63220;
+    --slate: #435659;
+    --border: #D8E2E0;
+    --text: #14282A;
+    --muted: #435659;
     --btn-text: #FFFFFF;
-    --band-bg: #101D31;
+    --band-bg: #071012;
     --band-title: #FFFFFF;
-    --band-text: #F4F1EA;
-    --band-muted: #9FB0C4;
-    --band-soft: #C9D3E0;
-    --band-link: #EFB88F;
-    --tint: #F6F2E9;
-    --tint-soft: #FDFCF8;
-    --code-bg: #101D31;
-    --code-text: #F4F1EA;
+    --band-text: #DCE7E5;
+    --band-muted: #85999B;
+    --band-soft: #B4C8C3;
+    --band-link: #7CE8C9;
+    --tint: #E5EEEC;
+    --tint-soft: #F7FAF9;
+    --code-bg: #08211E;
+    --code-text: #C7E8DC;
     --input-bg: #FFFFFF;
-    --input-border: #D9D2C5;
-    --focus-ring: rgba(194, 87, 27, 0.45);
-    --focus-soft: rgba(194, 87, 27, 0.18);
-    --pulse: rgba(194, 87, 27, 0.35);
-    --wait-bg: #F8E8D8;
-    --wait-text: #9A4E12;
-    --ok-bg: #E2F1E8;
-    --bad-bg: #F7E3E0;
-    --done-border: #BFDCCB;
-    --done-bg: #F2F8F4;
-    --err-bg: #F9ECEA;
-    --err-border: #E9CCC6;
-    --err-text: #7A2A21;
-    --serif: "Fraunces", Georgia, "Times New Roman", serif;
+    --input-border: #C5D3D0;
+    --focus-ring: rgba(9, 102, 88, 0.45);
+    --focus-soft: rgba(9, 102, 88, 0.16);
+    --pulse: rgba(9, 102, 88, 0.35);
+    --wait-bg: #F7EFD3;
+    --wait-text: #674D0C;
+    --ok-bg: #DDF2E4;
+    --bad-bg: #FBE9E6;
+    --done-border: #B2DAC3;
+    --done-bg: #EFF8F2;
+    --err-bg: #FBECEA;
+    --err-border: #EDCBC5;
+    --err-text: #8F2A21;
+    --serif: "Space Grotesk", "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
     --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
-    --shadow: 0 1px 2px rgba(16, 29, 49, 0.04), 0 10px 28px rgba(16, 29, 49, 0.06);
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --shadow: 0 1px 2px rgba(7, 16, 18, 0.05), 0 10px 28px rgba(7, 16, 18, 0.07);
   }
   /* Dark palette — scoped to screen so print always renders the light theme. */
   @media screen {
     html[data-theme="dark"] {
       color-scheme: dark;
-      --ink: #F5F1E8;
-      --paper: #0D1626;
-      --card: #182640;
-      --accent: #E8824A;
-      --accent-dark: #F0925C;
-      --ok: #4CAF7D;
-      --bad: #E06456;
-      --slate: #9DABBF;
-      --border: #2B3B55;
-      --text: #EDE9DF;
-      --muted: #9DABBF;
-      --btn-text: #16202F;
-      --band-bg: #0A111D;
-      --band-title: #F5F1E8;
-      --band-text: #EDE9DF;
-      --band-muted: #9DABBF;
-      --band-soft: #B9C4D4;
-      --band-link: #EFB88F;
-      --tint: #131F36;
-      --tint-soft: #14213A;
-      --code-bg: #0F1B30;
-      --code-text: #EDE9DF;
-      --input-bg: #0F1B30;
-      --input-border: #33445F;
-      --focus-ring: rgba(232, 130, 74, 0.55);
-      --focus-soft: rgba(232, 130, 74, 0.25);
-      --pulse: rgba(232, 130, 74, 0.4);
-      --wait-bg: rgba(232, 130, 74, 0.16);
-      --wait-text: #F0A97E;
-      --ok-bg: rgba(76, 175, 125, 0.16);
-      --bad-bg: rgba(224, 100, 86, 0.16);
-      --done-border: #2E5A44;
+      --ink: #EDF5F3;
+      --paper: #0B1416;
+      --card: #101E21;
+      --accent: #35D3AC;
+      --accent-dark: #5FE0BF;
+      --ok: #74D389;
+      --bad: #F98576;
+      --slate: #8FA6A2;
+      --border: #24363A;
+      --text: #DCE7E5;
+      --muted: #93A9A5;
+      --btn-text: #062019;
+      --band-bg: #060D0F;
+      --band-title: #EDF5F3;
+      --band-text: #DCE7E5;
+      --band-muted: #7E9490;
+      --band-soft: #B4C8C3;
+      --band-link: #7CE8C9;
+      --tint: #122023;
+      --tint-soft: #101C1F;
+      --code-bg: #07110F;
+      --code-text: #B8E6D2;
+      --input-bg: #0F1B1E;
+      --input-border: #2E4247;
+      --focus-ring: rgba(53, 211, 172, 0.55);
+      --focus-soft: rgba(53, 211, 172, 0.2);
+      --pulse: rgba(53, 211, 172, 0.38);
+      --wait-bg: rgba(242, 206, 114, 0.13);
+      --wait-text: #F2CE72;
+      --ok-bg: rgba(116, 211, 137, 0.14);
+      --bad-bg: rgba(249, 133, 118, 0.16);
+      --done-border: #2C5B41;
       /* Opaque equivalent of rgba(76,175,125,0.1) over the card (#182640).
          Must stay opaque: done stages sit on top of the .pipeline::before
          connector line — a translucent fill lets it ghost through the card. */
-      --done-bg: #1D3446;
-      --err-bg: rgba(224, 100, 86, 0.12);
-      --err-border: rgba(224, 100, 86, 0.4);
-      --err-text: #F1A99F;
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.45);
+      --done-bg: rgba(116, 211, 137, 0.1);
+      --err-bg: rgba(249, 133, 118, 0.12);
+      --err-border: rgba(249, 133, 118, 0.4);
+      --err-text: #FFAFA4;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 10px 28px rgba(0, 0, 0, 0.5);
     }
   }
   * { box-sizing: border-box; }
@@ -384,13 +385,10 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) {
     .spinner { animation-duration: 2.5s; }
-    .mp-stage { transition: none; }
-    .mp-stage.is-cur { animation: none; }
+    /* Keep the active-stage ring visibly alive, just slower. */
+    .trk-mark-spin { animation-duration: 2.5s; }
     .trivia-line { transition: none; }
     .takeover { transition: none !important; animation: none !important; }
-    .stage, .stage-icon, .stage-name { transition: none; }
-    .mp-stage.is-cur::before, .stage.is-cur::after { transition: none; }
-    .stage.is-cur .stage-dot { animation: none; }
     .bug { animation: none; }
     .bug > span { animation: none; }
     .bug.is-squashed > span { animation: none; opacity: 0.35; }
@@ -407,60 +405,85 @@
   .state-elapsed { margin-left: 10px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12.5px; }
   .state-note { font-size: 12px; color: var(--muted); margin: 14px 0 0; }
 
-  /* compact pipeline + rotating trivia (processing state only) */
-  .mini-pipe { display: flex; align-items: center; gap: 6px; margin: 16px 0 0; flex-wrap: wrap; }
-  .mp-stage {
-    position: relative;
+  /* ---------- verbose stage tracker (status card + overlay) ----------
+     Robust by construction: every state marker is real text/border content
+     (✓ / spinner ring / ○ / ▶) — never a pseudo-element width fill. */
+  .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0; border: 0;
+    clip: rect(0 0 0 0);
     overflow: hidden;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 34px;
-    height: 34px;
+    white-space: nowrap;
+  }
+  .track-wrap { margin: 18px 0 0; max-width: 680px; }
+  .track-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .track-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--accent);
+  }
+  .track { list-style: none; margin: 12px 0 0; padding: 0; max-width: 680px; }
+  .trk-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
     border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--tint-soft);
-    font-size: 16px;
-    line-height: 1;
-    opacity: 0.45;
-    transition: opacity 0.4s ease, border-color 0.4s ease, background 0.4s ease;
+    padding: 10px 14px;
+    margin: 0 0 8px;
   }
-  .mp-stage.is-done { opacity: 1; border-color: var(--done-border); background: var(--done-bg); }
-  .mp-stage.is-done::after {
-    content: "\2713";
-    position: absolute;
-    right: 3px;
-    bottom: 1px;
-    font-size: 9px;
+  .trk-mark {
+    flex: none;
+    box-sizing: border-box;
+    width: 22px;
+    height: 22px;
+    margin-top: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 13px;
     font-weight: 700;
     line-height: 1;
-    color: var(--ok);
   }
-  .mp-stage.is-cur {
-    opacity: 1;
+  .trk-mark-done { background: var(--ok-bg); color: var(--ok); }
+  .trk-mark-pend { color: var(--muted); font-size: 15px; }
+  .trk-mark-spin {
+    border: 3px solid var(--focus-soft);
+    border-top-color: var(--accent);
+    animation: spin 0.85s linear infinite;
+  }
+  .trk-mark-you { background: var(--accent); color: var(--btn-text); font-size: 10px; }
+  .trk-body { flex: 1; min-width: 0; }
+  .trk-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .trk-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
+  .trk-model {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 1px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--tint);
+    color: var(--slate);
+    white-space: nowrap;
+  }
+  .trk-nomodel { opacity: 0.7; }
+  .trk-desc { display: block; font-size: 12px; line-height: 1.5; color: var(--slate); margin-top: 2px; }
+  .trk-row.is-pending { opacity: 0.62; }
+  .trk-row.is-cur {
     border-color: var(--accent);
     background: var(--card);
-    animation: mp-pulse 1.5s ease-in-out infinite;
+    box-shadow: 0 0 0 3px var(--focus-soft);
   }
-  /* Time-estimated fill along the bottom of the current stage — keeps the
-     long browser-walk stretch reading as alive, not stuck. Width is driven
-     by the --p custom property from updateMiniPipe(). */
-  .mp-stage.is-cur::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    height: 3px;
-    width: var(--p, 0%);
-    background: var(--accent);
-    transition: width 0.9s linear;
-  }
-  @keyframes mp-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 var(--pulse); }
-    50% { box-shadow: 0 0 0 6px transparent; }
-  }
-  .mp-link { flex: none; width: 14px; height: 2px; background: var(--border); }
-  .mp-note { font-size: 11px; color: var(--muted); margin-left: 8px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .trk-row.is-cur .trk-name { font-weight: 700; color: var(--ink); }
+  .trk-row.is-done .trk-name { color: var(--ink); }
+  .trk-row.is-you { border-color: var(--accent); background: var(--wait-bg); }
+  .trk-row.is-you .trk-name { font-weight: 700; color: var(--wait-text); }
+  .trk-row.is-you .trk-desc { color: var(--text); }
   .trivia-line {
     font-size: 13px;
     color: var(--slate);
@@ -646,88 +669,8 @@
   .z-top { position: relative; z-index: 6; pointer-events: none; }
   .z-top a { pointer-events: auto; }
 
-  /* full-size animated pipeline (matches the processing page) */
-  .pipeline {
-    list-style: none;
-    display: flex;
-    gap: 16px;
-    position: relative;
-    margin: 22px 0 0;
-    padding: 0;
-  }
-  .pipeline::before {
-    content: "";
-    position: absolute;
-    left: 3%; right: 3%; top: 50%;
-    height: 2px;
-    background: var(--border);
-    z-index: 0;
-  }
-  .stage {
-    position: relative;
-    z-index: 1;
-    overflow: hidden;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 7px;
-    text-align: center;
-    background: var(--tint-soft);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 15px 10px 13px;
-    transition: border-color 0.4s ease, background 0.4s ease, box-shadow 0.4s ease;
-  }
-  .stage-icon { font-size: 22px; line-height: 1; filter: grayscale(0.9); opacity: 0.55; transition: filter 0.4s ease, opacity 0.4s ease; }
-  .stage-name { font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--muted); transition: color 0.4s ease; }
-  .stage-dot { position: relative; width: 10px; height: 10px; border-radius: 50%; background: var(--input-border); }
-  .stage.is-cur {
-    background: var(--card);
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--focus-soft);
-  }
-  .stage.is-cur .stage-icon, .stage.is-done .stage-icon { filter: none; opacity: 1; }
-  .stage.is-cur .stage-name, .stage.is-done .stage-name { color: var(--ink); }
-  .stage.is-cur .stage-dot { background: var(--accent); animation: tk-pulse 1.4s ease-in-out infinite; }
-  /* Time-estimated fill along the bottom edge of the current stage (see
-     updateOvPipe). Purely a "still working" hint — the badge above the
-     pipeline keeps it honestly labeled as estimated. */
-  .stage.is-cur::after {
-    content: "";
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    height: 3px;
-    width: var(--p, 0%);
-    background: var(--accent);
-    border-radius: 0 3px 3px 0;
-    transition: width 0.9s linear;
-  }
-  .stage.is-done { border-color: var(--done-border); background: var(--done-bg); }
-  .stage.is-done .stage-dot { background: var(--ok); }
-  .stage.is-done .stage-dot::after {
-    content: "\2713";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    font-size: 8px;
-    font-weight: 700;
-    line-height: 1;
-    color: #fff;
-  }
-  @keyframes tk-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 var(--pulse); }
-    50% { box-shadow: 0 0 0 7px transparent; }
-  }
+  /* note under the overlay's stage tracker */
   .pipe-note { margin: 16px 0 0; font-size: 12px; color: var(--muted); }
-  @media (max-width: 720px) {
-    .pipeline { flex-direction: column; gap: 10px; }
-    .pipeline::before { display: none; }
-    .stage { flex-direction: row; text-align: left; padding: 12px 16px; }
-    .stage-dot { margin-left: auto; }
-  }
 
   /* ---------- bug mini-game (inside the takeover) ---------- */
   #ovBugLayer {
@@ -798,6 +741,10 @@
     padding: 0 28px 40px;
   }
   footer a { color: var(--accent); }
+
+  /* ---------- smooth theme transition (added after first paint via .theme-ready) ---------- */
+  html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: background-color 220ms ease, color 220ms ease, border-color 220ms ease, box-shadow 220ms ease, fill 220ms ease, stroke 220ms ease; }
+  @media (prefers-reduced-motion: reduce) { html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -816,8 +763,9 @@
     <p class="value-prop">
       Survey QA automates the link-testing step of market-research fieldwork. Point it at the
       <strong>Word questionnaire</strong> and the programmed survey URL: it parses the .docx into a
-      canonical spec, <strong>walks every survey page with a real browser</strong>, has two
-      LLMs&nbsp;&mdash; Claude and DeepSeek&nbsp;&mdash; independently compare the rendered survey
+      canonical spec, <strong>walks every survey page with a real browser</strong>, has three
+      models&nbsp;&mdash; DeepSeek, Workers&nbsp;AI (gpt-oss-120b) and Claude Opus&nbsp;4.8&nbsp;&mdash;
+      independently compare the rendered survey
       against the spec, <strong>verifies every finding with verbatim quotes</strong>, and delivers a
       findings report with a <strong>seeded-error scorecard</strong>. Typos, missing options, broken
       piping, mislabeled scales&nbsp;&mdash; caught before a single respondent sees them.
@@ -848,8 +796,8 @@
         </div>
         <div class="step">
           <div class="step-num">3</div>
-          <h3>Dual-LLM comparison</h3>
-          <p>Claude and DeepSeek independently compare each rendered page against the spec and flag discrepancies.</p>
+          <h3>Three-model comparison</h3>
+          <p>DeepSeek (deepseek-v4-pro) and Workers AI (gpt-oss-120b) compare each page in-Worker automatically; Claude Opus 4.8 adds a third independent read from your machine — on your Claude subscription, for $0.</p>
         </div>
         <div class="step">
           <div class="step-num">4</div>
@@ -905,7 +853,7 @@
 
           <div class="field field-full submit-row">
             <button type="submit" id="runBtn" class="btn">Run QA check</button>
-            <span class="hint">A run takes roughly 1&ndash;3 minutes: browser walk, model comparison, quote verification.</span>
+            <span class="hint">A run takes roughly 1&ndash;3 minutes: browser walk, two automatic model comparisons (DeepSeek + Workers AI), quote verification.</span>
           </div>
         </div>
       </form>
@@ -947,15 +895,10 @@
         </div>
         <span class="badge-est">estimated</span>
       </div>
-      <ol class="pipeline" aria-labelledby="ov-pipe-title">
-        <li class="stage" id="ovStage0"><span class="stage-icon" aria-hidden="true">&#128196;</span><span class="stage-name">Parse docx</span><span class="stage-dot" aria-hidden="true"></span></li>
-        <li class="stage" id="ovStage1"><span class="stage-icon" aria-hidden="true">&#127760;</span><span class="stage-name">Browser walks pages</span><span class="stage-dot" aria-hidden="true"></span></li>
-        <li class="stage" id="ovStage2"><span class="stage-icon" aria-hidden="true">&#129504;</span><span class="stage-name">LLM compare</span><span class="stage-dot" aria-hidden="true"></span></li>
-        <li class="stage" id="ovStage3"><span class="stage-icon" aria-hidden="true">&#128269;</span><span class="stage-name">Quote verification</span><span class="stage-dot" aria-hidden="true"></span></li>
-        <li class="stage" id="ovStage4"><span class="stage-icon" aria-hidden="true">&#128202;</span><span class="stage-name">Report</span><span class="stage-dot" aria-hidden="true"></span></li>
-      </ol>
-      <p class="pipe-note">The status API doesn't report stage-by-stage progress, so this indicator
-        advances on typical timings &mdash; the browser walk is the long stretch.</p>
+      <ol class="track" id="ovTrack" aria-labelledby="ov-pipe-title"></ol>
+      <p class="pipe-note">Stage timings are estimates &mdash; the status API doesn't report per-stage
+        progress. DeepSeek (deepseek-v4-pro) and Workers AI (gpt-oss-120b) run automatically in the Worker;
+        Claude Opus 4.8 is the final leg you run locally, on your Claude subscription, for $0.</p>
     </div>
 
     <div class="tk-card">
@@ -1019,18 +962,42 @@
   var lastErrorDetail = null;
   var squashed = 0;
 
-  var STAGES = [
-    { after: 0,   text: "Parsing the questionnaire (.docx)…" },
-    { after: 8,   text: "Walking every survey page with a headless browser…" },
-    { after: 70,  text: "Running the DeepSeek comparison…" },
-    { after: 150, text: "Verifying quotes and assembling the report…" }
+  /* The real pipeline, verbose: stage name + model badge + what's happening.
+     `at` is the estimated elapsed-seconds threshold at which the stage begins
+     (the status API exposes no per-stage signal, so this is honest guesswork —
+     the UI labels the whole tracker "estimated"). `live` is the one-line
+     status text shown next to the spinner. */
+  var TRACK = [
+    { at: 0, name: "Parsing questionnaire", model: null,
+      desc: "Reading the spec from your Word document",
+      live: "Parsing the questionnaire (.docx)…" },
+    { at: 3, name: "Walking the survey", model: "Browser Rendering",
+      desc: "Clicking through every page, capturing text + screenshots + PDF",
+      live: "A headless browser is clicking through every survey page…" },
+    { at: 93, name: "DeepSeek comparison", model: "deepseek-v4-pro",
+      desc: "Reads each page vs the spec (automatic · ~1¢/run)",
+      live: "DeepSeek (deepseek-v4-pro) is reading each page against the spec…" },
+    { at: 118, name: "Workers AI comparison", model: "gpt-oss-120b",
+      desc: "Independent second read (Cloudflare Workers AI · free)",
+      live: "Workers AI (gpt-oss-120b) is running its independent second read…" },
+    { at: 140, name: "Verifying quotes", model: null,
+      desc: "Every finding must quote both sides verbatim or it's dropped",
+      live: "Verifying quotes — findings that don't match verbatim get dropped…" },
+    { at: 158, name: "Building report", model: null,
+      desc: "Scorecard + findings + page evidence",
+      live: "Assembling the report and scorecard…" }
   ];
+  /* Manual 7th step, shown once the automatic legs finish. */
+  var CLAUDE_STEP = {
+    name: "Your turn: run Claude locally", model: "Claude Opus 4.8",
+    desc: "Runs on YOUR Claude subscription ($0), not a metered API key — that's why this step is a command you run"
+  };
 
   /* Same copy as src/processing.ts TRIVIA_LINES — keep the two in sync. */
   var TRIVIA = [
     "A headless Chrome instance is clicking through every page of your survey right now.",
     "Each finding must quote the questionnaire verbatim — if the quote doesn't match, we throw it out.",
-    "Two models — Claude and DeepSeek — read every page independently. Then we compare notes.",
+    "Three models — DeepSeek, Workers AI's gpt-oss-120b and Claude Opus 4.8 — read every page independently. Then we compare notes.",
     "Every survey page is captured three ways: extracted text, a screenshot, and a PDF. Evidence beats vibes.",
     "Survey research 101: every extra minute of questionnaire length measurably increases drop-off.",
     "A routing error caught after fielding can mean re-fielding at full cost. Catching it now costs a coffee break.",
@@ -1049,42 +1016,84 @@
   var triviaLastAt = 0;
   var triviaFading = false;
 
-  var PIPE_ICONS = ["📄", "🌐", "🧠", "🔍", "📊"];
-  var PIPE_TITLES = ["Parse docx", "Browser walks pages", "LLM compare", "Quote verification", "Report"];
-  var PIPE_AT = [0, 3, 93, 130, 160];
+  /* ----- verbose stage tracker (status card + overlay) -----
+     Every row is real DOM text (marker glyph, name, model badge, description),
+     so the tracker can never render as an empty strip. The active row gets a
+     spinner ring + bold name; done rows a green check; pending rows a muted
+     circle; the manual Claude step a highlighted "your turn" row. */
 
-  /* Estimated fraction (as a 0–96 percentage) through stage `idx`, from the
-     PIPE_AT timings. Capped below 100% — this is a time-based guess, never a
-     claim that the stage actually finished. */
-  function stageProgressPct(idx) {
-    var start = PIPE_AT[idx];
-    var end = idx + 1 < PIPE_AT.length ? PIPE_AT[idx + 1] : PIPE_AT[idx] + 30;
-    var f = (elapsedSec() - start) / (end - start);
-    if (!(f > 0)) f = 0;
-    if (f > 0.96) f = 0.96;
-    return Math.round(f * 100);
-  }
-
-  function miniPipeHtml() {
-    var html = '<div class="mini-pipe" aria-hidden="true">';
-    for (var i = 0; i < PIPE_ICONS.length; i++) {
-      if (i > 0) html += '<span class="mp-link"></span>';
-      html += '<span class="mp-stage" id="mpStage' + i + '" title="' + esc(PIPE_TITLES[i]) + '">' + PIPE_ICONS[i] + '</span>';
-    }
-    html += '<span class="mp-note">estimated</span></div>';
-    return html;
-  }
-
-  function updateMiniPipe() {
+  /* Estimated index of the stage currently running, from TRACK timings. */
+  function estStage() {
+    if (!startedAt) return 0;
     var e = elapsedSec();
     var cur = 0;
-    for (var i = 0; i < PIPE_AT.length; i++) { if (e >= PIPE_AT[i]) cur = i; }
-    for (var j = 0; j < PIPE_ICONS.length; j++) {
-      var el = document.getElementById("mpStage" + j);
-      if (!el) return;
-      el.className = "mp-stage" + (j < cur ? " is-done" : (j === cur ? " is-cur" : ""));
-      if (j === cur) el.style.setProperty("--p", stageProgressPct(cur) + "%");
-      else el.style.removeProperty("--p");
+    for (var i = 0; i < TRACK.length; i++) { if (e >= TRACK[i].at) cur = i; }
+    return cur;
+  }
+
+  function trackRowHtml(stage, st) {
+    var marker;
+    if (st === "done") marker = '<span class="trk-mark trk-mark-done" aria-hidden="true">✓</span>';
+    else if (st === "cur") marker = '<span class="trk-mark trk-mark-spin" aria-hidden="true"></span>';
+    else if (st === "you") marker = '<span class="trk-mark trk-mark-you" aria-hidden="true">▶</span>';
+    else marker = '<span class="trk-mark trk-mark-pend" aria-hidden="true">○</span>';
+    var badge = stage.model
+      ? '<span class="trk-model">' + esc(stage.model) + '</span>'
+      : '<span class="trk-model trk-nomodel">no model</span>';
+    var srState = st === "done" ? "done" : (st === "cur" ? "in progress" : (st === "you" ? "waiting for you" : "queued"));
+    return '<li class="trk-row is-' + st + '">' + marker +
+      '<span class="trk-body">' +
+        '<span class="trk-top"><span class="trk-name">' + esc(stage.name) + '</span>' + badge +
+        '<span class="sr-only"> — ' + srState + '</span></span>' +
+        '<span class="trk-desc">' + esc(stage.desc) + '</span>' +
+      '</span></li>';
+  }
+
+  function trackerHtml() {
+    var rows = "";
+    var i;
+    if (currentState === "complete") {
+      for (i = 0; i < TRACK.length; i++) rows += trackRowHtml(TRACK[i], "done");
+      rows += trackRowHtml(CLAUDE_STEP, "done");
+    } else if (currentState === "awaiting") {
+      for (i = 0; i < TRACK.length; i++) rows += trackRowHtml(TRACK[i], "done");
+      rows += trackRowHtml(CLAUDE_STEP, "you");
+    } else if (currentState === "processing") {
+      var cur = estStage();
+      for (i = 0; i < TRACK.length; i++) {
+        rows += trackRowHtml(TRACK[i], i < cur ? "done" : (i === cur ? "cur" : "pending"));
+      }
+      rows += trackRowHtml(CLAUDE_STEP, "pending");
+    } else {
+      /* No live run (or failed): show the full queue, all pending — never blank. */
+      for (i = 0; i < TRACK.length; i++) rows += trackRowHtml(TRACK[i], "pending");
+      rows += trackRowHtml(CLAUDE_STEP, "pending");
+    }
+    return rows;
+  }
+
+  /* Shell for the inline status card (the overlay has its own card + note). */
+  function trackerShellHtml() {
+    return '<div class="track-wrap">' +
+      '<div class="track-head"><span class="track-title">Pipeline</span>' +
+      '<span class="badge-est">estimated</span></div>' +
+      '<ol class="track" id="cardTrack"></ol>' +
+      '</div>';
+  }
+
+  /* Re-render both tracker containers, but only when the state/stage actually
+     changed (keyed via data-key) so the spinner animation isn't restarted
+     every second. A freshly re-created container has no data-key and is
+     always filled — the tracker cannot be left empty. */
+  function updateTrackers() {
+    var key = currentState + ":" + (currentState === "processing" ? estStage() : "");
+    var ids = ["ovTrack", "cardTrack"];
+    for (var i = 0; i < ids.length; i++) {
+      var box = document.getElementById(ids[i]);
+      if (!box) continue;
+      if (box.getAttribute("data-key") === key) continue;
+      box.innerHTML = trackerHtml();
+      box.setAttribute("data-key", key);
     }
   }
 
@@ -1145,11 +1154,7 @@
   }
 
   function stageText() {
-    var e = elapsedSec();
-    var text = STAGES[0].text;
-    for (var i = 0; i < STAGES.length; i++) {
-      if (e >= STAGES[i].after) text = STAGES[i].text;
-    }
+    var text = TRACK[estStage()].live;
     if (failStreak >= 3) text += " (status endpoint slow to respond — still trying)";
     return text;
   }
@@ -1183,34 +1188,38 @@
         '<div class="state-stage"><span id="stageText">' + esc(stageText()) + '</span>' +
         '<span class="state-elapsed" id="elapsedText">' + esc(fmtElapsed(elapsedSec())) + '</span></div></div>' +
       '</div>' +
-      miniPipeHtml() +
+      trackerShellHtml() +
       '<p class="trivia-line" id="triviaLine" aria-hidden="true">' + esc(TRIVIA[triviaIdx]) + '</p>' +
-      '<p class="state-note">Leave this tab open — status refreshes every 5 seconds.</p>'
+      '<p class="state-note">Leave this tab open — status refreshes every 5 seconds. Stage timings are estimates: the status API doesn\'t report per-stage progress.</p>'
     );
-    updateMiniPipe();
+    updateTrackers();
   }
 
   function renderAwaiting() {
     show(
       '<span class="state-badge is-wait">Awaiting Claude leg</span>' +
-      '<div class="state-title">Run <code>' + esc(runId) + '</code> — browser walk and DeepSeek comparison done</div>' +
+      '<div class="state-title">Run <code>' + esc(runId) + '</code> — automatic legs done (DeepSeek + Workers AI)</div>' +
       '<p class="state-stage" style="margin:6px 0 0;">The interim report is live: ' +
         '<a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;↗</a>. ' +
-        'To finish the dual-LLM comparison, run this from the repo root:</p>' +
+        'To add the third model leg — Claude Opus 4.8 — run this from the repo root:</p>' +
       '<div class="cmd"><code id="cmdCode">' + esc(claudeCommand()) + '</code>' +
         '<button type="button" class="copy-btn">Copy</button></div>' +
-      '<p class="cmd-caption">runs the Claude comparison leg locally on your Claude subscription</p>' +
+      '<p class="cmd-caption">Claude runs locally on your Claude subscription ($0, flat-rate) instead of a metered API key — that\'s why this leg is a command you run.</p>' +
+      trackerShellHtml() +
       '<p class="state-note">This page keeps polling and will switch to “complete” automatically once the runner submits its findings.</p>'
     );
+    updateTrackers();
   }
 
   function renderComplete() {
     show(
       '<span class="state-badge is-ok">Complete</span>' +
       '<div class="state-title">Run <code>' + esc(runId) + '</code> finished</div>' +
-      '<p class="state-stage" style="margin:6px 0 14px;">Both model legs are in — scorecard, findings and page evidence are ready.</p>' +
-      '<p class="report-cta"><a class="btn" href="' + esc(reportUrl) + '" target="_blank" rel="noopener">View report</a></p>'
+      '<p class="state-stage" style="margin:6px 0 14px;">All three model legs are in — DeepSeek, Workers AI (gpt-oss-120b) and Claude Opus 4.8. Scorecard, findings and page evidence are ready.</p>' +
+      '<p class="report-cta"><a class="btn" href="' + esc(reportUrl) + '" target="_blank" rel="noopener">View report</a></p>' +
+      trackerShellHtml()
     );
+    updateTrackers();
   }
 
   function renderFailed(message, detail) {
@@ -1252,8 +1261,7 @@
     if (el) el.textContent = fmtElapsed(elapsedSec());
     var ost = document.getElementById("ovStageText");
     if (ost) ost.textContent = stageText();
-    updateMiniPipe();
-    updateOvPipe();
+    updateTrackers();
     var e = elapsedSec();
     if (e > 0 && e - triviaLastAt >= 6) {
       triviaLastAt = e;
@@ -1294,13 +1302,13 @@
     if (currentState === "awaiting") {
       return (
         '<span class="state-badge is-wait">Awaiting Claude leg</span>' +
-        '<div class="state-title">Browser walk and DeepSeek comparison done</div>' +
+        '<div class="state-title">Automatic legs done — DeepSeek + Workers AI (gpt-oss-120b)</div>' +
         '<p class="state-stage" style="margin:6px 0 0;">The interim report is live: ' +
           '<a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;↗</a>. ' +
-          'To finish the dual-LLM comparison, run this from the repo root:</p>' +
+          'To add the third model leg — Claude Opus 4.8 — run this from the repo root:</p>' +
         '<div class="cmd"><code id="ovCmdCode">' + esc(claudeCommand()) + '</code>' +
           '<button type="button" class="copy-btn">Copy</button></div>' +
-        '<p class="cmd-caption">runs the Claude comparison leg locally on your Claude subscription</p>' +
+        '<p class="cmd-caption">Claude runs locally on your Claude subscription ($0, flat-rate) instead of a metered API key — that\'s why this leg is a command you run.</p>' +
         '<p class="state-note">This page keeps polling and will switch to “complete” automatically once the runner submits its findings.</p>'
       );
     }
@@ -1308,7 +1316,7 @@
       return (
         '<span class="state-badge is-ok">Complete</span>' +
         '<div class="state-title">Run <code>' + esc(runId) + '</code> finished</div>' +
-        '<p class="state-stage" style="margin:6px 0 14px;">Both model legs are in — scorecard, findings and page evidence are ready.</p>' +
+        '<p class="state-stage" style="margin:6px 0 14px;">All three model legs are in — DeepSeek, Workers AI (gpt-oss-120b) and Claude Opus 4.8. Scorecard, findings and page evidence are ready.</p>' +
         '<p class="report-cta"><a class="btn tk-cta" href="' + esc(reportUrl) + '" target="_blank" rel="noopener">View report</a></p>'
       );
     }
@@ -1322,32 +1330,6 @@
     return '<div class="state-stage">No run in progress yet.</div>';
   }
 
-  /* Advance the overlay's full-size pipeline. Estimated while processing;
-     pinned to the last stage while awaiting the Claude leg; all done on complete. */
-  function updateOvPipe() {
-    var cur;
-    if (currentState === "complete") {
-      cur = PIPE_ICONS.length; /* past the end: everything reads done */
-    } else if (currentState === "awaiting") {
-      cur = PIPE_ICONS.length - 1;
-    } else {
-      cur = 0;
-      var e = elapsedSec();
-      for (var i = 0; i < PIPE_AT.length; i++) { if (e >= PIPE_AT[i]) cur = i; }
-    }
-    var hasCur = currentState === "processing" || currentState === "awaiting";
-    for (var j = 0; j < PIPE_ICONS.length; j++) {
-      var el = document.getElementById("ovStage" + j);
-      if (!el) continue;
-      var isCur = hasCur && j === cur;
-      el.className = "stage" + (j < cur ? " is-done" : (isCur ? " is-cur" : ""));
-      /* Determinate-ish hint only while processing — while awaiting the
-         Claude leg the timing is unknowable, so the bar stays off. */
-      if (isCur && currentState === "processing") el.style.setProperty("--p", stageProgressPct(j) + "%");
-      else el.style.removeProperty("--p");
-    }
-  }
-
   /* Bring every overlay pane in line with the current run state. Cheap enough
      to run even while the overlay is hidden, so its content is always ready. */
   function syncOverlay() {
@@ -1356,7 +1338,7 @@
     if (ovStatus) ovStatus.innerHTML = overlayStatusHtml();
     if (ovElapsed && startedAt) ovElapsed.textContent = fmtElapsed(elapsedSec());
     if (ovTrivia && !ovTrivia.textContent) ovTrivia.textContent = TRIVIA[triviaIdx];
-    updateOvPipe();
+    updateTrackers();
   }
 
   function openOverlay() {

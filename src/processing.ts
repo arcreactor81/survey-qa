@@ -6,10 +6,10 @@
 // inside the returned HTML, so it compiles under the project tsconfig
 // (lib: ES2022, no DOM types).
 //
-// Design language (matches report.ts / index.html):
-//   ink navy #101D31 · warm paper #FAF8F3 · white cards, #E4DFD5 borders,
-//   12px radius · accent #C2571B · success #1E7F4F · slate #5B6B7F
-//   Fraunces (serif, Georgia fallback) headings, system-ui body.
+// Design language (matches report.ts / index.html — Deep Teal Terminal):
+//   ink #0F2422 · cool paper #F1F6F5 · white cards, #D8E2E0 borders,
+//   12px radius · accent #096658 · success #156B3F · slate #435659
+//   Space Grotesk (display, Segoe UI fallback) headings, system-ui body.
 //   prefers-reduced-motion tames every animation on the page.
 
 /** Trivia lines rotated on the waiting page (each < 140 chars).
@@ -18,7 +18,7 @@
 const TRIVIA_LINES: string[] = [
   "A headless Chrome instance is clicking through every page of your survey right now.",
   "Each finding must quote the questionnaire verbatim — if the quote doesn't match, we throw it out.",
-  "Two models — Claude and DeepSeek — read every page independently. Then we compare notes.",
+  "Three models — DeepSeek, Workers AI's gpt-oss-120b and Claude Opus 4.8 — read every page independently. Then we compare notes.",
   "Every survey page is captured three ways: extracted text, a screenshot, and a PDF. Evidence beats vibes.",
   "Survey research 101: every extra minute of questionnaire length measurably increases drop-off.",
   "A routing error caught after fielding can mean re-fielding at full cost. Catching it now costs a coffee break.",
@@ -37,15 +37,17 @@ const TRIVIA_LINES: string[] = [
 const STAGES: { icon: string; name: string }[] = [
   { icon: "📄", name: "Parse docx" },
   { icon: "🌐", name: "Browser walks pages" },
-  { icon: "🧠", name: "LLM compare" },
+  { icon: "🧠", name: "DeepSeek compare (deepseek-v4-pro)" },
+  { icon: "🤖", name: "Workers AI compare (gpt-oss-120b)" },
   { icon: "🔍", name: "Quote verification" },
   { icon: "📊", name: "Report" },
 ];
 
 /** Seconds (since page load) at which each stage is *estimated* to begin.
  *  The status API has no stage field, so this is a well-informed guess:
- *  docx parse ~3 s, browser walk ~90 s, the rest spread out. */
-const STAGE_AT_SEC: number[] = [0, 3, 93, 130, 160];
+ *  docx parse ~3 s, browser walk ~90 s, the two model legs and quote
+ *  verification spread out after it. */
+const STAGE_AT_SEC: number[] = [0, 3, 93, 118, 140, 158];
 
 /** Routing already restricts runId to [\w-]+, but validate defensively:
  *  strip anything outside [\w-] so the id is safe to embed in HTML and JS. */
@@ -83,67 +85,68 @@ export function processingPage(runId: string): string {
     } catch (e) { /* matchMedia unavailable */ }
   }
   document.documentElement.dataset.theme = t;
+  requestAnimationFrame(function(){requestAnimationFrame(function(){document.documentElement.classList.add("theme-ready");});});
 })();
 </script>
 <title>Run ${id} — Survey QA</title>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: light;
-    --ink: #101D31;
-    --paper: #FAF8F3;
+    --ink: #0F2422;
+    --paper: #F1F6F5;
     --card: #FFFFFF;
-    --accent: #C2571B;
-    --ok: #1E7F4F;
-    --slate: #5B6B7F;
-    --border: #E4DFD5;
-    --text: #26374B;
-    --muted: #8C96A3;
-    --band-bg: #101D31;
+    --accent: #096658;
+    --ok: #156B3F;
+    --slate: #435659;
+    --border: #D8E2E0;
+    --text: #14282A;
+    --muted: #435659;
+    --band-bg: #071012;
     --band-title: #FFFFFF;
-    --band-text: #F4F1EA;
-    --band-link: #EFB88F;
-    --band-soft: #C9D3E0;
-    --tint: #F6F2E9;
+    --band-text: #DCE7E5;
+    --band-link: #7CE8C9;
+    --band-soft: #B4C8C3;
+    --tint: #E5EEEC;
     --stage-bg: #FDFCF8;
     --dot-idle: #CFC8BA;
-    --done-border: #BFDCCB;
-    --done-bg: #FBFDFC;
-    --focus-ring: rgba(194, 87, 27, 0.45);
-    --focus-soft: rgba(194, 87, 27, 0.13);
-    --pulse: rgba(194, 87, 27, 0.45);
-    --serif: "Fraunces", Georgia, "Times New Roman", serif;
+    --done-border: #B2DAC3;
+    --done-bg: #EFF8F2;
+    --focus-ring: rgba(9, 102, 88, 0.45);
+    --focus-soft: rgba(9, 102, 88, 0.16);
+    --pulse: rgba(9, 102, 88, 0.35);
+    --serif: "Space Grotesk", "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
     --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
-    --shadow: 0 1px 2px rgba(16, 29, 49, 0.04), 0 10px 28px rgba(16, 29, 49, 0.06);
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --shadow: 0 1px 2px rgba(7, 16, 18, 0.05), 0 10px 28px rgba(7, 16, 18, 0.07);
   }
   /* Dark palette — scoped to screen so print always renders the light theme. */
   @media screen {
     html[data-theme="dark"] {
       color-scheme: dark;
-      --ink: #F5F1E8;
-      --paper: #0D1626;
-      --card: #182640;
-      --accent: #E8824A;
-      --ok: #4CAF7D;
-      --slate: #9DABBF;
-      --border: #2B3B55;
-      --text: #EDE9DF;
-      --muted: #9DABBF;
-      --band-bg: #0A111D;
-      --band-title: #F5F1E8;
-      --band-text: #EDE9DF;
-      --band-link: #EFB88F;
-      --band-soft: #B9C4D4;
-      --tint: #131F36;
+      --ink: #EDF5F3;
+      --paper: #0B1416;
+      --card: #101E21;
+      --accent: #35D3AC;
+      --ok: #74D389;
+      --slate: #8FA6A2;
+      --border: #24363A;
+      --text: #DCE7E5;
+      --muted: #93A9A5;
+      --band-bg: #060D0F;
+      --band-title: #EDF5F3;
+      --band-text: #DCE7E5;
+      --band-link: #7CE8C9;
+      --band-soft: #B4C8C3;
+      --tint: #122023;
       --stage-bg: #14213A;
       --dot-idle: #33445F;
-      --done-border: #2E5A44;
-      --done-bg: rgba(76, 175, 125, 0.1);
-      --focus-ring: rgba(232, 130, 74, 0.55);
-      --focus-soft: rgba(232, 130, 74, 0.22);
-      --pulse: rgba(232, 130, 74, 0.4);
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 28px rgba(0, 0, 0, 0.45);
+      --done-border: #2C5B41;
+      --done-bg: rgba(116, 211, 137, 0.1);
+      --focus-ring: rgba(53, 211, 172, 0.55);
+      --focus-soft: rgba(53, 211, 172, 0.2);
+      --pulse: rgba(53, 211, 172, 0.38);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 10px 28px rgba(0, 0, 0, 0.5);
     }
   }
   * { box-sizing: border-box; }
@@ -417,6 +420,10 @@ export function processingPage(runId: string): string {
     .bug > span { animation: none; }
     .bug.is-squashed > span { animation: none; opacity: 0.35; }
   }
+
+  /* ---------- smooth theme transition (added after first paint via .theme-ready) ---------- */
+  html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: background-color 220ms ease, color 220ms ease, border-color 220ms ease, box-shadow 220ms ease, fill 220ms ease, stroke 220ms ease; }
+  @media (prefers-reduced-motion: reduce) { html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -449,7 +456,10 @@ export function processingPage(runId: string): string {
       <ol class="pipeline">${stageCards}
       </ol>
       <p class="pipe-note">The status API doesn't report stage-by-stage progress, so this indicator
-        advances on typical timings — the browser walk is the long stretch.</p>
+        advances on typical timings — the browser walk is the long stretch. DeepSeek
+        (deepseek-v4-pro) and Workers AI (gpt-oss-120b) run automatically in the Worker;
+        the third model leg, Claude Opus 4.8, runs later from your machine on your Claude
+        subscription for $0.</p>
     </section>
 
     <section class="card trivia-card" aria-labelledby="trivia-title">

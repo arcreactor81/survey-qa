@@ -392,59 +392,6 @@ export default {
         }
       }
 
-      // TEMPORARY model-bakeoff endpoint: run an arbitrary @cf/ model against a
-      // completed run's captured pages, verify quotes, and score recall/FP vs the
-      // seeded manifest. For choosing the Workers AI 3rd-pillar model. Remove after.
-      if (path === "/api/eval-model" && req.method === "GET") {
-        const model = url.searchParams.get("model") ?? "";
-        const runIdParam = url.searchParams.get("run") ?? "";
-        if (!model.startsWith("@cf/")) return json({ error: "model must be a @cf/ id" }, 400);
-        const envelope = await getRun(env, runIdParam);
-        if (!envelope) return json({ error: "run not found" }, 404);
-        const report = envelope.report;
-        if (!report.pages.length || !report.specText) {
-          return json({ error: "run has no captured pages / specText (must be a finished run)" }, 409);
-        }
-        const lang = envelope.lang ?? "en";
-        const findings: Finding[] = [];
-        let calls = 0, errors = 0, latencyMsTotal = 0, inTok = 0, outTok = 0;
-        for (const page of report.pages) {
-          if (!page.text) continue;
-          calls++;
-          try {
-            const r = await workersaiCompare(env, report.specText, page, model);
-            latencyMsTotal += r.latencyMs;
-            inTok += r.inputTokens;
-            outTok += r.outputTokens;
-            for (const f of r.findings) {
-              findings.push({ ...f, model: "workersai", pageIndex: page.pageIndex, quoteVerified: false });
-            }
-          } catch (err) {
-            errors++;
-            console.error(`eval-model ${model} page ${page.pageIndex}:`, err);
-          }
-        }
-        const verified = verifyFindings(findings, report.specText, report.pages);
-        const sc = buildScorecard(verified, MANIFESTS[lang] ?? MANIFESTS.en);
-        const caught = sc.entries.filter((e) => e.caughtBy.includes("workersai")).length;
-        return json({
-          model,
-          lang,
-          run: runIdParam,
-          recall: `${caught}/${sc.entries.length}`,
-          caught,
-          falsePositives: sc.falsePositives.workersai ?? 0,
-          totalFindings: findings.length,
-          verifiedFindings: verified.filter((f) => f.quoteVerified).length,
-          missed: sc.entries.filter((e) => !e.caughtBy.includes("workersai")).map((e) => e.errorId),
-          calls,
-          errors,
-          avgLatencyMs: calls > 0 ? Math.round(latencyMsTotal / calls) : 0,
-          inputTokens: inTok,
-          outputTokens: outTok,
-        });
-      }
-
       // Everything else falls through to static assets.
       return env.ASSETS.fetch(req);
     } catch (err) {
