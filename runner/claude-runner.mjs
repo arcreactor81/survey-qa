@@ -16,7 +16,6 @@ import { spawn, spawnSync } from "node:child_process";
 import process from "node:process";
 
 const MODEL_NAME = "claude";
-const MODEL_ID = "claude-code/opus (subscription)";
 const CLAUDE_BIN = process.env.CLAUDE_BIN || "claude";
 const MAX_BUFFER = 32 * 1024 * 1024; // 32 MB
 const CLAUDE_TIMEOUT_MS = 5 * 60 * 1000; // kill a hung claude call after 5 minutes

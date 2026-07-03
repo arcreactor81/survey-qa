@@ -168,12 +168,12 @@ export async function deepseekThinkingProbe(env: Env): Promise<unknown> {
     };
   }
 
-  // asIs = byte-for-byte our production request (temperature:0, max_tokens:8000,
-  // no thinking param) — this is the ground truth for "what prod actually gets".
-  const asIs = await call("as-is (current prod shape)", { temperature: 0, max_tokens: 8000 });
-  // explicitOn: enable thinking and let it run WITHOUT an arbitrary cap — a large
-  // budget so reasoning is never truncated (finishReason should be "stop", not "length").
-  const explicitOn = await call("explicit thinking on (uncapped)", {
+  // asIs = the LEGACY pre-thinking-pin body (temperature:0, max_tokens:8000, no
+  // thinking param). Prod NO LONGER sends this; kept only as a contrast arm.
+  const asIs = await call("legacy shape (pre-thinking-pin)", { temperature: 0, max_tokens: 8000 });
+  // explicitOn = the shape deepseekCompare NOW actually sends in prod: thinking
+  // pinned on at high effort with a lifted budget so reasoning is never truncated.
+  const explicitOn = await call("current prod shape (thinking pinned on)", {
     reasoning_effort: "high",
     thinking: { type: "enabled" },
     max_tokens: 32000,

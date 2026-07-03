@@ -86,8 +86,8 @@ function parseFindings(content: string): RawFinding[] {
 
 /**
  * Run one Gemini compare call for one rendered page via the Google AI Studio
- * OpenAI-compatibility endpoint. Thinking is disabled (reasoning_effort:"none")
- * so the model never spends the output budget on reasoning.
+ * OpenAI-compatibility endpoint. Thinking is ON at low effort (reasoning_effort:
+ * "low") with a generous max_tokens so reasoning never starves the JSON answer.
  * Throws on HTTP failure, empty content, or unparseable JSON.
  */
 export async function geminiCompare(

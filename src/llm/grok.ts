@@ -86,8 +86,8 @@ function parseFindings(content: string): RawFinding[] {
 
 /**
  * Run one Grok compare call for one rendered page via the xAI OpenAI-compatible
- * API. Thinking is disabled (reasoning_effort:"none") so the model never spends
- * the output budget on reasoning.
+ * API. Thinking is ON at low effort (reasoning_effort:"low") with a generous
+ * max_tokens so reasoning never starves the JSON answer.
  * Throws on HTTP failure, empty content, or unparseable JSON.
  */
 export async function grokCompare(
