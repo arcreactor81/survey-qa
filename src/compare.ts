@@ -3,6 +3,8 @@
 
 import { deepseekCompare } from "./llm/deepseek";
 import { workersaiCompare } from "./llm/workersai";
+import { geminiCompare } from "./llm/gemini";
+import { grokCompare } from "./llm/grok";
 import type { Env, Finding, ModelName, ModelRunStats, PageCapture } from "./types";
 
 // Defaults mirror the *_USD_PER_MTOK vars in wrangler.jsonc (env vars win at
@@ -11,6 +13,8 @@ const DEFAULT_RATES: Record<ModelName, { input: number; output: number }> = {
   claude: { input: 5, output: 25 },
   deepseek: { input: 0.28, output: 0.42 },
   workersai: { input: 0.35, output: 0.75 },
+  gemini: { input: 0.3, output: 2.5 },
+  grok: { input: 1.25, output: 2.5 },
 };
 
 function parseRate(value: string | undefined, fallback: number): number {
@@ -31,6 +35,8 @@ export function computeCost(
     claude: [env.CLAUDE_INPUT_USD_PER_MTOK, env.CLAUDE_OUTPUT_USD_PER_MTOK],
     deepseek: [env.DEEPSEEK_INPUT_USD_PER_MTOK, env.DEEPSEEK_OUTPUT_USD_PER_MTOK],
     workersai: [env.WORKERSAI_INPUT_USD_PER_MTOK, env.WORKERSAI_OUTPUT_USD_PER_MTOK],
+    gemini: [env.GEMINI_INPUT_USD_PER_MTOK, env.GEMINI_OUTPUT_USD_PER_MTOK],
+    grok: [env.GROK_INPUT_USD_PER_MTOK, env.GROK_OUTPUT_USD_PER_MTOK],
   };
   const inputRate = parseRate(envRates[model][0], defaults.input);
   const outputRate = parseRate(envRates[model][1], defaults.output);
@@ -155,5 +161,105 @@ export async function runWorkersaiCompares(
 
   assertLegNotFullyFailed("workersai", stats, pages.length, lastError);
   stats.costUsd = computeCost("workersai", stats.inputTokens, stats.outputTokens, env);
+  return { findings, stats };
+}
+
+/**
+ * Run the Gemini compare over all pages sequentially (same shape as the
+ * DeepSeek loop). Findings are stamped model:"gemini", pageIndex,
+ * quoteVerified:false. A total outage throws via assertLegNotFullyFailed.
+ */
+export async function runGeminiCompares(
+  env: Env,
+  specText: string,
+  pages: PageCapture[],
+): Promise<{ findings: Finding[]; stats: ModelRunStats }> {
+  const findings: Finding[] = [];
+  const stats: ModelRunStats = {
+    model: "gemini",
+    modelId: env.GEMINI_MODEL ?? "gemini-2.5-flash",
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    latencyMsTotal: 0,
+    errors: 0,
+  };
+
+  let lastError: string | undefined;
+  for (const page of pages) {
+    stats.calls += 1;
+    try {
+      const result = await geminiCompare(env, specText, page);
+      stats.inputTokens += result.inputTokens;
+      stats.outputTokens += result.outputTokens;
+      stats.latencyMsTotal += result.latencyMs;
+      for (const finding of result.findings) {
+        findings.push({
+          ...finding,
+          model: "gemini",
+          pageIndex: page.pageIndex,
+          quoteVerified: false,
+        });
+      }
+    } catch (err) {
+      stats.errors += 1;
+      lastError = err instanceof Error ? err.message : String(err);
+      console.error(`gemini compare failed for page ${page.pageIndex}: ${lastError}`);
+    }
+  }
+
+  assertLegNotFullyFailed("gemini", stats, pages.length, lastError);
+  stats.costUsd = computeCost("gemini", stats.inputTokens, stats.outputTokens, env);
+  return { findings, stats };
+}
+
+/**
+ * Run the Grok compare over all pages sequentially (same shape as the
+ * DeepSeek loop). Findings are stamped model:"grok", pageIndex,
+ * quoteVerified:false. A total outage throws via assertLegNotFullyFailed.
+ */
+export async function runGrokCompares(
+  env: Env,
+  specText: string,
+  pages: PageCapture[],
+): Promise<{ findings: Finding[]; stats: ModelRunStats }> {
+  const findings: Finding[] = [];
+  const stats: ModelRunStats = {
+    model: "grok",
+    modelId: env.GROK_MODEL ?? "grok-4.3",
+    calls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    latencyMsTotal: 0,
+    errors: 0,
+  };
+
+  let lastError: string | undefined;
+  for (const page of pages) {
+    stats.calls += 1;
+    try {
+      const result = await grokCompare(env, specText, page);
+      stats.inputTokens += result.inputTokens;
+      stats.outputTokens += result.outputTokens;
+      stats.latencyMsTotal += result.latencyMs;
+      for (const finding of result.findings) {
+        findings.push({
+          ...finding,
+          model: "grok",
+          pageIndex: page.pageIndex,
+          quoteVerified: false,
+        });
+      }
+    } catch (err) {
+      stats.errors += 1;
+      lastError = err instanceof Error ? err.message : String(err);
+      console.error(`grok compare failed for page ${page.pageIndex}: ${lastError}`);
+    }
+  }
+
+  assertLegNotFullyFailed("grok", stats, pages.length, lastError);
+  stats.costUsd = computeCost("grok", stats.inputTokens, stats.outputTokens, env);
   return { findings, stats };
 }

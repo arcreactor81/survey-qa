@@ -21,6 +21,16 @@
       "binding": "DEEPSEEK_API_KEY",
       "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
       "secret_name": "DEEPSEEK_API_KEY"
+    },
+    {
+      "binding": "GEMINI_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "GEMINI_API_KEY"
+    },
+    {
+      "binding": "XAI_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "XAI_API_KEY"
     }
   ],
   "vars": {
@@ -32,7 +42,13 @@
     "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.42",
     "WORKERSAI_MODEL": "@cf/openai/gpt-oss-120b",
     "WORKERSAI_INPUT_USD_PER_MTOK": "0.35",
-    "WORKERSAI_OUTPUT_USD_PER_MTOK": "0.75"
+    "WORKERSAI_OUTPUT_USD_PER_MTOK": "0.75",
+    "GEMINI_MODEL": "gemini-2.5-flash",
+    "GEMINI_INPUT_USD_PER_MTOK": "0.30",
+    "GEMINI_OUTPUT_USD_PER_MTOK": "2.50",
+    "GROK_MODEL": "grok-4.3",
+    "GROK_INPUT_USD_PER_MTOK": "1.25",
+    "GROK_OUTPUT_USD_PER_MTOK": "2.50"
   },
   "observability": { "enabled": true }
 }

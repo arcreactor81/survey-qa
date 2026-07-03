@@ -14,7 +14,7 @@ export interface SeededError {
   rendered: string;
 }
 
-const MODELS: readonly ModelName[] = ["deepseek", "claude", "workersai"];
+const MODELS: readonly ModelName[] = ["deepseek", "claude", "workersai", "gemini", "grok"];
 
 /** Categories where the defect is an ABSENCE on the site, so siteQuote is legitimately "". */
 const ABSENCE_CATEGORIES: ReadonlySet<Finding["category"]> = new Set<Finding["category"]>([
@@ -222,7 +222,13 @@ export function buildScorecard(
   const verified = findings.filter((finding) => finding.quoteVerified);
 
   const caughtSets: Array<Set<ModelName>> = seeded.map(() => new Set<ModelName>());
-  const falsePositives: Record<ModelName, number> = { deepseek: 0, claude: 0, workersai: 0 };
+  const falsePositives: Record<ModelName, number> = {
+    deepseek: 0,
+    claude: 0,
+    workersai: 0,
+    gemini: 0,
+    grok: 0,
+  };
 
   for (const model of MODELS) {
     const modelFindings = verified.filter((finding) => finding.model === model);
@@ -262,7 +268,13 @@ export function buildScorecard(
     caughtBy: MODELS.filter((model) => caughtSets[i].has(model)),
   }));
 
-  const recall: Record<ModelName, number> = { deepseek: 0, claude: 0, workersai: 0 };
+  const recall: Record<ModelName, number> = {
+    deepseek: 0,
+    claude: 0,
+    workersai: 0,
+    gemini: 0,
+    grok: 0,
+  };
   for (const model of MODELS) {
     const caught = entries.filter((entry) => entry.caughtBy.includes(model)).length;
     recall[model] = seeded.length > 0 ? caught / seeded.length : 0;

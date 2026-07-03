@@ -9,9 +9,15 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   // Plain worker secret OR an account-level Secrets Store binding (read via .get()).
   DEEPSEEK_API_KEY?: string | SecretBinding;
+  // Gemini / Grok legs stay INERT until their key is provisioned: resolveSecret
+  // returns undefined when unset, so the workflow gate never enables the leg.
+  GEMINI_API_KEY?: string | SecretBinding;
+  XAI_API_KEY?: string | SecretBinding;
   CLAUDE_MODEL?: string; // default "claude-opus-4-8"
   DEEPSEEK_MODEL?: string; // default "deepseek-v4-pro"
   WORKERSAI_MODEL?: string; // default "@cf/openai/gpt-oss-120b"
+  GEMINI_MODEL?: string; // default "gemini-2.5-flash"
+  GROK_MODEL?: string; // default "grok-4.3"
   CF_AIG_ACCOUNT_ID?: string; // optional AI Gateway routing for DeepSeek
   CF_AIG_GATEWAY_ID?: string;
   CF_AIG_TOKEN?: string;
@@ -22,9 +28,13 @@ export interface Env {
   DEEPSEEK_OUTPUT_USD_PER_MTOK?: string; // default "0.42"
   WORKERSAI_INPUT_USD_PER_MTOK?: string; // default "0.35"
   WORKERSAI_OUTPUT_USD_PER_MTOK?: string; // default "0.75"
+  GEMINI_INPUT_USD_PER_MTOK?: string; // default "0.30" (gemini-2.5-flash)
+  GEMINI_OUTPUT_USD_PER_MTOK?: string; // default "2.50" (gemini-2.5-flash)
+  GROK_INPUT_USD_PER_MTOK?: string; // default "1.25" (grok-4.3)
+  GROK_OUTPUT_USD_PER_MTOK?: string; // default "2.50" (grok-4.3)
 }
 
-export type ModelName = "deepseek" | "claude" | "workersai";
+export type ModelName = "deepseek" | "claude" | "workersai" | "gemini" | "grok";
 
 /** Cloudflare Secrets Store binding: account-level secret exposed via .get(). */
 export interface SecretBinding {

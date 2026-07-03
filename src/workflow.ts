@@ -4,6 +4,8 @@ import { walkSurvey } from "./walker";
 import {
   runDeepseekCompares,
   runWorkersaiCompares,
+  runGeminiCompares,
+  runGrokCompares,
   computeCost,
   assertLegNotFullyFailed,
 } from "./compare";
@@ -94,6 +96,11 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         deepseek: (await resolveSecret(env.DEEPSEEK_API_KEY)) !== undefined,
         workersai: env.AI !== undefined,
         claude: (await resolveSecret(env.ANTHROPIC_API_KEY)) !== undefined,
+        // Gemini / Grok stay OFF until their key is provisioned: resolveSecret
+        // returns undefined for an unset (or PLACEHOLDER) key, so the gate is
+        // false and the leg block below never runs — fully inert without a key.
+        gemini: (await resolveSecret(env.GEMINI_API_KEY)) !== undefined,
+        grok: (await resolveSecret(env.XAI_API_KEY)) !== undefined,
       }));
 
       let deepseek: { findings: Finding[]; stats: ModelRunStats } | null = null;
@@ -130,6 +137,48 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         }
       }
 
+      let gemini: { findings: Finding[]; stats: ModelRunStats } | null = null;
+      // Gated exactly like DEEPSEEK: legGates.gemini is only true when
+      // resolveSecret(env.GEMINI_API_KEY) is set. Un-provisioned key → gate
+      // false → this whole block is skipped, enabledLegs is untouched, and the
+      // leg is completely inert.
+      if (legGates.gemini) {
+        enabledLegs++;
+        try {
+          gemini = await step.do(
+            "gemini-compare",
+            { retries: { limit: 1, delay: "10 seconds" }, timeout: stepTimeout },
+            async () => runGeminiCompares(env, specText, pages)
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          legOutages.push(`gemini: ${msg}`);
+          console.error(`gemini leg failed — degrading to no gemini findings: ${msg}`);
+          gemini = null;
+        }
+      }
+
+      let grok: { findings: Finding[]; stats: ModelRunStats } | null = null;
+      // Gated exactly like DEEPSEEK: legGates.grok is only true when
+      // resolveSecret(env.XAI_API_KEY) is set. Un-provisioned key → gate false →
+      // this whole block is skipped, enabledLegs is untouched, and the leg is
+      // completely inert.
+      if (legGates.grok) {
+        enabledLegs++;
+        try {
+          grok = await step.do(
+            "grok-compare",
+            { retries: { limit: 1, delay: "10 seconds" }, timeout: stepTimeout },
+            async () => runGrokCompares(env, specText, pages)
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          legOutages.push(`grok: ${msg}`);
+          console.error(`grok leg failed — degrading to no grok findings: ${msg}`);
+          grok = null;
+        }
+      }
+
       let claude: { findings: Finding[]; stats: ModelRunStats } | null = null;
       // Same gate as DEEPSEEK: resolveSecret trims whitespace and treats the
       // "PLACEHOLDER" seed as unset, so a seeded-but-empty key correctly falls
@@ -153,7 +202,7 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       // Total wipeout: every enabled leg failed. Nothing to report, so fail the
       // run loudly (the top-level catch marks it "failed"). A partial outage
       // (>=1 leg succeeded) continues to finalize with whatever we have.
-      if (enabledLegs > 0 && !deepseek && !workersai && !claude) {
+      if (enabledLegs > 0 && !deepseek && !workersai && !gemini && !grok && !claude) {
         throw new Error(
           `all ${enabledLegs} enabled compare leg(s) failed: ${legOutages.join("; ")}`
         );
@@ -175,12 +224,18 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
           const all: Finding[] = [
             ...(deepseek?.findings ?? []),
             ...(workersai?.findings ?? []),
+            ...(gemini?.findings ?? []),
+            ...(grok?.findings ?? []),
             ...(claude?.findings ?? []),
           ];
           report.findings = verifyFindings(all, specText, pages);
-          report.stats = [deepseek?.stats, workersai?.stats, claude?.stats].filter(
-            Boolean
-          ) as ModelRunStats[];
+          report.stats = [
+            deepseek?.stats,
+            workersai?.stats,
+            gemini?.stats,
+            grok?.stats,
+            claude?.stats,
+          ].filter(Boolean) as ModelRunStats[];
           report.scorecard = seeded
             ? buildScorecard(report.findings, MANIFESTS[lang ?? "en"] ?? MANIFESTS.en)
             : null;
