@@ -18,7 +18,7 @@
 const TRIVIA_LINES: string[] = [
   "A headless Chrome instance is clicking through every page of your survey right now.",
   "Each finding must quote the questionnaire verbatim — if the quote doesn't match, we throw it out.",
-  "Three models — DeepSeek, Workers AI's gpt-oss-120b and Claude Opus 4.8 — read every page independently. Then we compare notes.",
+  "Three model families — DeepSeek v4-pro, Grok 4.3 and Claude Sonnet 4.6 — read every page independently. Then we compare notes.",
   "Every survey page is captured three ways: extracted text, a screenshot, and a PDF. Evidence beats vibes.",
   "Survey research 101: every extra minute of questionnaire length measurably increases drop-off.",
   "A routing error caught after fielding can mean re-fielding at full cost. Catching it now costs a coffee break.",
@@ -38,16 +38,17 @@ const STAGES: { icon: string; name: string }[] = [
   { icon: "📄", name: "Parse docx" },
   { icon: "🌐", name: "Browser walks pages" },
   { icon: "🧠", name: "DeepSeek compare (deepseek-v4-pro)" },
-  { icon: "🤖", name: "Workers AI compare (gpt-oss-120b)" },
+  { icon: "🤖", name: "Grok compare (grok-4.3)" },
+  { icon: "✨", name: "Claude compare (claude-sonnet-4-6)" },
   { icon: "🔍", name: "Quote verification" },
   { icon: "📊", name: "Report" },
 ];
 
 /** Seconds (since page load) at which each stage is *estimated* to begin.
  *  The status API has no stage field, so this is a well-informed guess:
- *  docx parse ~3 s, browser walk ~90 s, the two model legs and quote
+ *  docx parse ~3 s, browser walk ~90 s, the three model legs and quote
  *  verification spread out after it. */
-const STAGE_AT_SEC: number[] = [0, 3, 93, 118, 140, 158];
+const STAGE_AT_SEC: number[] = [0, 3, 93, 118, 140, 163, 180];
 
 /** Routing already restricts runId to [\w-]+, but validate defensively:
  *  strip anything outside [\w-] so the id is safe to embed in HTML and JS. */
@@ -459,10 +460,9 @@ export function processingPage(runId: string): string {
       <ol class="pipeline">${stageCards}
       </ol>
       <p class="pipe-note">The status API doesn't report stage-by-stage progress, so this indicator
-        advances on typical timings — the browser walk is the long stretch. DeepSeek
-        (deepseek-v4-pro) and Workers AI (gpt-oss-120b) run automatically in the Worker;
-        the third model leg, Claude Opus 4.8, runs later from your machine on your Claude
-        subscription for $0.</p>
+        advances on typical timings — the browser walk is the long stretch. All three model legs —
+        DeepSeek (deepseek-v4-pro), Grok (grok-4.3) and Claude (claude-sonnet-4-6) — run automatically
+        in the Worker, with every call routed through the Cloudflare AI Gateway.</p>
     </section>
 
     <section class="card trivia-card" aria-labelledby="trivia-title">

@@ -52,12 +52,14 @@ function usage(message) {
 }
 
 function parseArgs(argv) {
-  // model defaults to the "opus" alias (the quality anchor). Pass a FULL id to
-  // A/B a cheaper tier — e.g. --model claude-sonnet-4-6 or
-  // --model claude-haiku-4-5-20251001. Do NOT use the bare "sonnet"/"haiku"
-  // aliases: "sonnet" resolves to Sonnet 5 (excluded, expensive) and the CLI's
-  // "haiku" alias is bugged (silently serves Sonnet) — pin the snapshot id.
-  const opts = { workerUrl: null, runId: null, dryRun: false, model: "opus" };
+  // model defaults to the roster's Claude model, pinned by FULL id
+  // ("claude-sonnet-4-6") so this $0 fallback runner matches the in-Worker
+  // Claude leg (CLAUDE_MODEL=claude-sonnet-4-6). Pass a FULL id to A/B a
+  // different tier — e.g. --model claude-haiku-4-5-20251001. Do NOT use the
+  // bare "sonnet"/"haiku" aliases: "sonnet" resolves to Sonnet 5 (excluded,
+  // expensive) and the CLI's "haiku" alias is bugged (silently serves Sonnet)
+  // — always pin the full id.
+  const opts = { workerUrl: null, runId: null, dryRun: false, model: "claude-sonnet-4-6" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--worker-url") {

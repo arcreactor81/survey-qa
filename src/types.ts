@@ -13,17 +13,18 @@ export interface Env {
   // returns undefined when unset, so the workflow gate never enables the leg.
   GEMINI_API_KEY?: string | SecretBinding;
   XAI_API_KEY?: string | SecretBinding;
-  CLAUDE_MODEL?: string; // default "claude-opus-4-8"
+  CLAUDE_MODEL?: string; // default "claude-sonnet-4-6"
   DEEPSEEK_MODEL?: string; // default "deepseek-v4-pro"
   WORKERSAI_MODEL?: string; // default "@cf/openai/gpt-oss-120b"
+  WORKERSAI_ENABLED?: string; // "false" retires the gpt-oss leg from the roster
   GEMINI_MODEL?: string; // default "gemini-2.5-flash"
   GROK_MODEL?: string; // default "grok-4.3"
   CF_AIG_ACCOUNT_ID?: string; // optional AI Gateway routing for DeepSeek
   CF_AIG_GATEWAY_ID?: string;
   CF_AIG_TOKEN?: string;
   // USD per 1M tokens, overridable without redeploy
-  CLAUDE_INPUT_USD_PER_MTOK?: string; // default "5"
-  CLAUDE_OUTPUT_USD_PER_MTOK?: string; // default "25"
+  CLAUDE_INPUT_USD_PER_MTOK?: string; // default "3"
+  CLAUDE_OUTPUT_USD_PER_MTOK?: string; // default "15"
   DEEPSEEK_INPUT_USD_PER_MTOK?: string; // default "0.28"
   DEEPSEEK_OUTPUT_USD_PER_MTOK?: string; // default "0.42"
   WORKERSAI_INPUT_USD_PER_MTOK?: string; // default "0.35"
@@ -102,7 +103,7 @@ export interface Finding {
 /** Per-model token/cost accounting across a run. */
 export interface ModelRunStats {
   model: ModelName;
-  modelId: string; // e.g. "claude-opus-4-8"
+  modelId: string; // e.g. "claude-sonnet-4-6"
   calls: number;
   inputTokens: number;
   outputTokens: number;

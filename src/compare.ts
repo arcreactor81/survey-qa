@@ -10,7 +10,7 @@ import type { Env, Finding, ModelName, ModelRunStats, PageCapture } from "./type
 // Defaults mirror the *_USD_PER_MTOK vars in wrangler.jsonc (env vars win at
 // runtime; these fallbacks apply only if a rate var is unset).
 const DEFAULT_RATES: Record<ModelName, { input: number; output: number }> = {
-  claude: { input: 5, output: 25 },
+  claude: { input: 3, output: 15 },
   deepseek: { input: 0.28, output: 0.42 },
   workersai: { input: 0.35, output: 0.75 },
   gemini: { input: 0.3, output: 2.5 },

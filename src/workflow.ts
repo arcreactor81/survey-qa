@@ -94,7 +94,11 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       // mid-run). Pinning the booleans here keeps every replay consistent.
       const legGates = await step.do("resolve-leg-gates", async () => ({
         deepseek: (await resolveSecret(env.DEEPSEEK_API_KEY)) !== undefined,
-        workersai: env.AI !== undefined,
+        // Workers AI (gpt-oss) is RETIRED from the roster (weakest leg): gated
+        // off via WORKERSAI_ENABLED="false". The AI binding stays for the
+        // /api/eval-model + /api/health/workersai bench tools; set the var to
+        // anything but "false" (or remove it) to bring the leg back.
+        workersai: env.AI !== undefined && env.WORKERSAI_ENABLED !== "false",
         claude: (await resolveSecret(env.ANTHROPIC_API_KEY)) !== undefined,
         // Gemini / Grok stay OFF until their key is provisioned: resolveSecret
         // returns undefined for an unset (or PLACEHOLDER) key, so the gate is
@@ -302,7 +306,7 @@ async function runClaudeInWorker(
   const findings: Finding[] = [];
   const stats: ModelRunStats = {
     model: "claude",
-    modelId: env.CLAUDE_MODEL ?? "claude-opus-4-8",
+    modelId: env.CLAUDE_MODEL ?? "claude-sonnet-4-6",
     calls: 0,
     inputTokens: 0,
     outputTokens: 0,

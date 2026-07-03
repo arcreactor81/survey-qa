@@ -103,8 +103,8 @@ function parseFindings(content: string): RawFinding[] {
 
 /**
  * Run one Claude compare call for one rendered page using structured outputs
- * (output_config.format json_schema with COMPARE_SCHEMA). Do NOT set temperature —
- * sampling parameters are rejected on this model.
+ * (output_config.format json_schema with COMPARE_SCHEMA). We set no
+ * temperature/top_p — unnecessary here and safe across models.
  */
 export async function claudeCompare(
   env: Env,
@@ -131,7 +131,7 @@ export async function claudeCompare(
       ? `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_ID}/anthropic`
       : undefined;
   const client = getClient(apiKey, baseURL);
-  const model = env.CLAUDE_MODEL ?? "claude-opus-4-8";
+  const model = env.CLAUDE_MODEL ?? "claude-sonnet-4-6";
 
   const startedAt = Date.now();
   const response = await client.messages.create({

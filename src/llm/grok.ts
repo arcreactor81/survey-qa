@@ -1,6 +1,6 @@
 // Grok compare call — OpenAI-compat fetch, optionally routed through the
 // Cloudflare AI Gateway (grok provider). Cloned from deepseek.ts; thinking is
-// ON at low effort with a generous max_tokens so reasoning sharpens the diff
+// ON at medium effort with a generous max_tokens so reasoning sharpens the diff
 // without starving the JSON answer. grok-4.3 accepts none/low/medium/high.
 
 import { buildComparePrompt } from "../prompt";
@@ -86,7 +86,7 @@ function parseFindings(content: string): RawFinding[] {
 
 /**
  * Run one Grok compare call for one rendered page via the xAI OpenAI-compatible
- * API. Thinking is ON at low effort (reasoning_effort:"low") with a generous
+ * API. Thinking is ON at medium effort (reasoning_effort:"medium") with a generous
  * max_tokens so reasoning never starves the JSON answer.
  * Throws on HTTP failure, empty content, or unparseable JSON.
  */

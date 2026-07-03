@@ -23,26 +23,27 @@
       "secret_name": "DEEPSEEK_API_KEY"
     },
     {
-      "binding": "GEMINI_API_KEY",
-      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
-      "secret_name": "GEMINI_API_KEY"
-    },
-    {
       "binding": "XAI_API_KEY",
       "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
       "secret_name": "XAI_API_KEY"
+    },
+    {
+      "binding": "ANTHROPIC_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "ANTHROPIC_API_KEY"
     }
   ],
   "vars": {
-    "CLAUDE_MODEL": "claude-opus-4-8",
+    "CLAUDE_MODEL": "claude-sonnet-4-6",
     "DEEPSEEK_MODEL": "deepseek-v4-pro",
-    "CLAUDE_INPUT_USD_PER_MTOK": "5",
-    "CLAUDE_OUTPUT_USD_PER_MTOK": "25",
+    "CLAUDE_INPUT_USD_PER_MTOK": "3",
+    "CLAUDE_OUTPUT_USD_PER_MTOK": "15",
     "DEEPSEEK_INPUT_USD_PER_MTOK": "0.28",
     "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.42",
     "WORKERSAI_MODEL": "@cf/openai/gpt-oss-120b",
     "WORKERSAI_INPUT_USD_PER_MTOK": "0.35",
     "WORKERSAI_OUTPUT_USD_PER_MTOK": "0.75",
+    "WORKERSAI_ENABLED": "false",
     "GEMINI_MODEL": "gemini-2.5-flash",
     "GEMINI_INPUT_USD_PER_MTOK": "0.30",
     "GEMINI_OUTPUT_USD_PER_MTOK": "2.50",

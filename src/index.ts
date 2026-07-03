@@ -4,7 +4,6 @@ import { buildHtmlReport } from "./report";
 import { processingPage } from "./processing";
 import { getRun, putRun, updateRun, shotKey, pagePdfKey, docxKey } from "./store";
 import { workersaiCompare } from "./llm/workersai";
-import { deepseekThinkingProbe } from "./llm/deepseek";
 import { isBlockedHostname } from "./net-guard";
 import { MANIFESTS, SUPPORTED_LANGS } from "./manifests";
 import type { Env, Finding, ModelRunStats, RunReport } from "./types";
@@ -230,7 +229,7 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
     status: "processing",
     reportUrl: `${origin}/reports/${runId}`,
     apiUrl: `${origin}/api/runs/${runId}`,
-    next: `Poll the report URL; once the walk finishes, run the local Claude runner: node runner/claude-runner.mjs --worker-url ${origin} --run ${runId}`,
+    next: `Poll the report URL. If this deployment has no Anthropic key, the Claude leg runs via the fallback runner: node runner/claude-runner.mjs --worker-url ${origin} --run ${runId}`,
   });
 }
 
@@ -498,20 +497,6 @@ export default {
           errors, lastError,
           inputTokens, outputTokens, latencyMs,
         });
-      }
-
-      // Diagnostic: is the DeepSeek leg actually reasoning (thinking on)? Runs
-      // our exact prod request shape + explicit on/off and reports which we get.
-      if (path === "/api/health/deepseek" && req.method === "GET") {
-        if (!allowRequest(`health:${clientIp(req)}`, HEALTH_RATE)) {
-          return json({ error: "rate limit exceeded; wait a minute and retry" }, 429);
-        }
-        try {
-          return json(await deepseekThinkingProbe(env));
-        } catch (err) {
-          console.error("deepseek probe failed:", err);
-          return json({ ok: false, error: err instanceof Error ? err.message : "probe failed" }, 500);
-        }
       }
 
       // Everything else falls through to static assets.

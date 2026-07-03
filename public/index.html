@@ -19,7 +19,7 @@
 })();
 </script>
 <title>Survey QA &mdash; Automated questionnaire-to-website verification</title>
-<meta name="description" content="Survey QA automates vendor survey link-testing: it parses the Word questionnaire, walks every survey page with a real browser, has three models — DeepSeek, Workers AI (gpt-oss-120b) and Claude Opus 4.8 — independently compare every page, keeps only verbatim-quote-verified findings, and delivers a report with a seeded-error scorecard.">
+<meta name="description" content="Survey QA automates vendor survey link-testing: it parses the Word questionnaire, walks every survey page with a real browser, has three models — DeepSeek v4-pro, Grok 4.3 and Claude Sonnet 4.6 — independently compare every page, combines their findings by consensus with verbatim-quote verification, and delivers a report with a seeded-error scorecard.">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -764,9 +764,10 @@
       Survey QA automates the link-testing step of market-research fieldwork. Point it at the
       <strong>Word questionnaire</strong> and the programmed survey URL: it parses the .docx into a
       canonical spec, <strong>walks every survey page with a real browser</strong>, has three
-      models&nbsp;&mdash; DeepSeek, Workers&nbsp;AI (gpt-oss-120b) and Claude Opus&nbsp;4.8&nbsp;&mdash;
-      independently compare the rendered survey
-      against the spec, <strong>verifies every finding with verbatim quotes</strong>, and delivers a
+      models from three families&nbsp;&mdash; DeepSeek&nbsp;v4-pro, Grok&nbsp;4.3 (xAI) and
+      Claude Sonnet&nbsp;4.6 (Anthropic)&nbsp;&mdash; independently compare the rendered survey
+      against the spec, <strong>combines their findings by consensus and verifies each with verbatim
+      quotes</strong>, and delivers a
       findings report with a <strong>seeded-error scorecard</strong>. Typos, missing options, broken
       piping, mislabeled scales&nbsp;&mdash; caught before a single respondent sees them.
     </p>
@@ -797,7 +798,7 @@
         <div class="step">
           <div class="step-num">3</div>
           <h3>Three-model comparison</h3>
-          <p>DeepSeek (deepseek-v4-pro) and Workers AI (gpt-oss-120b) compare each page in-Worker automatically; Claude Opus 4.8 adds a third independent read from your machine — on your Claude subscription, for $0.</p>
+          <p>DeepSeek v4-pro, Grok 4.3 and Claude Sonnet 4.6 — three independent model families — each compare every page in-Worker automatically, with all calls routed through the Cloudflare AI Gateway.</p>
         </div>
         <div class="step">
           <div class="step-num">4</div>
@@ -853,7 +854,7 @@
 
           <div class="field field-full submit-row">
             <button type="submit" id="runBtn" class="btn">Run QA check</button>
-            <span class="hint">A run takes roughly 2&ndash;3 minutes: browser walk (the long stretch, ~90&nbsp;s), two automatic model comparisons (DeepSeek + Workers AI), quote verification.</span>
+            <span class="hint">A run takes roughly 3 minutes: browser walk (the long stretch, ~90&nbsp;s), three automatic model comparisons (DeepSeek, Grok, Claude Sonnet), quote verification.</span>
           </div>
         </div>
       </form>
@@ -897,8 +898,8 @@
       </div>
       <ol class="track" id="ovTrack" aria-labelledby="ov-pipe-title"></ol>
       <p class="pipe-note">Stage timings are estimates &mdash; the status API doesn't report per-stage
-        progress. DeepSeek (deepseek-v4-pro) and Workers AI (gpt-oss-120b) run automatically in the Worker;
-        Claude Opus 4.8 is the final leg you run locally, on your Claude subscription, for $0.</p>
+        progress. All three model legs &mdash; DeepSeek (deepseek-v4-pro), Grok (grok-4.3) and
+        Claude (claude-sonnet-4-6) &mdash; run automatically in the Worker.</p>
     </div>
 
     <div class="tk-card">
@@ -977,27 +978,32 @@
     { at: 93, name: "DeepSeek comparison", model: "deepseek-v4-pro",
       desc: "Reads each page vs the spec (automatic · ~1¢/run)",
       live: "DeepSeek (deepseek-v4-pro) is reading each page against the spec…" },
-    { at: 118, name: "Workers AI comparison", model: "gpt-oss-120b",
-      desc: "Independent second read (Cloudflare Workers AI · free)",
-      live: "Workers AI (gpt-oss-120b) is running its independent second read…" },
-    { at: 140, name: "Verifying quotes", model: null,
+    { at: 118, name: "Grok comparison", model: "grok-4.3",
+      desc: "Independent second read (xAI · automatic)",
+      live: "Grok (grok-4.3) is running its independent second read…" },
+    { at: 140, name: "Claude comparison", model: "claude-sonnet-4-6",
+      desc: "Independent third read (Anthropic · automatic when an Anthropic key is set)",
+      live: "Claude Sonnet 4.6 is running its independent third read…" },
+    { at: 163, name: "Verifying quotes", model: null,
       desc: "Every finding must quote both sides verbatim or it's dropped",
       live: "Verifying quotes — findings that don't match verbatim get dropped…" },
-    { at: 158, name: "Building report", model: null,
-      desc: "Scorecard + findings + page evidence",
+    { at: 180, name: "Building report", model: null,
+      desc: "Cross-model consensus + scorecard + page evidence",
       live: "Assembling the report and scorecard…" }
   ];
-  /* Manual 7th step, shown once the automatic legs finish. */
+  /* Fallback step, appended after the automatic pipeline. Only relevant when
+     the deployment has no Anthropic key: the run then parks in "awaiting"
+     until the local runner submits the Claude findings. */
   var CLAUDE_STEP = {
-    name: "Your turn: run Claude locally", model: "Claude Opus 4.8",
-    desc: "Runs on YOUR Claude subscription ($0), not a metered API key — that's why this step is a command you run"
+    name: "Fallback: local Claude runner", model: "Claude Sonnet 4.6",
+    desc: "Only needed when no Anthropic key is set — then the runner submits Claude's findings from your machine, on your Claude subscription ($0)"
   };
 
   /* Same copy as src/processing.ts TRIVIA_LINES — keep the two in sync. */
   var TRIVIA = [
     "A headless Chrome instance is clicking through every page of your survey right now.",
     "Each finding must quote the questionnaire verbatim — if the quote doesn't match, we throw it out.",
-    "Three models — DeepSeek, Workers AI's gpt-oss-120b and Claude Opus 4.8 — read every page independently. Then we compare notes.",
+    "Three model families — DeepSeek v4-pro, Grok 4.3 and Claude Sonnet 4.6 — read every page independently. Then we compare notes.",
     "Every survey page is captured three ways: extracted text, a screenshot, and a PDF. Evidence beats vibes.",
     "Survey research 101: every extra minute of questionnaire length measurably increases drop-off.",
     "A routing error caught after fielding can mean re-fielding at full cost. Catching it now costs a coffee break.",
@@ -1198,13 +1204,14 @@
   function renderAwaiting() {
     show(
       '<span class="state-badge is-wait">Awaiting Claude leg</span>' +
-      '<div class="state-title">Run <code>' + esc(runId) + '</code> — automatic legs done (DeepSeek + Workers AI)</div>' +
+      '<div class="state-title">Run <code>' + esc(runId) + '</code> — DeepSeek and Grok have reported</div>' +
       '<p class="state-stage" style="margin:6px 0 0;">The interim report is live: ' +
         '<a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;↗</a>. ' +
-        'To add the third model leg — Claude Opus 4.8 — run this from the repo root:</p>' +
+        'This deployment has no Anthropic key, so the Claude Sonnet 4.6 leg didn\'t run in-Worker. ' +
+        'Fallback: run it locally from the repo root:</p>' +
       '<div class="cmd"><code id="cmdCode">' + esc(claudeCommand()) + '</code>' +
         '<button type="button" class="copy-btn">Copy</button></div>' +
-      '<p class="cmd-caption">Claude runs locally on your Claude subscription ($0, flat-rate) instead of a metered API key — that\'s why this leg is a command you run.</p>' +
+      '<p class="cmd-caption">The fallback runner bills your Claude subscription ($0, flat-rate) instead of a metered API key. With an Anthropic key set, all three legs run automatically.</p>' +
       trackerShellHtml() +
       '<p class="state-note">This page keeps polling and will switch to “complete” automatically once the runner submits its findings.</p>'
     );
@@ -1215,7 +1222,7 @@
     show(
       '<span class="state-badge is-ok">Complete</span>' +
       '<div class="state-title">Run <code>' + esc(runId) + '</code> finished</div>' +
-      '<p class="state-stage" style="margin:6px 0 14px;">All three model legs are in — DeepSeek, Workers AI (gpt-oss-120b) and Claude Opus 4.8. Scorecard, findings and page evidence are ready.</p>' +
+      '<p class="state-stage" style="margin:6px 0 14px;">All three model legs are in — DeepSeek v4-pro, Grok 4.3 and Claude Sonnet 4.6. Scorecard, consensus findings and page evidence are ready.</p>' +
       '<p class="report-cta"><a class="btn" href="' + esc(reportUrl) + '" target="_blank" rel="noopener">View report</a></p>' +
       trackerShellHtml()
     );
@@ -1335,13 +1342,14 @@
     if (currentState === "awaiting") {
       return (
         '<span class="state-badge is-wait">Awaiting Claude leg</span>' +
-        '<div class="state-title">Automatic legs done — DeepSeek + Workers AI (gpt-oss-120b)</div>' +
+        '<div class="state-title">DeepSeek and Grok have reported</div>' +
         '<p class="state-stage" style="margin:6px 0 0;">The interim report is live: ' +
           '<a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;↗</a>. ' +
-          'To add the third model leg — Claude Opus 4.8 — run this from the repo root:</p>' +
+          'This deployment has no Anthropic key, so the Claude Sonnet 4.6 leg didn\'t run in-Worker. ' +
+          'Fallback: run it locally from the repo root:</p>' +
         '<div class="cmd"><code id="ovCmdCode">' + esc(claudeCommand()) + '</code>' +
           '<button type="button" class="copy-btn">Copy</button></div>' +
-        '<p class="cmd-caption">Claude runs locally on your Claude subscription ($0, flat-rate) instead of a metered API key — that\'s why this leg is a command you run.</p>' +
+        '<p class="cmd-caption">The fallback runner bills your Claude subscription ($0, flat-rate) instead of a metered API key. With an Anthropic key set, all three legs run automatically.</p>' +
         '<p class="state-note">This page keeps polling and will switch to “complete” automatically once the runner submits its findings.</p>'
       );
     }
@@ -1349,7 +1357,7 @@
       return (
         '<span class="state-badge is-ok">Complete</span>' +
         '<div class="state-title">Run <code>' + esc(runId) + '</code> finished</div>' +
-        '<p class="state-stage" style="margin:6px 0 14px;">All three model legs are in — DeepSeek, Workers AI (gpt-oss-120b) and Claude Opus 4.8. Scorecard, findings and page evidence are ready.</p>' +
+        '<p class="state-stage" style="margin:6px 0 14px;">All three model legs are in — DeepSeek v4-pro, Grok 4.3 and Claude Sonnet 4.6. Scorecard, consensus findings and page evidence are ready.</p>' +
         '<p class="report-cta"><a class="btn tk-cta" href="' + esc(reportUrl) + '" target="_blank" rel="noopener">View report</a></p>'
       );
     }
