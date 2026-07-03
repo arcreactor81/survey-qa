@@ -1,5 +1,27 @@
 # HANDOFF — survey-qa build state
 
+## MODEL ROSTER WORK — 2026-07-03 (latest; commit 9443848, deployed version e6f9ba3d)
+Multilingual bakeoff done (docs/model-bakeoff.md, round 3): 6 langs × models. Sonnet-4.6 = perfect
+10/10 every language (= Opus, but faster + far lighter subscription quota) → recommended Claude-leg
+swap; kimi-k2.7 REJECTED (timeout-crippled, avg ~8.6, en swung 4↔10); gpt-oss-120b weakest survivor
+(8.8) with no better zero-key @cf replacement. User positioning: "keys are not a barrier" → pick legs
+on merit, drop the zero-key privilege. Consensus design means Opus's only edge (lower FP) is moot.
+Runner is parameterized: `node runner/claude-runner.mjs ... --model claude-sonnet-4-6` (default still
+opus; pin FULL ids — bare `sonnet`→Sonnet5, CLI `haiku` alias is bugged→Sonnet).
+
+GEMINI + GROK legs BUILT (inert, key-gated) & deployed: src/llm/gemini.ts (gemini-2.5-flash, thinking
+OFF via reasoning_effort:'none') + src/llm/grok.ts (grok-4.3, thinking off), wired into
+compare/workflow/verify/report, deepseek.ts-cloned hardening. Secrets created in store
+55e6ce4174d645cfa68a6c27eef7847f: GEMINI_API_KEY (id b92ee38be0cd40308c4074a5550fccb8) + XAI_API_KEY
+(id 0819ec27ed614525a2f882ffa18e70c8), both seeded PLACEHOLDER (=inert via resolveSecret) and bound in
+wrangler.jsonc. Vars: GEMINI_MODEL/GROK_MODEL + cost vars set.
+
+**PENDING USER:** set real key VALUES in the store (dashboard or `wrangler secrets-store secret update
+<store> --name GEMINI_API_KEY --remote`). Runtime .get() → leg activates on next run, NO redeploy.
+**THEN (me):** run the 6-lang matrix (Gemini/Grok auto-join the scorecard), decide final roster —
+likely DeepSeek + Sonnet-4.6 + Gemini (+Grok if it earns it), retire gpt-oss. Also still open: flip the
+runner default opus→sonnet-4-6 (user go), and honest Grok caveat = unproven for verbatim zh/ja.
+
 ## ✅ COMPLETE AS OF 2026-07-03 (commit 3255eb6, deployed version d2e9eed9)
 The full arc landed & verified. Final 3-way (run 26656492): Claude 10/10, DeepSeek 10/10,
 Workers AI gpt-oss-120b 7/10 this run (1 brownout page error; 9/10 when all pages land).
