@@ -4,6 +4,7 @@
 
 import puppeteer from "@cloudflare/puppeteer";
 import type { BrowserWorker, Page } from "@cloudflare/puppeteer";
+import { isBlockedUrl } from "./net-guard";
 import type { Env, PageCapture } from "./types";
 
 const MAX_ITERATIONS = 12;
@@ -67,6 +68,7 @@ export async function walkSurvey(
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 1600 });
+    await enableSsrfGuard(page);
 
     // A page that keeps a connection open (analytics heartbeat, websocket,
     // long-poll) never satisfies networkidle0. Treat that timeout as
@@ -215,6 +217,44 @@ export async function walkSurvey(
 /* ------------------------------------------------------------------------- */
 /* Worker-side helpers                                                        */
 /* ------------------------------------------------------------------------- */
+
+/**
+ * Per-request SSRF guard. The submitted URL is validated once in index.ts,
+ * but the browser follows 3xx/meta/JS redirects on its own — an allowlisted
+ * public host could redirect to 169.254.169.254 or a private IP and its
+ * response body would end up in the report. Request interception re-validates
+ * EVERY request (each redirect hop and every subresource) against the same
+ * net-guard rules and aborts blocked ones. Public hosts — the same-origin
+ * demo survey and its unpkg.com CDN assets — pass untouched.
+ *
+ * Every intercepted request MUST be settled via continue()/abort() or the
+ * page hangs, so the handler always resolves each request and validation
+ * failures fail closed (abort). If interception itself cannot be enabled we
+ * throw: the walk must never proceed unprotected.
+ */
+async function enableSsrfGuard(page: Page): Promise<void> {
+  try {
+    await page.setRequestInterception(true);
+  } catch (err) {
+    throw new Error(`Could not enable request interception (SSRF guard): ${describeError(err)}`);
+  }
+  page.on("request", (request) => {
+    let blocked = true; // fail closed if validation itself throws
+    try {
+      blocked = isBlockedUrl(request.url());
+    } catch {
+      blocked = true;
+    }
+    if (blocked) {
+      console.warn(`SSRF guard blocked request to ${request.url()}`);
+    }
+    const settled = blocked ? request.abort("blockedbyclient") : request.continue();
+    settled.catch((err) => {
+      // Settling can race the request being cancelled/finished; log and move on.
+      console.error(`SSRF guard could not settle request ${request.url()}: ${describeError(err)}`);
+    });
+  });
+}
 
 async function captureText(page: Page): Promise<string> {
   return page.evaluate(() => document.body.innerText);

@@ -4,6 +4,7 @@ import { buildHtmlReport } from "./report";
 import { processingPage } from "./processing";
 import { getRun, putRun, shotKey, pagePdfKey, docxKey } from "./store";
 import { workersaiCompare } from "./llm/workersai";
+import { isBlockedHostname } from "./net-guard";
 import { MANIFESTS, SUPPORTED_LANGS } from "./manifests";
 import type { Env, Finding, ModelRunStats, RunReport } from "./types";
 
@@ -61,41 +62,9 @@ function allowRequest(key: string, limit: { windowMs: number; max: number }): bo
 
 const clientIp = (req: Request): string => req.headers.get("cf-connecting-ip") ?? "unknown";
 
-/**
- * True when the hostname points at loopback/private/link-local/metadata space —
- * anything Browser Rendering must never be aimed at. The WHATWG URL parser has
- * already normalized decimal/hex/octal IPv4 host forms to dotted quads.
- */
-function isBlockedHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, "");
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) return true;
-
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (v4) {
-    const a = Number(v4[1]);
-    const b = Number(v4[2]);
-    return (
-      a === 0 || // 0.0.0.0/8 "this network"
-      a === 10 || // 10.0.0.0/8 private
-      a === 127 || // loopback
-      (a === 100 && b >= 64 && b <= 127) || // 100.64.0.0/10 CGNAT
-      (a === 169 && b === 254) || // link-local / cloud metadata (169.254.169.254)
-      (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12 private
-      (a === 192 && b === 168) || // 192.168.0.0/16 private
-      a >= 224 // multicast + reserved
-    );
-  }
-
-  // IPv6 literals: URL.hostname keeps the surrounding brackets.
-  const v6 = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-  if (v6.includes(":")) {
-    if (v6 === "::" || v6 === "::1") return true; // unspecified / loopback
-    if (v6.startsWith("fc") || v6.startsWith("fd")) return true; // fc00::/7 ULA
-    if (/^fe[89ab]/.test(v6)) return true; // fe80::/10 link-local
-    if (v6.includes("::ffff:")) return true; // IPv4-mapped
-  }
-  return false;
-}
+// Host validation (isBlockedHostname/isBlockedUrl) lives in ./net-guard so the
+// walker's per-request interception applies the exact same rules to every
+// redirect hop and subresource — not just the URL submitted here.
 
 /**
  * Resolve and validate the requested survey URL. Same-origin targets (the

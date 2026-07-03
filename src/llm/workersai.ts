@@ -15,6 +15,45 @@ const VALID_CATEGORIES = new Set<Finding["category"]>([
 ]);
 const VALID_SEVERITIES = new Set<Finding["severity"]>(["high", "medium", "low"]);
 
+/**
+ * Per-call cap. Unlike fetch, env.AI.run takes no AbortSignal, so a hung
+ * Workers AI call would otherwise stall the whole workersai-compare step until
+ * its workflow timeout (then retry, doubling the hang). Racing a timer makes a
+ * single hung page-call reject fast; the per-page try/catch in
+ * runWorkersaiCompares records it in stats.errors and the leg moves on.
+ * Mirrors the 60s REQUEST_TIMEOUT_MS on the DeepSeek/Claude legs.
+ */
+const AI_RUN_TIMEOUT_MS = 60_000;
+
+interface AiRunner {
+  run(model: string, options: Record<string, unknown>): Promise<unknown>;
+}
+
+async function runWithTimeout(
+  ai: AiRunner,
+  model: string,
+  options: Record<string, unknown>,
+): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const call = ai.run(model, options);
+  // If the call loses the race and rejects later, don't surface an unhandled
+  // rejection — the race result is what callers observe.
+  call.catch(() => {});
+  try {
+    return await Promise.race([
+      call,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Workers AI call timed out after ${AI_RUN_TIMEOUT_MS / 1000}s`)),
+          AI_RUN_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer); // no leaked timers on success
+  }
+}
+
 function parseLenient(text: string): unknown {
   let t = text.trim();
   const fenced = t.match(/^```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```\s*$/);
@@ -74,10 +113,8 @@ export async function workersaiCompare(
   const started = Date.now();
   // The Ai binding's model catalog typing is a string-literal union that lags
   // the live catalog; the runtime accepts any valid model id string.
-  const ai = env.AI as unknown as {
-    run(model: string, options: Record<string, unknown>): Promise<unknown>;
-  };
-  const res = (await ai.run(model, {
+  const ai = env.AI as unknown as AiRunner;
+  const res = (await runWithTimeout(ai, model, {
     messages: [
       {
         role: "system",

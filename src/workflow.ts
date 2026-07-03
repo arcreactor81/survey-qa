@@ -77,9 +77,14 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
 
       let workersai: { findings: Finding[]; stats: ModelRunStats } | null = null;
       if (env.AI) {
+        // Tight timeout: each page-call is capped at 60s inside workersaiCompare,
+        // and healthy calls take seconds, so 3 minutes comfortably covers a demo
+        // run while guaranteeing a total Workers AI outage lands the run in a
+        // terminal state (awaiting-claude with this leg errored) within minutes
+        // instead of hanging through a 10-minute timeout plus retry.
         workersai = await step.do(
           "workersai-compare",
-          { retries: { limit: 1, delay: "10 seconds" }, timeout: "10 minutes" },
+          { retries: { limit: 1, delay: "10 seconds" }, timeout: "3 minutes" },
           async () => runWorkersaiCompares(env, specText, pages)
         );
       }
@@ -89,9 +94,12 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       // "PLACEHOLDER" seed as unset, so a seeded-but-empty key correctly falls
       // through to the external runner path instead of erroring on every page.
       if (await resolveSecret(env.ANTHROPIC_API_KEY)) {
+        // claudeCompare caps each call at 60s with one SDK retry (~2 min/page
+        // worst case), so 8 minutes bounds a total outage without cutting off
+        // a healthy multi-page run.
         claude = await step.do(
           "claude-compare",
-          { retries: { limit: 1, delay: "10 seconds" }, timeout: "15 minutes" },
+          { retries: { limit: 1, delay: "10 seconds" }, timeout: "8 minutes" },
           async () => runClaudeInWorker(env, specText, pages)
         );
       }
