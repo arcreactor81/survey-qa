@@ -31,3 +31,30 @@ Only `kimi-k2.7-code` beats the incumbent, and it beats it well (perfect recall 
 **Upgrade path if latency budget changes:** switch `WORKERSAI_MODEL` to `@cf/moonshotai/kimi-k2.7-code`
 AND raise the per-call timeout in `src/llm/workersai.ts` (`runWithTimeout`, currently 60 s) to ~120 s
 plus rescale `legStepTimeout` in `src/workflow.ts`. Mistral is fast but ruled out on false positives.
+
+## Round 3 — 2026-07-03 — FULL multilingual matrix (6 langs × 6 models, recall/10)
+
+Every leg validated across en/es/fr/de/zh/ja (seeded 10-error manifest per lang). Claude tiers
+run via the parameterized runner (`--model`); kimi via `/api/eval-model` (2 reps, timeout-fragile).
+
+| lang | DeepSeek | gpt-oss-120b | kimi-k2.7 | Opus 4.8 | Sonnet-4.6 | Haiku-4.5 |
+|---|---|---|---|---|---|---|
+| en | 8 | 8 | 4·10 | 10 | 10 | 10 |
+| es | 10 | 9 | 8·8 | 10 | 10 | 9 |
+| fr | 10 | 10 | 8·10 | 10 | 10 | 9 |
+| de | 10 | 9 | 8·8 | 10 | 10 | 10 |
+| zh | 10 | 8 | 10·10 | 10 | 10 | 10 |
+| ja | 10 | 9 | 10·9 | 10 | 10 | 10 |
+| **avg recall** | **9.7** | **8.8** | **~8.6** | **10.0** | **10.0** | **9.7** |
+| **avg FP** | 1.8 | 2.5 | ~1.8 | **0.7** | 1.8 | 2.3 |
+
+Conclusions:
+- **Sonnet-4.6 = Opus on recall (perfect 10/10 all langs), faster, far lighter on subscription quota** →
+  recommended swap for the Claude leg. Opus keeps a small edge on false positives (0.7 vs 1.8).
+- **kimi-k2.7-code REJECTED as a leg:** multilingually it is the least reliable (avg ~8.6, en swung 4↔10),
+  timed out on nearly every rep at the 60 s cap, and its reasoning truncated to an EMPTY response (fr rep2:
+  finish_reason=length, 4096-tok output cap eaten by CoT). Its English 10/10 was a fluke; not worth the
+  timeout/token-cap accommodations to babysit one slow high-variance model.
+- **gpt-oss-120b is the weakest surviving leg (8.8) and has no better zero-key `@cf` replacement** (kimi
+  failed; qwen ~7; mistral 8-but-10-FP). Since API keys are not a differentiator for this product, the
+  cleaner roster is **DeepSeek + Gemini 2.5 Flash + Claude(Sonnet-4.6)**, retiring gpt-oss.
