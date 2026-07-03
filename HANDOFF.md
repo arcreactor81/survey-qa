@@ -1,6 +1,16 @@
 # HANDOFF — survey-qa build state
 
-## STATE AS OF 2026-07-03 (active session — most current, read this block first)
+## ✅ COMPLETE AS OF 2026-07-03 (commit 3255eb6, deployed version d2e9eed9)
+The full arc landed & verified. Final 3-way (run 26656492): Claude 10/10, DeepSeek 10/10,
+Workers AI gpt-oss-120b 7/10 this run (1 brownout page error; 9/10 when all pages land).
+Coherence gate returned coherent:true; its touch-ups (code defaults/comments/README aligned to
+the gpt-oss-120b swap) are applied. Three adversarial reviews done + all highs/mediums/lows fixed
+& verified. Product is live, consistent, and resilient. Remaining known/accepted residuals:
+DNS-rebinding SSRF (needs DoH; cross-origin surveyUrl is blocked so N/A for the demo), Workers AI
+brownout variance (infra-side; resilience handles it), per-isolate rate limiter (needs KV/DO for
+global limits), findings-submission capability-URL auth (deferred; runner is local/trusted).
+
+## STATE AS OF 2026-07-03 (active session — historical)
 LIVE & committed (commit 071e947, deployed version 25ad91ec): Deep Teal Terminal theme (contrast-corrected,
 Space Grotesk/JetBrains Mono, smooth 220ms transition), verbose model-aware pipeline stage tracker (replaced
 the broken --p fill), accurate 3-way copy (DeepSeek + Workers AI gpt-oss-120b + Claude Opus 4.8), Workers AI

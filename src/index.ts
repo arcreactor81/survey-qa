@@ -36,6 +36,21 @@ const MAX_TEXT_FIELD_CHARS = 4000;
 // below these; only a runaway curl loop trips them.
 const RUN_RATE = { windowMs: 60_000, max: 10 };
 const HEALTH_RATE = { windowMs: 60_000, max: 6 };
+const EVAL_RATE = { windowMs: 60_000, max: 12 };
+
+// Model bakeoff endpoint (/api/eval-model) safety: the ONLY models it will run
+// are these benign, cheap third-pillar candidates. This closes the original
+// denial-of-wallet (an arbitrary billable model id) — an attacker can trigger
+// only these fixed eval models, rate-limited, and only against an already
+// existing run (whose id is an unguessable UUID). Add a candidate here to bench it.
+const EVAL_ALLOWLIST = new Set<string>([
+  "@cf/openai/gpt-oss-120b",
+  "@cf/moonshotai/kimi-k2.6",
+  "@cf/moonshotai/kimi-k2.7-code",
+  "@cf/qwen/qwen3-30b-a3b-fp8",
+  "@cf/qwen/qwq-32b",
+  "@cf/mistralai/mistral-small-3.1-24b-instruct",
+]);
 
 // Per-isolate, KV-less counters. KNOWN LIMITATION: this Map lives in a single
 // Worker isolate's memory, so the limit is NOT global — concurrent requests
@@ -433,6 +448,55 @@ export default {
           console.error("workersai health probe failed:", err);
           return json({ ok: false, error: "workers ai probe failed (see server logs)" }, 500);
         }
+      }
+
+      // Model bakeoff: run an ALLOWLISTED candidate model over an existing
+      // run's already-captured pages and score it against the seeded manifest —
+      // benching third-pillar candidates without a redeploy. Secured by the
+      // fixed EVAL_ALLOWLIST + rate limit + the unguessable run id (see above).
+      if (path === "/api/eval-model" && req.method === "GET") {
+        if (!allowRequest(`eval:${clientIp(req)}`, EVAL_RATE)) {
+          return json({ error: "rate limit exceeded; wait a minute and retry" }, 429);
+        }
+        const model = url.searchParams.get("model") ?? "";
+        const runId = url.searchParams.get("run") ?? "";
+        if (!EVAL_ALLOWLIST.has(model)) {
+          return json({ error: "model not in eval allowlist", allowed: [...EVAL_ALLOWLIST] }, 400);
+        }
+        const envelope = await getRun(env, runId);
+        if (!envelope) return json({ error: "run not found" }, 404);
+        const { report } = envelope;
+        if (!report.pages.length) return json({ error: "run has no captured pages" }, 400);
+        const raw: Finding[] = [];
+        let errors = 0, inputTokens = 0, outputTokens = 0, latencyMs = 0;
+        let lastError: string | undefined;
+        for (const page of report.pages) {
+          try {
+            const r = await workersaiCompare(env, report.specText, page, model);
+            inputTokens += r.inputTokens;
+            outputTokens += r.outputTokens;
+            latencyMs += r.latencyMs;
+            for (const f of r.findings) {
+              raw.push({ ...f, model: "workersai", pageIndex: page.pageIndex, quoteVerified: false });
+            }
+          } catch (err) {
+            errors += 1;
+            lastError = err instanceof Error ? err.message : String(err);
+          }
+        }
+        const verified = verifyFindings(raw, report.specText, report.pages);
+        const manifest = MANIFESTS[envelope.lang ?? "en"] ?? MANIFESTS.en;
+        const sc = buildScorecard(verified, manifest);
+        const caught = sc.entries.filter((e) => e.caughtBy.includes("workersai")).length;
+        return json({
+          model, runId,
+          caught, total: manifest.length,
+          recall: `${caught}/${manifest.length}`,
+          falsePositives: sc.falsePositives.workersai,
+          verifiedFindings: verified.length,
+          errors, lastError,
+          inputTokens, outputTokens, latencyMs,
+        });
       }
 
       // Everything else falls through to static assets.
