@@ -1,60 +1,128 @@
-# Survey QA — Automated Language Checks (PoC)
+# Survey QA
 
-Iteration 1 of the Automated Survey Website QA initiative: verify that a vendor-programmed
-survey website faithfully matches the Word questionnaire it was built from.
+Automated QA for vendor-built survey websites: verify that a programmed survey faithfully matches
+the Word questionnaire it was built from — before it goes live and starts collecting corrupted data.
+
+A single Cloudflare Worker walks the survey with a headless browser, compares every page against the
+questionnaire using **three independent LLMs**, and produces an **issue-first consensus report**: each
+discrepancy shown once, with which models agree (N/3), a confidence score, and the verbatim evidence
+that proves it.
+
+> Iteration 1 focuses on **language/content fidelity** (typos, missing/renamed options, broken piping,
+> scale mislabels, reordered options, wrong numbering, encoding artifacts, missing instructions). Later
+> iterations extend the same walker to routing/logic, calculations, and input validation — see [Roadmap](#roadmap).
 
 ## How it works
 
 ```
-questionnaire.docx ──► Worker parses docx (fflate, in-Worker)
+questionnaire.docx ─► Worker parses the docx (fflate, in-Worker)
                               │
-survey URL ──► Browser Rendering walks every page (text + screenshot + PDF per page)
+survey URL ─► Browser Rendering walks every page (rendered text + screenshot + PDF per page)
                               │
-              per-page comparison, THREE independent model legs:
-                ├── DeepSeek  (deepseek-v4-pro, in-Worker via AI Gateway; metered ~1¢/run)
-                ├── Workers AI (gpt-oss-120b, in-Worker native binding; free/bundled)
-                └── Claude    (Opus 4.8, local runner → `claude -p` on your subscription; $0)
+              per-page comparison — THREE independent model legs, all in-Worker,
+              all routed through a Cloudflare AI Gateway:
+                ├── DeepSeek v4-pro       (reasoning on)
+                ├── Grok 4.3              (xAI, reasoning_effort: medium)
+                └── Claude Sonnet 4.6     (Anthropic, structured outputs)
                               │
-              server-side verbatim-quote verification kills hallucinated findings
+              server-side VERBATIM-QUOTE verification drops any finding whose quotes
+              don't literally appear in both the document and the rendered page
                               │
-              HTML report: findings, seeded-error scorecard (recall + false positives),
-              per-model token/cost comparison, page screenshots + PDFs
+              CONSENSUS report: one card per issue with N/3 model agreement, a
+              confidence score, spec-vs-site provenance, a seeded-error scorecard
+              (recall + false positives), per-model cost/latency, and page evidence
 ```
 
-DeepSeek and Workers AI run automatically inside the Worker; Claude runs on-demand from your
-machine so it bills to your flat-rate Claude subscription instead of a metered API key ($0).
+**Why three models, and these three?** In a multi-model design, a *missed* error (false negative) is the
+expensive failure — it ships to respondents and corrupts data — while a false positive is cheap (a few
+seconds of review, and consensus demotes lone flags to low confidence). So the roster optimizes
+**ensemble recall**: three independent families (DeepSeek / xAI / Anthropic), each catching what the
+others might miss. All three score **10/10** on the seeded benchmark across six languages. The model
+selection is data-driven — see [`docs/model-bakeoff.md`](docs/model-bakeoff.md) for the full bakeoff
+(≈15 models benched; kimi/Gemini/Workers-AI evaluated and retired on the numbers).
 
-The demo pair is self-contained: `spec/questionnaire.docx` (ground truth, generated from
-`spec/canon.json`) and `/survey.html` (SurveyJS site with **10 deliberately seeded errors** —
-typo, missing option, mislabeled option, broken piping, scale mislabel, reordered options,
-wrong numbering, encoding artifact, duplicated word, missing instruction). Two questions are
-error-free on purpose to measure false positives.
+The three legs run automatically inside the Worker (no local step). A zero-cost **local Claude runner**
+(`runner/claude-runner.mjs`, uses the `claude` CLI on a Claude subscription) remains as a fallback for
+deployments that don't set an Anthropic API key.
 
-## Run the demo
+## The demo pair
 
-1. `npm install` and `npx wrangler deploy` (Node 22+; on this machine use the portable node —
-   see `set-secrets.ps1` header for the path).
-2. `powershell -File .\set-secrets.ps1` — sets `DEEPSEEK_API_KEY` (optional; the run degrades
-   gracefully to a Workers AI + Claude report without it) and optionally `ANTHROPIC_API_KEY`
-   (not needed when using the subscription runner). Workers AI needs no key (native binding).
-3. Open the Worker URL → landing page → "Run QA" (bundled sample docx + /survey.html), or:
-   `curl -X POST https://survey-qa.<subdomain>.workers.dev/api/run -F surveyUrl=/survey.html -F useSample=true`
-4. When the report shows "Claude comparison pending", run the Claude leg on your subscription:
-   `node runner/claude-runner.mjs --worker-url https://survey-qa.<subdomain>.workers.dev --run <runId>`
-5. Open `/reports/<runId>`.
+Self-contained, no external survey needed:
+- `spec/canon.json` — questionnaire ground truth **and** the seeded-error manifest (single source of truth)
+- `spec/questionnaire.docx` — generated from `canon.json` (`npm run gen-docx`)
+- `public/survey.html` — a SurveyJS site with **10 deliberately seeded errors**; two questions are
+  error-free on purpose so false positives are measurable
+- Localized pairs for `en / es / fr / de / zh / ja` (the walker handles localized Next/Complete labels)
+
+## Setup & deploy
+
+Requires Node 22+ and a Cloudflare account (Workers Paid — Browser Rendering + Workflows).
+
+```bash
+npm install
+npx wrangler deploy
+```
+
+**Bindings** (see `wrangler.jsonc`): Browser Rendering, R2 (`ARTIFACTS`), Workflows (`RUN_WORKFLOW`),
+static assets, Workers AI (kept for the optional bench endpoints), and an AI Gateway (`CF_AIG_*` vars).
+
+**API keys** live in the account-level **Secrets Store** (never in the repo), read at runtime via
+bindings — so updating a key needs no redeploy. The three active legs need:
+
+| Secret | Leg |
+|---|---|
+| `DEEPSEEK_API_KEY` | DeepSeek |
+| `XAI_API_KEY` | Grok |
+| `ANTHROPIC_API_KEY` | Claude Sonnet 4.6 (in-Worker) |
+
+Set them with `set-secrets.ps1`, or directly:
+```bash
+wrangler secrets-store secret update <STORE_ID> --name XAI_API_KEY --remote
+```
+Each secret is seeded with `PLACEHOLDER` (treated as unset) so a leg stays **inert until its real key is
+set** — the pipeline degrades gracefully to whatever legs are keyed.
+
+## Run it
+
+- **Web UI:** open the Worker URL → "Run QA" (uses the bundled sample docx + `/survey.html`).
+- **API:**
+  ```bash
+  curl -X POST https://survey-qa.<subdomain>.workers.dev/api/run \
+    -F surveyUrl=/survey.html -F useSample=true -F lang=en
+  # → { "runId": "..." }
+  ```
+  Then open `/reports/<runId>` (auto-refreshes while processing).
+- **Claude fallback** (only if no `ANTHROPIC_API_KEY` is set — the run parks at `awaiting-claude`):
+  ```bash
+  node runner/claude-runner.mjs --worker-url <url> --run <runId>   # $0 on your Claude subscription
+  ```
 
 ## Layout
 
-- `spec/canon.json` — questionnaire ground truth + seeded-error manifest (single source of truth)
-- `scripts/gen-docx.mjs` — regenerates `spec/questionnaire.docx` (`npm run gen-docx`)
-- `public/` — landing page + the seeded SurveyJS survey + bundled sample docx
-- `src/` — Worker: router, docx parser, Browser Rendering walker, LLM compare, quote
-  verification, scorecard, HTML report
-- `runner/claude-runner.mjs` — local Claude leg via the `claude` CLI (subscription billing)
+- `src/` — the Worker: router (`index.ts`), docx parser (`docx.ts`), Browser Rendering walker
+  (`walker.ts`), Cloudflare Workflow orchestration (`workflow.ts`), the model legs (`llm/`),
+  quote verification + scorecard (`verify.ts`), consensus HTML report (`report.ts`), SSRF guard
+  (`net-guard.ts`)
+- `public/` — landing page, the seeded SurveyJS survey, bundled sample docx
+- `runner/claude-runner.mjs` — optional $0 Claude fallback via the `claude` CLI
+- `spec/` + `scripts/gen-*.mjs` — the canonical questionnaire and its generators
+- `docs/model-bakeoff.md` — the model-selection decision record
 
-## Roadmap (later iterations)
+## Design notes
 
-2. Routing/logic verification — walker submits controlled answers, asserts the survey lands
-   where the spec says (uses this same walker skeleton).
+- **Consensus + verbatim verification** is the noise control: a finding is only high-confidence if ≥2
+  models agree *and* its quotes are verified against both sources, so individual-model false positives
+  are demoted rather than shown as fact.
+- **Per-leg resilience:** each leg is best-effort; one leg failing (or a provider brownout) degrades to
+  a partial report instead of failing the run. Only *all* enabled legs failing fails the run.
+- **SSRF-guarded:** `surveyUrl` is restricted to same-origin, and the walker re-validates every redirect
+  hop / subresource against a blocklist (private/loopback/link-local incl. NAT64 & 6to4).
+- **Bench tools** (`/api/eval-model`, `/api/health/workersai`) are rate-limited GETs kept for future
+  model iteration — never part of an automatic run.
+
+## Roadmap
+
+1. ✅ Language/content fidelity (this iteration).
+2. Routing/logic — the walker submits controlled answers and asserts the survey lands where the spec says.
 3. Calculations, allocation tables, input validation (ranges, sum-to-100).
 4. Word-doc parsing of real internal questionnaires (in-house/legal constraints permitting).

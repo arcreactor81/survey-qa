@@ -2,3 +2,7 @@ node_modules/
 .wrangler/
 .dev.vars
 *.log
+
+# local bench/run trackers (test artifacts)
+.*-run-id
+.lang-runs
