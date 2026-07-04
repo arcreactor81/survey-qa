@@ -548,7 +548,7 @@ export function processingPage(runId: string): string {
       if (live) live.textContent = "Estimated stage: " + STAGE_NAMES[idx];
     }
   }
-  setInterval(tick, 1000);
+  var tickTimer = setInterval(tick, 1000);
   tick();
 
   /* ----- rotating trivia (6 s cycle, fade transition) ----- */
@@ -568,19 +568,98 @@ export function processingPage(runId: string): string {
     setTimeout(function () { setTrivia(); t.className = "trivia"; }, 420);
   }, 6000);
 
-  /* ----- status polling: reload on any status other than "processing" ----- */
+  /* ----- status polling -----
+     "processing" keeps this waiting page. A known terminal status (complete,
+     awaiting-claude or failed) reloads, so the server swaps in the report or
+     the failure page. A 404 (the run expired or was evicted) — or a run of
+     unreadable polls (missing/unknown status, network/server errors) — stops
+     here with a clear message instead of polling this page forever. */
+
+  var pollTimer = null;
+  var gaveUp = false;
+  var pollFailStreak = 0;
+  var MAX_POLL_FAILS = 24; /* ~2 minutes at the 5 s cadence */
+
+  function stopWaiting() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+  }
+
+  function giveUp(title, message) {
+    if (gaveUp) return;
+    gaveUp = true;
+    stopWaiting(); /* stop polling and freeze the elapsed clock */
+
+    var card = document.createElement("section");
+    card.className = "card";
+    card.setAttribute("role", "alert");
+    card.innerHTML =
+      '<div class="card-head"><div>' +
+        '<div class="kicker">Run status</div>' +
+        '<h2 id="giveupTitle"></h2>' +
+      '</div></div>' +
+      '<p id="giveupMsg" style="margin:0 0 16px; color: var(--slate);"></p>' +
+      '<p style="margin:0;"><a href="/" style="color: var(--accent); font-weight:600;">Start a new run &rarr;</a></p>';
+    /* Dynamic strings go in via textContent — no HTML injection, no escaping to get wrong. */
+    var titleEl = card.querySelector("#giveupTitle");
+    if (titleEl) titleEl.textContent = title;
+    var msgEl = card.querySelector("#giveupMsg");
+    if (msgEl) msgEl.textContent = message;
+
+    var arena = document.querySelector(".arena");
+    if (arena) { arena.innerHTML = ""; arena.appendChild(card); }
+    var sub = document.querySelector(".subtitle");
+    if (sub) sub.textContent = title + ".";
+    var live = document.getElementById("live");
+    if (live) live.textContent = title + ". " + message;
+  }
+
+  function bumpPollFail() {
+    if (gaveUp) return;
+    pollFailStreak++;
+    if (pollFailStreak >= MAX_POLL_FAILS) {
+      giveUp("Run status unavailable",
+        "Survey QA stopped responding for run " + RUN_ID + " across " + pollFailStreak +
+        " checks, so this page gave up. Reload to try again, or start a new run.");
+    }
+  }
 
   function poll() {
+    if (gaveUp) return;
     fetch("/api/runs/" + RUN_ID)
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
-        if (!data) return;
-        adoptStartedAt(data.startedAt);
-        if (data.status && data.status !== "processing") location.reload();
+      .then(function (res) {
+        if (res.status === 404) {
+          var e = new Error("run not found");
+          e.notFound = true;
+          throw e;
+        }
+        if (!res.ok) throw new Error("status endpoint returned HTTP " + res.status);
+        return res.json();
       })
-      .catch(function () { /* transient network error — keep polling */ });
+      .then(function (data) {
+        if (gaveUp) return;
+        if (!data) { bumpPollFail(); return; }
+        adoptStartedAt(data.startedAt);
+        var st = data.status;
+        if (st === "processing") { pollFailStreak = 0; return; }
+        if (st === "complete" || st === "awaiting-claude" || st === "failed") {
+          location.reload(); /* server now serves the report or failure page */
+          return;
+        }
+        bumpPollFail(); /* missing or unrecognized status — don't spin on it */
+      })
+      .catch(function (err) {
+        if (gaveUp) return;
+        if (err && err.notFound) {
+          giveUp("Run not found",
+            "The server no longer has run " + RUN_ID + " — it may have finished long ago and " +
+            "expired, or been evicted. This page has stopped checking.");
+          return;
+        }
+        bumpPollFail(); /* transient network / server error — bounded, not forever */
+      });
   }
-  setInterval(poll, 5000);
+  pollTimer = setInterval(poll, 5000);
   poll(); /* immediately, so the elapsed clock adopts the run's real startedAt */
 
   /* ----- bug squash mini-game ----- */

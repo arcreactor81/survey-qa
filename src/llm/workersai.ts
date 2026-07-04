@@ -167,22 +167,35 @@ export async function workersaiCompare(
     );
   }
 
+  const usage = typeof res === "object" ? res.usage : undefined;
+
   // Truncation guard: with max_tokens=4096 a long page can hit the cap, leaving
-  // the JSON body cut off. parseLenient's brace-recovery can then silently drop
-  // the trailing (unclosed) findings, understating this leg's recall with no
-  // error. Detect the provider's length/truncation signal and surface it, so a
-  // silently-partial result is at least visible in logs rather than scored as a
-  // clean, complete pass.
+  // the JSON body cut off. parseLenient's brace-recovery would then silently drop
+  // the trailing (unclosed) findings, understating this leg's recall with NO error
+  // — which corrupts /api/eval-model bakeoff scores. The OpenAI-compat catalog
+  // models (gpt-oss-120b) report this as choices[0].finish_reason "length"; the
+  // classic {response:string} shape carries no such signal. Mirror the
+  // deepseek/grok/gemini legs and THROW on the length signal instead of
+  // warning-and-continuing, so a partial result surfaces as an error rather than
+  // being scored as a clean, complete pass.
   const finishReason =
     typeof res === "object" ? res.choices?.[0]?.finish_reason : undefined;
   if (finishReason === "length" || finishReason === "max_tokens") {
-    console.warn(
-      `workersaiCompare: response for page ${page.pageIndex} was truncated ` +
-        `(finish_reason=${finishReason}, max_tokens=4096); findings may be incomplete.`,
-    );
+    // The truncated call still consumed (and was billed for) its tokens. Carry the
+    // usage on the thrown error so the caller can still account for the spend even
+    // though the findings are unusable (see costUsd accounting in compare.ts).
+    const truncErr = new Error(
+      `Workers AI response for page ${page.pageIndex} truncated at max_tokens ` +
+        `(4096, finish_reason=${finishReason}); output is incomplete JSON`,
+    ) as Error & { usage?: { inputTokens: number; outputTokens: number } };
+    truncErr.usage = {
+      inputTokens: usage?.prompt_tokens ?? 0,
+      outputTokens: usage?.completion_tokens ?? 0,
+    };
+    throw truncErr;
   }
+
   const findings = sanitize(parseLenient(text));
-  const usage = typeof res === "object" ? res.usage : undefined;
   return {
     findings,
     inputTokens: usage?.prompt_tokens ?? 0,

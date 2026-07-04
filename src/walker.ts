@@ -53,6 +53,7 @@ declare const window: {
   EventSource?: unknown;
   RTCPeerConnection?: unknown;
   webkitRTCPeerConnection?: unknown;
+  WebTransport?: unknown;
 };
 
 /**
@@ -112,10 +113,10 @@ export async function walkSurvey(
       }
       await sleep(SETTLE_MS);
 
-      // 2. Capture visible text, a structural page signature, a full-page
-      //    screenshot, and a PDF rendition.
+      // 2. Capture visible text, a full-page screenshot, and a PDF rendition.
+      //    The structural page signature is captured LATER (after answering) so
+      //    that any visibleIf reveals are part of the pre-navigation baseline.
       const text = await captureText(page);
-      const signature = await capturePageSignature(page);
       screenshots.push(await captureScreenshot(page));
       pdfs.push(await capturePdf(page, notes));
 
@@ -136,6 +137,16 @@ export async function walkSurvey(
       } catch (err) {
         notes.push(`Answer fill failed: ${describeError(err)}`);
       }
+
+      // Snapshot the structural signature AFTER answering — never before.
+      // Filling can reveal visibleIf-gated questions on the SAME page (new
+      // question nodes appear), which changes the signature; capturing it here
+      // (after a short settle for the reactive re-render) folds those reveals
+      // into the "before" baseline, so a same-page validation block is not
+      // later misread as a page advance. A genuine advance still changes the
+      // signature because the next page's question set differs.
+      await sleep(SETTLE_MS);
+      const signature = await capturePageSignature(page);
 
       // 4. Find and click the Next/Complete button.
       let clickedLabel: string | null = null;
@@ -246,13 +257,16 @@ export async function walkSurvey(
  *
  * LIMITATION: CDP request interception (Fetch domain) covers HTTP(S) requests
  * — including fetch/XHR and EventSource, which are plain HTTP GETs — but does
- * NOT intercept WebSocket handshakes or WebRTC (RTCPeerConnection) data
- * channels, so those remain an out-of-band egress path that isBlockedUrl can
- * never see. As a defense-in-depth mitigation we also neuter those page-side
- * constructors before any survey script runs (installSocketEgressGuard). The
- * walker only needs to render and read the survey, never a live socket, so
- * this is safe for the same-origin demo (which uses none of them). It is
- * best-effort: a real fix would require a network-layer egress allowlist.
+ * NOT intercept WebSocket handshakes, WebTransport sessions, or WebRTC
+ * (RTCPeerConnection) data channels, so those remain an out-of-band egress path
+ * that isBlockedUrl can never see. As a defense-in-depth mitigation we also
+ * neuter those page-side constructors before any survey script runs
+ * (installSocketEgressGuard). The walker only needs to render and read the
+ * survey, never a live socket, so this is safe for the same-origin demo (which
+ * uses none of them). It stays best-effort: page-side neutering can still be
+ * bypassed from a realm the init script has not yet run in (e.g. a just-created
+ * same-origin iframe grabbing a fresh constructor), so the authoritative control
+ * remains this CDP interceptor plus, ideally, a network-layer egress allowlist.
  */
 async function enableSsrfGuard(page: Page): Promise<void> {
   try {
@@ -360,10 +374,17 @@ function didAdvance(
  * family, thrown when a click triggers a real (full-document) navigation and
  * tears down the frame's JS context mid-evaluate. That is itself proof the page
  * changed, so callers treat it as a successful advance rather than a failure.
+ *
+ * Deliberately does NOT match "target closed" / "session closed" (nor a
+ * disconnected browser): those mean the browser or CDP session actually DIED,
+ * not that the page navigated. Classifying a dead browser as an advance would
+ * mask the failure as progress, so those errors instead fall through to the
+ * caller and surface as a genuine error — the walk step then retries with a
+ * fresh browser.
  */
 function isExecutionContextDestroyed(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /execution context (?:was destroyed|is not available)|context destroyed|detached frame|target closed|session closed|frame (?:was )?detached|navigating/i.test(
+  return /execution context (?:was destroyed|is not available)|context destroyed|detached frame|frame (?:was )?detached|navigating/i.test(
     msg,
   );
 }
@@ -449,30 +470,26 @@ function detectCompletionInPage(): boolean {
   ) {
     return false;
   }
-  // Generic nav-labelled buttons (intro pages often use "Start"/"Begin").
-  // Localized for es/fr/de/zh/ja so a non-English intro page (which offers a
-  // Start/Next button) isn't misread as a completion page.
-  const navLabels = [
-    // English
-    "next", "complete", "submit", "continue", "finish", "done", "start", "begin",
-    // Spanish
-    "siguiente", "completar", "finalizar", "terminar", "enviar", "continuar", "comenzar", "empezar",
-    // French
-    "suivant", "suivante", "terminer", "envoyer", "valider", "continuer", "commencer", "démarrer",
-    // German
-    "weiter", "abschließen", "abschliessen", "absenden", "senden", "fertig", "fertigstellen",
-    "fortfahren", "beenden", "starten",
-    // Chinese
-    "下一页", "下一步", "完成", "提交", "继续", "结束", "开始",
-    // Japanese
-    "次へ", "次のページ", "次", "完了", "送信", "続行", "続ける", "終了", "開始", "はじめる",
-  ];
+  // A real completion page is terminal — it offers nothing to click. An
+  // intro/info page always exposes a proceed control (Start/Next/Begin, a
+  // custom label, or an icon-only button). Matching button LABELS against a
+  // fixed word list misses custom text, unlisted languages, and icon-only
+  // buttons, so such an intro page would be misread as "complete". Instead,
+  // treat ANY visible, enabled button as proof this is not the completion page.
+  // Completion is thus inferred from the ABSENCE of anything to click, not a
+  // label, so a localized completion page (which has no button) is still
+  // detected. Scope to the survey root (when present) so unrelated host-page
+  // chrome buttons on an embedded survey don't suppress a genuine completion.
+  const surveyRoot =
+    document.querySelector(".sd-root-modern, .sv-root-modern, .sd-page, .sv-page, form") ||
+    document.body;
   const buttons = Array.from(
-    document.querySelectorAll("input[type=button][value], input[type=submit][value], button"),
+    surveyRoot.querySelectorAll(
+      "input[type=button], input[type=submit], input[type=reset], button, [role=button]",
+    ),
   );
   for (const el of buttons) {
-    const label = (el.value || el.textContent || "").trim().toLowerCase();
-    if (navLabels.indexOf(label) !== -1) return false;
+    if (el.offsetParent !== null && !el.disabled) return false;
   }
   return true;
 }
@@ -509,7 +526,8 @@ function detectValidationErrorsInPage(): boolean {
 }
 
 /**
- * Disable the socket egress APIs the request interceptor cannot police. The
+ * Disable the socket egress APIs the request interceptor cannot police
+ * (WebSocket, EventSource, WebRTC RTCPeerConnection, and WebTransport). The
  * walked survey never needs a live socket, so replacing these constructors
  * with a throwing stub closes the out-of-band channel without affecting normal
  * HTTP(S) rendering. Each assignment is wrapped so a non-configurable property
@@ -537,6 +555,11 @@ function blockSocketEgressInPage(): void {
   }
   try {
     window.webkitRTCPeerConnection = denied;
+  } catch {
+    /* non-configurable — leave as-is */
+  }
+  try {
+    window.WebTransport = denied;
   } catch {
     /* non-configurable — leave as-is */
   }
@@ -656,6 +679,33 @@ function fillAnswersInPage(): string[] {
     return skip.indexOf(t) === -1;
   };
 
+  // Find the popup/listbox a just-opened dropdown/tagbox control owns, so its
+  // options are never confused with another control's list elsewhere in the
+  // document. SurveyJS can portal the popup out of the dropdown subtree, so the
+  // definitive link is the control's ARIA target (aria-controls/aria-owns);
+  // fall back to a listbox nested in the dropdown, then — only when EXACTLY one
+  // dropdown popup is visible (we just opened one) — that single visible popup.
+  // Returns null when none can be scoped, so the caller leaves the field
+  // unanswered rather than click a foreign option.
+  const findOpenListPopup = (dd: InPageElement, control: InPageElement): InPageElement | null => {
+    const owns =
+      control.getAttribute("aria-controls") ||
+      control.getAttribute("aria-owns") ||
+      dd.getAttribute("aria-controls") ||
+      dd.getAttribute("aria-owns");
+    if (owns !== null && owns.trim().length > 0) {
+      const id = owns.trim().split(/\s+/)[0].replace(/[\\"]/g, "\\$&");
+      const byId = document.querySelector('[id="' + id + '"]');
+      if (byId !== null) return byId;
+    }
+    const nested = dd.querySelector(".sv-list, .sd-list, [role=listbox]");
+    if (nested !== null) return nested;
+    const visiblePopups = Array.from(
+      document.querySelectorAll(".sv-popup--dropdown, .sd-popup--dropdown, .sv-list, .sd-list"),
+    ).filter((p) => p.offsetParent !== null);
+    return visiblePopups.length === 1 ? visiblePopups[0] : null;
+  };
+
   const questionRoots = Array.from(
     document.querySelectorAll("[data-name], .sd-question, .sv-question, .sv_q"),
   );
@@ -745,8 +795,13 @@ function fillAnswersInPage(): string[] {
       for (const dd of combos) {
         const control = dd.querySelector("[role=combobox], input, .sd-dropdown__value") || dd;
         control.click();
+        // Scope the option lookup to THIS control's popup — never the whole
+        // document, where another dropdown's (or a stale) popup could be clicked
+        // by mistake. Fall back to the dropdown's own subtree.
+        const popup = findOpenListPopup(dd, control);
+        const scope = popup !== null ? popup : dd;
         const items = Array.from(
-          document.querySelectorAll(
+          scope.querySelectorAll(
             ".sv-list__item-body, .sd-list__item-body, li[role=option], [role=option]",
           ),
         );
@@ -754,7 +809,8 @@ function fillAnswersInPage(): string[] {
         if (target !== undefined) {
           target.click();
         } else {
-          // Nothing selectable yet — close the popup so it can't block nav.
+          // Nothing selectable in this control's popup — close it so its overlay
+          // can't block nav, and leave the field unanswered.
           control.click();
         }
       }

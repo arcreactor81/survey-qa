@@ -44,6 +44,33 @@ export function computeCost(
 }
 
 /**
+ * Some leg calls fail *after* the provider has already generated (and billed)
+ * tokens — most notably a truncated Workers AI response, which now throws (see
+ * workersai.ts) yet still consumed its input+output budget. When a leg attaches
+ * `usage` to the error it throws, recover those tokens here so costUsd reflects
+ * the real billed spend for the page instead of silently dropping it.
+ *
+ * costUsd is therefore a best-effort LOWER BOUND on true spend. It still cannot
+ * include: (a) Workers AI "zombie" calls that keep running and are billed after
+ * our client-side timeout has already rejected — their result (and usage) is
+ * discarded and genuinely unobservable (see runWithTimeout in workersai.ts); nor
+ * (b) failed calls whose provider returned no usage before erroring (network/HTTP
+ * failures, and the deepseek/grok/gemini legs, which throw plain usage-less
+ * errors on truncation).
+ */
+function billedTokensFromError(
+  err: unknown,
+): { inputTokens: number; outputTokens: number } | null {
+  if (err === null || typeof err !== "object" || !("usage" in err)) return null;
+  const usage = (err as { usage?: unknown }).usage;
+  if (usage === null || typeof usage !== "object") return null;
+  const inputTokens = (usage as { inputTokens?: unknown }).inputTokens;
+  const outputTokens = (usage as { outputTokens?: unknown }).outputTokens;
+  if (typeof inputTokens !== "number" || typeof outputTokens !== "number") return null;
+  return { inputTokens, outputTokens };
+}
+
+/**
  * Guard against a total leg outage being reported as a healthy "0 findings"
  * run: if EVERY page errored, throw so the workflow step fails (its configured
  * retry fires, and a persistent outage marks the run failed) instead of
@@ -105,6 +132,14 @@ export async function runDeepseekCompares(
       }
     } catch (err) {
       stats.errors += 1;
+      // Recover tokens the provider already billed before the error (e.g. a
+      // truncated response that still consumed its budget), so costUsd isn't
+      // understated for this page. No-op when the error carries no usage.
+      const billed = billedTokensFromError(err);
+      if (billed !== null) {
+        stats.inputTokens += billed.inputTokens;
+        stats.outputTokens += billed.outputTokens;
+      }
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`deepseek compare failed for page ${page.pageIndex}: ${lastError}`);
     }
@@ -154,6 +189,14 @@ export async function runWorkersaiCompares(
       }
     } catch (err) {
       stats.errors += 1;
+      // Recover tokens the provider already billed before the error — notably a
+      // truncated Workers AI response (workersai.ts throws with usage attached),
+      // so costUsd isn't understated for this page. No-op when no usage is carried.
+      const billed = billedTokensFromError(err);
+      if (billed !== null) {
+        stats.inputTokens += billed.inputTokens;
+        stats.outputTokens += billed.outputTokens;
+      }
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`workersai compare failed for page ${page.pageIndex}: ${lastError}`);
     }
@@ -204,6 +247,14 @@ export async function runGeminiCompares(
       }
     } catch (err) {
       stats.errors += 1;
+      // Recover tokens the provider already billed before the error (e.g. a
+      // truncated response that still consumed its budget), so costUsd isn't
+      // understated for this page. No-op when the error carries no usage.
+      const billed = billedTokensFromError(err);
+      if (billed !== null) {
+        stats.inputTokens += billed.inputTokens;
+        stats.outputTokens += billed.outputTokens;
+      }
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`gemini compare failed for page ${page.pageIndex}: ${lastError}`);
     }
@@ -254,6 +305,14 @@ export async function runGrokCompares(
       }
     } catch (err) {
       stats.errors += 1;
+      // Recover tokens the provider already billed before the error (e.g. a
+      // truncated response that still consumed its budget), so costUsd isn't
+      // understated for this page. No-op when the error carries no usage.
+      const billed = billedTokensFromError(err);
+      if (billed !== null) {
+        stats.inputTokens += billed.inputTokens;
+        stats.outputTokens += billed.outputTokens;
+      }
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`grok compare failed for page ${page.pageIndex}: ${lastError}`);
     }

@@ -220,7 +220,7 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         // finalize may re-run after the external Claude runner has already set
         // "complete" and pushed its findings/stats — in that case we must NOT
         // overwrite them or downgrade the status.
-        return updateRun(env, runId, (envelope) => {
+        const persisted = await updateRun(env, runId, (envelope) => {
           if (envelope.status === "complete") return false; // don't clobber a completed run
           const report = envelope.report;
           report.specText = specText;
@@ -253,8 +253,15 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
               : undefined;
           envelope.status = claude ? "complete" : "awaiting-claude";
         });
+        // Return only a SMALL summary — NOT the run envelope. Cloudflare
+        // Workflows caps a step's returned result at ~1 MiB, and the full
+        // envelope (pages + findings + specText) can exceed that on a large
+        // survey, which would turn a successfully-persisted run into a "failed"
+        // one. updateRun already persisted everything above, so a tiny status
+        // summary loses nothing.
+        return { persisted: persisted !== null, status: persisted?.status ?? null };
       });
-      if (finalized === null) throw new Error(`run ${runId} missing during finalize`);
+      if (!finalized.persisted) throw new Error(`run ${runId} missing during finalize`);
     } catch (err) {
       // Terminal failure: surface it on the run record instead of leaving the
       // run stranded in "processing". This persistence runs OUTSIDE the failing

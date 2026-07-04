@@ -1,7 +1,7 @@
 // Gemini compare call — OpenAI-compat fetch, optionally routed through the
 // Cloudflare AI Gateway (google-ai-studio provider). Cloned from deepseek.ts;
-// thinking is ON at low effort with a generous max_tokens so reasoning sharpens
-// the diff without starving the JSON answer.
+// thinking is ON at medium effort with a generous max_tokens so reasoning
+// sharpens the diff without starving the JSON answer.
 
 import { buildComparePrompt } from "../prompt";
 import { COMPARE_SCHEMA, resolveSecret } from "../types";
@@ -86,8 +86,8 @@ function parseFindings(content: string): RawFinding[] {
 
 /**
  * Run one Gemini compare call for one rendered page via the Google AI Studio
- * OpenAI-compatibility endpoint. Thinking is ON at low effort (reasoning_effort:
- * "low") with a generous max_tokens so reasoning never starves the JSON answer.
+ * OpenAI-compatibility endpoint. Thinking is ON at medium effort (reasoning_effort:
+ * "medium") with a generous max_tokens so reasoning never starves the JSON answer.
  * Throws on HTTP failure, empty content, or unparseable JSON.
  */
 export async function geminiCompare(

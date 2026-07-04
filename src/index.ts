@@ -37,6 +37,9 @@ const MAX_TEXT_FIELD_CHARS = 4000;
 const RUN_RATE = { windowMs: 60_000, max: 10 };
 const HEALTH_RATE = { windowMs: 60_000, max: 6 };
 const EVAL_RATE = { windowMs: 60_000, max: 12 };
+// Findings submission (the local Claude runner POSTs here). Generous enough for
+// the runner's one POST per run plus idempotent retries; only a runaway loop trips it.
+const FINDINGS_RATE = { windowMs: 60_000, max: 10 };
 
 // Model bakeoff endpoint (/api/eval-model) safety: the ONLY models it will run
 // are these benign, cheap third-pillar candidates. This closes the original
@@ -246,8 +249,28 @@ const finiteNumber = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
+/** Coerce to a finite, NON-NEGATIVE number. Runner-submitted stats (calls, token
+ *  counts, cost, latency, errors) are all counts/amounts that can never be < 0;
+ *  clamping stops a malformed or hostile POST from injecting negative values
+ *  into the published report. */
+const nonNegativeNumber = (v: unknown): number => Math.max(0, finiteNumber(v));
+
 const boundedText = (v: unknown, max = MAX_TEXT_FIELD_CHARS): string =>
   typeof v === "string" ? v.slice(0, max) : "";
+
+/** True when the run already carries the IN-WORKER Claude leg. runClaudeInWorker
+ *  stamps its stat with the bare configured model id (env.CLAUDE_MODEL, e.g.
+ *  "claude-sonnet-4-6"), whereas the fallback runner stamps
+ *  "claude-code/<model> (subscription)" — so exact-equality on the bare id tells
+ *  them apart. Used to reject a runner POST that would clobber a genuine
+ *  in-Worker Claude Sonnet leg: the fallback runner must only fill runs still
+ *  AWAITING Claude, never replace Claude findings the Worker already produced.
+ *  A run completed by a PRIOR runner POST is not matched here, so the runner's
+ *  own idempotent re-POST still works. */
+function hasInWorkerClaudeLeg(report: RunReport, env: Env): boolean {
+  const inWorkerModelId = env.CLAUDE_MODEL ?? "claude-sonnet-4-6";
+  return report.stats.some((s) => s.model === "claude" && s.modelId === inWorkerModelId);
+}
 
 async function handleSubmitFindings(req: Request, env: Env, runId: string): Promise<Response> {
   // Fast-path status check for a clean 404/409 before parsing the body. The
@@ -258,6 +281,11 @@ async function handleSubmitFindings(req: Request, env: Env, runId: string): Prom
   if (pre.status === "processing") return json({ error: "run still processing" }, 409);
   if (pre.status === "failed") {
     return json({ error: "run failed before analysis completed; findings are not accepted" }, 409);
+  }
+  // A run already completed WITH an in-Worker Claude leg must not be clobbered by
+  // a runner POST — the fallback runner only applies to runs awaiting Claude.
+  if (pre.status === "complete" && hasInWorkerClaudeLeg(pre.report, env)) {
+    return json({ error: "run already completed with an in-Worker Claude leg; findings not accepted" }, 409);
   }
 
   const body = (await req.json().catch(() => null)) as {
@@ -289,6 +317,11 @@ async function handleSubmitFindings(req: Request, env: Env, runId: string): Prom
     }
     if (envelope.status === "failed") {
       conflict = "run failed before analysis completed; findings are not accepted";
+      return false;
+    }
+    // Race-safe repeat of the pre-check: never overwrite an in-Worker Claude leg.
+    if (envelope.status === "complete" && hasInWorkerClaudeLeg(envelope.report, env)) {
+      conflict = "run already completed with an in-Worker Claude leg; findings not accepted";
       return false;
     }
 
@@ -324,12 +357,12 @@ async function handleSubmitFindings(req: Request, env: Env, runId: string): Prom
     report.stats.push({
       model: "claude",
       modelId: claudeModelId,
-      calls: finiteNumber(rawStats?.calls),
-      inputTokens: finiteNumber(rawStats?.inputTokens),
-      outputTokens: finiteNumber(rawStats?.outputTokens),
-      costUsd: finiteNumber(rawStats?.costUsd),
-      latencyMsTotal: finiteNumber(rawStats?.latencyMsTotal),
-      errors: finiteNumber(rawStats?.errors),
+      calls: nonNegativeNumber(rawStats?.calls),
+      inputTokens: nonNegativeNumber(rawStats?.inputTokens),
+      outputTokens: nonNegativeNumber(rawStats?.outputTokens),
+      costUsd: nonNegativeNumber(rawStats?.costUsd),
+      latencyMsTotal: nonNegativeNumber(rawStats?.latencyMsTotal),
+      errors: nonNegativeNumber(rawStats?.errors),
     });
     report.scorecard = envelope.seeded
       ? buildScorecard(report.findings, MANIFESTS[envelope.lang ?? "en"] ?? MANIFESTS.en)
@@ -385,6 +418,9 @@ export default {
 
       m = path.match(/^\/api\/runs\/([\w-]+)\/findings$/);
       if (m && req.method === "POST") {
+        if (!allowRequest(`findings:${clientIp(req)}`, FINDINGS_RATE)) {
+          return json({ error: "rate limit exceeded; wait a minute and retry" }, 429);
+        }
         return await handleSubmitFindings(req, env, m[1]);
       }
 
@@ -420,8 +456,14 @@ export default {
       if (path === "/api/health") return json({ ok: true, name: "survey-qa" });
 
       // Cheap end-to-end probe of the Workers AI leg (no key required).
-      // Rate-limited: each hit runs one real (billable) inference.
-      if (path === "/api/health/workersai" && req.method === "GET") {
+      // Rate-limited: each hit runs one real (billable) inference — so it is a
+      // bench tool, gated OFF unless BENCH_ENDPOINTS_ENABLED==="true" (disabled
+      // in production, where it falls through to a 404 like any unknown path).
+      if (
+        path === "/api/health/workersai" &&
+        req.method === "GET" &&
+        env.BENCH_ENDPOINTS_ENABLED === "true"
+      ) {
         if (!allowRequest(`health:${clientIp(req)}`, HEALTH_RATE)) {
           return json({ error: "rate limit exceeded; wait a minute and retry" }, 429);
         }
@@ -454,7 +496,13 @@ export default {
       // run's already-captured pages and score it against the seeded manifest —
       // benching third-pillar candidates without a redeploy. Secured by the
       // fixed EVAL_ALLOWLIST + rate limit + the unguessable run id (see above).
-      if (path === "/api/eval-model" && req.method === "GET") {
+      // Billable inference, so it is a bench tool gated OFF unless
+      // BENCH_ENDPOINTS_ENABLED==="true" (disabled in production).
+      if (
+        path === "/api/eval-model" &&
+        req.method === "GET" &&
+        env.BENCH_ENDPOINTS_ENABLED === "true"
+      ) {
         if (!allowRequest(`eval:${clientIp(req)}`, EVAL_RATE)) {
           return json({ error: "rate limit exceeded; wait a minute and retry" }, 429);
         }

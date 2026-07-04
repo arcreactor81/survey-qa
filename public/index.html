@@ -957,6 +957,15 @@
   var pollTimer = null;
   var tickTimer = null;
   var failStreak = 0;
+  /* Per-run latch: once a poll observes a terminal state (complete/failed) for
+     the current run, a late/out-of-order poll response can no longer revert the
+     UI to "processing". Reset when a new run starts. */
+  var reachedTerminal = false;
+  /* Friendly labels of the model legs actually present in the run's stats, and
+     whether the run degraded (a leg was unavailable). Drives the awaiting /
+     complete copy so it never claims a leg that didn't report. */
+  var reportedLegs = [];
+  var runDegraded = false;
   var overlayOpen = false;
   var overlayAnimTimer = null;
   var lastFailMsg = null;
@@ -997,6 +1006,17 @@
   var CLAUDE_STEP = {
     name: "Fallback: local Claude runner", model: "Claude Sonnet 4.6",
     desc: "Only needed when no Anthropic key is set — then the runner submits Claude's findings from your machine, on your Claude subscription ($0)"
+  };
+
+  /* Friendly display label per model leg, keyed by ModelRunStats.model
+     (the src/ ModelName union). Used to describe which legs actually reported,
+     so a degraded run doesn't claim legs that never ran. */
+  var LEG_LABELS = {
+    deepseek: "DeepSeek v4-pro",
+    grok: "Grok 4.3",
+    claude: "Claude Sonnet 4.6",
+    gemini: "Gemini",
+    workersai: "Workers AI"
   };
 
   /* Same copy as src/processing.ts TRIVIA_LINES — keep the two in sync. */
@@ -1170,6 +1190,66 @@
     statusBody.innerHTML = html;
   }
 
+  /* ----- model-leg roster (awaiting / complete copy) ----- */
+
+  function joinList(items) {
+    if (!items || !items.length) return "";
+    if (items.length === 1) return items[0];
+    if (items.length === 2) return items[0] + " and " + items[1];
+    return items.slice(0, -1).join(", ") + " and " + items[items.length - 1];
+  }
+
+  function numberWord(n) {
+    var words = ["zero", "one", "two", "three", "four", "five"];
+    return (n >= 0 && n < words.length) ? words[n] : String(n);
+  }
+
+  /* Record which model legs actually reported (present in the run's stats) and
+     whether the run degraded, so the awaiting/complete copy reflects reality
+     instead of assuming every leg ran. */
+  function captureLegs(data) {
+    var labels = [];
+    var seen = {};
+    var stats = data && data.stats;
+    if (stats && stats.length) {
+      for (var i = 0; i < stats.length; i++) {
+        var key = stats[i] && stats[i].model;
+        if (key && !seen[key]) {
+          seen[key] = true;
+          labels.push(LEG_LABELS[key] || key);
+        }
+      }
+    }
+    reportedLegs = labels;
+    /* On a non-failed run, envelope.error is populated ONLY to flag a degraded
+       run (a leg outage) — a genuine failure carries status "failed" instead. */
+    runDegraded = !!(data && typeof data.error === "string" && data.error);
+  }
+
+  /* "All three model legs are in — A, B and C." for a healthy run; names only
+     the legs that reported (and flags the gap) when a leg was unavailable. */
+  function completeLegsSentence() {
+    var n = reportedLegs.length;
+    if (n === 0) return "The report is ready.";
+    var list = joinList(reportedLegs);
+    if (!runDegraded) {
+      return "All " + numberWord(n) + " model " + (n === 1 ? "leg is" : "legs are") +
+        " in — " + list + ".";
+    }
+    var word = numberWord(n);
+    word = word.charAt(0).toUpperCase() + word.slice(1);
+    return word + " model " + (n === 1 ? "leg" : "legs") + " reported — " + list +
+      "; one or more legs were unavailable this run.";
+  }
+
+  /* "DeepSeek v4-pro and Grok 4.3 have reported" — the legs that ran before the
+     Claude fallback, whatever that set turns out to be. */
+  function awaitingLegsPhrase() {
+    var n = reportedLegs.length;
+    if (n === 0) return "The automatic legs have reported";
+    return joinList(reportedLegs) + (n === 1 ? " has reported" : " have reported");
+  }
+
   function claudeCommand() {
     return "node runner/claude-runner.mjs --worker-url " + location.origin + " --run " + runId;
   }
@@ -1204,7 +1284,7 @@
   function renderAwaiting() {
     show(
       '<span class="state-badge is-wait">Awaiting Claude leg</span>' +
-      '<div class="state-title">Run <code>' + esc(runId) + '</code> — DeepSeek and Grok have reported</div>' +
+      '<div class="state-title">Run <code>' + esc(runId) + '</code> — ' + esc(awaitingLegsPhrase()) + '</div>' +
       '<p class="state-stage" style="margin:6px 0 0;">The interim report is live: ' +
         '<a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;↗</a>. ' +
         'This deployment has no Anthropic key, so the Claude Sonnet 4.6 leg didn\'t run in-Worker. ' +
@@ -1222,7 +1302,7 @@
     show(
       '<span class="state-badge is-ok">Complete</span>' +
       '<div class="state-title">Run <code>' + esc(runId) + '</code> finished</div>' +
-      '<p class="state-stage" style="margin:6px 0 14px;">All three model legs are in — DeepSeek v4-pro, Grok 4.3 and Claude Sonnet 4.6. Scorecard, consensus findings and page evidence are ready.</p>' +
+      '<p class="state-stage" style="margin:6px 0 14px;">' + esc(completeLegsSentence()) + ' Scorecard, consensus findings and page evidence are ready.</p>' +
       '<p class="report-cta"><a class="btn" href="' + esc(reportUrl) + '" target="_blank" rel="noopener">View report</a></p>' +
       trackerShellHtml()
     );
@@ -1240,6 +1320,9 @@
   function setState(state, detail) {
     if (state === currentState) return;
     currentState = state;
+    /* Latch terminal states: once complete/failed, poll() must not revert the
+       UI on a late/out-of-order response for this same run. */
+    if (state === "complete" || state === "failed") reachedTerminal = true;
     if (state === "processing") {
       renderProcessing();
     } else if (state === "awaiting") {
@@ -1303,6 +1386,8 @@
       })
       .then(function (data) {
         if (pollRunId !== runId) return; /* stale response from a previous run */
+        if (reachedTerminal) return; /* terminal state already latched — ignore late polls */
+        captureLegs(data); /* record which legs reported, for the awaiting/complete copy */
         var st = data && data.status;
         if (st === "processing") { failStreak = 0; setState("processing"); }
         else if (st === "awaiting-claude") { failStreak = 0; setState("awaiting"); }
@@ -1316,6 +1401,7 @@
       })
       .catch(function (err) {
         if (pollRunId !== runId) return; /* stale response from a previous run */
+        if (reachedTerminal) return; /* terminal state already latched — ignore late polls */
         if (err && err.notFound) {
           setState("failed", "The server no longer knows run " + pollRunId +
             " (HTTP 404) — it may have expired or been evicted. Start a new run.");
@@ -1342,7 +1428,7 @@
     if (currentState === "awaiting") {
       return (
         '<span class="state-badge is-wait">Awaiting Claude leg</span>' +
-        '<div class="state-title">DeepSeek and Grok have reported</div>' +
+        '<div class="state-title">' + esc(awaitingLegsPhrase()) + '</div>' +
         '<p class="state-stage" style="margin:6px 0 0;">The interim report is live: ' +
           '<a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;↗</a>. ' +
           'This deployment has no Anthropic key, so the Claude Sonnet 4.6 leg didn\'t run in-Worker. ' +
@@ -1357,7 +1443,7 @@
       return (
         '<span class="state-badge is-ok">Complete</span>' +
         '<div class="state-title">Run <code>' + esc(runId) + '</code> finished</div>' +
-        '<p class="state-stage" style="margin:6px 0 14px;">All three model legs are in — DeepSeek v4-pro, Grok 4.3 and Claude Sonnet 4.6. Scorecard, consensus findings and page evidence are ready.</p>' +
+        '<p class="state-stage" style="margin:6px 0 14px;">' + esc(completeLegsSentence()) + ' Scorecard, consensus findings and page evidence are ready.</p>' +
         '<p class="report-cta"><a class="btn tk-cta" href="' + esc(reportUrl) + '" target="_blank" rel="noopener">View report</a></p>'
       );
     }
@@ -1589,6 +1675,9 @@
     reportUrl = null;
     startedAt = 0;
     failStreak = 0;
+    reachedTerminal = false;
+    reportedLegs = [];
+    runDegraded = false;
     triviaLastAt = 0;
     triviaFading = false;
     lastFailMsg = null;

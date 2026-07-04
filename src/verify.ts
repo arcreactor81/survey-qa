@@ -52,12 +52,13 @@ const MIN_ABSENCE_SPEC_LEN = 4;
 /**
  * Set quoteVerified on every finding:
  * - specQuote must appear (whitespace-normalized) in specText — always required.
- * - siteQuote must appear in THAT page's text (matched by finding.pageIndex).
- * - Absence categories pass with an empty siteQuote, but ONLY if the
- *   claimed-missing specQuote is actually ABSENT from the rendered page text
- *   (a "missing X" claim is refuted when X is present on the page). A
- *   non-empty siteQuote is still checked against the page.
- * - Non-absence findings with an empty siteQuote fail verification.
+ * - Absence categories (missing-question/option/instruction) are verified by
+ *   ABSENCE: the claimed-missing specQuote must NOT appear in the captured page
+ *   text — checked against ALL pages for missing-question, and the claimed page
+ *   for missing-option/instruction. This runs regardless of any siteQuote the
+ *   model supplied, so a non-empty siteQuote cannot bypass the absence check.
+ * - Non-absence findings are verified by PRESENCE: siteQuote must appear in
+ *   THAT page's text (matched by finding.pageIndex); an empty siteQuote fails.
  * Returns new Finding objects; the input array is not mutated.
  */
 export function verifyFindings(
@@ -85,14 +86,14 @@ export function verifyFindings(
 
     const siteNeedle = normalizeWhitespace(finding.siteQuote);
     let siteOk: boolean;
-    if (siteNeedle.length === 0) {
+    if (ABSENCE_CATEGORIES.has(finding.category)) {
       // Absence claim: verify the claimed-missing spec text does NOT appear on
-      // the site. Without this, an absence finding is unfalsifiable (a spec-side
-      // check alone would credit a hallucinated "missing" claim even when the
-      // text is actually present on the page).
-      if (!ABSENCE_CATEGORIES.has(finding.category)) {
-        siteOk = false;
-      } else if (specNeedle.length < MIN_ABSENCE_SPEC_LEN) {
+      // the site. This is keyed off the CATEGORY, not an empty siteQuote, so it
+      // ALWAYS runs for an absence finding regardless of any siteQuote the model
+      // supplied — otherwise a hallucinated "missing X" could ship a non-empty
+      // siteQuote to skip the absence check and pass on the spec-side match
+      // alone, even when X is actually present on the page.
+      if (specNeedle.length < MIN_ABSENCE_SPEC_LEN) {
         // Not distinctive enough to verify an absence — see MIN_ABSENCE_SPEC_LEN.
         siteOk = false;
       } else if (pageTextByIndex.size === 0) {
@@ -105,8 +106,11 @@ export function verifyFindings(
         siteOk = ![...pageTextByIndex.values()].some((text) => text.includes(specNeedle));
       } else {
         // Page-local absence (missing-option / missing-instruction): the defect
-        // is scoped to one question on one page. Check the claimed page; if its
-        // index is unknown, fall back to requiring absence from every page.
+        // is scoped to one question on one page, and the same token may
+        // legitimately appear on ANOTHER page (e.g. a brand option dropped from
+        // Q1 but still listed in Q3), so an all-pages check would miss it. Check
+        // the claimed page; if its index is unknown, fall back to requiring
+        // absence from every page.
         const pageText = pageTextByIndex.get(finding.pageIndex);
         if (pageText !== undefined) {
           siteOk = !pageText.includes(specNeedle);
@@ -114,6 +118,11 @@ export function verifyFindings(
           siteOk = ![...pageTextByIndex.values()].some((text) => text.includes(specNeedle));
         }
       }
+    } else if (siteNeedle.length === 0) {
+      // Non-absence category with an empty siteQuote: nothing to ground against
+      // the rendered page, so it fails verification (an absence claim must use
+      // one of the ABSENCE_CATEGORIES handled above).
+      siteOk = false;
     } else {
       const pageText = pageTextByIndex.get(finding.pageIndex);
       siteOk = pageText !== undefined && pageText.includes(siteNeedle);

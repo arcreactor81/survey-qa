@@ -50,8 +50,10 @@ const WML_MAIN_NAMESPACES = [
  * Paragraph source: alternative 1 is a self-closing/empty paragraph
  * (<w:p/> with optional attributes); alternative 2 captures the paragraph
  * body (capture group 1). The lookahead (?=[\s/>]) ensures we match <w:p ...>
- * but not <w:pPr>, <w:pStyle>, <w:proofErr>, etc. Paragraphs do not nest in
- * WordprocessingML, so a lazy scan to the next </w:p> is correct.
+ * but not <w:pPr>, <w:pStyle>, <w:proofErr>, etc. Paragraphs nest in exactly
+ * one place — inside a text box (<w:txbxContent>) — which extractBlocks
+ * neutralizes before scanning (see neutralizeTextBoxParagraphs), so the lazy
+ * scan to the next </w:p> is correct for every paragraph that reaches it.
  *
  * Run-token source matches, in document order within a paragraph:
  *   1. an empty self-closing text run       <w:t/> (with optional attributes)
@@ -250,19 +252,61 @@ function escapeRegExp(text: string): string {
 }
 
 /**
+ * Word wraps a shape/text box in <mc:AlternateContent> with a DrawingML
+ * <mc:Choice> and an equivalent VML <mc:Fallback>; both carry the SAME text, so
+ * keeping both would double-count a text box's paragraphs. Drop the Fallback and
+ * keep the Choice. The "mc" prefix for the markup-compatibility namespace is
+ * fixed by every known OOXML producer; a document that binds it to another
+ * prefix simply keeps its (harmless) duplicate rather than losing any text.
+ */
+function stripMarkupCompatibilityFallback(xml: string): string {
+  return xml.replace(/<mc:Fallback(?=[\s>])[\s\S]*?<\/mc:Fallback>/g, "");
+}
+
+/**
+ * Text boxes (<w:txbxContent>, used by both DrawingML and VML shapes) are the
+ * one place WordprocessingML nests paragraphs: a shape's <w:p> lives INSIDE a
+ * run of an outer <w:p>. A lazy outer-paragraph scan would otherwise stop at the
+ * inner </w:p>, which both truncates the host paragraph (dropping every run
+ * after the box) and folds the box into that first half. Rename the inner
+ * paragraph tags to an inert sentinel the paragraph/run scanners ignore, so the
+ * outer paragraph matches its TRUE close and the box's <w:t> runs are captured
+ * inline — neither host text nor box text is lost. A document without text boxes
+ * is unchanged (the regex matches nothing). The sentinel keeps the namespace
+ * prefix but a name (…boxpara) that no scanner's lookahead accepts, so it is
+ * invisible to the paragraph, table, and run token scans alike.
+ */
+function neutralizeTextBoxParagraphs(xml: string, wml: WmlSyntax): string {
+  const p = escapeRegExp(wml.prefix);
+  const txbxRe = new RegExp(`<${p}txbxContent(?=[\\s>])[\\s\\S]*?<\\/${p}txbxContent>`, "g");
+  const openRe = new RegExp(`<${p}p(?=[\\s/>])`, "g");
+  const closeRe = new RegExp(`<\\/${p}p>`, "g");
+  const sentinel = `${wml.prefix}boxpara`;
+  return xml.replace(txbxRe, (block) =>
+    block.replace(openRe, `<${sentinel}`).replace(closeRe, `</${sentinel}>`),
+  );
+}
+
+/**
  * Walk the document body in order, emitting one block per paragraph and one
  * block per table row. Tables are matched before their inner paragraphs (the
  * scanner reaches <w:tbl> first), so cell paragraphs are not double-counted.
  * A nested table ends the lazy outer-table match early; any content after
  * that point degrades gracefully to plain paragraph extraction — text is
  * never lost, only the tabular shape.
+ *
+ * Before scanning, two structures that break the flat-paragraph model are
+ * normalized: redundant mc:Fallback shape markup is dropped, and paragraphs
+ * nested inside text boxes are neutralized (so a text box never truncates its
+ * host paragraph, and its own text is captured inline).
  */
 function extractBlocks(xml: string, wml: WmlSyntax): string[] {
+  const scanXml = neutralizeTextBoxParagraphs(stripMarkupCompatibilityFallback(xml), wml);
   const blocks: string[] = [];
   // Combined groups: tableSrc has none, so group 1 is the paragraph body.
   const scanner = new RegExp(`${wml.tableSrc}|${wml.paragraphSrc}`, "g");
   let m: RegExpExecArray | null;
-  while ((m = scanner.exec(xml)) !== null) {
+  while ((m = scanner.exec(scanXml)) !== null) {
     if (m[0].startsWith(`<${wml.prefix}tbl`)) {
       blocks.push(...extractTableRows(m[0], wml));
     } else {

@@ -20,13 +20,23 @@ const SDK_MAX_RETRIES = 1;
 let cachedClient: Anthropic | null = null;
 let cachedApiKey = "";
 
-function getClient(apiKey: string, baseURL?: string): Anthropic {
-  const cacheKey = `${apiKey}|${baseURL ?? ""}`;
+function getClient(apiKey: string, baseURL?: string, aigToken?: string): Anthropic {
+  // Cache key includes the gateway token so flipping an authenticated gateway
+  // on/off (or rotating the token) rebuilds the client instead of reusing a
+  // cached instance with stale default headers.
+  const cacheKey = `${apiKey}|${baseURL ?? ""}|${aigToken ?? ""}`;
   if (cachedClient === null || cachedApiKey !== cacheKey) {
     cachedClient = new Anthropic({
       apiKey,
       // Route through the Cloudflare AI Gateway (anthropic provider) when set.
       ...(baseURL ? { baseURL } : {}),
+      // Authenticated AI Gateway: forward the gateway bearer as cf-aig-authorization
+      // so an authenticated gateway does not reject every Claude call — matching the
+      // header the deepseek/grok/gemini legs already send. Only when routing through
+      // the gateway AND a token is configured; an unauthenticated gateway gets none.
+      ...(baseURL && aigToken
+        ? { defaultHeaders: { "cf-aig-authorization": `Bearer ${aigToken}` } }
+        : {}),
       timeout: REQUEST_TIMEOUT_MS,
       maxRetries: SDK_MAX_RETRIES,
     });
@@ -125,12 +135,13 @@ export async function claudeCompare(
 
   // Route through the Cloudflare AI Gateway (anthropic provider) when configured,
   // so this optional in-Worker Claude path shares the same gateway as the other
-  // legs. (An authenticated gateway would also need cf-aig-authorization headers.)
+  // legs. When the gateway is authenticated, getClient forwards CF_AIG_TOKEN as the
+  // cf-aig-authorization header (as env.CF_AIG_TOKEN, matching the other legs).
   const baseURL =
     env.CF_AIG_ACCOUNT_ID && env.CF_AIG_GATEWAY_ID
       ? `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_ID}/anthropic`
       : undefined;
-  const client = getClient(apiKey, baseURL);
+  const client = getClient(apiKey, baseURL, env.CF_AIG_TOKEN);
   const model = env.CLAUDE_MODEL ?? "claude-sonnet-4-6";
 
   const startedAt = Date.now();

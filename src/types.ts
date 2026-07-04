@@ -17,6 +17,10 @@ export interface Env {
   DEEPSEEK_MODEL?: string; // default "deepseek-v4-pro"
   WORKERSAI_MODEL?: string; // default "@cf/openai/gpt-oss-120b"
   WORKERSAI_ENABLED?: string; // "false" retires the gpt-oss leg from the roster
+  // Bench tools (/api/eval-model + /api/health/workersai) each trigger a real,
+  // billable Workers AI inference on GET. They are OFF unless this is exactly
+  // "true", so production (where it is unset) cannot be used for denial-of-wallet.
+  BENCH_ENDPOINTS_ENABLED?: string;
   GEMINI_MODEL?: string; // default "gemini-2.5-flash"
   GROK_MODEL?: string; // default "grok-4.3"
   CF_AIG_ACCOUNT_ID?: string; // optional AI Gateway routing for DeepSeek
