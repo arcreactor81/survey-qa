@@ -115,10 +115,15 @@ set** — the pipeline degrades gracefully to whatever legs are keyed.
   are demoted rather than shown as fact.
 - **Per-leg resilience:** each leg is best-effort; one leg failing (or a provider brownout) degrades to
   a partial report instead of failing the run. Only *all* enabled legs failing fails the run.
-- **SSRF-guarded:** `surveyUrl` is restricted to same-origin, and the walker re-validates every redirect
-  hop / subresource against a blocklist (private/loopback/link-local incl. NAT64 & 6to4).
+- **SSRF-guarded:** `surveyUrl` must be same-origin or a public http(s) host (private, loopback,
+  link-local, NAT64/6to4 are blocked), and the walker re-validates every redirect hop / subresource
+  against the same blocklist. *Known limitation:* the blocklist is string/parse-based, so a public
+  domain whose DNS resolves to a private/internal address (DNS-rebinding-style) is not caught — closing
+  that needs connect-time DoH resolved-IP validation, tracked for when cross-origin QA of arbitrary
+  vendor URLs is enabled.
 - **Bench tools** (`/api/eval-model`, `/api/health/workersai`) are rate-limited GETs kept for future
-  model iteration — never part of an automatic run.
+  model iteration — never part of an automatic run, and **off by default** unless
+  `BENCH_ENDPOINTS_ENABLED="true"` is set (disabled in the shipped `wrangler.jsonc`).
 
 ## Roadmap
 

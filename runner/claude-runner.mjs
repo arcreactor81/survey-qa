@@ -549,6 +549,14 @@ async function main() {
     },
     FETCH_TIMEOUT_MS
   );
+  if (res.status === 409) {
+    // The run already has an in-Worker Claude leg (Sonnet 4.6 ran automatically),
+    // so this fallback runner has nothing to add — exit cleanly, not as an error.
+    const body = (await res.text().catch(() => "")).slice(0, 300);
+    console.log(`\nRun already complete with an in-Worker Claude leg (server returned 409) — nothing to do. ${body}`);
+    console.log(`Report: ${workerUrl}/reports/${encodeURIComponent(runId)}`);
+    process.exit(0);
+  }
   if (!res.ok) {
     const body = (await res.text().catch(() => "")).slice(0, 300);
     console.error(`POST ${postUrl} -> HTTP ${res.status} ${res.statusText} ${body}`);
