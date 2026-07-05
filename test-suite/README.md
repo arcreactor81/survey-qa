@@ -59,6 +59,23 @@ Index (lists every survey): https://survey-qa-testbench.arcreactor81.workers.dev
 | **type-2-diabetes** | [en](https://survey-qa-testbench.arcreactor81.workers.dev/type-2-diabetes/en) | [es](https://survey-qa-testbench.arcreactor81.workers.dev/type-2-diabetes/es) | [fr](https://survey-qa-testbench.arcreactor81.workers.dev/type-2-diabetes/fr) | [de](https://survey-qa-testbench.arcreactor81.workers.dev/type-2-diabetes/de) | [zh](https://survey-qa-testbench.arcreactor81.workers.dev/type-2-diabetes/zh) | [ja](https://survey-qa-testbench.arcreactor81.workers.dev/type-2-diabetes/ja) |
 | **migraine** | [en](https://survey-qa-testbench.arcreactor81.workers.dev/migraine/en) | [es](https://survey-qa-testbench.arcreactor81.workers.dev/migraine/es) | [fr](https://survey-qa-testbench.arcreactor81.workers.dev/migraine/fr) | [de](https://survey-qa-testbench.arcreactor81.workers.dev/migraine/de) | [zh](https://survey-qa-testbench.arcreactor81.workers.dev/migraine/zh) | [ja](https://survey-qa-testbench.arcreactor81.workers.dev/migraine/ja) |
 
+## Ground-truth questionnaires (.docx)
+
+The clean Word document each survey is scored against — one per case per language (**24 total**).
+These are the **correct** spec (not the errored survey): the tool flags where a rendered survey
+deviates from its matching-language doc. GitHub opens each in a file view with a **Download** button.
+
+| Case | en | es | fr | de | zh | ja |
+|---|---|---|---|---|---|---|
+| **oncology** | [.docx](cases/oncology/questionnaire.docx) | [.docx](cases/oncology/questionnaire.es.docx) | [.docx](cases/oncology/questionnaire.fr.docx) | [.docx](cases/oncology/questionnaire.de.docx) | [.docx](cases/oncology/questionnaire.zh.docx) | [.docx](cases/oncology/questionnaire.ja.docx) |
+| **rheumatoid-arthritis** | [.docx](cases/rheumatoid-arthritis/questionnaire.docx) | [.docx](cases/rheumatoid-arthritis/questionnaire.es.docx) | [.docx](cases/rheumatoid-arthritis/questionnaire.fr.docx) | [.docx](cases/rheumatoid-arthritis/questionnaire.de.docx) | [.docx](cases/rheumatoid-arthritis/questionnaire.zh.docx) | [.docx](cases/rheumatoid-arthritis/questionnaire.ja.docx) |
+| **type-2-diabetes** | [.docx](cases/type-2-diabetes/questionnaire.docx) | [.docx](cases/type-2-diabetes/questionnaire.es.docx) | [.docx](cases/type-2-diabetes/questionnaire.fr.docx) | [.docx](cases/type-2-diabetes/questionnaire.de.docx) | [.docx](cases/type-2-diabetes/questionnaire.zh.docx) | [.docx](cases/type-2-diabetes/questionnaire.ja.docx) |
+| **migraine** | [.docx](cases/migraine/questionnaire.docx) | [.docx](cases/migraine/questionnaire.es.docx) | [.docx](cases/migraine/questionnaire.fr.docx) | [.docx](cases/migraine/questionnaire.de.docx) | [.docx](cases/migraine/questionnaire.zh.docx) | [.docx](cases/migraine/questionnaire.ja.docx) |
+
+Each case folder also holds its `manifest[.<lang>].json` (questions + the seeded-error key) and
+`errored-model[.<lang>].json` (the SurveyJS model actually served). The demo's own ground-truth doc
+lives at `spec/questionnaire.docx` in the repo root.
+
 ## Cases
 
 Each case has 10 questions (`S1, S2, Q1–Q8`) across 5 pages and 10 seeded errors.
