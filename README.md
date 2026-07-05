@@ -29,6 +29,13 @@ flowchart TD
     VER --> REP["Consensus report:<br/>one card per issue — N/3 model agreement, confidence,<br/>spec-vs-site evidence, seeded-error scorecard, per-model cost + latency"]
 ```
 
+## Validation at a glance
+
+- **Benchmark:** 10/10 recall on the seeded demo — every run, all six languages.
+- **Held-out generalization:** **239 / 240** seeded errors caught across **24 unseen surveys** (4 diseases × 6 languages) the tool had never encountered — at ~0.9 false positives per survey.
+
+Full detail: [Validation & Results](docs/RESULTS.md) · [held-out testbench + scoreboard](test-suite/README.md) · [model bakeoff](docs/model-bakeoff.md) · [correctness & security hardening](docs/hardening.md).
+
 **Why three models, and these three?** In a multi-model design, a *missed* error (false negative) is the
 expensive failure — it ships to respondents and corrupts data — while a false positive is cheap (a few
 seconds of review, and consensus demotes lone flags to low confidence). So the roster optimizes
