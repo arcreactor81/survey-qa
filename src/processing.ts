@@ -109,7 +109,7 @@ export function processingPage(runId: string): string {
 
   const stageCards = STAGES.map(
     (s, i) => `
-          <li class="stage is-run" id="stage-${i}">
+          <li class="stage${i === 0 ? " is-run" : ""}" id="stage-${i}">
             <span class="stage-icon" aria-hidden="true">${s.icon}</span>
             <span class="stage-name">${s.name}</span>
             <span class="stage-dot" aria-hidden="true"></span>
@@ -176,7 +176,7 @@ main { padding: 32px 0 40px; position: relative; z-index: 1; }
   background: var(--accent); animation: pulse 1.6s var(--ease-in-out) infinite;
 }
 
-/* animated pipeline — every stage runs while the run is "processing" */
+/* animated pipeline — stages light up per the run's real stage (parse / walk / compare) */
 .pipeline { list-style: none; display: flex; gap: 16px; position: relative; margin: 22px 0 0; padding: 0; }
 .pipeline::before {
   content: ""; position: absolute; left: 3%; right: 3%; top: 50%;
@@ -551,7 +551,8 @@ footer { padding: 0 28px 96px; }
     btn.setAttribute("aria-label", "squash the bug");
     var glyph = Math.random() < 0.5 ? "🐛" : "🪲";
     btn.innerHTML = '<span aria-hidden="true">' + glyph + '</span>';
-    btn.style.top = Math.floor(h * (0.08 + Math.random() * 0.78)) + "px";
+    var startY = Math.floor(h * (0.05 + Math.random() * 0.82));
+    btn.style.top = startY + "px";
 
     var escapeTimer;
     if (REDUCED) {
@@ -563,7 +564,7 @@ footer { padding: 0 28px 96px; }
       var durMs = 5200 + Math.floor(Math.random() * 3800);
       btn.style.setProperty("--x0", (ltr ? -60 : w + 60) + "px");
       btn.style.setProperty("--x1", (ltr ? w + 60 : -60) + "px");
-      btn.style.setProperty("--y1", Math.floor((Math.random() - 0.5) * 90) + "px");
+      btn.style.setProperty("--y1", (Math.floor(h * (0.05 + Math.random() * 0.82)) - startY) + "px");
       btn.style.setProperty("--bug-dur", durMs + "ms");
       if (!ltr) btn.style.setProperty("--flip", "-1");
       escapeTimer = setTimeout(function () { removeBug(btn); }, durMs + 300);

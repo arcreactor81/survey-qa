@@ -294,9 +294,9 @@
   var squashed = 0;
 
   /* The real pipeline, verbose: stage name + model badge + what's happening.
-     There is deliberately NO wall-clock estimate here: the status API exposes
-     only milestone transitions (processing → awaiting-claude → complete), so the
-     tracker lights stages from the ACTUAL run status, never a guessed timeline.
+     There is deliberately NO wall-clock estimate here: the status API exposes a
+     coarse status plus an artifact-derived stage (parse / walk / compare), so the
+     tracker lights stages from the ACTUAL run progress, never a guessed timeline.
      `role` keys each stage so the renderer can reason about it (e.g. the Claude
      leg is pending, not done, while a run awaits the fallback runner). */
   var TRACK = [
@@ -566,7 +566,14 @@
   /* ----- drag & drop for the questionnaire (.docx) ----- */
   function showDocxName() {
     if (docxInput.files && docxInput.files.length > 0) {
-      dropzoneText.textContent = "📎 " + docxInput.files[0].name;
+      var name = docxInput.files[0].name;
+      if (!/\.docx$/i.test(name)) {
+        dropzoneText.textContent = "⚠️ Please choose a Word .docx file";
+        dropzone.classList.remove("has-file");
+        docxInput.value = "";
+        return;
+      }
+      dropzoneText.textContent = "📎 " + name;
       dropzone.classList.add("has-file");
     } else {
       dropzone.classList.remove("has-file");
@@ -612,8 +619,7 @@
     return m + ":" + (r < 10 ? "0" : "") + r;
   }
 
-  /* One honest processing line — no per-stage guess (the status API reports
-     milestones, not sub-stage progress). */
+  /* One honest summary line to accompany the per-stage tracker — prose, not a clock. */
   function stageText() {
     var text = "Running the pipeline server-side — browser walk, the model legs, then quote verification.";
     if (failStreak >= 3) text += " (status endpoint slow to respond — still trying)";
@@ -1033,7 +1039,8 @@
     btn.setAttribute("aria-label", "squash the bug");
     var glyph = Math.random() < 0.5 ? "🐛" : "🪲";
     btn.innerHTML = '<span aria-hidden="true">' + glyph + '</span>';
-    btn.style.top = Math.floor(h * (0.08 + Math.random() * 0.78)) + "px";
+    var startY = Math.floor(h * (0.05 + Math.random() * 0.82));
+    btn.style.top = startY + "px";
 
     var escapeTimer;
     if (REDUCED) {
@@ -1045,7 +1052,7 @@
       var durMs = 5200 + Math.floor(Math.random() * 3800);
       btn.style.setProperty("--x0", (ltr ? -60 : w + 60) + "px");
       btn.style.setProperty("--x1", (ltr ? w + 60 : -60) + "px");
-      btn.style.setProperty("--y1", Math.floor((Math.random() - 0.5) * 90) + "px");
+      btn.style.setProperty("--y1", (Math.floor(h * (0.05 + Math.random() * 0.82)) - startY) + "px");
       btn.style.setProperty("--bug-dur", durMs + "ms");
       if (!ltr) btn.style.setProperty("--flip", "-1");
       escapeTimer = setTimeout(function () { removeBug(btn); }, durMs + 300);
@@ -1127,6 +1134,7 @@
     stopTimers();
     closeOverlay();
     currentState = null;
+    currentStage = 0;
     runId = null;
     reportUrl = null;
     startedAt = 0;

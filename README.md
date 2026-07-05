@@ -142,12 +142,12 @@ curl -X POST https://survey-qa.<subdomain>.workers.dev/api/run \
 # → { "runId": "..." }
 ```
 
-The processing screen shows an **honest live pipeline** — each stage lights up as the run actually reaches it (parse → walk → compare), inferred from real artifacts, not a guessed timer.
-  Then open `/reports/<runId>` (auto-refreshes while processing).
-- **Claude fallback** (only if no `ANTHROPIC_API_KEY` is set — the run parks at `awaiting-claude`):
-  ```bash
-  node runner/claude-runner.mjs --worker-url <url> --run <runId>   # $0 on your Claude subscription
-  ```
+The response returns a `runId`; open `/reports/<runId>` to watch it (it auto-refreshes while processing). The processing screen shows an **honest live pipeline** — each stage lights up as the run actually reaches it (parse → walk → compare), inferred from real artifacts, not a guessed timer.
+
+**Claude fallback** — only when no `ANTHROPIC_API_KEY` is set (the run parks at `awaiting-claude`):
+```bash
+node runner/claude-runner.mjs --worker-url <url> --run <runId>   # $0 on your Claude subscription
+```
 
 ## 🗂️ Layout
 
@@ -208,8 +208,8 @@ extends along three axes: **what** it checks, **how** you run it, and **hardenin
   for a public endpoint that triggers a browser walk + paid inference).
 - **Connect-time DoH resolved-IP validation** to fully close SSRF via DNS-rebinding (today's blocklist
   is string-based).
-- **Per-stage progress** — emit real pipeline sub-stages so the processing page can show a live bar;
-  today it shows an honest "running" state because the status API exposes no sub-stage signal.
+- **Finer-grained progress** — the live pipeline already lights up coarse stages (parse / walk / compare)
+  from real artifacts; per-leg and per-page sub-stages would drive an even finer progress bar.
 - **False-positive tuning** — suppress the residual low-confidence patterns (e.g. the `[NUMERIC ENTRY …]`
   doc-generator annotation) and periodically re-bench the model roster (the [bakeoff](docs/model-bakeoff.md)
   is a living record).
