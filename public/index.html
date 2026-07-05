@@ -185,7 +185,9 @@
       <p class="pipe-note">DeepSeek (deepseek-v4-pro) and Grok (grok-4.3) always run in the Worker;
         Claude (claude-sonnet-4-6) runs in the Worker when an Anthropic key is set, otherwise the
         $0 fallback runner completes it. The status API reports milestones (processing &rarr; complete),
-        not per-stage progress &mdash; so the stages light up as your run reaches each real checkpoint.</p>
+        not per-stage progress &mdash; so the stages light up as your run reaches each real checkpoint.
+        A run usually takes a few minutes (longer for an external survey URL &mdash; the browser walk is
+        the slow part); it&rsquo;s working even while the stages read &ldquo;running&rdquo;, so keep this tab open.</p>
     </div>
 
     <div class="tk-card">

@@ -263,7 +263,9 @@ footer { padding: 0 28px 96px; }
         and Grok (grok-4.3) always run in the Worker; Claude (claude-sonnet-4-6) runs in the Worker when an
         Anthropic key is set, otherwise the $0 fallback runner completes it — every call routes through the
         Cloudflare AI Gateway. The status API reports milestones, not per-stage progress, so this page
-        advances to the report automatically the moment the run finishes.</p>
+        advances to the report automatically the moment the run finishes. A run usually takes a few
+        minutes (longer for an external survey URL &mdash; the browser walk is the slow part); it&rsquo;s
+        working even while the stages read &ldquo;running&rdquo;, so keep this tab open.</p>
     </section>
 
     <section class="card trivia-card" aria-labelledby="trivia-title">

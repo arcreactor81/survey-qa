@@ -49,6 +49,15 @@ The three legs run automatically inside the Worker (no local step). A zero-cost 
 (`runner/claude-runner.mjs`, uses the `claude` CLI on a Claude subscription) remains as a fallback for
 deployments that don't set an Anthropic API key.
 
+**Resilient by design.** Every leg is best-effort and independent, so the pipeline recovers from errors
+on its own. A leg that errors on a page — or fails outright during a provider brownout — degrades
+gracefully: the run finishes on the surviving legs' consensus and the report flags the degraded leg,
+instead of failing. The workflow also **retries transient step failures** (the browser walk up to twice,
+each model leg once) with a fresh browser. Only a non-recoverable step, or *all* enabled legs failing,
+fails the run. In practice a wobbly provider costs a confidence point, not the run — e.g. a live oncology
+run where DeepSeek errored on 4 of 6 pages still returned a complete report because Grok and Claude
+covered it.
+
 ## The demo pair
 
 Self-contained, no external survey needed:
