@@ -142,7 +142,37 @@ secrets to `PLACEHOLDER`, run `npx wrangler deploy`, and set the real keys.
 
 ## Roadmap
 
-1. ✅ Language/content fidelity (this iteration).
-2. Routing/logic — the walker submits controlled answers and asserts the survey lands where the spec says.
-3. Calculations, allocation tables, input validation (ranges, sum-to-100).
-4. Word-doc parsing of real internal questionnaires (in-house/legal constraints permitting).
+The same architecture — parse the spec, walk the survey, compare by consensus, verify every quote —
+extends along three axes: **what** it checks, **how** you run it, and **hardening** for a shared deploy.
+
+### Check depth — what the walker verifies
+1. ✅ **Language & content fidelity** *(this iteration)* — typos, missing/renamed options, broken
+   piping, scale mislabels, reordered options, wrong numbering, encoding artifacts, missing instructions.
+2. **Routing & display logic** — submit controlled answer sets and assert the survey shows, hides,
+   and skips exactly what the spec's display/skip logic dictates, and that piping resolves to the
+   correct upstream value.
+3. **Calculations & constrained inputs** — sum-to-100 allocation grids, numeric ranges,
+   auto-calculated fields, quota and termination logic.
+4. **Data & export integrity** — variable names, answer codes/values, and export layout match the
+   programming spec.
+5. **Real internal questionnaires** — parse in-house / vendor spec documents directly, beyond the
+   demo's generated docs (subject to in-house and legal constraints).
+
+### Product & workflow
+- **Batch mode** — QA many survey links in one reconnectable, shareable server-side job (as in the
+  sibling pa-extractor tool).
+- **Run library** — persistent history: re-open a report, diff two versions of the same survey, share
+  a result by permalink.
+- **CI / webhook hooks** — run a QA pass on every survey-build deploy and alert on new discrepancies,
+  so a regression is caught before the link goes to respondents.
+
+### Hardening for a shared / production deploy
+- **Auth + a global rate limit** on `POST /api/run` — today it's unauthenticated (fine for a PoC, not
+  for a public endpoint that triggers a browser walk + paid inference).
+- **Connect-time DoH resolved-IP validation** to fully close SSRF via DNS-rebinding (today's blocklist
+  is string-based).
+- **Per-stage progress** — emit real pipeline sub-stages so the processing page can show a live bar;
+  today it shows an honest "running" state because the status API exposes no sub-stage signal.
+- **False-positive tuning** — suppress the residual low-confidence patterns (e.g. the `[NUMERIC ENTRY …]`
+  doc-generator annotation) and periodically re-bench the model roster (the [bakeoff](docs/model-bakeoff.md)
+  is a living record).
