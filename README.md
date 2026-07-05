@@ -1,18 +1,35 @@
-# Survey QA
+<h1 align="center">🔍 Survey QA</h1>
 
-Automated QA for vendor-built survey websites: verify that a programmed survey faithfully matches
-the Word questionnaire it was built from — before it goes live and starts collecting corrupted data.
+<p align="center"><b>Catch survey-programming errors before they corrupt your data.</b></p>
 
-A single Cloudflare Worker walks the survey with a headless browser, compares every page against the
-questionnaire using **three independent LLMs**, and produces an **issue-first consensus report**: each
-discrepancy shown once, with which models agree (N/3), a confidence score, and the verbatim evidence
-that proves it.
+<p align="center">
+A single Cloudflare Worker walks a live survey with a real browser, compares every page against its Word
+questionnaire using <b>three independent LLMs</b>, and returns an issue-first consensus report — each
+discrepancy shown once, with model agreement (N/3), a confidence score, and the verbatim evidence.
+</p>
 
-> Iteration 1 focuses on **language/content fidelity** (typos, missing/renamed options, broken piping,
-> scale mislabels, reordered options, wrong numbering, encoding artifacts, missing instructions). Later
-> iterations extend the same walker to routing/logic, calculations, and input validation — see [Roadmap](#roadmap).
+<p align="center">
+<img alt="seeded benchmark" src="https://img.shields.io/badge/seeded_benchmark-10%2F10-2ea44f?style=flat-square">
+<img alt="held-out generalization" src="https://img.shields.io/badge/held--out-239%2F240-2ea44f?style=flat-square">
+<img alt="languages" src="https://img.shields.io/badge/languages-6-4c8bf5?style=flat-square">
+<img alt="platform" src="https://img.shields.io/badge/runs_on-Cloudflare_Workers-f38020?style=flat-square">
+<img alt="models" src="https://img.shields.io/badge/roster-DeepSeek_Grok_Claude-6e5aa8?style=flat-square">
+</p>
 
-## How it works
+<p align="center">
+<a href="docs/RESULTS.md"><b>📊 Results</b></a> &nbsp;·&nbsp;
+<a href="test-suite/README.md"><b>🌍 Unseen-data testbench</b></a> &nbsp;·&nbsp;
+<a href="docs/model-bakeoff.md"><b>🏆 Model bakeoff</b></a> &nbsp;·&nbsp;
+<a href="docs/hardening.md"><b>🛡️ Hardening</b></a>
+</p>
+
+---
+
+> **Iteration 1** covers **language / content fidelity** — typos, missing / renamed options, broken piping,
+> scale mislabels, reordered options, wrong numbering, encoding artifacts, missing instructions. Later
+> iterations extend the same walker to routing / logic, calculations, and validation (see the roadmap below).
+
+## ⚙️ How it works
 
 ```mermaid
 flowchart TD
@@ -29,7 +46,7 @@ flowchart TD
     VER --> REP["Consensus report:<br/>one card per issue — N/3 model agreement, confidence,<br/>spec-vs-site evidence, seeded-error scorecard, per-model cost + latency"]
 ```
 
-## Validation at a glance
+## 📊 Validation at a glance
 
 - **Benchmark:** 10/10 recall on the seeded demo — every run, all six languages.
 - **Held-out generalization:** **239 / 240** seeded errors caught across **24 unseen surveys** (4 diseases × 6 languages) the tool had never encountered — at ~0.9 false positives per survey.
@@ -58,7 +75,7 @@ fails the run. In practice a wobbly provider costs a confidence point, not the r
 run where DeepSeek errored on 4 of 6 pages still returned a complete report because Grok and Claude
 covered it.
 
-## The demo pair
+## 🎬 The demo pair
 
 Self-contained, no external survey needed:
 - `spec/canon.json` — questionnaire ground truth **and** the seeded-error manifest (single source of truth)
@@ -67,7 +84,7 @@ Self-contained, no external survey needed:
   error-free on purpose so false positives are measurable
 - Localized pairs for `en / es / fr / de / zh / ja` (the walker handles localized Next/Complete labels)
 
-## Setup & deploy
+## 🚀 Setup & deploy
 
 Requires Node 22+ and a Cloudflare account (Workers Paid — Browser Rendering + Workflows).
 
@@ -106,7 +123,7 @@ not secrets, but a fresh clone won't deploy until you point them at **your** acc
 `bucket_name` and the workflow/binding names are fine as-is (created on first deploy). Then seed the three
 secrets to `PLACEHOLDER`, run `npx wrangler deploy`, and set the real keys.
 
-## Run it
+## ▶️ Run it
 
 - **Web UI:** open the Worker URL → "Run QA" (uses the bundled sample docx + `/survey.html`).
 - **API:**
@@ -121,7 +138,7 @@ secrets to `PLACEHOLDER`, run `npx wrangler deploy`, and set the real keys.
   node runner/claude-runner.mjs --worker-url <url> --run <runId>   # $0 on your Claude subscription
   ```
 
-## Layout
+## 🗂️ Layout
 
 - `src/` — the Worker: router (`index.ts`), docx parser (`docx.ts`), Browser Rendering walker
   (`walker.ts`), Cloudflare Workflow orchestration (`workflow.ts`), the model legs (`llm/`),
@@ -132,7 +149,7 @@ secrets to `PLACEHOLDER`, run `npx wrangler deploy`, and set the real keys.
 - `spec/` + `scripts/gen-*.mjs` — the canonical questionnaire and its generators
 - `docs/model-bakeoff.md` — the model-selection decision record
 
-## Design notes
+## 🔧 Design & security notes
 
 - **Consensus + verbatim verification** is the noise control: a finding is only high-confidence if ≥2
   models agree *and* its quotes are verified against both sources, so individual-model false positives
@@ -149,7 +166,7 @@ secrets to `PLACEHOLDER`, run `npx wrangler deploy`, and set the real keys.
   model iteration — never part of an automatic run, and **off by default** unless
   `BENCH_ENDPOINTS_ENABLED="true"` is set (disabled in the shipped `wrangler.jsonc`).
 
-## Roadmap
+## 🗺️ Roadmap
 
 The same architecture — parse the spec, walk the survey, compare by consensus, verify every quote —
 extends along three axes: **what** it checks, **how** you run it, and **hardening** for a shared deploy.

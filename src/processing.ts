@@ -39,6 +39,50 @@ const TRIVIA_LINES: string[] = [
   "The browser reads your survey the way respondents do — except it actually reads all the instructions.",
   "Seeded-error scorecards are fire drills for QA: hide known bugs, then measure how many the models catch.",
   "A scale labeled only at its endpoints and one labeled at every point yield different data. Wording is everything.",
+  "🧾 A single dropped answer option can quietly bias an entire brand-tracking study.",
+  "🎯 A missed error ships to respondents and corrupts data; a false alarm costs seconds of review — so we optimize for catching everything.",
+  "🔗 Piping bugs are sneaky: {brand} renders fine on page 2 but shows the raw token on page 5.",
+  "🧪 This tool was validated on 240 planted errors across surveys it had never seen — and caught them.",
+  "🗂️ Six languages, including CJK: the same walker reads English, Español, Français, Deutsch, 中文 and 日本語.",
+  "⚖️ Two models agreeing on a finding beats one model shouting. Consensus over confidence.",
+  "🕵️ A renamed option ('Very satisfied' → 'Extremely satisfied') shifts your trend line. We flag it.",
+  "🔢 Off-by-one numbering (Q7, Q7, Q9) is invisible to skimming and obvious to a machine.",
+  "📉 Straight-lining, speeding, and drop-off are the three horsemen of survey data quality.",
+  "🧷 'Select all that apply' vs 'select one' — a missing instruction quietly changes how people answer.",
+  "🌐 Every model call routes through a Cloudflare AI Gateway — one pane of glass for cost, latency and logs.",
+  "♻️ Catch it in QA, or re-field the whole sample. One of these is much cheaper.",
+  "🧭 Skip logic that takes the wrong branch strands respondents in questions that don't apply to them.",
+  "📝 The questionnaire is the source of truth. The site is the suspect. We compare them line by line.",
+  "🎲 Randomized option order is a feature — unless the doc says fixed and the site shuffles anyway.",
+  "🧩 A grid row present in the doc but missing on the site is a classic silent data hole.",
+  "⌨️ Numeric-entry fields with the wrong range let impossible answers through. Validation matters.",
+  "🫧 Encoding artifacts love to hide in apostrophes, em-dashes, and accented characters.",
+  "🔬 The verbatim-quote check is our lie detector: no evidence in both documents, no finding.",
+  "📮 A survey goes live once. Getting it right the first time is the whole game.",
+  "🧮 Sum-to-100 allocation questions that don't enforce 100 become a data-cleaning nightmare later.",
+  "🦾 While you read this, three LLMs are arguing about a comma. Productively.",
+  "🎛️ Matrix questions with too many rows are where respondent attention goes to die.",
+  "👀 Humans miss the tenth typo on page four. The machine reads page four exactly as hard as page one.",
+  "📚 A well-QA'd survey is boring to read and beautiful to analyze.",
+  "🧊 The report shows each issue once — with which models agreed and the proof. No wall of duplicates.",
+  "⚙️ DeepSeek and Grok run in the Worker; Claude joins in-Worker with a key, or via a $0 fallback runner.",
+  "🔒 A finding is only trusted when it quotes both the doc and the rendered page. Trust, but verify — literally.",
+  "🌡️ A mislabeled scale point turns a 5-point Likert into apples and oranges at analysis time.",
+  "🪲 The bugs scurrying across this screen are decorative. The real ones are being caught server-side.",
+  "🏷️ Brand lists drift: one option quietly renamed between the doc and the build can skew share-of-preference.",
+  "🧬 Two surveys, one truth: we diff the Word doc against the live site so respondents never see the difference.",
+  "⌛ Most of the wait is the browser walk — rendering and reading every page like a real respondent.",
+  "🗜️ We parse the .docx in the Worker itself — no upload to a third-party service, no round-trip.",
+  "🎚️ Endpoints-only vs fully-labeled scales measure different things. If the doc says one, the site should match.",
+  "🧠 Ensemble recall: three independent readers catch what any single model would miss.",
+  "📴 A required question accidentally set optional is the kind of bug that only shows up in the data.",
+  "🔎 We don't just check questions — instructions, option labels, scale points, and numbering all get read.",
+  "🇯🇵 CJK surveys are where encoding bugs hide best. The walker reads 日本語 as carefully as English.",
+  "🧯 Every real error caught here is one that never reaches a respondent — or your dataset.",
+  "🤝 The more models flag the same issue, the higher its confidence in the final report.",
+  "🕰️ Fielding first and QA-ing later is the most expensive order of operations in research.",
+  "🌀 Reordered options can flip a 'top-2-box' score without changing a single word.",
+  "✅ When this finishes you'll get one clean, ranked, de-duplicated list of issues — each with its evidence.",
 ];
 
 /** The real in-Worker pipeline. There is deliberately no per-stage timing: the
@@ -178,7 +222,7 @@ main { padding: 32px 0 40px; position: relative; z-index: 1; }
 .bug {
   position: absolute; left: 0; top: 0; border: 0; margin: 0; padding: 5px;
   background: transparent; font-size: 24px; line-height: 1; cursor: pointer;
-  pointer-events: auto; animation: scurry var(--dur, 7s) linear forwards; will-change: transform;
+  pointer-events: auto; animation: scurry var(--bug-dur, 7s) linear forwards; will-change: transform;
 }
 @keyframes scurry {
   from { transform: translateX(var(--x0, -60px)) translateY(0); }
@@ -499,7 +543,7 @@ footer { padding: 0 28px 96px; }
       btn.style.setProperty("--x0", (ltr ? -60 : w + 60) + "px");
       btn.style.setProperty("--x1", (ltr ? w + 60 : -60) + "px");
       btn.style.setProperty("--y1", Math.floor((Math.random() - 0.5) * 90) + "px");
-      btn.style.setProperty("--dur", durMs + "ms");
+      btn.style.setProperty("--bug-dur", durMs + "ms");
       if (!ltr) btn.style.setProperty("--flip", "-1");
       escapeTimer = setTimeout(function () { removeBug(btn); }, durMs + 300);
     }

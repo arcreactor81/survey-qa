@@ -732,7 +732,7 @@ body.tk-lock { overflow: hidden; }
 .bug {
   position: absolute; left: 0; top: 0; border: 0; margin: 0; padding: 5px;
   background: transparent; font-size: 24px; line-height: 1; cursor: pointer;
-  pointer-events: auto; animation: scurry var(--dur, 7s) linear forwards; will-change: transform;
+  pointer-events: auto; animation: scurry var(--bug-dur, 7s) linear forwards; will-change: transform;
 }
 @keyframes scurry {
   from { transform: translateX(var(--x0, -60px)) translateY(0); }
