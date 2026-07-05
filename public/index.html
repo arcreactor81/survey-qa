@@ -96,50 +96,71 @@
       <div class="kicker">Live demo</div>
       <h2 id="demo-title">Run a QA check <span class="sub">against this deployment</span></h2>
       <form id="runForm" novalidate>
-        <div class="form-grid">
-          <div class="field field-full">
-            <label for="surveyUrl">Survey URL</label>
-            <input type="text" id="surveyUrl" name="surveyUrl" value="/survey.html" autocomplete="off" spellcheck="false">
-            <p class="hint">Relative paths resolve against this deployment.</p>
-            <p class="hint">Preview the demo survey in any language:
-              <a href="/survey.html" target="_blank" rel="noopener">EN</a> &middot;
-              <a href="/survey.html?lang=es" target="_blank" rel="noopener">ES</a> &middot;
-              <a href="/survey.html?lang=fr" target="_blank" rel="noopener">FR</a> &middot;
-              <a href="/survey.html?lang=de" target="_blank" rel="noopener">DE</a> &middot;
-              <a href="/survey.html?lang=zh" target="_blank" rel="noopener">ZH</a> &middot;
-              <a href="/survey.html?lang=ja" target="_blank" rel="noopener">JA</a></p>
-          </div>
+        <div class="mode-tabs" role="tablist" aria-label="What to QA">
+          <button type="button" class="mode-tab is-active" id="modeDemo" role="tab" aria-selected="true">
+            <span class="mode-tab-title">🧪 Try the demo</span>
+            <span class="mode-tab-sub">Bundled survey &middot; 10 seeded errors &middot; ready to run</span>
+          </button>
+          <button type="button" class="mode-tab" id="modeCustom" role="tab" aria-selected="false">
+            <span class="mode-tab-title">🚀 QA your own survey</span>
+            <span class="mode-tab-sub">Your live URL + Word questionnaire</span>
+          </button>
+        </div>
 
-          <div class="field field-full">
-            <div class="check-row">
-              <input type="checkbox" id="useSample" checked>
-              <label for="useSample">Use bundled sample questionnaire (.docx) with 10 seeded errors</label>
+        <input type="checkbox" id="useSample" checked hidden>
+
+        <div class="mode-panel" id="panelDemo" role="tabpanel" aria-labelledby="modeDemo">
+          <div class="form-grid">
+            <div class="field">
+              <label for="lang">Survey language</label>
+              <select id="lang" name="lang">
+                <option value="en" selected>English</option>
+                <option value="es">Espa&ntilde;ol</option>
+                <option value="fr">Fran&ccedil;ais</option>
+                <option value="de">Deutsch</option>
+                <option value="zh">&#20013;&#25991;</option>
+                <option value="ja">&#26085;&#26412;&#35486;</option>
+              </select>
+              <p class="hint">Runs the bundled sample survey (10 seeded errors) in this language &mdash; the safe way to watch the whole pipeline end to end.</p>
+            </div>
+            <div class="field">
+              <label>Preview the demo survey</label>
+              <p class="hint preview-row">
+                <a href="/survey.html" id="heroPreview" target="_blank" rel="noopener">EN</a> &middot;
+                <a href="/survey.html?lang=es" target="_blank" rel="noopener">ES</a> &middot;
+                <a href="/survey.html?lang=fr" target="_blank" rel="noopener">FR</a> &middot;
+                <a href="/survey.html?lang=de" target="_blank" rel="noopener">DE</a> &middot;
+                <a href="/survey.html?lang=zh" target="_blank" rel="noopener">ZH</a> &middot;
+                <a href="/survey.html?lang=ja" target="_blank" rel="noopener">JA</a>
+              </p>
             </div>
           </div>
+        </div>
 
-          <div class="field is-disabled" id="docxField">
-            <label for="docx">Or upload a questionnaire (.docx)</label>
-            <input type="file" id="docx" name="docx" disabled
-              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
-            <p class="hint">Enabled when the sample checkbox is unticked.</p>
+        <div class="mode-panel is-hidden" id="panelCustom" role="tabpanel" aria-labelledby="modeCustom">
+          <div class="form-grid">
+            <div class="field field-full">
+              <label for="surveyUrl">Survey URL</label>
+              <input type="text" id="surveyUrl" name="surveyUrl" value="/survey.html" placeholder="https://your-survey.example.com/s/abc123" autocomplete="off" spellcheck="false">
+              <p class="hint">The live survey to walk &mdash; any public survey URL. External surveys take a little longer (cross-origin walk).</p>
+            </div>
+            <div class="field field-full">
+              <label for="docx">Questionnaire (.docx)</label>
+              <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Upload or drop a Word questionnaire (.docx)">
+                <input type="file" id="docx" name="docx"
+                  accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+                <span class="dropzone-icon" aria-hidden="true">📄</span>
+                <span class="dropzone-text" id="dropzoneText">Drag &amp; drop your Word questionnaire, or <span class="dropzone-link">browse</span></span>
+              </div>
+              <p class="hint">The ground-truth spec. Parsed inside the Worker &mdash; nothing is sent to a third-party service.</p>
+            </div>
           </div>
+        </div>
 
-          <div class="field">
-            <label for="lang">Survey language</label>
-            <select id="lang" name="lang">
-              <option value="en" selected>English</option>
-              <option value="es">Espa&ntilde;ol</option>
-              <option value="fr">Fran&ccedil;ais</option>
-              <option value="de">Deutsch</option>
-              <option value="zh">&#20013;&#25991;</option>
-              <option value="ja">&#26085;&#26412;&#35486;</option>
-            </select>
-            <p class="hint">Non-English picks point the survey URL at a translated build.</p>
-          </div>
-
+        <div class="form-grid">
           <div class="field field-full submit-row">
             <button type="submit" id="runBtn" class="btn">Run QA check</button>
-            <span class="hint">A run takes roughly 3 minutes: the browser walk (the long stretch, ~90&nbsp;s), then three model comparisons&nbsp;&mdash; DeepSeek and Grok in the Worker, Claude in the Worker when an Anthropic key is set (else via the $0 fallback runner)&nbsp;&mdash; and quote verification.</span>
+            <span class="hint" id="runHint">A demo run takes ~3 minutes: the browser walk (~90&nbsp;s), then three model comparisons &mdash; DeepSeek and Grok in the Worker, Claude in-Worker with a key (else the $0 fallback) &mdash; and quote verification.</span>
           </div>
         </div>
       </form>
@@ -218,8 +239,14 @@
   var surveyUrlInput = document.getElementById("surveyUrl");
   var useSample = document.getElementById("useSample");
   var docxInput = document.getElementById("docx");
-  var docxField = document.getElementById("docxField");
   var langSelect = document.getElementById("lang");
+  var modeDemo = document.getElementById("modeDemo");
+  var modeCustom = document.getElementById("modeCustom");
+  var panelDemo = document.getElementById("panelDemo");
+  var panelCustom = document.getElementById("panelCustom");
+  var dropzone = document.getElementById("dropzone");
+  var dropzoneText = document.getElementById("dropzoneText");
+  var runHint = document.getElementById("runHint");
   var statusCard = document.getElementById("statusCard");
   var statusBody = document.getElementById("statusBody");
   var expandBtn = document.getElementById("expandBtn");
@@ -496,10 +523,58 @@
     if (heroPreview) heroPreview.href = surveyHref;
   });
 
-  useSample.addEventListener("change", function () {
-    docxInput.disabled = useSample.checked;
-    docxField.classList.toggle("is-disabled", useSample.checked);
-  });
+  function demoUrlForLang() {
+    return langSelect.value === "en" ? "/survey.html" : "/survey.html?lang=" + langSelect.value;
+  }
+  function setMode(demo) {
+    useSample.checked = demo;
+    modeDemo.classList.toggle("is-active", demo);
+    modeCustom.classList.toggle("is-active", !demo);
+    modeDemo.setAttribute("aria-selected", demo ? "true" : "false");
+    modeCustom.setAttribute("aria-selected", demo ? "false" : "true");
+    panelDemo.classList.toggle("is-hidden", !demo);
+    panelCustom.classList.toggle("is-hidden", demo);
+    if (demo) surveyUrlInput.value = demoUrlForLang();
+    else if (/^\/survey\.html/.test(surveyUrlInput.value)) surveyUrlInput.value = "";
+    if (runHint) {
+      runHint.textContent = demo
+        ? "A demo run takes ~3 minutes: the browser walk (~90 s), then three model comparisons and quote verification."
+        : "We walk your live survey and compare every page against your .docx. External surveys take a few minutes (cross-origin walk) — the processing screen shows it's working the whole time.";
+    }
+  }
+  if (modeDemo && modeCustom) {
+    modeDemo.addEventListener("click", function () { setMode(true); });
+    modeCustom.addEventListener("click", function () { setMode(false); });
+  }
+
+  /* ----- drag & drop for the questionnaire (.docx) ----- */
+  function showDocxName() {
+    if (docxInput.files && docxInput.files.length > 0) {
+      dropzoneText.textContent = "📎 " + docxInput.files[0].name;
+      dropzone.classList.add("has-file");
+    } else {
+      dropzone.classList.remove("has-file");
+    }
+  }
+  if (dropzone) {
+    docxInput.addEventListener("change", showDocxName);
+    dropzone.addEventListener("click", function () { docxInput.click(); });
+    dropzone.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); docxInput.click(); }
+    });
+    ["dragenter", "dragover"].forEach(function (ev) {
+      dropzone.addEventListener(ev, function (e) { e.preventDefault(); e.stopPropagation(); dropzone.classList.add("is-drag"); });
+    });
+    ["dragleave", "dragend", "drop"].forEach(function (ev) {
+      dropzone.addEventListener(ev, function (e) { e.preventDefault(); e.stopPropagation(); dropzone.classList.remove("is-drag"); });
+    });
+    dropzone.addEventListener("drop", function (e) {
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        try { docxInput.files = e.dataTransfer.files; } catch (err) {}
+        showDocxName();
+      }
+    });
+  }
 
   /* ----- state machine ----- */
 
@@ -1007,6 +1082,17 @@
 
   form.addEventListener("submit", function (event) {
     event.preventDefault();
+
+    if (!useSample.checked) {
+      if (!surveyUrlInput.value.trim()) {
+        alert("Enter the survey URL to QA, or switch to \"Try the demo\".");
+        return;
+      }
+      if (!docxInput.files || docxInput.files.length === 0) {
+        alert("Upload the Word questionnaire (.docx) the survey should match.");
+        return;
+      }
+    }
 
     var formData = new FormData();
     formData.append("surveyUrl", surveyUrlInput.value);

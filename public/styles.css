@@ -540,6 +540,38 @@ input[type="file"]:disabled { opacity: 0.5; cursor: not-allowed; }
 .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
 .submit-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 4px; }
 
+/* mode toggle: demo vs your-survey */
+.mode-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 820px; margin-bottom: 20px; }
+.mode-tab {
+  display: flex; flex-direction: column; gap: 3px; text-align: left;
+  padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2); color: var(--ink); cursor: pointer;
+  transition: border-color var(--dur-fast), background var(--dur-fast), box-shadow var(--dur-fast);
+}
+.mode-tab:hover { border-color: var(--border-strong); }
+.mode-tab.is-active { border-color: var(--accent); background: var(--card); box-shadow: inset 0 0 0 1px var(--accent); }
+.mode-tab-title { font-weight: 600; font-size: 15px; }
+.mode-tab-sub { font-size: 12px; color: var(--muted); }
+.mode-panel.is-hidden { display: none; }
+.preview-row a { margin-right: 3px; white-space: nowrap; }
+@media (max-width: 680px) { .mode-tabs { grid-template-columns: 1fr; } }
+
+/* drag & drop questionnaire zone */
+.dropzone {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; text-align: center; padding: 26px 18px; margin-top: 2px; cursor: pointer;
+  border: 1.5px dashed var(--border-strong); border-radius: var(--radius);
+  background: var(--surface-2); color: var(--muted);
+  transition: border-color var(--dur-fast), background var(--dur-fast), color var(--dur-fast);
+}
+.dropzone input[type="file"] { display: none; }
+.dropzone:hover, .dropzone:focus-visible { border-color: var(--accent); color: var(--ink); outline: none; }
+.dropzone.is-drag { border-color: var(--accent); background: var(--primary-soft, rgba(110, 90, 168, .08)); color: var(--ink); }
+.dropzone.has-file { border-style: solid; border-color: var(--accent); background: var(--card); color: var(--ink); }
+.dropzone-icon { font-size: 26px; line-height: 1; }
+.dropzone-text { font-size: 13px; max-width: 440px; word-break: break-word; }
+.dropzone-link { color: var(--accent); font-weight: 600; text-decoration: underline; }
+
 /* ---- status card ---- */
 #statusCard[hidden] { display: none; }
 .state-badge {
