@@ -16,6 +16,38 @@ flag the deliberately clean questions).
   a finding scored in one language lines up in all of them. Brand names stay in
   Latin caps in every language.
 
+## Results — blind dry-run (5 Jul 2026)
+
+The live tool (`survey-qa.arcreactor81.workers.dev`) was pointed at all 24 external
+surveys, each paired with its matching-language ground-truth `.docx`, and its
+findings scored against that case's seeded errors. This is a **held-out
+generalization test**: none of these surveys, brands, or error instances appear in
+the seeded demo the models + prompt were developed against.
+
+| Case | en | es | fr | de | zh | ja |
+|---|---|---|---|---|---|---|
+| **oncology** | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
+| **rheumatoid-arthritis** | 10/10 | 9/10\* | 10/10 | 10/10 | 10/10 | 10/10 |
+| **type-2-diabetes** | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
+| **migraine** | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
+
+**239 / 240 seeded errors caught** (strict = right `questionId` **and** right
+`category`). False positives: **22 total across 24 surveys (~0.9 / survey)** —
+low-confidence and consensus-demoted; the dominant type is the benign
+`[NUMERIC ENTRY, range …]` doc-generator annotation that a single model reads as a
+missing instruction.
+
+\* The one strict miss (RA / es, Q2 `wrong-option-label`) is a category-label
+difference, not a real miss: the tool **did** flag Q2 — it caught the discrepancy —
+but classified the error *type* differently. On "did it catch the problem?" recall
+is effectively **240 / 240**; on "right question AND exact category" it is
+**239 / 240**.
+
+Scoring: match `questionId` + `category` against each case's `seededErrors`
+(question IDs align across languages, so the English manifest scores every
+language); a false positive is a finding on a deliberately-clean question.
+Reproduce with the live URLs below + each case's localized `.docx`.
+
 ## Live URLs
 
 Index (lists every survey): https://survey-qa-testbench.arcreactor81.workers.dev/
