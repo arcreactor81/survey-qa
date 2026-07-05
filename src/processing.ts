@@ -7,8 +7,8 @@
 // inside the returned HTML, so it compiles under the project tsconfig
 // (lib: ES2022, no DOM types).
 //
-// The status API reports only milestone transitions (processing → complete),
-// never per-stage progress, and this page is served ONLY while the run is
+// The status API reports a coarse status plus an honest stage field (0 parse,
+// 1 walk, 2 compare) inferred from real R2 artifacts, and this page is served ONLY while the run is
 // "processing" (index.ts reloads it to the report the moment the run reaches a
 // terminal/awaiting status). So the pipeline is shown as genuinely running
 // server-side — no guessed per-stage clock — with a REAL elapsed timer adopted
@@ -85,9 +85,9 @@ const TRIVIA_LINES: string[] = [
   "✅ When this finishes you'll get one clean, ranked, de-duplicated list of issues — each with its evidence.",
 ];
 
-/** The real in-Worker pipeline. There is deliberately no per-stage timing: the
- *  status API exposes no stage field, so every stage is shown as running while
- *  the run is "processing", and this page advances to the report on completion. */
+/** The real in-Worker pipeline. Stages light up from the status API's honest
+ *  stage field (0 parse, 1 walk, 2 compare), inferred from real R2 artifacts;
+ *  this page advances to the report on completion. */
 const STAGES: { icon: string; name: string }[] = [
   { icon: "📄", name: "Parse docx" },
   { icon: "🌐", name: "Browser walks pages" },
@@ -310,10 +310,10 @@ footer { padding: 0 28px 96px; }
       <p class="pipe-note">Your run is executing the whole pipeline server-side. DeepSeek (deepseek-v4-pro)
         and Grok (grok-4.3) always run in the Worker; Claude (claude-sonnet-4-6) runs in the Worker when an
         Anthropic key is set, otherwise the $0 fallback runner completes it — every call routes through the
-        Cloudflare AI Gateway. The status API reports milestones, not per-stage progress, so this page
-        advances to the report automatically the moment the run finishes. A run usually takes a few
-        minutes (longer for an external survey URL &mdash; the browser walk is the slow part); it&rsquo;s
-        working even while the stages read &ldquo;running&rdquo;, so keep this tab open.</p>
+        Cloudflare AI Gateway. Each stage lights up as the run actually reaches it (parsing &rarr; browser
+        walk &rarr; comparison), and this page advances to the report the moment the run finishes. A run
+        usually takes a few minutes (longer for an external survey URL &mdash; the browser walk and the
+        comparison are the slow parts), so keep this tab open.</p>
     </section>
 
     <section class="card trivia-card" aria-labelledby="trivia-title">
@@ -463,6 +463,7 @@ footer { padding: 0 28px 96px; }
     }
   }
 
+  var maxStage = 0; /* monotonic: a reordered/slow poll can't regress the lights */
   /* Honest per-stage lighting from the status API stage field (0 parse, 1 walk,
      2 compare), inferred from real R2 artifacts — no guessed clock. Finished
      stages go solid, the current group keeps pulsing, later stages stay idle. */
@@ -496,7 +497,7 @@ footer { padding: 0 28px 96px; }
         if (!data) { bumpPollFail(); return; }
         adoptStartedAt(data.startedAt);
         var st = data.status;
-        if (st === "processing") { pollFailStreak = 0; if (typeof data.stage === "number") lightStages(data.stage); return; }
+        if (st === "processing") { pollFailStreak = 0; if (typeof data.stage === "number") { maxStage = Math.max(maxStage, data.stage); lightStages(maxStage); } return; }
         if (st === "complete" || st === "awaiting-claude" || st === "failed") {
           location.reload(); /* server now serves the report or failure page */
           return;

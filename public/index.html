@@ -160,7 +160,7 @@
         <div class="form-grid">
           <div class="field field-full submit-row">
             <button type="submit" id="runBtn" class="btn">Run QA check</button>
-            <span class="hint" id="runHint">A demo run takes ~3 minutes: the browser walk (~90&nbsp;s), then three model comparisons &mdash; DeepSeek and Grok in the Worker, Claude in-Worker with a key (else the $0 fallback) &mdash; and quote verification.</span>
+            <span class="hint" id="runHint">A demo run takes ~3–4 minutes: the browser walk (~90&nbsp;s), then three model comparisons &mdash; DeepSeek and Grok in the Worker, Claude in-Worker with a key (else the $0 fallback) &mdash; and quote verification.</span>
           </div>
         </div>
       </form>
@@ -205,10 +205,10 @@
       <ol class="track" id="ovTrack" aria-labelledby="ov-pipe-title"></ol>
       <p class="pipe-note">DeepSeek (deepseek-v4-pro) and Grok (grok-4.3) always run in the Worker;
         Claude (claude-sonnet-4-6) runs in the Worker when an Anthropic key is set, otherwise the
-        $0 fallback runner completes it. The status API reports milestones (processing &rarr; complete),
-        not per-stage progress &mdash; so the stages light up as your run reaches each real checkpoint.
-        A run usually takes a few minutes (longer for an external survey URL &mdash; the browser walk is
-        the slow part); it&rsquo;s working even while the stages read &ldquo;running&rdquo;, so keep this tab open.</p>
+        $0 fallback runner completes it. Each stage lights up as your run actually reaches it &mdash; parsing,
+        then the browser walk, then the three-model comparison &mdash; drawn from real progress, not a timer.
+        A run usually takes a few minutes (longer for an external survey URL &mdash; the browser walk and the
+        comparison are the slow parts), so keep this tab open.</p>
     </div>
 
     <div class="tk-card">
@@ -405,8 +405,8 @@
      Every row is real DOM text (marker glyph, name, model badge, description),
      so the tracker can never render as an empty strip. Row states are a pure
      function of the REAL run status:
-       processing → every in-Worker stage is "run" (running); we do NOT fake a
-                    current stage because the status API gives no sub-stage signal.
+       processing → stages light up from the status API's `stage` (0 parse, 1 walk,
+                    2 compare), inferred from real R2 artifacts — no faked clock.
        awaiting   → the interim report is live, so walk + DeepSeek + Grok + verify
                     + report are done, but the in-Worker Claude leg was skipped, so
                     it renders PENDING (not done) and the fallback runner is "you".
@@ -479,8 +479,8 @@
   }
 
   /* Re-render both tracker containers, but only when the state actually changed
-     (keyed via data-key) so nothing flickers between polls. Row states depend
-     only on currentState now (no wall-clock stage), so the key is the state. A
+     (keyed via data-key) so nothing flickers between polls. Row states depend on
+     currentState AND currentStage, so the key combines both. A
      freshly re-created container has no data-key and is always filled — the
      tracker cannot be left empty. */
   function updateTrackers() {
@@ -554,7 +554,7 @@
     }
     if (runHint) {
       runHint.textContent = demo
-        ? "A demo run takes ~3 minutes: the browser walk (~90 s), then three model comparisons and quote verification."
+        ? "A demo run takes ~3–4 minutes: the browser walk (~90 s), then three model comparisons and quote verification."
         : "We walk your live survey and compare every page against your .docx. External surveys take a few minutes (cross-origin walk) — the processing screen shows it's working the whole time.";
     }
   }
@@ -711,7 +711,7 @@
       '</div>' +
       trackerShellHtml() +
       '<p class="trivia-line" id="triviaLine" aria-hidden="true">' + esc(TRIVIA[triviaIdx]) + '</p>' +
-      '<p class="state-note">Leave this tab open — status refreshes every 5 seconds. The status API reports milestones (processing → complete), not per-stage progress, so the tracker advances as your run reaches each real checkpoint.</p>'
+      '<p class="state-note">Leave this tab open — status refreshes every 5 seconds. Each stage lights up as your run actually reaches it (parsing → browser walk → three-model comparison), from real progress rather than a timer.</p>'
     );
     updateTrackers();
   }
@@ -830,7 +830,7 @@
         var st = data && data.status;
         if (st === "processing") {
           failStreak = 0;
-          if (typeof data.stage === "number") currentStage = data.stage;
+          if (typeof data.stage === "number") currentStage = Math.max(currentStage, data.stage);
           /* Ordering guard: don't regress a run that already reached awaiting
              back to "processing" on a late/out-of-order response. */
           if (!reachedAwaiting) { setState("processing"); updateTrackers(); }
