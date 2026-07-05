@@ -160,8 +160,9 @@
         <div class="form-grid">
           <div class="field field-full submit-row">
             <button type="submit" id="runBtn" class="btn">Run QA check</button>
-            <span class="hint" id="runHint">A demo run takes ~3–4 minutes: the browser walk (~90&nbsp;s), then three model comparisons &mdash; DeepSeek and Grok in the Worker, Claude in-Worker with a key (else the $0 fallback) &mdash; and quote verification.</span>
+            <span class="hint" id="runHint">A demo run takes ~3–4 minutes: the browser walk (~90&nbsp;s), then three model comparisons and quote verification.</span>
           </div>
+          <p class="form-error field-full" id="formError" role="alert" hidden></p>
         </div>
       </form>
     </section>
@@ -247,6 +248,7 @@
   var dropzone = document.getElementById("dropzone");
   var dropzoneText = document.getElementById("dropzoneText");
   var runHint = document.getElementById("runHint");
+  var formError = document.getElementById("formError");
   var statusCard = document.getElementById("statusCard");
   var statusBody = document.getElementById("statusBody");
   var expandBtn = document.getElementById("expandBtn");
@@ -355,7 +357,7 @@
     "🧾 A single dropped answer option can quietly bias an entire brand-tracking study.",
     "🎯 A missed error ships to respondents and corrupts data; a false alarm costs seconds of review — so we optimize for catching everything.",
     "🔗 Piping bugs are sneaky: {brand} renders fine on page 2 but shows the raw token on page 5.",
-    "🧪 This tool was validated on 240 planted errors across surveys it had never seen — and caught them.",
+    "🧪 Benchmarked on 240 planted errors across surveys it had never seen — it flagged all 240, exact category on 239.",
     "🗂️ Six languages, including CJK: the same walker reads English, Español, Français, Deutsch, 中文 and 日本語.",
     "⚖️ Two models agreeing on a finding beats one model shouting. Consensus over confidence.",
     "🕵️ A renamed option ('Very satisfied' → 'Extremely satisfied') shifts your trend line. We flag it.",
@@ -535,10 +537,16 @@
   });
 
   var lastCustomUrl = "";
+  function showFormError(msg, field) {
+    if (formError) { formError.textContent = msg; formError.hidden = false; }
+    if (field && field.focus) field.focus();
+  }
+  function clearFormError() { if (formError) { formError.hidden = true; formError.textContent = ""; } }
   function demoUrlForLang() {
     return langSelect.value === "en" ? "/survey.html" : "/survey.html?lang=" + langSelect.value;
   }
   function setMode(demo) {
+    clearFormError();
     useSample.checked = demo;
     modeDemo.classList.toggle("is-active", demo);
     modeCustom.classList.toggle("is-active", !demo);
@@ -562,6 +570,7 @@
     modeDemo.addEventListener("click", function () { setMode(true); });
     modeCustom.addEventListener("click", function () { setMode(false); });
   }
+  surveyUrlInput.addEventListener("input", clearFormError);
 
   /* ----- drag & drop for the questionnaire (.docx) ----- */
   function showDocxName() {
@@ -575,6 +584,7 @@
       }
       dropzoneText.textContent = "📎 " + name;
       dropzone.classList.add("has-file");
+      clearFormError();
     } else {
       dropzone.classList.remove("has-file");
     }
@@ -1112,13 +1122,14 @@
   form.addEventListener("submit", function (event) {
     event.preventDefault();
 
+    clearFormError();
     if (!useSample.checked) {
       if (!surveyUrlInput.value.trim()) {
-        alert("Enter the survey URL to QA, or switch to \"Try the demo\".");
+        showFormError("Enter the survey URL to QA, or switch to the demo above.", surveyUrlInput);
         return;
       }
       if (!docxInput.files || docxInput.files.length === 0) {
-        alert("Upload the Word questionnaire (.docx) the survey should match.");
+        showFormError("Upload the Word questionnaire (.docx) the survey should match.", dropzone);
         return;
       }
     }

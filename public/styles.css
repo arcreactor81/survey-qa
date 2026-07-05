@@ -571,6 +571,8 @@ input[type="file"]:disabled { opacity: 0.5; cursor: not-allowed; }
 .dropzone-icon { font-size: 26px; line-height: 1; }
 .dropzone-text { font-size: 13px; max-width: 440px; word-break: break-word; }
 .dropzone-link { color: var(--accent); font-weight: 600; text-decoration: underline; }
+.form-error { margin: 6px 0 0; font-size: 13px; font-weight: 500; color: var(--bad, #b3261e); }
+.form-error[hidden] { display: none; }
 
 /* ---- status card ---- */
 #statusCard[hidden] { display: none; }

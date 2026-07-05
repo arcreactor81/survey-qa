@@ -42,7 +42,7 @@ const TRIVIA_LINES: string[] = [
   "🧾 A single dropped answer option can quietly bias an entire brand-tracking study.",
   "🎯 A missed error ships to respondents and corrupts data; a false alarm costs seconds of review — so we optimize for catching everything.",
   "🔗 Piping bugs are sneaky: {brand} renders fine on page 2 but shows the raw token on page 5.",
-  "🧪 This tool was validated on 240 planted errors across surveys it had never seen — and caught them.",
+  "🧪 Benchmarked on 240 planted errors across surveys it had never seen — it flagged all 240, exact category on 239.",
   "🗂️ Six languages, including CJK: the same walker reads English, Español, Français, Deutsch, 中文 and 日本語.",
   "⚖️ Two models agreeing on a finding beats one model shouting. Consensus over confidence.",
   "🕵️ A renamed option ('Very satisfied' → 'Extremely satisfied') shifts your trend line. We flag it.",
