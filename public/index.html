@@ -3,751 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script>
-/* Theme bootstrap — runs before first paint to avoid a flash of the wrong theme. */
-(function () {
-  var t = null;
-  try { t = localStorage.getItem("sqa-theme"); } catch (e) { /* storage unavailable */ }
-  if (t !== "light" && t !== "dark") {
-    t = "light";
-    try {
-      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
-    } catch (e) { /* matchMedia unavailable */ }
-  }
-  document.documentElement.dataset.theme = t;
-  requestAnimationFrame(function(){requestAnimationFrame(function(){document.documentElement.classList.add("theme-ready");});});
-})();
-</script>
+<meta name="color-scheme" content="light dark">
+<!-- No-FOUC theme bootstrap (same-origin, runs before first paint). -->
+<script src="/theme.js"></script>
 <title>Survey QA &mdash; Automated questionnaire-to-website verification</title>
 <meta name="description" content="Survey QA automates vendor survey link-testing: it parses the Word questionnaire, walks every survey page with a real browser, has three models — DeepSeek v4-pro, Grok 4.3 and Claude Sonnet 4.6 — independently compare every page, combines their findings by consensus with verbatim-quote verification, and delivers a report with a seeded-error scorecard.">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-  :root {
-    color-scheme: light;
-    --ink: #0F2422;
-    --paper: #F1F6F5;
-    --card: #FFFFFF;
-    --accent: #096658;
-    --accent-dark: #07564A;
-    --ok: #156B3F;
-    --bad: #A63220;
-    --slate: #435659;
-    --border: #D8E2E0;
-    --text: #14282A;
-    --muted: #435659;
-    --btn-text: #FFFFFF;
-    --band-bg: #071012;
-    --band-title: #FFFFFF;
-    --band-text: #DCE7E5;
-    --band-muted: #85999B;
-    --band-soft: #B4C8C3;
-    --band-link: #7CE8C9;
-    --tint: #E5EEEC;
-    --tint-soft: #F7FAF9;
-    --code-bg: #08211E;
-    --code-text: #C7E8DC;
-    --input-bg: #FFFFFF;
-    --input-border: #C5D3D0;
-    --focus-ring: rgba(9, 102, 88, 0.45);
-    --focus-soft: rgba(9, 102, 88, 0.16);
-    --pulse: rgba(9, 102, 88, 0.35);
-    --wait-bg: #F7EFD3;
-    --wait-text: #674D0C;
-    --ok-bg: #DDF2E4;
-    --bad-bg: #FBE9E6;
-    --done-border: #B2DAC3;
-    --done-bg: #EFF8F2;
-    --err-bg: #FBECEA;
-    --err-border: #EDCBC5;
-    --err-text: #8F2A21;
-    --serif: "Space Grotesk", "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
-    --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-    --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-    --shadow: 0 1px 2px rgba(7, 16, 18, 0.05), 0 10px 28px rgba(7, 16, 18, 0.07);
-  }
-  /* Dark palette — scoped to screen so print always renders the light theme. */
-  @media screen {
-    html[data-theme="dark"] {
-      color-scheme: dark;
-      --ink: #EDF5F3;
-      --paper: #0B1416;
-      --card: #101E21;
-      --accent: #35D3AC;
-      --accent-dark: #5FE0BF;
-      --ok: #74D389;
-      --bad: #F98576;
-      --slate: #8FA6A2;
-      --border: #24363A;
-      --text: #DCE7E5;
-      --muted: #93A9A5;
-      --btn-text: #062019;
-      --band-bg: #060D0F;
-      --band-title: #EDF5F3;
-      --band-text: #DCE7E5;
-      --band-muted: #7E9490;
-      --band-soft: #B4C8C3;
-      --band-link: #7CE8C9;
-      --tint: #122023;
-      --tint-soft: #101C1F;
-      --code-bg: #07110F;
-      --code-text: #B8E6D2;
-      --input-bg: #0F1B1E;
-      --input-border: #2E4247;
-      --focus-ring: rgba(53, 211, 172, 0.55);
-      --focus-soft: rgba(53, 211, 172, 0.2);
-      --pulse: rgba(53, 211, 172, 0.38);
-      --wait-bg: rgba(242, 206, 114, 0.13);
-      --wait-text: #F2CE72;
-      --ok-bg: rgba(116, 211, 137, 0.14);
-      --bad-bg: rgba(249, 133, 118, 0.16);
-      --done-border: #2C5B41;
-      /* Opaque equivalent of rgba(116,211,137,0.1) over the card (#101E21).
-         Must stay opaque: done stages sit on top of the .pipeline::before
-         connector line — a translucent fill lets it ghost through the card. */
-      --done-bg: #1A302B;
-      --err-bg: rgba(249, 133, 118, 0.12);
-      --err-border: rgba(249, 133, 118, 0.4);
-      --err-text: #FFAFA4;
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 10px 28px rgba(0, 0, 0, 0.5);
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font-family: var(--sans);
-    background: var(--paper);
-    color: var(--text);
-    line-height: 1.55;
-    font-size: 14px;
-  }
-  .wrap { max-width: 1140px; margin: 0 auto; padding: 0 28px; }
-  a { color: var(--accent); }
-  a:focus-visible,
-  button:focus-visible,
-  input:focus-visible,
-  select:focus-visible,
-  summary:focus-visible {
-    outline: 3px solid var(--focus-ring);
-    outline-offset: 2px;
-    border-radius: 4px;
-  }
-  .mono { font-family: var(--mono); }
-  .num { font-variant-numeric: tabular-nums; }
-  .kicker {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: var(--accent);
-    margin-bottom: 4px;
-  }
-  h2 {
-    margin: 0 0 18px;
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 24px;
-    color: var(--ink);
-    letter-spacing: 0.1px;
-  }
-  .sub { font-family: var(--sans); font-size: 12px; font-weight: 400; color: var(--slate); margin-left: 10px; }
-
-  /* ---------- hero band ---------- */
-  .band {
-    background: var(--band-bg);
-    color: var(--band-text);
-    padding: 60px 0 54px;
-    border-bottom: 4px solid var(--accent);
-  }
-  .brand-row { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
-  .brand {
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 46px;
-    line-height: 1.05;
-    letter-spacing: 0.2px;
-    margin: 0;
-    color: var(--band-title);
-  }
-  .tagline {
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--band-muted);
-  }
-  .value-prop {
-    max-width: 760px;
-    margin: 22px 0 0;
-    font-size: 16.5px;
-    line-height: 1.65;
-    color: var(--band-soft);
-  }
-  .value-prop strong { color: var(--band-title); font-weight: 600; }
-  .hero-ctas { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 30px; align-items: center; }
-  .band a { color: var(--band-link); }
-
-  /* ---------- buttons ---------- */
-  .btn {
-    display: inline-block;
-    background: var(--accent);
-    color: var(--btn-text) !important;
-    border: 1px solid var(--accent);
-    border-radius: 8px;
-    padding: 11px 24px;
-    font-family: var(--sans);
-    font-size: 14px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    text-decoration: none;
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
-  .btn:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
-  .btn:disabled { opacity: 0.55; cursor: wait; }
-  .btn-ghost {
-    background: transparent;
-    border: 1px solid rgba(244, 241, 234, 0.35);
-    color: var(--band-text) !important;
-  }
-  .btn-ghost:hover { background: rgba(244, 241, 234, 0.08); border-color: rgba(244, 241, 234, 0.6); }
-
-  /* ---------- layout ---------- */
-  main { padding: 34px 0 56px; }
-  section {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 26px 30px 30px;
-    margin-bottom: 26px;
-    box-shadow: var(--shadow);
-  }
-
-  /* ---------- how it works ---------- */
-  .steps {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 16px;
-    counter-reset: step;
-  }
-  .step {
-    position: relative;
-    background: var(--tint-soft);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 18px 16px 16px;
-  }
-  .step:not(:last-child)::after {
-    content: "\2192";
-    position: absolute;
-    right: -15px;
-    top: 16px;
-    color: var(--accent);
-    font-size: 15px;
-    font-weight: 700;
-    z-index: 1;
-  }
-  .step-num {
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 26px;
-    color: var(--accent);
-    font-variant-numeric: tabular-nums;
-    line-height: 1;
-  }
-  .step h3 {
-    margin: 10px 0 6px;
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 15.5px;
-    color: var(--ink);
-    line-height: 1.3;
-  }
-  .step p { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--slate); }
-  @media (max-width: 960px) {
-    .steps { grid-template-columns: repeat(2, 1fr); }
-    .step:not(:last-child)::after { display: none; }
-  }
-  @media (max-width: 540px) { .steps { grid-template-columns: 1fr; } }
-
-  /* ---------- demo form ---------- */
-  .form-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 18px 26px;
-    max-width: 820px;
-  }
-  .field { margin: 0; }
-  .field-full { grid-column: 1 / -1; }
-  @media (max-width: 680px) { .form-grid { grid-template-columns: 1fr; } .field { grid-column: auto; } }
-  label {
-    display: block;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.11em;
-    color: var(--slate);
-    margin-bottom: 7px;
-  }
-  input[type="text"], select {
-    width: 100%;
-    padding: 10px 12px;
-    border: 1px solid var(--input-border);
-    border-radius: 8px;
-    background: var(--input-bg);
-    font-family: var(--sans);
-    font-size: 14px;
-    color: var(--text);
-  }
-  input[type="text"] { font-family: var(--mono); font-size: 13px; }
-  input[type="text"]:focus, select:focus {
-    border-color: var(--accent);
-    outline: none;
-    box-shadow: 0 0 0 3px var(--focus-soft);
-  }
-  input[type="file"] {
-    width: 100%;
-    font-size: 13px;
-    color: var(--slate);
-    padding: 7px 8px;
-    border: 1px dashed var(--input-border);
-    border-radius: 8px;
-    background: var(--tint-soft);
-  }
-  input[type="file"]::file-selector-button {
-    font-family: var(--sans);
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--ink);
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 12px;
-    margin-right: 10px;
-    cursor: pointer;
-  }
-  input[type="file"]:disabled { opacity: 0.5; cursor: not-allowed; }
-  .field.is-disabled label { opacity: 0.55; }
-  .check-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    background: var(--tint);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px 14px;
-  }
-  .check-row input[type="checkbox"] {
-    accent-color: var(--accent);
-    width: 17px;
-    height: 17px;
-    margin: 2px 0 0;
-    flex: none;
-    cursor: pointer;
-  }
-  .check-row label {
-    text-transform: none;
-    letter-spacing: normal;
-    font-size: 13.5px;
-    font-weight: 500;
-    color: var(--text);
-    margin: 0;
-    cursor: pointer;
-  }
-  .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
-  .submit-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 4px; }
-
-  /* ---------- status card ---------- */
-  #statusCard[hidden] { display: none; }
-  .state-badge {
-    display: inline-block;
-    padding: 3px 11px;
-    border-radius: 999px;
-    font-size: 10.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.09em;
-    white-space: nowrap;
-    margin-bottom: 12px;
-  }
-  .state-badge.is-wait { background: var(--wait-bg); color: var(--wait-text); }
-  .state-badge.is-ok { background: var(--ok-bg); color: var(--ok); }
-  .state-badge.is-bad { background: var(--bad-bg); color: var(--bad); }
-  .run-state { display: flex; align-items: flex-start; gap: 16px; }
-  .spinner {
-    flex: none;
-    width: 26px;
-    height: 26px;
-    margin-top: 3px;
-    border: 3px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.85s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner { animation-duration: 2.5s; }
-    /* Keep the active-stage ring visibly alive, just slower. */
-    .trk-mark-spin { animation-duration: 2.5s; }
-    .trivia-line { transition: none; }
-    .takeover { transition: none !important; animation: none !important; }
-    .bug { animation: none; }
-    .bug > span { animation: none; }
-    .bug.is-squashed > span { animation: none; opacity: 0.35; }
-  }
-  .state-title {
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 18px;
-    color: var(--ink);
-    margin-bottom: 3px;
-  }
-  .state-title code { font-family: var(--mono); font-size: 15px; color: var(--accent); }
-  .state-stage { font-size: 13.5px; color: var(--slate); }
-  .state-elapsed { margin-left: 10px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12.5px; }
-  .state-note { font-size: 12px; color: var(--muted); margin: 14px 0 0; }
-
-  /* ---------- verbose stage tracker (status card + overlay) ----------
-     Robust by construction: every state marker is real text/border content
-     (✓ / spinner ring / ○ / ▶) — never a pseudo-element width fill. */
-  .sr-only {
-    position: absolute;
-    width: 1px; height: 1px;
-    margin: -1px; padding: 0; border: 0;
-    clip: rect(0 0 0 0);
-    overflow: hidden;
-    white-space: nowrap;
-  }
-  .track-wrap { margin: 18px 0 0; max-width: 680px; }
-  .track-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .track-title {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: var(--accent);
-  }
-  .track { list-style: none; margin: 12px 0 0; padding: 0; max-width: 680px; }
-  .trk-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--tint-soft);
-    padding: 10px 14px;
-    margin: 0 0 8px;
-  }
-  .trk-mark {
-    flex: none;
-    box-sizing: border-box;
-    width: 22px;
-    height: 22px;
-    margin-top: 2px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    font-size: 13px;
-    font-weight: 700;
-    line-height: 1;
-  }
-  .trk-mark-done { background: var(--ok-bg); color: var(--ok); }
-  .trk-mark-pend { color: var(--muted); font-size: 15px; }
-  .trk-mark-spin {
-    border: 3px solid var(--focus-soft);
-    border-top-color: var(--accent);
-    animation: spin 0.85s linear infinite;
-  }
-  .trk-mark-you { background: var(--accent); color: var(--btn-text); font-size: 10px; }
-  .trk-body { flex: 1; min-width: 0; }
-  .trk-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .trk-name { font-size: 13.5px; font-weight: 600; color: var(--text); }
-  .trk-model {
-    font-family: var(--mono);
-    font-size: 10.5px;
-    padding: 1px 9px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: var(--tint);
-    color: var(--slate);
-    white-space: nowrap;
-  }
-  .trk-nomodel { opacity: 0.7; }
-  .trk-desc { display: block; font-size: 12px; line-height: 1.5; color: var(--slate); margin-top: 2px; }
-  .trk-row.is-pending { opacity: 0.62; }
-  .trk-row.is-cur {
-    border-color: var(--accent);
-    background: var(--card);
-    box-shadow: 0 0 0 3px var(--focus-soft);
-  }
-  .trk-row.is-cur .trk-name { font-weight: 700; color: var(--ink); }
-  .trk-row.is-done .trk-name { color: var(--ink); }
-  .trk-row.is-you { border-color: var(--accent); background: var(--wait-bg); }
-  .trk-row.is-you .trk-name { font-weight: 700; color: var(--wait-text); }
-  .trk-row.is-you .trk-desc { color: var(--text); }
-  .trivia-line {
-    font-size: 13px;
-    color: var(--slate);
-    background: var(--tint);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px 14px;
-    margin: 12px 0 0;
-    max-width: 640px;
-    min-height: 40px;
-    transition: opacity 0.35s ease;
-  }
-  .trivia-line.is-fading { opacity: 0; }
-  .cmd {
-    display: flex;
-    align-items: stretch;
-    gap: 10px;
-    background: var(--code-bg);
-    border-radius: 10px;
-    padding: 13px 14px;
-    margin: 14px 0 0;
-    max-width: 780px;
-  }
-  .cmd code {
-    flex: 1;
-    font-family: var(--mono);
-    font-size: 12.5px;
-    line-height: 1.55;
-    color: var(--code-text);
-    word-break: break-all;
-    align-self: center;
-  }
-  .copy-btn {
-    flex: none;
-    align-self: center;
-    background: transparent;
-    color: var(--code-text);
-    border: 1px solid rgba(244, 241, 234, 0.3);
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-family: var(--sans);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    cursor: pointer;
-  }
-  .copy-btn:hover { border-color: rgba(244, 241, 234, 0.7); background: rgba(244, 241, 234, 0.08); }
-  .copy-btn.copied { border-color: #4CAF87; color: #7FDDB1; }
-  .cmd-caption { font-size: 12px; color: var(--slate); margin: 8px 0 0; }
-  .error-detail {
-    font-family: var(--mono);
-    font-size: 12px;
-    background: var(--err-bg);
-    border: 1px solid var(--err-border);
-    color: var(--err-text);
-    border-radius: 8px;
-    padding: 12px 14px;
-    margin: 12px 0 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 260px;
-    overflow: auto;
-  }
-  .report-cta { margin-top: 6px; }
-
-  /* ---------- theme toggle ---------- */
-  .theme-toggle {
-    position: fixed;
-    top: 14px;
-    right: 14px;
-    z-index: 260;
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 50%;
-    background: var(--card);
-    box-shadow: var(--shadow);
-    font-size: 17px;
-    line-height: 1;
-    cursor: pointer;
-  }
-  .theme-toggle:hover { border-color: var(--accent); }
-  .theme-toggle .tt-sun { display: none; }
-  html[data-theme="dark"] .theme-toggle .tt-sun { display: block; }
-  html[data-theme="dark"] .theme-toggle .tt-moon { display: none; }
-
-  /* ---------- status card head + expand ---------- */
-  .status-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-  .expand-btn {
-    flex: none;
-    background: transparent;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--accent);
-    font-family: var(--sans);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    padding: 6px 12px;
-    cursor: pointer;
-  }
-  .expand-btn:hover { border-color: var(--accent); }
-  .expand-btn[hidden] { display: none; }
-
-  /* ---------- fullscreen run-status takeover ---------- */
-  body.tk-lock { overflow: hidden; }
-  .takeover {
-    position: fixed;
-    inset: 0;
-    z-index: 240;
-    background: var(--paper);
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .takeover[hidden] { display: none; }
-  @keyframes tk-in { from { opacity: 0; } to { opacity: 1; } }
-  .takeover:not([hidden]) { animation: tk-in 0.25s ease; }
-  .tk-inner { position: relative; z-index: 2; max-width: 920px; margin: 0 auto; padding: 54px 28px 130px; }
-  .min-btn {
-    position: fixed;
-    top: 14px;
-    right: 66px;
-    z-index: 260;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: var(--shadow);
-    color: var(--text);
-    font-family: var(--sans);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    padding: 9px 14px;
-    cursor: pointer;
-  }
-  .min-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .tk-head { margin-bottom: 24px; }
-  .tk-title {
-    margin: 6px 0 0;
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 34px;
-    line-height: 1.15;
-    color: var(--ink);
-  }
-  .tk-title code { font-family: var(--mono); font-size: 25px; color: var(--accent); }
-  .tk-elapsed {
-    margin-top: 8px;
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 52px;
-    line-height: 1;
-    color: var(--ink);
-    font-variant-numeric: tabular-nums;
-  }
-  .tk-card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 24px 28px 26px;
-    margin-bottom: 22px;
-    box-shadow: var(--shadow);
-  }
-  .tk-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-  .tk-card h2 { margin-bottom: 0; font-size: 22px; }
-  .badge-est {
-    flex: none;
-    padding: 3px 11px;
-    border-radius: 999px;
-    background: var(--tint);
-    border: 1px solid var(--border);
-    font-size: 10.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.09em;
-    color: var(--slate);
-  }
-  .tk-cta { font-size: 16px; padding: 14px 30px; }
-  .z-top { position: relative; z-index: 6; pointer-events: none; }
-  .z-top a { pointer-events: auto; }
-
-  /* note under the overlay's stage tracker */
-  .pipe-note { margin: 16px 0 0; font-size: 12px; color: var(--muted); }
-
-  /* ---------- bug mini-game (inside the takeover) ---------- */
-  #ovBugLayer {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    pointer-events: none;
-    z-index: 5;
-  }
-  .bug {
-    position: absolute;
-    left: 0;
-    top: 0;
-    border: 0;
-    margin: 0;
-    padding: 5px;
-    background: transparent;
-    font-size: 24px;
-    line-height: 1;
-    cursor: pointer;
-    pointer-events: auto;
-    animation: scurry var(--dur, 7s) linear forwards;
-    will-change: transform;
-  }
-  @keyframes scurry {
-    from { transform: translateX(var(--x0, -60px)) translateY(0); }
-    to   { transform: translateX(var(--x1, 100vw)) translateY(var(--y1, 0px)); }
-  }
-  .bug > span {
-    display: inline-block;
-    animation: bob 0.5s ease-in-out infinite alternate;
-  }
-  @keyframes bob {
-    from { transform: scaleX(var(--flip, 1)) translateY(-3px) rotate(-6deg); }
-    to   { transform: scaleX(var(--flip, 1)) translateY(3px) rotate(6deg); }
-  }
-  .bug.is-squashed { animation-play-state: paused; }
-  .bug.is-squashed > span { animation: pop 0.45s ease forwards; }
-  @keyframes pop {
-    from { transform: scale(1.5); opacity: 1; }
-    to   { transform: scale(0.4); opacity: 0; }
-  }
-  .squash-chip {
-    position: fixed;
-    right: 18px;
-    bottom: 18px;
-    z-index: 250;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: var(--shadow);
-    padding: 10px 16px;
-    max-width: 240px;
-  }
-  .squash-chip strong { display: block; font-size: 13px; color: var(--ink); }
-  .squash-chip small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
-
-  /* ---------- print ---------- */
-  @media print {
-    .theme-toggle, .takeover, .expand-btn { display: none !important; }
-  }
-
-  /* ---------- footer ---------- */
-  footer {
-    text-align: center;
-    font-size: 12px;
-    color: var(--slate);
-    padding: 0 28px 40px;
-  }
-  footer a { color: var(--accent); }
-
-  /* ---------- smooth theme transition (added after first paint via .theme-ready) ---------- */
-  html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: background-color 220ms ease, color 220ms ease, border-color 220ms ease, box-shadow 220ms ease, fill 220ms ease, stroke 220ms ease; }
-  @media (prefers-reduced-motion: reduce) { html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: none !important; } }
-</style>
+<link rel="preload" href="/fonts/instrument-serif-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/dm-sans-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/jetbrains-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%8D%3C/text%3E%3C/svg%3E">
 </head>
 <body>
+
+<div class="aurora" aria-hidden="true"><span class="aurora__glow"></span></div>
 
 <button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
   <span class="tt-moon" aria-hidden="true">&#127769;</span>
@@ -756,9 +25,19 @@
 
 <header class="band">
   <div class="wrap">
-    <div class="brand-row">
-      <h1 class="brand">Survey QA</h1>
-      <span class="tagline">Automated questionnaire-to-website verification</span>
+    <div class="masthead">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="34" height="34" role="img" aria-label="Survey QA logo">
+          <rect x="3" y="3" width="42" height="42" rx="11" fill="currentColor"></rect>
+          <rect x="13" y="26" width="5" height="11" rx="1.5" data-paper opacity=".95"></rect>
+          <rect x="21.5" y="19" width="5" height="18" rx="1.5" data-paper opacity=".95"></rect>
+          <rect x="30" y="12" width="5" height="25" rx="1.5" data-paper opacity=".95"></rect>
+        </svg>
+      </span>
+      <div class="masthead-text">
+        <p class="kicker">Automated questionnaire-to-website verification</p>
+        <h1 class="brand">Survey <em>QA</em></h1>
+      </div>
     </div>
     <p class="value-prop">
       Survey QA automates the link-testing step of market-research fieldwork. Point it at the
@@ -773,7 +52,7 @@
     </p>
     <div class="hero-ctas">
       <a class="btn" href="#demo">Run the demo</a>
-      <a class="btn btn-ghost" href="/survey.html" target="_blank" rel="noopener">Preview the demo survey&nbsp;&#8599;</a>
+      <a class="btn btn-ghost" id="heroPreview" href="/survey.html" target="_blank" rel="noopener">Preview the demo survey&nbsp;&#8599;</a>
     </div>
   </div>
 </header>
@@ -798,7 +77,7 @@
         <div class="step">
           <div class="step-num">3</div>
           <h3>Three-model comparison</h3>
-          <p>DeepSeek v4-pro, Grok 4.3 and Claude Sonnet 4.6 — three independent model families — each compare every page in-Worker automatically, with all calls routed through the Cloudflare AI Gateway.</p>
+          <p>DeepSeek v4-pro and Grok 4.3 compare every page in the Worker automatically; Claude Sonnet 4.6 joins in-Worker when an Anthropic key is set, otherwise via the $0 fallback runner. All calls route through the Cloudflare AI Gateway.</p>
         </div>
         <div class="step">
           <div class="step-num">4</div>
@@ -821,8 +100,14 @@
           <div class="field field-full">
             <label for="surveyUrl">Survey URL</label>
             <input type="text" id="surveyUrl" name="surveyUrl" value="/survey.html" autocomplete="off" spellcheck="false">
-            <p class="hint">Relative paths resolve against this deployment.
-              <a href="/survey.html" target="_blank" rel="noopener">Preview the demo survey&nbsp;&#8599;</a></p>
+            <p class="hint">Relative paths resolve against this deployment.</p>
+            <p class="hint">Preview the demo survey in any language:
+              <a href="/survey.html" target="_blank" rel="noopener">EN</a> &middot;
+              <a href="/survey.html?lang=es" target="_blank" rel="noopener">ES</a> &middot;
+              <a href="/survey.html?lang=fr" target="_blank" rel="noopener">FR</a> &middot;
+              <a href="/survey.html?lang=de" target="_blank" rel="noopener">DE</a> &middot;
+              <a href="/survey.html?lang=zh" target="_blank" rel="noopener">ZH</a> &middot;
+              <a href="/survey.html?lang=ja" target="_blank" rel="noopener">JA</a></p>
           </div>
 
           <div class="field field-full">
@@ -854,7 +139,7 @@
 
           <div class="field field-full submit-row">
             <button type="submit" id="runBtn" class="btn">Run QA check</button>
-            <span class="hint">A run takes roughly 3 minutes: browser walk (the long stretch, ~90&nbsp;s), three automatic model comparisons (DeepSeek, Grok, Claude Sonnet), quote verification.</span>
+            <span class="hint">A run takes roughly 3 minutes: the browser walk (the long stretch, ~90&nbsp;s), then three model comparisons&nbsp;&mdash; DeepSeek and Grok in the Worker, Claude in the Worker when an Anthropic key is set (else via the $0 fallback runner)&nbsp;&mdash; and quote verification.</span>
           </div>
         </div>
       </form>
@@ -894,12 +179,13 @@
           <div class="kicker">Pipeline</div>
           <h2 id="ov-pipe-title">Where your run is</h2>
         </div>
-        <span class="badge-est">estimated</span>
+        <span class="badge-est">live</span>
       </div>
       <ol class="track" id="ovTrack" aria-labelledby="ov-pipe-title"></ol>
-      <p class="pipe-note">Stage timings are estimates &mdash; the status API doesn't report per-stage
-        progress. All three model legs &mdash; DeepSeek (deepseek-v4-pro), Grok (grok-4.3) and
-        Claude (claude-sonnet-4-6) &mdash; run automatically in the Worker.</p>
+      <p class="pipe-note">DeepSeek (deepseek-v4-pro) and Grok (grok-4.3) always run in the Worker;
+        Claude (claude-sonnet-4-6) runs in the Worker when an Anthropic key is set, otherwise the
+        $0 fallback runner completes it. The status API reports milestones (processing &rarr; complete),
+        not per-stage progress &mdash; so the stages light up as your run reaches each real checkpoint.</p>
     </div>
 
     <div class="tk-card">
@@ -961,6 +247,11 @@
      the current run, a late/out-of-order poll response can no longer revert the
      UI to "processing". Reset when a new run starts. */
   var reachedTerminal = false;
+  /* Ordering guard for the non-terminal "awaiting-claude" milestone: once the
+     run reaches awaiting, a late/out-of-order "processing" response must not
+     drag the UI backwards to the spinner. awaiting can still advance forward to
+     complete/failed. Reset when a new run starts. */
+  var reachedAwaiting = false;
   /* Friendly labels of the model legs actually present in the run's stats, and
      whether the run degraded (a leg was unavailable). Drives the awaiting /
      complete copy so it never claims a leg that didn't report. */
@@ -973,32 +264,26 @@
   var squashed = 0;
 
   /* The real pipeline, verbose: stage name + model badge + what's happening.
-     `at` is the estimated elapsed-seconds threshold at which the stage begins
-     (the status API exposes no per-stage signal, so this is honest guesswork —
-     the UI labels the whole tracker "estimated"). `live` is the one-line
-     status text shown next to the spinner. */
+     There is deliberately NO wall-clock estimate here: the status API exposes
+     only milestone transitions (processing → awaiting-claude → complete), so the
+     tracker lights stages from the ACTUAL run status, never a guessed timeline.
+     `role` keys each stage so the renderer can reason about it (e.g. the Claude
+     leg is pending, not done, while a run awaits the fallback runner). */
   var TRACK = [
-    { at: 0, name: "Parsing questionnaire", model: null,
-      desc: "Reading the spec from your Word document",
-      live: "Parsing the questionnaire (.docx)…" },
-    { at: 3, name: "Walking the survey", model: "Browser Rendering",
-      desc: "Clicking through every page, capturing text + screenshots + PDF",
-      live: "A headless browser is clicking through every survey page…" },
-    { at: 93, name: "DeepSeek comparison", model: "deepseek-v4-pro",
-      desc: "Reads each page vs the spec (automatic · ~1¢/run)",
-      live: "DeepSeek (deepseek-v4-pro) is reading each page against the spec…" },
-    { at: 118, name: "Grok comparison", model: "grok-4.3",
-      desc: "Independent second read (xAI · automatic)",
-      live: "Grok (grok-4.3) is running its independent second read…" },
-    { at: 140, name: "Claude comparison", model: "claude-sonnet-4-6",
-      desc: "Independent third read (Anthropic · automatic when an Anthropic key is set)",
-      live: "Claude Sonnet 4.6 is running its independent third read…" },
-    { at: 163, name: "Verifying quotes", model: null,
-      desc: "Every finding must quote both sides verbatim or it's dropped",
-      live: "Verifying quotes — findings that don't match verbatim get dropped…" },
-    { at: 180, name: "Building report", model: null,
-      desc: "Cross-model consensus + scorecard + page evidence",
-      live: "Assembling the report and scorecard…" }
+    { role: "parse", name: "Parsing questionnaire", model: null,
+      desc: "Reading the spec from your Word document" },
+    { role: "walk", name: "Walking the survey", model: "Browser Rendering",
+      desc: "Clicking through every page, capturing text + screenshots + PDF" },
+    { role: "deepseek", name: "DeepSeek comparison", model: "deepseek-v4-pro",
+      desc: "Reads each page vs the spec (in-Worker · automatic)" },
+    { role: "grok", name: "Grok comparison", model: "grok-4.3",
+      desc: "Independent second read (xAI · in-Worker · automatic)" },
+    { role: "claude", name: "Claude comparison", model: "claude-sonnet-4-6",
+      desc: "Independent third read (Anthropic · in-Worker when an Anthropic key is set)" },
+    { role: "verify", name: "Verifying quotes", model: null,
+      desc: "Every finding must quote both sides verbatim or it's dropped" },
+    { role: "report", name: "Building report", model: null,
+      desc: "Cross-model consensus + scorecard + page evidence" }
   ];
   /* Fallback step, appended after the automatic pipeline. Only relevant when
      the deployment has no Anthropic key: the run then parks in "awaiting"
@@ -1044,29 +329,28 @@
 
   /* ----- verbose stage tracker (status card + overlay) -----
      Every row is real DOM text (marker glyph, name, model badge, description),
-     so the tracker can never render as an empty strip. The active row gets a
-     spinner ring + bold name; done rows a green check; pending rows a muted
-     circle; the manual Claude step a highlighted "your turn" row. */
-
-  /* Estimated index of the stage currently running, from TRACK timings. */
-  function estStage() {
-    if (!startedAt) return 0;
-    var e = elapsedSec();
-    var cur = 0;
-    for (var i = 0; i < TRACK.length; i++) { if (e >= TRACK[i].at) cur = i; }
-    return cur;
-  }
+     so the tracker can never render as an empty strip. Row states are a pure
+     function of the REAL run status:
+       processing → every in-Worker stage is "run" (running); we do NOT fake a
+                    current stage because the status API gives no sub-stage signal.
+       awaiting   → the interim report is live, so walk + DeepSeek + Grok + verify
+                    + report are done, but the in-Worker Claude leg was skipped, so
+                    it renders PENDING (not done) and the fallback runner is "you".
+       complete   → all stages done. */
 
   function trackRowHtml(stage, st) {
     var marker;
     if (st === "done") marker = '<span class="trk-mark trk-mark-done" aria-hidden="true">✓</span>';
     else if (st === "cur") marker = '<span class="trk-mark trk-mark-spin" aria-hidden="true"></span>';
+    else if (st === "run") marker = '<span class="trk-mark trk-mark-run" aria-hidden="true">●</span>';
     else if (st === "you") marker = '<span class="trk-mark trk-mark-you" aria-hidden="true">▶</span>';
     else marker = '<span class="trk-mark trk-mark-pend" aria-hidden="true">○</span>';
     var badge = stage.model
       ? '<span class="trk-model">' + esc(stage.model) + '</span>'
       : '<span class="trk-model trk-nomodel">no model</span>';
-    var srState = st === "done" ? "done" : (st === "cur" ? "in progress" : (st === "you" ? "waiting for you" : "queued"));
+    var srState = st === "done" ? "done"
+      : (st === "cur" || st === "run") ? "in progress"
+      : (st === "you" ? "waiting for you" : "queued");
     return '<li class="trk-row is-' + st + '">' + marker +
       '<span class="trk-body">' +
         '<span class="trk-top"><span class="trk-name">' + esc(stage.name) + '</span>' + badge +
@@ -1082,13 +366,16 @@
       for (i = 0; i < TRACK.length; i++) rows += trackRowHtml(TRACK[i], "done");
       rows += trackRowHtml(CLAUDE_STEP, "done");
     } else if (currentState === "awaiting") {
-      for (i = 0; i < TRACK.length; i++) rows += trackRowHtml(TRACK[i], "done");
+      /* Interim report is live: everything ran EXCEPT the in-Worker Claude leg,
+         which is skipped without an Anthropic key — render it pending, not done. */
+      for (i = 0; i < TRACK.length; i++) {
+        rows += trackRowHtml(TRACK[i], TRACK[i].role === "claude" ? "pending" : "done");
+      }
       rows += trackRowHtml(CLAUDE_STEP, "you");
     } else if (currentState === "processing") {
-      var cur = estStage();
-      for (i = 0; i < TRACK.length; i++) {
-        rows += trackRowHtml(TRACK[i], i < cur ? "done" : (i === cur ? "cur" : "pending"));
-      }
+      /* No per-stage signal from the status API — the whole in-Worker pipeline
+         is executing. Show every stage as running rather than guessing one. */
+      for (i = 0; i < TRACK.length; i++) rows += trackRowHtml(TRACK[i], "run");
       rows += trackRowHtml(CLAUDE_STEP, "pending");
     } else {
       /* No live run (or failed): show the full queue, all pending — never blank. */
@@ -1102,17 +389,18 @@
   function trackerShellHtml() {
     return '<div class="track-wrap">' +
       '<div class="track-head"><span class="track-title">Pipeline</span>' +
-      '<span class="badge-est">estimated</span></div>' +
+      '<span class="badge-est">live</span></div>' +
       '<ol class="track" id="cardTrack"></ol>' +
       '</div>';
   }
 
-  /* Re-render both tracker containers, but only when the state/stage actually
-     changed (keyed via data-key) so the spinner animation isn't restarted
-     every second. A freshly re-created container has no data-key and is
-     always filled — the tracker cannot be left empty. */
+  /* Re-render both tracker containers, but only when the state actually changed
+     (keyed via data-key) so nothing flickers between polls. Row states depend
+     only on currentState now (no wall-clock stage), so the key is the state. A
+     freshly re-created container has no data-key and is always filled — the
+     tracker cannot be left empty. */
   function updateTrackers() {
-    var key = currentState + ":" + (currentState === "processing" ? estStage() : "");
+    var key = String(currentState);
     var ids = ["ovTrack", "cardTrack"];
     for (var i = 0; i < ids.length; i++) {
       var box = document.getElementById(ids[i]);
@@ -1154,9 +442,12 @@
   /* ----- form behaviors ----- */
 
   langSelect.addEventListener("change", function () {
-    surveyUrlInput.value = langSelect.value === "en"
+    var surveyHref = langSelect.value === "en"
       ? "/survey.html"
       : "/survey.html?lang=" + langSelect.value;
+    surveyUrlInput.value = surveyHref;
+    var heroPreview = document.getElementById("heroPreview");
+    if (heroPreview) heroPreview.href = surveyHref;
   });
 
   useSample.addEventListener("change", function () {
@@ -1179,8 +470,10 @@
     return m + ":" + (r < 10 ? "0" : "") + r;
   }
 
+  /* One honest processing line — no per-stage guess (the status API reports
+     milestones, not sub-stage progress). */
   function stageText() {
-    var text = TRACK[estStage()].live;
+    var text = "Running the pipeline server-side — browser walk, the model legs, then quote verification.";
     if (failStreak >= 3) text += " (status endpoint slow to respond — still trying)";
     return text;
   }
@@ -1276,7 +569,7 @@
       '</div>' +
       trackerShellHtml() +
       '<p class="trivia-line" id="triviaLine" aria-hidden="true">' + esc(TRIVIA[triviaIdx]) + '</p>' +
-      '<p class="state-note">Leave this tab open — status refreshes every 5 seconds. Stage timings are estimates: the status API doesn\'t report per-stage progress.</p>'
+      '<p class="state-note">Leave this tab open — status refreshes every 5 seconds. The status API reports milestones (processing → complete), not per-stage progress, so the tracker advances as your run reaches each real checkpoint.</p>'
     );
     updateTrackers();
   }
@@ -1321,8 +614,12 @@
     if (state === currentState) return;
     currentState = state;
     /* Latch terminal states: once complete/failed, poll() must not revert the
-       UI on a late/out-of-order response for this same run. */
+       UI on a late/out-of-order response for this same run. The awaiting-claude
+       milestone gets a weaker, one-directional guard (reachedAwaiting) so a late
+       "processing" response can't drag it back to the spinner, while still
+       allowing it to advance to complete/failed. */
     if (state === "complete" || state === "failed") reachedTerminal = true;
+    if (state === "awaiting") reachedAwaiting = true;
     if (state === "processing") {
       renderProcessing();
     } else if (state === "awaiting") {
@@ -1389,7 +686,12 @@
         if (reachedTerminal) return; /* terminal state already latched — ignore late polls */
         captureLegs(data); /* record which legs reported, for the awaiting/complete copy */
         var st = data && data.status;
-        if (st === "processing") { failStreak = 0; setState("processing"); }
+        if (st === "processing") {
+          failStreak = 0;
+          /* Ordering guard: don't regress a run that already reached awaiting
+             back to "processing" on a late/out-of-order response. */
+          if (!reachedAwaiting) setState("processing");
+        }
         else if (st === "awaiting-claude") { failStreak = 0; setState("awaiting"); }
         else if (st === "complete") { failStreak = 0; setState("complete"); }
         else if (st === "failed") { failStreak = 0; setState("failed", data && data.error); }
@@ -1676,6 +978,7 @@
     startedAt = 0;
     failStreak = 0;
     reachedTerminal = false;
+    reachedAwaiting = false;
     reportedLegs = [];
     runDegraded = false;
     triviaLastAt = 0;

@@ -16,6 +16,11 @@
   "workflows": [
     { "name": "survey-qa-run", "binding": "RUN_WORKFLOW", "class_name": "RunWorkflow" }
   ],
+  // NOTE FOR CLONERS: the store_id below and CF_AIG_ACCOUNT_ID / CF_AIG_GATEWAY_ID
+  // near the bottom are the original author's Cloudflare account-specific identifiers.
+  // They are identifiers, not secrets — but a fresh clone will NOT deploy until you
+  // replace them with your own (your Secrets Store id, your AI Gateway account id +
+  // gateway name). See "Deploy your own instance" in README.md.
   "secrets_store_secrets": [
     {
       "binding": "DEEPSEEK_API_KEY",

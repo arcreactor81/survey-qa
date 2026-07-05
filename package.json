@@ -10,12 +10,12 @@
     "dev": "wrangler dev"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "latest",
-    "@cloudflare/puppeteer": "latest",
+    "@anthropic-ai/sdk": "^0.109.0",
+    "@cloudflare/puppeteer": "^1.1.0",
     "fflate": "^0.8.2"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "latest",
+    "@cloudflare/workers-types": "^4.20260701.1",
     "docx": "^9.0.2",
     "typescript": "^5.6.0",
     "wrangler": "^4.106.0"

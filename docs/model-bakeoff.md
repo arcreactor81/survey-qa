@@ -58,3 +58,21 @@ Conclusions:
 - **gpt-oss-120b is the weakest surviving leg (8.8) and has no better zero-key `@cf` replacement** (kimi
   failed; qwen ~7; mistral 8-but-10-FP). Since API keys are not a differentiator for this product, the
   cleaner roster is **DeepSeek + Gemini 2.5 Flash + Claude(Sonnet-4.6)**, retiring gpt-oss.
+
+## Round 4 — 2026-07-04 — Gemini vs Grok, and the final automatic roster
+
+Round 3 recommended retiring gpt-oss and closing the roster at DeepSeek + a third keyed leg + Claude
+Sonnet-4.6. Two API-keyed third-leg candidates were then evaluated head-to-head (thinking ON, routed
+through the Cloudflare AI Gateway) across the same six-language seeded manifest:
+
+| Candidate | Recall (6 langs) | FP | Latency | Notes |
+|---|---|---|---|---|
+| **Grok 4.3** (`reasoning_effort: medium`) | **10/10 all langs** | ~1.2 | normal | tuning low→medium lifted 9→10; cleanest FP of the keyed legs |
+| Gemini 2.5 Flash (`reasoning_effort: medium`) | ~9 (noisy) | higher | normal | plateaued at 9 with more false-positive noise |
+| Gemini 3 Flash (preview) | 10/10 | — | **~10× slower (~156 s/leg)** | perfect recall but preview instability + latency disqualifying |
+
+**Decision (final roster, locked 5 Jul 2026):** DeepSeek v4-pro + **Grok 4.3 (medium)** + Claude
+Sonnet-4.6 — all run automatically in-Worker, routed through the AI Gateway. **Grok replaces Gemini** as
+the third leg (10/10 at usable latency, lowest FP). **gpt-oss and Gemini are retired but kept
+inert-and-re-enablable** (their legs + `wrangler.jsonc` vars remain, gated off), so the roster can be
+re-benched without code changes.

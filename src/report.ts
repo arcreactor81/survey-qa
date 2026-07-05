@@ -1,19 +1,20 @@
 // HTML report builder for survey-qa runs.
-// Produces a self-contained HTML document (inline CSS; the only external
-// resource is the Google Fonts stylesheet) from a RunReport. All user/model-
-// derived strings are HTML-escaped via esc().
+// Produces a self-contained HTML document (inline CSS; fonts self-hosted at
+// /fonts/ with a strong fallback stack so a saved/offline report still reads).
+// All user/model-derived strings are HTML-escaped via esc().
 //
-// Three model legs feed a report: DeepSeek (deepseek-v4-pro), Grok (grok-4.3)
-// and Claude (claude-sonnet-4-6) all run automatically in-Worker, with every
-// call routed through the Cloudflare AI Gateway. When no Anthropic key is
-// provisioned, the optional local runner (runner/claude-runner.mjs) is the
-// fallback: it runs the Claude leg on the user's Claude subscription ($0)
-// and POSTs findings back.
+// Three model legs feed a report: DeepSeek (deepseek-v4-pro) and Grok (grok-4.3)
+// always run in-Worker; Claude (claude-sonnet-4-6) runs in-Worker when an
+// Anthropic key is provisioned, with every call routed through the Cloudflare AI
+// Gateway. When no Anthropic key is set, the optional local runner
+// (runner/claude-runner.mjs) is the fallback: it runs the Claude leg on the
+// user's Claude subscription ($0) and POSTs findings back.
 //
-// Design language: editorial-technical consulting deliverable (Deep Teal Terminal).
-//   ink #0F2422 · cool paper #F1F6F5 · white cards · accent #096658
-//   success #156B3F · fail #A63220 · slate #435659 · borders #D8E2E0
-//   Space Grotesk (display, Segoe UI fallback) for headings, system-ui for body.
+// Design: the shared "Editorial Medical" system (src/theme-css.ts) — warm paper
+// / near-black canvas, Instrument Serif display (italic <em> accents), DM Sans
+// body, JetBrains Mono technical labels. Light/dark via prefers-color-scheme +
+// a manual [data-theme] toggle; the dark palette is scoped to @media screen so
+// print always renders on paper.
 
 import type {
   Finding,
@@ -23,6 +24,12 @@ import type {
   RunReport,
   ScorecardEntry,
 } from "./types";
+import { THEME_CSS } from "./theme-css";
+
+/** When the hardcoded provider $/MTok rates below were last set. Rendered on the
+ *  economics card so the cost estimate is honestly dated. Rates are overridable
+ *  per-deploy via env (see src/types.ts CLAUDE/DEEPSEEK/GROK_*_USD_PER_MTOK). */
+const RATES_AS_OF = "5 Jul 2026";
 
 /** Escape a value for safe interpolation into HTML text or attributes. */
 function esc(value: string | number | null | undefined): string {
@@ -173,46 +180,93 @@ const CONFIDENCE_LABEL: Record<Confidence, string> = {
 };
 
 const CONFIDENCE_BASIS: Record<Confidence, string> = {
-  high: "Flagged by 2 or more models and the evidence quotes were verbatim-verified in both the questionnaire and the rendered page.",
+  high: "Flagged by 2 or more distinct models whose evidence quotes were EACH verbatim-verified in both the questionnaire and the rendered page.",
   medium:
-    "Either flagged by a single model with verbatim-verified quotes, or flagged by 2+ models without verbatim verification.",
+    "Either flagged by a single model with verbatim-verified quotes, or flagged by 2+ models without two independently verified quotes.",
   low: "Flagged by a single model and the evidence quotes were not verbatim-verified.",
 };
 
-/** Grouping key: same question + category when a questionId is present;
- *  otherwise fall back to page + category. The questionId is lower-cased the
- *  same way verify.ts matches it, so two models emitting "Q4" and "q4" for the
- *  same discrepancy group into ONE consensus issue instead of splitting into
- *  duplicate cards (and losing the multi-model agreement signal). */
-function issueKey(f: Finding): string {
-  return f.questionId !== null && f.questionId !== ""
-    ? `q:${f.questionId.toLowerCase()}\u0000${f.category}`
-    : `p:${f.pageIndex}\u0000${f.category}`;
+/** Normalized fragment of a quote: whitespace-collapsed, lower-cased (matching
+ *  verify.ts's case-insensitive matching), capped so trivial tail differences
+ *  don't split one defect. Used to tell distinct defects apart on a page. */
+function normFrag(s: string): string {
+  return s.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 48);
 }
 
-function deriveConfidence(consensus: number, verified: boolean): Confidence {
-  if (consensus >= 2 && verified) return "high";
-  if (verified || consensus >= 2) return "medium";
+/** A defect's identity independent of questionId: the spec + site quote it
+ *  cites. Two findings with the same signature on the same page+category are the
+ *  same discrepancy even if one carries a questionId and the other does not. */
+function quoteSig(f: Finding): string {
+  return `${normFrag(f.specQuote)}${normFrag(f.siteQuote)}`;
+}
+
+/** High requires the corroboration to be REAL: 2+ DISTINCT models each with a
+ *  verbatim-verified quote — matching CONFIDENCE_BASIS.high. A single verified
+ *  model, or a 2+-model agreement without two independently verified quotes, is
+ *  Medium; a lone unverified flag is Low. */
+function deriveConfidence(consensus: number, verifiedModels: number): Confidence {
+  if (verifiedModels >= 2) return "high";
+  if (verifiedModels >= 1 || consensus >= 2) return "medium";
   return "low";
 }
 
 /** Merge the run's findings (up to one per model per real discrepancy) into
- *  a de-duplicated list of issues, sorted by confidence then severity. */
+ *  a de-duplicated list of issues, sorted by confidence then severity.
+ *
+ *  Grouping is two-pass so that:
+ *   - two DISTINCT null-questionId defects of the same category on one page stay
+ *     separate cards (keyed by their quote signature, not collapsed together), and
+ *   - the SAME defect reported once with a questionId and once without groups into
+ *     ONE consensus card (the null-qid finding joins the qid group when their
+ *     page + category + quote signature match), preserving the multi-model signal.
+ *  questionId comparison stays case-insensitive, as verify.ts matches it. */
 function buildIssues(run: RunReport): Issue[] {
   const groups = new Map<string, Finding[]>();
-  for (const f of run.findings) {
-    const key = issueKey(f);
+  // page+category+quoteSig -> the group key that already owns that defect, so a
+  // later null-qid finding for the same defect joins the right (possibly qid) group.
+  const sigToKey = new Map<string, string>();
+
+  const hasQid = (f: Finding): boolean => f.questionId !== null && f.questionId !== "";
+  const sigOf = (f: Finding): string => `${f.pageIndex} ${f.category} ${quoteSig(f)}`;
+  const push = (key: string, f: Finding): void => {
     const bucket = groups.get(key);
     if (bucket) bucket.push(f);
     else groups.set(key, [f]);
+  };
+
+  // Pass 1: findings WITH a questionId group by question + category. Register
+  // each group's page+category+quote signature so a matching null-qid finding
+  // can attach to it in pass 2.
+  for (const f of run.findings) {
+    if (!hasQid(f)) continue;
+    const key = `q:${(f.questionId as string).toLowerCase()} ${f.category}`;
+    push(key, f);
+    const sk = sigOf(f);
+    if (!sigToKey.has(sk)) sigToKey.set(sk, key);
+  }
+
+  // Pass 2: findings WITHOUT a questionId. Join an existing group (qid or
+  // null-qid) that describes the same defect; otherwise start their own card,
+  // keyed by the quote signature so distinct null-qid defects don't merge.
+  for (const f of run.findings) {
+    if (hasQid(f)) continue;
+    const sk = sigOf(f);
+    let key = sigToKey.get(sk);
+    if (!key) {
+      key = `p:${sk}`;
+      sigToKey.set(sk, key);
+    }
+    push(key, f);
   }
 
   const issues: Issue[] = [];
   for (const [key, members] of groups) {
-    const flaggedBy = CANONICAL_MODELS.filter((m) =>
-      members.some((f) => f.model === m)
-    );
+    const flaggedBy = CANONICAL_MODELS.filter((m) => members.some((f) => f.model === m));
     const verified = members.some((f) => f.quoteVerified);
+    // Distinct models whose OWN contributing finding passed verbatim verification.
+    const verifiedModels = CANONICAL_MODELS.filter((m) =>
+      members.some((f) => f.model === m && f.quoteVerified)
+    );
     // Prefer a verified finding as the evidence lead so the provenance shown
     // is the one that passed verbatim verification; else the highest severity.
     const lead =
@@ -225,7 +279,7 @@ function buildIssues(run: RunReport): Issue[] {
       (best, f) => (SEVERITY_RANK[f.severity] < SEVERITY_RANK[best] ? f.severity : best),
       "low"
     );
-    const confidence = deriveConfidence(flaggedBy.length, verified);
+    const confidence = deriveConfidence(flaggedBy.length, verifiedModels.length);
     issues.push({
       key,
       questionId: lead.questionId,
@@ -266,12 +320,16 @@ function statCard(label: string, value: string, sub: string): string {
 function overviewSection(run: RunReport, models: ModelName[], issues: Issue[]): string {
   const highConf = issues.filter((i) => i.confidence === "high").length;
   const consensus = issues.filter((i) => i.flaggedBy.length >= 2).length;
-  // Partial = not every ACTIVE leg ran. Measured against the 3-leg active
-  // roster, not the 5 canonical models — otherwise every clean 3-leg run is
-  // wrongly flagged partial (retired legs never run). A degraded run missing an
-  // active leg still reads as partial.
+
+  // The report page is served for BOTH the terminal "complete" status and the
+  // interim "awaiting-claude" status (workflow.ts sets status = claude ?
+  // "complete" : "awaiting-claude"). So a missing in-Worker Claude stat means
+  // the run is genuinely still in progress (awaiting the fallback Claude runner);
+  // a present Claude stat means the run is terminal. Only an in-progress run may
+  // say "so far" — a completed run never does, even if a leg was unavailable.
+  const inProgress = !run.stats.some((s) => s.model === "claude");
   const activeRan = ACTIVE_MODELS.filter((m) => models.includes(m)).length;
-  const partial = activeRan < ACTIVE_MODELS.length;
+  const missingActive = activeRan < ACTIVE_MODELS.length;
 
   const cards = [
     statCard(
@@ -282,7 +340,7 @@ function overviewSection(run: RunReport, models: ModelName[], issues: Issue[]): 
     statCard(
       "High confidence",
       fmtInt(highConf),
-      "2+ models, verbatim-verified"
+      "≥2 models, each verbatim-verified"
     ),
     statCard(
       "Multi-model consensus",
@@ -317,9 +375,18 @@ function overviewSection(run: RunReport, models: ModelName[], issues: Issue[]): 
     })
     .join("\n");
 
-  const partialNote = partial
-    ? `<span class="sub">${activeRan} of ${ACTIVE_MODELS.length} model legs run so far</span>`
-    : "";
+  let partialNote = "";
+  if (inProgress) {
+    // Genuinely mid-run: the Claude leg is still pending (fallback runner).
+    partialNote = `<span class="sub">${activeRan} of ${ACTIVE_MODELS.length} model legs run so far</span>`;
+  } else if (missingActive) {
+    // Terminal but a leg didn't report (a degraded run, or a pre-Grok historical
+    // run). Never "so far" — nothing more is coming.
+    const gap = ACTIVE_MODELS.length - activeRan;
+    partialNote = `<span class="sub">${activeRan} of ${ACTIVE_MODELS.length} legs reported; ${
+      gap === 1 ? "one leg was" : `${gap} legs were`
+    } unavailable this run</span>`;
+  }
 
   return `
   <section>
@@ -452,7 +519,7 @@ function statsSection(run: RunReport): string {
   return `
   <section>
     <div class="kicker">Economics</div>
-    <h2>Model comparison</h2>
+    <h2>Model comparison <span class="rates-stamp" title="When the hardcoded provider list prices were last set">rates as of ${esc(RATES_AS_OF)}</span></h2>
     <div class="table-scroll">
       <table>
         <thead>
@@ -463,6 +530,7 @@ function statsSection(run: RunReport): string {
         </tbody>
       </table>
     </div>
+    <p class="rates-note muted small">Cost is an estimate from provider list prices as of ${esc(RATES_AS_OF)} (per-deploy overridable via env $/MTok rates); Claude at &ldquo;$0 &middot; subscription&rdquo; is the flat-rate fallback runner, not a metered API charge.</p>
   </section>`;
 }
 
@@ -696,6 +764,7 @@ export function buildHtmlReport(run: RunReport): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <script>
 /* Theme bootstrap — runs before first paint to avoid a flash of the wrong theme. */
 (function () {
@@ -712,647 +781,195 @@ export function buildHtmlReport(run: RunReport): string {
 })();
 </script>
 <title>Survey QA &mdash; ${esc(run.runId)}</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<link rel="preload" href="/fonts/instrument-serif-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/dm-sans-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/jetbrains-mono-400.woff2" as="font" type="font/woff2" crossorigin>
 <style>
-  :root {
-    color-scheme: light;
-    --ink: #0F2422;
-    --paper: #F1F6F5;
-    --card: #FFFFFF;
-    --accent: #096658;
-    --accent-dark: #07564A;
-    --ok: #156B3F;
-    --bad: #A63220;
-    --slate: #435659;
-    --border: #D8E2E0;
-    --text: #14282A;
-    --muted: #435659;
-    --band-bg: #071012;
-    --band-title: #FFFFFF;
-    --band-text: #DCE7E5;
-    --band-muted: #85999B;
-    --band-dt: #8FA6A2;
-    --band-link: #7CE8C9;
-    --notice-bg: rgba(124, 232, 201, 0.1);
-    --notice-border: rgba(124, 232, 201, 0.45);
-    --notice-text: #C7E8DC;
-    --notice-code: #FFFFFF;
-    --tint: #E5EEEC;
-    --table-border: #E2EAE8;
-    --row-hover: #F0F6F4;
-    --mark-missed: #5A716D;
-    --chip-cat-bg: #E5EEEC;
-    --bad-bg: #FBE9E6;
-    --sev-med-bg: #F7EFD3;
-    --sev-med-text: #674D0C;
-    --sev-low-bg: #E6EDEB;
-    --ok-bg: #DDF2E4;
-    --badge-muted-bg: #E5EEEC;
-    --spec-bg: #EDF5EF;
-    --spec-border: #CBE0D2;
-    --site-bg: #FBECEA;
-    --site-border: #EDCBC5;
-    --shot-bg: #E9F0EE;
-    --note-text: #435659;
-    --note-bg: #EDF4F2;
-    --note-border: #CFE0DC;
-    --serif: "Space Grotesk", "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
-    --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-    --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-    --shadow: 0 1px 2px rgba(7, 16, 18, 0.05), 0 10px 28px rgba(7, 16, 18, 0.07);
-  }
-  /* Dark palette — scoped to screen so print always renders the light theme. */
-  @media screen {
-    html[data-theme="dark"] {
-      color-scheme: dark;
-      --ink: #EDF5F3;
-      --paper: #0B1416;
-      --card: #101E21;
-      --accent: #35D3AC;
-      --accent-dark: #5FE0BF;
-      --ok: #74D389;
-      --bad: #F98576;
-      --slate: #8FA6A2;
-      --border: #24363A;
-      --text: #DCE7E5;
-      --muted: #93A9A5;
-      --band-bg: #060D0F;
-      --band-title: #EDF5F3;
-      --band-text: #DCE7E5;
-      --band-muted: #7E9490;
-      --band-dt: #93A9A5;
-      --band-link: #7CE8C9;
-      --notice-bg: rgba(53, 211, 172, 0.12);
-      --notice-border: rgba(53, 211, 172, 0.4);
-      --notice-text: #B8E6D2;
-      --notice-code: #EDF5F3;
-      --tint: #122023;
-      --table-border: #24363A;
-      --row-hover: rgba(255, 255, 255, 0.04);
-      --mark-missed: #8FA6A2;
-      --chip-cat-bg: rgba(143, 166, 162, 0.16);
-      --bad-bg: rgba(249, 133, 118, 0.16);
-      --sev-med-bg: rgba(242, 206, 114, 0.15);
-      --sev-med-text: #F2CE72;
-      --sev-low-bg: rgba(143, 166, 162, 0.14);
-      --ok-bg: rgba(116, 211, 137, 0.14);
-      --badge-muted-bg: rgba(143, 166, 162, 0.16);
-      --spec-bg: rgba(76, 175, 125, 0.12);
-      --spec-border: rgba(76, 175, 125, 0.38);
-      --site-bg: rgba(224, 100, 86, 0.12);
-      --site-border: rgba(224, 100, 86, 0.4);
-      --shot-bg: #0F1B1E;
-      --note-text: #B4C8C3;
-      --note-bg: rgba(143, 166, 162, 0.12);
-      --note-border: rgba(143, 166, 162, 0.32);
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 10px 28px rgba(0, 0, 0, 0.5);
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font-family: var(--sans);
-    background: var(--paper);
-    color: var(--text);
-    line-height: 1.55;
-    font-size: 14px;
-  }
-  .wrap { max-width: 1140px; margin: 0 auto; padding: 0 28px; }
-  a { color: var(--accent); }
+${THEME_CSS}
 
-  /* ---------- header band ---------- */
-  .band {
-    background: var(--band-bg);
-    color: var(--band-text);
-    padding: 44px 0 40px;
-    border-bottom: 4px solid var(--accent);
-  }
-  .brand-row { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
-  .brand {
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 34px;
-    letter-spacing: 0.2px;
-    margin: 0;
-    color: var(--band-title);
-  }
-  .tagline {
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--band-muted);
-  }
-  .band .meta {
-    display: grid;
-    grid-template-columns: 150px 1fr;
-    gap: 5px 18px;
-    font-size: 13px;
-    margin-top: 26px;
-    max-width: 780px;
-  }
-  .band .meta dt {
-    color: var(--band-dt);
-    font-weight: 600;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    padding-top: 2px;
-  }
-  .band .meta dd { margin: 0; word-break: break-all; font-variant-numeric: tabular-nums; }
-  .band .meta a { color: var(--band-link); text-decoration: none; }
-  .band .meta a:hover { text-decoration: underline; }
-  .notice {
-    margin-top: 22px;
-    background: var(--notice-bg);
-    color: var(--notice-text);
-    border: 1px solid var(--notice-border);
-    border-radius: 10px;
-    padding: 12px 16px;
-    font-size: 13px;
-    max-width: 780px;
-  }
-  .notice code { display: block; margin-top: 6px; color: var(--notice-code); word-break: break-all; }
+/* ---------- report-page components ---------- */
+.masthead { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.masthead-text { min-width: 0; }
+.brand-row { align-items: baseline; }
+.brand { font-size: 34px; }
+.band .meta {
+  display: grid; grid-template-columns: 150px 1fr; gap: 5px 18px;
+  font-size: 13px; margin-top: 24px; max-width: 780px;
+}
+.band .meta dt {
+  color: var(--band-dt); font-family: var(--mono); font-weight: 400; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.12em; padding-top: 2px;
+}
+.band .meta dd { margin: 0; word-break: break-all; font-variant-numeric: tabular-nums; color: var(--band-text); }
+.band .meta a { color: var(--band-link); text-decoration: none; }
+.band .meta a:hover { text-decoration: underline; }
+.notice {
+  margin-top: 22px; background: var(--notice-bg); color: var(--notice-text);
+  border: 1px solid var(--notice-border); border-radius: var(--radius-sm);
+  padding: 12px 16px; font-size: 13px; max-width: 780px;
+}
+.notice code { display: block; margin-top: 6px; color: var(--notice-code); word-break: break-all; }
 
-  /* ---------- layout ---------- */
-  main { padding: 30px 0 56px; }
-  section {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 26px 30px 28px;
-    margin-bottom: 26px;
-    box-shadow: var(--shadow);
-  }
-  .kicker {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: var(--accent);
-    margin-bottom: 4px;
-  }
-  h2 {
-    margin: 0 0 18px;
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 24px;
-    color: var(--ink);
-    letter-spacing: 0.1px;
-  }
-  h3 {
-    margin: 26px 0 10px;
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 17px;
-    color: var(--ink);
-  }
-  .sub { font-family: var(--sans); font-size: 12px; font-weight: 400; color: var(--slate); margin-left: 10px; }
-  .mono { font-family: var(--mono); }
-  .small { font-size: 11px; }
-  .muted { color: var(--muted); }
-  .num { font-variant-numeric: tabular-nums; }
+main { padding: 30px 0 56px; position: relative; z-index: 1; }
+section {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 26px 30px 28px; margin-bottom: 26px; box-shadow: var(--shadow);
+}
 
-  /* ---------- KPI row ---------- */
-  .kpi-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
-    gap: 16px;
-    margin-bottom: 26px;
-  }
-  .kpi {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px 18px 14px;
-    box-shadow: var(--shadow);
-  }
-  .kpi-label {
-    font-size: 10.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.13em;
-    color: var(--slate);
-    margin-bottom: 6px;
-  }
-  .kpi-value {
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 34px;
-    line-height: 1.05;
-    color: var(--ink);
-    font-variant-numeric: tabular-nums;
-  }
-  .kpi-denom { font-size: 20px; color: var(--slate); font-weight: 400; }
-  .kpi-sub { font-size: 11.5px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+/* KPI row */
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 16px; margin-bottom: 26px; }
+.kpi { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px 14px; box-shadow: var(--shadow-sm); }
+.kpi-label { font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.12em; color: var(--slate); margin-bottom: 8px; }
+.kpi-value { font-family: var(--serif); font-weight: 400; font-size: 38px; line-height: 1.02; letter-spacing: -0.01em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.kpi-sub { font-size: 11.5px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
 
-  /* ---------- tables ---------- */
-  .table-scroll { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
-  thead th {
-    font-size: 10.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.11em;
-    color: var(--slate);
-    border-bottom: 2px solid var(--border);
-    white-space: nowrap;
-    background: transparent;
-  }
-  tbody tr:hover { background: var(--row-hover); }
-  td.num, th.num { font-variant-numeric: tabular-nums; }
-  .center { text-align: center; }
-  .err { color: var(--bad); font-weight: 700; }
-  .mark-caught { color: var(--ok); font-weight: 700; font-size: 15px; }
-  .mark-missed { color: var(--mark-missed); font-weight: 700; font-size: 15px; }
-  tfoot .summary-row td {
-    background: var(--tint);
-    border-top: 2px solid var(--border);
-    border-bottom: none;
-    font-weight: 600;
-    color: var(--ink);
-  }
-  .note-cell { max-width: 340px; }
+/* tables — report extras (base table styling is shared) */
+.err { color: var(--bad); font-weight: 600; }
+.mark-caught { color: var(--green-text); font-weight: 600; font-size: 15px; }
+.mark-missed { color: var(--mark-missed); font-weight: 600; font-size: 15px; }
+tfoot .summary-row td { background: var(--tint); border-top: 2px solid var(--border); border-bottom: none; font-weight: 600; color: var(--ink); }
+.note-cell { max-width: 340px; }
+.rates-stamp {
+  margin-left: 10px; font-family: var(--mono); font-size: 10.5px; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-pill); padding: 2px 10px; vertical-align: middle; white-space: nowrap;
+}
+.rates-note { margin: 12px 0 0; }
 
-  /* ---------- chips & badges ---------- */
-  .chip {
-    display: inline-block;
-    padding: 2px 10px;
-    border-radius: 999px;
-    font-size: 10.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    white-space: nowrap;
-  }
-  .chip-cat { background: var(--chip-cat-bg); color: var(--slate); }
-  .sev-high { background: var(--bad-bg); color: var(--bad); }
-  .sev-medium { background: var(--sev-med-bg); color: var(--sev-med-text); }
-  .sev-low { background: var(--sev-low-bg); color: var(--slate); }
-  .badge {
-    display: inline-block;
-    padding: 2px 9px;
-    border-radius: 6px;
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    white-space: nowrap;
-  }
-  .badge-ok { background: var(--ok-bg); color: var(--ok); }
-  .badge-bad { background: var(--bad-bg); color: var(--bad); }
-  .badge-muted { background: var(--badge-muted-bg); color: var(--slate); }
+/* findings diff */
+code.quote {
+  display: block; font-family: var(--mono); font-size: 11.5px; line-height: 1.5;
+  border-radius: var(--radius-sm); padding: 8px 10px; white-space: pre-wrap; word-break: break-word;
+}
 
-  /* ---------- findings diff ---------- */
-  .findings-table .desc-cell { min-width: 240px; }
-  tr.finding-row td { border-bottom: none; }
-  tr.diff-row td { padding-top: 0; padding-bottom: 14px; }
-  tr.diff-row:hover { background: transparent; }
-  .diff {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  .diff-label {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    margin-bottom: 4px;
-  }
-  .diff-spec .diff-label { color: var(--ok); }
-  .diff-site .diff-label { color: var(--bad); }
-  code.quote {
-    display: block;
-    font-family: var(--mono);
-    font-size: 11.5px;
-    line-height: 1.5;
-    border-radius: 8px;
-    padding: 8px 10px;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .diff-spec code.quote { background: var(--spec-bg); border: 1px solid var(--spec-border); }
-  .diff-site code.quote { background: var(--site-bg); border: 1px solid var(--site-border); }
-  @media (max-width: 720px) { .diff { grid-template-columns: 1fr; } }
+/* overview: agreement strip */
+.section-lede { margin: -8px 0 16px; font-size: 12.5px; max-width: 760px; }
+.agreement { margin-top: 20px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.agree-head { font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.12em; color: var(--slate); background: var(--tint); padding: 8px 16px; border-bottom: 1px solid var(--border); }
+.agree-row { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--table-border); font-size: 13px; }
+.agree-row:last-child { border-bottom: none; }
+.agree-model { font-family: var(--serif); font-weight: 400; font-size: 16px; color: var(--ink); min-width: 92px; }
+.agree-recall { min-width: 150px; }
+.agree-flagged { color: var(--muted); }
+.agree-cost { margin-left: auto; color: var(--ink); font-weight: 600; }
 
-  /* ---------- overview: agreement strip ---------- */
-  .section-lede { margin: -8px 0 16px; font-size: 12.5px; max-width: 760px; }
-  .agreement {
-    margin-top: 20px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    overflow: hidden;
-  }
-  .agree-head {
-    font-size: 10.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.13em;
-    color: var(--slate);
-    background: var(--tint);
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-  .agree-row {
-    display: flex;
-    align-items: baseline;
-    gap: 16px;
-    flex-wrap: wrap;
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--table-border);
-    font-size: 13px;
-  }
-  .agree-row:last-child { border-bottom: none; }
-  .agree-model { font-family: var(--serif); font-weight: 600; font-size: 14px; color: var(--ink); min-width: 92px; }
-  .agree-recall { min-width: 150px; }
-  .agree-flagged { color: var(--muted); }
-  .agree-cost { margin-left: auto; color: var(--ink); font-weight: 600; }
+/* issue cards */
+.issues { display: flex; flex-direction: column; gap: 16px; }
+.issue { border: 1px solid var(--border); border-left: 4px solid var(--slate); border-radius: var(--radius); padding: 16px 18px 16px; background: var(--card); }
+.issue.conf-high { border-left-color: var(--bad); }
+.issue.conf-medium { border-left-color: var(--accent); }
+.issue.conf-low { border-left-color: var(--slate); }
+.issue-top { display: flex; align-items: flex-start; gap: 14px; }
+.issue-titlewrap { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.issue-qid { font-family: var(--mono); font-weight: 400; font-size: 13px; color: var(--accent); background: var(--chip-cat-bg); border-radius: 6px; padding: 1px 8px; white-space: nowrap; }
+.issue-title { font-family: var(--serif); font-weight: 400; font-size: 18px; letter-spacing: -0.01em; color: var(--ink); line-height: 1.3; }
+.conf-chip { display: inline-block; padding: 3px 11px; border-radius: var(--radius-pill); font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: 0.02em; white-space: nowrap; cursor: help; flex: 0 0 auto; }
+.conf-chip.conf-high { background: var(--bad-bg); color: var(--bad); }
+.conf-chip.conf-medium { background: var(--ok-bg); color: var(--green-text); }
+.conf-chip.conf-low { background: var(--badge-muted-bg); color: var(--slate); }
 
-  /* ---------- issue cards ---------- */
-  .issues { display: flex; flex-direction: column; gap: 16px; }
-  .issue {
-    border: 1px solid var(--border);
-    border-left: 4px solid var(--slate);
-    border-radius: 12px;
-    padding: 16px 18px 16px;
-    background: var(--card);
-  }
-  .issue.conf-high { border-left-color: var(--bad); }
-  .issue.conf-medium { border-left-color: var(--accent); }
-  .issue.conf-low { border-left-color: var(--slate); }
-  .issue-top { display: flex; align-items: flex-start; gap: 14px; }
-  .issue-titlewrap { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .issue-qid {
-    font-family: var(--mono);
-    font-weight: 600;
-    font-size: 13px;
-    color: var(--accent);
-    background: var(--chip-cat-bg);
-    border-radius: 6px;
-    padding: 1px 8px;
-    white-space: nowrap;
-  }
-  .issue-title { font-family: var(--serif); font-weight: 600; font-size: 16px; color: var(--ink); line-height: 1.35; }
+/* consensus */
+.consensus { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.consensus-count { font-family: var(--serif); font-weight: 400; font-size: 15px; color: var(--ink); background: var(--tint); border-radius: 6px; padding: 2px 10px; white-space: nowrap; cursor: help; }
+.mchips { display: flex; gap: 6px; flex-wrap: wrap; }
+.mchip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: var(--radius-pill); font-size: 11px; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
+.mchip.flagged { background: var(--ok-bg); color: var(--green-text); border-color: var(--spec-border); }
+.mchip.unflagged { background: transparent; color: var(--muted); border-color: var(--border); }
+.mchip .mmark { font-weight: 600; }
+.mchip.flagged .mmark { color: var(--green-text); }
+.mchip.unflagged .mmark { color: var(--mark-missed); }
+.issue-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.meta-page { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.disagree { font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.04em; color: var(--sev-med-text); background: var(--sev-med-bg); border-radius: 6px; padding: 2px 8px; cursor: help; }
 
-  .conf-chip {
-    display: inline-block;
-    padding: 3px 11px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    white-space: nowrap;
-    cursor: help;
-    flex: 0 0 auto;
-  }
-  .conf-chip.conf-high { background: var(--bad-bg); color: var(--bad); }
-  .conf-chip.conf-medium { background: var(--ok-bg); color: var(--ok); }
-  .conf-chip.conf-low { background: var(--badge-muted-bg); color: var(--slate); }
+/* provenance */
+.prov-wrap { margin-top: 14px; }
+.prov-head { font-family: var(--mono); font-size: 10px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.14em; color: var(--slate); margin-bottom: 8px; }
+.prov { display: flex; flex-direction: column; gap: 8px; }
+.prov-line { display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: start; }
+.prov-label { font-family: var(--mono); font-size: 10px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.1em; padding-top: 8px; }
+.prov-spec .prov-label { color: var(--green-text); }
+.prov-site .prov-label { color: var(--bad); }
+.prov-spec code.quote { background: var(--spec-bg); border: 1px solid var(--spec-border); }
+.prov-site code.quote { background: var(--site-bg); border: 1px solid var(--site-border); }
+.prov .absent { display: block; font-size: 12px; font-style: italic; color: var(--bad); background: var(--site-bg); border: 1px dashed var(--site-border); border-radius: var(--radius-sm); padding: 8px 10px; }
+@media (max-width: 620px) { .prov-line { grid-template-columns: 1fr; gap: 4px; } .prov-label { padding-top: 0; } }
 
-  /* consensus */
-  .consensus { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
-  .consensus-count {
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 13px;
-    color: var(--ink);
-    background: var(--tint);
-    border-radius: 6px;
-    padding: 2px 10px;
-    white-space: nowrap;
-    cursor: help;
-  }
-  .mchips { display: flex; gap: 6px; flex-wrap: wrap; }
-  .mchip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 2px 9px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 600;
-    white-space: nowrap;
-    border: 1px solid transparent;
-  }
-  .mchip.flagged { background: var(--ok-bg); color: var(--ok); border-color: var(--spec-border); }
-  .mchip.unflagged { background: transparent; color: var(--muted); border-color: var(--border); }
-  .mchip .mmark { font-weight: 700; }
-  .mchip.flagged .mmark { color: var(--ok); }
-  .mchip.unflagged .mmark { color: var(--mark-missed); }
+/* per-model detail */
+.per-model { margin-top: 14px; border-top: 1px solid var(--table-border); padding-top: 10px; }
+.per-model summary { font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; }
+.pm-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.pm-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.pm-model { font-family: var(--serif); font-weight: 400; font-size: 14px; color: var(--ink); min-width: 76px; }
+.pm-desc { color: var(--muted); flex: 1; min-width: 180px; }
 
-  .issue-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-  .meta-page { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .disagree {
-    font-size: 10.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--sev-med-text);
-    background: var(--sev-med-bg);
-    border-radius: 6px;
-    padding: 2px 8px;
-    cursor: help;
-  }
+/* appendix */
+.appendix > summary { list-style: none; cursor: pointer; }
+.appendix > summary::-webkit-details-marker { display: none; }
+.appendix-title { display: inline; margin: 0; }
+.appendix > summary::before { content: "\\25B8"; color: var(--accent); font-weight: 400; margin-right: 8px; }
+.appendix[open] > summary::before { content: "\\25BE"; }
 
-  /* provenance */
-  .prov-wrap { margin-top: 14px; }
-  .prov-head {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--slate);
-    margin-bottom: 8px;
-  }
-  .prov { display: flex; flex-direction: column; gap: 8px; }
-  .prov-line { display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: start; }
-  .prov-label {
-    font-size: 10px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    padding-top: 8px;
-  }
-  .prov-spec .prov-label { color: var(--ok); }
-  .prov-site .prov-label { color: var(--bad); }
-  .prov-spec code.quote { background: var(--spec-bg); border: 1px solid var(--spec-border); }
-  .prov-site code.quote { background: var(--site-bg); border: 1px solid var(--site-border); }
-  .prov .absent {
-    display: block;
-    font-size: 12px;
-    font-style: italic;
-    color: var(--bad);
-    background: var(--site-bg);
-    border: 1px dashed var(--site-border);
-    border-radius: 8px;
-    padding: 8px 10px;
-  }
-  @media (max-width: 620px) { .prov-line { grid-template-columns: 1fr; gap: 4px; } .prov-label { padding-top: 0; } }
+/* pages strip */
+.strip { display: flex; gap: 18px; overflow-x: auto; padding: 4px 2px 14px; }
+.page-card { flex: 0 0 320px; max-width: 320px; border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px 16px; background: var(--card); }
+.page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.page-num { font-family: var(--serif); font-weight: 400; font-size: 17px; color: var(--ink); }
+.pdf-link { margin-left: auto; font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); text-decoration: none; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; }
+.pdf-link:hover { border-color: var(--accent); }
+.shot-link { display: block; }
+img.shot { display: block; width: 100%; height: 190px; object-fit: cover; object-position: top; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--shot-bg); }
+.shot-empty { height: 190px; display: flex; align-items: center; justify-content: center; border: 1px dashed var(--border); border-radius: var(--radius-sm); background: var(--tint); text-align: center; padding: 0 14px; }
+.page-notes { font-size: 12px; color: var(--note-text); background: var(--note-bg); border: 1px solid var(--note-border); border-radius: var(--radius-sm); padding: 6px 10px; margin: 10px 0 0; }
+details { margin-top: 10px; }
+summary { cursor: pointer; font-size: 12.5px; color: var(--accent); font-weight: 600; }
+pre.captured { font-family: var(--mono); font-size: 11.5px; background: var(--tint); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; }
 
-  /* per-model detail */
-  .per-model { margin-top: 14px; border-top: 1px solid var(--table-border); padding-top: 10px; }
-  .per-model summary { font-size: 12px; font-weight: 600; color: var(--accent); cursor: pointer; }
-  .pm-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  .pm-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
-  .pm-model { font-family: var(--serif); font-weight: 600; color: var(--ink); min-width: 76px; }
-  .pm-desc { color: var(--muted); flex: 1; min-width: 180px; }
+footer { font-variant-numeric: tabular-nums; padding: 0 28px 40px; }
 
-  /* appendix */
-  .appendix > summary { list-style: none; cursor: pointer; }
-  .appendix > summary::-webkit-details-marker { display: none; }
-  .appendix-title { display: inline; margin: 0; }
-  .appendix > summary::before { content: "\\25B8"; color: var(--accent); font-weight: 700; margin-right: 8px; }
-  .appendix[open] > summary::before { content: "\\25BE"; }
-
-  /* ---------- pages strip ---------- */
-  .strip {
-    display: flex;
-    gap: 18px;
-    overflow-x: auto;
-    padding: 4px 2px 14px;
-  }
-  .page-card {
-    flex: 0 0 320px;
-    max-width: 320px;
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px 16px 16px;
-    background: var(--card);
-  }
-  .page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-  .page-num { font-family: var(--serif); font-weight: 600; font-size: 16px; color: var(--ink); }
-  .pdf-link {
-    margin-left: auto;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--accent);
-    text-decoration: none;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 2px 8px;
-  }
-  .pdf-link:hover { border-color: var(--accent); }
-  .shot-link { display: block; }
-  img.shot {
-    display: block;
-    width: 100%;
-    height: 190px;
-    object-fit: cover;
-    object-position: top;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--shot-bg);
-  }
-  .shot-empty {
-    height: 190px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px dashed var(--border);
-    border-radius: 8px;
-    background: var(--tint);
-    text-align: center;
-    padding: 0 14px;
-  }
-  .page-notes {
-    font-size: 12px;
-    color: var(--note-text);
-    background: var(--note-bg);
-    border: 1px solid var(--note-border);
-    border-radius: 8px;
-    padding: 6px 10px;
-    margin: 10px 0 0;
-  }
-  details { margin-top: 10px; }
-  summary { cursor: pointer; font-size: 12.5px; color: var(--accent); font-weight: 600; }
-  pre.captured {
-    font-family: var(--mono);
-    font-size: 11.5px;
-    background: var(--tint);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 360px;
-    overflow: auto;
-  }
-
-  /* ---------- footer ---------- */
-  footer {
-    text-align: center;
-    font-size: 12px;
-    color: var(--slate);
-    padding-bottom: 40px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* ---------- theme toggle ---------- */
-  .theme-toggle {
-    position: fixed;
-    top: 14px;
-    right: 14px;
-    z-index: 260;
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 50%;
-    background: var(--card);
-    box-shadow: var(--shadow);
-    font-size: 17px;
-    line-height: 1;
-    cursor: pointer;
-  }
-  .theme-toggle:hover { border-color: var(--accent); }
-  .theme-toggle .tt-sun { display: none; }
-  html[data-theme="dark"] .theme-toggle .tt-sun { display: block; }
-  html[data-theme="dark"] .theme-toggle .tt-moon { display: none; }
-
-  /* ---------- print ---------- */
-  @media print {
-    .theme-toggle { display: none !important; }
-    body { background: #FFFFFF; }
-    .band {
-      background: #FFFFFF;
-      color: var(--ink);
-      border-bottom: 3px solid var(--ink);
-      padding: 20px 0;
-    }
-    .brand, .band .meta dd { color: var(--ink); }
-    .tagline, .band .meta dt { color: var(--slate); }
-    .band .meta a, .notice, .notice code { color: var(--ink); }
-    .notice { background: #FFFFFF; border-color: var(--border); }
-    section, .kpi, .page-card, .issue { box-shadow: none; break-inside: avoid; page-break-inside: avoid; }
-    tr.finding-row, tr.diff-row { break-inside: avoid; page-break-inside: avoid; }
-    .appendix > summary::before { content: ""; margin: 0; }
-    details.appendix, details.per-model { display: block; }
-    details.appendix > summary, details.per-model > summary { display: none; }
-    .strip { flex-wrap: wrap; overflow: visible; }
-    tbody tr:hover { background: transparent; }
-    a { text-decoration: none; }
-  }
-
-  /* ---------- smooth theme transition (added after first paint via .theme-ready) ---------- */
-  html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: background-color 220ms ease, color 220ms ease, border-color 220ms ease, box-shadow 220ms ease, fill 220ms ease, stroke 220ms ease; }
-  @media (prefers-reduced-motion: reduce) { html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: none !important; } }
+/* print — force the light palette + tidy the deliverable */
+@media print {
+  body { background: #FFFFFF; }
+  .band { background: #FFFFFF; border-bottom: 3px solid var(--ink); padding: 20px 0; }
+  .brand, .band .meta dd { color: var(--ink); }
+  .tagline, .band .meta dt { color: var(--slate); }
+  .band .meta a, .notice, .notice code { color: var(--ink); }
+  .notice { background: #FFFFFF; border-color: var(--border); }
+  section, .kpi, .page-card, .issue { box-shadow: none; break-inside: avoid; page-break-inside: avoid; }
+  .appendix > summary::before { content: ""; margin: 0; }
+  details.appendix, details.per-model { display: block; }
+  details.appendix > summary, details.per-model > summary { display: none; }
+  .strip { flex-wrap: wrap; overflow: visible; }
+  tbody tr:hover { background: transparent; }
+  a { text-decoration: none; }
+}
 </style>
 </head>
 <body>
+<div class="aurora" aria-hidden="true"><span class="aurora__glow"></span></div>
 <button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
   <span class="tt-moon" aria-hidden="true">&#127769;</span>
   <span class="tt-sun" aria-hidden="true">&#9728;&#65039;</span>
 </button>
 <header class="band">
   <div class="wrap">
-    <div class="brand-row">
-      <h1 class="brand">Survey QA</h1>
-      <span class="tagline">Automated questionnaire-to-website verification</span>
+    <div class="masthead">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="34" height="34" role="img" aria-label="Survey QA logo">
+          <rect x="3" y="3" width="42" height="42" rx="11" fill="currentColor"></rect>
+          <rect x="13" y="26" width="5" height="11" rx="1.5" data-paper opacity=".95"></rect>
+          <rect x="21.5" y="19" width="5" height="18" rx="1.5" data-paper opacity=".95"></rect>
+          <rect x="30" y="12" width="5" height="25" rx="1.5" data-paper opacity=".95"></rect>
+        </svg>
+      </span>
+      <div class="masthead-text">
+        <p class="kicker">Findings report &middot; questionnaire-to-website QA</p>
+        <div class="brand-row">
+          <h1 class="brand">Survey <em>QA</em></h1>
+          <span class="tagline">Automated questionnaire-to-website verification</span>
+        </div>
+      </div>
     </div>
     <dl class="meta">
       <dt>Run ID</dt><dd class="mono">${esc(run.runId)}</dd>

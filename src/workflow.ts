@@ -24,22 +24,54 @@ export interface RunParams {
   lang?: string;
 }
 
+// R2 keys for the large step payloads offloaded out of workflow state (the ~1 MiB
+// per-step return cap; see extract-spec / walk-survey). Written once per run, so
+// the reads are deterministic across the workflow's replays.
+const specTextKey = (id: string): string => `runs/${id}/spec.txt`;
+const capturesKey = (id: string): string => `runs/${id}/captures.json`;
+
+/** Load the full extracted spec text offloaded by the extract-spec step. */
+async function loadSpecText(env: Env, runId: string): Promise<string> {
+  const obj = await env.ARTIFACTS.get(specTextKey(runId));
+  if (!obj) throw new Error(`spec text missing at ${specTextKey(runId)}`);
+  return await obj.text();
+}
+
+/** Load the full page captures offloaded by the walk-survey step. */
+async function loadCaptures(env: Env, runId: string): Promise<PageCapture[]> {
+  const obj = await env.ARTIFACTS.get(capturesKey(runId));
+  if (!obj) throw new Error(`captures missing at ${capturesKey(runId)}`);
+  return JSON.parse(await obj.text()) as PageCapture[];
+}
+
 export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
   async run(event: WorkflowEvent<RunParams>, step: WorkflowStep): Promise<void> {
     const { runId, surveyUrl, docxName, seeded, lang } = event.payload;
     const env = this.env;
 
     try {
-      const specText = await step.do("extract-spec", async () => {
+      // extract-spec and walk-survey OFFLOAD their large payloads (the full spec
+      // text; every page's captured text) to R2 and return only a tiny summary.
+      // A Workflows step's PERSISTED return value is capped at ~1 MiB, and a
+      // dense/many-page questionnaire's extracted text or page captures can
+      // exceed that — which would turn a successful run into a "failed" one. The
+      // payloads are loaded back from R2 (write-once, deterministic across
+      // replays) for the legs + finalize below.
+      await step.do("extract-spec", async () => {
         const obj = await env.ARTIFACTS.get(docxKey(runId));
         if (!obj) throw new Error(`docx not found at ${docxKey(runId)}`);
-        return extractDocxText(await obj.arrayBuffer());
+        const text = extractDocxText(await obj.arrayBuffer());
+        await env.ARTIFACTS.put(specTextKey(runId), text, {
+          httpMetadata: { contentType: "text/plain; charset=utf-8" },
+        });
+        return { chars: text.length };
       });
+      const specText = await loadSpecText(env, runId);
 
-      const pages = await step.do(
+      await step.do(
         "walk-survey",
         { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "8 minutes" },
-        async (): Promise<PageCapture[]> => {
+        async (): Promise<{ pages: number }> => {
           const { captures, screenshots, pdfs } = await walkSurvey(env, surveyUrl);
           // Purge page artifacts from any earlier (failed) attempt of this step:
           // keys are deterministic per pageIndex, so a shorter retry would
@@ -64,9 +96,15 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
               captures[i].pdfKey = key;
             }
           }
-          return captures;
+          // Offload the captures (page text + notes + artifact keys) to R2; the
+          // screenshots/PDFs are already there. Overwrites cleanly on a retry.
+          await env.ARTIFACTS.put(capturesKey(runId), JSON.stringify(captures), {
+            httpMetadata: { contentType: "application/json" },
+          });
+          return { pages: captures.length };
         }
       );
+      const pages = await loadCaptures(env, runId);
 
       // Each compare leg is INDEPENDENT and best-effort: a leg that fully fails
       // (e.g. a Workers AI brownout makes assertLegNotFullyFailed throw) must
@@ -251,7 +289,15 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
             legOutages.length > 0
               ? `degraded run — ${legOutages.length} leg(s) unavailable: ${legOutages.join("; ")}`
               : undefined;
-          envelope.status = claude ? "complete" : "awaiting-claude";
+          // claude === null has two distinct causes: (a) the leg was gated OFF
+          // (no Anthropic key) — the external local runner is expected to finish
+          // the run, so stay "awaiting-claude"; (b) the leg was gated ON but
+          // failed after retries (an outage, already recorded in legOutages) — on
+          // a keyed deployment no runner is watching, so finalize as a degraded
+          // "complete" rather than stranding the run permanently in the
+          // non-terminal "awaiting-claude".
+          const claudeAttemptedButFailed = legGates.claude && claude === null;
+          envelope.status = claude || claudeAttemptedButFailed ? "complete" : "awaiting-claude";
         });
         // Return only a SMALL summary — NOT the run envelope. Cloudflare
         // Workflows caps a step's returned result at ~1 MiB, and the full

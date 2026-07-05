@@ -1,6 +1,10 @@
 node_modules/
 .wrangler/
 .dev.vars
+.dev.vars.*
+.env
+.env.*
+*.local
 *.log
 
 # local bench/run trackers (test artifacts)

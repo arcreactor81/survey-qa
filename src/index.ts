@@ -288,6 +288,12 @@ async function handleSubmitFindings(req: Request, env: Env, runId: string): Prom
     return json({ error: "run already completed with an in-Worker Claude leg; findings not accepted" }, 409);
   }
 
+  // Cap the payload before parsing (defense-in-depth atop the findings-count limit
+  // below) so an oversized body can't be buffered into memory. Content-Length only,
+  // like /api/run; a chunked request without it still hits the count cap after parse.
+  if (Number(req.headers.get("content-length") ?? "0") > 2_000_000) {
+    return json({ error: "findings payload too large (max 2 MB)" }, 413);
+  }
   const body = (await req.json().catch(() => null)) as {
     model?: string;
     modelId?: string;

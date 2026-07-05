@@ -458,13 +458,23 @@ function detectCompletionInPage(): boolean {
   // (es/fr/de/zh/ja) so a non-English completion page is still recognized.
   const thanks = ["thank you", "gracias", "merci", "danke", "dank", "感谢", "谢谢", "ありがとう"];
   if (!thanks.some((t) => text.indexOf(t) !== -1)) return false;
-  const inputs = document.querySelectorAll(
+  // Scope the input + button checks to the survey root (when present) so
+  // unrelated host-page chrome on an embedded survey — a footer newsletter
+  // input, a site-search box/button — does not suppress a genuine completion
+  // page. The generic-button check was already survey-scoped, but the input and
+  // SurveyJS nav-button checks were document-wide, so on a real vendor site with
+  // header/footer inputs completion was NEVER detected. Falls back to <body> for
+  // non-SurveyJS markup.
+  const surveyRoot =
+    document.querySelector(".sd-root-modern, .sv-root-modern, .sd-page, .sv-page, form") ||
+    document.body;
+  const inputs = surveyRoot.querySelectorAll(
     "input[type=radio], input[type=checkbox], input[type=text], input[type=number], textarea, select",
   );
   if (inputs.length > 0) return false;
   // SurveyJS navigation buttons present => not a completion page.
   if (
-    document.querySelector(
+    surveyRoot.querySelector(
       '.sd-navigation__next-btn, .sd-navigation__complete-btn, .sd-navigation__start-btn, .sd-navigation__preview-btn, input[value="Next"], input[value="Complete"], input[value="Start"]',
     )
   ) {
@@ -477,12 +487,7 @@ function detectCompletionInPage(): boolean {
   // buttons, so such an intro page would be misread as "complete". Instead,
   // treat ANY visible, enabled button as proof this is not the completion page.
   // Completion is thus inferred from the ABSENCE of anything to click, not a
-  // label, so a localized completion page (which has no button) is still
-  // detected. Scope to the survey root (when present) so unrelated host-page
-  // chrome buttons on an embedded survey don't suppress a genuine completion.
-  const surveyRoot =
-    document.querySelector(".sd-root-modern, .sv-root-modern, .sd-page, .sv-page, form") ||
-    document.body;
+  // label, so a localized completion page (which has no button) is still detected.
   const buttons = Array.from(
     surveyRoot.querySelectorAll(
       "input[type=button], input[type=submit], input[type=reset], button, [role=button]",

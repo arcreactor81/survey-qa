@@ -1,16 +1,23 @@
 // Waiting page served at /reports/{runId} while a run's status is
 // "processing". Returns a complete, self-contained HTML document (inline
-// CSS/JS; the only external resource is the Google Fonts stylesheet).
+// CSS/JS; fonts self-hosted at /fonts/ with a strong fallback stack so a
+// saved/offline copy still reads).
 //
 // This module only builds a template string — all page-side JavaScript lives
 // inside the returned HTML, so it compiles under the project tsconfig
 // (lib: ES2022, no DOM types).
 //
-// Design language (matches report.ts / index.html — Deep Teal Terminal):
-//   ink #0F2422 · cool paper #F1F6F5 · white cards, #D8E2E0 borders,
-//   12px radius · accent #096658 · success #156B3F · slate #435659
-//   Space Grotesk (display, Segoe UI fallback) headings, system-ui body.
-//   prefers-reduced-motion tames every animation on the page.
+// The status API reports only milestone transitions (processing → complete),
+// never per-stage progress, and this page is served ONLY while the run is
+// "processing" (index.ts reloads it to the report the moment the run reaches a
+// terminal/awaiting status). So the pipeline is shown as genuinely running
+// server-side — no guessed per-stage clock — with a REAL elapsed timer adopted
+// from the run's own startedAt.
+//
+// Design: the shared "Editorial Medical" system (src/theme-css.ts) — warm paper
+// / near-black, Instrument Serif display, DM Sans body, JetBrains Mono labels.
+
+import { THEME_CSS } from "./theme-css";
 
 /** Trivia lines rotated on the waiting page (each < 140 chars).
  *  NOTE: public/index.html duplicates this copy in its status-card JS —
@@ -34,6 +41,9 @@ const TRIVIA_LINES: string[] = [
   "A scale labeled only at its endpoints and one labeled at every point yield different data. Wording is everything.",
 ];
 
+/** The real in-Worker pipeline. There is deliberately no per-stage timing: the
+ *  status API exposes no stage field, so every stage is shown as running while
+ *  the run is "processing", and this page advances to the report on completion. */
 const STAGES: { icon: string; name: string }[] = [
   { icon: "📄", name: "Parse docx" },
   { icon: "🌐", name: "Browser walks pages" },
@@ -43,12 +53,6 @@ const STAGES: { icon: string; name: string }[] = [
   { icon: "🔍", name: "Quote verification" },
   { icon: "📊", name: "Report" },
 ];
-
-/** Seconds (since page load) at which each stage is *estimated* to begin.
- *  The status API has no stage field, so this is a well-informed guess:
- *  docx parse ~3 s, browser walk ~90 s, the three model legs and quote
- *  verification spread out after it. */
-const STAGE_AT_SEC: number[] = [0, 3, 93, 118, 140, 163, 180];
 
 /** Routing already restricts runId to [\w-]+, but validate defensively:
  *  strip anything outside [\w-] so the id is safe to embed in HTML and JS. */
@@ -61,7 +65,7 @@ export function processingPage(runId: string): string {
 
   const stageCards = STAGES.map(
     (s, i) => `
-          <li class="stage${i === 0 ? " is-cur" : ""}" id="stage-${i}">
+          <li class="stage is-run" id="stage-${i}">
             <span class="stage-icon" aria-hidden="true">${s.icon}</span>
             <span class="stage-name">${s.name}</span>
             <span class="stage-dot" aria-hidden="true"></span>
@@ -73,6 +77,7 @@ export function processingPage(runId: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <meta name="robots" content="noindex">
 <script>
 /* Theme bootstrap — runs before first paint to avoid a flash of the wrong theme. */
@@ -90,347 +95,130 @@ export function processingPage(runId: string): string {
 })();
 </script>
 <title>Run ${id} — Survey QA</title>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="preload" href="/fonts/instrument-serif-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/dm-sans-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/jetbrains-mono-400.woff2" as="font" type="font/woff2" crossorigin>
 <style>
-  :root {
-    color-scheme: light;
-    --ink: #0F2422;
-    --paper: #F1F6F5;
-    --card: #FFFFFF;
-    --accent: #096658;
-    --ok: #156B3F;
-    --slate: #435659;
-    --border: #D8E2E0;
-    --text: #14282A;
-    --muted: #435659;
-    --band-bg: #071012;
-    --band-title: #FFFFFF;
-    --band-text: #DCE7E5;
-    --band-link: #7CE8C9;
-    --band-soft: #B4C8C3;
-    --tint: #E5EEEC;
-    --stage-bg: #F7FAF9;
-    --dot-idle: #C5D3D0;
-    --done-border: #B2DAC3;
-    --done-bg: #EFF8F2;
-    --focus-ring: rgba(9, 102, 88, 0.45);
-    --focus-soft: rgba(9, 102, 88, 0.16);
-    --pulse: rgba(9, 102, 88, 0.35);
-    --serif: "Space Grotesk", "Segoe UI", system-ui, Helvetica, Arial, sans-serif;
-    --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-    --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-    --shadow: 0 1px 2px rgba(7, 16, 18, 0.05), 0 10px 28px rgba(7, 16, 18, 0.07);
-  }
-  /* Dark palette — scoped to screen so print always renders the light theme. */
-  @media screen {
-    html[data-theme="dark"] {
-      color-scheme: dark;
-      --ink: #EDF5F3;
-      --paper: #0B1416;
-      --card: #101E21;
-      --accent: #35D3AC;
-      --ok: #74D389;
-      --slate: #8FA6A2;
-      --border: #24363A;
-      --text: #DCE7E5;
-      --muted: #93A9A5;
-      --band-bg: #060D0F;
-      --band-title: #EDF5F3;
-      --band-text: #DCE7E5;
-      --band-link: #7CE8C9;
-      --band-soft: #B4C8C3;
-      --tint: #122023;
-      --stage-bg: #14262A;
-      --dot-idle: #33484D;
-      --done-border: #2C5B41;
-      /* Opaque equivalent of rgba(116,211,137,0.1) over the card (#101E21).
-         Must stay opaque: done stages sit on top of the .pipeline::before
-         connector line — a translucent fill lets it ghost through. */
-      --done-bg: #1A302B;
-      --focus-ring: rgba(53, 211, 172, 0.55);
-      --focus-soft: rgba(53, 211, 172, 0.2);
-      --pulse: rgba(53, 211, 172, 0.38);
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 10px 28px rgba(0, 0, 0, 0.5);
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font-family: var(--sans);
-    background: var(--paper);
-    color: var(--text);
-    line-height: 1.55;
-    font-size: 14px;
-  }
-  .wrap { max-width: 920px; margin: 0 auto; padding: 0 28px; }
-  .num { font-variant-numeric: tabular-nums; }
-  button:focus-visible {
-    outline: 3px solid var(--focus-ring);
-    outline-offset: 2px;
-    border-radius: 6px;
-  }
-  .kicker {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: var(--accent);
-    margin-bottom: 4px;
-  }
-  h2 {
-    margin: 0;
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 22px;
-    color: var(--ink);
-    letter-spacing: 0.1px;
-  }
-  .sr-only {
-    position: absolute;
-    width: 1px; height: 1px;
-    margin: -1px; padding: 0; border: 0;
-    clip: rect(0 0 0 0);
-    overflow: hidden;
-    white-space: nowrap;
-  }
+${THEME_CSS}
 
-  /* ---------- header band ---------- */
-  .band {
-    background: var(--band-bg);
-    color: var(--band-text);
-    padding: 44px 0 38px;
-    border-bottom: 4px solid var(--accent);
-  }
-  .band .kicker { color: var(--band-link); }
-  .brand {
-    font-family: var(--serif);
-    font-weight: 600;
-    font-size: 36px;
-    line-height: 1.1;
-    margin: 0;
-    color: var(--band-title);
-  }
-  .brand code { font-family: var(--mono); font-size: 27px; color: var(--band-link); }
-  .subtitle { margin: 10px 0 0; font-size: 15px; color: var(--band-soft); }
-  .elapsed-chip {
-    display: inline-block;
-    margin-left: 12px;
-    padding: 2px 12px;
-    border: 1px solid rgba(244, 241, 234, 0.3);
-    border-radius: 999px;
-    font-size: 12.5px;
-    color: var(--band-text);
-  }
+/* ---------- processing-page components ---------- */
+.wrap { max-width: 920px; }
+.masthead { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.masthead-text { min-width: 0; }
+.band .kicker { color: var(--kicker); }
+.subtitle { margin: 12px 0 0; font-size: 15px; color: var(--band-soft); }
+.elapsed-chip {
+  display: inline-block; margin-left: 12px; padding: 2px 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
+  font-family: var(--mono); font-size: 12.5px; color: var(--band-text);
+}
 
-  /* ---------- layout ---------- */
-  main { padding: 32px 0 40px; }
-  .arena { position: relative; }
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 24px 28px 26px;
-    margin-bottom: 24px;
-    box-shadow: var(--shadow);
-  }
-  .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-  .badge-est {
-    flex: none;
-    padding: 3px 11px;
-    border-radius: 999px;
-    background: var(--tint);
-    border: 1px solid var(--border);
-    font-size: 10.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.09em;
-    color: var(--slate);
-  }
+main { padding: 32px 0 40px; position: relative; z-index: 1; }
+.arena { position: relative; }
+.card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 24px 28px 26px; margin-bottom: 24px; box-shadow: var(--shadow);
+}
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.badge-est {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 11px; border-radius: var(--radius-pill);
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-family: var(--mono); font-size: 10px; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.09em; color: var(--slate);
+}
+.badge-est::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); animation: pulse 1.6s var(--ease-in-out) infinite;
+}
 
-  /* ---------- animated pipeline ---------- */
-  .pipeline {
-    list-style: none;
-    display: flex;
-    gap: 16px;
-    position: relative;
-    margin: 22px 0 0;
-    padding: 0;
-  }
-  .pipeline::before {
-    content: "";
-    position: absolute;
-    left: 3%; right: 3%; top: 50%;
-    height: 2px;
-    background: var(--border);
-    z-index: 0;
-  }
-  .stage {
-    position: relative;
-    z-index: 1;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 7px;
-    text-align: center;
-    background: var(--stage-bg);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 15px 10px 13px;
-    transition: border-color 0.4s ease, background 0.4s ease, box-shadow 0.4s ease;
-  }
-  .stage-icon { font-size: 22px; line-height: 1; filter: grayscale(0.9); opacity: 0.55; transition: filter 0.4s ease, opacity 0.4s ease; }
-  .stage-name { font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--muted); transition: color 0.4s ease; }
-  .stage-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dot-idle); }
-  .stage.is-cur {
-    background: var(--card);
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--focus-soft);
-  }
-  .stage.is-cur .stage-icon, .stage.is-done .stage-icon { filter: none; opacity: 1; }
-  .stage.is-cur .stage-name, .stage.is-done .stage-name { color: var(--ink); }
-  .stage.is-cur .stage-dot { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
-  .stage.is-done { border-color: var(--done-border); background: var(--done-bg); }
-  .stage.is-done .stage-dot { background: var(--ok); }
-  @keyframes pulse {
-    0%, 100% { box-shadow: 0 0 0 0 var(--pulse); }
-    50% { box-shadow: 0 0 0 7px transparent; }
-  }
-  .pipe-note { margin: 16px 0 0; font-size: 12px; color: var(--muted); }
-  @media (max-width: 720px) {
-    .pipeline { flex-direction: column; gap: 10px; }
-    .pipeline::before { display: none; }
-    .stage { flex-direction: row; text-align: left; padding: 12px 16px; }
-    .stage-dot { margin-left: auto; }
-  }
+/* animated pipeline — every stage runs while the run is "processing" */
+.pipeline { list-style: none; display: flex; gap: 16px; position: relative; margin: 22px 0 0; padding: 0; }
+.pipeline::before {
+  content: ""; position: absolute; left: 3%; right: 3%; top: 50%;
+  height: 2px; background: var(--border); z-index: 0;
+}
+.stage {
+  position: relative; z-index: 1; flex: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  text-align: center; background: var(--stage-bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 15px 10px 13px;
+  transition: border-color 0.4s ease, background 0.4s ease, box-shadow 0.4s ease;
+}
+.stage-icon { font-size: 22px; line-height: 1; filter: grayscale(0.6); opacity: 0.6; transition: filter 0.4s ease, opacity 0.4s ease; }
+.stage-name { font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--muted); transition: color 0.4s ease; }
+.stage-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dot-idle); }
+.stage.is-run {
+  background: var(--card);
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+}
+.stage.is-run .stage-icon { filter: none; opacity: 1; }
+.stage.is-run .stage-name { color: var(--ink); }
+.stage.is-run .stage-dot { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--pulse); }
+  50% { box-shadow: 0 0 0 7px transparent; }
+}
+.pipe-note { margin: 16px 0 0; font-size: 12px; color: var(--muted); }
+@media (max-width: 720px) {
+  .pipeline { flex-direction: column; gap: 10px; }
+  .pipeline::before { display: none; }
+  .stage { flex-direction: row; text-align: left; padding: 12px 16px; }
+  .stage-dot { margin-left: auto; }
+}
 
-  /* ---------- trivia card ---------- */
-  .trivia-card { min-height: 132px; }
-  /* Sits above the bug layer so a scurrying bug never covers the copy;
-     pointer-events pass through so bugs stay clickable underneath. */
-  .z-top { position: relative; z-index: 6; pointer-events: none; }
-  .trivia {
-    margin: 8px 0 0;
-    min-height: 46px;
-    max-width: 660px;
-    font-size: 15px;
-    line-height: 1.6;
-    color: var(--text);
-    transition: opacity 0.4s ease;
-  }
-  .trivia.is-fading { opacity: 0; }
+/* trivia card */
+.trivia-card { min-height: 132px; }
+.z-top { position: relative; z-index: 6; pointer-events: none; }
+.trivia { margin: 8px 0 0; min-height: 46px; max-width: 660px; font-size: 15px; line-height: 1.6; color: var(--text); transition: opacity 0.4s ease; }
+.trivia.is-fading { opacity: 0; }
 
-  /* ---------- bug mini-game ---------- */
-  #bugLayer {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    pointer-events: none;
-    z-index: 5;
-  }
-  .bug {
-    position: absolute;
-    left: 0;
-    top: 0;
-    border: 0;
-    margin: 0;
-    padding: 5px;
-    background: transparent;
-    font-size: 24px;
-    line-height: 1;
-    cursor: pointer;
-    pointer-events: auto;
-    animation: scurry var(--dur, 7s) linear forwards;
-    will-change: transform;
-  }
-  @keyframes scurry {
-    from { transform: translateX(var(--x0, -60px)) translateY(0); }
-    to   { transform: translateX(var(--x1, 100vw)) translateY(var(--y1, 0px)); }
-  }
-  .bug > span {
-    display: inline-block;
-    animation: bob 0.5s ease-in-out infinite alternate;
-  }
-  @keyframes bob {
-    from { transform: scaleX(var(--flip, 1)) translateY(-3px) rotate(-6deg); }
-    to   { transform: scaleX(var(--flip, 1)) translateY(3px) rotate(6deg); }
-  }
-  .bug.is-squashed { animation-play-state: paused; }
-  .bug.is-squashed > span { animation: pop 0.45s ease forwards; }
-  @keyframes pop {
-    from { transform: scale(1.5); opacity: 1; }
-    to   { transform: scale(0.4); opacity: 0; }
-  }
+/* bug mini-game */
+#bugLayer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 5; }
+.bug {
+  position: absolute; left: 0; top: 0; border: 0; margin: 0; padding: 5px;
+  background: transparent; font-size: 24px; line-height: 1; cursor: pointer;
+  pointer-events: auto; animation: scurry var(--dur, 7s) linear forwards; will-change: transform;
+}
+@keyframes scurry {
+  from { transform: translateX(var(--x0, -60px)) translateY(0); }
+  to   { transform: translateX(var(--x1, 100vw)) translateY(var(--y1, 0px)); }
+}
+.bug > span { display: inline-block; animation: bob 0.5s ease-in-out infinite alternate; }
+@keyframes bob {
+  from { transform: scaleX(var(--flip, 1)) translateY(-3px) rotate(-6deg); }
+  to   { transform: scaleX(var(--flip, 1)) translateY(3px) rotate(6deg); }
+}
+.bug.is-squashed { animation-play-state: paused; }
+.bug.is-squashed > span { animation: pop 0.45s ease forwards; }
+@keyframes pop {
+  from { transform: scale(1.5); opacity: 1; }
+  to   { transform: scale(0.4); opacity: 0; }
+}
+.squash-chip {
+  position: fixed; right: 18px; bottom: 18px; z-index: 20;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 10px 16px; max-width: 240px;
+}
+.squash-chip strong { display: block; font-size: 13px; color: var(--ink); }
+.squash-chip small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
 
-  /* ---------- squash counter chip ---------- */
-  .squash-chip {
-    position: fixed;
-    right: 18px;
-    bottom: 18px;
-    z-index: 20;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: var(--shadow);
-    padding: 10px 16px;
-    max-width: 240px;
-  }
-  .squash-chip strong { display: block; font-size: 13px; color: var(--ink); }
-  .squash-chip small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+footer { padding: 0 28px 96px; }
 
-  footer {
-    text-align: center;
-    font-size: 12px;
-    color: var(--slate);
-    padding: 0 28px 96px;
-  }
-
-  /* ---------- theme toggle ---------- */
-  .theme-toggle {
-    position: fixed;
-    top: 14px;
-    right: 14px;
-    z-index: 260;
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: 50%;
-    background: var(--card);
-    box-shadow: var(--shadow);
-    font-size: 17px;
-    line-height: 1;
-    cursor: pointer;
-  }
-  .theme-toggle:hover { border-color: var(--accent); }
-  .theme-toggle .tt-sun { display: none; }
-  html[data-theme="dark"] .theme-toggle .tt-sun { display: block; }
-  html[data-theme="dark"] .theme-toggle .tt-moon { display: none; }
-
-  /* ---------- print ---------- */
-  @media print {
-    .theme-toggle { display: none !important; }
-  }
-
-  /* ---------- reduced motion ---------- */
-  @media (prefers-reduced-motion: reduce) {
-    .stage, .stage-icon, .stage-name { transition: none; }
-    .stage.is-cur .stage-dot { animation: none; }
-    .trivia { transition: none; }
-    .bug { animation: none; }
-    .bug > span { animation: none; }
-    .bug.is-squashed > span { animation: none; opacity: 0.35; }
-  }
-
-  /* ---------- smooth theme transition (added after first paint via .theme-ready) ---------- */
-  html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: background-color 220ms ease, color 220ms ease, border-color 220ms ease, box-shadow 220ms ease, fill 220ms ease, stroke 220ms ease; }
-  @media (prefers-reduced-motion: reduce) { html.theme-ready body, html.theme-ready body *, html.theme-ready body *::before, html.theme-ready body *::after { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) {
+  .stage, .stage-icon, .stage-name { transition: none; }
+  .stage.is-run .stage-dot { animation: none; }
+  .badge-est::before { animation: none; }
+  .trivia { transition: none; }
+  .bug { animation: none; }
+  .bug > span { animation: none; }
+  .bug.is-squashed > span { animation: none; opacity: 0.35; }
+}
 </style>
 </head>
 <body>
+
+<div class="aurora" aria-hidden="true"><span class="aurora__glow"></span></div>
 
 <button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
   <span class="tt-moon" aria-hidden="true">&#127769;</span>
@@ -439,8 +227,20 @@ export function processingPage(runId: string): string {
 
 <header class="band">
   <div class="wrap">
-    <div class="kicker">Survey QA · Run in progress</div>
-    <h1 class="brand">Run <code>${id}</code></h1>
+    <div class="masthead">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="34" height="34" role="img" aria-label="Survey QA logo">
+          <rect x="3" y="3" width="42" height="42" rx="11" fill="currentColor"></rect>
+          <rect x="13" y="26" width="5" height="11" rx="1.5" data-paper opacity=".95"></rect>
+          <rect x="21.5" y="19" width="5" height="18" rx="1.5" data-paper opacity=".95"></rect>
+          <rect x="30" y="12" width="5" height="25" rx="1.5" data-paper opacity=".95"></rect>
+        </svg>
+      </span>
+      <div class="masthead-text">
+        <div class="kicker">Survey QA · Run in progress</div>
+        <h1 class="brand">Run <code>${id}</code></h1>
+      </div>
+    </div>
     <p class="subtitle">Survey QA is inspecting your survey.
       <span class="elapsed-chip">Elapsed <span id="elapsed" class="num">0:00</span></span></p>
   </div>
@@ -455,14 +255,15 @@ export function processingPage(runId: string): string {
           <div class="kicker">Pipeline</div>
           <h2 id="pipe-title">Where your run is</h2>
         </div>
-        <span class="badge-est">estimated</span>
+        <span class="badge-est">live</span>
       </div>
       <ol class="pipeline">${stageCards}
       </ol>
-      <p class="pipe-note">The status API doesn't report stage-by-stage progress, so this indicator
-        advances on typical timings — the browser walk is the long stretch. All three model legs —
-        DeepSeek (deepseek-v4-pro), Grok (grok-4.3) and Claude (claude-sonnet-4-6) — run automatically
-        in the Worker, with every call routed through the Cloudflare AI Gateway.</p>
+      <p class="pipe-note">Your run is executing the whole pipeline server-side. DeepSeek (deepseek-v4-pro)
+        and Grok (grok-4.3) always run in the Worker; Claude (claude-sonnet-4-6) runs in the Worker when an
+        Anthropic key is set, otherwise the $0 fallback runner completes it — every call routes through the
+        Cloudflare AI Gateway. The status API reports milestones, not per-stage progress, so this page
+        advances to the report automatically the moment the run finishes.</p>
     </section>
 
     <section class="card trivia-card" aria-labelledby="trivia-title">
@@ -494,9 +295,6 @@ export function processingPage(runId: string): string {
 
   var RUN_ID = "${id}";
   var TRIVIA = ${JSON.stringify(TRIVIA_LINES)};
-  var STAGE_AT = ${JSON.stringify(STAGE_AT_SEC)};
-  var STAGE_NAMES = ${JSON.stringify(STAGES.map((s) => s.name))};
-  var N_STAGES = STAGE_AT.length;
 
   var REDUCED = false;
   try {
@@ -505,11 +303,12 @@ export function processingPage(runId: string): string {
 
   /* Elapsed clock baseline. Date.now() is only a first guess: the status
      API reports the run's real startedAt, which poll() adopts as soon as it
-     arrives — so the clock and the estimated pipeline stage survive page
-     refreshes instead of resetting to zero on every load. */
+     arrives — so the clock survives page refreshes instead of resetting to
+     zero on every load. There is no estimated-stage advancement: the pipeline
+     is shown running until the run reaches a terminal status and this page
+     reloads into the report. */
   var startedAt = Date.now();
   var startedAtLocked = false;
-  var curStage = -1;
   var squashed = 0;
 
   function adoptStartedAt(iso) {
@@ -518,7 +317,7 @@ export function processingPage(runId: string): string {
     if (!isNaN(t) && t <= Date.now()) {
       startedAt = t;
       startedAtLocked = true;
-      tick(); /* re-render the clock and stage against the real baseline */
+      tick(); /* re-render the clock against the real baseline */
     }
   }
 
@@ -529,27 +328,17 @@ export function processingPage(runId: string): string {
     return m + ":" + (r < 10 ? "0" : "") + r;
   }
 
-  /* ----- elapsed clock + estimated pipeline stage ----- */
+  /* ----- real elapsed clock (no estimated stage) ----- */
 
   function tick() {
-    var e = elapsedSec();
     var el = document.getElementById("elapsed");
-    if (el) el.textContent = fmtElapsed(e);
-
-    var idx = 0;
-    for (var i = 0; i < N_STAGES; i++) { if (e >= STAGE_AT[i]) idx = i; }
-    if (idx !== curStage) {
-      curStage = idx;
-      for (var j = 0; j < N_STAGES; j++) {
-        var st = document.getElementById("stage-" + j);
-        if (st) st.className = "stage" + (j < idx ? " is-done" : (j === idx ? " is-cur" : ""));
-      }
-      var live = document.getElementById("live");
-      if (live) live.textContent = "Estimated stage: " + STAGE_NAMES[idx];
-    }
+    if (el) el.textContent = fmtElapsed(elapsedSec());
   }
   var tickTimer = setInterval(tick, 1000);
   tick();
+
+  var live = document.getElementById("live");
+  if (live) live.textContent = "Your run is processing. This page advances to the report automatically when it finishes.";
 
   /* ----- rotating trivia (6 s cycle, fade transition) ----- */
 
@@ -610,8 +399,8 @@ export function processingPage(runId: string): string {
     if (arena) { arena.innerHTML = ""; arena.appendChild(card); }
     var sub = document.querySelector(".subtitle");
     if (sub) sub.textContent = title + ".";
-    var live = document.getElementById("live");
-    if (live) live.textContent = title + ". " + message;
+    var liveEl = document.getElementById("live");
+    if (liveEl) liveEl.textContent = title + ". " + message;
   }
 
   function bumpPollFail() {

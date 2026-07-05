@@ -38,8 +38,9 @@ expensive failure — it ships to respondents and corrupts data — while a fals
 seconds of review, and consensus demotes lone flags to low confidence). So the roster optimizes
 **ensemble recall**: three independent families (DeepSeek / xAI / Anthropic), each catching what the
 others might miss. All three score **10/10** on the seeded benchmark across six languages. The model
-selection is data-driven — see [`docs/model-bakeoff.md`](docs/model-bakeoff.md) for the full bakeoff
-(≈15 models benched; kimi/Gemini/Workers-AI evaluated and retired on the numbers).
+selection is data-driven — see [`docs/model-bakeoff.md`](docs/model-bakeoff.md) for the bakeoff record:
+the Workers-AI third-pillar round, the six-language Claude-tier matrix, and the Gemini-vs-Grok run that
+settled the third leg. gpt-oss and Gemini were evaluated and retired (kept inert-but-re-enablable).
 
 The three legs run automatically inside the Worker (no local step). A zero-cost **local Claude runner**
 (`runner/claude-runner.mjs`, uses the `claude` CLI on a Claude subscription) remains as a fallback for
@@ -81,6 +82,17 @@ wrangler secrets-store secret update <STORE_ID> --name XAI_API_KEY --remote
 ```
 Each secret is seeded with `PLACEHOLDER` (treated as unset) so a leg stays **inert until its real key is
 set** — the pipeline degrades gracefully to whatever legs are keyed.
+
+### Deploy your own instance
+
+`wrangler.jsonc` ships with the original author's Cloudflare account identifiers — they're identifiers,
+not secrets, but a fresh clone won't deploy until you point them at **your** account's resources. Replace:
+- **`store_id`** (×3, in `secrets_store_secrets`) → your Secrets Store id (`wrangler secrets-store store list`)
+- **`CF_AIG_ACCOUNT_ID`** → your Cloudflare account id
+- **`CF_AIG_GATEWAY_ID`** → your AI Gateway name (create one, or delete both `CF_AIG_*` vars to call providers directly)
+
+`bucket_name` and the workflow/binding names are fine as-is (created on first deploy). Then seed the three
+secrets to `PLACEHOLDER`, run `npx wrangler deploy`, and set the real keys.
 
 ## Run it
 
