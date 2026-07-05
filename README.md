@@ -125,13 +125,24 @@ secrets to `PLACEHOLDER`, run `npx wrangler deploy`, and set the real keys.
 
 ## ▶️ Run it
 
-- **Web UI:** open the Worker URL → "Run QA" (uses the bundled sample docx + `/survey.html`).
-- **API:**
-  ```bash
-  curl -X POST https://survey-qa.<subdomain>.workers.dev/api/run \
-    -F surveyUrl=/survey.html -F useSample=true -F lang=en
-  # → { "runId": "..." }
-  ```
+Open the Worker URL — the form has two modes:
+
+- **🧪 Try the demo** — pick a language and run the bundled sample survey (10 seeded errors). The safe way to watch the whole pipeline end to end.
+- **🚀 QA your own survey** — paste a live survey URL and drag-and-drop its Word questionnaire (`.docx`). The tool walks the survey and compares every page against the doc.
+
+**API** — multipart `POST /api/run`:
+```bash
+# demo: bundled sample survey + its docx, in the chosen language
+curl -X POST https://survey-qa.<subdomain>.workers.dev/api/run \
+  -F surveyUrl=/survey.html -F useSample=true -F lang=en
+
+# your own survey: your live URL + your questionnaire
+curl -X POST https://survey-qa.<subdomain>.workers.dev/api/run \
+  -F surveyUrl=https://your-survey.example.com/s/abc -F useSample=false -F docx=@questionnaire.docx
+# → { "runId": "..." }
+```
+
+The processing screen shows an **honest live pipeline** — each stage lights up as the run actually reaches it (parse → walk → compare), inferred from real artifacts, not a guessed timer.
   Then open `/reports/<runId>` (auto-refreshes while processing).
 - **Claude fallback** (only if no `ANTHROPIC_API_KEY` is set — the run parks at `awaiting-claude`):
   ```bash
