@@ -383,6 +383,22 @@ async function handleSubmitFindings(req: Request, env: Env, runId: string): Prom
   return json({ ok: true, accepted, verified: claudeVerified, status: "complete" });
 }
 
+/**
+ * Live progress checkpoint during a "processing" run, inferred from the R2
+ * artifacts the workflow writes as it advances (no fake timer): spec.txt once
+ * the questionnaire is parsed, captures.json once the browser walk finishes.
+ * 0 = parsing the questionnaire · 1 = walking the survey · 2 = comparing pages.
+ */
+async function computeStage(env: Env, runId: string): Promise<number> {
+  const [spec, caps] = await Promise.all([
+    env.ARTIFACTS.head(`runs/${runId}/spec.txt`),
+    env.ARTIFACTS.head(`runs/${runId}/captures.json`),
+  ]);
+  if (caps) return 2;
+  if (spec) return 1;
+  return 0;
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -407,6 +423,7 @@ export default {
           status: envelope.status,
           seeded: envelope.seeded,
           error: firstLine(envelope.error),
+          stage: envelope.status === "processing" ? await computeStage(env, m[1]) : undefined,
         });
       }
 

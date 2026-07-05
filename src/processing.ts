@@ -199,6 +199,10 @@ main { padding: 32px 0 40px; position: relative; z-index: 1; }
 .stage.is-run .stage-icon { filter: none; opacity: 1; }
 .stage.is-run .stage-name { color: var(--ink); }
 .stage.is-run .stage-dot { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+.stage.is-done { background: var(--card); }
+.stage.is-done .stage-icon { filter: none; opacity: 0.9; }
+.stage.is-done .stage-name { color: var(--ink); }
+.stage.is-done .stage-dot { background: var(--accent); }
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--pulse); }
   50% { box-shadow: 0 0 0 7px transparent; }
@@ -459,6 +463,22 @@ footer { padding: 0 28px 96px; }
     }
   }
 
+  /* Honest per-stage lighting from the status API stage field (0 parse, 1 walk,
+     2 compare), inferred from real R2 artifacts — no guessed clock. Finished
+     stages go solid, the current group keeps pulsing, later stages stay idle. */
+  function lightStages(stage) {
+    for (var i = 0; ; i++) {
+      var el = document.getElementById("stage-" + i);
+      if (!el) break;
+      var cls;
+      if (i === 0) cls = stage >= 1 ? "is-done" : "is-run";
+      else if (i === 1) cls = stage >= 2 ? "is-done" : (stage >= 1 ? "is-run" : "");
+      else if (i >= 2 && i <= 4) cls = stage >= 2 ? "is-run" : "";
+      else cls = "";
+      el.className = "stage" + (cls ? " " + cls : "");
+    }
+  }
+
   function poll() {
     if (gaveUp) return;
     fetch("/api/runs/" + RUN_ID)
@@ -476,7 +496,7 @@ footer { padding: 0 28px 96px; }
         if (!data) { bumpPollFail(); return; }
         adoptStartedAt(data.startedAt);
         var st = data.status;
-        if (st === "processing") { pollFailStreak = 0; return; }
+        if (st === "processing") { pollFailStreak = 0; if (typeof data.stage === "number") lightStages(data.stage); return; }
         if (st === "complete" || st === "awaiting-claude" || st === "failed") {
           location.reload(); /* server now serves the report or failure page */
           return;

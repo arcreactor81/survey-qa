@@ -269,6 +269,7 @@
   var reportUrl = null;
   var startedAt = 0;
   var currentState = null;
+  var currentStage = 0;
   var pollTimer = null;
   var tickTimer = null;
   var failStreak = 0;
@@ -446,9 +447,19 @@
       }
       rows += trackRowHtml(CLAUDE_STEP, "you");
     } else if (currentState === "processing") {
-      /* No per-stage signal from the status API — the whole in-Worker pipeline
-         is executing. Show every stage as running rather than guessing one. */
-      for (i = 0; i < TRACK.length; i++) rows += trackRowHtml(TRACK[i], "run");
+      /* Honest per-stage progress: the status API's `stage` field is inferred
+         from real R2 artifacts (spec.txt / captures.json) — 0 parsing, 1 walking,
+         2 comparing. Finished stages light up, the current group blinks, and
+         stages still to come stay dark. No guessed wall-clock. */
+      var stg = currentStage || 0;
+      for (i = 0; i < TRACK.length; i++) {
+        var role = TRACK[i].role, st;
+        if (role === "parse") st = stg >= 1 ? "done" : "run";
+        else if (role === "walk") st = stg >= 2 ? "done" : (stg >= 1 ? "run" : "pending");
+        else if (role === "deepseek" || role === "grok" || role === "claude") st = stg >= 2 ? "run" : "pending";
+        else st = "pending";
+        rows += trackRowHtml(TRACK[i], st);
+      }
       rows += trackRowHtml(CLAUDE_STEP, "pending");
     } else {
       /* No live run (or failed): show the full queue, all pending — never blank. */
@@ -473,7 +484,7 @@
      freshly re-created container has no data-key and is always filled — the
      tracker cannot be left empty. */
   function updateTrackers() {
-    var key = String(currentState);
+    var key = currentState + ":" + (currentStage || 0);
     var ids = ["ovTrack", "cardTrack"];
     for (var i = 0; i < ids.length; i++) {
       var box = document.getElementById(ids[i]);
@@ -819,9 +830,10 @@
         var st = data && data.status;
         if (st === "processing") {
           failStreak = 0;
+          if (typeof data.stage === "number") currentStage = data.stage;
           /* Ordering guard: don't regress a run that already reached awaiting
              back to "processing" on a late/out-of-order response. */
-          if (!reachedAwaiting) setState("processing");
+          if (!reachedAwaiting) { setState("processing"); updateTrackers(); }
         }
         else if (st === "awaiting-claude") { failStreak = 0; setState("awaiting"); }
         else if (st === "complete") { failStreak = 0; setState("complete"); }
