@@ -1,0 +1,141 @@
+{
+  "title": "Wahrnehmungen von Ärzten zu inkretinbasierten Therapien beim Typ-2-Diabetes",
+  "description": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Vielen Dank für die Teilnahme an der Umfrage.</h3><p>Ihre Antworten wurden gespeichert.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Endokrinolge",
+            "Hausarzt",
+            "Pflegefachkraft",
+            "Arztassistent"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. Welche der folgenden Medikamente für den Typ-2-Diabetes sind Ihnen bekannt?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "OZEMPIC",
+            "MOUNJARO",
+            "JARDIANCE",
+            "TRULICITY",
+            "Keine der oben genannten"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. Was ist Ihr wichtigstes Kriterium bei der Auswahl eines Medikaments für einen Patienten mit unzureichend eingestelltem Typ-2-Diabetes?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Ausmaß der HbA1c-Senkung",
+            "Potenzial zur Gewichtszunahme",
+            "Bequemlichkeit der einmal wöchentlichen Gabe",
+            "Verringerung des kardiovaskulären Risikos",
+            "Kostenübernahme und Kosten"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. Welches Medikament verschreiben Sie am häufigsten bei unzureichend eingestelltem Typ-2-Diabetes?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "OZEMPIC",
+            "MOUNJARO",
+            "JARDIANCE",
+            "TRULICITY",
+            "RYBELSUS"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. Wie zufrieden sind Sie mit {Q3brand} bei Ihren Patienten mit Typ-2-Diabetes?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Sehr zufrieden",
+            "Eher zufrieden",
+            "Weder zufrieden noch unzufrieden",
+            "Eher unzufrieden",
+            "Sehr unzufrieden"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "GLP-1-Rezeptoragonisten haben das Management des Typ-2-Diabetes grundlegend verändert",
+            "Die Belastung durch Injektionen schränkt die Therapietreue meiner Patienten ein",
+            "Ich fühle mich sicher dabei, diese Wirkstoffe bei Patienten mit eingeschränkter Nierenfunktion zu titrieren"
+          ],
+          "columns": [
+            "Stimme voll und ganz zu",
+            "Stimme eher zu",
+            "Weder Zustimmung noch Ablehnung",
+            "Stimme überhaupt nicht zu",
+            "Stimme überhaupt nicht zu"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q6. Wie viel Prozent Ihrer Patienten mit Typ-2-Diabetes erhalten derzeit einen GLP-1-Rezeptoragonisten oder einen dualen GIP/GLP-1-Agonisten?",
+          "isRequired": false,
+          "description": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. Was ist Ihrer Ansicht nach das grÃ¶ÃŸte einzelne Hindernis für den Zugang Ihrer Patienten zu diesen Therapien?",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. Wie wahrscheinlich ist es, dass Sie Sie einem Kollegen, der einen Typ-2-Diabetes betreut, diese Therapien empfehlen?",
+          "isRequired": false,
+          "description": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

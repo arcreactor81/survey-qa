@@ -1,0 +1,145 @@
+{
+  "title": "中等症から重症の関節リウマチにおける先進的治療に対するリウマチ専門医の認識",
+  "description": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "リウマチ専問医",
+            "ナースプラクティショナー",
+            "フィジシャンアシスタント",
+            "プライマリケア医"
+          ]
+        },
+        {
+          "name": "S2",
+          "title": "S2. 関節リウマチの患者さんの治療に携わって何年になりますか。",
+          "isRequired": false,
+          "description": "0から50までの整数を入力してください。",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 50
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. 中等症から重症の関節リウマチに対する以下の先進的治療のうち、あなたがご存知のものはどれですか。",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "HUMIRA",
+            "ENBREL",
+            "RINVOQ",
+            "XELJANZ",
+            "上記のいずれでもない"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. 中等症から重症の関節リウマチに対する先進的治療を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "ACR20/50/70の改善",
+            "画像上の退行の抑制",
+            "経口投与か注射投与か",
+            "良好な安全性・感染症プロファイル",
+            "フォーミュラリー収載と費用"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. 中等症から重症の関節リウマチに対して、あなたが最も頻繁に処方する先進的治療はどれですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "HUMIRA",
+            "ENBREL",
+            "RINVOQ",
+            "XELJANZ",
+            "ORENCIA"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. 中等症から重症の関節リウマチの患者さんに対する{Q3brand}について、どの程度満足していますか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "非常に満足している",
+            "やや満足している",
+            "どちらともいえない",
+            "やや不満である",
+            "非常に不満である"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. 以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "先進的治療は関節リウマチの治療成績を大きく変えた",
+            "事前承認の要件が患者さんの治療を遅らせている",
+            "現行の安全性ガイダンスを踏まえ、私は抵抗なくJAK阻害薬を処方できる"
+          ],
+          "columns": [
+            "強くそう思う",
+            "強くそう思う",
+            "どちらともいえない",
+            "あまりそう思わない",
+            "全くそう思わない"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. あなたの中等症から重症の関節リウマチの患者さんのうち、現在先進的治療（生物学的製剤またはJAK阻害薬）を受けている方の割合は何パーセントですか。",
+          "isRequired": false,
+          "description": "0から100までの整数を入力してください。",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q8",
+          "title": "Q8. 中等症から重症の関節リウマチを治療している同僚にに、先進的治療をどの程度勧めたいと思いますか。",
+          "isRequired": false,
+          "description": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

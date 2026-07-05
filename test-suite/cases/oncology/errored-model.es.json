@@ -1,0 +1,151 @@
+{
+  "title": "Percepciones de los oncólogos sobre la inmunoterapia de primera línea en el cáncer de pulmón no microcítico metastásico",
+  "description": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Gracias por completar la encuesta.</h3><p>Sus respuestas han sido registradas.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. ¿Cuál de las siguientes opciones describe mejor su función profesional principal?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Oncólogo médico",
+            "Hematólogo-oncólgo",
+            "Enfermero de práctica avanzada",
+            "Asistente médico"
+          ]
+        },
+        {
+          "name": "S2",
+          "title": "S2. ¿Cuántos años lleva tratando a pacientes con cáncer de pulmón no microcítico?",
+          "isRequired": false,
+          "description": "Introduzca un número entero entre 0 y 50.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 50
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. ¿Cuáles de las siguientes inmunoterapias para el cáncer de pulmón no microcítico metastásico conoce usted?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "KEYTRUDA",
+            "OPDIVO",
+            "TECENTRIQ",
+            "IMFINZI",
+            "Ninguno de los anteriores"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. ¿Cuál es su consideración más importante al seleccionar la inmunoterapia de primera línea para el cáncer de pulmón no microcítico metastásico?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Beneficio en respuesta global",
+            "Supervivencia libre de progresión",
+            "Concordancia con el estado de PD-L1",
+            "Perfil de tolerabilidad favorable",
+            "Comodidad posológica"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. ¿Qué inmunoterapia prescribe con mayor frecuencia para el cáncer de pulmón no microcítico metastásico de primera línea?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "KEYTRUDA",
+            "OPDIVO",
+            "TECENTRIQ",
+            "IMFINZI",
+            "LIBTAYO"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. ¿Cuál es su grado de satisfacción con {Q3brand} para sus pacientes con cáncer de pulmón no microcítico metastásico de primera línea?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Muy satisfecho",
+            "Algo satisfecho",
+            "Ni satisfecho ni insatisfecho",
+            "Algo insatisfecho",
+            "Muy insatisfecho"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Indique su grado de acuerdo con cada una de las siguientes afirmaciones.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "La inmunoterapia ha transformado los resultados en el cáncer de pulmón no microcítico metastásico",
+            "Los plazos de las pruebas de biomarcadores limitan la toma de decisiones terapéuticas oportunas",
+            "Me siento cómodo usando inmunoterapia en pacientes con comorbilidades autoinmunitarias"
+          ],
+          "columns": [
+            "Totalmente de acuerdo",
+            "Totalmente de acuerdo",
+            "Ni de acuerdo ni en desacuerdo",
+            "Algo en desacuerdo",
+            "Totalmente en desacuerdo"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. ¿Qué porcentaje de sus pacientes con cáncer de pulmón no microcítico metastásico recibe actualmente inmunoterapia?",
+          "isRequired": false,
+          "description": "Introduzca un número entero entre 0 y 100.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. En su opiniÃ³n, ¿cuál es la mayor barrera para el acceso de sus pacientes a la inmunoterapia?",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. ¿Qué probabilidad hay de que usted usted recomiende la inmunoterapia a un colega que trata el cáncer de pulmón no microcítico metastásico?",
+          "isRequired": false,
+          "description": "0 = Nada probable, 10 = Extremadamente probable",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

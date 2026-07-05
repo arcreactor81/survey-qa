@@ -1,0 +1,3638 @@
+{
+  "migraine": {
+    "langs": {
+      "en": {
+        "route": "/migraine/en",
+        "lang": "en",
+        "title": "Clinician Perceptions of CGRP-Targeted Therapies in Migraine",
+        "model": {
+          "title": "Clinician Perceptions of CGRP-Targeted Therapies in Migraine",
+          "description": "Thank you for participating. This survey takes approximately 10 minutes. Your responses are confidential and reported only in aggregate.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Thank you for completing the survey.</h3><p>Your responses have been recorded.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Which of the following best describes your primary clinical role?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Neurologist",
+                    "Headche specialist",
+                    "Primary care physician",
+                    "Nurse practitioner"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Which of the following therapies for migraine are you aware of?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "None of the above"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. What is your most important consideration when selecting a therapy for a patient with migraine?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Reduction in monthly migraine attacks",
+                    "Speed of onset of benefit",
+                    "Oral versus injectable administration",
+                    "Favorable tolerability profile",
+                    "Prior authorization burden"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Which migraine therapy do you prescribe most often?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "QULIPTA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. How satisfied are you with {Q3brand} for your migraine patients?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Very satisfied",
+                    "Somewhat satisfied",
+                    "Neither satisfied nor dissatisfied",
+                    "Somewhat dissatisfied",
+                    "Very dissatisfied"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Please rate your agreement with each of the following statements.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "CGRP-targeted therapies have transformed migraine management",
+                    "Prior authorization requirements delay my patients' access to newer therapies",
+                    "I am comfortable using these therapies in patients with cardiovascular risk factors"
+                  ],
+                  "columns": [
+                    "Strongly agree",
+                    "Somewhat agree",
+                    "Somewhat agree",
+                    "Somewhat disagree",
+                    "Strongly disagree"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. What percentage of your migraine patients currently receive a CGRP-targeted therapy?",
+                  "isRequired": false,
+                  "description": "Enter a whole number between 0 and 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. In your view, what is the single biggest barrier to your patientsâ€™ access to CGRP-targeted therapies?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. How likely are you to recommend CGRP-targeted therapy to a colleague treating migraine?",
+                  "isRequired": false,
+                  "description": "0 = Not at all likely, 10 = Extremely likely",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "es": {
+        "route": "/migraine/es",
+        "lang": "es",
+        "title": "Percepciones de los médicos sobre las terapias dirigidas al CGRP en la migraña",
+        "model": {
+          "title": "Percepciones de los médicos sobre las terapias dirigidas al CGRP en la migraña",
+          "description": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Gracias por completar la encuesta.</h3><p>Sus respuestas han sido registradas.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. ¿Cuál de las siguientes opciones describe mejor su función profesional principal?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Neurólogo",
+                    "Especialista en cefalas",
+                    "Médico de atención primaria",
+                    "Enfermero de práctica avanzada"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. ¿Cuáles de las siguientes terapias para la migraña conoce usted?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "Ninguno de los anteriores"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. ¿Cuál es su consideración más importante al seleccionar una terapia para un paciente con migraña?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Reducción de las crisis de migraña al mes",
+                    "Rapidez de inicio del beneficio",
+                    "Administración oral frente a inyectable",
+                    "Perfil de tolerabilidad favorable",
+                    "Carga de la autorización previa"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. ¿Qué terapia para la migraña prescribe con mayor frecuencia?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "QULIPTA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. ¿Cuál es su grado de satisfacción con {Q3brand} para sus pacientes con migraña?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Muy satisfecho",
+                    "Algo satisfecho",
+                    "Ni satisfecho ni insatisfecho",
+                    "Algo insatisfecho",
+                    "Muy insatisfecho"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Indique su grado de acuerdo con cada una de las siguientes afirmaciones.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "Las terapias dirigidas al CGRP han transformado el manejo de la migraña",
+                    "Los requisitos de autorización previa retrasan el acceso de mis pacientes a las terapias más nuevas",
+                    "Me siento cómodo usando estas terapias en pacientes con factores de riesgo cardiovascular"
+                  ],
+                  "columns": [
+                    "Totalmente de acuerdo",
+                    "Algo de acuerdo",
+                    "Algo de acuerdo",
+                    "Algo en desacuerdo",
+                    "Totalmente en desacuerdo"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. ¿Qué porcentaje de sus pacientes con migraña recibe actualmente una terapia dirigida al CGRP?",
+                  "isRequired": false,
+                  "description": "Introduzca un número entero entre 0 y 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. En su opiniÃ³n, ¿cuál es la mayor barrera para el acceso de sus pacientes a las terapias dirigidas al CGRP?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. ¿Qué probabilidad hay de que usted recomiende la terapia dirigida al CGRP a un colega que trata la migraña?",
+                  "isRequired": false,
+                  "description": "0 = Nada probable, 10 = Extremadamente probable",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "fr": {
+        "route": "/migraine/fr",
+        "lang": "fr",
+        "title": "Perceptions des cliniciens sur les traitements ciblant le CGRP dans la migraine",
+        "model": {
+          "title": "Perceptions des cliniciens sur les traitements ciblant le CGRP dans la migraine",
+          "description": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Neurologue",
+                    "Spécialiste des céphalés",
+                    "Médecin généraliste",
+                    "Infirmier en pratique avancée"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Parmi les traitements suivants de la migraine, lesquels connaissez-vous ?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "Aucune de ces réponses"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. Quel est votre critère le plus important lors du choix d'un traitement pour un patient souffrant de migraine ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Réduction du nombre de crises de migraine par mois",
+                    "Rapidité d'installation du bénéfice",
+                    "Administration orale versus injectable",
+                    "Profil de tolérance favorable",
+                    "Charge liée à l'autorisation préalable"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Quel traitement de la migraine prescrivez-vous le plus souvent ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "QULIPTA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. Dans quelle mesure êtes-vous satisfait(e) de {Q3brand} pour vos patients souffrant de migraine ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Très satisfait(e)",
+                    "Plutôt satisfait(e)",
+                    "Ni satisfait(e) ni insatisfait(e)",
+                    "Plutôt insatisfait(e)",
+                    "Très insatisfait(e)"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "Les traitements ciblant le CGRP ont transformé la prise en charge de la migraine",
+                    "Les exigences d'autorisation préalable retardent l'accès de mes patients aux traitements plus récents",
+                    "Je suis à l'aise pour utiliser ces traitements chez les patients présentant des facteurs de risque cardiovasculaire"
+                  ],
+                  "columns": [
+                    "Tout à fait d'accord",
+                    "Plutôt d'accord",
+                    "Plutôt d'accord",
+                    "Plutôt pas d'accord",
+                    "Pas du tout d'accord"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. Quel pourcentage de vos patients souffrant de migraine reçoit actuellement un traitement ciblant le CGRP ?",
+                  "isRequired": false,
+                  "description": "Saisissez un nombre entier entre 0 et 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. Selon vous, quel est le principal obstacle à l'accÃ¨s de vos patients aux traitements ciblant le CGRP ?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. Quelle est la probabilité que vous recommandiez le traitement ciblant le CGRP à un confrère traitant la migraine ?",
+                  "isRequired": false,
+                  "description": "0 = Pas du tout probable, 10 = Extrêmement probable",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "de": {
+        "route": "/migraine/de",
+        "lang": "de",
+        "title": "Wahrnehmungen von Ärzten zu CGRP-gerichteten Therapien bei Migräne",
+        "model": {
+          "title": "Wahrnehmungen von Ärzten zu CGRP-gerichteten Therapien bei Migräne",
+          "description": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Vielen Dank für die Teilnahme an der Umfrage.</h3><p>Ihre Antworten wurden gespeichert.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Neurologe",
+                    "Kopfschmerzspezialst",
+                    "Hausarzt",
+                    "Pflegefachkraft"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Welche der folgenden Therapien für die Migräne sind Ihnen bekannt?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "Keine der oben genannten"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. Was ist Ihr wichtigstes Kriterium bei der Auswahl einer Therapie für einen Patienten mit Migräne?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Reduktion der monatlichen Migräneattacken",
+                    "Schnelligkeit des Wirkungseintritts",
+                    "Orale versus injizierbare Anwendung",
+                    "Günstiges Verträglichkeitsprofil",
+                    "Aufwand der vorherigen Genehmigung"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Welche Migränetherapie verschreiben Sie am häufigsten?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "QULIPTA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. Wie zufrieden sind Sie mit {Q3brand} bei Ihren Patienten mit Migräne?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Sehr zufrieden",
+                    "Eher zufrieden",
+                    "Weder zufrieden noch unzufrieden",
+                    "Eher unzufrieden",
+                    "Sehr unzufrieden"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "CGRP-gerichtete Therapien haben das Migränemanagement grundlegend verändert",
+                    "Anforderungen an die vorherige Genehmigung verzögern den Zugang meiner Patienten zu neueren Therapien",
+                    "Ich fühle mich sicher dabei, diese Therapien bei Patienten mit kardiovaskulären Risikofaktoren einzusetzen"
+                  ],
+                  "columns": [
+                    "Stimme voll und ganz zu",
+                    "Stimme eher zu",
+                    "Stimme eher zu",
+                    "Stimme eher nicht zu",
+                    "Stimme überhaupt nicht zu"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. Wie viel Prozent Ihrer Patienten mit Migräne erhalten derzeit eine CGRP-gerichtete Therapie?",
+                  "isRequired": false,
+                  "description": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. Was ist Ihrer Ansicht nach das grÃ¶ÃŸte einzelne Hindernis für den Zugang Ihrer Patienten zu CGRP-gerichteten Therapien?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. Wie wahrscheinlich ist es, dass Sie einem Kollegen, der Migräne behandelt, eine CGRP-gerichtete Therapie empfehlen?",
+                  "isRequired": false,
+                  "description": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "zh": {
+        "route": "/migraine/zh",
+        "lang": "zh",
+        "title": "临床医生对偏头痛靶向CGRP治疗的认知",
+        "model": {
+          "title": "临床医生对偏头痛靶向CGRP治疗的认知",
+          "description": "感谢您的参与。本次调查约需10分钟。您的回答将予以严格保密，仅以汇总形式报告。",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>感谢您完成本次调查。</h3><p>您的回答已被记录。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. 以下哪一项最能描述您的主要职业角色？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "神经科医师",
+                    "投痛专科医师",
+                    "全科医师",
+                    "执业护师"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. 您知晓以下哪些用于治疗偏头痛的药物？",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "以上均无"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. 在为偏头痛患者选择治疗时，您最重要的考虑因素是什么？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "每月偏头痛发作次数的减少",
+                    "起效速度",
+                    "口服与注射给药方式",
+                    "良好的耐受性",
+                    "事先授权负担"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. 对于偏头痛，您最常处方哪种治疗？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "QULIPTA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. 对于您的偏头痛患者，您对{Q3brand}的满意度如何？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "非常满意",
+                    "比较满意",
+                    "既不满意也非不满意",
+                    "不太满意",
+                    "非常不满意"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. 请评价您对以下各项陈述的同意程度。",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "靶向CGRP的治疗彻底改变了偏头痛的管理",
+                    "事先授权要求延误了我的患者获得较新治疗的机会",
+                    "对于有心血管危险因素的患者，我能够放心地使用这些治疗"
+                  ],
+                  "columns": [
+                    "非常同意",
+                    "比较同意",
+                    "比较同意",
+                    "不太同意",
+                    "非常不同意"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. 在您的偏头痛患者中，目前有多大比例正在接受靶向CGRP的治疗（百分比）？",
+                  "isRequired": false,
+                  "description": "请输入0至100之间的整数。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. 在您看来，您的æ‚£è€…获得靶向CGRP治疗的最大障碍是什么？",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. 您向治疗偏头痛的同事推荐靶向CGRP治疗的可能性有多大？",
+                  "isRequired": false,
+                  "description": "0 = 完全不可能，10 = 极有可能",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ja": {
+        "route": "/migraine/ja",
+        "lang": "ja",
+        "title": "片頭痛におけるCGRPを標的とする治療に対する臨床医の認識",
+        "model": {
+          "title": "片頭痛におけるCGRPを標的とする治療に対する臨床医の認識",
+          "description": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "神経内科医",
+                    "頭痛専問医",
+                    "プライマリケア医",
+                    "ナースプラクティショナー"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. 片頭痛に対する以下の治療のうち、あなたがご存知のものはどれですか。",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "上記のいずれでもない"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. 片頭痛の患者さんに対する治療を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "月間片頭痛発作回数の減少",
+                    "効果発現の速さ",
+                    "経口投与か注射投与か",
+                    "良好な忍容性プロファイル",
+                    "事前承認の負担"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. 片頭痛に対して、あなたが最も頻繁に処方する治療はどれですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "NURTEC",
+                    "UBRELVY",
+                    "AJOVY",
+                    "EMGALITY",
+                    "QULIPTA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. 片頭痛の患者さんに対する{Q3brand}について、どの程度満足していますか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "非常に満足している",
+                    "やや満足している",
+                    "どちらともいえない",
+                    "やや不満である",
+                    "非常に不満である"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. 以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "CGRPを標的とする治療は片頭痛の管理を大きく変えた",
+                    "事前承認の要件が患者さんの新しい治療へのアクセスを遅らせている",
+                    "心血管系のリスク因子を有する患者さんにも、私は抵抗なくこれらの治療を使用できる"
+                  ],
+                  "columns": [
+                    "強くそう思う",
+                    "ややそう思う",
+                    "ややそう思う",
+                    "あまりそう思わない",
+                    "全くそう思わない"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. あなたの片頭痛の患者さんのうち、現在CGRPを標的とする治療を受けている方の割合は何パーセントですか。",
+                  "isRequired": false,
+                  "description": "0から100までの整数を入力してください。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. あなたのお考えでは、æ‚£è€…さんがCGRPを標的とする治療を受ける上での最大の障壁は何ですか。",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. 片頭痛を治療している同僚に、CGRPを標的とする治療をどの程度勧めたいと思いますか。",
+                  "isRequired": false,
+                  "description": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "domain": "Migraine — CGRP-targeted therapy selection",
+    "brands": [
+      "NURTEC",
+      "UBRELVY",
+      "AJOVY",
+      "EMGALITY",
+      "QULIPTA"
+    ]
+  },
+  "oncology": {
+    "langs": {
+      "en": {
+        "route": "/oncology/en",
+        "lang": "en",
+        "title": "Oncologist Perceptions of First-Line Immunotherapy in Metastatic Non-Small Cell Lung Cancer",
+        "model": {
+          "title": "Oncologist Perceptions of First-Line Immunotherapy in Metastatic Non-Small Cell Lung Cancer",
+          "description": "Thank you for participating. This survey takes approximately 10 minutes. Your responses are confidential and reported only in aggregate.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Thank you for completing the survey.</h3><p>Your responses have been recorded.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Which of the following best describes your primary clinical role?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Medical oncologist",
+                    "Hematologist-oncolgist",
+                    "Nurse practitioner",
+                    "Physician assistant"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. How many years have you been treating patients with non-small cell lung cancer?",
+                  "isRequired": false,
+                  "description": "Enter a whole number between 0 and 50.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Which of the following immunotherapies for metastatic non-small cell lung cancer are you aware of?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "None of the above"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. What is your most important consideration when selecting first-line immunotherapy for metastatic NSCLC?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Overall response benefit",
+                    "Progression-free survival",
+                    "Alignment with PD-L1 status",
+                    "Favorable tolerability profile",
+                    "Dosing convenience"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Which immunotherapy do you prescribe most often for first-line metastatic NSCLC?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "LIBTAYO"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. How satisfied are you with {Q3brand} for your first-line metastatic NSCLC patients?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Very satisfied",
+                    "Somewhat satisfied",
+                    "Neither satisfied nor dissatisfied",
+                    "Somewhat dissatisfied",
+                    "Very dissatisfied"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Please rate your agreement with each of the following statements.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "Immunotherapy has transformed outcomes in metastatic NSCLC",
+                    "Biomarker testing turnaround limits timely treatment decisions",
+                    "I am comfortable using immunotherapy in patients with autoimmune comorbidities"
+                  ],
+                  "columns": [
+                    "Strongly agree",
+                    "Strongly agree",
+                    "Neither agree nor disagree",
+                    "Somewhat disagree",
+                    "Strongly disagree"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. What percentage of your metastatic NSCLC patients currently receive immunotherapy?",
+                  "isRequired": false,
+                  "description": "Enter a whole number between 0 and 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. In your view, what is the single biggest barrier to your patientsâ€™ access to immunotherapy?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. How likely are you you to recommend immunotherapy to a colleague treating metastatic NSCLC?",
+                  "isRequired": false,
+                  "description": "0 = Not at all likely, 10 = Extremely likely",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "es": {
+        "route": "/oncology/es",
+        "lang": "es",
+        "title": "Percepciones de los oncólogos sobre la inmunoterapia de primera línea en el cáncer de pulmón no microcítico metastásico",
+        "model": {
+          "title": "Percepciones de los oncólogos sobre la inmunoterapia de primera línea en el cáncer de pulmón no microcítico metastásico",
+          "description": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Gracias por completar la encuesta.</h3><p>Sus respuestas han sido registradas.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. ¿Cuál de las siguientes opciones describe mejor su función profesional principal?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Oncólogo médico",
+                    "Hematólogo-oncólgo",
+                    "Enfermero de práctica avanzada",
+                    "Asistente médico"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. ¿Cuántos años lleva tratando a pacientes con cáncer de pulmón no microcítico?",
+                  "isRequired": false,
+                  "description": "Introduzca un número entero entre 0 y 50.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. ¿Cuáles de las siguientes inmunoterapias para el cáncer de pulmón no microcítico metastásico conoce usted?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "Ninguno de los anteriores"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. ¿Cuál es su consideración más importante al seleccionar la inmunoterapia de primera línea para el cáncer de pulmón no microcítico metastásico?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Beneficio en respuesta global",
+                    "Supervivencia libre de progresión",
+                    "Concordancia con el estado de PD-L1",
+                    "Perfil de tolerabilidad favorable",
+                    "Comodidad posológica"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. ¿Qué inmunoterapia prescribe con mayor frecuencia para el cáncer de pulmón no microcítico metastásico de primera línea?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "LIBTAYO"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. ¿Cuál es su grado de satisfacción con {Q3brand} para sus pacientes con cáncer de pulmón no microcítico metastásico de primera línea?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Muy satisfecho",
+                    "Algo satisfecho",
+                    "Ni satisfecho ni insatisfecho",
+                    "Algo insatisfecho",
+                    "Muy insatisfecho"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Indique su grado de acuerdo con cada una de las siguientes afirmaciones.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "La inmunoterapia ha transformado los resultados en el cáncer de pulmón no microcítico metastásico",
+                    "Los plazos de las pruebas de biomarcadores limitan la toma de decisiones terapéuticas oportunas",
+                    "Me siento cómodo usando inmunoterapia en pacientes con comorbilidades autoinmunitarias"
+                  ],
+                  "columns": [
+                    "Totalmente de acuerdo",
+                    "Totalmente de acuerdo",
+                    "Ni de acuerdo ni en desacuerdo",
+                    "Algo en desacuerdo",
+                    "Totalmente en desacuerdo"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. ¿Qué porcentaje de sus pacientes con cáncer de pulmón no microcítico metastásico recibe actualmente inmunoterapia?",
+                  "isRequired": false,
+                  "description": "Introduzca un número entero entre 0 y 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. En su opiniÃ³n, ¿cuál es la mayor barrera para el acceso de sus pacientes a la inmunoterapia?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. ¿Qué probabilidad hay de que usted usted recomiende la inmunoterapia a un colega que trata el cáncer de pulmón no microcítico metastásico?",
+                  "isRequired": false,
+                  "description": "0 = Nada probable, 10 = Extremadamente probable",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "fr": {
+        "route": "/oncology/fr",
+        "lang": "fr",
+        "title": "Perceptions des oncologues sur l'immunothérapie de première ligne dans le cancer bronchique non à petites cellules métastatique",
+        "model": {
+          "title": "Perceptions des oncologues sur l'immunothérapie de première ligne dans le cancer bronchique non à petites cellules métastatique",
+          "description": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Oncologue médical",
+                    "Hématologue-oncologe",
+                    "Infirmier en pratique avancée",
+                    "Assistant médical"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. Depuis combien d'années traitez-vous des patients atteints d'un cancer bronchique non à petites cellules ?",
+                  "isRequired": false,
+                  "description": "Saisissez un nombre entier entre 0 et 50.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Parmi les immunothérapies suivantes du cancer bronchique non à petites cellules métastatique, lesquelles connaissez-vous ?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "Aucune de ces réponses"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. Quel est votre critère le plus important lors du choix d'une immunothérapie de première ligne pour un cancer bronchique non à petites cellules métastatique ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Bénéfice en réponse globale",
+                    "Survie sans progression",
+                    "Cohérence avec le statut PD-L1",
+                    "Profil de tolérance favorable",
+                    "Commodité d'administration"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Quelle immunothérapie prescrivez-vous le plus souvent en première ligne pour un cancer bronchique non à petites cellules métastatique ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "LIBTAYO"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. Dans quelle mesure êtes-vous satisfait(e) de {Q3brand} pour vos patients atteints d'un cancer bronchique non à petites cellules métastatique en première ligne ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Très satisfait(e)",
+                    "Plutôt satisfait(e)",
+                    "Ni satisfait(e) ni insatisfait(e)",
+                    "Plutôt insatisfait(e)",
+                    "Très insatisfait(e)"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "L'immunothérapie a transformé les résultats dans le cancer bronchique non à petites cellules métastatique",
+                    "Les délais des tests de biomarqueurs limitent la rapidité des décisions thérapeutiques",
+                    "Je suis à l'aise pour utiliser l'immunothérapie chez les patients présentant des comorbidités auto-immunes"
+                  ],
+                  "columns": [
+                    "Tout à fait d'accord",
+                    "Tout à fait d'accord",
+                    "Ni d'accord ni pas d'accord",
+                    "Plutôt pas d'accord",
+                    "Pas du tout d'accord"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. Quel pourcentage de vos patients atteints d'un cancer bronchique non à petites cellules métastatique reçoit actuellement une immunothérapie ?",
+                  "isRequired": false,
+                  "description": "Saisissez un nombre entier entre 0 et 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. Selon vous, quel est le principal obstacle à l'accÃ¨s de vos patients à l'immunothérapie ?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. Quelle est la probabilité que vous vous recommandiez l'immunothérapie à un confrère traitant un cancer bronchique non à petites cellules métastatique ?",
+                  "isRequired": false,
+                  "description": "0 = Pas du tout probable, 10 = Extrêmement probable",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "de": {
+        "route": "/oncology/de",
+        "lang": "de",
+        "title": "Wahrnehmungen von Onkologen zur Erstlinien-Immuntherapie beim metastasierten nicht-kleinzelligen Lungenkarzinom",
+        "model": {
+          "title": "Wahrnehmungen von Onkologen zur Erstlinien-Immuntherapie beim metastasierten nicht-kleinzelligen Lungenkarzinom",
+          "description": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Vielen Dank für die Teilnahme an der Umfrage.</h3><p>Ihre Antworten wurden gespeichert.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Medizinischer Onkologe",
+                    "Hämatologe-Onkloge",
+                    "Pflegefachkraft",
+                    "Arztassistent"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. Wie viele Jahre behandeln Sie bereits Patienten mit nicht-kleinzelligem Lungenkarzinom?",
+                  "isRequired": false,
+                  "description": "Geben Sie eine ganze Zahl zwischen 0 und 50 ein.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Welche der folgenden Immuntherapien für das metastasierte nicht-kleinzellige Lungenkarzinom sind Ihnen bekannt?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "Keine der oben genannten"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. Was ist Ihr wichtigstes Kriterium bei der Auswahl einer Erstlinien-Immuntherapie für das metastasierte nicht-kleinzellige Lungenkarzinom?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Nutzen für das Gesamtansprechen",
+                    "Progressionsfreies Überleben",
+                    "Übereinstimmung mit dem PD-L1-Status",
+                    "Günstiges Verträglichkeitsprofil",
+                    "Bequemes Dosierungsschema"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Welche Immuntherapie verschreiben Sie am häufigsten in der Erstlinie beim metastasierten nicht-kleinzelligen Lungenkarzinom?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "LIBTAYO"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. Wie zufrieden sind Sie mit {Q3brand} bei Ihren Erstlinien-Patienten mit metastasiertem nicht-kleinzelligem Lungenkarzinom?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Sehr zufrieden",
+                    "Eher zufrieden",
+                    "Weder zufrieden noch unzufrieden",
+                    "Eher unzufrieden",
+                    "Sehr unzufrieden"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "Die Immuntherapie hat die Behandlungsergebnisse beim metastasierten nicht-kleinzelligen Lungenkarzinom grundlegend verändert",
+                    "Die Bearbeitungszeit von Biomarkertests schränkt zeitnahe Behandlungsentscheidungen ein",
+                    "Ich fühle mich sicher dabei, Immuntherapie bei Patienten mit autoimmunen Begleiterkrankungen einzusetzen"
+                  ],
+                  "columns": [
+                    "Stimme voll und ganz zu",
+                    "Stimme voll und ganz zu",
+                    "Weder Zustimmung noch Ablehnung",
+                    "Stimme eher nicht zu",
+                    "Stimme überhaupt nicht zu"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. Wie viel Prozent Ihrer Patienten mit metastasiertem nicht-kleinzelligem Lungenkarzinom erhalten derzeit eine Immuntherapie?",
+                  "isRequired": false,
+                  "description": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. Was ist Ihrer Ansicht nach das grÃ¶ÃŸte einzelne Hindernis für den Zugang Ihrer Patienten zur Immuntherapie?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. Wie wahrscheinlich ist es, dass Sie Sie einem Kollegen, der ein metastasiertes nicht-kleinzelliges Lungenkarzinom behandelt, eine Immuntherapie empfehlen?",
+                  "isRequired": false,
+                  "description": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "zh": {
+        "route": "/oncology/zh",
+        "lang": "zh",
+        "title": "肿瘤科医生对转移性非小细胞肺癌一线免疫治疗的认知",
+        "model": {
+          "title": "肿瘤科医生对转移性非小细胞肺癌一线免疫治疗的认知",
+          "description": "感谢您的参与。本次调查约需10分钟。您的回答将予以严格保密，仅以汇总形式报告。",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>感谢您完成本次调查。</h3><p>您的回答已被记录。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. 以下哪一项最能描述您的主要职业角色？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "肿瘤内科医师",
+                    "血液种瘤科医师",
+                    "执业护师",
+                    "医师助理"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. 您治疗非小细胞肺癌患者已有多少年？",
+                  "isRequired": false,
+                  "description": "请输入0至50之间的整数。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. 您知晓以下哪些用于治疗转移性非小细胞肺癌的免疫治疗药物？",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "以上均无"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. 在为转移性非小细胞肺癌选择一线免疫治疗时，您最重要的考虑因素是什么？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "总缓解获益",
+                    "无进展生存",
+                    "与PD-L1状态的一致性",
+                    "良好的耐受性",
+                    "给药便利性"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. 对于一线转移性非小细胞肺癌，您最常处方哪种免疫治疗？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "LIBTAYO"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. 对于您的一线转移性非小细胞肺癌患者，您对{Q3brand}的满意度如何？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "非常满意",
+                    "比较满意",
+                    "既不满意也非不满意",
+                    "不太满意",
+                    "非常不满意"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. 请评价您对以下各项陈述的同意程度。",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "免疫治疗彻底改变了转移性非小细胞肺癌的治疗结局",
+                    "生物标志物检测的周转时间限制了及时的治疗决策",
+                    "对于合并自身免疫性疾病的患者，我能够放心地使用免疫治疗"
+                  ],
+                  "columns": [
+                    "非常同意",
+                    "非常同意",
+                    "既不同意也不反对",
+                    "不太同意",
+                    "非常不同意"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. 在您的转移性非小细胞肺癌患者中，目前有多大比例正在接受免疫治疗（百分比）？",
+                  "isRequired": false,
+                  "description": "请输入0至100之间的整数。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. 在您看来，您的æ‚£è€…获得免疫治疗的最大障碍是什么？",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. 您向治疗转移性非小细胞肺癌的的同事推荐免疫治疗的可能性有多大？",
+                  "isRequired": false,
+                  "description": "0 = 完全不可能，10 = 极有可能",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ja": {
+        "route": "/oncology/ja",
+        "lang": "ja",
+        "title": "転移性非小細胞肺がんの一次免疫療法に対する腫瘍内科医の認識",
+        "model": {
+          "title": "転移性非小細胞肺がんの一次免疫療法に対する腫瘍内科医の認識",
+          "description": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "腫瘍内科医",
+                    "血液種瘍内科医",
+                    "ナースプラクティショナー",
+                    "フィジシャンアシスタント"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. 非小細胞肺がんの患者さんの治療に携わって何年になりますか。",
+                  "isRequired": false,
+                  "description": "0から50までの整数を入力してください。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. 転移性非小細胞肺がんに対する以下の免疫療法のうち、あなたがご存知のものはどれですか。",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "上記のいずれでもない"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. 転移性非小細胞肺がんに対する一次治療の免疫療法を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "全奏効のベネフィット",
+                    "無増悪生存期間",
+                    "PD-L1発現状況との整合性",
+                    "良好な忍容性プロファイル",
+                    "投与の利便性"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. 一次治療の転移性非小細胞肺がんに対して、あなたが最も頻繁に処方する免疫療法はどれですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "KEYTRUDA",
+                    "OPDIVO",
+                    "TECENTRIQ",
+                    "IMFINZI",
+                    "LIBTAYO"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. 一次治療の転移性非小細胞肺がんの患者さんに対する{Q3brand}について、どの程度満足していますか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "非常に満足している",
+                    "やや満足している",
+                    "どちらともいえない",
+                    "やや不満である",
+                    "非常に不満である"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. 以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "免疫療法は転移性非小細胞肺がんの治療成績を大きく変えた",
+                    "バイオマーカー検査の所要時間が適時の治療判断を妨げている",
+                    "自己免疫性の併存疾患を有する患者さんにも、私は抵抗なく免疫療法を使用できる"
+                  ],
+                  "columns": [
+                    "強くそう思う",
+                    "強くそう思う",
+                    "どちらともいえない",
+                    "あまりそう思わない",
+                    "全くそう思わない"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. あなたの転移性非小細胞肺がんの患者さんのうち、現在免疫療法を受けている方の割合は何パーセントですか。",
+                  "isRequired": false,
+                  "description": "0から100までの整数を入力してください。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. あなたのお考えでは、æ‚£è€…さんが免疫療法を受ける上での最大の障壁は何ですか。",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. 転移性非小細胞肺がんを治療している同僚にに、免疫療法をどの程度勧めたいと思いますか。",
+                  "isRequired": false,
+                  "description": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "domain": "Oncology — first-line immunotherapy in metastatic NSCLC",
+    "brands": [
+      "KEYTRUDA",
+      "OPDIVO",
+      "TECENTRIQ",
+      "IMFINZI",
+      "LIBTAYO"
+    ]
+  },
+  "rheumatoid-arthritis": {
+    "langs": {
+      "en": {
+        "route": "/rheumatoid-arthritis/en",
+        "lang": "en",
+        "title": "Rheumatologist Perceptions of Advanced Therapies in Moderate-to-Severe Rheumatoid Arthritis",
+        "model": {
+          "title": "Rheumatologist Perceptions of Advanced Therapies in Moderate-to-Severe Rheumatoid Arthritis",
+          "description": "Thank you for participating. This survey takes approximately 10 minutes. Your responses are confidential and reported only in aggregate.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Thank you for completing the survey.</h3><p>Your responses have been recorded.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Which of the following best describes your primary clinical role?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Rheumatolgist",
+                    "Nurse practitioner",
+                    "Physician assistant",
+                    "Primary care physician"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. How many years have you been treating patients with rheumatoid arthritis?",
+                  "isRequired": false,
+                  "description": "Enter a whole number between 0 and 50.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Which of the following advanced therapies for moderate-to-severe rheumatoid arthritis are you aware of?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "None of the above"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. What is your most important consideration when selecting an advanced therapy for moderate-to-severe RA?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "ACR20/50/70 response",
+                    "Inhibition of radiographic regression",
+                    "Oral versus injectable administration",
+                    "Favorable safety and infection profile",
+                    "Formulary coverage and cost"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Which advanced therapy do you prescribe most often for moderate-to-severe RA?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "ORENCIA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. How satisfied are you with {Q3brand} for your moderate-to-severe RA patients?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Very satisfied",
+                    "Somewhat satisfied",
+                    "Neither satisfied nor dissatisfied",
+                    "Somewhat dissatisfied",
+                    "Very dissatisfied"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Please rate your agreement with each of the following statements.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "Advanced therapies have transformed outcomes in rheumatoid arthritis",
+                    "Prior authorization requirements delay my patients' treatment",
+                    "I am comfortable prescribing JAK inhibitors given current safety guidance"
+                  ],
+                  "columns": [
+                    "Strongly agree",
+                    "Strongly agree",
+                    "Neither agree nor disagree",
+                    "Somewhat disagree",
+                    "Strongly disagree"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. What percentage of your moderate-to-severe RA patients currently receive an advanced therapy (biologic or JAK inhibitor)?",
+                  "isRequired": false,
+                  "description": "Enter a whole number between 0 and 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q8",
+                  "title": "Q8. How likely are you you to recommend advanced therapy to a colleague treating moderate-to-severe RA?",
+                  "isRequired": false,
+                  "description": "0 = Not at all likely, 10 = Extremely likely",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "es": {
+        "route": "/rheumatoid-arthritis/es",
+        "lang": "es",
+        "title": "Percepciones de los reumatólogos sobre las terapias avanzadas en la artritis reumatoide de moderada a grave",
+        "model": {
+          "title": "Percepciones de los reumatólogos sobre las terapias avanzadas en la artritis reumatoide de moderada a grave",
+          "description": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Gracias por completar la encuesta.</h3><p>Sus respuestas han sido registradas.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. ¿Cuál de las siguientes opciones describe mejor su función profesional principal?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Reumatólgo",
+                    "Enfermero de práctica avanzada",
+                    "Asistente médico",
+                    "Médico de atención primaria"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. ¿Cuántos años lleva tratando a pacientes con artritis reumatoide?",
+                  "isRequired": false,
+                  "description": "Introduzca un número entero entre 0 y 50.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. ¿Cuáles de las siguientes terapias avanzadas para la artritis reumatoide de moderada a grave conoce usted?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "Ninguno de los anteriores"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. ¿Cuál es su consideración más importante al seleccionar una terapia avanzada para la artritis reumatoide de moderada a grave?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Respuesta ACR20/50/70",
+                    "Inhibición de la regresión radiográfica",
+                    "Administración oral frente a inyectable",
+                    "Perfil favorable de seguridad e infecciones",
+                    "Cobertura del formulario y coste"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. ¿Qué terapia avanzada prescribe con mayor frecuencia para la artritis reumatoide de moderada a grave?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "ORENCIA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. ¿Cuál es su grado de satisfacción con {Q3brand} para sus pacientes con artritis reumatoide de moderada a grave?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Muy satisfecho",
+                    "Algo satisfecho",
+                    "Ni satisfecho ni insatisfecho",
+                    "Algo insatisfecho",
+                    "Muy insatisfecho"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Indique su grado de acuerdo con cada una de las siguientes afirmaciones.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "Las terapias avanzadas han transformado los resultados en la artritis reumatoide",
+                    "Los requisitos de autorización previa retrasan el tratamiento de mis pacientes",
+                    "Me siento cómodo prescribiendo inhibidores de JAK conforme a las recomendaciones de seguridad actuales"
+                  ],
+                  "columns": [
+                    "Totalmente de acuerdo",
+                    "Totalmente de acuerdo",
+                    "Ni de acuerdo ni en desacuerdo",
+                    "Algo en desacuerdo",
+                    "Totalmente en desacuerdo"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. ¿Qué porcentaje de sus pacientes con artritis reumatoide de moderada a grave recibe actualmente una terapia avanzada (biológico o inhibidor de JAK)?",
+                  "isRequired": false,
+                  "description": "Introduzca un número entero entre 0 y 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q8",
+                  "title": "Q8. ¿Qué probabilidad hay de que usted usted recomiende la terapia avanzada a un colega que trata la artritis reumatoide de moderada a grave?",
+                  "isRequired": false,
+                  "description": "0 = Nada probable, 10 = Extremadamente probable",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "fr": {
+        "route": "/rheumatoid-arthritis/fr",
+        "lang": "fr",
+        "title": "Perceptions des rhumatologues sur les traitements avancés dans la polyarthrite rhumatoïde modérée à sévère",
+        "model": {
+          "title": "Perceptions des rhumatologues sur les traitements avancés dans la polyarthrite rhumatoïde modérée à sévère",
+          "description": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Rhumatologe",
+                    "Infirmier en pratique avancée",
+                    "Assistant médical",
+                    "Médecin généraliste"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. Depuis combien d'années traitez-vous des patients atteints de polyarthrite rhumatoïde ?",
+                  "isRequired": false,
+                  "description": "Saisissez un nombre entier entre 0 et 50.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Parmi les traitements avancés suivants de la polyarthrite rhumatoïde modérée à sévère, lesquels connaissez-vous ?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "Aucune de ces réponses"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. Quel est votre critère le plus important lors du choix d'un traitement avancé pour une polyarthrite rhumatoïde modérée à sévère ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Réponse ACR20/50/70",
+                    "Inhibition de la régression radiographique",
+                    "Administration orale versus injectable",
+                    "Profil favorable de sécurité et d'infections",
+                    "Prise en charge par le formulaire et coût"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Quel traitement avancé prescrivez-vous le plus souvent pour une polyarthrite rhumatoïde modérée à sévère ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "ORENCIA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. Dans quelle mesure êtes-vous satisfait(e) de {Q3brand} pour vos patients atteints de polyarthrite rhumatoïde modérée à sévère ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Très satisfait(e)",
+                    "Plutôt satisfait(e)",
+                    "Ni satisfait(e) ni insatisfait(e)",
+                    "Plutôt insatisfait(e)",
+                    "Très insatisfait(e)"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "Les traitements avancés ont transformé les résultats dans la polyarthrite rhumatoïde",
+                    "Les exigences d'autorisation préalable retardent le traitement de mes patients",
+                    "Je suis à l'aise pour prescrire des inhibiteurs de JAK compte tenu des recommandations de sécurité actuelles"
+                  ],
+                  "columns": [
+                    "Tout à fait d'accord",
+                    "Tout à fait d'accord",
+                    "Ni d'accord ni pas d'accord",
+                    "Plutôt pas d'accord",
+                    "Pas du tout d'accord"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. Quel pourcentage de vos patients atteints de polyarthrite rhumatoïde modérée à sévère reçoit actuellement un traitement avancé (biologique ou inhibiteur de JAK) ?",
+                  "isRequired": false,
+                  "description": "Saisissez un nombre entier entre 0 et 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q8",
+                  "title": "Q8. Quelle est la probabilité que vous vous recommandiez le traitement avancé à un confrère traitant une polyarthrite rhumatoïde modérée à sévère ?",
+                  "isRequired": false,
+                  "description": "0 = Pas du tout probable, 10 = Extrêmement probable",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "de": {
+        "route": "/rheumatoid-arthritis/de",
+        "lang": "de",
+        "title": "Wahrnehmungen von Rheumatologen zu fortgeschrittenen Therapien bei mittelschwerer bis schwerer rheumatoider Arthritis",
+        "model": {
+          "title": "Wahrnehmungen von Rheumatologen zu fortgeschrittenen Therapien bei mittelschwerer bis schwerer rheumatoider Arthritis",
+          "description": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Vielen Dank für die Teilnahme an der Umfrage.</h3><p>Ihre Antworten wurden gespeichert.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Rheumatolge",
+                    "Pflegefachkraft",
+                    "Arztassistent",
+                    "Hausarzt"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. Wie viele Jahre behandeln Sie bereits Patienten mit rheumatoider Arthritis?",
+                  "isRequired": false,
+                  "description": "Geben Sie eine ganze Zahl zwischen 0 und 50 ein.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Welche der folgenden fortgeschrittenen Therapien für die mittelschwere bis schwere rheumatoide Arthritis sind Ihnen bekannt?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "Keine der oben genannten"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. Was ist Ihr wichtigstes Kriterium bei der Auswahl einer fortgeschrittenen Therapie für die mittelschwere bis schwere rheumatoide Arthritis?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "ACR20/50/70-Ansprechen",
+                    "Hemmung der radiographischen Regression",
+                    "Orale versus injizierbare Anwendung",
+                    "Günstiges Sicherheits- und Infektionsprofil",
+                    "Kostenübernahme und Kosten"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Welche fortgeschrittene Therapie verschreiben Sie am häufigsten bei mittelschwerer bis schwerer rheumatoider Arthritis?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "ORENCIA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. Wie zufrieden sind Sie mit {Q3brand} bei Ihren Patienten mit mittelschwerer bis schwerer rheumatoider Arthritis?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Sehr zufrieden",
+                    "Eher zufrieden",
+                    "Weder zufrieden noch unzufrieden",
+                    "Eher unzufrieden",
+                    "Sehr unzufrieden"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "Fortgeschrittene Therapien haben die Behandlungsergebnisse bei rheumatoider Arthritis grundlegend verändert",
+                    "Anforderungen an die vorherige Genehmigung verzögern die Behandlung meiner Patienten",
+                    "Ich fühle mich sicher dabei, JAK-Inhibitoren gemäß den aktuellen Sicherheitshinweisen zu verschreiben"
+                  ],
+                  "columns": [
+                    "Stimme voll und ganz zu",
+                    "Stimme voll und ganz zu",
+                    "Weder Zustimmung noch Ablehnung",
+                    "Stimme eher nicht zu",
+                    "Stimme überhaupt nicht zu"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. Wie viel Prozent Ihrer Patienten mit mittelschwerer bis schwerer rheumatoider Arthritis erhalten derzeit eine fortgeschrittene Therapie (Biologikum oder JAK-Inhibitor)?",
+                  "isRequired": false,
+                  "description": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q8",
+                  "title": "Q8. Wie wahrscheinlich ist es, dass Sie Sie einem Kollegen, der eine mittelschwere bis schwere rheumatoide Arthritis behandelt, eine fortgeschrittene Therapie empfehlen?",
+                  "isRequired": false,
+                  "description": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "zh": {
+        "route": "/rheumatoid-arthritis/zh",
+        "lang": "zh",
+        "title": "风湿科医生对中重度类风湿关节炎先进治疗的认知",
+        "model": {
+          "title": "风湿科医生对中重度类风湿关节炎先进治疗的认知",
+          "description": "感谢您的参与。本次调查约需10分钟。您的回答将予以严格保密，仅以汇总形式报告。",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>感谢您完成本次调查。</h3><p>您的回答已被记录。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. 以下哪一项最能描述您的主要职业角色？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "疯湿科医师",
+                    "执业护师",
+                    "医师助理",
+                    "全科医师"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. 您治疗类风湿关节炎患者已有多少年？",
+                  "isRequired": false,
+                  "description": "请输入0至50之间的整数。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. 您知晓以下哪些用于治疗中重度类风湿关节炎的先进治疗药物？",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "以上均无"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. 在为中重度类风湿关节炎选择先进治疗时，您最重要的考虑因素是什么？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "ACR20/50/70缓解",
+                    "抑制影像学消退",
+                    "口服与注射给药方式",
+                    "良好的安全性与感染谱",
+                    "医保目录覆盖与费用"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. 对于中重度类风湿关节炎，您最常处方哪种先进治疗？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "ORENCIA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. 对于您的中重度类风湿关节炎患者，您对{Q3brand}的满意度如何？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "非常满意",
+                    "比较满意",
+                    "既不满意也非不满意",
+                    "不太满意",
+                    "非常不满意"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. 请评价您对以下各项陈述的同意程度。",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "先进治疗彻底改变了类风湿关节炎的治疗结局",
+                    "事先授权要求延误了我的患者的治疗",
+                    "根据当前的安全性指导，我能够放心地处方JAK抑制剂"
+                  ],
+                  "columns": [
+                    "非常同意",
+                    "非常同意",
+                    "既不同意也不反对",
+                    "不太同意",
+                    "非常不同意"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. 在您的中重度类风湿关节炎患者中，目前有多大比例正在接受先进治疗（生物制剂或JAK抑制剂）（百分比）？",
+                  "isRequired": false,
+                  "description": "请输入0至100之间的整数。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q8",
+                  "title": "Q8. 您向治疗中重度类风湿关节炎的的同事推荐先进治疗的可能性有多大？",
+                  "isRequired": false,
+                  "description": "0 = 完全不可能，10 = 极有可能",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ja": {
+        "route": "/rheumatoid-arthritis/ja",
+        "lang": "ja",
+        "title": "中等症から重症の関節リウマチにおける先進的治療に対するリウマチ専門医の認識",
+        "model": {
+          "title": "中等症から重症の関節リウマチにおける先進的治療に対するリウマチ専門医の認識",
+          "description": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "リウマチ専問医",
+                    "ナースプラクティショナー",
+                    "フィジシャンアシスタント",
+                    "プライマリケア医"
+                  ]
+                },
+                {
+                  "name": "S2",
+                  "title": "S2. 関節リウマチの患者さんの治療に携わって何年になりますか。",
+                  "isRequired": false,
+                  "description": "0から50までの整数を入力してください。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 50
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. 中等症から重症の関節リウマチに対する以下の先進的治療のうち、あなたがご存知のものはどれですか。",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "上記のいずれでもない"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. 中等症から重症の関節リウマチに対する先進的治療を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "ACR20/50/70の改善",
+                    "画像上の退行の抑制",
+                    "経口投与か注射投与か",
+                    "良好な安全性・感染症プロファイル",
+                    "フォーミュラリー収載と費用"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. 中等症から重症の関節リウマチに対して、あなたが最も頻繁に処方する先進的治療はどれですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "HUMIRA",
+                    "ENBREL",
+                    "RINVOQ",
+                    "XELJANZ",
+                    "ORENCIA"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. 中等症から重症の関節リウマチの患者さんに対する{Q3brand}について、どの程度満足していますか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "非常に満足している",
+                    "やや満足している",
+                    "どちらともいえない",
+                    "やや不満である",
+                    "非常に不満である"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. 以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "先進的治療は関節リウマチの治療成績を大きく変えた",
+                    "事前承認の要件が患者さんの治療を遅らせている",
+                    "現行の安全性ガイダンスを踏まえ、私は抵抗なくJAK阻害薬を処方できる"
+                  ],
+                  "columns": [
+                    "強くそう思う",
+                    "強くそう思う",
+                    "どちらともいえない",
+                    "あまりそう思わない",
+                    "全くそう思わない"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q5. あなたの中等症から重症の関節リウマチの患者さんのうち、現在先進的治療（生物学的製剤またはJAK阻害薬）を受けている方の割合は何パーセントですか。",
+                  "isRequired": false,
+                  "description": "0から100までの整数を入力してください。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q8",
+                  "title": "Q8. 中等症から重症の関節リウマチを治療している同僚にに、先進的治療をどの程度勧めたいと思いますか。",
+                  "isRequired": false,
+                  "description": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "domain": "Rheumatoid arthritis — advanced therapy in moderate-to-severe RA",
+    "brands": [
+      "HUMIRA",
+      "ENBREL",
+      "RINVOQ",
+      "XELJANZ",
+      "ORENCIA"
+    ]
+  },
+  "type-2-diabetes": {
+    "langs": {
+      "en": {
+        "route": "/type-2-diabetes/en",
+        "lang": "en",
+        "title": "Clinician Perceptions of Incretin-Based Therapies in Type 2 Diabetes",
+        "model": {
+          "title": "Clinician Perceptions of Incretin-Based Therapies in Type 2 Diabetes",
+          "description": "Thank you for participating. This survey takes approximately 10 minutes. Your responses are confidential and reported only in aggregate.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Thank you for completing the survey.</h3><p>Your responses have been recorded.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Which of the following best describes your primary clinical role?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Endocrinologst",
+                    "Primary care physician",
+                    "Nurse practitioner",
+                    "Physician assistant"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Which of the following medications for type 2 diabetes are you aware of?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "None of the above"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. What is your most important consideration when selecting a medication for a patient with inadequately controlled type 2 diabetes?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Magnitude of HbA1c reduction",
+                    "Weight-gain potential",
+                    "Once-weekly dosing convenience",
+                    "Cardiovascular risk reduction",
+                    "Formulary coverage and cost"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Which medication do you prescribe most often for inadequately controlled type 2 diabetes?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "RYBELSUS"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. How satisfied are you with {Q3brand} for your type 2 diabetes patients?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Very satisfied",
+                    "Somewhat satisfied",
+                    "Neither satisfied nor dissatisfied",
+                    "Somewhat dissatisfied",
+                    "Very dissatisfied"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Please rate your agreement with each of the following statements.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "GLP-1 receptor agonists have transformed type 2 diabetes management",
+                    "Injection burden limits my patients' adherence to therapy",
+                    "I am comfortable titrating these agents in patients with renal impairment"
+                  ],
+                  "columns": [
+                    "Strongly agree",
+                    "Somewhat agree",
+                    "Neither agree nor disagree",
+                    "Strongly disagree",
+                    "Strongly disagree"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q6. What percentage of your type 2 diabetes patients currently receive a GLP-1 receptor agonist or dual GIP/GLP-1 agonist?",
+                  "isRequired": false,
+                  "description": "Enter a whole number between 0 and 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. In your view, what is the single biggest barrier to your patientsâ€™ access to these therapies?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. How likely are you you to recommend these therapies to a colleague managing type 2 diabetes?",
+                  "isRequired": false,
+                  "description": "0 = Not at all likely, 10 = Extremely likely",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "es": {
+        "route": "/type-2-diabetes/es",
+        "lang": "es",
+        "title": "Percepciones de los médicos sobre las terapias basadas en incretinas en la diabetes tipo 2",
+        "model": {
+          "title": "Percepciones de los médicos sobre las terapias basadas en incretinas en la diabetes tipo 2",
+          "description": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Gracias por completar la encuesta.</h3><p>Sus respuestas han sido registradas.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. ¿Cuál de las siguientes opciones describe mejor su función profesional principal?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Endocrinólgo",
+                    "Médico de atención primaria",
+                    "Enfermero de práctica avanzada",
+                    "Asistente médico"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. ¿Cuáles de los siguientes medicamentos para la diabetes tipo 2 conoce usted?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "Ninguno de los anteriores"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. ¿Cuál es su consideración más importante al seleccionar un medicamento para un paciente con diabetes tipo 2 inadecuadamente controlada?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Magnitud de la reducción de la HbA1c",
+                    "Potencial de aumento de peso",
+                    "Comodidad de la dosificación semanal",
+                    "Reducción del riesgo cardiovascular",
+                    "Cobertura del formulario y coste"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. ¿Qué medicamento prescribe con mayor frecuencia para la diabetes tipo 2 inadecuadamente controlada?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "RYBELSUS"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. ¿Cuál es su grado de satisfacción con {Q3brand} para sus pacientes con diabetes tipo 2?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Muy satisfecho",
+                    "Algo satisfecho",
+                    "Ni satisfecho ni insatisfecho",
+                    "Algo insatisfecho",
+                    "Muy insatisfecho"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Indique su grado de acuerdo con cada una de las siguientes afirmaciones.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "Los agonistas del receptor de GLP-1 han transformado el manejo de la diabetes tipo 2",
+                    "La carga de las inyecciones limita la adherencia de mis pacientes al tratamiento",
+                    "Me siento cómodo ajustando la dosis de estos fármacos en pacientes con insuficiencia renal"
+                  ],
+                  "columns": [
+                    "Totalmente de acuerdo",
+                    "Algo de acuerdo",
+                    "Ni de acuerdo ni en desacuerdo",
+                    "Totalmente en desacuerdo",
+                    "Totalmente en desacuerdo"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q6. ¿Qué porcentaje de sus pacientes con diabetes tipo 2 recibe actualmente un agonista del receptor de GLP-1 o un agonista dual GIP/GLP-1?",
+                  "isRequired": false,
+                  "description": "Introduzca un número entero entre 0 y 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. En su opiniÃ³n, ¿cuál es la mayor barrera para el acceso de sus pacientes a estas terapias?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. ¿Qué probabilidad hay de que usted usted recomiende estas terapias a un colega que maneja la diabetes tipo 2?",
+                  "isRequired": false,
+                  "description": "0 = Nada probable, 10 = Extremadamente probable",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "fr": {
+        "route": "/type-2-diabetes/fr",
+        "lang": "fr",
+        "title": "Perceptions des cliniciens sur les traitements à base d'incrétines dans le diabète de type 2",
+        "model": {
+          "title": "Perceptions des cliniciens sur les traitements à base d'incrétines dans le diabète de type 2",
+          "description": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Endocrinologe",
+                    "Médecin généraliste",
+                    "Infirmier en pratique avancée",
+                    "Assistant médical"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Parmi les médicaments suivants du diabète de type 2, lesquels connaissez-vous ?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "Aucune de ces réponses"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. Quel est votre critère le plus important lors du choix d'un médicament pour un patient atteint d'un diabète de type 2 insuffisamment contrôlé ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Ampleur de la réduction de l'HbA1c",
+                    "Potentiel de prise de poids",
+                    "Commodité d'une administration hebdomadaire",
+                    "Réduction du risque cardiovasculaire",
+                    "Prise en charge par le formulaire et coût"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Quel médicament prescrivez-vous le plus souvent pour un diabète de type 2 insuffisamment contrôlé ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "RYBELSUS"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. Dans quelle mesure êtes-vous satisfait(e) de {Q3brand} pour vos patients atteints de diabète de type 2 ?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Très satisfait(e)",
+                    "Plutôt satisfait(e)",
+                    "Ni satisfait(e) ni insatisfait(e)",
+                    "Plutôt insatisfait(e)",
+                    "Très insatisfait(e)"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "Les agonistes des récepteurs du GLP-1 ont transformé la prise en charge du diabète de type 2",
+                    "La contrainte des injections limite l'observance de mes patients",
+                    "Je suis à l'aise pour ajuster la dose de ces agents chez les patients atteints d'insuffisance rénale"
+                  ],
+                  "columns": [
+                    "Tout à fait d'accord",
+                    "Plutôt d'accord",
+                    "Ni d'accord ni pas d'accord",
+                    "Pas du tout d'accord",
+                    "Pas du tout d'accord"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q6. Quel pourcentage de vos patients atteints de diabète de type 2 reçoit actuellement un agoniste des récepteurs du GLP-1 ou un agoniste double GIP/GLP-1 ?",
+                  "isRequired": false,
+                  "description": "Saisissez un nombre entier entre 0 et 100.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. Selon vous, quel est le principal obstacle à l'accÃ¨s de vos patients à ces traitements ?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. Quelle est la probabilité que vous vous recommandiez ces traitements à un confrère prenant en charge un diabète de type 2 ?",
+                  "isRequired": false,
+                  "description": "0 = Pas du tout probable, 10 = Extrêmement probable",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "de": {
+        "route": "/type-2-diabetes/de",
+        "lang": "de",
+        "title": "Wahrnehmungen von Ärzten zu inkretinbasierten Therapien beim Typ-2-Diabetes",
+        "model": {
+          "title": "Wahrnehmungen von Ärzten zu inkretinbasierten Therapien beim Typ-2-Diabetes",
+          "description": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>Vielen Dank für die Teilnahme an der Umfrage.</h3><p>Ihre Antworten wurden gespeichert.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Endokrinolge",
+                    "Hausarzt",
+                    "Pflegefachkraft",
+                    "Arztassistent"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. Welche der folgenden Medikamente für den Typ-2-Diabetes sind Ihnen bekannt?",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "Keine der oben genannten"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. Was ist Ihr wichtigstes Kriterium bei der Auswahl eines Medikaments für einen Patienten mit unzureichend eingestelltem Typ-2-Diabetes?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Ausmaß der HbA1c-Senkung",
+                    "Potenzial zur Gewichtszunahme",
+                    "Bequemlichkeit der einmal wöchentlichen Gabe",
+                    "Verringerung des kardiovaskulären Risikos",
+                    "Kostenübernahme und Kosten"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. Welches Medikament verschreiben Sie am häufigsten bei unzureichend eingestelltem Typ-2-Diabetes?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "RYBELSUS"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. Wie zufrieden sind Sie mit {Q3brand} bei Ihren Patienten mit Typ-2-Diabetes?",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "Sehr zufrieden",
+                    "Eher zufrieden",
+                    "Weder zufrieden noch unzufrieden",
+                    "Eher unzufrieden",
+                    "Sehr unzufrieden"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "GLP-1-Rezeptoragonisten haben das Management des Typ-2-Diabetes grundlegend verändert",
+                    "Die Belastung durch Injektionen schränkt die Therapietreue meiner Patienten ein",
+                    "Ich fühle mich sicher dabei, diese Wirkstoffe bei Patienten mit eingeschränkter Nierenfunktion zu titrieren"
+                  ],
+                  "columns": [
+                    "Stimme voll und ganz zu",
+                    "Stimme eher zu",
+                    "Weder Zustimmung noch Ablehnung",
+                    "Stimme überhaupt nicht zu",
+                    "Stimme überhaupt nicht zu"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q6. Wie viel Prozent Ihrer Patienten mit Typ-2-Diabetes erhalten derzeit einen GLP-1-Rezeptoragonisten oder einen dualen GIP/GLP-1-Agonisten?",
+                  "isRequired": false,
+                  "description": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. Was ist Ihrer Ansicht nach das grÃ¶ÃŸte einzelne Hindernis für den Zugang Ihrer Patienten zu diesen Therapien?",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. Wie wahrscheinlich ist es, dass Sie Sie einem Kollegen, der einen Typ-2-Diabetes betreut, diese Therapien empfehlen?",
+                  "isRequired": false,
+                  "description": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "zh": {
+        "route": "/type-2-diabetes/zh",
+        "lang": "zh",
+        "title": "临床医生对2型糖尿病基于肠促胰素治疗的认知",
+        "model": {
+          "title": "临床医生对2型糖尿病基于肠促胰素治疗的认知",
+          "description": "感谢您的参与。本次调查约需10分钟。您的回答将予以严格保密，仅以汇总形式报告。",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>感谢您完成本次调查。</h3><p>您的回答已被记录。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. 以下哪一项最能描述您的主要职业角色？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "内分秘科医师",
+                    "全科医师",
+                    "执业护师",
+                    "医师助理"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. 您知晓以下哪些用于治疗2型糖尿病的药物？",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "以上均无"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. 在为控制不佳的2型糖尿病患者选择药物时，您最重要的考虑因素是什么？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "HbA1c降幅",
+                    "增重潜力",
+                    "每周一次给药的便利性",
+                    "降低心血管风险",
+                    "医保目录覆盖与费用"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. 对于控制不佳的2型糖尿病，您最常处方哪种药物？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "RYBELSUS"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. 对于您的2型糖尿病患者，您对{Q3brand}的满意度如何？",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "非常满意",
+                    "比较满意",
+                    "既不满意也非不满意",
+                    "不太满意",
+                    "非常不满意"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. 请评价您对以下各项陈述的同意程度。",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "GLP-1受体激动剂彻底改变了2型糖尿病的管理",
+                    "注射负担限制了我的患者对治疗的依从性",
+                    "对于肾功能受损的患者，我能够放心地滴定这些药物的剂量"
+                  ],
+                  "columns": [
+                    "非常同意",
+                    "比较同意",
+                    "既不同意也不反对",
+                    "非常不同意",
+                    "非常不同意"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q6. 在您的2型糖尿病患者中，目前有多大比例正在接受GLP-1受体激动剂或GIP/GLP-1双重激动剂（百分比）？",
+                  "isRequired": false,
+                  "description": "请输入0至100之间的整数。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. 在您看来，您的æ‚£è€…获得这些治疗的最大障碍是什么？",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. 您向管理2型糖尿病的的同事推荐这些治疗的可能性有多大？",
+                  "isRequired": false,
+                  "description": "0 = 完全不可能，10 = 极有可能",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ja": {
+        "route": "/type-2-diabetes/ja",
+        "lang": "ja",
+        "title": "2型糖尿病におけるインクレチン関連治療に対する臨床医の認識",
+        "model": {
+          "title": "2型糖尿病におけるインクレチン関連治療に対する臨床医の認識",
+          "description": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+          "showQuestionNumbers": "off",
+          "focusFirstQuestionAutomatic": false,
+          "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+          "pages": [
+            {
+              "name": "page1",
+              "elements": [
+                {
+                  "name": "S1",
+                  "title": "S1. あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "内分秘内科医",
+                    "プライマリケア医",
+                    "ナースプラクティショナー",
+                    "フィジシャンアシスタント"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page2",
+              "elements": [
+                {
+                  "name": "Q1",
+                  "title": "Q1. 2型糖尿病に対する以下の薬剤のうち、あなたがご存知のものはどれですか。",
+                  "isRequired": false,
+                  "type": "checkbox",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "上記のいずれでもない"
+                  ]
+                },
+                {
+                  "name": "Q2",
+                  "title": "Q2. コントロール不良の2型糖尿病の患者さんに対する薬剤を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "HbA1c低下の大きさ",
+                    "体重増加の可能性",
+                    "週1回投与の利便性",
+                    "心血管リスクの低減",
+                    "フォーミュラリー収載と費用"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page3",
+              "elements": [
+                {
+                  "name": "Q3",
+                  "title": "Q3. コントロール不良の2型糖尿病に対して、あなたが最も頻繁に処方する薬剤はどれですか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "OZEMPIC",
+                    "MOUNJARO",
+                    "JARDIANCE",
+                    "TRULICITY",
+                    "RYBELSUS"
+                  ]
+                },
+                {
+                  "name": "Q4",
+                  "title": "Q4. 2型糖尿病の患者さんに対する{Q3brand}について、どの程度満足していますか。",
+                  "isRequired": false,
+                  "type": "radiogroup",
+                  "choices": [
+                    "非常に満足している",
+                    "やや満足している",
+                    "どちらともいえない",
+                    "やや不満である",
+                    "非常に不満である"
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "page4",
+              "elements": [
+                {
+                  "name": "Q5",
+                  "title": "Q5. 以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+                  "isRequired": false,
+                  "type": "matrix",
+                  "rows": [
+                    "GLP-1受容体作動薬は2型糖尿病の管理を大きく変えた",
+                    "注射の負担が患者さんの治療アドヒアランスを制限している",
+                    "腎機能障害のある患者さんにも、私は抵抗なくこれらの薬剤を用量調節できる"
+                  ],
+                  "columns": [
+                    "強くそう思う",
+                    "ややそう思う",
+                    "どちらともいえない",
+                    "全くそう思わない",
+                    "全くそう思わない"
+                  ]
+                },
+                {
+                  "name": "Q6",
+                  "title": "Q6. あなたの2型糖尿病の患者さんのうち、現在GLP-1受容体作動薬またはGIP/GLP-1デュアル作動薬を受けている方の割合は何パーセントですか。",
+                  "isRequired": false,
+                  "description": "0から100までの整数を入力してください。",
+                  "type": "text",
+                  "inputType": "number",
+                  "min": 0,
+                  "max": 100
+                }
+              ]
+            },
+            {
+              "name": "page5",
+              "elements": [
+                {
+                  "name": "Q7",
+                  "title": "Q7. あなたのお考えでは、æ‚£è€…さんがこれらの治療を受ける上での最大の障壁は何ですか。",
+                  "isRequired": false,
+                  "type": "comment"
+                },
+                {
+                  "name": "Q8",
+                  "title": "Q8. 2型糖尿病を管理している同僚にに、これらの治療をどの程度勧めたいと思いますか。",
+                  "isRequired": false,
+                  "description": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+                  "type": "rating",
+                  "rateMin": 0,
+                  "rateMax": 10
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "domain": "Type 2 diabetes — GLP-1 / incretin therapy selection",
+    "brands": [
+      "OZEMPIC",
+      "MOUNJARO",
+      "JARDIANCE",
+      "TRULICITY",
+      "RYBELSUS"
+    ]
+  }
+}

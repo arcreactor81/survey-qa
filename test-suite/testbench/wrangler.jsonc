@@ -1,0 +1,18 @@
+{
+  // Self-contained external testbench for the held-out generalization suite.
+  // Serves each case's ERRORED SurveyJS model as a walkable multi-page survey,
+  // using the SurveyJS runtime staged under public/assets/ (no CDN, no re-fetch).
+  // Isolated from the main survey-qa Worker: its own name, own config; shares
+  // nothing with the production deployment.
+  "name": "survey-qa-testbench",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-01",
+  "assets": {
+    // Static SurveyJS runtime (survey-core.min.css, survey.core.min.js,
+    // survey-js-ui.min.js) is served directly from here; any path that is not a
+    // static asset falls through to the Worker, which routes the case surveys.
+    "directory": "public",
+    "binding": "ASSETS"
+  },
+  "observability": { "enabled": true }
+}

@@ -1,0 +1,141 @@
+{
+  "title": "Perceptions des cliniciens sur les traitements ciblant le CGRP dans la migraine",
+  "description": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Neurologue",
+            "Spécialiste des céphalés",
+            "Médecin généraliste",
+            "Infirmier en pratique avancée"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. Parmi les traitements suivants de la migraine, lesquels connaissez-vous ?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "NURTEC",
+            "UBRELVY",
+            "AJOVY",
+            "EMGALITY",
+            "Aucune de ces réponses"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. Quel est votre critère le plus important lors du choix d'un traitement pour un patient souffrant de migraine ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Réduction du nombre de crises de migraine par mois",
+            "Rapidité d'installation du bénéfice",
+            "Administration orale versus injectable",
+            "Profil de tolérance favorable",
+            "Charge liée à l'autorisation préalable"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. Quel traitement de la migraine prescrivez-vous le plus souvent ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "NURTEC",
+            "UBRELVY",
+            "AJOVY",
+            "EMGALITY",
+            "QULIPTA"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. Dans quelle mesure êtes-vous satisfait(e) de {Q3brand} pour vos patients souffrant de migraine ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Très satisfait(e)",
+            "Plutôt satisfait(e)",
+            "Ni satisfait(e) ni insatisfait(e)",
+            "Plutôt insatisfait(e)",
+            "Très insatisfait(e)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "Les traitements ciblant le CGRP ont transformé la prise en charge de la migraine",
+            "Les exigences d'autorisation préalable retardent l'accès de mes patients aux traitements plus récents",
+            "Je suis à l'aise pour utiliser ces traitements chez les patients présentant des facteurs de risque cardiovasculaire"
+          ],
+          "columns": [
+            "Tout à fait d'accord",
+            "Plutôt d'accord",
+            "Plutôt d'accord",
+            "Plutôt pas d'accord",
+            "Pas du tout d'accord"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. Quel pourcentage de vos patients souffrant de migraine reçoit actuellement un traitement ciblant le CGRP ?",
+          "isRequired": false,
+          "description": "Saisissez un nombre entier entre 0 et 100.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. Selon vous, quel est le principal obstacle à l'accÃ¨s de vos patients aux traitements ciblant le CGRP ?",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. Quelle est la probabilité que vous recommandiez le traitement ciblant le CGRP à un confrère traitant la migraine ?",
+          "isRequired": false,
+          "description": "0 = Pas du tout probable, 10 = Extrêmement probable",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

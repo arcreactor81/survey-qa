@@ -1,0 +1,121 @@
+{
+  "slug": "rheumatoid-arthritis",
+  "domain": "Rheumatoid arthritis — advanced therapy in moderate-to-severe RA",
+  "lang": "en",
+  "route": "/rheumatoid-arthritis",
+  "brands": ["HUMIRA", "ENBREL", "RINVOQ", "XELJANZ", "ORENCIA"],
+  "title": "Rheumatologist Perceptions of Advanced Therapies in Moderate-to-Severe Rheumatoid Arthritis",
+  "intro": "Thank you for participating. This survey takes approximately 10 minutes. Your responses are confidential and reported only in aggregate.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "Which of the following best describes your primary clinical role?",
+      "options": ["Rheumatologist", "Nurse practitioner", "Physician assistant", "Primary care physician"]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "How many years have you been treating patients with rheumatoid arthritis?",
+      "instruction": "Enter a whole number between 0 and 50.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "Which of the following advanced therapies for moderate-to-severe rheumatoid arthritis are you aware of?",
+      "instruction": "Select all that apply.",
+      "options": ["HUMIRA", "ENBREL", "RINVOQ", "XELJANZ", "ORENCIA", "None of the above"]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "What is your most important consideration when selecting an advanced therapy for moderate-to-severe RA?",
+      "options": ["ACR20/50/70 response", "Inhibition of radiographic progression", "Favorable safety and infection profile", "Oral versus injectable administration", "Formulary coverage and cost"],
+      "logicNote": "PROGRAMMER NOTE: Present options in the exact order listed above. Do not randomize."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "Which advanced therapy do you prescribe most often for moderate-to-severe RA?",
+      "options": ["HUMIRA", "ENBREL", "RINVOQ", "XELJANZ", "ORENCIA"],
+      "logicNote": "PROGRAMMER NOTE: The brand selected in Q3 must be piped into the text of Q4."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "How satisfied are you with [PIPE: Q3 selection] for your moderate-to-severe RA patients?",
+      "options": ["Very satisfied", "Somewhat satisfied", "Neither satisfied nor dissatisfied", "Somewhat dissatisfied", "Very dissatisfied"],
+      "piping": { "source": "Q3", "note": "Replace [PIPE: Q3 selection] with the brand chosen in Q3." }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Please rate your agreement with each of the following statements.",
+      "rows": [
+        "Advanced therapies have transformed outcomes in rheumatoid arthritis",
+        "Prior authorization requirements delay my patients' treatment",
+        "I am comfortable prescribing JAK inhibitors given current safety guidance"
+      ],
+      "scale": ["Strongly agree", "Somewhat agree", "Neither agree nor disagree", "Somewhat disagree", "Strongly disagree"]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "What percentage of your moderate-to-severe RA patients currently receive an advanced therapy (biologic or JAK inhibitor)?",
+      "instruction": "Enter a whole number between 0 and 100.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "In your view, what is the single biggest barrier to your patients' access to advanced therapy?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "How likely are you to recommend advanced therapy to a colleague treating moderate-to-severe RA?",
+      "instruction": "0 = Not at all likely, 10 = Extremely likely",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    { "id": "E01", "questionId": "S1", "category": "typo", "truth": "Rheumatologist", "rendered": "Rheumatolgist", "note": "First answer option misspelled on the site (dropped 'o' in 'Rheumatologist')." },
+    { "id": "E02", "questionId": "Q1", "category": "missing-option", "truth": "ORENCIA listed as an option", "rendered": "ORENCIA absent from the option list", "note": "Site omits the ORENCIA answer option entirely." },
+    { "id": "E03", "questionId": "Q2", "category": "wrong-option-label", "truth": "Inhibition of radiographic progression", "rendered": "Inhibition of radiographic regression", "note": "Option label altered on the site: 'progression' changed to 'regression', which reverses the clinical meaning." },
+    { "id": "E04", "questionId": "Q4", "category": "broken-piping", "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])", "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand", "note": "Site renders the literal unresolved token {Q3brand} in the question text." },
+    { "id": "E05", "questionId": "Q5", "category": "scale-mislabel", "truth": "Second scale point is 'Somewhat agree'", "rendered": "Second scale point reads 'Strongly agree' (duplicate of the first)", "note": "Matrix column header duplicated/mislabeled." },
+    { "id": "E06", "questionId": "Q2", "category": "reordered-options", "truth": "Order: ...Inhibition of radiographic progression, Favorable safety and infection profile, Oral versus injectable administration, Formulary coverage and cost", "rendered": "'Favorable safety and infection profile' and 'Oral versus injectable administration' swapped", "note": "Spec explicitly forbids reordering (programmer note)." },
+    { "id": "E07", "questionId": "Q6", "category": "wrong-numbering", "truth": "Question is numbered Q6", "rendered": "Question is numbered Q5 (duplicate of the previous question's number)", "note": "Visible question number wrong on site." },
+    { "id": "E09", "questionId": "Q8", "category": "duplicated-word", "truth": "How likely are you to recommend", "rendered": "How likely are you you to recommend", "note": "Duplicated word 'you' in question text." },
+    { "id": "E10", "questionId": "Q1", "category": "missing-instruction", "truth": "Instruction 'Select all that apply.' shown below the question", "rendered": "Instruction omitted", "note": "Site drops the multi-select instruction." },
+    { "id": "E11", "questionId": "Q7", "category": "missing-question", "truth": "Q7 (open-text barrier question) is present in the questionnaire spec", "rendered": "Q7 is absent from the site entirely — the survey skips from Q6 to Q8", "note": "An entire spec question is missing from the rendered survey." }
+  ],
+  "mutations": [
+    { "errorId": "E01", "op": "replaceOption", "questionId": "S1", "find": "Rheumatologist", "replace": "Rheumatolgist" },
+    { "errorId": "E02", "op": "removeOption", "questionId": "Q1", "option": "ORENCIA" },
+    { "errorId": "E03", "op": "replaceOption", "questionId": "Q2", "find": "Inhibition of radiographic progression", "replace": "Inhibition of radiographic regression" },
+    { "errorId": "E04", "op": "replaceInTitle", "questionId": "Q4", "find": "{Q3}", "replace": "{Q3brand}" },
+    { "errorId": "E05", "op": "replaceColumn", "questionId": "Q5", "find": "Somewhat agree", "replace": "Strongly agree" },
+    { "errorId": "E06", "op": "swapOptions", "questionId": "Q2", "a": "Favorable safety and infection profile", "b": "Oral versus injectable administration" },
+    { "errorId": "E07", "op": "replaceInTitle", "questionId": "Q6", "find": "Q6.", "replace": "Q5." },
+    { "errorId": "E09", "op": "replaceInTitle", "questionId": "Q8", "find": "are you to recommend", "replace": "are you you to recommend" },
+    { "errorId": "E10", "op": "removeInstruction", "questionId": "Q1" },
+    { "errorId": "E11", "op": "removeQuestion", "questionId": "Q7" }
+  ],
+  "cleanQuestions": ["S2", "Q3"],
+  "notes": "Rheumatoid arthritis held-out case. Adds the missing-question category (Q7 removed from the site but present in the .docx); drops encoding-artifact. S2 and Q3 (piping SOURCE) are deliberately error-free. Q7 hosts the missing-question error, so page 5 renders with Q8 only."
+}

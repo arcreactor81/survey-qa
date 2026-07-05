@@ -1,0 +1,151 @@
+{
+  "title": "Wahrnehmungen von Onkologen zur Erstlinien-Immuntherapie beim metastasierten nicht-kleinzelligen Lungenkarzinom",
+  "description": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Vielen Dank für die Teilnahme an der Umfrage.</h3><p>Ihre Antworten wurden gespeichert.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Medizinischer Onkologe",
+            "Hämatologe-Onkloge",
+            "Pflegefachkraft",
+            "Arztassistent"
+          ]
+        },
+        {
+          "name": "S2",
+          "title": "S2. Wie viele Jahre behandeln Sie bereits Patienten mit nicht-kleinzelligem Lungenkarzinom?",
+          "isRequired": false,
+          "description": "Geben Sie eine ganze Zahl zwischen 0 und 50 ein.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 50
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. Welche der folgenden Immuntherapien für das metastasierte nicht-kleinzellige Lungenkarzinom sind Ihnen bekannt?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "KEYTRUDA",
+            "OPDIVO",
+            "TECENTRIQ",
+            "IMFINZI",
+            "Keine der oben genannten"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. Was ist Ihr wichtigstes Kriterium bei der Auswahl einer Erstlinien-Immuntherapie für das metastasierte nicht-kleinzellige Lungenkarzinom?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Nutzen für das Gesamtansprechen",
+            "Progressionsfreies Überleben",
+            "Übereinstimmung mit dem PD-L1-Status",
+            "Günstiges Verträglichkeitsprofil",
+            "Bequemes Dosierungsschema"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. Welche Immuntherapie verschreiben Sie am häufigsten in der Erstlinie beim metastasierten nicht-kleinzelligen Lungenkarzinom?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "KEYTRUDA",
+            "OPDIVO",
+            "TECENTRIQ",
+            "IMFINZI",
+            "LIBTAYO"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. Wie zufrieden sind Sie mit {Q3brand} bei Ihren Erstlinien-Patienten mit metastasiertem nicht-kleinzelligem Lungenkarzinom?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Sehr zufrieden",
+            "Eher zufrieden",
+            "Weder zufrieden noch unzufrieden",
+            "Eher unzufrieden",
+            "Sehr unzufrieden"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "Die Immuntherapie hat die Behandlungsergebnisse beim metastasierten nicht-kleinzelligen Lungenkarzinom grundlegend verändert",
+            "Die Bearbeitungszeit von Biomarkertests schränkt zeitnahe Behandlungsentscheidungen ein",
+            "Ich fühle mich sicher dabei, Immuntherapie bei Patienten mit autoimmunen Begleiterkrankungen einzusetzen"
+          ],
+          "columns": [
+            "Stimme voll und ganz zu",
+            "Stimme voll und ganz zu",
+            "Weder Zustimmung noch Ablehnung",
+            "Stimme eher nicht zu",
+            "Stimme überhaupt nicht zu"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. Wie viel Prozent Ihrer Patienten mit metastasiertem nicht-kleinzelligem Lungenkarzinom erhalten derzeit eine Immuntherapie?",
+          "isRequired": false,
+          "description": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. Was ist Ihrer Ansicht nach das grÃ¶ÃŸte einzelne Hindernis für den Zugang Ihrer Patienten zur Immuntherapie?",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. Wie wahrscheinlich ist es, dass Sie Sie einem Kollegen, der ein metastasiertes nicht-kleinzelliges Lungenkarzinom behandelt, eine Immuntherapie empfehlen?",
+          "isRequired": false,
+          "description": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

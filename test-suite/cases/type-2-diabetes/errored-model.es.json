@@ -1,0 +1,141 @@
+{
+  "title": "Percepciones de los médicos sobre las terapias basadas en incretinas en la diabetes tipo 2",
+  "description": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Gracias por completar la encuesta.</h3><p>Sus respuestas han sido registradas.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. ¿Cuál de las siguientes opciones describe mejor su función profesional principal?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Endocrinólgo",
+            "Médico de atención primaria",
+            "Enfermero de práctica avanzada",
+            "Asistente médico"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. ¿Cuáles de los siguientes medicamentos para la diabetes tipo 2 conoce usted?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "OZEMPIC",
+            "MOUNJARO",
+            "JARDIANCE",
+            "TRULICITY",
+            "Ninguno de los anteriores"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. ¿Cuál es su consideración más importante al seleccionar un medicamento para un paciente con diabetes tipo 2 inadecuadamente controlada?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Magnitud de la reducción de la HbA1c",
+            "Potencial de aumento de peso",
+            "Comodidad de la dosificación semanal",
+            "Reducción del riesgo cardiovascular",
+            "Cobertura del formulario y coste"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. ¿Qué medicamento prescribe con mayor frecuencia para la diabetes tipo 2 inadecuadamente controlada?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "OZEMPIC",
+            "MOUNJARO",
+            "JARDIANCE",
+            "TRULICITY",
+            "RYBELSUS"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. ¿Cuál es su grado de satisfacción con {Q3brand} para sus pacientes con diabetes tipo 2?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Muy satisfecho",
+            "Algo satisfecho",
+            "Ni satisfecho ni insatisfecho",
+            "Algo insatisfecho",
+            "Muy insatisfecho"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Indique su grado de acuerdo con cada una de las siguientes afirmaciones.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "Los agonistas del receptor de GLP-1 han transformado el manejo de la diabetes tipo 2",
+            "La carga de las inyecciones limita la adherencia de mis pacientes al tratamiento",
+            "Me siento cómodo ajustando la dosis de estos fármacos en pacientes con insuficiencia renal"
+          ],
+          "columns": [
+            "Totalmente de acuerdo",
+            "Algo de acuerdo",
+            "Ni de acuerdo ni en desacuerdo",
+            "Totalmente en desacuerdo",
+            "Totalmente en desacuerdo"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q6. ¿Qué porcentaje de sus pacientes con diabetes tipo 2 recibe actualmente un agonista del receptor de GLP-1 o un agonista dual GIP/GLP-1?",
+          "isRequired": false,
+          "description": "Introduzca un número entero entre 0 y 100.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. En su opiniÃ³n, ¿cuál es la mayor barrera para el acceso de sus pacientes a estas terapias?",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. ¿Qué probabilidad hay de que usted usted recomiende estas terapias a un colega que maneja la diabetes tipo 2?",
+          "isRequired": false,
+          "description": "0 = Nada probable, 10 = Extremadamente probable",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

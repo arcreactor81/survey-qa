@@ -1,0 +1,141 @@
+{
+  "title": "片頭痛におけるCGRPを標的とする治療に対する臨床医の認識",
+  "description": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "神経内科医",
+            "頭痛専問医",
+            "プライマリケア医",
+            "ナースプラクティショナー"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. 片頭痛に対する以下の治療のうち、あなたがご存知のものはどれですか。",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "NURTEC",
+            "UBRELVY",
+            "AJOVY",
+            "EMGALITY",
+            "上記のいずれでもない"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. 片頭痛の患者さんに対する治療を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "月間片頭痛発作回数の減少",
+            "効果発現の速さ",
+            "経口投与か注射投与か",
+            "良好な忍容性プロファイル",
+            "事前承認の負担"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. 片頭痛に対して、あなたが最も頻繁に処方する治療はどれですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "NURTEC",
+            "UBRELVY",
+            "AJOVY",
+            "EMGALITY",
+            "QULIPTA"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. 片頭痛の患者さんに対する{Q3brand}について、どの程度満足していますか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "非常に満足している",
+            "やや満足している",
+            "どちらともいえない",
+            "やや不満である",
+            "非常に不満である"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. 以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "CGRPを標的とする治療は片頭痛の管理を大きく変えた",
+            "事前承認の要件が患者さんの新しい治療へのアクセスを遅らせている",
+            "心血管系のリスク因子を有する患者さんにも、私は抵抗なくこれらの治療を使用できる"
+          ],
+          "columns": [
+            "強くそう思う",
+            "ややそう思う",
+            "ややそう思う",
+            "あまりそう思わない",
+            "全くそう思わない"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. あなたの片頭痛の患者さんのうち、現在CGRPを標的とする治療を受けている方の割合は何パーセントですか。",
+          "isRequired": false,
+          "description": "0から100までの整数を入力してください。",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. あなたのお考えでは、æ‚£è€…さんがCGRPを標的とする治療を受ける上での最大の障壁は何ですか。",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. 片頭痛を治療している同僚に、CGRPを標的とする治療をどの程度勧めたいと思いますか。",
+          "isRequired": false,
+          "description": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

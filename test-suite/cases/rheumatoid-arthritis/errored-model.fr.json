@@ -1,0 +1,145 @@
+{
+  "title": "Perceptions des rhumatologues sur les traitements avancés dans la polyarthrite rhumatoïde modérée à sévère",
+  "description": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Rhumatologe",
+            "Infirmier en pratique avancée",
+            "Assistant médical",
+            "Médecin généraliste"
+          ]
+        },
+        {
+          "name": "S2",
+          "title": "S2. Depuis combien d'années traitez-vous des patients atteints de polyarthrite rhumatoïde ?",
+          "isRequired": false,
+          "description": "Saisissez un nombre entier entre 0 et 50.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 50
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. Parmi les traitements avancés suivants de la polyarthrite rhumatoïde modérée à sévère, lesquels connaissez-vous ?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "HUMIRA",
+            "ENBREL",
+            "RINVOQ",
+            "XELJANZ",
+            "Aucune de ces réponses"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. Quel est votre critère le plus important lors du choix d'un traitement avancé pour une polyarthrite rhumatoïde modérée à sévère ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Réponse ACR20/50/70",
+            "Inhibition de la régression radiographique",
+            "Administration orale versus injectable",
+            "Profil favorable de sécurité et d'infections",
+            "Prise en charge par le formulaire et coût"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. Quel traitement avancé prescrivez-vous le plus souvent pour une polyarthrite rhumatoïde modérée à sévère ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "HUMIRA",
+            "ENBREL",
+            "RINVOQ",
+            "XELJANZ",
+            "ORENCIA"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. Dans quelle mesure êtes-vous satisfait(e) de {Q3brand} pour vos patients atteints de polyarthrite rhumatoïde modérée à sévère ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Très satisfait(e)",
+            "Plutôt satisfait(e)",
+            "Ni satisfait(e) ni insatisfait(e)",
+            "Plutôt insatisfait(e)",
+            "Très insatisfait(e)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "Les traitements avancés ont transformé les résultats dans la polyarthrite rhumatoïde",
+            "Les exigences d'autorisation préalable retardent le traitement de mes patients",
+            "Je suis à l'aise pour prescrire des inhibiteurs de JAK compte tenu des recommandations de sécurité actuelles"
+          ],
+          "columns": [
+            "Tout à fait d'accord",
+            "Tout à fait d'accord",
+            "Ni d'accord ni pas d'accord",
+            "Plutôt pas d'accord",
+            "Pas du tout d'accord"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. Quel pourcentage de vos patients atteints de polyarthrite rhumatoïde modérée à sévère reçoit actuellement un traitement avancé (biologique ou inhibiteur de JAK) ?",
+          "isRequired": false,
+          "description": "Saisissez un nombre entier entre 0 et 100.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q8",
+          "title": "Q8. Quelle est la probabilité que vous vous recommandiez le traitement avancé à un confrère traitant une polyarthrite rhumatoïde modérée à sévère ?",
+          "isRequired": false,
+          "description": "0 = Pas du tout probable, 10 = Extrêmement probable",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,294 @@
+{
+  "slug": "type-2-diabetes",
+  "domain": "Type 2 diabetes — GLP-1 / incretin therapy selection",
+  "lang": "de",
+  "route": "/type-2-diabetes/de",
+  "brands": [
+    "OZEMPIC",
+    "MOUNJARO",
+    "JARDIANCE",
+    "TRULICITY",
+    "RYBELSUS"
+  ],
+  "title": "Wahrnehmungen von Ärzten zu inkretinbasierten Therapien beim Typ-2-Diabetes",
+  "intro": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+      "options": [
+        "Endokrinologe",
+        "Hausarzt",
+        "Pflegefachkraft",
+        "Arztassistent"
+      ]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "Wie viele Jahre betreuen Sie bereits Patienten mit Typ-2-Diabetes?",
+      "instruction": "Geben Sie eine ganze Zahl zwischen 0 und 50 ein.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "Welche der folgenden Medikamente für den Typ-2-Diabetes sind Ihnen bekannt?",
+      "instruction": "Bitte alle zutreffenden Antworten auswählen.",
+      "options": [
+        "OZEMPIC",
+        "MOUNJARO",
+        "JARDIANCE",
+        "TRULICITY",
+        "RYBELSUS",
+        "Keine der oben genannten"
+      ]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "Was ist Ihr wichtigstes Kriterium bei der Auswahl eines Medikaments für einen Patienten mit unzureichend eingestelltem Typ-2-Diabetes?",
+      "options": [
+        "Ausmaß der HbA1c-Senkung",
+        "Potenzial zur Gewichtsabnahme",
+        "Verringerung des kardiovaskulären Risikos",
+        "Bequemlichkeit der einmal wöchentlichen Gabe",
+        "Kostenübernahme und Kosten"
+      ],
+      "logicNote": "HINWEIS FÜR DEN PROGRAMMIERER: Die Optionen in genau der oben angegebenen Reihenfolge darstellen. Nicht randomisieren."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "Welches Medikament verschreiben Sie am häufigsten bei unzureichend eingestelltem Typ-2-Diabetes?",
+      "options": [
+        "OZEMPIC",
+        "MOUNJARO",
+        "JARDIANCE",
+        "TRULICITY",
+        "RYBELSUS"
+      ],
+      "logicNote": "HINWEIS FÜR DEN PROGRAMMIERER: Die in Q3 ausgewählte Marke muss in den Text von Q4 eingefügt werden."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "Wie zufrieden sind Sie mit [PIPE: Q3 selection] bei Ihren Patienten mit Typ-2-Diabetes?",
+      "options": [
+        "Sehr zufrieden",
+        "Eher zufrieden",
+        "Weder zufrieden noch unzufrieden",
+        "Eher unzufrieden",
+        "Sehr unzufrieden"
+      ],
+      "piping": {
+        "source": "Q3",
+        "note": "Ersetzen Sie [PIPE: Q3 selection] durch die in Q3 gewählte Marke."
+      }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+      "rows": [
+        "GLP-1-Rezeptoragonisten haben das Management des Typ-2-Diabetes grundlegend verändert",
+        "Die Belastung durch Injektionen schränkt die Therapietreue meiner Patienten ein",
+        "Ich fühle mich sicher dabei, diese Wirkstoffe bei Patienten mit eingeschränkter Nierenfunktion zu titrieren"
+      ],
+      "scale": [
+        "Stimme voll und ganz zu",
+        "Stimme eher zu",
+        "Weder Zustimmung noch Ablehnung",
+        "Stimme eher nicht zu",
+        "Stimme überhaupt nicht zu"
+      ]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "Wie viel Prozent Ihrer Patienten mit Typ-2-Diabetes erhalten derzeit einen GLP-1-Rezeptoragonisten oder einen dualen GIP/GLP-1-Agonisten?",
+      "instruction": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "Was ist Ihrer Ansicht nach das größte einzelne Hindernis für den Zugang Ihrer Patienten zu diesen Therapien?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "Wie wahrscheinlich ist es, dass Sie einem Kollegen, der einen Typ-2-Diabetes betreut, diese Therapien empfehlen?",
+      "instruction": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    {
+      "id": "E01",
+      "questionId": "S1",
+      "category": "typo",
+      "truth": "Endokrinologe",
+      "rendered": "Endokrinolge",
+      "note": "Answer option misspelled on the site: \"Endokrinologe\" rendered as \"Endokrinolge\"."
+    },
+    {
+      "id": "E02",
+      "questionId": "Q1",
+      "category": "missing-option",
+      "truth": "RYBELSUS listed as an option",
+      "rendered": "RYBELSUS absent from the option list",
+      "note": "Site omits the RYBELSUS answer option entirely."
+    },
+    {
+      "id": "E03",
+      "questionId": "Q2",
+      "category": "wrong-option-label",
+      "truth": "Potenzial zur Gewichtsabnahme",
+      "rendered": "Potenzial zur Gewichtszunahme",
+      "note": "Option label altered on the site: \"Potenzial zur Gewichtsabnahme\" changed to \"Potenzial zur Gewichtszunahme\", changing the clinical meaning."
+    },
+    {
+      "id": "E04",
+      "questionId": "Q4",
+      "category": "broken-piping",
+      "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])",
+      "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand",
+      "note": "Site renders the literal unresolved token {Q3brand} in the question text."
+    },
+    {
+      "id": "E05",
+      "questionId": "Q5",
+      "category": "scale-mislabel",
+      "truth": "Scale point is \"Stimme eher nicht zu\"",
+      "rendered": "Scale point reads \"Stimme überhaupt nicht zu\" (duplicate of another column)",
+      "note": "Matrix column header duplicated/mislabeled."
+    },
+    {
+      "id": "E06",
+      "questionId": "Q2",
+      "category": "reordered-options",
+      "truth": "Order per spec: \"Verringerung des kardiovaskulären Risikos\" precedes \"Bequemlichkeit der einmal wöchentlichen Gabe\"",
+      "rendered": "\"Verringerung des kardiovaskulären Risikos\" and \"Bequemlichkeit der einmal wöchentlichen Gabe\" swapped",
+      "note": "Spec explicitly forbids reordering (programmer note)."
+    },
+    {
+      "id": "E08",
+      "questionId": "Q7",
+      "category": "encoding-artifact",
+      "truth": "größte",
+      "rendered": "grÃ¶ÃŸte",
+      "note": "Mojibake: UTF-8 bytes of \"größte\" displayed as CP1252, so it appears as \"grÃ¶ÃŸte\"."
+    },
+    {
+      "id": "E09",
+      "questionId": "Q8",
+      "category": "duplicated-word",
+      "truth": "dass Sie einem",
+      "rendered": "dass Sie Sie einem",
+      "note": "Duplicated word in question text: \"dass Sie einem\" rendered as \"dass Sie Sie einem\"."
+    },
+    {
+      "id": "E10",
+      "questionId": "Q1",
+      "category": "missing-instruction",
+      "truth": "Instruction \"Bitte alle zutreffenden Antworten auswählen.\" shown below the question",
+      "rendered": "Instruction omitted",
+      "note": "Site drops the instruction shown under Q1."
+    },
+    {
+      "id": "E11",
+      "questionId": "S2",
+      "category": "missing-question",
+      "truth": "S2 is present in the questionnaire spec",
+      "rendered": "S2 is absent from the site entirely",
+      "note": "An entire spec question is missing from the rendered survey."
+    }
+  ],
+  "mutations": [
+    {
+      "errorId": "E01",
+      "op": "replaceOption",
+      "questionId": "S1",
+      "find": "Endokrinologe",
+      "replace": "Endokrinolge"
+    },
+    {
+      "errorId": "E02",
+      "op": "removeOption",
+      "questionId": "Q1",
+      "option": "RYBELSUS"
+    },
+    {
+      "errorId": "E03",
+      "op": "replaceOption",
+      "questionId": "Q2",
+      "find": "Potenzial zur Gewichtsabnahme",
+      "replace": "Potenzial zur Gewichtszunahme"
+    },
+    {
+      "errorId": "E04",
+      "op": "replaceInTitle",
+      "questionId": "Q4",
+      "find": "{Q3}",
+      "replace": "{Q3brand}"
+    },
+    {
+      "errorId": "E05",
+      "op": "replaceColumn",
+      "questionId": "Q5",
+      "find": "Stimme eher nicht zu",
+      "replace": "Stimme überhaupt nicht zu"
+    },
+    {
+      "errorId": "E06",
+      "op": "swapOptions",
+      "questionId": "Q2",
+      "a": "Verringerung des kardiovaskulären Risikos",
+      "b": "Bequemlichkeit der einmal wöchentlichen Gabe"
+    },
+    {
+      "errorId": "E08",
+      "op": "replaceInTitle",
+      "questionId": "Q7",
+      "find": "größte",
+      "replace": "grÃ¶ÃŸte"
+    },
+    {
+      "errorId": "E09",
+      "op": "replaceInTitle",
+      "questionId": "Q8",
+      "find": "dass Sie einem",
+      "replace": "dass Sie Sie einem"
+    },
+    {
+      "errorId": "E10",
+      "op": "removeInstruction",
+      "questionId": "Q1"
+    },
+    {
+      "errorId": "E11",
+      "op": "removeQuestion",
+      "questionId": "S2"
+    }
+  ],
+  "cleanQuestions": [
+    "Q3",
+    "Q6"
+  ],
+  "notes": "de localization of the type-2-diabetes held-out case; structure and seeded-error signature copied from English; strings translated."
+}

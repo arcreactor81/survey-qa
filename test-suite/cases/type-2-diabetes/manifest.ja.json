@@ -1,0 +1,294 @@
+{
+  "slug": "type-2-diabetes",
+  "domain": "Type 2 diabetes — GLP-1 / incretin therapy selection",
+  "lang": "ja",
+  "route": "/type-2-diabetes/ja",
+  "brands": [
+    "OZEMPIC",
+    "MOUNJARO",
+    "JARDIANCE",
+    "TRULICITY",
+    "RYBELSUS"
+  ],
+  "title": "2型糖尿病におけるインクレチン関連治療に対する臨床医の認識",
+  "intro": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+      "options": [
+        "内分泌内科医",
+        "プライマリケア医",
+        "ナースプラクティショナー",
+        "フィジシャンアシスタント"
+      ]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "2型糖尿病の患者さんの管理に携わって何年になりますか。",
+      "instruction": "0から50までの整数を入力してください。",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "2型糖尿病に対する以下の薬剤のうち、あなたがご存知のものはどれですか。",
+      "instruction": "当てはまるものをすべて選択してください。",
+      "options": [
+        "OZEMPIC",
+        "MOUNJARO",
+        "JARDIANCE",
+        "TRULICITY",
+        "RYBELSUS",
+        "上記のいずれでもない"
+      ]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "コントロール不良の2型糖尿病の患者さんに対する薬剤を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+      "options": [
+        "HbA1c低下の大きさ",
+        "体重減少の可能性",
+        "心血管リスクの低減",
+        "週1回投与の利便性",
+        "フォーミュラリー収載と費用"
+      ],
+      "logicNote": "プログラマー注：選択肢は上記に記載された順序のとおりに提示してください。ランダム化しないでください。"
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "コントロール不良の2型糖尿病に対して、あなたが最も頻繁に処方する薬剤はどれですか。",
+      "options": [
+        "OZEMPIC",
+        "MOUNJARO",
+        "JARDIANCE",
+        "TRULICITY",
+        "RYBELSUS"
+      ],
+      "logicNote": "プログラマー注：Q3で選択されたブランド名をQ4の質問文にパイプ（差し込み）する必要があります。"
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "2型糖尿病の患者さんに対する[PIPE: Q3 selection]について、どの程度満足していますか。",
+      "options": [
+        "非常に満足している",
+        "やや満足している",
+        "どちらともいえない",
+        "やや不満である",
+        "非常に不満である"
+      ],
+      "piping": {
+        "source": "Q3",
+        "note": "[PIPE: Q3 selection]をQ3で選択されたブランド名に置き換えてください。"
+      }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+      "rows": [
+        "GLP-1受容体作動薬は2型糖尿病の管理を大きく変えた",
+        "注射の負担が患者さんの治療アドヒアランスを制限している",
+        "腎機能障害のある患者さんにも、私は抵抗なくこれらの薬剤を用量調節できる"
+      ],
+      "scale": [
+        "強くそう思う",
+        "ややそう思う",
+        "どちらともいえない",
+        "あまりそう思わない",
+        "全くそう思わない"
+      ]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "あなたの2型糖尿病の患者さんのうち、現在GLP-1受容体作動薬またはGIP/GLP-1デュアル作動薬を受けている方の割合は何パーセントですか。",
+      "instruction": "0から100までの整数を入力してください。",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "あなたのお考えでは、患者さんがこれらの治療を受ける上での最大の障壁は何ですか。"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "2型糖尿病を管理している同僚に、これらの治療をどの程度勧めたいと思いますか。",
+      "instruction": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    {
+      "id": "E01",
+      "questionId": "S1",
+      "category": "typo",
+      "truth": "内分泌内科医",
+      "rendered": "内分秘内科医",
+      "note": "Answer option misspelled on the site: \"内分泌内科医\" rendered as \"内分秘内科医\"."
+    },
+    {
+      "id": "E02",
+      "questionId": "Q1",
+      "category": "missing-option",
+      "truth": "RYBELSUS listed as an option",
+      "rendered": "RYBELSUS absent from the option list",
+      "note": "Site omits the RYBELSUS answer option entirely."
+    },
+    {
+      "id": "E03",
+      "questionId": "Q2",
+      "category": "wrong-option-label",
+      "truth": "体重減少の可能性",
+      "rendered": "体重増加の可能性",
+      "note": "Option label altered on the site: \"体重減少の可能性\" changed to \"体重増加の可能性\", changing the clinical meaning."
+    },
+    {
+      "id": "E04",
+      "questionId": "Q4",
+      "category": "broken-piping",
+      "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])",
+      "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand",
+      "note": "Site renders the literal unresolved token {Q3brand} in the question text."
+    },
+    {
+      "id": "E05",
+      "questionId": "Q5",
+      "category": "scale-mislabel",
+      "truth": "Scale point is \"あまりそう思わない\"",
+      "rendered": "Scale point reads \"全くそう思わない\" (duplicate of another column)",
+      "note": "Matrix column header duplicated/mislabeled."
+    },
+    {
+      "id": "E06",
+      "questionId": "Q2",
+      "category": "reordered-options",
+      "truth": "Order per spec: \"心血管リスクの低減\" precedes \"週1回投与の利便性\"",
+      "rendered": "\"心血管リスクの低減\" and \"週1回投与の利便性\" swapped",
+      "note": "Spec explicitly forbids reordering (programmer note)."
+    },
+    {
+      "id": "E08",
+      "questionId": "Q7",
+      "category": "encoding-artifact",
+      "truth": "患者",
+      "rendered": "æ‚£è€…",
+      "note": "Mojibake: UTF-8 bytes of \"患者\" displayed as CP1252, so it appears as \"æ‚£è€…\"."
+    },
+    {
+      "id": "E09",
+      "questionId": "Q8",
+      "category": "duplicated-word",
+      "truth": "同僚に、",
+      "rendered": "同僚にに、",
+      "note": "Duplicated word in question text: \"同僚に、\" rendered as \"同僚にに、\"."
+    },
+    {
+      "id": "E10",
+      "questionId": "Q1",
+      "category": "missing-instruction",
+      "truth": "Instruction \"当てはまるものをすべて選択してください。\" shown below the question",
+      "rendered": "Instruction omitted",
+      "note": "Site drops the instruction shown under Q1."
+    },
+    {
+      "id": "E11",
+      "questionId": "S2",
+      "category": "missing-question",
+      "truth": "S2 is present in the questionnaire spec",
+      "rendered": "S2 is absent from the site entirely",
+      "note": "An entire spec question is missing from the rendered survey."
+    }
+  ],
+  "mutations": [
+    {
+      "errorId": "E01",
+      "op": "replaceOption",
+      "questionId": "S1",
+      "find": "内分泌内科医",
+      "replace": "内分秘内科医"
+    },
+    {
+      "errorId": "E02",
+      "op": "removeOption",
+      "questionId": "Q1",
+      "option": "RYBELSUS"
+    },
+    {
+      "errorId": "E03",
+      "op": "replaceOption",
+      "questionId": "Q2",
+      "find": "体重減少の可能性",
+      "replace": "体重増加の可能性"
+    },
+    {
+      "errorId": "E04",
+      "op": "replaceInTitle",
+      "questionId": "Q4",
+      "find": "{Q3}",
+      "replace": "{Q3brand}"
+    },
+    {
+      "errorId": "E05",
+      "op": "replaceColumn",
+      "questionId": "Q5",
+      "find": "あまりそう思わない",
+      "replace": "全くそう思わない"
+    },
+    {
+      "errorId": "E06",
+      "op": "swapOptions",
+      "questionId": "Q2",
+      "a": "心血管リスクの低減",
+      "b": "週1回投与の利便性"
+    },
+    {
+      "errorId": "E08",
+      "op": "replaceInTitle",
+      "questionId": "Q7",
+      "find": "患者",
+      "replace": "æ‚£è€…"
+    },
+    {
+      "errorId": "E09",
+      "op": "replaceInTitle",
+      "questionId": "Q8",
+      "find": "同僚に、",
+      "replace": "同僚にに、"
+    },
+    {
+      "errorId": "E10",
+      "op": "removeInstruction",
+      "questionId": "Q1"
+    },
+    {
+      "errorId": "E11",
+      "op": "removeQuestion",
+      "questionId": "S2"
+    }
+  ],
+  "cleanQuestions": [
+    "Q3",
+    "Q6"
+  ],
+  "notes": "ja localization of the type-2-diabetes held-out case; structure and seeded-error signature copied from English; strings translated."
+}

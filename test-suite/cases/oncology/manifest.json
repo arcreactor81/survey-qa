@@ -1,0 +1,121 @@
+{
+  "slug": "oncology",
+  "domain": "Oncology — first-line immunotherapy in metastatic NSCLC",
+  "lang": "en",
+  "route": "/oncology",
+  "brands": ["KEYTRUDA", "OPDIVO", "TECENTRIQ", "IMFINZI", "LIBTAYO"],
+  "title": "Oncologist Perceptions of First-Line Immunotherapy in Metastatic Non-Small Cell Lung Cancer",
+  "intro": "Thank you for participating. This survey takes approximately 10 minutes. Your responses are confidential and reported only in aggregate.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "Which of the following best describes your primary clinical role?",
+      "options": ["Medical oncologist", "Hematologist-oncologist", "Nurse practitioner", "Physician assistant"]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "How many years have you been treating patients with non-small cell lung cancer?",
+      "instruction": "Enter a whole number between 0 and 50.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "Which of the following immunotherapies for metastatic non-small cell lung cancer are you aware of?",
+      "instruction": "Select all that apply.",
+      "options": ["KEYTRUDA", "OPDIVO", "TECENTRIQ", "IMFINZI", "LIBTAYO", "None of the above"]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "What is your most important consideration when selecting first-line immunotherapy for metastatic NSCLC?",
+      "options": ["Overall survival benefit", "Progression-free survival", "Favorable tolerability profile", "Alignment with PD-L1 status", "Dosing convenience"],
+      "logicNote": "PROGRAMMER NOTE: Present options in the exact order listed above. Do not randomize."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "Which immunotherapy do you prescribe most often for first-line metastatic NSCLC?",
+      "options": ["KEYTRUDA", "OPDIVO", "TECENTRIQ", "IMFINZI", "LIBTAYO"],
+      "logicNote": "PROGRAMMER NOTE: The brand selected in Q3 must be piped into the text of Q4."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "How satisfied are you with [PIPE: Q3 selection] for your first-line metastatic NSCLC patients?",
+      "options": ["Very satisfied", "Somewhat satisfied", "Neither satisfied nor dissatisfied", "Somewhat dissatisfied", "Very dissatisfied"],
+      "piping": { "source": "Q3", "note": "Replace [PIPE: Q3 selection] with the brand chosen in Q3." }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Please rate your agreement with each of the following statements.",
+      "rows": [
+        "Immunotherapy has transformed outcomes in metastatic NSCLC",
+        "Biomarker testing turnaround limits timely treatment decisions",
+        "I am comfortable using immunotherapy in patients with autoimmune comorbidities"
+      ],
+      "scale": ["Strongly agree", "Somewhat agree", "Neither agree nor disagree", "Somewhat disagree", "Strongly disagree"]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "What percentage of your metastatic NSCLC patients currently receive immunotherapy?",
+      "instruction": "Enter a whole number between 0 and 100.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "In your view, what is the single biggest barrier to your patients’ access to immunotherapy?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "How likely are you to recommend immunotherapy to a colleague treating metastatic NSCLC?",
+      "instruction": "0 = Not at all likely, 10 = Extremely likely",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    { "id": "E01", "questionId": "S1", "category": "typo", "truth": "Hematologist-oncologist", "rendered": "Hematologist-oncolgist", "note": "Second answer option misspelled on the site (dropped 'o' in 'oncologist')." },
+    { "id": "E02", "questionId": "Q1", "category": "missing-option", "truth": "LIBTAYO listed as an option", "rendered": "LIBTAYO absent from the option list", "note": "Site omits the LIBTAYO answer option entirely." },
+    { "id": "E03", "questionId": "Q2", "category": "wrong-option-label", "truth": "Overall survival benefit", "rendered": "Overall response benefit", "note": "Option label altered on the site: 'survival' changed to 'response', which changes the clinical endpoint." },
+    { "id": "E04", "questionId": "Q4", "category": "broken-piping", "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])", "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand", "note": "Site renders the literal unresolved token {Q3brand} in the question text." },
+    { "id": "E05", "questionId": "Q5", "category": "scale-mislabel", "truth": "Second scale point is 'Somewhat agree'", "rendered": "Second scale point reads 'Strongly agree' (duplicate of the first)", "note": "Matrix column header duplicated/mislabeled." },
+    { "id": "E06", "questionId": "Q2", "category": "reordered-options", "truth": "Order: ...Progression-free survival, Favorable tolerability profile, Alignment with PD-L1 status, Dosing convenience", "rendered": "'Favorable tolerability profile' and 'Alignment with PD-L1 status' swapped", "note": "Spec explicitly forbids reordering (programmer note)." },
+    { "id": "E07", "questionId": "Q6", "category": "wrong-numbering", "truth": "Question is numbered Q6", "rendered": "Question is numbered Q5 (duplicate of the previous question's number)", "note": "Visible question number wrong on site." },
+    { "id": "E08", "questionId": "Q7", "category": "encoding-artifact", "truth": "patients’ access", "rendered": "patientsâ€™ access", "note": "Mojibake: UTF-8 bytes of the curly apostrophe displayed as cp1252, so 'patients’' appears as 'patientsâ€™'." },
+    { "id": "E09", "questionId": "Q8", "category": "duplicated-word", "truth": "How likely are you to recommend", "rendered": "How likely are you you to recommend", "note": "Duplicated word 'you' in question text." },
+    { "id": "E10", "questionId": "Q1", "category": "missing-instruction", "truth": "Instruction 'Select all that apply.' shown below the question", "rendered": "Instruction omitted", "note": "Site drops the multi-select instruction." }
+  ],
+  "mutations": [
+    { "errorId": "E01", "op": "replaceOption", "questionId": "S1", "find": "Hematologist-oncologist", "replace": "Hematologist-oncolgist" },
+    { "errorId": "E02", "op": "removeOption", "questionId": "Q1", "option": "LIBTAYO" },
+    { "errorId": "E03", "op": "replaceOption", "questionId": "Q2", "find": "Overall survival benefit", "replace": "Overall response benefit" },
+    { "errorId": "E04", "op": "replaceInTitle", "questionId": "Q4", "find": "{Q3}", "replace": "{Q3brand}" },
+    { "errorId": "E05", "op": "replaceColumn", "questionId": "Q5", "find": "Somewhat agree", "replace": "Strongly agree" },
+    { "errorId": "E06", "op": "swapOptions", "questionId": "Q2", "a": "Favorable tolerability profile", "b": "Alignment with PD-L1 status" },
+    { "errorId": "E07", "op": "replaceInTitle", "questionId": "Q6", "find": "Q6.", "replace": "Q5." },
+    { "errorId": "E08", "op": "replaceInTitle", "questionId": "Q7", "find": "patients’", "replace": "patientsâ€™" },
+    { "errorId": "E09", "op": "replaceInTitle", "questionId": "Q8", "find": "are you to recommend", "replace": "are you you to recommend" },
+    { "errorId": "E10", "op": "removeInstruction", "questionId": "Q1" }
+  ],
+  "cleanQuestions": ["S2", "Q3"],
+  "notes": "Oncology (NSCLC first-line immunotherapy) held-out case. Structure parallels canon.json; content and error instances are fresh. S2 (years in practice) and Q3 (most-prescribed brand / piping SOURCE) are deliberately error-free to measure false positives. Covers 10 of 11 named categories (no missing-question in this case)."
+}

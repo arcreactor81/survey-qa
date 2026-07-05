@@ -1,0 +1,296 @@
+{
+  "slug": "oncology",
+  "domain": "Oncology — first-line immunotherapy in metastatic NSCLC",
+  "lang": "de",
+  "route": "/oncology/de",
+  "brands": [
+    "KEYTRUDA",
+    "OPDIVO",
+    "TECENTRIQ",
+    "IMFINZI",
+    "LIBTAYO"
+  ],
+  "title": "Wahrnehmungen von Onkologen zur Erstlinien-Immuntherapie beim metastasierten nicht-kleinzelligen Lungenkarzinom",
+  "intro": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+      "options": [
+        "Medizinischer Onkologe",
+        "Hämatologe-Onkologe",
+        "Pflegefachkraft",
+        "Arztassistent"
+      ]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "Wie viele Jahre behandeln Sie bereits Patienten mit nicht-kleinzelligem Lungenkarzinom?",
+      "instruction": "Geben Sie eine ganze Zahl zwischen 0 und 50 ein.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "Welche der folgenden Immuntherapien für das metastasierte nicht-kleinzellige Lungenkarzinom sind Ihnen bekannt?",
+      "instruction": "Bitte alle zutreffenden Antworten auswählen.",
+      "options": [
+        "KEYTRUDA",
+        "OPDIVO",
+        "TECENTRIQ",
+        "IMFINZI",
+        "LIBTAYO",
+        "Keine der oben genannten"
+      ]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "Was ist Ihr wichtigstes Kriterium bei der Auswahl einer Erstlinien-Immuntherapie für das metastasierte nicht-kleinzellige Lungenkarzinom?",
+      "options": [
+        "Nutzen für das Gesamtüberleben",
+        "Progressionsfreies Überleben",
+        "Günstiges Verträglichkeitsprofil",
+        "Übereinstimmung mit dem PD-L1-Status",
+        "Bequemes Dosierungsschema"
+      ],
+      "logicNote": "HINWEIS FÜR DEN PROGRAMMIERER: Die Optionen in genau der oben angegebenen Reihenfolge darstellen. Nicht randomisieren."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "Welche Immuntherapie verschreiben Sie am häufigsten in der Erstlinie beim metastasierten nicht-kleinzelligen Lungenkarzinom?",
+      "options": [
+        "KEYTRUDA",
+        "OPDIVO",
+        "TECENTRIQ",
+        "IMFINZI",
+        "LIBTAYO"
+      ],
+      "logicNote": "HINWEIS FÜR DEN PROGRAMMIERER: Die in Q3 ausgewählte Marke muss in den Text von Q4 eingefügt werden."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "Wie zufrieden sind Sie mit [PIPE: Q3 selection] bei Ihren Erstlinien-Patienten mit metastasiertem nicht-kleinzelligem Lungenkarzinom?",
+      "options": [
+        "Sehr zufrieden",
+        "Eher zufrieden",
+        "Weder zufrieden noch unzufrieden",
+        "Eher unzufrieden",
+        "Sehr unzufrieden"
+      ],
+      "piping": {
+        "source": "Q3",
+        "note": "Ersetzen Sie [PIPE: Q3 selection] durch die in Q3 gewählte Marke."
+      }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+      "rows": [
+        "Die Immuntherapie hat die Behandlungsergebnisse beim metastasierten nicht-kleinzelligen Lungenkarzinom grundlegend verändert",
+        "Die Bearbeitungszeit von Biomarkertests schränkt zeitnahe Behandlungsentscheidungen ein",
+        "Ich fühle mich sicher dabei, Immuntherapie bei Patienten mit autoimmunen Begleiterkrankungen einzusetzen"
+      ],
+      "scale": [
+        "Stimme voll und ganz zu",
+        "Stimme eher zu",
+        "Weder Zustimmung noch Ablehnung",
+        "Stimme eher nicht zu",
+        "Stimme überhaupt nicht zu"
+      ]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "Wie viel Prozent Ihrer Patienten mit metastasiertem nicht-kleinzelligem Lungenkarzinom erhalten derzeit eine Immuntherapie?",
+      "instruction": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "Was ist Ihrer Ansicht nach das größte einzelne Hindernis für den Zugang Ihrer Patienten zur Immuntherapie?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "Wie wahrscheinlich ist es, dass Sie einem Kollegen, der ein metastasiertes nicht-kleinzelliges Lungenkarzinom behandelt, eine Immuntherapie empfehlen?",
+      "instruction": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    {
+      "id": "E01",
+      "questionId": "S1",
+      "category": "typo",
+      "truth": "Hämatologe-Onkologe",
+      "rendered": "Hämatologe-Onkloge",
+      "note": "Answer option misspelled on the site: \"Hämatologe-Onkologe\" rendered as \"Hämatologe-Onkloge\"."
+    },
+    {
+      "id": "E02",
+      "questionId": "Q1",
+      "category": "missing-option",
+      "truth": "LIBTAYO listed as an option",
+      "rendered": "LIBTAYO absent from the option list",
+      "note": "Site omits the LIBTAYO answer option entirely."
+    },
+    {
+      "id": "E03",
+      "questionId": "Q2",
+      "category": "wrong-option-label",
+      "truth": "Nutzen für das Gesamtüberleben",
+      "rendered": "Nutzen für das Gesamtansprechen",
+      "note": "Option label altered on the site: \"Nutzen für das Gesamtüberleben\" changed to \"Nutzen für das Gesamtansprechen\", changing the clinical meaning."
+    },
+    {
+      "id": "E04",
+      "questionId": "Q4",
+      "category": "broken-piping",
+      "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])",
+      "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand",
+      "note": "Site renders the literal unresolved token {Q3brand} in the question text."
+    },
+    {
+      "id": "E05",
+      "questionId": "Q5",
+      "category": "scale-mislabel",
+      "truth": "Scale point is \"Stimme eher zu\"",
+      "rendered": "Scale point reads \"Stimme voll und ganz zu\" (duplicate of another column)",
+      "note": "Matrix column header duplicated/mislabeled."
+    },
+    {
+      "id": "E06",
+      "questionId": "Q2",
+      "category": "reordered-options",
+      "truth": "Order per spec: \"Günstiges Verträglichkeitsprofil\" precedes \"Übereinstimmung mit dem PD-L1-Status\"",
+      "rendered": "\"Günstiges Verträglichkeitsprofil\" and \"Übereinstimmung mit dem PD-L1-Status\" swapped",
+      "note": "Spec explicitly forbids reordering (programmer note)."
+    },
+    {
+      "id": "E07",
+      "questionId": "Q6",
+      "category": "wrong-numbering",
+      "truth": "Question is numbered Q6",
+      "rendered": "Question is numbered Q5 (duplicate of the previous question's number)",
+      "note": "Visible question number wrong on site."
+    },
+    {
+      "id": "E08",
+      "questionId": "Q7",
+      "category": "encoding-artifact",
+      "truth": "größte",
+      "rendered": "grÃ¶ÃŸte",
+      "note": "Mojibake: UTF-8 bytes of \"größte\" displayed as CP1252, so it appears as \"grÃ¶ÃŸte\"."
+    },
+    {
+      "id": "E09",
+      "questionId": "Q8",
+      "category": "duplicated-word",
+      "truth": "dass Sie einem",
+      "rendered": "dass Sie Sie einem",
+      "note": "Duplicated word in question text: \"dass Sie einem\" rendered as \"dass Sie Sie einem\"."
+    },
+    {
+      "id": "E10",
+      "questionId": "Q1",
+      "category": "missing-instruction",
+      "truth": "Instruction \"Bitte alle zutreffenden Antworten auswählen.\" shown below the question",
+      "rendered": "Instruction omitted",
+      "note": "Site drops the instruction shown under Q1."
+    }
+  ],
+  "mutations": [
+    {
+      "errorId": "E01",
+      "op": "replaceOption",
+      "questionId": "S1",
+      "find": "Hämatologe-Onkologe",
+      "replace": "Hämatologe-Onkloge"
+    },
+    {
+      "errorId": "E02",
+      "op": "removeOption",
+      "questionId": "Q1",
+      "option": "LIBTAYO"
+    },
+    {
+      "errorId": "E03",
+      "op": "replaceOption",
+      "questionId": "Q2",
+      "find": "Nutzen für das Gesamtüberleben",
+      "replace": "Nutzen für das Gesamtansprechen"
+    },
+    {
+      "errorId": "E04",
+      "op": "replaceInTitle",
+      "questionId": "Q4",
+      "find": "{Q3}",
+      "replace": "{Q3brand}"
+    },
+    {
+      "errorId": "E05",
+      "op": "replaceColumn",
+      "questionId": "Q5",
+      "find": "Stimme eher zu",
+      "replace": "Stimme voll und ganz zu"
+    },
+    {
+      "errorId": "E06",
+      "op": "swapOptions",
+      "questionId": "Q2",
+      "a": "Günstiges Verträglichkeitsprofil",
+      "b": "Übereinstimmung mit dem PD-L1-Status"
+    },
+    {
+      "errorId": "E07",
+      "op": "replaceInTitle",
+      "questionId": "Q6",
+      "find": "Q6.",
+      "replace": "Q5."
+    },
+    {
+      "errorId": "E08",
+      "op": "replaceInTitle",
+      "questionId": "Q7",
+      "find": "größte",
+      "replace": "grÃ¶ÃŸte"
+    },
+    {
+      "errorId": "E09",
+      "op": "replaceInTitle",
+      "questionId": "Q8",
+      "find": "dass Sie einem",
+      "replace": "dass Sie Sie einem"
+    },
+    {
+      "errorId": "E10",
+      "op": "removeInstruction",
+      "questionId": "Q1"
+    }
+  ],
+  "cleanQuestions": [
+    "S2",
+    "Q3"
+  ],
+  "notes": "de localization of the oncology held-out case; structure and seeded-error signature copied from English; strings translated."
+}

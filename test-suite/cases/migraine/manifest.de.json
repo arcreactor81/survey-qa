@@ -1,0 +1,294 @@
+{
+  "slug": "migraine",
+  "domain": "Migraine — CGRP-targeted therapy selection",
+  "lang": "de",
+  "route": "/migraine/de",
+  "brands": [
+    "NURTEC",
+    "UBRELVY",
+    "AJOVY",
+    "EMGALITY",
+    "QULIPTA"
+  ],
+  "title": "Wahrnehmungen von Ärzten zu CGRP-gerichteten Therapien bei Migräne",
+  "intro": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+      "options": [
+        "Neurologe",
+        "Kopfschmerzspezialist",
+        "Hausarzt",
+        "Pflegefachkraft"
+      ]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "Wie viele Jahre behandeln Sie bereits Patienten mit Migräne?",
+      "instruction": "Geben Sie eine ganze Zahl zwischen 0 und 50 ein.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "Welche der folgenden Therapien für die Migräne sind Ihnen bekannt?",
+      "instruction": "Bitte alle zutreffenden Antworten auswählen.",
+      "options": [
+        "NURTEC",
+        "UBRELVY",
+        "AJOVY",
+        "EMGALITY",
+        "QULIPTA",
+        "Keine der oben genannten"
+      ]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "Was ist Ihr wichtigstes Kriterium bei der Auswahl einer Therapie für einen Patienten mit Migräne?",
+      "options": [
+        "Reduktion der monatlichen Migränetage",
+        "Schnelligkeit des Wirkungseintritts",
+        "Günstiges Verträglichkeitsprofil",
+        "Orale versus injizierbare Anwendung",
+        "Aufwand der vorherigen Genehmigung"
+      ],
+      "logicNote": "HINWEIS FÜR DEN PROGRAMMIERER: Die Optionen in genau der oben angegebenen Reihenfolge darstellen. Nicht randomisieren."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "Welche Migränetherapie verschreiben Sie am häufigsten?",
+      "options": [
+        "NURTEC",
+        "UBRELVY",
+        "AJOVY",
+        "EMGALITY",
+        "QULIPTA"
+      ],
+      "logicNote": "HINWEIS FÜR DEN PROGRAMMIERER: Die in Q3 ausgewählte Marke muss in den Text von Q4 eingefügt werden."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "Wie zufrieden sind Sie mit [PIPE: Q3 selection] bei Ihren Patienten mit Migräne?",
+      "options": [
+        "Sehr zufrieden",
+        "Eher zufrieden",
+        "Weder zufrieden noch unzufrieden",
+        "Eher unzufrieden",
+        "Sehr unzufrieden"
+      ],
+      "piping": {
+        "source": "Q3",
+        "note": "Ersetzen Sie [PIPE: Q3 selection] durch die in Q3 gewählte Marke."
+      }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+      "rows": [
+        "CGRP-gerichtete Therapien haben das Migränemanagement grundlegend verändert",
+        "Anforderungen an die vorherige Genehmigung verzögern den Zugang meiner Patienten zu neueren Therapien",
+        "Ich fühle mich sicher dabei, diese Therapien bei Patienten mit kardiovaskulären Risikofaktoren einzusetzen"
+      ],
+      "scale": [
+        "Stimme voll und ganz zu",
+        "Stimme eher zu",
+        "Weder Zustimmung noch Ablehnung",
+        "Stimme eher nicht zu",
+        "Stimme überhaupt nicht zu"
+      ]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "Wie viel Prozent Ihrer Patienten mit Migräne erhalten derzeit eine CGRP-gerichtete Therapie?",
+      "instruction": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "Was ist Ihrer Ansicht nach das größte einzelne Hindernis für den Zugang Ihrer Patienten zu CGRP-gerichteten Therapien?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "Wie wahrscheinlich ist es, dass Sie einem Kollegen, der Migräne behandelt, eine CGRP-gerichtete Therapie empfehlen?",
+      "instruction": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    {
+      "id": "E01",
+      "questionId": "S1",
+      "category": "typo",
+      "truth": "Kopfschmerzspezialist",
+      "rendered": "Kopfschmerzspezialst",
+      "note": "Answer option misspelled on the site: \"Kopfschmerzspezialist\" rendered as \"Kopfschmerzspezialst\"."
+    },
+    {
+      "id": "E02",
+      "questionId": "Q1",
+      "category": "missing-option",
+      "truth": "QULIPTA listed as an option",
+      "rendered": "QULIPTA absent from the option list",
+      "note": "Site omits the QULIPTA answer option entirely."
+    },
+    {
+      "id": "E03",
+      "questionId": "Q2",
+      "category": "wrong-option-label",
+      "truth": "Reduktion der monatlichen Migränetage",
+      "rendered": "Reduktion der monatlichen Migräneattacken",
+      "note": "Option label altered on the site: \"Reduktion der monatlichen Migränetage\" changed to \"Reduktion der monatlichen Migräneattacken\", changing the clinical meaning."
+    },
+    {
+      "id": "E04",
+      "questionId": "Q4",
+      "category": "broken-piping",
+      "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])",
+      "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand",
+      "note": "Site renders the literal unresolved token {Q3brand} in the question text."
+    },
+    {
+      "id": "E05",
+      "questionId": "Q5",
+      "category": "scale-mislabel",
+      "truth": "Scale point is \"Weder Zustimmung noch Ablehnung\"",
+      "rendered": "Scale point reads \"Stimme eher zu\" (duplicate of another column)",
+      "note": "Matrix column header duplicated/mislabeled."
+    },
+    {
+      "id": "E06",
+      "questionId": "Q2",
+      "category": "reordered-options",
+      "truth": "Order per spec: \"Günstiges Verträglichkeitsprofil\" precedes \"Orale versus injizierbare Anwendung\"",
+      "rendered": "\"Günstiges Verträglichkeitsprofil\" and \"Orale versus injizierbare Anwendung\" swapped",
+      "note": "Spec explicitly forbids reordering (programmer note)."
+    },
+    {
+      "id": "E07",
+      "questionId": "Q6",
+      "category": "wrong-numbering",
+      "truth": "Question is numbered Q6",
+      "rendered": "Question is numbered Q5 (duplicate of the previous question's number)",
+      "note": "Visible question number wrong on site."
+    },
+    {
+      "id": "E08",
+      "questionId": "Q7",
+      "category": "encoding-artifact",
+      "truth": "größte",
+      "rendered": "grÃ¶ÃŸte",
+      "note": "Mojibake: UTF-8 bytes of \"größte\" displayed as CP1252, so it appears as \"grÃ¶ÃŸte\"."
+    },
+    {
+      "id": "E10",
+      "questionId": "Q1",
+      "category": "missing-instruction",
+      "truth": "Instruction \"Bitte alle zutreffenden Antworten auswählen.\" shown below the question",
+      "rendered": "Instruction omitted",
+      "note": "Site drops the instruction shown under Q1."
+    },
+    {
+      "id": "E11",
+      "questionId": "S2",
+      "category": "missing-question",
+      "truth": "S2 is present in the questionnaire spec",
+      "rendered": "S2 is absent from the site entirely",
+      "note": "An entire spec question is missing from the rendered survey."
+    }
+  ],
+  "mutations": [
+    {
+      "errorId": "E01",
+      "op": "replaceOption",
+      "questionId": "S1",
+      "find": "Kopfschmerzspezialist",
+      "replace": "Kopfschmerzspezialst"
+    },
+    {
+      "errorId": "E02",
+      "op": "removeOption",
+      "questionId": "Q1",
+      "option": "QULIPTA"
+    },
+    {
+      "errorId": "E03",
+      "op": "replaceOption",
+      "questionId": "Q2",
+      "find": "Reduktion der monatlichen Migränetage",
+      "replace": "Reduktion der monatlichen Migräneattacken"
+    },
+    {
+      "errorId": "E04",
+      "op": "replaceInTitle",
+      "questionId": "Q4",
+      "find": "{Q3}",
+      "replace": "{Q3brand}"
+    },
+    {
+      "errorId": "E05",
+      "op": "replaceColumn",
+      "questionId": "Q5",
+      "find": "Weder Zustimmung noch Ablehnung",
+      "replace": "Stimme eher zu"
+    },
+    {
+      "errorId": "E06",
+      "op": "swapOptions",
+      "questionId": "Q2",
+      "a": "Günstiges Verträglichkeitsprofil",
+      "b": "Orale versus injizierbare Anwendung"
+    },
+    {
+      "errorId": "E07",
+      "op": "replaceInTitle",
+      "questionId": "Q6",
+      "find": "Q6.",
+      "replace": "Q5."
+    },
+    {
+      "errorId": "E08",
+      "op": "replaceInTitle",
+      "questionId": "Q7",
+      "find": "größte",
+      "replace": "grÃ¶ÃŸte"
+    },
+    {
+      "errorId": "E10",
+      "op": "removeInstruction",
+      "questionId": "Q1"
+    },
+    {
+      "errorId": "E11",
+      "op": "removeQuestion",
+      "questionId": "S2"
+    }
+  ],
+  "cleanQuestions": [
+    "Q3",
+    "Q8"
+  ],
+  "notes": "de localization of the migraine held-out case; structure and seeded-error signature copied from English; strings translated."
+}

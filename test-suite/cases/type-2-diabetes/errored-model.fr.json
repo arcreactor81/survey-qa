@@ -1,0 +1,141 @@
+{
+  "title": "Perceptions des cliniciens sur les traitements à base d'incrétines dans le diabète de type 2",
+  "description": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Endocrinologe",
+            "Médecin généraliste",
+            "Infirmier en pratique avancée",
+            "Assistant médical"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. Parmi les médicaments suivants du diabète de type 2, lesquels connaissez-vous ?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "OZEMPIC",
+            "MOUNJARO",
+            "JARDIANCE",
+            "TRULICITY",
+            "Aucune de ces réponses"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. Quel est votre critère le plus important lors du choix d'un médicament pour un patient atteint d'un diabète de type 2 insuffisamment contrôlé ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Ampleur de la réduction de l'HbA1c",
+            "Potentiel de prise de poids",
+            "Commodité d'une administration hebdomadaire",
+            "Réduction du risque cardiovasculaire",
+            "Prise en charge par le formulaire et coût"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. Quel médicament prescrivez-vous le plus souvent pour un diabète de type 2 insuffisamment contrôlé ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "OZEMPIC",
+            "MOUNJARO",
+            "JARDIANCE",
+            "TRULICITY",
+            "RYBELSUS"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. Dans quelle mesure êtes-vous satisfait(e) de {Q3brand} pour vos patients atteints de diabète de type 2 ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Très satisfait(e)",
+            "Plutôt satisfait(e)",
+            "Ni satisfait(e) ni insatisfait(e)",
+            "Plutôt insatisfait(e)",
+            "Très insatisfait(e)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "Les agonistes des récepteurs du GLP-1 ont transformé la prise en charge du diabète de type 2",
+            "La contrainte des injections limite l'observance de mes patients",
+            "Je suis à l'aise pour ajuster la dose de ces agents chez les patients atteints d'insuffisance rénale"
+          ],
+          "columns": [
+            "Tout à fait d'accord",
+            "Plutôt d'accord",
+            "Ni d'accord ni pas d'accord",
+            "Pas du tout d'accord",
+            "Pas du tout d'accord"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q6. Quel pourcentage de vos patients atteints de diabète de type 2 reçoit actuellement un agoniste des récepteurs du GLP-1 ou un agoniste double GIP/GLP-1 ?",
+          "isRequired": false,
+          "description": "Saisissez un nombre entier entre 0 et 100.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. Selon vous, quel est le principal obstacle à l'accÃ¨s de vos patients à ces traitements ?",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. Quelle est la probabilité que vous vous recommandiez ces traitements à un confrère prenant en charge un diabète de type 2 ?",
+          "isRequired": false,
+          "description": "0 = Pas du tout probable, 10 = Extrêmement probable",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

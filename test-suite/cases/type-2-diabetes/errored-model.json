@@ -1,0 +1,141 @@
+{
+  "title": "Clinician Perceptions of Incretin-Based Therapies in Type 2 Diabetes",
+  "description": "Thank you for participating. This survey takes approximately 10 minutes. Your responses are confidential and reported only in aggregate.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Thank you for completing the survey.</h3><p>Your responses have been recorded.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. Which of the following best describes your primary clinical role?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Endocrinologst",
+            "Primary care physician",
+            "Nurse practitioner",
+            "Physician assistant"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. Which of the following medications for type 2 diabetes are you aware of?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "OZEMPIC",
+            "MOUNJARO",
+            "JARDIANCE",
+            "TRULICITY",
+            "None of the above"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. What is your most important consideration when selecting a medication for a patient with inadequately controlled type 2 diabetes?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Magnitude of HbA1c reduction",
+            "Weight-gain potential",
+            "Once-weekly dosing convenience",
+            "Cardiovascular risk reduction",
+            "Formulary coverage and cost"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. Which medication do you prescribe most often for inadequately controlled type 2 diabetes?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "OZEMPIC",
+            "MOUNJARO",
+            "JARDIANCE",
+            "TRULICITY",
+            "RYBELSUS"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. How satisfied are you with {Q3brand} for your type 2 diabetes patients?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Very satisfied",
+            "Somewhat satisfied",
+            "Neither satisfied nor dissatisfied",
+            "Somewhat dissatisfied",
+            "Very dissatisfied"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Please rate your agreement with each of the following statements.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "GLP-1 receptor agonists have transformed type 2 diabetes management",
+            "Injection burden limits my patients' adherence to therapy",
+            "I am comfortable titrating these agents in patients with renal impairment"
+          ],
+          "columns": [
+            "Strongly agree",
+            "Somewhat agree",
+            "Neither agree nor disagree",
+            "Strongly disagree",
+            "Strongly disagree"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q6. What percentage of your type 2 diabetes patients currently receive a GLP-1 receptor agonist or dual GIP/GLP-1 agonist?",
+          "isRequired": false,
+          "description": "Enter a whole number between 0 and 100.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. In your view, what is the single biggest barrier to your patientsâ€™ access to these therapies?",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. How likely are you you to recommend these therapies to a colleague managing type 2 diabetes?",
+          "isRequired": false,
+          "description": "0 = Not at all likely, 10 = Extremely likely",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

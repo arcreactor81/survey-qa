@@ -1,0 +1,294 @@
+{
+  "slug": "rheumatoid-arthritis",
+  "domain": "Rheumatoid arthritis — advanced therapy in moderate-to-severe RA",
+  "lang": "ja",
+  "route": "/rheumatoid-arthritis/ja",
+  "brands": [
+    "HUMIRA",
+    "ENBREL",
+    "RINVOQ",
+    "XELJANZ",
+    "ORENCIA"
+  ],
+  "title": "中等症から重症の関節リウマチにおける先進的治療に対するリウマチ専門医の認識",
+  "intro": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+      "options": [
+        "リウマチ専門医",
+        "ナースプラクティショナー",
+        "フィジシャンアシスタント",
+        "プライマリケア医"
+      ]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "関節リウマチの患者さんの治療に携わって何年になりますか。",
+      "instruction": "0から50までの整数を入力してください。",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "中等症から重症の関節リウマチに対する以下の先進的治療のうち、あなたがご存知のものはどれですか。",
+      "instruction": "当てはまるものをすべて選択してください。",
+      "options": [
+        "HUMIRA",
+        "ENBREL",
+        "RINVOQ",
+        "XELJANZ",
+        "ORENCIA",
+        "上記のいずれでもない"
+      ]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "中等症から重症の関節リウマチに対する先進的治療を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+      "options": [
+        "ACR20/50/70の改善",
+        "画像上の進行の抑制",
+        "良好な安全性・感染症プロファイル",
+        "経口投与か注射投与か",
+        "フォーミュラリー収載と費用"
+      ],
+      "logicNote": "プログラマー注：選択肢は上記に記載された順序のとおりに提示してください。ランダム化しないでください。"
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "中等症から重症の関節リウマチに対して、あなたが最も頻繁に処方する先進的治療はどれですか。",
+      "options": [
+        "HUMIRA",
+        "ENBREL",
+        "RINVOQ",
+        "XELJANZ",
+        "ORENCIA"
+      ],
+      "logicNote": "プログラマー注：Q3で選択されたブランド名をQ4の質問文にパイプ（差し込み）する必要があります。"
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "中等症から重症の関節リウマチの患者さんに対する[PIPE: Q3 selection]について、どの程度満足していますか。",
+      "options": [
+        "非常に満足している",
+        "やや満足している",
+        "どちらともいえない",
+        "やや不満である",
+        "非常に不満である"
+      ],
+      "piping": {
+        "source": "Q3",
+        "note": "[PIPE: Q3 selection]をQ3で選択されたブランド名に置き換えてください。"
+      }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+      "rows": [
+        "先進的治療は関節リウマチの治療成績を大きく変えた",
+        "事前承認の要件が患者さんの治療を遅らせている",
+        "現行の安全性ガイダンスを踏まえ、私は抵抗なくJAK阻害薬を処方できる"
+      ],
+      "scale": [
+        "強くそう思う",
+        "ややそう思う",
+        "どちらともいえない",
+        "あまりそう思わない",
+        "全くそう思わない"
+      ]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "あなたの中等症から重症の関節リウマチの患者さんのうち、現在先進的治療（生物学的製剤またはJAK阻害薬）を受けている方の割合は何パーセントですか。",
+      "instruction": "0から100までの整数を入力してください。",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "あなたのお考えでは、患者さんが先進的治療を受ける上での最大の障壁は何ですか。"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "中等症から重症の関節リウマチを治療している同僚に、先進的治療をどの程度勧めたいと思いますか。",
+      "instruction": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    {
+      "id": "E01",
+      "questionId": "S1",
+      "category": "typo",
+      "truth": "リウマチ専門医",
+      "rendered": "リウマチ専問医",
+      "note": "Answer option misspelled on the site: \"リウマチ専門医\" rendered as \"リウマチ専問医\"."
+    },
+    {
+      "id": "E02",
+      "questionId": "Q1",
+      "category": "missing-option",
+      "truth": "ORENCIA listed as an option",
+      "rendered": "ORENCIA absent from the option list",
+      "note": "Site omits the ORENCIA answer option entirely."
+    },
+    {
+      "id": "E03",
+      "questionId": "Q2",
+      "category": "wrong-option-label",
+      "truth": "画像上の進行の抑制",
+      "rendered": "画像上の退行の抑制",
+      "note": "Option label altered on the site: \"画像上の進行の抑制\" changed to \"画像上の退行の抑制\", changing the clinical meaning."
+    },
+    {
+      "id": "E04",
+      "questionId": "Q4",
+      "category": "broken-piping",
+      "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])",
+      "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand",
+      "note": "Site renders the literal unresolved token {Q3brand} in the question text."
+    },
+    {
+      "id": "E05",
+      "questionId": "Q5",
+      "category": "scale-mislabel",
+      "truth": "Scale point is \"ややそう思う\"",
+      "rendered": "Scale point reads \"強くそう思う\" (duplicate of another column)",
+      "note": "Matrix column header duplicated/mislabeled."
+    },
+    {
+      "id": "E06",
+      "questionId": "Q2",
+      "category": "reordered-options",
+      "truth": "Order per spec: \"良好な安全性・感染症プロファイル\" precedes \"経口投与か注射投与か\"",
+      "rendered": "\"良好な安全性・感染症プロファイル\" and \"経口投与か注射投与か\" swapped",
+      "note": "Spec explicitly forbids reordering (programmer note)."
+    },
+    {
+      "id": "E07",
+      "questionId": "Q6",
+      "category": "wrong-numbering",
+      "truth": "Question is numbered Q6",
+      "rendered": "Question is numbered Q5 (duplicate of the previous question's number)",
+      "note": "Visible question number wrong on site."
+    },
+    {
+      "id": "E09",
+      "questionId": "Q8",
+      "category": "duplicated-word",
+      "truth": "同僚に、",
+      "rendered": "同僚にに、",
+      "note": "Duplicated word in question text: \"同僚に、\" rendered as \"同僚にに、\"."
+    },
+    {
+      "id": "E10",
+      "questionId": "Q1",
+      "category": "missing-instruction",
+      "truth": "Instruction \"当てはまるものをすべて選択してください。\" shown below the question",
+      "rendered": "Instruction omitted",
+      "note": "Site drops the instruction shown under Q1."
+    },
+    {
+      "id": "E11",
+      "questionId": "Q7",
+      "category": "missing-question",
+      "truth": "Q7 is present in the questionnaire spec",
+      "rendered": "Q7 is absent from the site entirely",
+      "note": "An entire spec question is missing from the rendered survey."
+    }
+  ],
+  "mutations": [
+    {
+      "errorId": "E01",
+      "op": "replaceOption",
+      "questionId": "S1",
+      "find": "リウマチ専門医",
+      "replace": "リウマチ専問医"
+    },
+    {
+      "errorId": "E02",
+      "op": "removeOption",
+      "questionId": "Q1",
+      "option": "ORENCIA"
+    },
+    {
+      "errorId": "E03",
+      "op": "replaceOption",
+      "questionId": "Q2",
+      "find": "画像上の進行の抑制",
+      "replace": "画像上の退行の抑制"
+    },
+    {
+      "errorId": "E04",
+      "op": "replaceInTitle",
+      "questionId": "Q4",
+      "find": "{Q3}",
+      "replace": "{Q3brand}"
+    },
+    {
+      "errorId": "E05",
+      "op": "replaceColumn",
+      "questionId": "Q5",
+      "find": "ややそう思う",
+      "replace": "強くそう思う"
+    },
+    {
+      "errorId": "E06",
+      "op": "swapOptions",
+      "questionId": "Q2",
+      "a": "良好な安全性・感染症プロファイル",
+      "b": "経口投与か注射投与か"
+    },
+    {
+      "errorId": "E07",
+      "op": "replaceInTitle",
+      "questionId": "Q6",
+      "find": "Q6.",
+      "replace": "Q5."
+    },
+    {
+      "errorId": "E09",
+      "op": "replaceInTitle",
+      "questionId": "Q8",
+      "find": "同僚に、",
+      "replace": "同僚にに、"
+    },
+    {
+      "errorId": "E10",
+      "op": "removeInstruction",
+      "questionId": "Q1"
+    },
+    {
+      "errorId": "E11",
+      "op": "removeQuestion",
+      "questionId": "Q7"
+    }
+  ],
+  "cleanQuestions": [
+    "S2",
+    "Q3"
+  ],
+  "notes": "ja localization of the rheumatoid-arthritis held-out case; structure and seeded-error signature copied from English; strings translated."
+}

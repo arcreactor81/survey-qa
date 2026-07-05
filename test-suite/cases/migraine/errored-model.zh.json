@@ -1,0 +1,141 @@
+{
+  "title": "临床医生对偏头痛靶向CGRP治疗的认知",
+  "description": "感谢您的参与。本次调查约需10分钟。您的回答将予以严格保密，仅以汇总形式报告。",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>感谢您完成本次调查。</h3><p>您的回答已被记录。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. 以下哪一项最能描述您的主要职业角色？",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "神经科医师",
+            "投痛专科医师",
+            "全科医师",
+            "执业护师"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. 您知晓以下哪些用于治疗偏头痛的药物？",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "NURTEC",
+            "UBRELVY",
+            "AJOVY",
+            "EMGALITY",
+            "以上均无"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. 在为偏头痛患者选择治疗时，您最重要的考虑因素是什么？",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "每月偏头痛发作次数的减少",
+            "起效速度",
+            "口服与注射给药方式",
+            "良好的耐受性",
+            "事先授权负担"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. 对于偏头痛，您最常处方哪种治疗？",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "NURTEC",
+            "UBRELVY",
+            "AJOVY",
+            "EMGALITY",
+            "QULIPTA"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. 对于您的偏头痛患者，您对{Q3brand}的满意度如何？",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "非常满意",
+            "比较满意",
+            "既不满意也非不满意",
+            "不太满意",
+            "非常不满意"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. 请评价您对以下各项陈述的同意程度。",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "靶向CGRP的治疗彻底改变了偏头痛的管理",
+            "事先授权要求延误了我的患者获得较新治疗的机会",
+            "对于有心血管危险因素的患者，我能够放心地使用这些治疗"
+          ],
+          "columns": [
+            "非常同意",
+            "比较同意",
+            "比较同意",
+            "不太同意",
+            "非常不同意"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. 在您的偏头痛患者中，目前有多大比例正在接受靶向CGRP的治疗（百分比）？",
+          "isRequired": false,
+          "description": "请输入0至100之间的整数。",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. 在您看来，您的æ‚£è€…获得靶向CGRP治疗的最大障碍是什么？",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. 您向治疗偏头痛的同事推荐靶向CGRP治疗的可能性有多大？",
+          "isRequired": false,
+          "description": "0 = 完全不可能，10 = 极有可能",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

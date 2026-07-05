@@ -1,0 +1,151 @@
+{
+  "title": "Perceptions des oncologues sur l'immunothérapie de première ligne dans le cancer bronchique non à petites cellules métastatique",
+  "description": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Merci d'avoir répondu à cette enquête.</h3><p>Vos réponses ont été enregistrées.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Oncologue médical",
+            "Hématologue-oncologe",
+            "Infirmier en pratique avancée",
+            "Assistant médical"
+          ]
+        },
+        {
+          "name": "S2",
+          "title": "S2. Depuis combien d'années traitez-vous des patients atteints d'un cancer bronchique non à petites cellules ?",
+          "isRequired": false,
+          "description": "Saisissez un nombre entier entre 0 et 50.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 50
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. Parmi les immunothérapies suivantes du cancer bronchique non à petites cellules métastatique, lesquelles connaissez-vous ?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "KEYTRUDA",
+            "OPDIVO",
+            "TECENTRIQ",
+            "IMFINZI",
+            "Aucune de ces réponses"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. Quel est votre critère le plus important lors du choix d'une immunothérapie de première ligne pour un cancer bronchique non à petites cellules métastatique ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Bénéfice en réponse globale",
+            "Survie sans progression",
+            "Cohérence avec le statut PD-L1",
+            "Profil de tolérance favorable",
+            "Commodité d'administration"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. Quelle immunothérapie prescrivez-vous le plus souvent en première ligne pour un cancer bronchique non à petites cellules métastatique ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "KEYTRUDA",
+            "OPDIVO",
+            "TECENTRIQ",
+            "IMFINZI",
+            "LIBTAYO"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. Dans quelle mesure êtes-vous satisfait(e) de {Q3brand} pour vos patients atteints d'un cancer bronchique non à petites cellules métastatique en première ligne ?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Très satisfait(e)",
+            "Plutôt satisfait(e)",
+            "Ni satisfait(e) ni insatisfait(e)",
+            "Plutôt insatisfait(e)",
+            "Très insatisfait(e)"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "L'immunothérapie a transformé les résultats dans le cancer bronchique non à petites cellules métastatique",
+            "Les délais des tests de biomarqueurs limitent la rapidité des décisions thérapeutiques",
+            "Je suis à l'aise pour utiliser l'immunothérapie chez les patients présentant des comorbidités auto-immunes"
+          ],
+          "columns": [
+            "Tout à fait d'accord",
+            "Tout à fait d'accord",
+            "Ni d'accord ni pas d'accord",
+            "Plutôt pas d'accord",
+            "Pas du tout d'accord"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. Quel pourcentage de vos patients atteints d'un cancer bronchique non à petites cellules métastatique reçoit actuellement une immunothérapie ?",
+          "isRequired": false,
+          "description": "Saisissez un nombre entier entre 0 et 100.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. Selon vous, quel est le principal obstacle à l'accÃ¨s de vos patients à l'immunothérapie ?",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. Quelle est la probabilité que vous vous recommandiez l'immunothérapie à un confrère traitant un cancer bronchique non à petites cellules métastatique ?",
+          "isRequired": false,
+          "description": "0 = Pas du tout probable, 10 = Extrêmement probable",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

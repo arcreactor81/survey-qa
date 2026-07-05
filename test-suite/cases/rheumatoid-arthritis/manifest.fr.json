@@ -1,0 +1,294 @@
+{
+  "slug": "rheumatoid-arthritis",
+  "domain": "Rheumatoid arthritis — advanced therapy in moderate-to-severe RA",
+  "lang": "fr",
+  "route": "/rheumatoid-arthritis/fr",
+  "brands": [
+    "HUMIRA",
+    "ENBREL",
+    "RINVOQ",
+    "XELJANZ",
+    "ORENCIA"
+  ],
+  "title": "Perceptions des rhumatologues sur les traitements avancés dans la polyarthrite rhumatoïde modérée à sévère",
+  "intro": "Merci de votre participation. Cette enquête dure environ 10 minutes. Vos réponses sont confidentielles et ne seront présentées que sous forme agrégée.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "Laquelle des propositions suivantes décrit le mieux votre fonction professionnelle principale ?",
+      "options": [
+        "Rhumatologue",
+        "Infirmier en pratique avancée",
+        "Assistant médical",
+        "Médecin généraliste"
+      ]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "Depuis combien d'années traitez-vous des patients atteints de polyarthrite rhumatoïde ?",
+      "instruction": "Saisissez un nombre entier entre 0 et 50.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "Parmi les traitements avancés suivants de la polyarthrite rhumatoïde modérée à sévère, lesquels connaissez-vous ?",
+      "instruction": "Sélectionnez toutes les réponses qui s'appliquent.",
+      "options": [
+        "HUMIRA",
+        "ENBREL",
+        "RINVOQ",
+        "XELJANZ",
+        "ORENCIA",
+        "Aucune de ces réponses"
+      ]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "Quel est votre critère le plus important lors du choix d'un traitement avancé pour une polyarthrite rhumatoïde modérée à sévère ?",
+      "options": [
+        "Réponse ACR20/50/70",
+        "Inhibition de la progression radiographique",
+        "Profil favorable de sécurité et d'infections",
+        "Administration orale versus injectable",
+        "Prise en charge par le formulaire et coût"
+      ],
+      "logicNote": "NOTE AU PROGRAMMEUR : Présenter les options dans l'ordre exact indiqué ci-dessus. Ne pas randomiser."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "Quel traitement avancé prescrivez-vous le plus souvent pour une polyarthrite rhumatoïde modérée à sévère ?",
+      "options": [
+        "HUMIRA",
+        "ENBREL",
+        "RINVOQ",
+        "XELJANZ",
+        "ORENCIA"
+      ],
+      "logicNote": "NOTE AU PROGRAMMEUR : La marque sélectionnée en Q3 doit être insérée dans le texte de la Q4."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "Dans quelle mesure êtes-vous satisfait(e) de [PIPE: Q3 selection] pour vos patients atteints de polyarthrite rhumatoïde modérée à sévère ?",
+      "options": [
+        "Très satisfait(e)",
+        "Plutôt satisfait(e)",
+        "Ni satisfait(e) ni insatisfait(e)",
+        "Plutôt insatisfait(e)",
+        "Très insatisfait(e)"
+      ],
+      "piping": {
+        "source": "Q3",
+        "note": "Remplacer [PIPE: Q3 selection] par la marque choisie en Q3."
+      }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Veuillez indiquer votre degré d'accord avec chacune des affirmations suivantes.",
+      "rows": [
+        "Les traitements avancés ont transformé les résultats dans la polyarthrite rhumatoïde",
+        "Les exigences d'autorisation préalable retardent le traitement de mes patients",
+        "Je suis à l'aise pour prescrire des inhibiteurs de JAK compte tenu des recommandations de sécurité actuelles"
+      ],
+      "scale": [
+        "Tout à fait d'accord",
+        "Plutôt d'accord",
+        "Ni d'accord ni pas d'accord",
+        "Plutôt pas d'accord",
+        "Pas du tout d'accord"
+      ]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "Quel pourcentage de vos patients atteints de polyarthrite rhumatoïde modérée à sévère reçoit actuellement un traitement avancé (biologique ou inhibiteur de JAK) ?",
+      "instruction": "Saisissez un nombre entier entre 0 et 100.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "Selon vous, quel est le principal obstacle à l'accès de vos patients au traitement avancé ?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "Quelle est la probabilité que vous recommandiez le traitement avancé à un confrère traitant une polyarthrite rhumatoïde modérée à sévère ?",
+      "instruction": "0 = Pas du tout probable, 10 = Extrêmement probable",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    {
+      "id": "E01",
+      "questionId": "S1",
+      "category": "typo",
+      "truth": "Rhumatologue",
+      "rendered": "Rhumatologe",
+      "note": "Answer option misspelled on the site: \"Rhumatologue\" rendered as \"Rhumatologe\"."
+    },
+    {
+      "id": "E02",
+      "questionId": "Q1",
+      "category": "missing-option",
+      "truth": "ORENCIA listed as an option",
+      "rendered": "ORENCIA absent from the option list",
+      "note": "Site omits the ORENCIA answer option entirely."
+    },
+    {
+      "id": "E03",
+      "questionId": "Q2",
+      "category": "wrong-option-label",
+      "truth": "Inhibition de la progression radiographique",
+      "rendered": "Inhibition de la régression radiographique",
+      "note": "Option label altered on the site: \"Inhibition de la progression radiographique\" changed to \"Inhibition de la régression radiographique\", changing the clinical meaning."
+    },
+    {
+      "id": "E04",
+      "questionId": "Q4",
+      "category": "broken-piping",
+      "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])",
+      "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand",
+      "note": "Site renders the literal unresolved token {Q3brand} in the question text."
+    },
+    {
+      "id": "E05",
+      "questionId": "Q5",
+      "category": "scale-mislabel",
+      "truth": "Scale point is \"Plutôt d'accord\"",
+      "rendered": "Scale point reads \"Tout à fait d'accord\" (duplicate of another column)",
+      "note": "Matrix column header duplicated/mislabeled."
+    },
+    {
+      "id": "E06",
+      "questionId": "Q2",
+      "category": "reordered-options",
+      "truth": "Order per spec: \"Profil favorable de sécurité et d'infections\" precedes \"Administration orale versus injectable\"",
+      "rendered": "\"Profil favorable de sécurité et d'infections\" and \"Administration orale versus injectable\" swapped",
+      "note": "Spec explicitly forbids reordering (programmer note)."
+    },
+    {
+      "id": "E07",
+      "questionId": "Q6",
+      "category": "wrong-numbering",
+      "truth": "Question is numbered Q6",
+      "rendered": "Question is numbered Q5 (duplicate of the previous question's number)",
+      "note": "Visible question number wrong on site."
+    },
+    {
+      "id": "E09",
+      "questionId": "Q8",
+      "category": "duplicated-word",
+      "truth": "que vous recommandiez",
+      "rendered": "que vous vous recommandiez",
+      "note": "Duplicated word in question text: \"que vous recommandiez\" rendered as \"que vous vous recommandiez\"."
+    },
+    {
+      "id": "E10",
+      "questionId": "Q1",
+      "category": "missing-instruction",
+      "truth": "Instruction \"Sélectionnez toutes les réponses qui s'appliquent.\" shown below the question",
+      "rendered": "Instruction omitted",
+      "note": "Site drops the instruction shown under Q1."
+    },
+    {
+      "id": "E11",
+      "questionId": "Q7",
+      "category": "missing-question",
+      "truth": "Q7 is present in the questionnaire spec",
+      "rendered": "Q7 is absent from the site entirely",
+      "note": "An entire spec question is missing from the rendered survey."
+    }
+  ],
+  "mutations": [
+    {
+      "errorId": "E01",
+      "op": "replaceOption",
+      "questionId": "S1",
+      "find": "Rhumatologue",
+      "replace": "Rhumatologe"
+    },
+    {
+      "errorId": "E02",
+      "op": "removeOption",
+      "questionId": "Q1",
+      "option": "ORENCIA"
+    },
+    {
+      "errorId": "E03",
+      "op": "replaceOption",
+      "questionId": "Q2",
+      "find": "Inhibition de la progression radiographique",
+      "replace": "Inhibition de la régression radiographique"
+    },
+    {
+      "errorId": "E04",
+      "op": "replaceInTitle",
+      "questionId": "Q4",
+      "find": "{Q3}",
+      "replace": "{Q3brand}"
+    },
+    {
+      "errorId": "E05",
+      "op": "replaceColumn",
+      "questionId": "Q5",
+      "find": "Plutôt d'accord",
+      "replace": "Tout à fait d'accord"
+    },
+    {
+      "errorId": "E06",
+      "op": "swapOptions",
+      "questionId": "Q2",
+      "a": "Profil favorable de sécurité et d'infections",
+      "b": "Administration orale versus injectable"
+    },
+    {
+      "errorId": "E07",
+      "op": "replaceInTitle",
+      "questionId": "Q6",
+      "find": "Q6.",
+      "replace": "Q5."
+    },
+    {
+      "errorId": "E09",
+      "op": "replaceInTitle",
+      "questionId": "Q8",
+      "find": "que vous recommandiez",
+      "replace": "que vous vous recommandiez"
+    },
+    {
+      "errorId": "E10",
+      "op": "removeInstruction",
+      "questionId": "Q1"
+    },
+    {
+      "errorId": "E11",
+      "op": "removeQuestion",
+      "questionId": "Q7"
+    }
+  ],
+  "cleanQuestions": [
+    "S2",
+    "Q3"
+  ],
+  "notes": "fr localization of the rheumatoid-arthritis held-out case; structure and seeded-error signature copied from English; strings translated."
+}

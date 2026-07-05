@@ -1,0 +1,294 @@
+{
+  "slug": "migraine",
+  "domain": "Migraine — CGRP-targeted therapy selection",
+  "lang": "ja",
+  "route": "/migraine/ja",
+  "brands": [
+    "NURTEC",
+    "UBRELVY",
+    "AJOVY",
+    "EMGALITY",
+    "QULIPTA"
+  ],
+  "title": "片頭痛におけるCGRPを標的とする治療に対する臨床医の認識",
+  "intro": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+      "options": [
+        "神経内科医",
+        "頭痛専門医",
+        "プライマリケア医",
+        "ナースプラクティショナー"
+      ]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "片頭痛の患者さんの治療に携わって何年になりますか。",
+      "instruction": "0から50までの整数を入力してください。",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "片頭痛に対する以下の治療のうち、あなたがご存知のものはどれですか。",
+      "instruction": "当てはまるものをすべて選択してください。",
+      "options": [
+        "NURTEC",
+        "UBRELVY",
+        "AJOVY",
+        "EMGALITY",
+        "QULIPTA",
+        "上記のいずれでもない"
+      ]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "片頭痛の患者さんに対する治療を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+      "options": [
+        "月間片頭痛日数の減少",
+        "効果発現の速さ",
+        "良好な忍容性プロファイル",
+        "経口投与か注射投与か",
+        "事前承認の負担"
+      ],
+      "logicNote": "プログラマー注：選択肢は上記に記載された順序のとおりに提示してください。ランダム化しないでください。"
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "片頭痛に対して、あなたが最も頻繁に処方する治療はどれですか。",
+      "options": [
+        "NURTEC",
+        "UBRELVY",
+        "AJOVY",
+        "EMGALITY",
+        "QULIPTA"
+      ],
+      "logicNote": "プログラマー注：Q3で選択されたブランド名をQ4の質問文にパイプ（差し込み）する必要があります。"
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "片頭痛の患者さんに対する[PIPE: Q3 selection]について、どの程度満足していますか。",
+      "options": [
+        "非常に満足している",
+        "やや満足している",
+        "どちらともいえない",
+        "やや不満である",
+        "非常に不満である"
+      ],
+      "piping": {
+        "source": "Q3",
+        "note": "[PIPE: Q3 selection]をQ3で選択されたブランド名に置き換えてください。"
+      }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+      "rows": [
+        "CGRPを標的とする治療は片頭痛の管理を大きく変えた",
+        "事前承認の要件が患者さんの新しい治療へのアクセスを遅らせている",
+        "心血管系のリスク因子を有する患者さんにも、私は抵抗なくこれらの治療を使用できる"
+      ],
+      "scale": [
+        "強くそう思う",
+        "ややそう思う",
+        "どちらともいえない",
+        "あまりそう思わない",
+        "全くそう思わない"
+      ]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "あなたの片頭痛の患者さんのうち、現在CGRPを標的とする治療を受けている方の割合は何パーセントですか。",
+      "instruction": "0から100までの整数を入力してください。",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "あなたのお考えでは、患者さんがCGRPを標的とする治療を受ける上での最大の障壁は何ですか。"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "片頭痛を治療している同僚に、CGRPを標的とする治療をどの程度勧めたいと思いますか。",
+      "instruction": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    {
+      "id": "E01",
+      "questionId": "S1",
+      "category": "typo",
+      "truth": "頭痛専門医",
+      "rendered": "頭痛専問医",
+      "note": "Answer option misspelled on the site: \"頭痛専門医\" rendered as \"頭痛専問医\"."
+    },
+    {
+      "id": "E02",
+      "questionId": "Q1",
+      "category": "missing-option",
+      "truth": "QULIPTA listed as an option",
+      "rendered": "QULIPTA absent from the option list",
+      "note": "Site omits the QULIPTA answer option entirely."
+    },
+    {
+      "id": "E03",
+      "questionId": "Q2",
+      "category": "wrong-option-label",
+      "truth": "月間片頭痛日数の減少",
+      "rendered": "月間片頭痛発作回数の減少",
+      "note": "Option label altered on the site: \"月間片頭痛日数の減少\" changed to \"月間片頭痛発作回数の減少\", changing the clinical meaning."
+    },
+    {
+      "id": "E04",
+      "questionId": "Q4",
+      "category": "broken-piping",
+      "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])",
+      "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand",
+      "note": "Site renders the literal unresolved token {Q3brand} in the question text."
+    },
+    {
+      "id": "E05",
+      "questionId": "Q5",
+      "category": "scale-mislabel",
+      "truth": "Scale point is \"どちらともいえない\"",
+      "rendered": "Scale point reads \"ややそう思う\" (duplicate of another column)",
+      "note": "Matrix column header duplicated/mislabeled."
+    },
+    {
+      "id": "E06",
+      "questionId": "Q2",
+      "category": "reordered-options",
+      "truth": "Order per spec: \"良好な忍容性プロファイル\" precedes \"経口投与か注射投与か\"",
+      "rendered": "\"良好な忍容性プロファイル\" and \"経口投与か注射投与か\" swapped",
+      "note": "Spec explicitly forbids reordering (programmer note)."
+    },
+    {
+      "id": "E07",
+      "questionId": "Q6",
+      "category": "wrong-numbering",
+      "truth": "Question is numbered Q6",
+      "rendered": "Question is numbered Q5 (duplicate of the previous question's number)",
+      "note": "Visible question number wrong on site."
+    },
+    {
+      "id": "E08",
+      "questionId": "Q7",
+      "category": "encoding-artifact",
+      "truth": "患者",
+      "rendered": "æ‚£è€…",
+      "note": "Mojibake: UTF-8 bytes of \"患者\" displayed as CP1252, so it appears as \"æ‚£è€…\"."
+    },
+    {
+      "id": "E10",
+      "questionId": "Q1",
+      "category": "missing-instruction",
+      "truth": "Instruction \"当てはまるものをすべて選択してください。\" shown below the question",
+      "rendered": "Instruction omitted",
+      "note": "Site drops the instruction shown under Q1."
+    },
+    {
+      "id": "E11",
+      "questionId": "S2",
+      "category": "missing-question",
+      "truth": "S2 is present in the questionnaire spec",
+      "rendered": "S2 is absent from the site entirely",
+      "note": "An entire spec question is missing from the rendered survey."
+    }
+  ],
+  "mutations": [
+    {
+      "errorId": "E01",
+      "op": "replaceOption",
+      "questionId": "S1",
+      "find": "頭痛専門医",
+      "replace": "頭痛専問医"
+    },
+    {
+      "errorId": "E02",
+      "op": "removeOption",
+      "questionId": "Q1",
+      "option": "QULIPTA"
+    },
+    {
+      "errorId": "E03",
+      "op": "replaceOption",
+      "questionId": "Q2",
+      "find": "月間片頭痛日数の減少",
+      "replace": "月間片頭痛発作回数の減少"
+    },
+    {
+      "errorId": "E04",
+      "op": "replaceInTitle",
+      "questionId": "Q4",
+      "find": "{Q3}",
+      "replace": "{Q3brand}"
+    },
+    {
+      "errorId": "E05",
+      "op": "replaceColumn",
+      "questionId": "Q5",
+      "find": "どちらともいえない",
+      "replace": "ややそう思う"
+    },
+    {
+      "errorId": "E06",
+      "op": "swapOptions",
+      "questionId": "Q2",
+      "a": "良好な忍容性プロファイル",
+      "b": "経口投与か注射投与か"
+    },
+    {
+      "errorId": "E07",
+      "op": "replaceInTitle",
+      "questionId": "Q6",
+      "find": "Q6.",
+      "replace": "Q5."
+    },
+    {
+      "errorId": "E08",
+      "op": "replaceInTitle",
+      "questionId": "Q7",
+      "find": "患者",
+      "replace": "æ‚£è€…"
+    },
+    {
+      "errorId": "E10",
+      "op": "removeInstruction",
+      "questionId": "Q1"
+    },
+    {
+      "errorId": "E11",
+      "op": "removeQuestion",
+      "questionId": "S2"
+    }
+  ],
+  "cleanQuestions": [
+    "Q3",
+    "Q8"
+  ],
+  "notes": "ja localization of the migraine held-out case; structure and seeded-error signature copied from English; strings translated."
+}

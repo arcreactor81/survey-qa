@@ -1,0 +1,145 @@
+{
+  "title": "风湿科医生对中重度类风湿关节炎先进治疗的认知",
+  "description": "感谢您的参与。本次调查约需10分钟。您的回答将予以严格保密，仅以汇总形式报告。",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>感谢您完成本次调查。</h3><p>您的回答已被记录。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. 以下哪一项最能描述您的主要职业角色？",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "疯湿科医师",
+            "执业护师",
+            "医师助理",
+            "全科医师"
+          ]
+        },
+        {
+          "name": "S2",
+          "title": "S2. 您治疗类风湿关节炎患者已有多少年？",
+          "isRequired": false,
+          "description": "请输入0至50之间的整数。",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 50
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. 您知晓以下哪些用于治疗中重度类风湿关节炎的先进治疗药物？",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "HUMIRA",
+            "ENBREL",
+            "RINVOQ",
+            "XELJANZ",
+            "以上均无"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. 在为中重度类风湿关节炎选择先进治疗时，您最重要的考虑因素是什么？",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "ACR20/50/70缓解",
+            "抑制影像学消退",
+            "口服与注射给药方式",
+            "良好的安全性与感染谱",
+            "医保目录覆盖与费用"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. 对于中重度类风湿关节炎，您最常处方哪种先进治疗？",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "HUMIRA",
+            "ENBREL",
+            "RINVOQ",
+            "XELJANZ",
+            "ORENCIA"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. 对于您的中重度类风湿关节炎患者，您对{Q3brand}的满意度如何？",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "非常满意",
+            "比较满意",
+            "既不满意也非不满意",
+            "不太满意",
+            "非常不满意"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. 请评价您对以下各项陈述的同意程度。",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "先进治疗彻底改变了类风湿关节炎的治疗结局",
+            "事先授权要求延误了我的患者的治疗",
+            "根据当前的安全性指导，我能够放心地处方JAK抑制剂"
+          ],
+          "columns": [
+            "非常同意",
+            "非常同意",
+            "既不同意也不反对",
+            "不太同意",
+            "非常不同意"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. 在您的中重度类风湿关节炎患者中，目前有多大比例正在接受先进治疗（生物制剂或JAK抑制剂）（百分比）？",
+          "isRequired": false,
+          "description": "请输入0至100之间的整数。",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q8",
+          "title": "Q8. 您向治疗中重度类风湿关节炎的的同事推荐先进治疗的可能性有多大？",
+          "isRequired": false,
+          "description": "0 = 完全不可能，10 = 极有可能",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "slug": "type-2-diabetes",
+  "domain": "Type 2 diabetes — GLP-1 / incretin therapy selection",
+  "lang": "en",
+  "route": "/type-2-diabetes",
+  "brands": ["OZEMPIC", "MOUNJARO", "JARDIANCE", "TRULICITY", "RYBELSUS"],
+  "title": "Clinician Perceptions of Incretin-Based Therapies in Type 2 Diabetes",
+  "intro": "Thank you for participating. This survey takes approximately 10 minutes. Your responses are confidential and reported only in aggregate.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "Which of the following best describes your primary clinical role?",
+      "options": ["Endocrinologist", "Primary care physician", "Nurse practitioner", "Physician assistant"]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "How many years have you been managing patients with type 2 diabetes?",
+      "instruction": "Enter a whole number between 0 and 50.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "Which of the following medications for type 2 diabetes are you aware of?",
+      "instruction": "Select all that apply.",
+      "options": ["OZEMPIC", "MOUNJARO", "JARDIANCE", "TRULICITY", "RYBELSUS", "None of the above"]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "What is your most important consideration when selecting a medication for a patient with inadequately controlled type 2 diabetes?",
+      "options": ["Magnitude of HbA1c reduction", "Weight-loss potential", "Cardiovascular risk reduction", "Once-weekly dosing convenience", "Formulary coverage and cost"],
+      "logicNote": "PROGRAMMER NOTE: Present options in the exact order listed above. Do not randomize."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "Which medication do you prescribe most often for inadequately controlled type 2 diabetes?",
+      "options": ["OZEMPIC", "MOUNJARO", "JARDIANCE", "TRULICITY", "RYBELSUS"],
+      "logicNote": "PROGRAMMER NOTE: The brand selected in Q3 must be piped into the text of Q4."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "How satisfied are you with [PIPE: Q3 selection] for your type 2 diabetes patients?",
+      "options": ["Very satisfied", "Somewhat satisfied", "Neither satisfied nor dissatisfied", "Somewhat dissatisfied", "Very dissatisfied"],
+      "piping": { "source": "Q3", "note": "Replace [PIPE: Q3 selection] with the brand chosen in Q3." }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Please rate your agreement with each of the following statements.",
+      "rows": [
+        "GLP-1 receptor agonists have transformed type 2 diabetes management",
+        "Injection burden limits my patients' adherence to therapy",
+        "I am comfortable titrating these agents in patients with renal impairment"
+      ],
+      "scale": ["Strongly agree", "Somewhat agree", "Neither agree nor disagree", "Somewhat disagree", "Strongly disagree"]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "What percentage of your type 2 diabetes patients currently receive a GLP-1 receptor agonist or dual GIP/GLP-1 agonist?",
+      "instruction": "Enter a whole number between 0 and 100.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "In your view, what is the single biggest barrier to your patients’ access to these therapies?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "How likely are you to recommend these therapies to a colleague managing type 2 diabetes?",
+      "instruction": "0 = Not at all likely, 10 = Extremely likely",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    { "id": "E01", "questionId": "S1", "category": "typo", "truth": "Endocrinologist", "rendered": "Endocrinologst", "note": "First answer option misspelled on the site (dropped 'i' in 'Endocrinologist')." },
+    { "id": "E02", "questionId": "Q1", "category": "missing-option", "truth": "RYBELSUS listed as an option", "rendered": "RYBELSUS absent from the option list", "note": "Site omits the RYBELSUS answer option entirely." },
+    { "id": "E03", "questionId": "Q2", "category": "wrong-option-label", "truth": "Weight-loss potential", "rendered": "Weight-gain potential", "note": "Option label altered on the site: 'Weight-loss' changed to 'Weight-gain', which reverses the intended benefit." },
+    { "id": "E04", "questionId": "Q4", "category": "broken-piping", "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])", "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand", "note": "Site renders the literal unresolved token {Q3brand} in the question text." },
+    { "id": "E05", "questionId": "Q5", "category": "scale-mislabel", "truth": "Fourth scale point is 'Somewhat disagree'", "rendered": "Fourth scale point reads 'Strongly disagree' (duplicate of the fifth)", "note": "Matrix column header duplicated/mislabeled." },
+    { "id": "E06", "questionId": "Q2", "category": "reordered-options", "truth": "Order: ...Weight-loss potential, Cardiovascular risk reduction, Once-weekly dosing convenience, Formulary coverage and cost", "rendered": "'Cardiovascular risk reduction' and 'Once-weekly dosing convenience' swapped", "note": "Spec explicitly forbids reordering (programmer note)." },
+    { "id": "E08", "questionId": "Q7", "category": "encoding-artifact", "truth": "patients’ access", "rendered": "patientsâ€™ access", "note": "Mojibake: UTF-8 bytes of the curly apostrophe displayed as cp1252, so 'patients’' appears as 'patientsâ€™'." },
+    { "id": "E09", "questionId": "Q8", "category": "duplicated-word", "truth": "How likely are you to recommend", "rendered": "How likely are you you to recommend", "note": "Duplicated word 'you' in question text." },
+    { "id": "E10", "questionId": "Q1", "category": "missing-instruction", "truth": "Instruction 'Select all that apply.' shown below the question", "rendered": "Instruction omitted", "note": "Site drops the multi-select instruction." },
+    { "id": "E11", "questionId": "S2", "category": "missing-question", "truth": "S2 (years managing type 2 diabetes) is present in the questionnaire spec", "rendered": "S2 is absent from the site entirely — the screener skips from S1 to Q1", "note": "An entire spec question (screener) is missing from the rendered survey." }
+  ],
+  "mutations": [
+    { "errorId": "E01", "op": "replaceOption", "questionId": "S1", "find": "Endocrinologist", "replace": "Endocrinologst" },
+    { "errorId": "E02", "op": "removeOption", "questionId": "Q1", "option": "RYBELSUS" },
+    { "errorId": "E03", "op": "replaceOption", "questionId": "Q2", "find": "Weight-loss potential", "replace": "Weight-gain potential" },
+    { "errorId": "E04", "op": "replaceInTitle", "questionId": "Q4", "find": "{Q3}", "replace": "{Q3brand}" },
+    { "errorId": "E05", "op": "replaceColumn", "questionId": "Q5", "find": "Somewhat disagree", "replace": "Strongly disagree" },
+    { "errorId": "E06", "op": "swapOptions", "questionId": "Q2", "a": "Cardiovascular risk reduction", "b": "Once-weekly dosing convenience" },
+    { "errorId": "E08", "op": "replaceInTitle", "questionId": "Q7", "find": "patients’", "replace": "patientsâ€™" },
+    { "errorId": "E09", "op": "replaceInTitle", "questionId": "Q8", "find": "are you to recommend", "replace": "are you you to recommend" },
+    { "errorId": "E10", "op": "removeInstruction", "questionId": "Q1" },
+    { "errorId": "E11", "op": "removeQuestion", "questionId": "S2" }
+  ],
+  "cleanQuestions": ["Q3", "Q6"],
+  "notes": "Type 2 diabetes held-out case. Adds missing-question (S2 removed from the site) and drops wrong-numbering. Clean set is {Q3 (piping SOURCE), Q6 (percentage)}, deliberately different from the other cases. scale-mislabel targets the FOURTH column (Somewhat disagree) rather than the second. S2 hosts the missing-question error, so page 1 renders with S1 only."
+}

@@ -1,0 +1,141 @@
+{
+  "title": "Clinician Perceptions of CGRP-Targeted Therapies in Migraine",
+  "description": "Thank you for participating. This survey takes approximately 10 minutes. Your responses are confidential and reported only in aggregate.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Thank you for completing the survey.</h3><p>Your responses have been recorded.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. Which of the following best describes your primary clinical role?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Neurologist",
+            "Headche specialist",
+            "Primary care physician",
+            "Nurse practitioner"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. Which of the following therapies for migraine are you aware of?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "NURTEC",
+            "UBRELVY",
+            "AJOVY",
+            "EMGALITY",
+            "None of the above"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. What is your most important consideration when selecting a therapy for a patient with migraine?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Reduction in monthly migraine attacks",
+            "Speed of onset of benefit",
+            "Oral versus injectable administration",
+            "Favorable tolerability profile",
+            "Prior authorization burden"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. Which migraine therapy do you prescribe most often?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "NURTEC",
+            "UBRELVY",
+            "AJOVY",
+            "EMGALITY",
+            "QULIPTA"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. How satisfied are you with {Q3brand} for your migraine patients?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Very satisfied",
+            "Somewhat satisfied",
+            "Neither satisfied nor dissatisfied",
+            "Somewhat dissatisfied",
+            "Very dissatisfied"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Please rate your agreement with each of the following statements.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "CGRP-targeted therapies have transformed migraine management",
+            "Prior authorization requirements delay my patients' access to newer therapies",
+            "I am comfortable using these therapies in patients with cardiovascular risk factors"
+          ],
+          "columns": [
+            "Strongly agree",
+            "Somewhat agree",
+            "Somewhat agree",
+            "Somewhat disagree",
+            "Strongly disagree"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. What percentage of your migraine patients currently receive a CGRP-targeted therapy?",
+          "isRequired": false,
+          "description": "Enter a whole number between 0 and 100.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. In your view, what is the single biggest barrier to your patientsâ€™ access to CGRP-targeted therapies?",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. How likely are you to recommend CGRP-targeted therapy to a colleague treating migraine?",
+          "isRequired": false,
+          "description": "0 = Not at all likely, 10 = Extremely likely",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

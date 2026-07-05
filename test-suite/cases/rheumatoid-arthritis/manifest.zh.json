@@ -1,0 +1,294 @@
+{
+  "slug": "rheumatoid-arthritis",
+  "domain": "Rheumatoid arthritis — advanced therapy in moderate-to-severe RA",
+  "lang": "zh",
+  "route": "/rheumatoid-arthritis/zh",
+  "brands": [
+    "HUMIRA",
+    "ENBREL",
+    "RINVOQ",
+    "XELJANZ",
+    "ORENCIA"
+  ],
+  "title": "风湿科医生对中重度类风湿关节炎先进治疗的认知",
+  "intro": "感谢您的参与。本次调查约需10分钟。您的回答将予以严格保密，仅以汇总形式报告。",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "以下哪一项最能描述您的主要职业角色？",
+      "options": [
+        "风湿科医师",
+        "执业护师",
+        "医师助理",
+        "全科医师"
+      ]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "您治疗类风湿关节炎患者已有多少年？",
+      "instruction": "请输入0至50之间的整数。",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "您知晓以下哪些用于治疗中重度类风湿关节炎的先进治疗药物？",
+      "instruction": "请选择所有适用项。",
+      "options": [
+        "HUMIRA",
+        "ENBREL",
+        "RINVOQ",
+        "XELJANZ",
+        "ORENCIA",
+        "以上均无"
+      ]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "在为中重度类风湿关节炎选择先进治疗时，您最重要的考虑因素是什么？",
+      "options": [
+        "ACR20/50/70缓解",
+        "抑制影像学进展",
+        "良好的安全性与感染谱",
+        "口服与注射给药方式",
+        "医保目录覆盖与费用"
+      ],
+      "logicNote": "程序员注意：请严格按照上述顺序呈现选项，不得随机排列。"
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "对于中重度类风湿关节炎，您最常处方哪种先进治疗？",
+      "options": [
+        "HUMIRA",
+        "ENBREL",
+        "RINVOQ",
+        "XELJANZ",
+        "ORENCIA"
+      ],
+      "logicNote": "程序员注意：必须将Q3中所选的品牌插入Q4的题干文本中。"
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "对于您的中重度类风湿关节炎患者，您对[PIPE: Q3 selection]的满意度如何？",
+      "options": [
+        "非常满意",
+        "比较满意",
+        "既不满意也非不满意",
+        "不太满意",
+        "非常不满意"
+      ],
+      "piping": {
+        "source": "Q3",
+        "note": "请将[PIPE: Q3 selection]替换为Q3中所选的品牌。"
+      }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "请评价您对以下各项陈述的同意程度。",
+      "rows": [
+        "先进治疗彻底改变了类风湿关节炎的治疗结局",
+        "事先授权要求延误了我的患者的治疗",
+        "根据当前的安全性指导，我能够放心地处方JAK抑制剂"
+      ],
+      "scale": [
+        "非常同意",
+        "比较同意",
+        "既不同意也不反对",
+        "不太同意",
+        "非常不同意"
+      ]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "在您的中重度类风湿关节炎患者中，目前有多大比例正在接受先进治疗（生物制剂或JAK抑制剂）（百分比）？",
+      "instruction": "请输入0至100之间的整数。",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "在您看来，您的患者获得先进治疗的最大障碍是什么？"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "您向治疗中重度类风湿关节炎的同事推荐先进治疗的可能性有多大？",
+      "instruction": "0 = 完全不可能，10 = 极有可能",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    {
+      "id": "E01",
+      "questionId": "S1",
+      "category": "typo",
+      "truth": "风湿科医师",
+      "rendered": "疯湿科医师",
+      "note": "Answer option misspelled on the site: \"风湿科医师\" rendered as \"疯湿科医师\"."
+    },
+    {
+      "id": "E02",
+      "questionId": "Q1",
+      "category": "missing-option",
+      "truth": "ORENCIA listed as an option",
+      "rendered": "ORENCIA absent from the option list",
+      "note": "Site omits the ORENCIA answer option entirely."
+    },
+    {
+      "id": "E03",
+      "questionId": "Q2",
+      "category": "wrong-option-label",
+      "truth": "抑制影像学进展",
+      "rendered": "抑制影像学消退",
+      "note": "Option label altered on the site: \"抑制影像学进展\" changed to \"抑制影像学消退\", changing the clinical meaning."
+    },
+    {
+      "id": "E04",
+      "questionId": "Q4",
+      "category": "broken-piping",
+      "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])",
+      "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand",
+      "note": "Site renders the literal unresolved token {Q3brand} in the question text."
+    },
+    {
+      "id": "E05",
+      "questionId": "Q5",
+      "category": "scale-mislabel",
+      "truth": "Scale point is \"比较同意\"",
+      "rendered": "Scale point reads \"非常同意\" (duplicate of another column)",
+      "note": "Matrix column header duplicated/mislabeled."
+    },
+    {
+      "id": "E06",
+      "questionId": "Q2",
+      "category": "reordered-options",
+      "truth": "Order per spec: \"良好的安全性与感染谱\" precedes \"口服与注射给药方式\"",
+      "rendered": "\"良好的安全性与感染谱\" and \"口服与注射给药方式\" swapped",
+      "note": "Spec explicitly forbids reordering (programmer note)."
+    },
+    {
+      "id": "E07",
+      "questionId": "Q6",
+      "category": "wrong-numbering",
+      "truth": "Question is numbered Q6",
+      "rendered": "Question is numbered Q5 (duplicate of the previous question's number)",
+      "note": "Visible question number wrong on site."
+    },
+    {
+      "id": "E09",
+      "questionId": "Q8",
+      "category": "duplicated-word",
+      "truth": "的同事",
+      "rendered": "的的同事",
+      "note": "Duplicated word in question text: \"的同事\" rendered as \"的的同事\"."
+    },
+    {
+      "id": "E10",
+      "questionId": "Q1",
+      "category": "missing-instruction",
+      "truth": "Instruction \"请选择所有适用项。\" shown below the question",
+      "rendered": "Instruction omitted",
+      "note": "Site drops the instruction shown under Q1."
+    },
+    {
+      "id": "E11",
+      "questionId": "Q7",
+      "category": "missing-question",
+      "truth": "Q7 is present in the questionnaire spec",
+      "rendered": "Q7 is absent from the site entirely",
+      "note": "An entire spec question is missing from the rendered survey."
+    }
+  ],
+  "mutations": [
+    {
+      "errorId": "E01",
+      "op": "replaceOption",
+      "questionId": "S1",
+      "find": "风湿科医师",
+      "replace": "疯湿科医师"
+    },
+    {
+      "errorId": "E02",
+      "op": "removeOption",
+      "questionId": "Q1",
+      "option": "ORENCIA"
+    },
+    {
+      "errorId": "E03",
+      "op": "replaceOption",
+      "questionId": "Q2",
+      "find": "抑制影像学进展",
+      "replace": "抑制影像学消退"
+    },
+    {
+      "errorId": "E04",
+      "op": "replaceInTitle",
+      "questionId": "Q4",
+      "find": "{Q3}",
+      "replace": "{Q3brand}"
+    },
+    {
+      "errorId": "E05",
+      "op": "replaceColumn",
+      "questionId": "Q5",
+      "find": "比较同意",
+      "replace": "非常同意"
+    },
+    {
+      "errorId": "E06",
+      "op": "swapOptions",
+      "questionId": "Q2",
+      "a": "良好的安全性与感染谱",
+      "b": "口服与注射给药方式"
+    },
+    {
+      "errorId": "E07",
+      "op": "replaceInTitle",
+      "questionId": "Q6",
+      "find": "Q6.",
+      "replace": "Q5."
+    },
+    {
+      "errorId": "E09",
+      "op": "replaceInTitle",
+      "questionId": "Q8",
+      "find": "的同事",
+      "replace": "的的同事"
+    },
+    {
+      "errorId": "E10",
+      "op": "removeInstruction",
+      "questionId": "Q1"
+    },
+    {
+      "errorId": "E11",
+      "op": "removeQuestion",
+      "questionId": "Q7"
+    }
+  ],
+  "cleanQuestions": [
+    "S2",
+    "Q3"
+  ],
+  "notes": "zh localization of the rheumatoid-arthritis held-out case; structure and seeded-error signature copied from English; strings translated."
+}

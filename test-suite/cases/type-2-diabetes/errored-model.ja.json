@@ -1,0 +1,141 @@
+{
+  "title": "2型糖尿病におけるインクレチン関連治療に対する臨床医の認識",
+  "description": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "内分秘内科医",
+            "プライマリケア医",
+            "ナースプラクティショナー",
+            "フィジシャンアシスタント"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. 2型糖尿病に対する以下の薬剤のうち、あなたがご存知のものはどれですか。",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "OZEMPIC",
+            "MOUNJARO",
+            "JARDIANCE",
+            "TRULICITY",
+            "上記のいずれでもない"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. コントロール不良の2型糖尿病の患者さんに対する薬剤を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "HbA1c低下の大きさ",
+            "体重増加の可能性",
+            "週1回投与の利便性",
+            "心血管リスクの低減",
+            "フォーミュラリー収載と費用"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. コントロール不良の2型糖尿病に対して、あなたが最も頻繁に処方する薬剤はどれですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "OZEMPIC",
+            "MOUNJARO",
+            "JARDIANCE",
+            "TRULICITY",
+            "RYBELSUS"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. 2型糖尿病の患者さんに対する{Q3brand}について、どの程度満足していますか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "非常に満足している",
+            "やや満足している",
+            "どちらともいえない",
+            "やや不満である",
+            "非常に不満である"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. 以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "GLP-1受容体作動薬は2型糖尿病の管理を大きく変えた",
+            "注射の負担が患者さんの治療アドヒアランスを制限している",
+            "腎機能障害のある患者さんにも、私は抵抗なくこれらの薬剤を用量調節できる"
+          ],
+          "columns": [
+            "強くそう思う",
+            "ややそう思う",
+            "どちらともいえない",
+            "全くそう思わない",
+            "全くそう思わない"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q6. あなたの2型糖尿病の患者さんのうち、現在GLP-1受容体作動薬またはGIP/GLP-1デュアル作動薬を受けている方の割合は何パーセントですか。",
+          "isRequired": false,
+          "description": "0から100までの整数を入力してください。",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. あなたのお考えでは、æ‚£è€…さんがこれらの治療を受ける上での最大の障壁は何ですか。",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. 2型糖尿病を管理している同僚にに、これらの治療をどの程度勧めたいと思いますか。",
+          "isRequired": false,
+          "description": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

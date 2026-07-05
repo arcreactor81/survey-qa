@@ -1,0 +1,151 @@
+{
+  "title": "転移性非小細胞肺がんの一次免疫療法に対する腫瘍内科医の認識",
+  "description": "ご参加いただきありがとうございます。本調査の所要時間は約10分です。ご回答は機密として取り扱われ、集計データとしてのみ報告されます。",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>アンケートにご協力いただきありがとうございました。</h3><p>回答は記録されました。</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. あなたの主な職種として最も当てはまるものは、次のうちどれですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "腫瘍内科医",
+            "血液種瘍内科医",
+            "ナースプラクティショナー",
+            "フィジシャンアシスタント"
+          ]
+        },
+        {
+          "name": "S2",
+          "title": "S2. 非小細胞肺がんの患者さんの治療に携わって何年になりますか。",
+          "isRequired": false,
+          "description": "0から50までの整数を入力してください。",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 50
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. 転移性非小細胞肺がんに対する以下の免疫療法のうち、あなたがご存知のものはどれですか。",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "KEYTRUDA",
+            "OPDIVO",
+            "TECENTRIQ",
+            "IMFINZI",
+            "上記のいずれでもない"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. 転移性非小細胞肺がんに対する一次治療の免疫療法を選択する際に、あなたにとって最も重要な考慮事項は何ですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "全奏効のベネフィット",
+            "無増悪生存期間",
+            "PD-L1発現状況との整合性",
+            "良好な忍容性プロファイル",
+            "投与の利便性"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. 一次治療の転移性非小細胞肺がんに対して、あなたが最も頻繁に処方する免疫療法はどれですか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "KEYTRUDA",
+            "OPDIVO",
+            "TECENTRIQ",
+            "IMFINZI",
+            "LIBTAYO"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. 一次治療の転移性非小細胞肺がんの患者さんに対する{Q3brand}について、どの程度満足していますか。",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "非常に満足している",
+            "やや満足している",
+            "どちらともいえない",
+            "やや不満である",
+            "非常に不満である"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. 以下のそれぞれの記述について、あなたの同意の程度をお答えください。",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "免疫療法は転移性非小細胞肺がんの治療成績を大きく変えた",
+            "バイオマーカー検査の所要時間が適時の治療判断を妨げている",
+            "自己免疫性の併存疾患を有する患者さんにも、私は抵抗なく免疫療法を使用できる"
+          ],
+          "columns": [
+            "強くそう思う",
+            "強くそう思う",
+            "どちらともいえない",
+            "あまりそう思わない",
+            "全くそう思わない"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. あなたの転移性非小細胞肺がんの患者さんのうち、現在免疫療法を受けている方の割合は何パーセントですか。",
+          "isRequired": false,
+          "description": "0から100までの整数を入力してください。",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q7",
+          "title": "Q7. あなたのお考えでは、æ‚£è€…さんが免疫療法を受ける上での最大の障壁は何ですか。",
+          "isRequired": false,
+          "type": "comment"
+        },
+        {
+          "name": "Q8",
+          "title": "Q8. 転移性非小細胞肺がんを治療している同僚にに、免疫療法をどの程度勧めたいと思いますか。",
+          "isRequired": false,
+          "description": "0 = 全く勧めたいと思わない、10 = 非常に勧めたいと思う",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

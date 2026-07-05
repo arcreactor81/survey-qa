@@ -1,0 +1,145 @@
+{
+  "title": "Percepciones de los reumatólogos sobre las terapias avanzadas en la artritis reumatoide de moderada a grave",
+  "description": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Gracias por completar la encuesta.</h3><p>Sus respuestas han sido registradas.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. ¿Cuál de las siguientes opciones describe mejor su función profesional principal?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Reumatólgo",
+            "Enfermero de práctica avanzada",
+            "Asistente médico",
+            "Médico de atención primaria"
+          ]
+        },
+        {
+          "name": "S2",
+          "title": "S2. ¿Cuántos años lleva tratando a pacientes con artritis reumatoide?",
+          "isRequired": false,
+          "description": "Introduzca un número entero entre 0 y 50.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 50
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. ¿Cuáles de las siguientes terapias avanzadas para la artritis reumatoide de moderada a grave conoce usted?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "HUMIRA",
+            "ENBREL",
+            "RINVOQ",
+            "XELJANZ",
+            "Ninguno de los anteriores"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. ¿Cuál es su consideración más importante al seleccionar una terapia avanzada para la artritis reumatoide de moderada a grave?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Respuesta ACR20/50/70",
+            "Inhibición de la regresión radiográfica",
+            "Administración oral frente a inyectable",
+            "Perfil favorable de seguridad e infecciones",
+            "Cobertura del formulario y coste"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. ¿Qué terapia avanzada prescribe con mayor frecuencia para la artritis reumatoide de moderada a grave?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "HUMIRA",
+            "ENBREL",
+            "RINVOQ",
+            "XELJANZ",
+            "ORENCIA"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. ¿Cuál es su grado de satisfacción con {Q3brand} para sus pacientes con artritis reumatoide de moderada a grave?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Muy satisfecho",
+            "Algo satisfecho",
+            "Ni satisfecho ni insatisfecho",
+            "Algo insatisfecho",
+            "Muy insatisfecho"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Indique su grado de acuerdo con cada una de las siguientes afirmaciones.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "Las terapias avanzadas han transformado los resultados en la artritis reumatoide",
+            "Los requisitos de autorización previa retrasan el tratamiento de mis pacientes",
+            "Me siento cómodo prescribiendo inhibidores de JAK conforme a las recomendaciones de seguridad actuales"
+          ],
+          "columns": [
+            "Totalmente de acuerdo",
+            "Totalmente de acuerdo",
+            "Ni de acuerdo ni en desacuerdo",
+            "Algo en desacuerdo",
+            "Totalmente en desacuerdo"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. ¿Qué porcentaje de sus pacientes con artritis reumatoide de moderada a grave recibe actualmente una terapia avanzada (biológico o inhibidor de JAK)?",
+          "isRequired": false,
+          "description": "Introduzca un número entero entre 0 y 100.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q8",
+          "title": "Q8. ¿Qué probabilidad hay de que usted usted recomiende la terapia avanzada a un colega que trata la artritis reumatoide de moderada a grave?",
+          "isRequired": false,
+          "description": "0 = Nada probable, 10 = Extremadamente probable",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}

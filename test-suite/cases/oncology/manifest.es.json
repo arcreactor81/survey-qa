@@ -1,0 +1,296 @@
+{
+  "slug": "oncology",
+  "domain": "Oncology — first-line immunotherapy in metastatic NSCLC",
+  "lang": "es",
+  "route": "/oncology/es",
+  "brands": [
+    "KEYTRUDA",
+    "OPDIVO",
+    "TECENTRIQ",
+    "IMFINZI",
+    "LIBTAYO"
+  ],
+  "title": "Percepciones de los oncólogos sobre la inmunoterapia de primera línea en el cáncer de pulmón no microcítico metastásico",
+  "intro": "Gracias por su participación. Esta encuesta dura aproximadamente 10 minutos. Sus respuestas son confidenciales y se comunican únicamente de forma agregada.",
+  "questions": [
+    {
+      "id": "S1",
+      "page": 1,
+      "type": "radio",
+      "text": "¿Cuál de las siguientes opciones describe mejor su función profesional principal?",
+      "options": [
+        "Oncólogo médico",
+        "Hematólogo-oncólogo",
+        "Enfermero de práctica avanzada",
+        "Asistente médico"
+      ]
+    },
+    {
+      "id": "S2",
+      "page": 1,
+      "type": "number",
+      "text": "¿Cuántos años lleva tratando a pacientes con cáncer de pulmón no microcítico?",
+      "instruction": "Introduzca un número entero entre 0 y 50.",
+      "min": 0,
+      "max": 50
+    },
+    {
+      "id": "Q1",
+      "page": 2,
+      "type": "checkbox",
+      "text": "¿Cuáles de las siguientes inmunoterapias para el cáncer de pulmón no microcítico metastásico conoce usted?",
+      "instruction": "Seleccione todas las opciones que correspondan.",
+      "options": [
+        "KEYTRUDA",
+        "OPDIVO",
+        "TECENTRIQ",
+        "IMFINZI",
+        "LIBTAYO",
+        "Ninguno de los anteriores"
+      ]
+    },
+    {
+      "id": "Q2",
+      "page": 2,
+      "type": "radio",
+      "text": "¿Cuál es su consideración más importante al seleccionar la inmunoterapia de primera línea para el cáncer de pulmón no microcítico metastásico?",
+      "options": [
+        "Beneficio en supervivencia global",
+        "Supervivencia libre de progresión",
+        "Perfil de tolerabilidad favorable",
+        "Concordancia con el estado de PD-L1",
+        "Comodidad posológica"
+      ],
+      "logicNote": "NOTA PARA EL PROGRAMADOR: Presente las opciones en el orden exacto indicado anteriormente. No aleatorizar."
+    },
+    {
+      "id": "Q3",
+      "page": 3,
+      "type": "radio",
+      "text": "¿Qué inmunoterapia prescribe con mayor frecuencia para el cáncer de pulmón no microcítico metastásico de primera línea?",
+      "options": [
+        "KEYTRUDA",
+        "OPDIVO",
+        "TECENTRIQ",
+        "IMFINZI",
+        "LIBTAYO"
+      ],
+      "logicNote": "NOTA PARA EL PROGRAMADOR: La marca seleccionada en Q3 debe insertarse en el texto de Q4."
+    },
+    {
+      "id": "Q4",
+      "page": 3,
+      "type": "radio",
+      "text": "¿Cuál es su grado de satisfacción con [PIPE: Q3 selection] para sus pacientes con cáncer de pulmón no microcítico metastásico de primera línea?",
+      "options": [
+        "Muy satisfecho",
+        "Algo satisfecho",
+        "Ni satisfecho ni insatisfecho",
+        "Algo insatisfecho",
+        "Muy insatisfecho"
+      ],
+      "piping": {
+        "source": "Q3",
+        "note": "Sustituya [PIPE: Q3 selection] por la marca elegida en Q3."
+      }
+    },
+    {
+      "id": "Q5",
+      "page": 4,
+      "type": "matrix",
+      "text": "Indique su grado de acuerdo con cada una de las siguientes afirmaciones.",
+      "rows": [
+        "La inmunoterapia ha transformado los resultados en el cáncer de pulmón no microcítico metastásico",
+        "Los plazos de las pruebas de biomarcadores limitan la toma de decisiones terapéuticas oportunas",
+        "Me siento cómodo usando inmunoterapia en pacientes con comorbilidades autoinmunitarias"
+      ],
+      "scale": [
+        "Totalmente de acuerdo",
+        "Algo de acuerdo",
+        "Ni de acuerdo ni en desacuerdo",
+        "Algo en desacuerdo",
+        "Totalmente en desacuerdo"
+      ]
+    },
+    {
+      "id": "Q6",
+      "page": 4,
+      "type": "number",
+      "text": "¿Qué porcentaje de sus pacientes con cáncer de pulmón no microcítico metastásico recibe actualmente inmunoterapia?",
+      "instruction": "Introduzca un número entero entre 0 y 100.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q7",
+      "page": 5,
+      "type": "text",
+      "text": "En su opinión, ¿cuál es la mayor barrera para el acceso de sus pacientes a la inmunoterapia?"
+    },
+    {
+      "id": "Q8",
+      "page": 5,
+      "type": "nps",
+      "text": "¿Qué probabilidad hay de que usted recomiende la inmunoterapia a un colega que trata el cáncer de pulmón no microcítico metastásico?",
+      "instruction": "0 = Nada probable, 10 = Extremadamente probable",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "seededErrors": [
+    {
+      "id": "E01",
+      "questionId": "S1",
+      "category": "typo",
+      "truth": "Hematólogo-oncólogo",
+      "rendered": "Hematólogo-oncólgo",
+      "note": "Answer option misspelled on the site: \"Hematólogo-oncólogo\" rendered as \"Hematólogo-oncólgo\"."
+    },
+    {
+      "id": "E02",
+      "questionId": "Q1",
+      "category": "missing-option",
+      "truth": "LIBTAYO listed as an option",
+      "rendered": "LIBTAYO absent from the option list",
+      "note": "Site omits the LIBTAYO answer option entirely."
+    },
+    {
+      "id": "E03",
+      "questionId": "Q2",
+      "category": "wrong-option-label",
+      "truth": "Beneficio en supervivencia global",
+      "rendered": "Beneficio en respuesta global",
+      "note": "Option label altered on the site: \"Beneficio en supervivencia global\" changed to \"Beneficio en respuesta global\", changing the clinical meaning."
+    },
+    {
+      "id": "E04",
+      "questionId": "Q4",
+      "category": "broken-piping",
+      "truth": "Q4 text pipes in the brand selected in Q3 (placeholder [PIPE: Q3 selection])",
+      "rendered": "Q4 text shows the literal unresolved token {Q3brand} instead of the Q3 brand",
+      "note": "Site renders the literal unresolved token {Q3brand} in the question text."
+    },
+    {
+      "id": "E05",
+      "questionId": "Q5",
+      "category": "scale-mislabel",
+      "truth": "Scale point is \"Algo de acuerdo\"",
+      "rendered": "Scale point reads \"Totalmente de acuerdo\" (duplicate of another column)",
+      "note": "Matrix column header duplicated/mislabeled."
+    },
+    {
+      "id": "E06",
+      "questionId": "Q2",
+      "category": "reordered-options",
+      "truth": "Order per spec: \"Perfil de tolerabilidad favorable\" precedes \"Concordancia con el estado de PD-L1\"",
+      "rendered": "\"Perfil de tolerabilidad favorable\" and \"Concordancia con el estado de PD-L1\" swapped",
+      "note": "Spec explicitly forbids reordering (programmer note)."
+    },
+    {
+      "id": "E07",
+      "questionId": "Q6",
+      "category": "wrong-numbering",
+      "truth": "Question is numbered Q6",
+      "rendered": "Question is numbered Q5 (duplicate of the previous question's number)",
+      "note": "Visible question number wrong on site."
+    },
+    {
+      "id": "E08",
+      "questionId": "Q7",
+      "category": "encoding-artifact",
+      "truth": "opinión",
+      "rendered": "opiniÃ³n",
+      "note": "Mojibake: UTF-8 bytes of \"opinión\" displayed as CP1252, so it appears as \"opiniÃ³n\"."
+    },
+    {
+      "id": "E09",
+      "questionId": "Q8",
+      "category": "duplicated-word",
+      "truth": "que usted recomiende",
+      "rendered": "que usted usted recomiende",
+      "note": "Duplicated word in question text: \"que usted recomiende\" rendered as \"que usted usted recomiende\"."
+    },
+    {
+      "id": "E10",
+      "questionId": "Q1",
+      "category": "missing-instruction",
+      "truth": "Instruction \"Seleccione todas las opciones que correspondan.\" shown below the question",
+      "rendered": "Instruction omitted",
+      "note": "Site drops the instruction shown under Q1."
+    }
+  ],
+  "mutations": [
+    {
+      "errorId": "E01",
+      "op": "replaceOption",
+      "questionId": "S1",
+      "find": "Hematólogo-oncólogo",
+      "replace": "Hematólogo-oncólgo"
+    },
+    {
+      "errorId": "E02",
+      "op": "removeOption",
+      "questionId": "Q1",
+      "option": "LIBTAYO"
+    },
+    {
+      "errorId": "E03",
+      "op": "replaceOption",
+      "questionId": "Q2",
+      "find": "Beneficio en supervivencia global",
+      "replace": "Beneficio en respuesta global"
+    },
+    {
+      "errorId": "E04",
+      "op": "replaceInTitle",
+      "questionId": "Q4",
+      "find": "{Q3}",
+      "replace": "{Q3brand}"
+    },
+    {
+      "errorId": "E05",
+      "op": "replaceColumn",
+      "questionId": "Q5",
+      "find": "Algo de acuerdo",
+      "replace": "Totalmente de acuerdo"
+    },
+    {
+      "errorId": "E06",
+      "op": "swapOptions",
+      "questionId": "Q2",
+      "a": "Perfil de tolerabilidad favorable",
+      "b": "Concordancia con el estado de PD-L1"
+    },
+    {
+      "errorId": "E07",
+      "op": "replaceInTitle",
+      "questionId": "Q6",
+      "find": "Q6.",
+      "replace": "Q5."
+    },
+    {
+      "errorId": "E08",
+      "op": "replaceInTitle",
+      "questionId": "Q7",
+      "find": "opinión",
+      "replace": "opiniÃ³n"
+    },
+    {
+      "errorId": "E09",
+      "op": "replaceInTitle",
+      "questionId": "Q8",
+      "find": "que usted recomiende",
+      "replace": "que usted usted recomiende"
+    },
+    {
+      "errorId": "E10",
+      "op": "removeInstruction",
+      "questionId": "Q1"
+    }
+  ],
+  "cleanQuestions": [
+    "S2",
+    "Q3"
+  ],
+  "notes": "es localization of the oncology held-out case; structure and seeded-error signature copied from English; strings translated."
+}

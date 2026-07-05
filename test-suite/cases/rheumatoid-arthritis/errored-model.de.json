@@ -1,0 +1,145 @@
+{
+  "title": "Wahrnehmungen von Rheumatologen zu fortgeschrittenen Therapien bei mittelschwerer bis schwerer rheumatoider Arthritis",
+  "description": "Vielen Dank für Ihre Teilnahme. Diese Umfrage dauert etwa 10 Minuten. Ihre Antworten sind vertraulich und werden ausschließlich in aggregierter Form berichtet.",
+  "showQuestionNumbers": "off",
+  "focusFirstQuestionAutomatic": false,
+  "completedHtml": "<h3>Vielen Dank für die Teilnahme an der Umfrage.</h3><p>Ihre Antworten wurden gespeichert.</p><p lang=\"en\" style=\"color:#999;font-size:0.85em\">Thank you for completing the survey.</p>",
+  "pages": [
+    {
+      "name": "page1",
+      "elements": [
+        {
+          "name": "S1",
+          "title": "S1. Welche der folgenden Beschreibungen trifft am besten auf Ihre primäre berufliche Rolle zu?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Rheumatolge",
+            "Pflegefachkraft",
+            "Arztassistent",
+            "Hausarzt"
+          ]
+        },
+        {
+          "name": "S2",
+          "title": "S2. Wie viele Jahre behandeln Sie bereits Patienten mit rheumatoider Arthritis?",
+          "isRequired": false,
+          "description": "Geben Sie eine ganze Zahl zwischen 0 und 50 ein.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 50
+        }
+      ]
+    },
+    {
+      "name": "page2",
+      "elements": [
+        {
+          "name": "Q1",
+          "title": "Q1. Welche der folgenden fortgeschrittenen Therapien für die mittelschwere bis schwere rheumatoide Arthritis sind Ihnen bekannt?",
+          "isRequired": false,
+          "type": "checkbox",
+          "choices": [
+            "HUMIRA",
+            "ENBREL",
+            "RINVOQ",
+            "XELJANZ",
+            "Keine der oben genannten"
+          ]
+        },
+        {
+          "name": "Q2",
+          "title": "Q2. Was ist Ihr wichtigstes Kriterium bei der Auswahl einer fortgeschrittenen Therapie für die mittelschwere bis schwere rheumatoide Arthritis?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "ACR20/50/70-Ansprechen",
+            "Hemmung der radiographischen Regression",
+            "Orale versus injizierbare Anwendung",
+            "Günstiges Sicherheits- und Infektionsprofil",
+            "Kostenübernahme und Kosten"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page3",
+      "elements": [
+        {
+          "name": "Q3",
+          "title": "Q3. Welche fortgeschrittene Therapie verschreiben Sie am häufigsten bei mittelschwerer bis schwerer rheumatoider Arthritis?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "HUMIRA",
+            "ENBREL",
+            "RINVOQ",
+            "XELJANZ",
+            "ORENCIA"
+          ]
+        },
+        {
+          "name": "Q4",
+          "title": "Q4. Wie zufrieden sind Sie mit {Q3brand} bei Ihren Patienten mit mittelschwerer bis schwerer rheumatoider Arthritis?",
+          "isRequired": false,
+          "type": "radiogroup",
+          "choices": [
+            "Sehr zufrieden",
+            "Eher zufrieden",
+            "Weder zufrieden noch unzufrieden",
+            "Eher unzufrieden",
+            "Sehr unzufrieden"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "page4",
+      "elements": [
+        {
+          "name": "Q5",
+          "title": "Q5. Bitte geben Sie an, inwieweit Sie den folgenden Aussagen zustimmen.",
+          "isRequired": false,
+          "type": "matrix",
+          "rows": [
+            "Fortgeschrittene Therapien haben die Behandlungsergebnisse bei rheumatoider Arthritis grundlegend verändert",
+            "Anforderungen an die vorherige Genehmigung verzögern die Behandlung meiner Patienten",
+            "Ich fühle mich sicher dabei, JAK-Inhibitoren gemäß den aktuellen Sicherheitshinweisen zu verschreiben"
+          ],
+          "columns": [
+            "Stimme voll und ganz zu",
+            "Stimme voll und ganz zu",
+            "Weder Zustimmung noch Ablehnung",
+            "Stimme eher nicht zu",
+            "Stimme überhaupt nicht zu"
+          ]
+        },
+        {
+          "name": "Q6",
+          "title": "Q5. Wie viel Prozent Ihrer Patienten mit mittelschwerer bis schwerer rheumatoider Arthritis erhalten derzeit eine fortgeschrittene Therapie (Biologikum oder JAK-Inhibitor)?",
+          "isRequired": false,
+          "description": "Geben Sie eine ganze Zahl zwischen 0 und 100 ein.",
+          "type": "text",
+          "inputType": "number",
+          "min": 0,
+          "max": 100
+        }
+      ]
+    },
+    {
+      "name": "page5",
+      "elements": [
+        {
+          "name": "Q8",
+          "title": "Q8. Wie wahrscheinlich ist es, dass Sie Sie einem Kollegen, der eine mittelschwere bis schwere rheumatoide Arthritis behandelt, eine fortgeschrittene Therapie empfehlen?",
+          "isRequired": false,
+          "description": "0 = Überhaupt nicht wahrscheinlich, 10 = Äußerst wahrscheinlich",
+          "type": "rating",
+          "rateMin": 0,
+          "rateMax": 10
+        }
+      ]
+    }
+  ]
+}
