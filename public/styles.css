@@ -477,8 +477,9 @@ section {
 }
 .step:not(:last-child)::after {
   content: "\2192";
-  position: absolute; right: -15px; top: 16px;
-  color: var(--accent); font-size: 15px; font-weight: 400; z-index: 1;
+  position: absolute; right: -8px; top: 33px;
+  transform: translate(50%, -50%);
+  color: var(--accent); font-size: 16px; font-weight: 400; z-index: 1;
 }
 .step-num {
   font-family: var(--serif); font-weight: 400; font-size: 30px;

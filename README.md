@@ -14,23 +14,19 @@ that proves it.
 
 ## How it works
 
-```
-questionnaire.docx ─► Worker parses the docx (fflate, in-Worker)
-                              │
-survey URL ─► Browser Rendering walks every page (rendered text + screenshot + PDF per page)
-                              │
-              per-page comparison — THREE independent model legs, all in-Worker,
-              all routed through a Cloudflare AI Gateway:
-                ├── DeepSeek v4-pro       (reasoning on)
-                ├── Grok 4.3              (xAI, reasoning_effort: medium)
-                └── Claude Sonnet 4.6     (Anthropic, structured outputs)
-                              │
-              server-side VERBATIM-QUOTE verification drops any finding whose quotes
-              don't literally appear in both the document and the rendered page
-                              │
-              CONSENSUS report: one card per issue with N/3 model agreement, a
-              confidence score, spec-vs-site provenance, a seeded-error scorecard
-              (recall + false positives), per-model cost/latency, and page evidence
+```mermaid
+flowchart TD
+    DOCX["questionnaire.docx"] --> PARSE["Parse into a spec:<br/>questions, options, scales, piping, programmer notes"]
+    URL["survey URL"] --> WALK["Headless browser walks every page:<br/>rendered text + screenshot + PDF"]
+    PARSE --> CMP
+    WALK --> CMP["Three independent model legs compare each page against the spec<br/>(all in-Worker, routed through a Cloudflare AI Gateway)"]
+    CMP --> DS["DeepSeek v4-pro"]
+    CMP --> GK["Grok 4.3"]
+    CMP --> CS["Claude Sonnet 4.6"]
+    DS --> VER
+    GK --> VER
+    CS --> VER["Verbatim-quote verification:<br/>drop any finding not grounded in BOTH the doc and the rendered page"]
+    VER --> REP["Consensus report:<br/>one card per issue — N/3 model agreement, confidence,<br/>spec-vs-site evidence, seeded-error scorecard, per-model cost + latency"]
 ```
 
 **Why three models, and these three?** In a multi-model design, a *missed* error (false negative) is the
