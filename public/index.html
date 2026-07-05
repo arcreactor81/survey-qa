@@ -126,7 +126,7 @@
             <div class="field">
               <label>Preview the demo survey</label>
               <p class="hint preview-row">
-                <a href="/survey.html" id="heroPreview" target="_blank" rel="noopener">EN</a> &middot;
+                <a href="/survey.html" target="_blank" rel="noopener">EN</a> &middot;
                 <a href="/survey.html?lang=es" target="_blank" rel="noopener">ES</a> &middot;
                 <a href="/survey.html?lang=fr" target="_blank" rel="noopener">FR</a> &middot;
                 <a href="/survey.html?lang=de" target="_blank" rel="noopener">DE</a> &middot;
@@ -523,6 +523,7 @@
     if (heroPreview) heroPreview.href = surveyHref;
   });
 
+  var lastCustomUrl = "";
   function demoUrlForLang() {
     return langSelect.value === "en" ? "/survey.html" : "/survey.html?lang=" + langSelect.value;
   }
@@ -534,8 +535,12 @@
     modeCustom.setAttribute("aria-selected", demo ? "false" : "true");
     panelDemo.classList.toggle("is-hidden", !demo);
     panelCustom.classList.toggle("is-hidden", demo);
-    if (demo) surveyUrlInput.value = demoUrlForLang();
-    else if (/^\/survey\.html/.test(surveyUrlInput.value)) surveyUrlInput.value = "";
+    if (demo) {
+      if (!/^\/survey\.html/.test(surveyUrlInput.value)) lastCustomUrl = surveyUrlInput.value;
+      surveyUrlInput.value = demoUrlForLang();
+    } else {
+      surveyUrlInput.value = lastCustomUrl || "";
+    }
     if (runHint) {
       runHint.textContent = demo
         ? "A demo run takes ~3 minutes: the browser walk (~90 s), then three model comparisons and quote verification."
@@ -570,6 +575,11 @@
     });
     dropzone.addEventListener("drop", function (e) {
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        if (!/\.docx$/i.test(e.dataTransfer.files[0].name)) {
+          dropzoneText.textContent = "⚠️ Please drop a Word .docx file";
+          dropzone.classList.remove("has-file");
+          return;
+        }
         try { docxInput.files = e.dataTransfer.files; } catch (err) {}
         showDocxName();
       }
