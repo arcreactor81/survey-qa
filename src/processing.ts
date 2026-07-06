@@ -31,7 +31,22 @@ export function errorPage(opts: { title: string; heading: string; detail?: strin
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <meta name="robots" content="noindex">
+<script>
+/* Theme bootstrap — set data-theme before first paint, matching the report/processing pages. */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("sqa-theme"); } catch (e) { /* storage unavailable */ }
+  if (t !== "light" && t !== "dark") {
+    t = "light";
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) t = "dark";
+    } catch (e) { /* matchMedia unavailable */ }
+  }
+  document.documentElement.dataset.theme = t;
+})();
+</script>
 <title>${esc(opts.title)} &mdash; Survey QA</title>
 <style>${THEME_CSS}
   body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 32px;
