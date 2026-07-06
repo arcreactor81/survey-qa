@@ -19,6 +19,49 @@
 
 import { THEME_CSS } from "./theme-css";
 
+/** A themed, self-contained error page for terminal failures / missing runs.
+ *  Replaces the bare unstyled <h1>/<pre> so a failed run stays inside the
+ *  branded experience. Uses the shared theme tokens (auto light/dark). */
+export function errorPage(opts: { title: string; heading: string; detail?: string }): string {
+  const esc = (v: string): string =>
+    String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const detailBlock = opts.detail ? `<p class="err-detail">${esc(opts.detail)}</p>` : "";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${esc(opts.title)} &mdash; Survey QA</title>
+<style>${THEME_CSS}
+  body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 32px;
+    background: var(--paper); color: var(--ink); font-family: var(--sans); }
+  .err-card { max-width: 560px; width: 100%; background: var(--card); border: 1px solid var(--border);
+    border-left: 4px solid var(--bad); border-radius: var(--radius); box-shadow: var(--shadow); padding: 30px 32px; }
+  .err-kicker { font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.12em; color: var(--bad); margin-bottom: 12px; }
+  .err-card h1 { font-family: var(--serif); font-weight: 400; font-size: 27px; line-height: 1.2;
+    letter-spacing: -0.01em; color: var(--ink); margin: 0 0 14px; }
+  .err-detail { font-family: var(--mono); font-size: 12.5px; line-height: 1.55; color: var(--slate);
+    background: var(--tint); border-radius: var(--radius-sm); padding: 12px 14px; margin: 0 0 22px;
+    white-space: pre-wrap; word-break: break-word; }
+  .err-cta { display: inline-block; font-family: var(--sans); font-size: 14px; font-weight: 600;
+    text-decoration: none; color: var(--accent-ink); background: var(--accent-solid);
+    border-radius: var(--radius-sm); padding: 10px 20px; }
+  .err-cta:hover { filter: brightness(1.06); }
+</style>
+</head>
+<body>
+  <main class="err-card" role="alert">
+    <div class="err-kicker">Survey QA</div>
+    <h1>${esc(opts.heading)}</h1>
+    ${detailBlock}
+    <a class="err-cta" href="/">Start a new run &rarr;</a>
+  </main>
+</body>
+</html>`;
+}
+
 /** Trivia lines rotated on the waiting page (each < 140 chars).
  *  NOTE: public/index.html duplicates this copy in its status-card JS —
  *  keep the two lists in sync when editing. */

@@ -227,7 +227,7 @@ function buildIssues(run: RunReport): Issue[] {
   const sigToKey = new Map<string, string>();
 
   const hasQid = (f: Finding): boolean => f.questionId !== null && f.questionId !== "";
-  const sigOf = (f: Finding): string => `${f.pageIndex} ${f.category} ${quoteSig(f)}`;
+  const sigOf = (f: Finding): string => `${f.pageIndex}\u001f${f.category}\u001f${quoteSig(f)}`;
   const push = (key: string, f: Finding): void => {
     const bucket = groups.get(key);
     if (bucket) bucket.push(f);
@@ -239,7 +239,7 @@ function buildIssues(run: RunReport): Issue[] {
   // can attach to it in pass 2.
   for (const f of run.findings) {
     if (!hasQid(f)) continue;
-    const key = `q:${(f.questionId as string).toLowerCase()} ${f.category}`;
+    const key = `q:${(f.questionId as string).toLowerCase()}\u001f${f.category}`;
     push(key, f);
     const sk = sigOf(f);
     if (!sigToKey.has(sk)) sigToKey.set(sk, key);
@@ -609,7 +609,7 @@ function issueCard(issue: Issue, models: ModelName[]): string {
   const label =
     issue.questionId !== null && issue.questionId !== ""
       ? esc(issue.questionId)
-      : `Page ${fmtInt(issue.pageIndex)}`;
+      : `Page ${fmtInt(issue.pageIndex + 1)}`;
 
   // Severity disagreement across models is itself signal.
   const distinctSevs = [...new Set(issue.members.map((m) => m.severity))];
@@ -635,7 +635,7 @@ function issueCard(issue: Issue, models: ModelName[]): string {
       <div class="issue-meta">
         ${severityChip(issue.severity)}
         ${categoryChip(issue.category)}
-        <span class="meta-page">Page ${fmtInt(issue.pageIndex)}</span>
+        <span class="meta-page">Page ${fmtInt(issue.pageIndex + 1)}</span>
         ${verifiedMark}
         ${disagree}
       </div>
@@ -687,7 +687,7 @@ function pagesSection(run: RunReport): string {
       const png = shotUrl(run.runId, idx);
       const shot = p.screenshotKey
         ? `<a class="shot-link" href="${png}" target="_blank" rel="noopener" title="Open full-size screenshot">
-            <img class="shot" src="${png}" alt="Screenshot of page ${idx}" loading="lazy">
+            <img class="shot" src="${png}" alt="Screenshot of page ${idx + 1}" loading="lazy">
           </a>`
         : `<div class="shot-empty muted small">No screenshot captured for this page.</div>`;
       const pdfLink = p.pdfKey
@@ -699,7 +699,7 @@ function pagesSection(run: RunReport): string {
       return `
     <article class="page-card">
       <div class="page-head">
-        <span class="page-num">Page ${idx}</span>
+        <span class="page-num">Page ${idx + 1}</span>
         ${navBadge(p.navOk)}
         ${pdfLink}
       </div>
@@ -857,7 +857,7 @@ code.quote {
 /* issue cards */
 .issues { display: flex; flex-direction: column; gap: 16px; }
 .issue { border: 1px solid var(--border); border-left: 4px solid var(--slate); border-radius: var(--radius); padding: 16px 18px 16px; background: var(--card); }
-.issue.conf-high { border-left-color: var(--bad); }
+.issue.conf-high { border-left-color: var(--accent-solid); }
 .issue.conf-medium { border-left-color: var(--accent); }
 .issue.conf-low { border-left-color: var(--slate); }
 .issue-top { display: flex; align-items: flex-start; gap: 14px; }
@@ -865,8 +865,8 @@ code.quote {
 .issue-qid { font-family: var(--mono); font-weight: 400; font-size: 13px; color: var(--accent); background: var(--chip-cat-bg); border-radius: 6px; padding: 1px 8px; white-space: nowrap; }
 .issue-title { font-family: var(--serif); font-weight: 400; font-size: 18px; letter-spacing: -0.01em; color: var(--ink); line-height: 1.3; }
 .conf-chip { display: inline-block; padding: 3px 11px; border-radius: var(--radius-pill); font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: 0.02em; white-space: nowrap; cursor: help; flex: 0 0 auto; }
-.conf-chip.conf-high { background: var(--bad-bg); color: var(--bad); }
-.conf-chip.conf-medium { background: var(--ok-bg); color: var(--green-text); }
+.conf-chip.conf-high { background: var(--accent-solid); color: var(--accent-ink); }
+.conf-chip.conf-medium { background: var(--primary-soft); color: var(--accent-solid); }
 .conf-chip.conf-low { background: var(--badge-muted-bg); color: var(--slate); }
 
 /* consensus */

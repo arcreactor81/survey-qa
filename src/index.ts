@@ -1,7 +1,7 @@
 import { buildComparePrompt } from "./prompt";
 import { verifyFindings, buildScorecard } from "./verify";
 import { buildHtmlReport } from "./report";
-import { processingPage } from "./processing";
+import { processingPage, errorPage } from "./processing";
 import { getRun, putRun, updateRun, shotKey, pagePdfKey, docxKey } from "./store";
 import { workersaiCompare } from "./llm/workersai";
 import { isBlockedHostname } from "./net-guard";
@@ -117,16 +117,6 @@ function resolveSurveyUrl(
     return { ok: false, error: "surveyUrl host is not allowed (private, loopback, and link-local addresses are blocked)" };
   }
   return { ok: true, url: raw };
-}
-
-/** Escape a string for safe interpolation into HTML text/attribute context. */
-function htmlEscape(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 /** Strip stack frames from a stored error: clients get the message line only. */
@@ -450,14 +440,15 @@ export default {
       m = path.match(/^\/reports\/([\w-]+)$/);
       if (m && req.method === "GET") {
         const envelope = await getRun(env, m[1]);
-        if (!envelope) return html("<h1>Run not found</h1>", 404);
+        if (!envelope) return html(errorPage({ title: "Run not found", heading: "We couldn't find that run", detail: "It may have expired, been evicted, or the link is wrong. Start a fresh run from the home page." }), 404);
         if (envelope.status === "processing") return html(processingPage(m[1]));
         if (envelope.status === "failed") {
           console.error(`run ${m[1]} failed:`, envelope.error);
-          // Full HTML-escape: the error text can contain '>', '&', quotes, and
-          // upstream snippets — escaping only '<' would leave those unescaped.
-          const detail = htmlEscape(firstLine(envelope.error) ?? "unknown");
-          return html(`<h1>Run ${htmlEscape(m[1])} failed</h1><pre>${detail}</pre>`, 500);
+          return html(errorPage({
+            title: "Run failed",
+            heading: "This run didn't finish",
+            detail: firstLine(envelope.error) ?? "No error detail was recorded.",
+          }), 500);
         }
         return html(buildHtmlReport(envelope.report));
       }
