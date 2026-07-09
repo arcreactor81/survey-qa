@@ -4,9 +4,10 @@ import { buildHtmlReport } from "./report";
 import { processingPage, errorPage } from "./processing";
 import { getRun, putRun, updateRun, shotKey, pagePdfKey, docxKey } from "./store";
 import { workersaiCompare } from "./llm/workersai";
+import { grokCompare } from "./llm/grok";
 import { isBlockedHostname } from "./net-guard";
 import { MANIFESTS, SUPPORTED_LANGS } from "./manifests";
-import type { Env, Finding, ModelRunStats, RunReport } from "./types";
+import type { Env, Finding, ModelName, ModelRunStats, RunReport } from "./types";
 
 export { RunWorkflow } from "./workflow";
 
@@ -42,10 +43,11 @@ const EVAL_RATE = { windowMs: 60_000, max: 12 };
 const FINDINGS_RATE = { windowMs: 60_000, max: 10 };
 
 // Model bakeoff endpoint (/api/eval-model) safety: the ONLY models it will run
-// are these benign, cheap third-pillar candidates. This closes the original
-// denial-of-wallet (an arbitrary billable model id) — an attacker can trigger
-// only these fixed eval models, rate-limited, and only against an already
-// existing run (whose id is an unguessable UUID). Add a candidate here to bench it.
+// are these fixed, cheap candidates — the Workers AI (@cf/) third-pillar set
+// plus the two xAI grok candidates. This closes the original denial-of-wallet
+// (an arbitrary billable model id) — an attacker can trigger only these fixed
+// eval models, rate-limited, and only against an already existing run (whose id
+// is an unguessable UUID). Add a candidate here to bench it.
 const EVAL_ALLOWLIST = new Set<string>([
   "@cf/openai/gpt-oss-120b",
   "@cf/moonshotai/kimi-k2.6",
@@ -53,6 +55,8 @@ const EVAL_ALLOWLIST = new Set<string>([
   "@cf/qwen/qwen3-30b-a3b-fp8",
   "@cf/qwen/qwq-32b",
   "@cf/mistralai/mistral-small-3.1-24b-instruct",
+  "grok-4.5",
+  "grok-4.3",
 ]);
 
 // Per-isolate, KV-less counters. KNOWN LIMITATION: this Map lives in a single
@@ -529,17 +533,23 @@ export default {
         if (!envelope) return json({ error: "run not found" }, 404);
         const { report } = envelope;
         if (!report.pages.length) return json({ error: "run has no captured pages" }, 400);
+        // Provider branch: @cf/ ids run on Workers AI; everything else is an xAI
+        // grok candidate. The finding's model tag drives scorecard attribution.
+        const isWorkersai = model.startsWith("@cf/");
+        const leg: ModelName = isWorkersai ? "workersai" : "grok";
         const raw: Finding[] = [];
         let errors = 0, inputTokens = 0, outputTokens = 0, latencyMs = 0;
         let lastError: string | undefined;
         for (const page of report.pages) {
           try {
-            const r = await workersaiCompare(env, report.specText, page, model);
+            const r = isWorkersai
+              ? await workersaiCompare(env, report.specText, page, model)
+              : await grokCompare(env, report.specText, page, model);
             inputTokens += r.inputTokens;
             outputTokens += r.outputTokens;
             latencyMs += r.latencyMs;
             for (const f of r.findings) {
-              raw.push({ ...f, model: "workersai", pageIndex: page.pageIndex, quoteVerified: false });
+              raw.push({ ...f, model: leg, pageIndex: page.pageIndex, quoteVerified: false });
             }
           } catch (err) {
             errors += 1;
@@ -549,12 +559,12 @@ export default {
         const verified = verifyFindings(raw, report.specText, report.pages);
         const manifest = MANIFESTS[envelope.lang ?? "en"] ?? MANIFESTS.en;
         const sc = buildScorecard(verified, manifest);
-        const caught = sc.entries.filter((e) => e.caughtBy.includes("workersai")).length;
+        const caught = sc.entries.filter((e) => e.caughtBy.includes(leg)).length;
         return json({
           model, runId,
           caught, total: manifest.length,
           recall: `${caught}/${manifest.length}`,
-          falsePositives: sc.falsePositives.workersai,
+          falsePositives: sc.falsePositives[leg],
           verifiedFindings: verified.length,
           errors, lastError,
           inputTokens, outputTokens, latencyMs,

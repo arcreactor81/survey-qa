@@ -750,6 +750,11 @@ body.tk-lock { overflow: hidden; }
   margin-top: 8px; font-family: var(--serif); font-weight: 400; font-size: 54px;
   line-height: 1; color: var(--ink); font-variant-numeric: tabular-nums;
 }
+.tk-report-link {
+  display: inline-block; margin-top: 10px; font-family: var(--mono);
+  font-size: 13px; color: var(--accent); text-decoration: underline;
+}
+.tk-report-link[hidden] { display: none; }
 .tk-card {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 24px 28px 26px; margin-bottom: 22px; box-shadow: var(--shadow);

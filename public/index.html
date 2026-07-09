@@ -192,6 +192,7 @@
     <div class="tk-head">
       <div class="kicker">Survey QA &middot; Mission control</div>
       <h2 class="tk-title">Run <code id="ovRunId">&hellip;</code></h2>
+      <a id="ovReportLink" class="tk-report-link" href="#" target="_blank" rel="noopener" hidden>open report&nbsp;&#8599;</a>
       <div class="tk-elapsed num" id="ovElapsed">0:00</div>
     </div>
 
@@ -256,6 +257,7 @@
   var minimizeBtn = document.getElementById("minimizeBtn");
   var ovRunId = document.getElementById("ovRunId");
   var ovElapsed = document.getElementById("ovElapsed");
+  var ovReportLink = document.getElementById("ovReportLink");
   var ovStatus = document.getElementById("ovStatus");
   var ovTrivia = document.getElementById("ovTrivia");
   var ovBugLayer = document.getElementById("ovBugLayer");
@@ -725,6 +727,8 @@
         '<div class="state-stage"><span id="stageText">' + esc(stageText()) + '</span>' +
         '<span class="state-elapsed" id="elapsedText">' + esc(fmtElapsed(elapsedSec())) + '</span></div></div>' +
       '</div>' +
+      '<p class="state-stage" style="margin:6px 0 0;">Live report link (updates in place as the run progresses): ' +
+        '<a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;↗</a>. Share or bookmark it now.</p>' +
       trackerShellHtml() +
       '<p class="trivia-line" id="triviaLine" aria-hidden="true">' + esc(TRIVIA[triviaIdx]) + '</p>' +
       '<p class="state-note">Leave this tab open — status refreshes every 5 seconds. Each stage lights up as your run actually reaches it (parsing → browser walk → three-model comparison), from real progress rather than a timer.</p>'
@@ -883,6 +887,8 @@
           '<div><div class="state-title">Run <code>' + esc(runId) + '</code> in progress</div>' +
           '<div class="state-stage"><span id="ovStageText">' + esc(stageText()) + '</span></div></div>' +
         '</div>' +
+        '<p class="state-stage" style="margin:6px 0 0;">Live report link (updates in place as the run progresses): ' +
+          '<a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;↗</a>. Share or bookmark it now.</p>' +
         '<p class="state-note">Status refreshes every 5 seconds. Minimize (or press Escape) to return to the page.</p>'
       );
     }
@@ -923,6 +929,15 @@
   function syncOverlay() {
     if (expandBtn) expandBtn.hidden = !runId;
     if (ovRunId) ovRunId.textContent = runId || "…";
+    if (ovReportLink) {
+      if (runId && reportUrl && currentState !== "failed") {
+        ovReportLink.href = reportUrl;
+        ovReportLink.hidden = false;
+      } else {
+        ovReportLink.removeAttribute("href");
+        ovReportLink.hidden = true;
+      }
+    }
     if (ovStatus) ovStatus.innerHTML = overlayStatusHtml();
     if (ovElapsed && startedAt) ovElapsed.textContent = fmtElapsed(elapsedSec());
     if (ovTrivia && !ovTrivia.textContent) ovTrivia.textContent = TRIVIA[triviaIdx];
@@ -1160,6 +1175,7 @@
     lastErrorDetail = null;
     runBtn.disabled = true;
     expandBtn.hidden = true;
+    if (ovReportLink) { ovReportLink.hidden = true; ovReportLink.removeAttribute("href"); }
     renderSubmitting();
 
     fetch("/api/run", { method: "POST", body: formData })
