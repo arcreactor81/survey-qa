@@ -39,6 +39,7 @@
     }
   ],
   "vars": {
+    "BENCH_ENDPOINTS_ENABLED": "false",
     "CLAUDE_MODEL": "claude-sonnet-4-6",
     "DEEPSEEK_MODEL": "deepseek-v4-pro",
     "CLAUDE_INPUT_USD_PER_MTOK": "3",

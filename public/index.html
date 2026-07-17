@@ -264,10 +264,8 @@
   var ovSquashCount = document.getElementById("ovSquashCount");
   var themeToggle = document.getElementById("themeToggle");
 
-  var REDUCED = false;
-  try {
-    REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  } catch (e) { /* no matchMedia — assume motion is fine */ }
+  /* (No load-time reduced-motion snapshot: the game reads the live matchMedia
+     value per spawn via reducedNow(), and reduce styling is class-driven.) */
 
   var runId = null;
   var reportUrl = null;
@@ -1112,6 +1110,7 @@
     }
     btn.addEventListener("click", function () { squashBug(btn, escapeTimer); });
     ovBugLayer.appendChild(btn);
+    return btn;
   }
 
   /* Follow live OS preference flips: crawling bugs are culled the moment
@@ -1131,11 +1130,10 @@
         removeBug(scurriers[i]);
       }
       if (scurriers.length > 0 && overlayOpen) {
-        spawnBug();
-        if (hadFocus) {
-          var nb = ovBugLayer.querySelector(".bug.is-still");
-          if (nb) nb.focus();
-        }
+        /* Focus the actual replacement, never an older (possibly squashed)
+           dweller found by query. */
+        var nb = spawnBug();
+        if (hadFocus && nb) nb.focus();
       }
     }
     if (mq.addEventListener) mq.addEventListener("change", onFlip);

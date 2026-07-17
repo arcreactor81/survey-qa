@@ -680,6 +680,7 @@ footer { padding: 0 28px 96px; }
     }
     btn.addEventListener("click", function () { squash(btn, escapeTimer); });
     layer.appendChild(btn);
+    return btn;
   }
 
   /* Follow live OS preference flips: crawling bugs are culled the moment
@@ -699,11 +700,10 @@ footer { padding: 0 28px 96px; }
         removeBug(scurriers[i]);
       }
       if (scurriers.length > 0) {
-        spawnBug();
-        if (hadFocus) {
-          var nb = layer.querySelector(".bug.is-still");
-          if (nb) nb.focus();
-        }
+        /* Focus the actual replacement, never an older (possibly squashed)
+           dweller found by query. */
+        var nb = spawnBug();
+        if (hadFocus && nb) nb.focus();
       }
     }
     if (mq.addEventListener) mq.addEventListener("change", onFlip);

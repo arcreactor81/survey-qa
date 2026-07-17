@@ -103,6 +103,12 @@ function resolveSurveyUrl(
   surveyUrl: string,
   origin: string
 ): { ok: true; url: string } | { ok: false; error: string } {
+  // The relative form must be a rooted path: blind origin+value concatenation
+  // turns junk like "C:/x.html" into a parseable https URL with a mangled host
+  // that burns a full workflow run before failing at crawl (seen live).
+  if (!surveyUrl.startsWith("http") && !surveyUrl.startsWith("/")) {
+    return { ok: false, error: "surveyUrl must be an absolute http(s) URL or a same-origin path starting with /" };
+  }
   const raw = surveyUrl.startsWith("http") ? surveyUrl : origin + surveyUrl;
   let parsed: URL;
   try {
@@ -553,21 +559,28 @@ export default {
           } catch (err) {
             out.terminate = { ok: false, rejection: describe(err) };
           }
+          let sawTerminated = false;
           for (let i = 0; i < 12; i++) {
             const st = await inst.status().then(s => s, e => describe(e));
             out.statusAfterTerminate = st;
-            if ((st as { status?: string }).status === "terminated") break;
+            if ((st as { status?: string }).status === "terminated") { sawTerminated = true; break; }
             await new Promise(r => setTimeout(r, 500));
           }
-          try {
-            // restart() on a terminated instance — the load-bearing unknown.
-            await (inst as unknown as { restart: () => Promise<void> }).restart();
-            out.restart = { ok: true };
-          } catch (err) {
-            out.restart = { ok: false, rejection: describe(err) };
+          if (sawTerminated) {
+            try {
+              // restart() on a CONFIRMED-terminated instance — the load-bearing unknown.
+              await (inst as unknown as { restart: () => Promise<void> }).restart();
+              out.restart = { ok: true };
+            } catch (err) {
+              out.restart = { ok: false, rejection: describe(err) };
+            }
+            await new Promise(r => setTimeout(r, 1500));
+            out.statusAfterRestart = await inst.status().then(s => s, e => describe(e));
+          } else {
+            // Never observed "terminated" — restarting here would characterize
+            // the wrong state and poison the Phase 2 design evidence.
+            out.restart = { skipped: true, reason: "terminate never observed as settled" };
           }
-          await new Promise(r => setTimeout(r, 1500));
-          out.statusAfterRestart = await inst.status().then(s => s, e => describe(e));
           // 3. a FRESH handle to the same id (does lookup see it?)
           try {
             const again = await env.RUN_WORKFLOW.get(probeId);
