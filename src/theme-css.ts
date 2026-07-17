@@ -50,16 +50,16 @@ export const THEME_CSS = `
   --dur-slow: .5s;
 
   /* surfaces */
-  --paper: #F7F5EF;
-  --bg-grad-1: #F2EFE7;
-  --bg-grad-2: #F7F5EF;
-  --card: #FFFFFF;
-  --surface-2: #FBFAF6;
-  --surface-3: #EFECE3;
+  --paper: #F5F2EB;
+  --bg-grad-1: #F0EDE4;
+  --bg-grad-2: #F5F2EB;
+  --card: #FBF9F4;
+  --surface-2: #F8F6F0;
+  --surface-3: #EDEAE1;
 
   /* ink + hairlines */
-  --ink: #201E1B;
-  --text: #201E1B;
+  --ink: #342F2A;
+  --text: #403B35;
   --slate: #5F5C56;
   --muted: #5F5C56;
   --text-faint: #6E6B64;
@@ -79,7 +79,7 @@ export const THEME_CSS = `
   --ok: #4A6B41;
   --green-text: #3C5A34;
   --ok-bg: #E6EEE2;
-  --bad: #A6544F;
+  --bad: #A14F4B;
   --red-text: #8C4040;
   --bad-bg: #F5E4E4;
   --amber: #8A6D2A;
@@ -88,85 +88,85 @@ export const THEME_CSS = `
   --wait-text: #6D5621;
 
   /* component-scoped tokens (repointed to editorial hues) */
-  --tint: #EFECE3;
-  --tint-soft: #FBFAF6;
-  --input-bg: #FFFFFF;
-  --input-border: #CDC7B8;
-  --focus-ring: rgba(110, 90, 168, .45);
-  --focus-soft: rgba(110, 90, 168, .16);
-  --pulse: rgba(110, 90, 168, .3);
+  --tint: #EDEAE1;
+  --tint-soft: #F8F6F0;
+  --input-bg: #FBF9F4;
+  --input-border: #89857D;
+  --focus-ring: rgba(110, 90, 168, .38);
+  --focus-soft: rgba(110, 90, 168, .13);
+  --pulse: rgba(110, 90, 168, .22);
   --done-border: #C6DBBD;
   --done-bg: #EEF4E8;
   --err-bg: #F7E7E4;
   --err-border: #E7C9C4;
   --err-text: #8C4040;
-  --code-bg: #201E1B;
+  --code-bg: #312E2C;
   --code-text: #EDE7DA;
 
   /* masthead on paper (band recolored from the old dark hero) */
-  --band-bg: #F7F5EF;
-  --band-title: #201E1B;
-  --band-text: #3C3A34;
+  --band-bg: #F5F2EB;
+  --band-title: #342F2A;
+  --band-text: #46433D;
   --band-muted: #6E6B64;
-  --band-soft: #4A4842;
+  --band-soft: #504C45;
   --band-link: #6E5AA8;
   --band-dt: #6E6B64;
 
   /* report-specific tints */
-  --stage-bg: #FBFAF6;
+  --stage-bg: #F8F6F0;
   --dot-idle: #CDC7B8;
   --notice-bg: #E6EEE2;
   --notice-border: #C6DBBD;
   --notice-text: #3C5A34;
-  --notice-code: #201E1B;
+  --notice-code: #342F2A;
   --table-border: #ECE8DE;
   --row-hover: #F5F2EA;
-  --mark-missed: #8A857B;
-  --chip-cat-bg: #EFECE3;
+  --mark-missed: #716D65;
+  --chip-cat-bg: #EDEAE1;
   --sev-med-bg: #F2EAD4;
   --sev-med-text: #6D5621;
-  --sev-low-bg: #EFECE3;
-  --badge-muted-bg: #EFECE3;
+  --sev-low-bg: #EDEAE1;
+  --badge-muted-bg: #EDEAE1;
   --spec-bg: #E6EEE2;
   --spec-border: #C6DBBD;
   --site-bg: #F5E4E4;
   --site-border: #E7C9C4;
-  --shot-bg: #EFECE3;
+  --shot-bg: #EDEAE1;
   --note-text: #38617C;
   --note-bg: #E2ECF3;
   --note-border: #C6DAE6;
 
-  --shadow-sm: 0 1px 2px rgba(32, 30, 27, .06);
-  --shadow: 0 1px 2px rgba(32, 30, 27, .06), 0 10px 28px rgba(32, 30, 27, .08);
-  --shadow-lg: 0 12px 32px rgba(32, 30, 27, .14);
-  --glow-color: rgba(110, 90, 168, .1);
+  --shadow-sm: 0 1px 2px rgba(32, 30, 27, .05);
+  --shadow: 0 1px 2px rgba(32, 30, 27, .04), 0 7px 20px rgba(32, 30, 27, .05);
+  --shadow-lg: 0 10px 26px rgba(32, 30, 27, .08);
+  --glow-color: rgba(110, 90, 168, .05);
 }
 
 /* ---- design tokens: dark (near-black) — scoped to screen so print stays light ---- */
 @media screen {
   html[data-theme="dark"] {
     color-scheme: dark;
-    --paper: #0B0B0D;
-    --bg-grad-1: #101013;
-    --bg-grad-2: #0B0B0D;
-    --card: #141417;
-    --surface-2: #17171B;
-    --surface-3: #1C1C21;
+    --paper: #171716;
+    --bg-grad-1: #1C1B1A;
+    --bg-grad-2: #171716;
+    --card: #1F1E1D;
+    --surface-2: #242322;
+    --surface-3: #2B2A28;
 
-    --ink: #F0EDE6;
-    --text: #E6E2D9;
+    --ink: #DED9CF;
+    --text: #CDC7BC;
     --slate: #A8A59E;
     --muted: #A8A59E;
     --text-faint: #9B988F;
-    --border: #26262B;
-    --border-strong: #33333A;
+    --border: #343332;
+    --border-strong: #43413E;
 
     --accent: #BBA8E0;
     --accent-dark: #CDBFEA;
-    --accent-solid: #BBA8E0;
+    --accent-solid: #A597C2;
     --accent-ink: #1C1A26;
     --btn-text: #1C1A26;
-    --primary-soft: rgba(187, 168, 224, .16);
+    --primary-soft: rgba(187, 168, 224, .12);
     --kicker: #A8C4A0;
     --link-hot: #E8A889;
 
@@ -181,56 +181,56 @@ export const THEME_CSS = `
     --wait-bg: rgba(212, 184, 106, .14);
     --wait-text: #E2CF9A;
 
-    --tint: #1C1C21;
-    --tint-soft: #17171B;
-    --input-bg: #141417;
-    --input-border: #33333A;
-    --focus-ring: rgba(187, 168, 224, .55);
-    --focus-soft: rgba(187, 168, 224, .2);
-    --pulse: rgba(187, 168, 224, .38);
+    --tint: #2B2A28;
+    --tint-soft: #242322;
+    --input-bg: #1F1E1D;
+    --input-border: #7B7770;
+    --focus-ring: rgba(187, 168, 224, .45);
+    --focus-soft: rgba(187, 168, 224, .16);
+    --pulse: rgba(187, 168, 224, .24);
     --done-border: #3A5236;
     --done-bg: #1B2A1E;
     --err-bg: rgba(212, 154, 154, .12);
     --err-border: rgba(212, 154, 154, .4);
     --err-text: #E6C0C0;
-    --code-bg: #08080A;
+    --code-bg: #131211;
     --code-text: #CFC9BC;
 
-    --band-bg: #0B0B0D;
-    --band-title: #F0EDE6;
-    --band-text: #C6C2B9;
+    --band-bg: #171716;
+    --band-title: #DED9CF;
+    --band-text: #BEB9AF;
     --band-muted: #9B988F;
-    --band-soft: #C6C2B9;
+    --band-soft: #BEB9AF;
     --band-link: #BBA8E0;
     --band-dt: #9B988F;
 
-    --stage-bg: #17171B;
-    --dot-idle: #33333A;
+    --stage-bg: #242322;
+    --dot-idle: #43413E;
     --notice-bg: rgba(168, 196, 160, .12);
     --notice-border: rgba(168, 196, 160, .38);
     --notice-text: #C2D6BB;
-    --notice-code: #F0EDE6;
-    --table-border: #26262B;
+    --notice-code: #DED9CF;
+    --table-border: #343332;
     --row-hover: rgba(255, 255, 255, .04);
-    --mark-missed: #8B887F;
-    --chip-cat-bg: rgba(168, 165, 158, .16);
+    --mark-missed: #918D84;
+    --chip-cat-bg: rgba(168, 165, 158, .12);
     --sev-med-bg: rgba(212, 184, 106, .15);
     --sev-med-text: #E2CF9A;
-    --sev-low-bg: rgba(168, 165, 158, .14);
-    --badge-muted-bg: rgba(168, 165, 158, .16);
+    --sev-low-bg: rgba(168, 165, 158, .1);
+    --badge-muted-bg: rgba(168, 165, 158, .12);
     --spec-bg: rgba(168, 196, 160, .13);
     --spec-border: rgba(168, 196, 160, .4);
     --site-bg: rgba(212, 154, 154, .14);
     --site-border: rgba(212, 154, 154, .4);
-    --shot-bg: #17171B;
+    --shot-bg: #242322;
     --note-text: #B6D3E6;
     --note-bg: rgba(137, 184, 212, .12);
     --note-border: rgba(137, 184, 212, .32);
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .5);
-    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 32px rgba(0, 0, 0, .35);
-    --shadow-lg: 0 14px 36px rgba(0, 0, 0, .4);
-    --glow-color: rgba(187, 168, 224, .1);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 9px 24px rgba(0, 0, 0, .22);
+    --shadow-lg: 0 12px 30px rgba(0, 0, 0, .27);
+    --glow-color: rgba(187, 168, 224, .05);
   }
 }
 
@@ -267,10 +267,10 @@ select:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 /* ---- editorial typographic voice ---- */
 .kicker {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 400;
   text-transform: uppercase;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.11em;
   color: var(--kicker);
   margin-bottom: 6px;
 }
@@ -304,14 +304,14 @@ h3 {
 .aurora::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
-  opacity: .05;
+  opacity: .024;
 }
 .aurora__glow {
   position: absolute; top: -140px; left: 50%;
   width: 820px; height: 560px; margin-left: -410px; border-radius: 50%;
-  background: radial-gradient(closest-side, var(--glow-color), transparent 70%);
+  background: radial-gradient(closest-side, var(--glow-color), transparent 62%);
 }
-html[data-theme="dark"] .aurora::after { opacity: .2; }
+html[data-theme="dark"] .aurora::after { opacity: .06; }
 
 /* ---- masthead (the old dark ".band" hero, recolored to paper/editorial) ---- */
 .band {
@@ -337,9 +337,9 @@ html[data-theme="dark"] .aurora::after { opacity: .2; }
 .brand code { font-family: var(--mono); font-size: 30px; color: var(--accent); }
 .tagline {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 11.5px;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.10em;
   color: var(--band-muted);
 }
 
@@ -372,7 +372,7 @@ html[data-theme="dark"] .theme-toggle .tt-moon { display: none; }
   box-shadow: var(--shadow-sm);
   transition: filter var(--dur-fast), transform var(--dur-fast) var(--ease-spring), box-shadow var(--dur-fast);
 }
-.btn:hover { filter: brightness(1.06); }
+.btn:hover { filter: brightness(1.03); }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: 0.5; cursor: wait; box-shadow: none; }
 .btn-ghost {
@@ -414,7 +414,7 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
 thead th {
   font-family: var(--mono); font-size: 11px; font-weight: 400;
-  text-transform: uppercase; letter-spacing: 0.11em; color: var(--slate);
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);
   border-bottom: 2px solid var(--border); white-space: nowrap; background: transparent;
 }
 tbody tr:hover { background: var(--row-hover); }

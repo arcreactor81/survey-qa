@@ -798,7 +798,7 @@ ${THEME_CSS}
 }
 .band .meta dt {
   color: var(--band-dt); font-family: var(--mono); font-weight: 400; font-size: 11px;
-  text-transform: uppercase; letter-spacing: 0.12em; padding-top: 2px;
+  text-transform: uppercase; letter-spacing: 0.09em; padding-top: 2px;
 }
 .band .meta dd { margin: 0; word-break: break-all; font-variant-numeric: tabular-nums; color: var(--band-text); }
 .band .meta a { color: var(--band-link); text-decoration: none; }
@@ -819,7 +819,7 @@ section {
 /* KPI row */
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 16px; margin-bottom: 26px; }
 .kpi { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px 14px; box-shadow: var(--shadow-sm); }
-.kpi-label { font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.12em; color: var(--slate); margin-bottom: 8px; }
+.kpi-label { font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.09em; color: var(--slate); margin-bottom: 8px; }
 .kpi-value { font-family: var(--serif); font-weight: 400; font-size: 38px; line-height: 1.02; letter-spacing: -0.01em; color: var(--ink); font-variant-numeric: tabular-nums; }
 .kpi-sub { font-size: 11.5px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
 
@@ -846,7 +846,7 @@ code.quote {
 /* overview: agreement strip */
 .section-lede { margin: -8px 0 16px; font-size: 12.5px; max-width: 760px; }
 .agreement { margin-top: 20px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.agree-head { font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.12em; color: var(--slate); background: var(--tint); padding: 8px 16px; border-bottom: 1px solid var(--border); }
+.agree-head { font-family: var(--mono); font-size: 10.5px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.09em; color: var(--slate); background: var(--tint); padding: 8px 16px; border-bottom: 1px solid var(--border); }
 .agree-row { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--table-border); font-size: 13px; }
 .agree-row:last-child { border-bottom: none; }
 .agree-model { font-family: var(--serif); font-weight: 400; font-size: 16px; color: var(--ink); min-width: 92px; }
@@ -885,10 +885,10 @@ code.quote {
 
 /* provenance */
 .prov-wrap { margin-top: 14px; }
-.prov-head { font-family: var(--mono); font-size: 10px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.14em; color: var(--slate); margin-bottom: 8px; }
+.prov-head { font-family: var(--mono); font-size: 10px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.09em; color: var(--slate); margin-bottom: 8px; }
 .prov { display: flex; flex-direction: column; gap: 8px; }
 .prov-line { display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: start; }
-.prov-label { font-family: var(--mono); font-size: 10px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.1em; padding-top: 8px; }
+.prov-label { font-family: var(--mono); font-size: 10px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.07em; padding-top: 8px; }
 .prov-spec .prov-label { color: var(--green-text); }
 .prov-site .prov-label { color: var(--bad); }
 .prov-spec code.quote { background: var(--spec-bg); border: 1px solid var(--spec-border); }

@@ -54,7 +54,7 @@ export function errorPage(opts: { title: string; heading: string; detail?: strin
   .err-card { max-width: 560px; width: 100%; background: var(--card); border: 1px solid var(--border);
     border-left: 4px solid var(--bad); border-radius: var(--radius); box-shadow: var(--shadow); padding: 30px 32px; }
   .err-kicker { font-family: var(--mono); font-size: 11px; text-transform: uppercase;
-    letter-spacing: 0.12em; color: var(--bad); margin-bottom: 12px; }
+    letter-spacing: 0.08em; color: var(--bad); margin-bottom: 12px; }
   .err-card h1 { font-family: var(--serif); font-weight: 400; font-size: 27px; line-height: 1.2;
     letter-spacing: -0.01em; color: var(--ink); margin: 0 0 14px; }
   .err-detail { font-family: var(--mono); font-size: 12.5px; line-height: 1.55; color: var(--slate);
@@ -227,11 +227,11 @@ main { padding: 32px 0 40px; position: relative; z-index: 1; }
   padding: 3px 11px; border-radius: var(--radius-pill);
   background: var(--surface-2); border: 1px solid var(--border);
   font-family: var(--mono); font-size: 10px; font-weight: 400;
-  text-transform: uppercase; letter-spacing: 0.09em; color: var(--slate);
+  text-transform: uppercase; letter-spacing: 0.06em; color: var(--slate);
 }
 .badge-est::before {
   content: ""; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--accent); animation: pulse 1.6s var(--ease-in-out) infinite;
+  background: var(--accent); animation: pulse 2.4s var(--ease-in-out) infinite;
 }
 
 /* animated pipeline — stages light up per the run's real stage (parse / walk / compare) */
@@ -256,14 +256,14 @@ main { padding: 32px 0 40px; position: relative; z-index: 1; }
 }
 .stage.is-run .stage-icon { filter: none; opacity: 1; }
 .stage.is-run .stage-name { color: var(--ink); }
-.stage.is-run .stage-dot { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+.stage.is-run .stage-dot { background: var(--accent); animation: pulse 2.4s ease-in-out infinite; }
 .stage.is-done { background: var(--card); }
 .stage.is-done .stage-icon { filter: none; opacity: 0.9; }
 .stage.is-done .stage-name { color: var(--ink); }
 .stage.is-done .stage-dot { background: var(--accent); }
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 0 var(--pulse); }
-  50% { box-shadow: 0 0 0 7px transparent; }
+  50% { box-shadow: 0 0 0 4px transparent; }
 }
 .pipe-note { margin: 16px 0 0; font-size: 12px; color: var(--muted); }
 @media (max-width: 720px) {
