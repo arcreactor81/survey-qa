@@ -548,6 +548,21 @@ export default {
           }
           return { kind: typeof v, value: v };
         };
+        // Acceptance-test mode: terminate a named instance via the binding
+        // (REST instance-status route proved unreachable). Gate-locked like the
+        // rest of this endpoint; used to simulate engine-level death so the
+        // sweeper's recovery ladder can be exercised end-to-end for real.
+        const terminateId = url.searchParams.get("terminate");
+        if (terminateId) {
+          try {
+            const inst = await env.RUN_WORKFLOW.get(terminateId);
+            await inst.terminate();
+            const st = await inst.status().then(s => s, e => describe(e));
+            return json({ terminated: terminateId, status: st });
+          } catch (err) {
+            return json({ terminated: terminateId, failed: describe(err) }, 500);
+          }
+        }
         const out: Record<string, unknown> = {};
         // 1. get() an id that has never existed
         try {
