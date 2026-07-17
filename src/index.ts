@@ -510,6 +510,77 @@ export default {
         }
       }
 
+      // TEMPORARY (Phase 0 of the recovery plan): characterize the Workflows
+      // binding's runtime behavior — the get() rejection shape for unknown ids,
+      // terminate() settling, and restart() reality on a terminated instance —
+      // so the recovery ladder is built on observed semantics, not typings.
+      // Runs a throwaway instance that is terminated immediately. Gated OFF
+      // unless BENCH_ENDPOINTS_ENABLED==="true"; remove after Phase 2 ships.
+      if (
+        path === "/api/debug/workflow-probe" &&
+        req.method === "GET" &&
+        env.BENCH_ENDPOINTS_ENABLED === "true"
+      ) {
+        if (!allowRequest(`health:${clientIp(req)}`, HEALTH_RATE)) {
+          return json({ error: "rate limit exceeded; wait a minute and retry" }, 429);
+        }
+        const describe = (v: unknown): Record<string, unknown> => {
+          if (v instanceof Error) {
+            return { kind: "error", name: v.name, message: v.message };
+          }
+          return { kind: typeof v, value: v };
+        };
+        const out: Record<string, unknown> = {};
+        // 1. get() an id that has never existed
+        try {
+          const ghost = await env.RUN_WORKFLOW.get("wfprobe-never-existed-000");
+          out.getUnknown = { resolved: true, status: await ghost.status().then(s => s, e => describe(e)) };
+        } catch (err) {
+          out.getUnknown = { resolved: false, rejection: describe(err) };
+        }
+        // 2. throwaway instance: create -> status -> terminate -> settle -> restart()
+        const probeId = `wfprobe-${Date.now()}`;
+        out.probeId = probeId;
+        try {
+          const inst = await env.RUN_WORKFLOW.create({
+            id: probeId,
+            params: { runId: probeId, surveyUrl: "https://example.invalid/", docxName: "probe", seeded: false, lang: "en" },
+          });
+          out.statusAfterCreate = await inst.status().then(s => s, e => describe(e));
+          try {
+            await inst.terminate();
+            out.terminate = { ok: true };
+          } catch (err) {
+            out.terminate = { ok: false, rejection: describe(err) };
+          }
+          for (let i = 0; i < 12; i++) {
+            const st = await inst.status().then(s => s, e => describe(e));
+            out.statusAfterTerminate = st;
+            if ((st as { status?: string }).status === "terminated") break;
+            await new Promise(r => setTimeout(r, 500));
+          }
+          try {
+            // restart() on a terminated instance — the load-bearing unknown.
+            await (inst as unknown as { restart: () => Promise<void> }).restart();
+            out.restart = { ok: true };
+          } catch (err) {
+            out.restart = { ok: false, rejection: describe(err) };
+          }
+          await new Promise(r => setTimeout(r, 1500));
+          out.statusAfterRestart = await inst.status().then(s => s, e => describe(e));
+          // 3. a FRESH handle to the same id (does lookup see it?)
+          try {
+            const again = await env.RUN_WORKFLOW.get(probeId);
+            out.getExisting = { resolved: true, status: await again.status().then(s => s, e => describe(e)) };
+          } catch (err) {
+            out.getExisting = { resolved: false, rejection: describe(err) };
+          }
+        } catch (err) {
+          out.createFailed = describe(err);
+        }
+        return json(out);
+      }
+
       // Model bakeoff: run an ALLOWLISTED candidate model over an existing
       // run's already-captured pages and score it against the seeded manifest —
       // benching third-pillar candidates without a redeploy. Secured by the
