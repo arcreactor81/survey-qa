@@ -2,7 +2,8 @@ import { buildComparePrompt } from "./prompt";
 import { verifyFindings, buildScorecard } from "./verify";
 import { buildHtmlReport } from "./report";
 import { processingPage, errorPage } from "./processing";
-import { getRun, putRun, updateRun, shotKey, pagePdfKey, docxKey } from "./store";
+import { getRun, putRun, updateRun, shotKey, pagePdfKey, docxKey, activeMarkerKey } from "./store";
+import { sweepActive } from "./sweeper";
 import { workersaiCompare } from "./llm/workersai";
 import { grokCompare } from "./llm/grok";
 import { isBlockedHostname } from "./net-guard";
@@ -211,6 +212,17 @@ async function handleCreateRun(req: Request, env: Env): Promise<Response> {
     httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
   });
   await putRun(env, runId, { status: "processing", seeded, lang, report });
+  // Sweeper marker (retried, fail-open): a missed marker only delays stuck-run
+  // detection until the rolling audit reaches this run — never fail the
+  // submission over monitoring bookkeeping.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await env.ARTIFACTS.put(activeMarkerKey(runId), new Uint8Array(0));
+      break;
+    } catch (err) {
+      if (attempt === 2) console.error(`active-marker put failed for run ${runId}:`, err);
+    }
+  }
   try {
     await env.RUN_WORKFLOW.create({ id: runId, params: { runId, surveyUrl: resolvedUrl, docxName, seeded, lang } });
   } catch (err) {
@@ -660,6 +672,16 @@ export default {
     } catch (err) {
       console.error("unhandled error:", err);
       return json({ error: "internal error (see server logs)" }, 500);
+    }
+  },
+
+  // Cron tick (*/5): proactive stuck-run detection + recovery. Recovery is
+  // sweeper-owned by design — page visits never trigger it (owner decision 5).
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    try {
+      await sweepActive(env, new Date(controller.scheduledTime));
+    } catch (err) {
+      console.error("sweeper tick failed:", err);
     }
   },
 } satisfies ExportedHandler<Env>;

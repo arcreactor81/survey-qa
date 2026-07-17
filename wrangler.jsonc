@@ -59,5 +59,6 @@
     "CF_AIG_ACCOUNT_ID": "f0cbb2076e484454e6567789b9be85d8",
     "CF_AIG_GATEWAY_ID": "firstgateway"
   },
+  "triggers": { "crons": ["*/5 * * * *"] },
   "observability": { "enabled": true }
 }

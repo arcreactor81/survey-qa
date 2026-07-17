@@ -11,7 +11,7 @@ import {
 } from "./compare";
 import { claudeCompare } from "./llm/claude";
 import { verifyFindings, buildScorecard } from "./verify";
-import { updateRun, shotKey, pagePdfKey, docxKey } from "./store";
+import { updateRun, shotKey, pagePdfKey, docxKey, beat } from "./store";
 import { MANIFESTS } from "./manifests";
 import { resolveSecret } from "./types";
 import type { Env, Finding, ModelRunStats, PageCapture } from "./types";
@@ -57,7 +57,13 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       // exceed that — which would turn a successful run into a "failed" one. The
       // payloads are loaded back from R2 (write-once, deterministic across
       // replays) for the legs + finalize below.
+      // Progress heartbeats (runs/{id}/heartbeat.json) are written INSIDE step
+      // closures and per-page compare callbacks. Replay-safe by construction:
+      // completed steps return cached results without re-executing, so a
+      // crash-looping instance can NEVER self-refresh its own liveness — its
+      // heartbeat goes stale and the sweeper's stall detector fires.
       await step.do("extract-spec", async () => {
+        await beat(env, runId, "parsing questionnaire");
         const obj = await env.ARTIFACTS.get(docxKey(runId));
         if (!obj) throw new Error(`docx not found at ${docxKey(runId)}`);
         const text = extractDocxText(await obj.arrayBuffer());
@@ -72,6 +78,7 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
         "walk-survey",
         { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "8 minutes" },
         async (): Promise<{ pages: number }> => {
+          await beat(env, runId, "walking the survey");
           const { captures, screenshots, pdfs } = await walkSurvey(env, surveyUrl);
           // Purge page artifacts from any earlier (failed) attempt of this step:
           // keys are deterministic per pageIndex, so a shorter retry would
@@ -152,7 +159,9 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
           deepseek = await step.do(
             "deepseek-compare",
             { retries: { limit: 1, delay: "10 seconds" }, timeout: stepTimeout },
-            async () => runDeepseekCompares(env, specText, pages)
+            async () =>
+              runDeepseekCompares(env, specText, pages, (done, total) =>
+                beat(env, runId, `deepseek: page ${done}/${total}`))
           );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -169,7 +178,9 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
           workersai = await step.do(
             "workersai-compare",
             { retries: { limit: 1, delay: "10 seconds" }, timeout: stepTimeout },
-            async () => runWorkersaiCompares(env, specText, pages)
+            async () =>
+              runWorkersaiCompares(env, specText, pages, (done, total) =>
+                beat(env, runId, `workersai: page ${done}/${total}`))
           );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -190,7 +201,9 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
           gemini = await step.do(
             "gemini-compare",
             { retries: { limit: 1, delay: "10 seconds" }, timeout: stepTimeout },
-            async () => runGeminiCompares(env, specText, pages)
+            async () =>
+              runGeminiCompares(env, specText, pages, (done, total) =>
+                beat(env, runId, `gemini: page ${done}/${total}`))
           );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -211,7 +224,9 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
           grok = await step.do(
             "grok-compare",
             { retries: { limit: 1, delay: "10 seconds" }, timeout: stepTimeout },
-            async () => runGrokCompares(env, specText, pages)
+            async () =>
+              runGrokCompares(env, specText, pages, (done, total) =>
+                beat(env, runId, `grok: page ${done}/${total}`))
           );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -231,7 +246,9 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
           claude = await step.do(
             "claude-compare",
             { retries: { limit: 1, delay: "10 seconds" }, timeout: stepTimeout },
-            async () => runClaudeInWorker(env, specText, pages)
+            async () =>
+              runClaudeInWorker(env, specText, pages, (done, total) =>
+                beat(env, runId, `claude: page ${done}/${total}`))
           );
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -251,15 +268,16 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
       }
 
       const finalized = await step.do("finalize", async () => {
+        await beat(env, runId, "building the report");
         // updateRun re-reads under an etag guard and retries on a losing race,
         // so a finalize retry can never clobber a concurrent runner POST that
-        // completed the run. The mutator's "already terminal" check makes the
-        // whole read-modify-write idempotent: at-least-once step semantics mean
-        // finalize may re-run after the external Claude runner has already set
-        // "complete" and pushed its findings/stats — in that case we must NOT
-        // overwrite them or downgrade the status.
+        // completed the run. The mutator proceeds ONLY from a freshly-read
+        // "processing": at-least-once step semantics mean finalize may re-run
+        // after the external Claude runner completed the run, after a previous
+        // finalize attempt already set "awaiting-claude", or after the sweeper
+        // reconciled the run — none of those may be overwritten or downgraded.
         const persisted = await updateRun(env, runId, (envelope) => {
-          if (envelope.status === "complete") return false; // don't clobber a completed run
+          if (envelope.status !== "processing") return false; // never clobber a settled run
           const report = envelope.report;
           report.specText = specText;
           report.pages = pages;
@@ -323,7 +341,11 @@ export class RunWorkflow extends WorkflowEntrypoint<Env, RunParams> {
           { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" } },
           async () => {
             await updateRun(env, runId, (envelope) => {
-              if (envelope.status === "complete") return false;
+              // Proceed only from a freshly-read "processing": a run the runner
+              // completed, a finalize that already settled it, or a sweeper
+              // reconciliation must never be downgraded by a late failure
+              // handler (or a replayed one on a recovered instance).
+              if (envelope.status !== "processing") return false;
               envelope.status = "failed";
               envelope.error = detail;
               envelope.report.finishedAt = new Date().toISOString();
@@ -354,7 +376,8 @@ function legStepTimeout(pageCount: number): WorkflowSleepDuration {
 async function runClaudeInWorker(
   env: Env,
   specText: string,
-  pages: PageCapture[]
+  pages: PageCapture[],
+  onPage?: (done: number, total: number) => Promise<void>
 ): Promise<{ findings: Finding[]; stats: ModelRunStats }> {
   const findings: Finding[] = [];
   const stats: ModelRunStats = {
@@ -384,6 +407,8 @@ async function runClaudeInWorker(
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`claude compare failed on page ${page.pageIndex}:`, err);
     }
+    // Per-page progress hook (heartbeat); must never fail the leg.
+    if (onPage) { try { await onPage(stats.calls, pages.length); } catch { /* swallowed */ } }
   }
   // A total outage must fail the step loudly, not resolve as "0 findings".
   assertLegNotFullyFailed("claude", stats, pages.length, lastError);

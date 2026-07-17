@@ -101,6 +101,7 @@ export async function runDeepseekCompares(
   env: Env,
   specText: string,
   pages: PageCapture[],
+  onPage?: (done: number, total: number) => Promise<void>,
 ): Promise<{ findings: Finding[]; stats: ModelRunStats }> {
   const findings: Finding[] = [];
   const stats: ModelRunStats = {
@@ -143,6 +144,8 @@ export async function runDeepseekCompares(
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`deepseek compare failed for page ${page.pageIndex}: ${lastError}`);
     }
+    // Per-page progress hook (heartbeat); must never fail the leg.
+    if (onPage) { try { await onPage(stats.calls, pages.length); } catch { /* swallowed */ } }
   }
 
   assertLegNotFullyFailed("deepseek", stats, pages.length, lastError);
@@ -158,6 +161,7 @@ export async function runWorkersaiCompares(
   env: Env,
   specText: string,
   pages: PageCapture[],
+  onPage?: (done: number, total: number) => Promise<void>,
 ): Promise<{ findings: Finding[]; stats: ModelRunStats }> {
   const findings: Finding[] = [];
   const stats: ModelRunStats = {
@@ -200,6 +204,8 @@ export async function runWorkersaiCompares(
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`workersai compare failed for page ${page.pageIndex}: ${lastError}`);
     }
+    // Per-page progress hook (heartbeat); must never fail the leg.
+    if (onPage) { try { await onPage(stats.calls, pages.length); } catch { /* swallowed */ } }
   }
 
   assertLegNotFullyFailed("workersai", stats, pages.length, lastError);
@@ -216,6 +222,7 @@ export async function runGeminiCompares(
   env: Env,
   specText: string,
   pages: PageCapture[],
+  onPage?: (done: number, total: number) => Promise<void>,
 ): Promise<{ findings: Finding[]; stats: ModelRunStats }> {
   const findings: Finding[] = [];
   const stats: ModelRunStats = {
@@ -258,6 +265,8 @@ export async function runGeminiCompares(
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`gemini compare failed for page ${page.pageIndex}: ${lastError}`);
     }
+    // Per-page progress hook (heartbeat); must never fail the leg.
+    if (onPage) { try { await onPage(stats.calls, pages.length); } catch { /* swallowed */ } }
   }
 
   assertLegNotFullyFailed("gemini", stats, pages.length, lastError);
@@ -274,6 +283,7 @@ export async function runGrokCompares(
   env: Env,
   specText: string,
   pages: PageCapture[],
+  onPage?: (done: number, total: number) => Promise<void>,
 ): Promise<{ findings: Finding[]; stats: ModelRunStats }> {
   const findings: Finding[] = [];
   const stats: ModelRunStats = {
@@ -316,6 +326,8 @@ export async function runGrokCompares(
       lastError = err instanceof Error ? err.message : String(err);
       console.error(`grok compare failed for page ${page.pageIndex}: ${lastError}`);
     }
+    // Per-page progress hook (heartbeat); must never fail the leg.
+    if (onPage) { try { await onPage(stats.calls, pages.length); } catch { /* swallowed */ } }
   }
 
   assertLegNotFullyFailed("grok", stats, pages.length, lastError);
