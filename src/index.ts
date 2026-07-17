@@ -424,7 +424,44 @@ export default {
         return await handleCreateRun(req, env);
       }
 
-      let m = path.match(/^\/api\/runs\/([\w-]+)$/);
+      // Slim status view for the waiting-page poll: everything the client
+      // needs and nothing else (the full envelope below can be 100s of KB —
+      // pages + specText — and was being shipped every 5 seconds). Includes
+      // the live heartbeat so the page can show TRUE measured progress
+      // ("deepseek: page 3/6") instead of a fabricated ETA, and the recovery
+      // phase so an automatic rescue is reported honestly.
+      let m = path.match(/^\/api\/runs\/([\w-]+)\/status$/);
+      if (m && req.method === "GET") {
+        const envelope = await getRun(env, m[1]);
+        if (!envelope) return json({ error: "run not found" }, 404);
+        let progress: { at: string; note: string } | null = null;
+        if (envelope.status === "processing") {
+          try {
+            const hb = await env.ARTIFACTS.get(`runs/${m[1]}/heartbeat.json`);
+            if (hb) {
+              const parsed = (await hb.json()) as { at?: unknown; note?: unknown };
+              if (typeof parsed.at === "string") {
+                progress = { at: parsed.at, note: typeof parsed.note === "string" ? parsed.note : "" };
+              }
+            }
+          } catch { /* heartbeat is best-effort display data */ }
+        }
+        const phase = envelope.recovery?.phase;
+        return json({
+          status: envelope.status,
+          stage: envelope.status === "processing" ? await computeStage(env, m[1]) : undefined,
+          startedAt: envelope.report.startedAt,
+          error: firstLine(envelope.error),
+          recoveryMode:
+            envelope.status === "processing" && (phase === "restarting" || phase === "recreating")
+              ? phase
+              : null,
+          progress,
+          stats: envelope.report.stats.map((s) => ({ model: s.model })),
+        });
+      }
+
+      m = path.match(/^\/api\/runs\/([\w-]+)$/);
       if (m && req.method === "GET") {
         const envelope = await getRun(env, m[1]);
         if (!envelope) return json({ error: "run not found" }, 404);

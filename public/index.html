@@ -617,9 +617,18 @@
   /* ----- state machine ----- */
 
   function stopTimers() {
+    /* pollTimer may hold a setTimeout handle (self-scheduling loop) — the
+       clearInterval/clearTimeout pools are shared per spec, so this clears
+       either kind. */
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
   }
+
+  /* Poll immediately when the tab becomes visible again (the hidden cadence
+     is 30 s); the self-scheduling loop keeps running on its own. */
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && runId && !reachedTerminal && pollTimer) poll();
+  });
 
   function elapsedSec() { return Math.max(0, Math.floor((Date.now() - startedAt) / 1000)); }
 
@@ -816,13 +825,35 @@
     }
   }
 
-  /* Give up after ~2 minutes of consecutive bad polls instead of spinning forever. */
+  /* After ~2 minutes of consecutive bad polls, say the STATUS is unavailable —
+     never that the RUN failed (network trouble is not a run failure; the old
+     path latched a false terminal "Failed"). Non-terminal: polling continues,
+     a successful poll repaints the normal card, and "failed" is reserved for
+     status:"failed" actually returned by the server. */
   var MAX_FAIL_STREAK = 24;
+  var statusUnavailable = false;
+  function renderStatusUnavailable(detail) {
+    var html =
+      '<span class="state-badge">Status unavailable</span>' +
+      '<div class="state-title">Can&#8217;t reach the run status right now</div>' +
+      '<p class="state-stage" style="margin:6px 0 0;">The page has been unable to check on this run for a couple of minutes. ' +
+      'The run itself may well be fine — checking continues automatically. ' +
+      '<button type="button" class="copy-btn" id="retryNowBtn">Check now</button></p>' +
+      (reportUrl ? '<p class="state-stage" style="margin:6px 0 0;">Report link: <a href="' + esc(reportUrl) + '" target="_blank" rel="noopener">open report&nbsp;&#8599;</a></p>' : '') +
+      (detail ? '<pre class="error-detail">' + esc(String(detail)) + '</pre>' : '');
+    show(html);
+  }
+  statusBody.addEventListener("click", function (ev) {
+    var btn = ev.target && ev.target.closest ? ev.target.closest("#retryNowBtn") : null;
+    if (btn) poll();
+  });
   function bumpFailStreak(detail) {
     failStreak++;
-    if (failStreak >= MAX_FAIL_STREAK) {
-      setState("failed", "Status polling gave up after " + failStreak +
-        " consecutive failed checks. Last error: " + detail);
+    if (failStreak >= MAX_FAIL_STREAK && !statusUnavailable) {
+      statusUnavailable = true;
+      currentState = null; /* so the next successful poll's setState repaints */
+      renderStatusUnavailable(detail);
+      syncOverlay();
     }
   }
 
@@ -846,6 +877,7 @@
         if (reachedTerminal) return; /* terminal state already latched — ignore late polls */
         captureLegs(data); /* record which legs reported, for the awaiting/complete copy */
         var st = data && data.status;
+        if (st) statusUnavailable = false; /* connectivity is back; normal renders resume */
         if (st === "processing") {
           failStreak = 0;
           if (typeof data.stage === "number") currentStage = Math.max(currentStage, data.stage);
@@ -1258,7 +1290,15 @@
              live. Minimize / Escape collapse back to the inline card, and
              the Expand button re-opens it. */
           openOverlay();
-          pollTimer = setInterval(poll, 5000);
+          /* Self-scheduling poll: 5 s visible / 30 s hidden, immediate on
+             return to the tab (mirrors the /reports waiting page). */
+          (function schedulePoll() {
+            pollTimer = setTimeout(function () {
+              if (reachedTerminal) return;
+              poll();
+              schedulePoll();
+            }, document.hidden ? 30000 : 5000);
+          })();
           tickTimer = setInterval(tick, 1000);
         });
       })

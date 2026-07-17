@@ -395,6 +395,7 @@ footer { padding: 0 28px 96px; }
         walk &rarr; comparison), and this page advances to the report the moment the run finishes. A run
         usually takes a few minutes (longer for an external survey URL &mdash; the browser walk and the
         comparison are the slow parts), so keep this tab open.</p>
+      <p class="pipe-note" id="liveNote" style="display:none" aria-live="polite"></p>
     </section>
 
     <section class="card trivia-card" aria-labelledby="trivia-title">
@@ -561,9 +562,32 @@ footer { padding: 0 28px 96px; }
     }
   }
 
+  /* Honest live copy under the pipeline: TRUE measured progress from the
+     run's heartbeat ("deepseek: page 3/6"), the automatic-recovery state when
+     the sweeper is rescuing the run, and a calm taking-longer advisory past
+     10 minutes. Never a projected ETA — that would be a guess. */
+  function updateLiveNote(data) {
+    var el = document.getElementById("liveNote");
+    if (!el) return;
+    var parts = [];
+    if (data.recoveryMode === "restarting") {
+      parts.push("Automatic recovery restarted the analysis pipeline for this run.");
+    } else if (data.recoveryMode === "recreating") {
+      parts.push("Automatic recovery relaunched this run from its saved inputs.");
+    } else if (data.progress && data.progress.note) {
+      parts.push("Live progress: " + data.progress.note + ".");
+    }
+    if (elapsedSec() >= 600) {
+      parts.push("Taking longer than usual — most runs finish in 3–10 minutes. " +
+        "Automatic recovery is watching this run; no need to refresh.");
+    }
+    el.textContent = parts.join(" ");
+    el.style.display = parts.length ? "" : "none";
+  }
+
   function poll() {
     if (gaveUp) return;
-    fetch("/api/runs/" + RUN_ID)
+    fetch("/api/runs/" + RUN_ID + "/status")
       .then(function (res) {
         if (res.status === 404) {
           var e = new Error("run not found");
@@ -578,7 +602,12 @@ footer { padding: 0 28px 96px; }
         if (!data) { bumpPollFail(); return; }
         adoptStartedAt(data.startedAt);
         var st = data.status;
-        if (st === "processing") { pollFailStreak = 0; if (typeof data.stage === "number") { maxStage = Math.max(maxStage, data.stage); lightStages(maxStage); } return; }
+        if (st === "processing") {
+          pollFailStreak = 0;
+          if (typeof data.stage === "number") { maxStage = Math.max(maxStage, data.stage); lightStages(maxStage); }
+          updateLiveNote(data);
+          return;
+        }
         if (st === "complete" || st === "awaiting-claude" || st === "failed") {
           location.reload(); /* server now serves the report or failure page */
           return;
@@ -596,7 +625,23 @@ footer { padding: 0 28px 96px; }
         bumpPollFail(); /* transient network / server error — bounded, not forever */
       });
   }
-  pollTimer = setInterval(poll, 5000);
+  /* Self-scheduling poll loop: 5 s while the tab is visible, 30 s while
+     hidden, with an immediate poll on return — no overlapping requests, no
+     duplicate intervals across visibility flips. */
+  function schedulePoll() {
+    if (gaveUp) return;
+    pollTimer = setTimeout(function () {
+      poll();
+      schedulePoll();
+    }, document.hidden ? 30000 : 5000);
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (gaveUp || document.hidden) return;
+    if (pollTimer) clearTimeout(pollTimer);
+    poll();
+    schedulePoll();
+  });
+  schedulePoll();
   poll(); /* immediately, so the elapsed clock adopts the run's real startedAt */
 
   /* ----- bug squash mini-game -----
