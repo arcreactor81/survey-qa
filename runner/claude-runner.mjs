@@ -550,12 +550,19 @@ async function main() {
     FETCH_TIMEOUT_MS
   );
   if (res.status === 409) {
-    // The run already has an in-Worker Claude leg (Sonnet 4.6 ran automatically),
-    // so this fallback runner has nothing to add — exit cleanly, not as an error.
+    // The server returns 409 for three distinct states; only one is benign.
+    // Discriminate on the body — a blanket exit-0 here silently swallowed
+    // "still processing" and "failed" runs.
     const body = (await res.text().catch(() => "")).slice(0, 300);
-    console.log(`\nRun already complete with an in-Worker Claude leg (server returned 409) — nothing to do. ${body}`);
-    console.log(`Report: ${workerUrl}/reports/${encodeURIComponent(runId)}`);
-    process.exit(0);
+    if (body.includes("in-Worker Claude leg")) {
+      // Run already has an in-Worker Claude leg (Sonnet 4.6 ran automatically),
+      // so this fallback runner has nothing to add — exit cleanly, not as an error.
+      console.log(`\nRun already complete with an in-Worker Claude leg (server returned 409) — nothing to do. ${body}`);
+      console.log(`Report: ${workerUrl}/reports/${encodeURIComponent(runId)}`);
+      process.exit(0);
+    }
+    console.error(`POST ${postUrl} -> HTTP 409 (findings not accepted): ${body}`);
+    process.exit(1);
   }
   if (!res.ok) {
     const body = (await res.text().catch(() => "")).slice(0, 300);

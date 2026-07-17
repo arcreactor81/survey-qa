@@ -126,7 +126,7 @@ const TRIVIA_LINES: string[] = [
   "⚙️ DeepSeek and Grok run in the Worker; Claude joins in-Worker with a key, or via a $0 fallback runner.",
   "🔒 A finding is only trusted when it quotes both the doc and the rendered page. Trust, but verify — literally.",
   "🌡️ A mislabeled scale point turns a 5-point Likert into apples and oranges at analysis time.",
-  "🪲 The bugs scurrying across this screen are decorative. The real ones are being caught server-side.",
+  "🪲 The bugs on this screen are decorative — squash a few while you wait.",
   "🏷️ Brand lists drift: one option quietly renamed between the doc and the build can skew share-of-preference.",
   "🧬 Two surveys, one truth: we diff the Word doc against the live site so respondents never see the difference.",
   "⌛ Most of the wait is the browser walk — rendering and reading every page like a real respondent.",
@@ -279,27 +279,50 @@ main { padding: 32px 0 40px; position: relative; z-index: 1; }
 .trivia { margin: 8px 0 0; min-height: 46px; max-width: 660px; font-size: 15px; line-height: 1.6; color: var(--text); transition: opacity 0.4s ease; }
 .trivia.is-fading { opacity: 0; }
 
-/* bug mini-game */
+/* bug mini-game
+   Mode is committed per-bug at spawn: .is-scurry crawls (motion users),
+   .is-still is the reduced-motion whack-a-mole variant. All is-still
+   animation is opacity-only and lives on the child glyph; the button never
+   fades so its keyboard-focus outline stays visible. */
 #bugLayer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 5; }
 .bug {
   position: absolute; left: 0; top: 0; border: 0; margin: 0; padding: 5px;
   background: transparent; font-size: 24px; line-height: 1; cursor: pointer;
-  pointer-events: auto; animation: scurry var(--bug-dur, 7s) linear forwards; will-change: transform;
+  pointer-events: auto;
 }
+.bug.is-scurry { animation: scurry var(--bug-dur, 7s) linear forwards; will-change: transform; }
 @keyframes scurry {
   from { transform: translateX(var(--x0, -60px)) translateY(0); }
   to   { transform: translateX(var(--x1, 100vw)) translateY(var(--y1, 0px)); }
 }
-.bug > span { display: inline-block; animation: bob 0.5s ease-in-out infinite alternate; }
+.bug > span { display: inline-block; }
+.bug.is-scurry > span { animation: bob 0.5s ease-in-out infinite alternate; }
 @keyframes bob {
   from { transform: scaleX(var(--flip, 1)) translateY(-3px) rotate(-6deg); }
   to   { transform: scaleX(var(--flip, 1)) translateY(3px) rotate(6deg); }
 }
+.bug.is-still > span { opacity: 0; animation: dwell var(--dwell-dur, 10s) ease forwards; }
+@keyframes dwell {
+  0% { opacity: 0; }
+  8% { opacity: 1; }
+  86% { opacity: 1; }
+  100% { opacity: 0; }
+}
+/* Keyboard focus pauses the dwell so the target cannot fade under the user
+   (unsquashed only — the squash feedback must still play out while focused). */
+.bug.is-still:focus:not(.is-squashed) > span { animation-play-state: paused; opacity: 1; }
 .bug.is-squashed { animation-play-state: paused; }
+/* Squash effects: keep these LAST among the span rules — they tie the mode
+   rules on specificity, so source order is what makes the squash win. */
 .bug.is-squashed > span { animation: pop 0.45s ease forwards; }
+.bug.is-still.is-squashed > span { animation: pop-still 0.45s ease forwards; }
 @keyframes pop {
   from { transform: scale(1.5); opacity: 1; }
   to   { transform: scale(0.4); opacity: 0; }
+}
+@keyframes pop-still {
+  from { opacity: 1; }
+  to   { opacity: 0; }
 }
 .squash-chip {
   position: fixed; right: 18px; bottom: 18px; z-index: 20;
@@ -316,9 +339,9 @@ footer { padding: 0 28px 96px; }
   .stage.is-run .stage-dot { animation: none; }
   .badge-est::before { animation: none; }
   .trivia { transition: none; }
-  .bug { animation: none; }
-  .bug > span { animation: none; }
-  .bug.is-squashed > span { animation: none; opacity: 0.35; }
+  /* No .bug rules here: the game's motion mode is committed per-bug at spawn
+     via is-scurry/is-still classes (JS is the single authority), matching
+     public/styles.css. */
 }
 </style>
 </head>
@@ -388,7 +411,7 @@ footer { padding: 0 28px 96px; }
 
 <div class="squash-chip">
   <strong>🐛 Bugs squashed: <span id="squashCount" class="num">0</span></strong>
-  <small>(the real ones are being caught server-side)</small>
+  <small>(just for fun &mdash; actual run status is shown above)</small>
 </div>
 
 <footer>
@@ -576,10 +599,19 @@ footer { padding: 0 28px 96px; }
   pollTimer = setInterval(poll, 5000);
   poll(); /* immediately, so the elapsed clock adopts the run's real startedAt */
 
-  /* ----- bug squash mini-game ----- */
+  /* ----- bug squash mini-game -----
+     Mirrors public/index.html. Mode is committed per-bug at spawn from the
+     LIVE reduced-motion preference: is-scurry crawls; is-still is the
+     whack-a-mole variant (fixed spot, squashable dwell, opacity-only fades
+     on the glyph so the button's focus outline never fades). */
 
   var layer = document.getElementById("bugLayer");
   var countEl = document.getElementById("squashCount");
+
+  function reducedNow() {
+    try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+    catch (e) { return false; }
+  }
 
   function removeBug(btn) {
     if (btn.parentNode) btn.parentNode.removeChild(btn);
@@ -589,7 +621,7 @@ footer { padding: 0 28px 96px; }
     if (btn.getAttribute("data-dead")) return;
     btn.setAttribute("data-dead", "1");
     if (escapeTimer) clearTimeout(escapeTimer);
-    btn.className = "bug is-squashed";
+    btn.classList.add("is-squashed");
     btn.innerHTML = '<span aria-hidden="true">💥</span>';
     squashed++;
     if (countEl) countEl.textContent = String(squashed);
@@ -603,9 +635,10 @@ footer { padding: 0 28px 96px; }
     if (w < 120 || h < 120) return;
     if (layer.querySelectorAll(".bug").length >= 3) return;
 
+    var still = reducedNow();
     var btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "bug";
+    btn.className = "bug " + (still ? "is-still" : "is-scurry");
     btn.setAttribute("aria-label", "squash the bug");
     var glyph = Math.random() < 0.5 ? "🐛" : "🪲";
     btn.innerHTML = '<span aria-hidden="true">' + glyph + '</span>';
@@ -613,10 +646,28 @@ footer { padding: 0 28px 96px; }
     btn.style.top = startY + "px";
 
     var escapeTimer;
-    if (REDUCED) {
-      // No motion: the bug simply appears somewhere and leaves after a while.
+    if (still) {
+      /* Whack-a-mole: fixed spot, 8-12s dwell, glyph-only opacity lifecycle.
+         Escape on the dwell's animationend plus a fallback timer; both defer
+         while the button holds keyboard focus (CSS pauses the fade too). */
       btn.style.left = Math.floor(w * (0.1 + Math.random() * 0.7)) + "px";
-      escapeTimer = setTimeout(function () { removeBug(btn); }, 6000);
+      var dwellMs = 8000 + Math.floor(Math.random() * 4000);
+      btn.style.setProperty("--dwell-dur", dwellMs + "ms");
+      var tryEscape = function () {
+        if (btn.getAttribute("data-dead") || !btn.parentNode) return;
+        if (document.activeElement === btn) {
+          btn.addEventListener("blur", function onBlur() {
+            btn.removeEventListener("blur", onBlur);
+            setTimeout(tryEscape, 400);
+          });
+          return;
+        }
+        removeBug(btn);
+      };
+      btn.addEventListener("animationend", function (ev) {
+        if (ev.target !== btn && ev.animationName === "dwell") tryEscape();
+      });
+      escapeTimer = setTimeout(tryEscape, dwellMs + 1000);
     } else {
       var ltr = Math.random() < 0.5;
       var durMs = 5200 + Math.floor(Math.random() * 3800);
@@ -630,6 +681,34 @@ footer { padding: 0 28px 96px; }
     btn.addEventListener("click", function () { squash(btn, escapeTimer); });
     layer.appendChild(btn);
   }
+
+  /* Follow live OS preference flips: crawling bugs are culled the moment
+     reduce turns on (with one still replacement so the game never goes
+     empty), and a culled bug's keyboard focus moves to the replacement.
+     reduce-to-motion lets existing dwellers finish naturally. */
+  (function watchMotionPref() {
+    var mq;
+    try { mq = window.matchMedia("(prefers-reduced-motion: reduce)"); }
+    catch (e) { return; }
+    function onFlip() {
+      if (!mq.matches || !layer) return;
+      var scurriers = layer.querySelectorAll(".bug.is-scurry");
+      var hadFocus = false;
+      for (var i = 0; i < scurriers.length; i++) {
+        if (document.activeElement === scurriers[i]) hadFocus = true;
+        removeBug(scurriers[i]);
+      }
+      if (scurriers.length > 0) {
+        spawnBug();
+        if (hadFocus) {
+          var nb = layer.querySelector(".bug.is-still");
+          if (nb) nb.focus();
+        }
+      }
+    }
+    if (mq.addEventListener) mq.addEventListener("change", onFlip);
+    else if (mq.addListener) mq.addListener(onFlip);
+  })();
 
   (function scheduleBug() {
     setTimeout(function () {

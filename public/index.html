@@ -228,7 +228,7 @@
   <div id="ovBugLayer"></div>
   <div class="squash-chip">
     <strong>&#128027; Bugs squashed: <span id="ovSquashCount" class="num">0</span></strong>
-    <small>(the real ones are being caught server-side)</small>
+    <small>(just for fun &mdash; actual run status is shown above)</small>
   </div>
 </div>
 
@@ -385,7 +385,7 @@
     "⚙️ DeepSeek and Grok run in the Worker; Claude joins in-Worker with a key, or via a $0 fallback runner.",
     "🔒 A finding is only trusted when it quotes both the doc and the rendered page. Trust, but verify — literally.",
     "🌡️ A mislabeled scale point turns a 5-point Likert into apples and oranges at analysis time.",
-    "🪲 The bugs scurrying across this screen are decorative. The real ones are being caught server-side.",
+    "🪲 The bugs on this screen are decorative — squash a few while you wait.",
     "🏷️ Brand lists drift: one option quietly renamed between the doc and the build can skew share-of-preference.",
     "🧬 Two surveys, one truth: we diff the Word doc against the live site so respondents never see the difference.",
     "⌛ Most of the wait is the browser walk — rendering and reading every page like a real respondent.",
@@ -1034,7 +1034,16 @@
   });
 
   /* ----- bug squash mini-game (runs while the overlay is open) -----
-     Mirrors the implementation on the /reports processing page. */
+     Mirrors the implementation on the /reports processing page.
+     Mode is committed per-bug at spawn from the LIVE reduced-motion
+     preference: is-scurry crawls; is-still is the whack-a-mole variant
+     (appears at a fixed spot, dwells squashably, fades out — opacity-only,
+     on the glyph, so the button's focus outline never fades). */
+
+  function reducedNow() {
+    try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+    catch (e) { return false; }
+  }
 
   function removeBug(btn) {
     if (btn.parentNode) btn.parentNode.removeChild(btn);
@@ -1044,7 +1053,7 @@
     if (btn.getAttribute("data-dead")) return;
     btn.setAttribute("data-dead", "1");
     if (escapeTimer) clearTimeout(escapeTimer);
-    btn.className = "bug is-squashed";
+    btn.classList.add("is-squashed");
     btn.innerHTML = '<span aria-hidden="true">💥</span>';
     squashed++;
     if (ovSquashCount) ovSquashCount.textContent = String(squashed);
@@ -1058,9 +1067,10 @@
     if (w < 120 || h < 120) return;
     if (ovBugLayer.querySelectorAll(".bug").length >= 3) return;
 
+    var still = reducedNow();
     var btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "bug";
+    btn.className = "bug " + (still ? "is-still" : "is-scurry");
     btn.setAttribute("aria-label", "squash the bug");
     var glyph = Math.random() < 0.5 ? "🐛" : "🪲";
     btn.innerHTML = '<span aria-hidden="true">' + glyph + '</span>';
@@ -1068,10 +1078,28 @@
     btn.style.top = startY + "px";
 
     var escapeTimer;
-    if (REDUCED) {
-      /* No motion: the bug simply appears somewhere and leaves after a while. */
+    if (still) {
+      /* Whack-a-mole: fixed spot, 8-12s dwell, glyph-only opacity lifecycle.
+         Escape on the dwell's animationend plus a fallback timer; both defer
+         while the button holds keyboard focus (CSS pauses the fade too). */
       btn.style.left = Math.floor(w * (0.1 + Math.random() * 0.7)) + "px";
-      escapeTimer = setTimeout(function () { removeBug(btn); }, 6000);
+      var dwellMs = 8000 + Math.floor(Math.random() * 4000);
+      btn.style.setProperty("--dwell-dur", dwellMs + "ms");
+      var tryEscape = function () {
+        if (btn.getAttribute("data-dead") || !btn.parentNode) return;
+        if (document.activeElement === btn) {
+          btn.addEventListener("blur", function onBlur() {
+            btn.removeEventListener("blur", onBlur);
+            setTimeout(tryEscape, 400);
+          });
+          return;
+        }
+        removeBug(btn);
+      };
+      btn.addEventListener("animationend", function (ev) {
+        if (ev.target !== btn && ev.animationName === "dwell") tryEscape();
+      });
+      escapeTimer = setTimeout(tryEscape, dwellMs + 1000);
     } else {
       var ltr = Math.random() < 0.5;
       var durMs = 5200 + Math.floor(Math.random() * 3800);
@@ -1085,6 +1113,34 @@
     btn.addEventListener("click", function () { squashBug(btn, escapeTimer); });
     ovBugLayer.appendChild(btn);
   }
+
+  /* Follow live OS preference flips: crawling bugs are culled the moment
+     reduce turns on (with one still replacement so the game never goes
+     empty), and a culled bug's keyboard focus moves to the replacement.
+     reduce-to-motion lets existing dwellers finish naturally. */
+  (function watchMotionPref() {
+    var mq;
+    try { mq = window.matchMedia("(prefers-reduced-motion: reduce)"); }
+    catch (e) { return; }
+    function onFlip() {
+      if (!mq.matches || !ovBugLayer) return;
+      var scurriers = ovBugLayer.querySelectorAll(".bug.is-scurry");
+      var hadFocus = false;
+      for (var i = 0; i < scurriers.length; i++) {
+        if (document.activeElement === scurriers[i]) hadFocus = true;
+        removeBug(scurriers[i]);
+      }
+      if (scurriers.length > 0 && overlayOpen) {
+        spawnBug();
+        if (hadFocus) {
+          var nb = ovBugLayer.querySelector(".bug.is-still");
+          if (nb) nb.focus();
+        }
+      }
+    }
+    if (mq.addEventListener) mq.addEventListener("change", onFlip);
+    else if (mq.addListener) mq.addListener(onFlip);
+  })();
 
   function scheduleBug() {
     if (overlayAnimTimer) clearTimeout(overlayAnimTimer);

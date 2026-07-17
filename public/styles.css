@@ -596,9 +596,9 @@ input[type="file"]:disabled { opacity: 0.5; cursor: not-allowed; }
   .trk-mark-spin { animation-duration: 2.5s; }
   .trivia-line { transition: none; }
   .takeover { transition: none !important; animation: none !important; }
-  .bug { animation: none; }
-  .bug > span { animation: none; }
-  .bug.is-squashed > span { animation: none; opacity: 0.35; }
+  /* No .bug rules here: the game's motion mode is committed per-bug at spawn
+     via is-scurry/is-still classes (JS is the single authority), so a media
+     block can never fight the base rules' source order again. */
 }
 .state-title {
   font-family: var(--serif); font-weight: 400; font-size: 20px;
@@ -766,27 +766,51 @@ body.tk-lock { overflow: hidden; }
 .z-top a { pointer-events: auto; }
 .pipe-note { margin: 16px 0 0; font-size: 12px; color: var(--muted); }
 
-/* ---- bug mini-game (inside the takeover) ---- */
+/* ---- bug mini-game (inside the takeover) ----
+   Mode is committed per-bug at spawn: .is-scurry crawls (motion users),
+   .is-still is the reduced-motion whack-a-mole variant — the bug appears at a
+   fixed spot, dwells squashably, and fades out. All is-still animation is
+   opacity-only and lives on the child glyph; the button itself never fades so
+   its keyboard-focus outline stays visible. */
 #ovBugLayer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 5; }
 .bug {
   position: absolute; left: 0; top: 0; border: 0; margin: 0; padding: 5px;
   background: transparent; font-size: 24px; line-height: 1; cursor: pointer;
-  pointer-events: auto; animation: scurry var(--bug-dur, 7s) linear forwards; will-change: transform;
+  pointer-events: auto;
 }
+.bug.is-scurry { animation: scurry var(--bug-dur, 7s) linear forwards; will-change: transform; }
 @keyframes scurry {
   from { transform: translateX(var(--x0, -60px)) translateY(0); }
   to   { transform: translateX(var(--x1, 100vw)) translateY(var(--y1, 0px)); }
 }
-.bug > span { display: inline-block; animation: bob 0.5s ease-in-out infinite alternate; }
+.bug > span { display: inline-block; }
+.bug.is-scurry > span { animation: bob 0.5s ease-in-out infinite alternate; }
 @keyframes bob {
   from { transform: scaleX(var(--flip, 1)) translateY(-3px) rotate(-6deg); }
   to   { transform: scaleX(var(--flip, 1)) translateY(3px) rotate(6deg); }
 }
+.bug.is-still > span { opacity: 0; animation: dwell var(--dwell-dur, 10s) ease forwards; }
+@keyframes dwell {
+  0% { opacity: 0; }
+  8% { opacity: 1; }
+  86% { opacity: 1; }
+  100% { opacity: 0; }
+}
+/* Keyboard focus pauses the dwell so the target can't fade under the user
+   (unsquashed only — the squash feedback must still play out while focused). */
+.bug.is-still:focus:not(.is-squashed) > span { animation-play-state: paused; opacity: 1; }
 .bug.is-squashed { animation-play-state: paused; }
+/* Squash effects: keep these LAST among the span rules — they tie the mode
+   rules on specificity, so source order is what makes the squash win. */
 .bug.is-squashed > span { animation: pop 0.45s ease forwards; }
+.bug.is-still.is-squashed > span { animation: pop-still 0.45s ease forwards; }
 @keyframes pop {
   from { transform: scale(1.5); opacity: 1; }
   to   { transform: scale(0.4); opacity: 0; }
+}
+@keyframes pop-still {
+  from { opacity: 1; }
+  to   { opacity: 0; }
 }
 .squash-chip {
   position: fixed; right: 18px; bottom: 18px; z-index: 250;
