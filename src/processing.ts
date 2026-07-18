@@ -266,6 +266,51 @@ main { padding: 32px 0 40px; position: relative; z-index: 1; }
   50% { box-shadow: 0 0 0 4px transparent; }
 }
 .pipe-note { margin: 16px 0 0; font-size: 12px; color: var(--muted); }
+
+/* live progress banner — keep byte-identical with public/styles.css */
+.live-progress {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  column-gap: 10px;
+  margin: 18px 0 0;
+  padding: 12px 14px;
+  background: var(--primary-soft);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+.live-progress[hidden] { display: none; }
+.live-progress__dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--pulse);
+}
+.live-progress__hero {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.live-progress__meta {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.live-progress__recovery {
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--wait-bg);
+  color: var(--wait-text);
+}
+.live-progress__advisory {
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
 @media (max-width: 720px) {
   .pipeline { flex-direction: column; gap: 10px; }
   .pipeline::before { display: none; }
@@ -331,6 +376,14 @@ main { padding: 32px 0 40px; position: relative; z-index: 1; }
 }
 .squash-chip strong { display: block; font-size: 13px; color: var(--ink); }
 .squash-chip small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.motion-toggle {
+  display: inline-block; margin-top: 7px; padding: 3px 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--accent); cursor: pointer;
+  font-family: var(--mono); font-size: 10.5px;
+}
+.motion-toggle:hover { border-color: var(--accent); }
+.motion-toggle[hidden] { display: none; }
 
 footer { padding: 0 28px 96px; }
 
@@ -388,6 +441,14 @@ footer { padding: 0 28px 96px; }
       </div>
       <ol class="pipeline">${stageCards}
       </ol>
+      <div id="liveNote" class="live-progress" hidden role="status" aria-live="polite" aria-atomic="true">
+        <span class="live-progress__dot" aria-hidden="true"></span>
+        <div>
+          <p id="liveNoteHero" class="live-progress__hero"></p>
+          <p id="liveNoteRecovery" class="live-progress__meta live-progress__recovery" hidden></p>
+          <p id="liveNoteAdvisory" class="live-progress__meta live-progress__advisory" hidden></p>
+        </div>
+      </div>
       <p class="pipe-note">Your run is executing the whole pipeline server-side. DeepSeek (deepseek-v4-pro)
         and Grok (grok-4.3) always run in the Worker; Claude (claude-sonnet-4-6) runs in the Worker when an
         Anthropic key is set, otherwise the $0 fallback runner completes it — every call routes through the
@@ -395,7 +456,6 @@ footer { padding: 0 28px 96px; }
         walk &rarr; comparison), and this page advances to the report the moment the run finishes. A run
         usually takes a few minutes (longer for an external survey URL &mdash; the browser walk and the
         comparison are the slow parts), so keep this tab open.</p>
-      <p class="pipe-note" id="liveNote" style="display:none" aria-live="polite"></p>
     </section>
 
     <section class="card trivia-card" aria-labelledby="trivia-title">
@@ -413,6 +473,7 @@ footer { padding: 0 28px 96px; }
 <div class="squash-chip">
   <strong>🐛 Bugs squashed: <span id="squashCount" class="num">0</span></strong>
   <small>(just for fun &mdash; actual run status is shown above)</small>
+  <button type="button" id="motionToggle" class="motion-toggle" hidden aria-pressed="false"></button>
 </div>
 
 <footer>
@@ -562,27 +623,48 @@ footer { padding: 0 28px 96px; }
     }
   }
 
-  /* Honest live copy under the pipeline: TRUE measured progress from the
-     run's heartbeat ("deepseek: page 3/6"), the automatic-recovery state when
-     the sweeper is rescuing the run, and a calm taking-longer advisory past
-     10 minutes. Never a projected ETA — that would be a guess. */
+  /* Honest live banner under the pipeline: TRUE measured progress from the
+     run's heartbeat ("deepseek: page 3/6") as the hero line, the automatic-
+     recovery state when the sweeper is rescuing the run, and a calm
+     taking-longer advisory past 10 minutes. Never a projected ETA — that
+     would be a guess. Text nodes only change when the value changes so the
+     live region doesn't re-announce every poll. */
+  function setTextIfChanged(el, text) {
+    if (el && el.textContent !== text) el.textContent = text;
+  }
   function updateLiveNote(data) {
-    var el = document.getElementById("liveNote");
-    if (!el) return;
-    var parts = [];
-    if (data.recoveryMode === "restarting") {
-      parts.push("Automatic recovery restarted the analysis pipeline for this run.");
-    } else if (data.recoveryMode === "recreating") {
-      parts.push("Automatic recovery relaunched this run from its saved inputs.");
-    } else if (data.progress && data.progress.note) {
-      parts.push("Live progress: " + data.progress.note + ".");
+    var wrap = document.getElementById("liveNote");
+    if (!wrap) return;
+    var hero = document.getElementById("liveNoteHero");
+    var rec = document.getElementById("liveNoteRecovery");
+    var adv = document.getElementById("liveNoteAdvisory");
+    var note = data.progress && data.progress.note ? String(data.progress.note) : "";
+    var recovering = data.recoveryMode === "restarting" || data.recoveryMode === "recreating";
+    var advisory = elapsedSec() >= 600;
+    var heroText = "";
+    if (note) {
+      heroText = "Live progress: " + note;
+      if (!/[.!?]$/.test(heroText)) heroText += ".";
+    } else if (recovering) {
+      heroText = "Live progress: automatic recovery is active.";
+    } else if (advisory) {
+      heroText = "Live progress: run still processing.";
     }
-    if (elapsedSec() >= 600) {
-      parts.push("Taking longer than usual — most runs finish in 3–10 minutes. " +
-        "Automatic recovery is watching this run; no need to refresh.");
-    }
-    el.textContent = parts.join(" ");
-    el.style.display = parts.length ? "" : "none";
+    var recText = data.recoveryMode === "restarting"
+      ? "Recovery: analysis pipeline restarted automatically."
+      : data.recoveryMode === "recreating"
+        ? "Recovery: run relaunched automatically from saved inputs."
+        : "";
+    var advText = advisory
+      ? "Taking longer than usual: most runs finish in 3–10 minutes. Automatic recovery is watching; no refresh needed."
+      : "";
+    setTextIfChanged(hero, heroText);
+    if (hero) hero.hidden = !heroText;
+    setTextIfChanged(rec, recText);
+    if (rec) rec.hidden = !recText;
+    setTextIfChanged(adv, advText);
+    if (adv) adv.hidden = !advText;
+    wrap.hidden = !(heroText || recText || advText);
   }
 
   function poll() {
@@ -652,11 +734,62 @@ footer { padding: 0 28px 96px; }
 
   var layer = document.getElementById("bugLayer");
   var countEl = document.getElementById("squashCount");
+  var motionToggle = document.getElementById("motionToggle");
 
-  function reducedNow() {
+  function osReduced() {
     try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
     catch (e) { return false; }
   }
+  /* Owner-requested opt-in: reduced-motion users can turn the crawling game
+     back on FOR THE GAME ONLY (localStorage, this browser). The accessible
+     still-variant stays the default; OS-motion users never see the toggle. */
+  var gameMotionOn = false;
+  try { gameMotionOn = localStorage.getItem("sqa-bug-motion") === "on"; }
+  catch (e) { /* storage unavailable: in-memory state still works */ }
+  function motionOverride() { return gameMotionOn; }
+  function reducedNow() { return osReduced() && !motionOverride(); }
+
+  function cullScurriers() {
+    if (!layer) return { removed: 0, hadFocus: false };
+    var scurriers = layer.querySelectorAll(".bug.is-scurry");
+    var hadFocus = false;
+    for (var i = 0; i < scurriers.length; i++) {
+      if (document.activeElement === scurriers[i]) hadFocus = true;
+      removeBug(scurriers[i]);
+    }
+    return { removed: scurriers.length, hadFocus: hadFocus };
+  }
+
+  function syncMotionToggle() {
+    if (!motionToggle) return;
+    if (!osReduced()) { motionToggle.hidden = true; return; }
+    motionToggle.hidden = false;
+    var on = motionOverride();
+    motionToggle.textContent = on ? "⏸ settle them down" : "▶ let them crawl";
+    motionToggle.setAttribute("aria-pressed", on ? "true" : "false");
+    motionToggle.setAttribute("aria-label", "Crawling bug motion"); /* stable name; aria-pressed carries state */
+  }
+  if (motionToggle) {
+    motionToggle.addEventListener("click", function () {
+      gameMotionOn = !gameMotionOn; /* memory first: works even without storage */
+      try {
+        if (gameMotionOn) localStorage.setItem("sqa-bug-motion", "on");
+        else localStorage.removeItem("sqa-bug-motion");
+      } catch (e) { /* persistence is best-effort */ }
+      var turnOn = gameMotionOn;
+      if (turnOn) {
+        spawnBug(); /* instant feedback: a crawler right away */
+      } else {
+        var culled = cullScurriers();
+        if (culled.removed > 0) {
+          var nb = spawnBug();
+          if (culled.hadFocus && nb) nb.focus();
+        }
+      }
+      syncMotionToggle();
+    });
+  }
+  syncMotionToggle();
 
   function removeBug(btn) {
     if (btn.parentNode) btn.parentNode.removeChild(btn);
@@ -737,18 +870,14 @@ footer { padding: 0 28px 96px; }
     try { mq = window.matchMedia("(prefers-reduced-motion: reduce)"); }
     catch (e) { return; }
     function onFlip() {
-      if (!mq.matches || !layer) return;
-      var scurriers = layer.querySelectorAll(".bug.is-scurry");
-      var hadFocus = false;
-      for (var i = 0; i < scurriers.length; i++) {
-        if (document.activeElement === scurriers[i]) hadFocus = true;
-        removeBug(scurriers[i]);
-      }
-      if (scurriers.length > 0) {
+      syncMotionToggle(); /* the opt-in control only shows under OS reduce */
+      if (!reducedNow() || !layer) return;
+      var culled = cullScurriers();
+      if (culled.removed > 0) {
         /* Focus the actual replacement, never an older (possibly squashed)
            dweller found by query. */
         var nb = spawnBug();
-        if (hadFocus && nb) nb.focus();
+        if (culled.hadFocus && nb) nb.focus();
       }
     }
     if (mq.addEventListener) mq.addEventListener("change", onFlip);

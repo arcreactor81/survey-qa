@@ -205,6 +205,14 @@
         <span class="badge-est">live</span>
       </div>
       <ol class="track" id="ovTrack" aria-labelledby="ov-pipe-title"></ol>
+      <div id="ovLiveNote" class="live-progress" hidden role="status" aria-live="polite" aria-atomic="true">
+        <span class="live-progress__dot" aria-hidden="true"></span>
+        <div>
+          <p id="ovLiveNoteHero" class="live-progress__hero"></p>
+          <p id="ovLiveNoteRecovery" class="live-progress__meta live-progress__recovery" hidden></p>
+          <p id="ovLiveNoteAdvisory" class="live-progress__meta live-progress__advisory" hidden></p>
+        </div>
+      </div>
       <p class="pipe-note">DeepSeek (deepseek-v4-pro) and Grok (grok-4.3) always run in the Worker;
         Claude (claude-sonnet-4-6) runs in the Worker when an Anthropic key is set, otherwise the
         $0 fallback runner completes it. Each stage lights up as your run actually reaches it &mdash; parsing,
@@ -229,6 +237,7 @@
   <div class="squash-chip">
     <strong>&#128027; Bugs squashed: <span id="ovSquashCount" class="num">0</span></strong>
     <small>(just for fun &mdash; actual run status is shown above)</small>
+    <button type="button" id="ovMotionToggle" class="motion-toggle" hidden aria-pressed="false"></button>
   </div>
 </div>
 
@@ -825,6 +834,47 @@
     }
   }
 
+  /* Live progress banner in the overlay pipeline card (mirrors the /reports
+     waiting page): heartbeat hero, recovery state, 10-min advisory. Text nodes
+     only change when the value changes so the live region stays quiet. */
+  function setTextIfChanged(el, text) {
+    if (el && el.textContent !== text) el.textContent = text;
+  }
+  function updateOvLiveNote(data) {
+    var wrap = document.getElementById("ovLiveNote");
+    if (!wrap) return;
+    var hero = document.getElementById("ovLiveNoteHero");
+    var rec = document.getElementById("ovLiveNoteRecovery");
+    var adv = document.getElementById("ovLiveNoteAdvisory");
+    var note = data.progress && data.progress.note ? String(data.progress.note) : "";
+    var recovering = data.recoveryMode === "restarting" || data.recoveryMode === "recreating";
+    var advisory = elapsedSec() >= 600;
+    var heroText = "";
+    if (note) {
+      heroText = "Live progress: " + note;
+      if (!/[.!?]$/.test(heroText)) heroText += ".";
+    } else if (recovering) {
+      heroText = "Live progress: automatic recovery is active.";
+    } else if (advisory) {
+      heroText = "Live progress: run still processing.";
+    }
+    var recText = data.recoveryMode === "restarting"
+      ? "Recovery: analysis pipeline restarted automatically."
+      : data.recoveryMode === "recreating"
+        ? "Recovery: run relaunched automatically from saved inputs."
+        : "";
+    var advText = advisory
+      ? "Taking longer than usual: most runs finish in 3–10 minutes. Automatic recovery is watching; no refresh needed."
+      : "";
+    setTextIfChanged(hero, heroText);
+    if (hero) hero.hidden = !heroText;
+    setTextIfChanged(rec, recText);
+    if (rec) rec.hidden = !recText;
+    setTextIfChanged(adv, advText);
+    if (adv) adv.hidden = !advText;
+    wrap.hidden = !(heroText || recText || advText);
+  }
+
   /* After ~2 minutes of consecutive bad polls, say the STATUS is unavailable —
      never that the RUN failed (network trouble is not a run failure; the old
      path latched a false terminal "Failed"). Non-terminal: polling continues,
@@ -881,6 +931,7 @@
         if (st === "processing") {
           failStreak = 0;
           if (typeof data.stage === "number") currentStage = Math.max(currentStage, data.stage);
+          updateOvLiveNote(data); /* every poll — outside setState's same-state guard */
           /* Ordering guard: don't regress a run that already reached awaiting
              back to "processing" on a late/out-of-order response. */
           if (!reachedAwaiting) { setState("processing"); updateTrackers(); }
@@ -1070,14 +1121,66 @@
      (appears at a fixed spot, dwells squashably, fades out — opacity-only,
      on the glyph, so the button's focus outline never fades). */
 
-  function reducedNow() {
+  var ovMotionToggle = document.getElementById("ovMotionToggle");
+
+  function osReduced() {
     try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
     catch (e) { return false; }
   }
+  /* Owner-requested opt-in: reduced-motion users can turn the crawling game
+     back on FOR THE GAME ONLY (localStorage, this browser). The accessible
+     still-variant stays the default; OS-motion users never see the toggle. */
+  var gameMotionOn = false;
+  try { gameMotionOn = localStorage.getItem("sqa-bug-motion") === "on"; }
+  catch (e) { /* storage unavailable: in-memory state still works */ }
+  function motionOverride() { return gameMotionOn; }
+  function reducedNow() { return osReduced() && !motionOverride(); }
 
   function removeBug(btn) {
     if (btn.parentNode) btn.parentNode.removeChild(btn);
   }
+
+  function cullScurriers() {
+    if (!ovBugLayer) return { removed: 0, hadFocus: false };
+    var scurriers = ovBugLayer.querySelectorAll(".bug.is-scurry");
+    var hadFocus = false;
+    for (var i = 0; i < scurriers.length; i++) {
+      if (document.activeElement === scurriers[i]) hadFocus = true;
+      removeBug(scurriers[i]);
+    }
+    return { removed: scurriers.length, hadFocus: hadFocus };
+  }
+
+  function syncMotionToggle() {
+    if (!ovMotionToggle) return;
+    if (!osReduced()) { ovMotionToggle.hidden = true; return; }
+    ovMotionToggle.hidden = false;
+    var on = motionOverride();
+    ovMotionToggle.textContent = on ? "⏸ settle them down" : "▶ let them crawl";
+    ovMotionToggle.setAttribute("aria-pressed", on ? "true" : "false");
+    ovMotionToggle.setAttribute("aria-label", "Crawling bug motion"); /* stable name; aria-pressed carries state */
+  }
+  if (ovMotionToggle) {
+    ovMotionToggle.addEventListener("click", function () {
+      gameMotionOn = !gameMotionOn; /* memory first: works even without storage */
+      try {
+        if (gameMotionOn) localStorage.setItem("sqa-bug-motion", "on");
+        else localStorage.removeItem("sqa-bug-motion");
+      } catch (e) { /* persistence is best-effort */ }
+      var turnOn = gameMotionOn;
+      if (turnOn) {
+        spawnBug(); /* instant feedback: a crawler right away */
+      } else {
+        var culled = cullScurriers();
+        if (culled.removed > 0) {
+          var nb = spawnBug();
+          if (culled.hadFocus && nb) nb.focus();
+        }
+      }
+      syncMotionToggle();
+    });
+  }
+  syncMotionToggle();
 
   function squashBug(btn, escapeTimer) {
     if (btn.getAttribute("data-dead")) return;
@@ -1154,18 +1257,14 @@
     try { mq = window.matchMedia("(prefers-reduced-motion: reduce)"); }
     catch (e) { return; }
     function onFlip() {
-      if (!mq.matches || !ovBugLayer) return;
-      var scurriers = ovBugLayer.querySelectorAll(".bug.is-scurry");
-      var hadFocus = false;
-      for (var i = 0; i < scurriers.length; i++) {
-        if (document.activeElement === scurriers[i]) hadFocus = true;
-        removeBug(scurriers[i]);
-      }
-      if (scurriers.length > 0 && overlayOpen) {
+      syncMotionToggle(); /* the opt-in control only shows under OS reduce */
+      if (!reducedNow() || !ovBugLayer) return;
+      var culled = cullScurriers();
+      if (culled.removed > 0 && overlayOpen) {
         /* Focus the actual replacement, never an older (possibly squashed)
            dweller found by query. */
         var nb = spawnBug();
-        if (hadFocus && nb) nb.focus();
+        if (culled.hadFocus && nb) nb.focus();
       }
     }
     if (mq.addEventListener) mq.addEventListener("change", onFlip);

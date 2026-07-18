@@ -465,6 +465,21 @@ export default {
       if (m && req.method === "GET") {
         const envelope = await getRun(env, m[1]);
         if (!envelope) return json({ error: "run not found" }, 404);
+        // Additive live fields for the landing overlay's progress banner (the
+        // landing polls this full route; the waiting page uses /status).
+        let progress: { at: string; note: string } | null = null;
+        if (envelope.status === "processing") {
+          try {
+            const hb = await env.ARTIFACTS.get(`runs/${m[1]}/heartbeat.json`);
+            if (hb) {
+              const parsed = (await hb.json()) as { at?: unknown; note?: unknown };
+              if (typeof parsed.at === "string") {
+                progress = { at: parsed.at, note: typeof parsed.note === "string" ? parsed.note : "" };
+              }
+            }
+          } catch { /* heartbeat is best-effort display data */ }
+        }
+        const phase = envelope.recovery?.phase;
         // Flattened shape: the local runner reads .pages/.specText directly.
         // envelope.error is trimmed to its message line (no stack traces).
         return json({
@@ -473,6 +488,11 @@ export default {
           seeded: envelope.seeded,
           error: firstLine(envelope.error),
           stage: envelope.status === "processing" ? await computeStage(env, m[1]) : undefined,
+          progress,
+          recoveryMode:
+            envelope.status === "processing" && (phase === "restarting" || phase === "recreating")
+              ? phase
+              : null,
         });
       }
 
