@@ -778,7 +778,20 @@ footer { padding: 0 28px 96px; }
       } catch (e) { /* persistence is best-effort */ }
       var turnOn = gameMotionOn;
       if (turnOn) {
-        spawnBug(); /* instant feedback: a crawler right away */
+        /* Instant feedback: a crawler right away. A full board of dwellers
+           is the steady state, so if the 3-cap blocks the spawn, retire the
+           oldest still dweller to make room — a dead-looking toggle is worse
+           than one bug leaving early. */
+        var nb = spawnBug();
+        if (!nb && layer) {
+          var dweller = layer.querySelector(".bug.is-still:not(.is-squashed)");
+          if (dweller) {
+            var dwellerHadFocus = document.activeElement === dweller;
+            removeBug(dweller);
+            nb = spawnBug();
+            if (dwellerHadFocus && nb) nb.focus();
+          }
+        }
       } else {
         var culled = cullScurriers();
         if (culled.removed > 0) {
