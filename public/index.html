@@ -840,6 +840,10 @@
   function setTextIfChanged(el, text) {
     if (el && el.textContent !== text) el.textContent = text;
   }
+  function hideOvLiveNote() {
+    var wrap = document.getElementById("ovLiveNote");
+    if (wrap) wrap.hidden = true;
+  }
   function updateOvLiveNote(data) {
     var wrap = document.getElementById("ovLiveNote");
     if (!wrap) return;
@@ -902,6 +906,7 @@
     if (failStreak >= MAX_FAIL_STREAK && !statusUnavailable) {
       statusUnavailable = true;
       currentState = null; /* so the next successful poll's setState repaints */
+      hideOvLiveNote(); /* whatever it said is minutes stale by now */
       renderStatusUnavailable(detail);
       syncOverlay();
     }
@@ -928,6 +933,9 @@
         captureLegs(data); /* record which legs reported, for the awaiting/complete copy */
         var st = data && data.status;
         if (st) statusUnavailable = false; /* connectivity is back; normal renders resume */
+        /* The live banner only describes an in-flight run: any other state
+           means its content is stale — hide it before rendering. */
+        if (st !== "processing") hideOvLiveNote();
         if (st === "processing") {
           failStreak = 0;
           if (typeof data.stage === "number") currentStage = Math.max(currentStage, data.stage);
@@ -1361,6 +1369,7 @@
     runBtn.disabled = true;
     expandBtn.hidden = true;
     if (ovReportLink) { ovReportLink.hidden = true; ovReportLink.removeAttribute("href"); }
+    hideOvLiveNote(); /* previous run's progress must not leak into the new run */
     renderSubmitting();
 
     fetch("/api/run", { method: "POST", body: formData })
