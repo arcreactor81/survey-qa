@@ -641,12 +641,21 @@ footer { padding: 0 28px 96px; }
     var note = data.progress && data.progress.note ? String(data.progress.note) : "";
     var recovering = data.recoveryMode === "restarting" || data.recoveryMode === "recreating";
     var advisory = elapsedSec() >= 600;
+    /* Recovery outranks the note: while the sweeper is rescuing the run,
+       any note on file was written by the DEAD instance — presenting it as
+       the live hero would be stale data styled as measured truth. And an
+       old note (walk stages legitimately beat only every few minutes) is
+       age-stamped past 3 minutes instead of masquerading as current. */
+    var noteAgeMs = data.progress && data.progress.at ? (Date.now() - Date.parse(data.progress.at)) : 0;
     var heroText = "";
-    if (note) {
+    if (recovering) {
+      heroText = "Live progress: automatic recovery is active.";
+    } else if (note) {
       heroText = "Live progress: " + note;
       if (!/[.!?]$/.test(heroText)) heroText += ".";
-    } else if (recovering) {
-      heroText = "Live progress: automatic recovery is active.";
+      if (isFinite(noteAgeMs) && noteAgeMs >= 180000) {
+        heroText += " (last update " + Math.round(noteAgeMs / 60000) + " min ago)";
+      }
     } else if (advisory) {
       heroText = "Live progress: run still processing.";
     }

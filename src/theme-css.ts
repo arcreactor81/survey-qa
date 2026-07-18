@@ -78,7 +78,7 @@ export const THEME_CSS = `
 
   --ok: #4A6B41;
   --green-text: #3C5A34;
-  --ok-bg: #E6EEE2;
+  --ok-bg: #DCEBD4;
   --bad: #A14F4B;
   --red-text: #8C4040;
   --bad-bg: #F5E4E4;
@@ -115,7 +115,7 @@ export const THEME_CSS = `
   /* report-specific tints */
   --stage-bg: #E8ECE6;
   --dot-idle: #B4BBB3;
-  --notice-bg: #E6EEE2;
+  --notice-bg: #DCEBD4;
   --notice-border: #C6DBBD;
   --notice-text: #3C5A34;
   --notice-code: #3E453F;
@@ -127,7 +127,7 @@ export const THEME_CSS = `
   --sev-med-text: #6D5621;
   --sev-low-bg: #E2E7E1;
   --badge-muted-bg: #E2E7E1;
-  --spec-bg: #E6EEE2;
+  --spec-bg: #DCEBD4;
   --spec-border: #C6DBBD;
   --site-bg: #F5E4E4;
   --site-border: #E7C9C4;

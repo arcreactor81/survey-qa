@@ -27,6 +27,7 @@ import {
   heartbeatKey,
   docxKey,
   runKey,
+  beat,
   type RunEnvelope,
 } from "./store";
 import type { Env } from "./types";
@@ -142,6 +143,10 @@ async function runLadder(
   }
   if (claimed.recovery?.claimId !== claimId) return "lost-claim";
   const target = claimed.recovery.targetInstanceId ?? `${runId}-r1`;
+  // Overwrite the dead instance's last heartbeat so clients never present its
+  // stale note as live progress during the rescue — the truth right now IS
+  // the recovery.
+  await beat(env, runId, "automatic recovery: relaunching the pipeline");
 
   // Rung (a): engine-native restart of the existing (errored/terminated/stale-
   // complete) instance. Proven live for terminated instances.
