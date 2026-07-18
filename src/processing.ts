@@ -648,14 +648,19 @@ footer { padding: 0 28px 96px; }
        age-stamped past 3 minutes instead of masquerading as current. */
     var noteAgeMs = data.progress && data.progress.at ? (Date.now() - Date.parse(data.progress.at)) : 0;
     var heroText = "";
-    if (recovering) {
-      heroText = "Live progress: automatic recovery is active.";
-    } else if (note) {
+    if (note) {
+      /* Note-first is safe: at claim time the sweeper overwrites the dead
+         instance heartbeat, so any note during a rescue is either the
+         recovery marker or the relaunched pipeline REAL progress (which
+         must not be hidden behind a generic recovery line — recoveryMode
+         persists for the rest of the run). Old notes get age-stamped. */
       heroText = "Live progress: " + note;
       if (!/[.!?]$/.test(heroText)) heroText += ".";
       if (isFinite(noteAgeMs) && noteAgeMs >= 180000) {
         heroText += " (last update " + Math.round(noteAgeMs / 60000) + " min ago)";
       }
+    } else if (recovering) {
+      heroText = "Live progress: automatic recovery is active.";
     } else if (advisory) {
       heroText = "Live progress: run still processing.";
     }
