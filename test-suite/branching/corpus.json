@@ -1,0 +1,128 @@
+{
+  "schema": "branching-corpus/v1",
+  "generated": "2026-08-01",
+  "purpose": "Acceptance test-bed for the LLM-led testing pivot: complex branching surveys with machine-readable ground-truth logic (the manifest) and documented seeded deviations (the flawed variant).",
+  "engine": "engine.js",
+  "surveys": [
+    {
+      "id": "s1-skip",
+      "title": "Dermatologist Approaches to Biologic Therapy in Moderate-to-Severe Plaque Psoriasis",
+      "topic": "Plaque psoriasis (dermatology)",
+      "features": ["single-select skip gate", "one skip target"],
+      "questionCount": 8,
+      "routingPaths": { "clean": 2, "flawed": 2 },
+      "files": {
+        "docx": "s1-skip/questionnaire.docx",
+        "manifest": "s1-skip/manifest.json",
+        "flawedManifest": "s1-skip/manifest.flawed.json",
+        "cleanPage": "s1-skip/index.html",
+        "flawedPage": "s1-skip/flawed.html"
+      },
+      "seededErrors": [
+        { "id": "S1-E01", "category": "wrong-skip-target", "location": "Q2, rule 1", "description": "Q2=2 skips to Q6 instead of Q5, bypassing the barriers question for non-prescribers." },
+        { "id": "S1-E02", "category": "missing-option", "location": "Q3, option 5", "description": "BIMZELX missing from the Q3 option list." },
+        { "id": "S1-E03", "category": "missing-instruction", "location": "Q3, instruction", "description": "'Select all that apply.' not shown." }
+      ]
+    },
+    {
+      "id": "s2-screener",
+      "title": "Living with Migraine: Treatment Experiences and Preferences",
+      "topic": "Migraine (consumer)",
+      "features": ["screener", "multiple terminate paths", "age gate", "quota-full terminate"],
+      "questionCount": 10,
+      "routingPaths": { "clean": 5, "flawed": 4 },
+      "files": {
+        "docx": "s2-screener/questionnaire.docx",
+        "manifest": "s2-screener/manifest.json",
+        "flawedManifest": "s2-screener/manifest.flawed.json",
+        "cleanPage": "s2-screener/index.html",
+        "flawedPage": "s2-screener/flawed.html"
+      },
+      "seededErrors": [
+        { "id": "S2-E01", "category": "terminate-not-enforced", "location": "S3, rule 1", "description": "Industry-conflict terminate never fires." },
+        { "id": "S2-E02", "category": "wrong-threshold", "location": "S1, rule 1", "description": "Age terminate uses <16 instead of <18." },
+        { "id": "S2-E03", "category": "boundary-off-by-one", "location": "S4, rule 1", "description": "Chronic quota terminate uses >15 instead of >=15." }
+      ]
+    },
+    {
+      "id": "s3-multiselect-piping",
+      "title": "Clinician Use of Incretin-Based Therapies in Type 2 Diabetes",
+      "topic": "Type 2 diabetes (GLP-1)",
+      "features": ["multi-select-driven branching", "carry-forward option list", "answer piping", "count-based branch", "exclusive option"],
+      "questionCount": 9,
+      "routingPaths": { "clean": 3, "flawed": 3 },
+      "files": {
+        "docx": "s3-multiselect-piping/questionnaire.docx",
+        "manifest": "s3-multiselect-piping/manifest.json",
+        "flawedManifest": "s3-multiselect-piping/manifest.flawed.json",
+        "cleanPage": "s3-multiselect-piping/index.html",
+        "flawedPage": "s3-multiselect-piping/flawed.html"
+      },
+      "seededErrors": [
+        { "id": "S3-E01", "category": "broken-piping", "location": "Q3, question text", "description": "Q3 renders the literal token {Q2drug} instead of the piped brand." },
+        { "id": "S3-E02", "category": "carry-forward-broken", "location": "Q2, option list", "description": "Q2 shows the full static brand list instead of only the Q1 selections." },
+        { "id": "S3-E03", "category": "inverted-branch", "location": "Q3, rule 1", "description": "Count condition inverted: 3+ selections skip Q4, fewer than 3 see it." }
+      ]
+    },
+    {
+      "id": "s4-nested-rotation",
+      "title": "Oncologist Decision-Making in First-Line Metastatic NSCLC Immunotherapy",
+      "topic": "Oncology (metastatic NSCLC immunotherapy)",
+      "features": ["nested branching", "terminate", "option rotation", "randomization with anchored option", "unconditional skip"],
+      "questionCount": 10,
+      "routingPaths": { "clean": 4, "flawed": 4 },
+      "files": {
+        "docx": "s4-nested-rotation/questionnaire.docx",
+        "manifest": "s4-nested-rotation/manifest.json",
+        "flawedManifest": "s4-nested-rotation/manifest.flawed.json",
+        "cleanPage": "s4-nested-rotation/index.html",
+        "flawedPage": "s4-nested-rotation/flawed.html"
+      },
+      "seededErrors": [
+        { "id": "S4-E01", "category": "wrong-skip-target", "location": "Q4, rule 1", "description": "After Q4 the site skips to Q7 instead of Q6, so the PD-L1-high path never sees Q6." },
+        { "id": "S4-E02", "category": "rotation-anchor-violation", "location": "Q6, randomization", "description": "'Other' is shuffled into the list instead of being anchored last." },
+        { "id": "S4-E03", "category": "missing-option", "location": "Q1, option 5", "description": "LIBTAYO missing from the Q1 option list." }
+      ]
+    },
+    {
+      "id": "s5-allocation",
+      "title": "Treatment Mix in Moderate-to-Severe Plaque Psoriasis: An Allocation Study",
+      "topic": "Plaque psoriasis (dermatology)",
+      "features": ["allocation/constant-sum table", "per-row cap", "derived calculation", "calculation-driven branch"],
+      "questionCount": 9,
+      "routingPaths": { "clean": 2, "flawed": 2 },
+      "files": {
+        "docx": "s5-allocation/questionnaire.docx",
+        "manifest": "s5-allocation/manifest.json",
+        "flawedManifest": "s5-allocation/manifest.flawed.json",
+        "cleanPage": "s5-allocation/index.html",
+        "flawedPage": "s5-allocation/flawed.html"
+      },
+      "seededErrors": [
+        { "id": "S5-E01", "category": "allocation-sum-not-validated", "location": "Q1, allocation validation", "description": "The site accepts totals that do not equal 100." },
+        { "id": "S5-E02", "category": "wrong-branch-threshold", "location": "Q1, rule 1", "description": "Derived-share branch uses <30 instead of <50." },
+        { "id": "S5-E03", "category": "row-cap-removed", "location": "Q1, row r5", "description": "'Other approaches' row cap of 20 not enforced." }
+      ]
+    },
+    {
+      "id": "s6-kitchen-sink",
+      "title": "Rheumatologist Perceptions of Advanced Therapies in Moderate-to-Severe Rheumatoid Arthritis",
+      "topic": "Rheumatoid arthritis",
+      "features": ["multiple terminates", "multi-select", "loop per selected brand", "carry-forward", "piping", "allocation/constant-sum table", "derived calculation", "calculation-driven branch"],
+      "questionCount": 12,
+      "routingPaths": { "clean": 53, "flawed": 12 },
+      "files": {
+        "docx": "s6-kitchen-sink/questionnaire.docx",
+        "manifest": "s6-kitchen-sink/manifest.json",
+        "flawedManifest": "s6-kitchen-sink/manifest.flawed.json",
+        "cleanPage": "s6-kitchen-sink/index.html",
+        "flawedPage": "s6-kitchen-sink/flawed.html"
+      },
+      "seededErrors": [
+        { "id": "S6-E01", "category": "loop-truncated", "location": "Loop L1 (Q2-Q3)", "description": "Loop runs only for the first selected brand instead of up to three." },
+        { "id": "S6-E02", "category": "terminate-not-enforced", "location": "S2, rule 1", "description": "Insufficient-experience terminate never fires." },
+        { "id": "S6-E03", "category": "wrong-calc-source", "location": "computed accessWeight", "description": "COST/ACCESS WEIGHT computed from row r1 (efficacy) instead of r5 (cost and access)." }
+      ]
+    }
+  ]
+}

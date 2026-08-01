@@ -1,0 +1,343 @@
+{
+  "schema": "branching-survey/v1",
+  "id": "s6-kitchen-sink",
+  "variant": "flawed",
+  "title": "Rheumatologist Perceptions of Advanced Therapies in Moderate-to-Severe Rheumatoid Arthritis",
+  "intro": "Thank you for participating. This survey takes approximately 15 minutes. Your responses are confidential and reported only in aggregate.",
+  "seed": 606,
+  "loops": [
+    {
+      "id": "L1",
+      "source": "Q1",
+      "exclude": [
+        99
+      ],
+      "block": [
+        "Q2",
+        "Q3"
+      ],
+      "max": 1,
+      "note": "Repeat Q2-Q3 for each therapy selected at Q1, in the order listed at Q1, up to the first 3 selected. Pipe the current therapy name into each question."
+    }
+  ],
+  "computed": [
+    {
+      "id": "accessWeight",
+      "label": "COST/ACCESS WEIGHT",
+      "expr": {
+        "op": "sum",
+        "refs": [
+          "Q6.r1"
+        ]
+      },
+      "note": "Points allocated to 'Cost and access' (row r5) at Q6."
+    }
+  ],
+  "questions": [
+    {
+      "id": "S1",
+      "section": "SCREENER",
+      "type": "radio",
+      "text": "Which of the following best describes your primary professional role?",
+      "options": [
+        {
+          "code": 1,
+          "label": "Rheumatologist"
+        },
+        {
+          "code": 2,
+          "label": "Rheumatology nurse practitioner"
+        },
+        {
+          "code": 3,
+          "label": "Rheumatology physician assistant"
+        },
+        {
+          "code": 4,
+          "label": "I do not treat patients with rheumatoid arthritis"
+        }
+      ],
+      "rules": [
+        {
+          "if": {
+            "q": "S1",
+            "op": "eq",
+            "value": 4
+          },
+          "terminate": "non-treater",
+          "reason": "Does not treat rheumatoid arthritis patients."
+        }
+      ]
+    },
+    {
+      "id": "S2",
+      "section": "SCREENER",
+      "type": "number",
+      "text": "How many years have you been treating patients with rheumatoid arthritis?",
+      "instruction": "Enter a whole number between 0 and 50.",
+      "min": 0,
+      "max": 50,
+      "rules": []
+    },
+    {
+      "id": "S3",
+      "section": "SCREENER",
+      "type": "radio",
+      "text": "Which of the following best describes your primary practice setting?",
+      "options": [
+        {
+          "code": 1,
+          "label": "Academic medical center"
+        },
+        {
+          "code": 2,
+          "label": "Community hospital-affiliated practice"
+        },
+        {
+          "code": 3,
+          "label": "Independent private practice"
+        },
+        {
+          "code": 4,
+          "label": "Other"
+        }
+      ]
+    },
+    {
+      "id": "Q1",
+      "section": "MAIN",
+      "type": "checkbox",
+      "text": "Which of the following advanced therapies do you currently prescribe for moderate-to-severe rheumatoid arthritis?",
+      "instruction": "Select all that apply.",
+      "options": [
+        {
+          "code": 1,
+          "label": "HUMIRA"
+        },
+        {
+          "code": 2,
+          "label": "ENBREL"
+        },
+        {
+          "code": 3,
+          "label": "RINVOQ"
+        },
+        {
+          "code": 4,
+          "label": "XELJANZ"
+        },
+        {
+          "code": 5,
+          "label": "ORENCIA"
+        },
+        {
+          "code": 99,
+          "label": "None of the above",
+          "exclusive": true
+        }
+      ],
+      "rules": [
+        {
+          "if": {
+            "q": "Q1",
+            "op": "includes",
+            "value": 99
+          },
+          "terminate": "non-prescriber",
+          "reason": "Does not prescribe any advanced RA therapy."
+        }
+      ]
+    },
+    {
+      "id": "Q2",
+      "section": "MAIN",
+      "type": "radio",
+      "text": "How satisfied are you with {LOOP} for your moderate-to-severe rheumatoid arthritis patients?",
+      "options": [
+        {
+          "code": 1,
+          "label": "Very satisfied"
+        },
+        {
+          "code": 2,
+          "label": "Somewhat satisfied"
+        },
+        {
+          "code": 3,
+          "label": "Neither satisfied nor dissatisfied"
+        },
+        {
+          "code": 4,
+          "label": "Somewhat dissatisfied"
+        },
+        {
+          "code": 5,
+          "label": "Very dissatisfied"
+        }
+      ]
+    },
+    {
+      "id": "Q3",
+      "section": "MAIN",
+      "type": "number",
+      "text": "Approximately what percentage of your advanced-therapy RA patients currently receive {LOOP}?",
+      "instruction": "Enter a whole number between 0 and 100.",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "id": "Q4",
+      "section": "MAIN",
+      "type": "radio",
+      "text": "Which one advanced therapy would you call your first choice for a biologic- and JAK-naive patient with moderate-to-severe rheumatoid arthritis?",
+      "optionsFrom": {
+        "q": "Q1",
+        "exclude": [
+          99
+        ]
+      }
+    },
+    {
+      "id": "Q5",
+      "section": "MAIN",
+      "type": "rating",
+      "text": "How likely are you to continue prescribing {Q4} at your current rate over the next 12 months?",
+      "instruction": "0 = Not at all likely, 10 = Extremely likely",
+      "min": 0,
+      "max": 10,
+      "piping": {
+        "source": "Q4",
+        "note": "Insert the therapy selected at Q4 into the question text."
+      }
+    },
+    {
+      "id": "Q6",
+      "section": "MAIN",
+      "type": "allocation",
+      "text": "Allocate 100 points across the following factors according to how much each drives your choice of advanced therapy in moderate-to-severe rheumatoid arthritis.",
+      "instruction": "Enter a whole number in every row. Points must sum to exactly 100.",
+      "rows": [
+        {
+          "code": "r1",
+          "label": "Clinical efficacy"
+        },
+        {
+          "code": "r2",
+          "label": "Safety profile"
+        },
+        {
+          "code": "r3",
+          "label": "Mechanism of action"
+        },
+        {
+          "code": "r4",
+          "label": "Dosing convenience"
+        },
+        {
+          "code": "r5",
+          "label": "Cost and access"
+        }
+      ],
+      "allocation": {
+        "total": 100,
+        "rowMin": 0,
+        "rowMax": 100,
+        "enforceTotal": true
+      },
+      "rules": [
+        {
+          "if": {
+            "var": "accessWeight",
+            "op": "lt",
+            "value": 40
+          },
+          "goto": "Q8"
+        }
+      ]
+    },
+    {
+      "id": "Q7",
+      "section": "MAIN",
+      "type": "radio",
+      "text": "You allocated 40 or more points to cost and access. Which access hurdle affects your prescribing most?",
+      "options": [
+        {
+          "code": 1,
+          "label": "Prior authorization burden"
+        },
+        {
+          "code": 2,
+          "label": "Step therapy / fail-first requirements"
+        },
+        {
+          "code": 3,
+          "label": "High patient out-of-pocket costs"
+        },
+        {
+          "code": 4,
+          "label": "Formulary exclusions"
+        },
+        {
+          "code": 5,
+          "label": "Specialty pharmacy delays"
+        }
+      ]
+    },
+    {
+      "id": "Q8",
+      "section": "MAIN",
+      "type": "text",
+      "text": "What single change would most improve outcomes for your moderate-to-severe rheumatoid arthritis patients?"
+    },
+    {
+      "id": "Q9",
+      "section": "MAIN",
+      "type": "rating",
+      "text": "How likely are you to recommend advanced therapy to a colleague treating moderate-to-severe rheumatoid arthritis?",
+      "instruction": "0 = Not at all likely, 10 = Extremely likely",
+      "min": 0,
+      "max": 10
+    }
+  ],
+  "basedOn": "manifest.json",
+  "seededErrors": [
+    {
+      "id": "S6-E01",
+      "category": "loop-truncated",
+      "location": "Loop L1 (Q2-Q3)",
+      "description": "Docx says repeat Q2-Q3 for each therapy selected at Q1 up to 3; the site loops only the FIRST selected therapy.",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/loops/0/max",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "id": "S6-E02",
+      "category": "terminate-not-enforced",
+      "location": "S2, rule 1",
+      "description": "Docx says TERMINATE IF S2 < 2 (insufficient experience); the site never terminates on S2.",
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/questions/1/rules/0"
+        }
+      ]
+    },
+    {
+      "id": "S6-E03",
+      "category": "wrong-calc-source",
+      "location": "computed accessWeight",
+      "description": "Docx defines COST/ACCESS WEIGHT as the points on Q6 row r5 (Cost and access); the site computes it from row r1 (Clinical efficacy), so the Q7 branch keys off the wrong cell.",
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/computed/0/expr/refs/0",
+          "value": "Q6.r1"
+        }
+      ]
+    }
+  ]
+}
