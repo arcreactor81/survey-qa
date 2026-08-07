@@ -10,3 +10,150 @@ node_modules/
 # local bench/run trackers (test artifacts)
 .*-run-id
 .lang-runs
+
+# editor / tool / runtime scratch — never part of the source of a deployment
+.idea/
+.reasonix/
+node-compile-cache/
+
+# local sweeper queue markers (the empty files/dirs the v2 cron sweeper touches
+# when it is exercised locally — "v2/active" is a dir in one place and a file in
+# the other, so match the whole v2/ scratch root in both)
+/v2/
+worker-v2/v2/
+
+# disposable spike workers — contain deployment tokens, never commit
+spikes/
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EVALUATION BOUNDARY — the blind corpus
+#
+# Nothing that states expected behaviour, or names/describes a planted defect,
+# for the BLIND corpus (test-suite/blind/) may enter the public repo.
+#
+# The rules below are UNCONDITIONAL. Which *tiers* ship at all was decided by
+# the owner and is applied at the end of this file as PHASE 1 OF A STAGGERED
+# PUSH — see the block headed "PHASE 1" and docs/EVALUATION-BOUNDARY.md.
+#
+# DELIBERATELY NOT EXCLUDED — these belong to the OPEN corpus, are published on
+# purpose, and the scorer suites read them:
+#   test-suite/branching/**/manifest.flawed.json  (seeded patches, open corpus)
+#   scorer/oracle/generated/*.{clean,flawed}.json (derived oracles, open corpus)
+#   scorer/test/calibration-pins.mjs              (pinned calibration constants)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# blind-test answer keys: kept out of the public repo so the corpus stays blind
+test-suite/blind/**/truth/
+test-suite/blind/**/*.answerkey.json
+
+# belt-and-braces: these filenames only ever mean "disclosure of expected
+# behaviour", wherever someone puts them (including outside truth/)
+**/answer-key.json
+**/answer-key.*.json
+**/*.answerkey.json
+**/ANSWER-KEY.md
+**/seeded-defects.json
+**/seeded-defects.*.json
+# corpus100 truth artifacts: obligations.json records site_satisfies per requirement
+# and ambiguities.json records which cases are deliberately unresolvable — both are
+# answer keys wherever they are put, not only inside truth/.
+**/obligations.json
+**/ambiguities.json
+**/seeded-patch*.json
+**/adjudication*.json
+**/adjudications/
+**/calibration-results*.json
+**/*.oracle.json
+test-suite/blind/**/oracle*
+test-suite/blind/**/METHOD.md
+test-suite/blind/**/*expected*
+test-suite/blind/**/*defect*
+
+# Runs, judgements and rendered reports DERIVED from a blind tier reconstruct
+# that tier's corpus and its planted defects from captured artifacts alone.
+# Tiers 2-4 are excluded here; t1-easy-derived output is excluded in the PHASE 1
+# block at the end of this file, for the same reason.
+pipeline/runs/t2-*/
+pipeline/runs/t3-*/
+pipeline/runs/t4-*/
+pipeline/judge/out/t2-*/
+pipeline/judge/out/t3-*/
+pipeline/judge/out/t4-*/
+pipeline/report/samples/t2-*
+pipeline/report/samples/t3-*
+pipeline/report/samples/t4-*
+worker-v2/ui/fixtures/*-t2-*.json
+worker-v2/ui/fixtures/*-t3-*.json
+worker-v2/ui/fixtures/*-t4-*.json
+
+# deploy runbook with real account/app ids — sanitize before publishing
+worker-v2/DEPLOY-READY.md
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE 1 OF A STAGGERED PUSH — NOT A PERMANENT EXCLUSION
+#
+# OWNER'S RULING: "just keep the testing material blind for now, and once the
+# test runs are complete, publish them alongside the test materials on the repo
+# — staggered push."
+#
+# So: the blind corpus AND everything derived from it stay out of the public
+# repository UNTIL the test runs are complete, and then go in TOGETHER with the
+# results. Everything listed below is intended to be PUBLISHED LATER. If you are
+# reading this after the runs finished, the exclusion has expired — see
+# docs/EVALUATION-BOUNDARY.md for exactly what phase 2 involves.
+#
+# WHY THE DERIVED OUTPUT HAD TO GO TOO. Excluding test-suite/blind/ alone
+# accomplishes nothing: pipeline/runs/t1-easy reconstructs the t1 corpus and
+# every seeded defect from captured artifacts on their own (_textdiff.json
+# carries a verbatim doc-vs-site copy of every screen; _analysis.json prints the
+# full option inventory with codes; the session traces carry each mis-route).
+#
+# WHAT REPLACES IT FOR THE PUBLIC TEST SUITES. `pipeline/runs/synthetic-demo/`
+# — a signed, multi-session run over an invented houseplant questionnaire, built
+# by pipeline/runs/make-synthetic-run.mjs and resolved by
+# pipeline/runs/run-source.mjs. It is committed on purpose. Suites that need
+# "a real signed run" use it; the handful of tests that assert t1-easy's own
+# content skip with a stated reason and a printed banner, never silently.
+# ═══════════════════════════════════════════════════════════════════════════
+test-suite/blind/
+
+# t1-easy-derived output (reconstructs the corpus and its planted defects)
+pipeline/runs/t1-easy/
+pipeline/judge/out/t1-easy/
+pipeline/judge/replay/
+pipeline/judge/VERIFICATION.md
+pipeline/judge/VERIFICATION-ROUND2.md
+pipeline/judge/VERIFICATION-ROUND3.md
+pipeline/report/samples/acceptance/
+pipeline/report/samples/t1-easy-as-run.html
+pipeline/report/samples/t1-easy-current-results.html
+pipeline/report/samples/t1-easy-register.html
+pipeline/report/samples/t1-easy.flag-lanes.json
+worker-v2/ui/fixtures/16-live-seeded-t1-easy.json
+# ...and the preview RENDERED from that fixture. The rule above covered only the
+# JSON; the HTML is the same content laid out for reading, so it reconstructs the
+# seeded run just as well. Same rationale, same expiry.
+worker-v2/ui/previews/16-live-seeded-t1-easy.html
+
+# v2 acceptance output captured at the repo root: run-record.v2.json and
+# contract-revision.json for a t1-easy run. These are exactly the "captured
+# artifacts" the banner above says reconstruct the corpus and its planted
+# defects — a run record is the most disclosive single file we produce.
+/v2-acceptance-*/
+
+# THE HOSTED SURVEY SITE ITSELF. targets/t1-easy-host/ is the deployed copy of a
+# blind tier's instrument: the seeded site is half the answer key in executable
+# form (public/survey.js carries the routing the document is checked against, and
+# verify-log.json records what was served). t1-easy is retired, so this exclusion
+# is conservative rather than urgent — but the RULE it establishes is not:
+#
+#   RULE FOR THE NEXT SURVEY HOSTED THIS WAY: a target site built for a blind
+#   tier is blind material and is excluded from the moment it is created, in the
+#   same commit that creates it. It ships in phase 2 with the corpus and the
+#   results, never before and never separately. Host it under targets/ so this
+#   rule keeps matching.
+targets/
+
+# The PUBLIC stand-in run is deliberately NOT excluded — the five suites above
+# depend on it and it contains nothing derived from the blind corpus.
+!pipeline/runs/synthetic-demo/
