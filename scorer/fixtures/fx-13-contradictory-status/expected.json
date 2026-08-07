@@ -1,0 +1,22 @@
+{
+  "description": "Contradictory status/verdict (pending + pass). RUN_SCHEMA_INVALID; no completeness gate can pass; quality suppressed.",
+  "expectErrors": [
+    "RUN_SCHEMA_INVALID"
+  ],
+  "forbidErrors": [],
+  "assertions": [
+    {
+      "path": "metrics",
+      "op": "null"
+    },
+    {
+      "path": "completeness",
+      "op": "null"
+    },
+    {
+      "path": "integrity.gates.schema",
+      "op": "eq",
+      "value": "failed"
+    }
+  ]
+}

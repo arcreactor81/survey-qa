@@ -1,0 +1,22 @@
+{
+  "description": "Oracle-access attempt: tester tried to fetch the private oracle. ORACLE_ACCESS_VIOLATION; evaluation invalid.",
+  "expectErrors": [
+    "ORACLE_ACCESS_VIOLATION"
+  ],
+  "forbidErrors": [],
+  "assertions": [
+    {
+      "path": "integrity.evaluationInvalid",
+      "op": "true"
+    },
+    {
+      "path": "integrity.status",
+      "op": "eq",
+      "value": "invalid"
+    },
+    {
+      "path": "metrics",
+      "op": "null"
+    }
+  ]
+}

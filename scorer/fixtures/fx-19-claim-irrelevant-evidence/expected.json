@@ -1,0 +1,42 @@
+{
+  "description": "Claim relevance (defect 7): an item cites a screenshot from an attempt that never targeted it; a defect finding with no attemptRefs cites a run-level packet; and a blocker finding names an attempt but supports itself with an unrelated run-level artifact. All three claims are evidence-insufficient: no coverage credit, no defect credit, seeded-defect recall halves.",
+  "expectErrors": [],
+  "forbidErrors": [
+    "ATTESTATION_INVALID",
+    "EVIDENCE_HASH_MISMATCH"
+  ],
+  "expectWarnings": [
+    "EVIDENCE_INSUFFICIENT"
+  ],
+  "expectWarningMessages": [
+    "never targeted it",
+    "cites no attempt",
+    "lacks a blocker packet plus last valid state"
+  ],
+  "assertions": [
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "approx",
+      "value": 0.9230769230769231
+    },
+    {
+      "path": "metrics.evidenceCompleteness",
+      "op": "approx",
+      "value": 0.8235294117647058
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "approx",
+      "value": 0.5
+    },
+    {
+      "path": "defects.unsupported.length",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "completeness.testComplete",
+      "op": "false"
+    }
+  ]
+}

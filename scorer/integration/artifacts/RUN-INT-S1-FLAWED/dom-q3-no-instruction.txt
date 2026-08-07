@@ -1,0 +1,4 @@
+Q3 block DOM between the <h2> heading and the first .opt label:
+<h2>Which of the following biologic therapies do you currently prescribe for moderate-to-severe plaque psoriasis?</h2>
+<label class="opt">...SKYRIZI...</label>
+No element with class "instruction" is present in the Q3 block.

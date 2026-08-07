@@ -1,0 +1,29 @@
+{
+  "description": "Falsified cost telemetry: claimed totals differ from attested calls. RESOURCE_MISMATCH; only authentic totals scored; unknown cost fails the cost gate.",
+  "expectErrors": [
+    "RESOURCE_MISMATCH"
+  ],
+  "forbidErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "assertions": [
+    {
+      "path": "resources.costKnown",
+      "op": "false"
+    },
+    {
+      "path": "integrity.gates.cost",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "metrics.costPerVerifiedCoverageUnit",
+      "op": "null"
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "eq",
+      "value": 1
+    }
+  ]
+}

@@ -1,0 +1,550 @@
+{
+  "schemaVersion": "1.0.0",
+  "oracleRecordId": "s1-skip.clean",
+  "provenance": {
+    "generatorId": "scorer/oracle/build-oracle.mjs",
+    "generatorVersion": "1.0.0",
+    "generatedAt": "2026-08-01T00:00:00Z",
+    "sourceHash": "sha256:66f6b874f46f9b63547ad7053a18456cf4993780aecff4036299a7cc5d233914"
+  },
+  "survey": {
+    "surveyId": "s1-skip",
+    "title": "Dermatologist Approaches to Biologic Therapy in Moderate-to-Severe Plaque Psoriasis",
+    "variant": {
+      "variantId": "s1-skip.clean",
+      "kind": "clean"
+    },
+    "document": {
+      "documentId": "s1-skip/questionnaire.docx",
+      "contentHash": "sha256:e9a40074cb3eb5ff7823a33110e1957a5096b62bea0a07cdda66c0b330da9f70"
+    },
+    "targetBuild": {
+      "buildId": "s1-skip/index.html",
+      "contentHash": "sha256:e454b4a943bf7afd304bb227de0caa71299bfe182546b984c79de79262cd7f67"
+    }
+  },
+  "obligations": [
+    {
+      "oracleId": "s1-skip/question:Q1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q1",
+        "quote": "How many patients with moderate-to-severe plaque psoriasis do you personally manage in a typical month?"
+      },
+      "requirement": "Q1. How many patients with moderate-to-severe plaque psoriasis do you personally manage in a typical month?",
+      "contentHash": "sha256:6002005b1ad3a74311e4e49959c81b24049941956be9b855d63a5bf4cc63b0c2",
+      "preconditions": [],
+      "stimulus": "Reach question Q1",
+      "expectedObservables": [
+        "Question Q1 is displayed with text: \"How many patients with moderate-to-severe plaque psoriasis do you personally manage in a typical month?\"",
+        "Answer input is of type number"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/question:Q2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q2",
+        "quote": "Do you currently prescribe biologic therapies for moderate-to-severe plaque psoriasis?"
+      },
+      "requirement": "Q2. Do you currently prescribe biologic therapies for moderate-to-severe plaque psoriasis?",
+      "contentHash": "sha256:8d68ccc5fbe821ea657565857f6a725e10081bc352708349d5604c08ded22fad",
+      "preconditions": [],
+      "stimulus": "Reach question Q2",
+      "expectedObservables": [
+        "Question Q2 is displayed with text: \"Do you currently prescribe biologic therapies for moderate-to-severe plaque psoriasis?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Yes\"",
+        "Option 2: \"No\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/question:Q3",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q3",
+        "quote": "Which of the following biologic therapies do you currently prescribe for moderate-to-severe plaque psoriasis?"
+      },
+      "requirement": "Q3. Which of the following biologic therapies do you currently prescribe for moderate-to-severe plaque psoriasis?",
+      "contentHash": "sha256:afcd0198b255a59216eb81553f5e054788391412adaf87e4aa6dca1f73451e78",
+      "preconditions": [],
+      "stimulus": "Reach question Q3",
+      "expectedObservables": [
+        "Question Q3 is displayed with text: \"Which of the following biologic therapies do you currently prescribe for moderate-to-severe plaque psoriasis?\"",
+        "Answer input is of type checkbox",
+        "Option 1: \"SKYRIZI\"",
+        "Option 2: \"TREMFYA\"",
+        "Option 3: \"COSENTYX\"",
+        "Option 4: \"TALTZ\"",
+        "Option 5: \"BIMZELX\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/question:Q4",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q4",
+        "quote": "Overall, how satisfied are you with the biologic therapies you currently prescribe for moderate-to-severe plaque psoriasis?"
+      },
+      "requirement": "Q4. Overall, how satisfied are you with the biologic therapies you currently prescribe for moderate-to-severe plaque psoriasis?",
+      "contentHash": "sha256:e8858e0f80dc38cd0e29e39c6a14596be39e34b6b5886a90c588d59286167ee9",
+      "preconditions": [],
+      "stimulus": "Reach question Q4",
+      "expectedObservables": [
+        "Question Q4 is displayed with text: \"Overall, how satisfied are you with the biologic therapies you currently prescribe for moderate-to-severe plaque psoriasis?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Very satisfied\"",
+        "Option 2: \"Somewhat satisfied\"",
+        "Option 3: \"Neither satisfied nor dissatisfied\"",
+        "Option 4: \"Somewhat dissatisfied\"",
+        "Option 5: \"Very dissatisfied\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/question:Q5",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q5",
+        "quote": "What is the single biggest barrier to biologic use in your moderate-to-severe plaque psoriasis patients?"
+      },
+      "requirement": "Q5. What is the single biggest barrier to biologic use in your moderate-to-severe plaque psoriasis patients?",
+      "contentHash": "sha256:40f129b3f4d3fe06896c2816bd9836e0317f89ab9bc872580dd9f1b28d67909f",
+      "preconditions": [],
+      "stimulus": "Reach question Q5",
+      "expectedObservables": [
+        "Question Q5 is displayed with text: \"What is the single biggest barrier to biologic use in your moderate-to-severe plaque psoriasis patients?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Insurance / prior authorization requirements\"",
+        "Option 2: \"Out-of-pocket cost to patients\"",
+        "Option 3: \"Safety or tolerability concerns\"",
+        "Option 4: \"Patient reluctance to use injectables\"",
+        "Option 5: \"Other\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/question:Q6",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q6",
+        "quote": "How likely are you to recommend biologic therapy to a colleague treating moderate-to-severe plaque psoriasis?"
+      },
+      "requirement": "Q6. How likely are you to recommend biologic therapy to a colleague treating moderate-to-severe plaque psoriasis?",
+      "contentHash": "sha256:30daaede8abca3e5d301157d1b22cf0b64c153493c3ad0186b3a949af6d98fdb",
+      "preconditions": [],
+      "stimulus": "Reach question Q6",
+      "expectedObservables": [
+        "Question Q6 is displayed with text: \"How likely are you to recommend biologic therapy to a colleague treating moderate-to-severe plaque psoriasis?\"",
+        "Answer input is of type rating"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/question:S1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S1",
+        "quote": "Which of the following best describes your primary professional role?"
+      },
+      "requirement": "S1. Which of the following best describes your primary professional role?",
+      "contentHash": "sha256:3a53b30da56e83855695eb6fbb49e3df52fab0e562d37a0f2f5e66cd3c5aa51d",
+      "preconditions": [],
+      "stimulus": "Reach question S1",
+      "expectedObservables": [
+        "Question S1 is displayed with text: \"Which of the following best describes your primary professional role?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Practicing dermatologist\"",
+        "Option 2: \"Dermatology nurse practitioner\"",
+        "Option 3: \"Physician assistant\"",
+        "Option 4: \"Other healthcare professional\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/question:S2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S2",
+        "quote": "How many years have you been in clinical practice?"
+      },
+      "requirement": "S2. How many years have you been in clinical practice?",
+      "contentHash": "sha256:d84e4c86111df2c5cbf66aeee51b617cff389219a189cb44dbd40b8cdd556473",
+      "preconditions": [],
+      "stimulus": "Reach question S2",
+      "expectedObservables": [
+        "Question S2 is displayed with text: \"How many years have you been in clinical practice?\"",
+        "Answer input is of type number"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/rule:Q1:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, instruction",
+        "quote": "Enter a whole number between 0 and 500."
+      },
+      "requirement": "[INSTRUCTION: Enter a whole number between 0 and 500.]",
+      "contentHash": "sha256:6b497a47de4bc216d50667f5822a2359657e8d1bcb1aabae857f0281107ec667",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "View question Q1",
+      "expectedObservables": [
+        "Instruction shown: \"Enter a whole number between 0 and 500.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/rule:Q1:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, range validation"
+      },
+      "requirement": "Q1: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 500.",
+      "contentHash": "sha256:81ce68a166fb11ebd1e5c035f6d14d4c8f2dd3edb2826f9175b8e108c62dcf05",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "Submit an answer at Q1 outside the documented bounds",
+      "expectedObservables": [
+        "Q1 accepts only whole numbers between 0 and 500",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/rule:Q3:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q3, instruction",
+        "quote": "Select all that apply."
+      },
+      "requirement": "[INSTRUCTION: Select all that apply.]",
+      "contentHash": "sha256:bc95d34c8e1a13cd858c2668d8b25426d4589171972afd7ab527fdc3d21bbfc2",
+      "preconditions": [
+        "Question Q3 is displayed"
+      ],
+      "stimulus": "View question Q3",
+      "expectedObservables": [
+        "Instruction shown: \"Select all that apply.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/rule:Q6:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q6, instruction",
+        "quote": "0 = Not at all likely, 10 = Extremely likely"
+      },
+      "requirement": "[INSTRUCTION: 0 = Not at all likely, 10 = Extremely likely]",
+      "contentHash": "sha256:b240a2ec4dbfd0ec12ae4a94d38b6a33a1f37072e0d73834c7ba04e682aaa229",
+      "preconditions": [
+        "Question Q6 is displayed"
+      ],
+      "stimulus": "View question Q6",
+      "expectedObservables": [
+        "Instruction shown: \"0 = Not at all likely, 10 = Extremely likely\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/rule:Q6:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q6, range validation"
+      },
+      "requirement": "Q6: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 10.",
+      "contentHash": "sha256:d3ab6fba330f8756f37bb2519ebf50fbc747940f0480526f12d1ad86af395c65",
+      "preconditions": [
+        "Question Q6 is displayed"
+      ],
+      "stimulus": "Submit an answer at Q6 outside the documented bounds",
+      "expectedObservables": [
+        "Q6 accepts only whole numbers between 0 and 10",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/rule:S2:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S2, instruction",
+        "quote": "Enter a whole number between 0 and 50."
+      },
+      "requirement": "[INSTRUCTION: Enter a whole number between 0 and 50.]",
+      "contentHash": "sha256:1f90ea3c18ea1b23e737a1aefdbae2315cf7a5657c416123c3ba08f6ea57fe45",
+      "preconditions": [
+        "Question S2 is displayed"
+      ],
+      "stimulus": "View question S2",
+      "expectedObservables": [
+        "Instruction shown: \"Enter a whole number between 0 and 50.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/rule:S2:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S2, range validation"
+      },
+      "requirement": "S2: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 50.",
+      "contentHash": "sha256:d0690cd2b973efb937d49e629e08b52b544b9c094e60e616d1a3ad6d5eb0cb5f",
+      "preconditions": [
+        "Question S2 is displayed"
+      ],
+      "stimulus": "Submit an answer at S2 outside the documented bounds",
+      "expectedObservables": [
+        "S2 accepts only whole numbers between 0 and 50",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/branch:Q2:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q2, default continue"
+      },
+      "requirement": "AFTER Q2, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO Q3.",
+      "contentHash": "sha256:f4d5beb2608406903e8bc6032aaf22b834b8eac08e30e9f051a81b3e3eb2af10",
+      "preconditions": [
+        "Question Q2 is reached",
+        "Condition does not hold: Q2=2 (NO)"
+      ],
+      "stimulus": "Answer Q2 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at Q3 immediately after Q2"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/branch:Q2:goto:Q5:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q2, rule 1",
+        "quote": "IF Q2=2 (NO), SKIP TO Q5."
+      },
+      "requirement": "IF Q2=2 (NO), SKIP TO Q5.",
+      "contentHash": "sha256:0bc90f9f4575e57e7d657864c6ddca41df08c91f1e84578399154e0b75c2647b",
+      "preconditions": [
+        "Question Q2 is reached"
+      ],
+      "stimulus": "Answer Q2 such that Q2=2 (NO)",
+      "expectedObservables": [
+        "Navigation continues at Q5 immediately after Q2"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s1-skip/terminal:complete",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Survey completion"
+      },
+      "requirement": "SURVEY REACHES THE NORMAL COMPLETION SCREEN.",
+      "contentHash": "sha256:4f3cf01f982a93503d371c54b26a213ff51323829cbc80303365b1855ae1486f",
+      "preconditions": [],
+      "stimulus": "Reach the end of the questionnaire without triggering any terminate rule",
+      "expectedObservables": [
+        "The normal completion screen is shown"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    }
+  ],
+  "witnessPaths": [
+    {
+      "witnessPathId": "p001",
+      "answerVector": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": 0,
+        "Q2": 1,
+        "Q3": [
+          1
+        ],
+        "Q4": 1,
+        "Q5": 1,
+        "Q6": 0
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "Q5",
+        "Q6"
+      ],
+      "terminalId": null
+    },
+    {
+      "witnessPathId": "p002",
+      "answerVector": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": 0,
+        "Q2": 2,
+        "Q5": 1,
+        "Q6": 0
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "Q1",
+        "Q2",
+        "Q5",
+        "Q6"
+      ],
+      "terminalId": null
+    }
+  ],
+  "seededDefects": []
+}

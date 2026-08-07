@@ -1,0 +1,49 @@
+{
+  "description": "Duplicate-obligation inflation: one oracle obligation copied into two tester items. One match max; copy flagged duplicate/extraneous; extraction precision decreases.",
+  "expectErrors": [],
+  "forbidErrors": [
+    "MATCH_AMBIGUOUS"
+  ],
+  "assertions": [
+    {
+      "path": "errors.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "matching.duplicates.length",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "matching.duplicates.0.itemId",
+      "op": "eq",
+      "value": "T-99"
+    },
+    {
+      "path": "matching.matched",
+      "op": "eq",
+      "value": 14
+    },
+    {
+      "path": "metrics.extractionPrecision",
+      "op": "approx",
+      "value": 0.9333333333333333
+    },
+    {
+      "path": "metrics.extractionRecall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.verifiedCoverageUnits",
+      "op": "eq",
+      "value": 13
+    }
+  ]
+}

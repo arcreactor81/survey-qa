@@ -1,0 +1,1459 @@
+{
+  "judgementId": "JR-RUN-FIXTURE-PUBLICATION-GATE",
+  "schemaVersion": "survey-qa-judgement-record/1.0.0",
+  "kind": "judgement-record",
+  "generatedAt": "2026-08-01T22:00:00Z",
+  "status": "attestable",
+  "publishable": true,
+  "renderingConstraint": "may drive current results once the attestation verifies and binds",
+  "unbindableFields": [],
+  "binding": {
+    "runRecordPayloadHash": "sha256:7d5c23fe66512ea5073c2b87aeefd2a3f8d26fbd716303aac34f6757f29cb3c2",
+    "contractRevisionId": "CR-FIXTURE-1",
+    "targetBuildId": "s1-skip/index.html",
+    "evidenceManifestRoot": "sha256:ded9772c0ed27d83d7682cf80c1dc1e324514207fda92d2bf93ae50fb63beb00",
+    "engineVersion": "1.0.0",
+    "predicateVersion": "1.0.0",
+    "runId": "RUN-FIXTURE-PUBLICATION-GATE",
+    "contractRevisionHash": "sha256:crcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcrcr",
+    "compilerVersion": "1.0.0",
+    "ambiguityPolicyVersion": "1.0.0",
+    "resultPolicyVersion": "1.0.0"
+  },
+  "source": {
+    "runDir": "fixture"
+  },
+  "denominator": {
+    "obligations": 18,
+    "rule": "the fixture's contract items"
+  },
+  "counts": {},
+  "certification": {
+    "certifiable": true,
+    "blockers": [],
+    "integrity": []
+  },
+  "results": [
+    {
+      "obligationId": "it-s1-role",
+      "category": "question",
+      "statement": "S1 asks which option best describes the respondent's primary professional role.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "shot-s1.png",
+          "sha256": "sha256:fcdc204cfa8d9cca65e16f9125781c82dc3fd3522bfbfd4bdcf894382de63e2b",
+          "locators": [
+            "CAP-1-01"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "shot-s1.png",
+          "sha256": "sha256:fcdc204cfa8d9cca65e16f9125781c82dc3fd3522bfbfd4bdcf894382de63e2b",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-01",
+          "value": [
+            "S1 rendered with the four documented role options"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "shot-s1.png",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-01",
+              "expected": [
+                "S1 rendered with the four documented role options"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": false,
+            "reason": "WITNESS_REREAD_FAILED",
+            "proofKind": "capture-field",
+            "sha256": null
+          }
+        ],
+        "counter": [],
+        "allVerified": false,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-s2-tenure",
+      "category": "question",
+      "statement": "S2 asks how many years the respondent has been in clinical practice.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "shot-s2.png",
+          "sha256": "sha256:b6950e50da9634ea3559b70aeaf7b5433df0c050ad88ee6bb5c1e5cc8c288798",
+          "locators": [
+            "CAP-1-02"
+          ]
+        },
+        {
+          "artifact": "counter.json",
+          "sha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "locators": [
+            "evidence[9]"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "shot-s2.png",
+          "sha256": "sha256:b6950e50da9634ea3559b70aeaf7b5433df0c050ad88ee6bb5c1e5cc8c288798",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-02",
+          "value": [
+            "S2 rendered with a numeric entry field"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [
+        {
+          "artifact": "counter.json",
+          "sha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "session": "AT-1",
+          "seq": 9,
+          "locator": "evidence[9]",
+          "value": [
+            "the captured page shows the opposite of the recorded verdict"
+          ],
+          "note": "counter-witness attached to a result recorded as a pass"
+        }
+      ],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "shot-s2.png",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-02",
+              "expected": [
+                "S2 rendered with a numeric entry field"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:b6950e50da9634ea3559b70aeaf7b5433df0c050ad88ee6bb5c1e5cc8c288798"
+          }
+        ],
+        "counter": [
+          {
+            "witness": {
+              "artifact": "counter.json",
+              "session": "AT-1",
+              "seq": 9,
+              "locator": "evidence[9]",
+              "expected": [
+                "the captured page shows the opposite of the recorded verdict"
+              ],
+              "note": "counter-witness attached to a result recorded as a pass",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          }
+        ],
+        "allVerified": true,
+        "witnessCount": 2,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-s2-instruction",
+      "category": "question",
+      "statement": "S2 displays the instruction 'Enter a whole number between 0 and 50.'",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "INSUFFICIENT_SAMPLE",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "insufficient",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "dom-s2-instruction.txt",
+          "sha256": "sha256:e027d5474f1364414c20fae934173ac881f94e56aee5a75ab115ca50840b8f1f",
+          "locators": [
+            "CAP-1-03"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "dom-s2-instruction.txt",
+          "sha256": "sha256:e027d5474f1364414c20fae934173ac881f94e56aee5a75ab115ca50840b8f1f",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-03",
+          "value": [
+            "S2 instruction line rendered verbatim"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "dom-s2-instruction.txt",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-03",
+              "expected": [
+                "S2 instruction line rendered verbatim"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:e027d5474f1364414c20fae934173ac881f94e56aee5a75ab115ca50840b8f1f"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-s2-range",
+      "category": "question",
+      "statement": "S2 must accept only whole numbers between 0 and 50.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "mixed",
+      "evidenceRefs": [
+        {
+          "artifact": "dom-s2-range.txt",
+          "sha256": "sha256:522b9eb8ec866235c959c6da0f44e0cb338daf61e181fafbf8bd8f270fd1801d",
+          "locators": [
+            "CAP-1-04"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "dom-s2-range.txt",
+          "sha256": "sha256:522b9eb8ec866235c959c6da0f44e0cb338daf61e181fafbf8bd8f270fd1801d",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-04",
+          "value": [
+            "S2 rejected the out-of-range probe value 99"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "dom-s2-range.txt",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-04",
+              "expected": [
+                "S2 rejected the out-of-range probe value 99"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:522b9eb8ec866235c959c6da0f44e0cb338daf61e181fafbf8bd8f270fd1801d"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q1-caseload",
+      "category": "question",
+      "statement": "Q1 asks how many moderate-to-severe plaque psoriasis patients the respondent manages in a typical month.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "shot-q1.png",
+          "sha256": "sha256:90bd37550a50d991ad60bb6cd5468886a2cc59b2f6e78589eed93b54d1f10b9b",
+          "locators": [
+            "CAP-1-05"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "shot-q1.png",
+          "sha256": "sha256:90bd37550a50d991ad60bb6cd5468886a2cc59b2f6e78589eed93b54d1f10b9b",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-05",
+          "value": [
+            "Q1 rendered with a numeric entry field"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "shot-q1.png",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-05",
+              "expected": [
+                "Q1 rendered with a numeric entry field"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:90bd37550a50d991ad60bb6cd5468886a2cc59b2f6e78589eed93b54d1f10b9b"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q1-instruction",
+      "category": "question",
+      "statement": "Q1 displays the instruction 'Enter a whole number between 0 and 500.'",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "dom-q1-instruction.txt",
+          "sha256": "sha256:3e6a8869fe2a01752ff3d877d9fc8bd99120dfbc59ab4b18eabe9f3322b720eb",
+          "locators": [
+            "CAP-1-06"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "dom-q1-instruction.txt",
+          "sha256": "sha256:3e6a8869fe2a01752ff3d877d9fc8bd99120dfbc59ab4b18eabe9f3322b720eb",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-06",
+          "value": [
+            "Q1 instruction line rendered verbatim"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "dom-q1-instruction.txt",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-06",
+              "expected": [
+                "Q1 instruction line rendered verbatim"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:3e6a8869fe2a01752ff3d877d9fc8bd99120dfbc59ab4b18eabe9f3322b720eb"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q1-range",
+      "category": "question",
+      "statement": "Q1 must accept only whole numbers between 0 and 500.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "dom-q1-range.txt",
+          "sha256": "sha256:d4d439023f9aee9bebc9eef86fe8cceb38931e4079f06a7d679972beb83f630f",
+          "locators": [
+            "CAP-1-07"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "dom-q1-range.txt",
+          "sha256": "sha256:d4d439023f9aee9bebc9eef86fe8cceb38931e4079f06a7d679972beb83f630f",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-07",
+          "value": [
+            "Q1 rejected the out-of-range probe value 900"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "dom-q1-range.txt",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-07",
+              "expected": [
+                "Q1 rejected the out-of-range probe value 900"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:d4d439023f9aee9bebc9eef86fe8cceb38931e4079f06a7d679972beb83f630f"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q2-prescriber",
+      "category": "question",
+      "statement": "Q2 asks whether the respondent currently prescribes biologic therapies for moderate-to-severe plaque psoriasis.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "shot-q2.png",
+          "sha256": "sha256:c645867d576dc821cfe4cd7154f655bcf83283c4d1080f9da4da2e8adbb17050",
+          "locators": [
+            "CAP-1-08"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "shot-q2.png",
+          "sha256": "sha256:c645867d576dc821cfe4cd7154f655bcf83283c4d1080f9da4da2e8adbb17050",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-08",
+          "value": [
+            "Q2 rendered as a Yes/No single-select"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "shot-q2.png",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-08",
+              "expected": [
+                "Q2 rendered as a Yes/No single-select"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:c645867d576dc821cfe4cd7154f655bcf83283c4d1080f9da4da2e8adbb17050"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q2-skip",
+      "category": "question",
+      "statement": "If Q2 is answered No, the respondent skips ahead to Q5.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "dom-skip-to-q5.txt",
+          "sha256": "sha256:444dfd16ba5d524cd2bec9e68db1f99e1e423e489b735d08695b276ab86f08b4",
+          "locators": [
+            "CAP-2-01"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "dom-skip-to-q5.txt",
+          "sha256": "sha256:444dfd16ba5d524cd2bec9e68db1f99e1e423e489b735d08695b276ab86f08b4",
+          "session": "AT-2",
+          "seq": 1,
+          "locator": "CAP-2-01",
+          "value": [
+            "Answering No at Q2 routed straight to Q5"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "dom-skip-to-q5.txt",
+              "session": "AT-2",
+              "seq": 1,
+              "locator": "CAP-2-01",
+              "expected": [
+                "Answering No at Q2 routed straight to Q5"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:444dfd16ba5d524cd2bec9e68db1f99e1e423e489b735d08695b276ab86f08b4"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q2-continue",
+      "category": "question",
+      "statement": "When Q2 is answered Yes the survey continues to Q3.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "dom-q2-default.txt",
+          "sha256": "sha256:59b18808dab43437e536f52fe9b211c09bc5c248ed96d1023d7f6b32f9aa7ac5",
+          "locators": [
+            "CAP-1-09"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "dom-q2-default.txt",
+          "sha256": "sha256:59b18808dab43437e536f52fe9b211c09bc5c248ed96d1023d7f6b32f9aa7ac5",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-09",
+          "value": [
+            "Answering Yes at Q2 continued to Q3"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "dom-q2-default.txt",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-09",
+              "expected": [
+                "Answering Yes at Q2 continued to Q3"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:59b18808dab43437e536f52fe9b211c09bc5c248ed96d1023d7f6b32f9aa7ac5"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q3-options",
+      "category": "question",
+      "statement": "Q3 asks which biologic therapies the respondent currently prescribes for moderate-to-severe plaque psoriasis.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "shot-q3.png",
+          "sha256": "sha256:29d01514ec18cffc0f203cc9f4950eda184b8d95180584fed01c45dbaeb46780",
+          "locators": [
+            "CAP-1-10"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "shot-q3.png",
+          "sha256": "sha256:29d01514ec18cffc0f203cc9f4950eda184b8d95180584fed01c45dbaeb46780",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-10",
+          "value": [
+            "Q3 listed all five documented brands"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "shot-q3.png",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-10",
+              "expected": [
+                "Q3 listed all five documented brands"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:29d01514ec18cffc0f203cc9f4950eda184b8d95180584fed01c45dbaeb46780"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q3-instruction",
+      "category": "question",
+      "statement": "Q3 displays the instruction 'Select all that apply.'",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "dom-q3-instruction.txt",
+          "sha256": "sha256:1f24c123edb60e3170daca9f004109c505df2cde7aac787d6259f2948de1db2b",
+          "locators": [
+            "CAP-1-12"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "dom-q3-instruction.txt",
+          "sha256": "sha256:1f24c123edb60e3170daca9f004109c505df2cde7aac787d6259f2948de1db2b",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-12",
+          "value": [
+            "Q3 instruction line rendered verbatim"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "dom-q3-instruction.txt",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-12",
+              "expected": [
+                "Q3 instruction line rendered verbatim"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:1f24c123edb60e3170daca9f004109c505df2cde7aac787d6259f2948de1db2b"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q4-satisfaction",
+      "category": "question",
+      "statement": "Q4 asks how satisfied the respondent is overall with the biologic therapies they currently prescribe for moderate-to-severe plaque psoriasis.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "shot-q4.png",
+          "sha256": "sha256:fa2d3aecdcc2e3419debeb2feb00f8ea2332ffa2efbaf8fe68437d10c9eee645",
+          "locators": [
+            "CAP-1-13"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "shot-q4.png",
+          "sha256": "sha256:fa2d3aecdcc2e3419debeb2feb00f8ea2332ffa2efbaf8fe68437d10c9eee645",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-13",
+          "value": [
+            "Q4 rendered as the documented five-point scale"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "shot-q4.png",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-13",
+              "expected": [
+                "Q4 rendered as the documented five-point scale"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:fa2d3aecdcc2e3419debeb2feb00f8ea2332ffa2efbaf8fe68437d10c9eee645"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q5-barrier",
+      "category": "question",
+      "statement": "Q5 asks for the single biggest barrier to biologic use among the respondent's moderate-to-severe plaque psoriasis patients.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "shot-q5.png",
+          "sha256": "sha256:3780682b99d637026591256de5819a26e37a50df40139a6de459154e647ccb43",
+          "locators": [
+            "CAP-1-14"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "shot-q5.png",
+          "sha256": "sha256:3780682b99d637026591256de5819a26e37a50df40139a6de459154e647ccb43",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-14",
+          "value": [
+            "Q5 rendered with the five documented barrier options"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "shot-q5.png",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-14",
+              "expected": [
+                "Q5 rendered with the five documented barrier options"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:3780682b99d637026591256de5819a26e37a50df40139a6de459154e647ccb43"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q6-nps",
+      "category": "question",
+      "statement": "Q6 asks how likely the respondent is to recommend biologic therapy to a colleague treating moderate-to-severe plaque psoriasis.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "shot-q6.png",
+          "sha256": "sha256:022d64aad3973c162535230de19a552818627dd301a52ce5959484c9ec740443",
+          "locators": [
+            "CAP-1-15"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "shot-q6.png",
+          "sha256": "sha256:022d64aad3973c162535230de19a552818627dd301a52ce5959484c9ec740443",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-15",
+          "value": [
+            "Q6 rendered as an 0-10 rating row"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "shot-q6.png",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-15",
+              "expected": [
+                "Q6 rendered as an 0-10 rating row"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:022d64aad3973c162535230de19a552818627dd301a52ce5959484c9ec740443"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q6-instruction",
+      "category": "question",
+      "statement": "Q6 displays the scale instruction '0 = Not at all likely, 10 = Extremely likely'.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "dom-q6-instruction.txt",
+          "sha256": "sha256:a079d45e471f8f254151aef3fef78ad58a0ddd2aefe4f544888662af30347a20",
+          "locators": [
+            "CAP-1-16"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "dom-q6-instruction.txt",
+          "sha256": "sha256:a079d45e471f8f254151aef3fef78ad58a0ddd2aefe4f544888662af30347a20",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-16",
+          "value": [
+            "Q6 scale anchors rendered verbatim"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "dom-q6-instruction.txt",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-16",
+              "expected": [
+                "Q6 scale anchors rendered verbatim"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:a079d45e471f8f254151aef3fef78ad58a0ddd2aefe4f544888662af30347a20"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-q6-range",
+      "category": "question",
+      "statement": "Q6 must accept only whole numbers between 0 and 10.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "dom-q6-range.txt",
+          "sha256": "sha256:f718a4eaceb8c07db55c4eb592b4d407b9c1a62907b13ddf57add0c650f95d91",
+          "locators": [
+            "CAP-1-17"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "dom-q6-range.txt",
+          "sha256": "sha256:f718a4eaceb8c07db55c4eb592b4d407b9c1a62907b13ddf57add0c650f95d91",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-17",
+          "value": [
+            "Q6 rejected the out-of-range probe value 11"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "dom-q6-range.txt",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-17",
+              "expected": [
+                "Q6 rejected the out-of-range probe value 11"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:f718a4eaceb8c07db55c4eb592b4d407b9c1a62907b13ddf57add0c650f95d91"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    },
+    {
+      "obligationId": "it-completion",
+      "category": "question",
+      "statement": "The survey ends on the normal completion screen.",
+      "verdict": "pass",
+      "coverage": "exercised",
+      "disposition": "none",
+      "reason": "POSITIVE_WITNESS",
+      "withheld": null,
+      "note": null,
+      "expectation": {
+        "kind": "rendered-state",
+        "screen": "S1",
+        "compiledBy": "R-1",
+        "compilerVersion": "1.0.0"
+      },
+      "compiledBy": "R-1",
+      "predicateId": "rendered-state@1",
+      "predicateOutcome": "satisfied",
+      "predicateReason": "POSITIVE_WITNESS",
+      "predicateDetail": {},
+      "evidenceScope": {
+        "claimKind": "positive-witness"
+      },
+      "pathConsistency": "consistent",
+      "evidenceRefs": [
+        {
+          "artifact": "shot-complete.png",
+          "sha256": "sha256:03b312aec693870c64447d1dd623899e19c4d6451caf2cebacf06aef46c80dbe",
+          "locators": [
+            "CAP-1-18"
+          ]
+        }
+      ],
+      "supportingWitnesses": [
+        {
+          "artifact": "shot-complete.png",
+          "sha256": "sha256:03b312aec693870c64447d1dd623899e19c4d6451caf2cebacf06aef46c80dbe",
+          "session": "AT-1",
+          "seq": 1,
+          "locator": "CAP-1-18",
+          "value": [
+            "The full route ended on the normal completion screen"
+          ],
+          "note": "re-read from the artifact bytes by the judging engine",
+          "proofKind": "capture-field"
+        }
+      ],
+      "counterWitnesses": [],
+      "attestation": {
+        "positive": [
+          {
+            "witness": {
+              "artifact": "shot-complete.png",
+              "session": "AT-1",
+              "seq": 1,
+              "locator": "CAP-1-18",
+              "expected": [
+                "The full route ended on the normal completion screen"
+              ],
+              "note": "re-read from the artifact bytes by the judging engine",
+              "proofKind": "capture-field",
+              "proofClaim": null
+            },
+            "ok": true,
+            "reason": null,
+            "proofKind": "capture-field",
+            "sha256": "sha256:03b312aec693870c64447d1dd623899e19c4d6451caf2cebacf06aef46c80dbe"
+          }
+        ],
+        "counter": [],
+        "allVerified": true,
+        "witnessCount": 1,
+        "hashAuthority": "signed-run-record"
+      }
+    }
+  ],
+  "routeTable": null,
+  "ambiguityIndex": {
+    "version": "1.0.0",
+    "map": {},
+    "integrity": []
+  },
+  "attestation": {
+    "algorithm": "Ed25519",
+    "canonicalization": "RFC8785",
+    "scope": "entire-record-excluding-attestation",
+    "keyId": "fixture-harness-key-1",
+    "signedAt": "2026-08-01T22:30:00Z",
+    "payloadHash": "sha256:f76ae8813a98b4582d8ca779fb36a7af97702f92e1e69791abe1b65a303c9b0d",
+    "signature": "Y9Wy8PczWZq4c7yMM1R1Clux3sed9vm0IQMRmjJlHGRcuuROO_jy-c4zpCIzz82mxHX3I0o-bpMXGpv0_lv3Aw"
+  }
+}

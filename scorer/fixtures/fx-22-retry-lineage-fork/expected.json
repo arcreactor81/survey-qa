@@ -1,0 +1,33 @@
+{
+  "description": "Forked retry lineage (defect 12): path P-A carries two attempts numbered 2, both retrying attempt 1. attemptNumber must be unique and consecutive per path and every retry must name its immediate predecessor: INTEGRITY_LINEAGE_INVALID, fail closed, quality suppressed.",
+  "expectErrors": [
+    "INTEGRITY_LINEAGE_INVALID"
+  ],
+  "forbidErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "expectErrorMessages": [
+    "two attempts numbered 2",
+    "forks lineage"
+  ],
+  "assertions": [
+    {
+      "path": "metrics",
+      "op": "null"
+    },
+    {
+      "path": "completeness",
+      "op": "null"
+    },
+    {
+      "path": "integrity.gates.structure",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "integrity.status",
+      "op": "eq",
+      "value": "invalid"
+    }
+  ]
+}

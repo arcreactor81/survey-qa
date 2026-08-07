@@ -1,0 +1,2359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Survey QA report — RUN-FIXTURE-TAMPERED</title>
+<meta name="generator" content="survey-qa-report-view/2.0.0">
+<style>
+/* survey-qa audit report — self-contained stylesheet (inlined by render-report.mjs).
+ *
+ * Palette is the project "Editorial Medical" token set (src/theme-css.ts), reduced
+ * to a font-stack-only variant so a rendered report is fully self-contained: no
+ * @font-face, no CDN, no external asset of any kind.
+ *
+ * Honesty constraints encoded here:
+ *   - `exercised` is NEUTRAL (surface tint), never success green.
+ *   - every status carries a text label + a glyph; colour is decoration only.
+ *   - `.integrity-suspect` (invalid attestation) strips success styling globally.
+ *   - wide tables scroll inside `.scroll-x`; the page itself never scrolls sideways.
+ */
+
+:root {
+  color-scheme: light dark;
+  --serif: "Iowan Old Style", Georgia, "Palatino Linotype", "Times New Roman", serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --radius: 14px;
+  --radius-sm: 8px;
+  --radius-pill: 999px;
+
+  --paper: #ECEFEA;
+  --card: #EFF1ED;
+  --surface-2: #E8ECE6;
+  --surface-3: #E2E7E1;
+
+  --ink: #2F352F;
+  --text: #3C433D;
+  --muted: #545C54;
+  --border: #B4BBB3;
+  --border-strong: #7D857D;
+
+  --accent: #574589;
+  --accent-ink: #FFFFFF;
+  --kicker: #40592F;
+
+  --ok: #2F4A28;
+  --ok-bg: #DCEBD4;
+  --ok-border: #A9C69C;
+  --bad: #7C3936;
+  --bad-bg: #F5E4E4;
+  --bad-border: #D9AFAC;
+  --amber: #5E4A1C;
+  --amber-bg: #F2EAD4;
+  --amber-border: #D3C08A;
+  --info: #2C566F;
+  --info-bg: #E2ECF3;
+  --info-border: #B3CCDC;
+
+  --neutral-bg: #E2E7E1;
+  --neutral-border: #B4BBB3;
+
+  /* v2 register vocabulary. The existing set had no token for the states the
+   * Requirement Register must distinguish, and reusing ok/bad for any of them
+   * would make a withheld row read as a pass or a fail. Every one of these is
+   * paired with a glyph and a full word in the markup: colour is never the
+   * only signal, and none of them borrows success green. */
+  --neutral-strong-bg: #DDE3DC;      /* `exercised` — neutral by design */
+  --neutral-strong-border: #7C857B;
+
+  --nbo-bg: #E6E3F2;                 /* NOT_BROWSER_OBSERVABLE */
+  --nbo-text: #463F6B;
+  --nbo-border: #7E75AC;
+
+  --blocked-bg: #F0E6DC;             /* BLOCKED */
+  --blocked-text: #67462A;
+  --blocked-border: #A17F5C;
+
+  --mixed-bg: #F7E7DA;               /* MIXED — a fail, but a distinguishable one */
+  --mixed-text: #83441E;
+  --mixed-border: #B0764C;
+
+  --silent-bg: #E6E9EE;              /* document-silent / explicit-negative */
+  --silent-text: #454C59;
+  --silent-border: #7B8493;
+
+  --lane-gap-bg: #E2ECF3;            /* lane 1: document-backed contract gap */
+  --lane-gap-text: #2A5068;
+  --lane-gap-border: #5F8AA5;
+  --lane-tax-bg: #E9EBEE;            /* lane 2: taxonomy gap */
+  --lane-tax-text: #454C59;
+  --lane-tax-border: #7B8493;
+  --lane-amb-bg: #F2EAD4;            /* lane 3: ambiguity */
+  --lane-amb-text: #59451A;
+  --lane-amb-border: #97844E;
+  --lane-anom-bg: #EAEDE9;           /* lane 4: unsupported site anomaly */
+  --lane-anom-text: #4A524A;
+  --lane-anom-border: #7D857D;
+
+  /* JUDGMENT_PENDING — a recorded verdict that did not clear the publication
+   * gate. Deliberately its own hue: it is neither a pass (never green) nor a
+   * fail, and a reader must not mistake it for either. */
+  --pending-bg: #DFEAE7;
+  --pending-text: #1F4C45;
+  --pending-border: #558C82;
+
+  --code-bg: #E4E8E2;
+  --table-border: #C6CDC5;
+  --row-alt: #E9ECE7;
+  --row-hover: #E4E9E3;
+
+  --shadow-sm: 0 1px 2px rgba(32, 30, 27, .06);
+  --shadow: 0 1px 2px rgba(32, 30, 27, .05), 0 7px 20px rgba(32, 30, 27, .05);
+}
+
+@media screen and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #181A18;
+    --card: #20231F;
+    --surface-2: #252925;
+    --surface-3: #2B302B;
+
+    --ink: #E4E8E1;
+    --text: #CDD2CA;
+    --muted: #A9AFA7;
+    --border: #3A403A;
+    --border-strong: #565D56;
+
+    --accent: #C3B2E6;
+    --accent-ink: #1C1A26;
+    --kicker: #AECBA6;
+
+    --ok: #C8DCC1;
+    --ok-bg: rgba(168, 196, 160, .16);
+    --ok-border: rgba(168, 196, 160, .45);
+    --bad: #EBC6C6;
+    --bad-bg: rgba(212, 154, 154, .18);
+    --bad-border: rgba(212, 154, 154, .5);
+    --amber: #E7D5A2;
+    --amber-bg: rgba(212, 184, 106, .16);
+    --amber-border: rgba(212, 184, 106, .45);
+    --info: #BCD7E9;
+    --info-bg: rgba(137, 184, 212, .14);
+    --info-border: rgba(137, 184, 212, .38);
+
+    --neutral-bg: rgba(164, 170, 162, .14);
+    --neutral-border: #4A514A;
+
+    --neutral-strong-bg: rgba(164, 170, 162, .22);
+    --neutral-strong-border: #767E76;
+    --nbo-bg: rgba(176, 164, 224, .17);
+    --nbo-text: #C9C0EC;
+    --nbo-border: #8478B4;
+    --blocked-bg: rgba(205, 164, 124, .17);
+    --blocked-text: #E4C4A4;
+    --blocked-border: #A07E58;
+    --mixed-bg: rgba(224, 150, 100, .19);
+    --mixed-text: #F2BC96;
+    --mixed-border: #B0764C;
+    --silent-bg: rgba(160, 175, 195, .15);
+    --silent-text: #C4CCD8;
+    --silent-border: #78838F;
+    --lane-gap-bg: rgba(137, 184, 212, .14);
+    --lane-gap-text: #BCD7E9;
+    --lane-gap-border: #6F98B4;
+    --lane-tax-bg: rgba(160, 175, 195, .13);
+    --lane-tax-text: #C4CCD8;
+    --lane-tax-border: #78838F;
+    --lane-amb-bg: rgba(212, 184, 106, .15);
+    --lane-amb-text: #E7D5A2;
+    --lane-amb-border: #93803F;
+    --lane-anom-bg: rgba(164, 170, 162, .1);
+    --lane-anom-text: #B4BBB2;
+    --lane-anom-border: #767E76;
+    --pending-bg: rgba(120, 190, 178, .16);
+    --pending-text: #BFE0D8;
+    --pending-border: #5F978C;
+    --row-hover: rgba(255, 255, 255, .05);
+
+    --code-bg: #14170F14;
+    --code-bg: rgba(0, 0, 0, .25);
+    --table-border: #3A403A;
+    --row-alt: rgba(255, 255, 255, .028);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 9px 24px rgba(0, 0, 0, .22);
+  }
+}
+
+/* Manual override must win in both directions. */
+@media screen {
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #181A18;
+    --card: #20231F;
+    --surface-2: #252925;
+    --surface-3: #2B302B;
+    --ink: #E4E8E1;
+    --text: #CDD2CA;
+    --muted: #A9AFA7;
+    --border: #3A403A;
+    --border-strong: #565D56;
+    --accent: #C3B2E6;
+    --accent-ink: #1C1A26;
+    --kicker: #AECBA6;
+    --ok: #C8DCC1;
+    --ok-bg: rgba(168, 196, 160, .16);
+    --ok-border: rgba(168, 196, 160, .45);
+    --bad: #EBC6C6;
+    --bad-bg: rgba(212, 154, 154, .18);
+    --bad-border: rgba(212, 154, 154, .5);
+    --amber: #E7D5A2;
+    --amber-bg: rgba(212, 184, 106, .16);
+    --amber-border: rgba(212, 184, 106, .45);
+    --info: #BCD7E9;
+    --info-bg: rgba(137, 184, 212, .14);
+    --info-border: rgba(137, 184, 212, .38);
+    --neutral-bg: rgba(164, 170, 162, .14);
+    --neutral-border: #4A514A;
+    --neutral-strong-bg: rgba(164, 170, 162, .22);
+    --neutral-strong-border: #767E76;
+    --nbo-bg: rgba(176, 164, 224, .17);
+    --nbo-text: #C9C0EC;
+    --nbo-border: #8478B4;
+    --blocked-bg: rgba(205, 164, 124, .17);
+    --blocked-text: #E4C4A4;
+    --blocked-border: #A07E58;
+    --mixed-bg: rgba(224, 150, 100, .19);
+    --mixed-text: #F2BC96;
+    --mixed-border: #B0764C;
+    --silent-bg: rgba(160, 175, 195, .15);
+    --silent-text: #C4CCD8;
+    --silent-border: #78838F;
+    --lane-gap-bg: rgba(137, 184, 212, .14);
+    --lane-gap-text: #BCD7E9;
+    --lane-gap-border: #6F98B4;
+    --lane-tax-bg: rgba(160, 175, 195, .13);
+    --lane-tax-text: #C4CCD8;
+    --lane-tax-border: #78838F;
+    --lane-amb-bg: rgba(212, 184, 106, .15);
+    --lane-amb-text: #E7D5A2;
+    --lane-amb-border: #93803F;
+    --lane-anom-bg: rgba(164, 170, 162, .1);
+    --lane-anom-text: #B4BBB2;
+    --lane-anom-border: #767E76;
+    --pending-bg: rgba(120, 190, 178, .16);
+    --pending-text: #BFE0D8;
+    --pending-border: #5F978C;
+    --row-hover: rgba(255, 255, 255, .05);
+
+    --code-bg: rgba(0, 0, 0, .25);
+    --table-border: #3A403A;
+    --row-alt: rgba(255, 255, 255, .028);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 9px 24px rgba(0, 0, 0, .22);
+  }
+  :root[data-theme="light"] { color-scheme: light; }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.55;
+}
+/* Screen-only belt and braces against sideways page scroll. It must NOT apply
+   to print: `overflow: hidden` on the root in paged media clips the document
+   and silently drops every page after the first overflowing block. */
+@media screen {
+  html, body { overflow-x: hidden; }
+}
+main { display: block; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+h1, h2, h3, h4 { color: var(--ink); line-height: 1.22; margin: 0 0 .4em; font-weight: 600; }
+h1 { font-family: var(--serif); font-size: clamp(1.75rem, 1.2rem + 2vw, 2.5rem); font-weight: 400; }
+h2 { font-size: clamp(1.15rem, 1rem + .7vw, 1.5rem); }
+h3 { font-size: 1.02rem; }
+p { margin: 0 0 .7em; }
+p:last-child { margin-bottom: 0; }
+a { color: var(--accent); }
+a:hover { text-decoration-thickness: 2px; }
+code, .mono { font-family: var(--mono); font-size: .86em; }
+.hash, .idref {
+  font-family: var(--mono);
+  font-size: .84em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+ul, ol { margin: 0 0 .7em; padding-left: 1.2em; }
+li { margin-bottom: .25em; }
+
+:where(a, button, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.skip-link {
+  position: absolute;
+  /* Parked ABOVE the page, not to the left of it: a large negative `left`
+     makes the body's scrollWidth exceed the viewport, which reads as a
+     horizontal overflow in every automated layout check. */
+  left: 12px;
+  top: -80px;
+  background: var(--card);
+  color: var(--ink);
+  padding: 10px 16px;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-sm);
+  z-index: 20;
+}
+.skip-link:focus { left: 12px; top: 12px; }
+
+/* ---------- masthead ---------- */
+.masthead {
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  padding: 22px 0 18px;
+}
+.masthead .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.masthead .row > div { flex: 1 1 min(100%, 520px); min-width: 0; }
+.masthead .theme-toggle { margin-left: auto; flex: 0 0 auto; }
+.kicker {
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--kicker);
+  margin: 0 0 .35em;
+}
+.view-note {
+  font-size: .85rem;
+  color: var(--muted);
+  max-width: 62ch;
+}
+.theme-toggle {
+  font: inherit;
+  font-size: .82rem;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.theme-toggle:hover { background: var(--surface-3); }
+
+/* ---------- banners ---------- */
+.banner {
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin: 18px 0;
+  background: var(--surface-2);
+}
+.banner h2 { margin-bottom: .35em; }
+.banner--fail { background: var(--bad-bg); border-color: var(--bad-border); }
+.banner--fail h2 { color: var(--bad); }
+.banner--warn { background: var(--amber-bg); border-color: var(--amber-border); }
+.banner--warn h2 { color: var(--amber); }
+.banner--info { background: var(--info-bg); border-color: var(--info-border); }
+.banner--neutral { background: var(--surface-2); border-color: var(--border-strong); }
+.banner-flag {
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: .4em;
+}
+.outcome-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin: 12px 0 6px;
+  padding: 0;
+  list-style: none;
+}
+.outcome-pair li {
+  margin: 0;
+  border-left: 3px solid var(--border-strong);
+  padding-left: 10px;
+  min-width: 260px;
+  flex: 1 1 260px;
+}
+.outcome-pair .lbl {
+  display: block;
+  font-family: var(--mono);
+  font-size: .7rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.outcome-pair .val { font-weight: 600; color: var(--ink); }
+
+/* ---------- sections & panels ---------- */
+section { margin: 34px 0; scroll-margin-top: 12px; }
+.section-head { margin-bottom: 10px; }
+.section-head .lead { color: var(--muted); font-size: .92rem; max-width: 78ch; }
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+}
+.panel + .panel { margin-top: 12px; }
+.empty-state {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  color: var(--muted);
+  background: transparent;
+}
+.empty-state strong { color: var(--ink); }
+
+/* ---------- definition grids ---------- */
+.dl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px 22px;
+  margin: 0;
+}
+.dl-grid > div { min-width: 0; }
+.dl-grid dt {
+  font-family: var(--mono);
+  font-size: .7rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.dl-grid dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+
+/* ---------- stat tiles ---------- */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 12px;
+}
+.tile {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+.tile .tile-label {
+  font-family: var(--mono);
+  font-size: .69rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: block;
+}
+.tile .tile-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.tile .tile-denom { font-size: .84rem; color: var(--muted); }
+.tile ul { margin: 6px 0 0; padding-left: 1.1em; font-size: .88rem; }
+.tile--flag { border-left-color: var(--bad); }
+.tile--warn { border-left-color: var(--amber); }
+
+/* ---------- status badges (text + glyph; colour never alone) ---------- */
+.badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .4em;
+  border: 1px solid var(--neutral-border);
+  background: var(--neutral-bg);
+  color: var(--ink);
+  border-radius: var(--radius-pill);
+  padding: 2px 10px;
+  font-size: .8rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.badge .glyph { font-family: var(--mono); font-weight: 700; }
+.badge--pass { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+.badge--fail { background: var(--bad-bg); border-color: var(--bad-border); color: var(--bad); }
+.badge--warn { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.badge--info { background: var(--info-bg); border-color: var(--info-border); color: var(--info); }
+/* `exercised` and every non-terminal coverage state stay deliberately neutral. */
+.badge--neutral { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--ink); }
+.badge--strong { border-width: 2px; }
+
+/* When record integrity is suspect nothing may look like a success. */
+.integrity-suspect .badge--pass,
+.integrity-suspect .tile,
+.integrity-suspect .banner--ok {
+  background: var(--neutral-bg);
+  border-color: var(--neutral-border);
+  color: var(--ink);
+}
+.integrity-suspect .badge--pass { color: var(--ink); }
+
+.sev {
+  display: inline-block;
+  border-radius: var(--radius-sm);
+  padding: 1px 8px;
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  border: 1px solid var(--neutral-border);
+  background: var(--neutral-bg);
+  color: var(--ink);
+}
+.sev--critical, .sev--high { background: var(--bad-bg); border-color: var(--bad-border); color: var(--bad); }
+.sev--medium { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.sev--low, .sev--info { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--ink); }
+
+/* ---------- findings ---------- */
+.finding {
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.finding--critical, .finding--high { border-left-color: var(--bad); }
+.finding--medium { border-left-color: var(--amber); }
+.finding--unsupported { border-left-style: dashed; }
+.finding-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.finding-head h3 { margin: 0; flex: 1 1 340px; min-width: 0; }
+.eo {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+}
+.eo > div {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--surface-2);
+  min-width: 0;
+}
+.eo .eo-label {
+  font-family: var(--mono);
+  font-size: .69rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 2px;
+}
+.eo .eo-expected { border-left: 3px solid var(--info-border); }
+.eo .eo-observed { border-left: 3px solid var(--bad-border); }
+.refs {
+  font-size: .84rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.refs .idref { color: var(--ink); }
+
+/* ---------- tables ---------- */
+.scroll-x {
+  overflow-x: auto;
+  border: 1px solid var(--table-border);
+  border-radius: var(--radius);
+  background: var(--card);
+  max-width: 100%;
+}
+table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+table.audit { min-width: 1080px; }
+table.evidence-table { min-width: 780px; }
+table.plain { min-width: 520px; }
+caption {
+  text-align: left;
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: .86rem;
+  border-bottom: 1px solid var(--table-border);
+}
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--table-border);
+}
+thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-3);
+  color: var(--ink);
+  font-size: .74rem;
+  font-family: var(--mono);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  z-index: 1;
+}
+tbody tr:nth-child(even) { background: var(--row-alt); }
+tbody th[scope="row"] { font-weight: 600; color: var(--ink); font-family: var(--mono); font-size: .8rem; }
+.sub { display: block; color: var(--muted); font-size: .85em; margin-top: 2px; }
+.quote {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 8px;
+  color: var(--muted);
+  font-style: italic;
+  display: block;
+  margin-top: 3px;
+}
+.col-narrow { width: 92px; }
+
+/* ---------- footer ---------- */
+.report-footer {
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  margin-top: 40px;
+  padding: 24px 0 40px;
+  font-size: .9rem;
+}
+.report-footer h2 { font-size: 1.05rem; }
+.dl-inline { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0; }
+.downloads { list-style: none; padding: 0; }
+
+/* ------------------------------------------------------------------ *
+ * Requirement Register
+ * ------------------------------------------------------------------ */
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* Cell-state tones. Each one is ALSO carried by a glyph and a full word in
+ * the markup — these rules add emphasis, they never carry the meaning. */
+.cell--pass    { background: var(--ok-bg);             border-color: var(--ok-border);             color: var(--ok); }
+.cell--fail    { background: var(--bad-bg);            border-color: var(--bad-border);            color: var(--bad); }
+.cell--amb     { background: var(--lane-amb-bg);       border-color: var(--lane-amb-border);       color: var(--lane-amb-text); }
+.cell--warn    { background: var(--amber-bg);          border-color: var(--amber-border);          color: var(--amber); }
+.cell--nbo     { background: var(--nbo-bg);            border-color: var(--nbo-border);            color: var(--nbo-text); }
+.cell--blocked { background: var(--blocked-bg);        border-color: var(--blocked-border);        color: var(--blocked-text); }
+.cell--silent  { background: var(--silent-bg);         border-color: var(--silent-border);         color: var(--silent-text); }
+.cell--neutral { background: var(--neutral-strong-bg); border-color: var(--neutral-strong-border); color: var(--ink); }
+/* MIXED counts as a fail but gets its own hue, so a uniform failure and a
+ * route-dependent one are not the same mark on the page. */
+.cell--mixed   { background: var(--mixed-bg);          border-color: var(--mixed-border);          color: var(--mixed-text); border-width: 2px; }
+.reg-cell--fail .badge.cell--fail, .reg-cell--mixed .badge.cell--mixed { border-width: 2px; }
+.integrity-suspect .cell--pass { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--ink); }
+
+/* A caption inside `.scroll-x` inherits the table's min-width and gets clipped,
+ * which silently truncates the sentence that explains the table. The register's
+ * explanation therefore lives outside the scroller. */
+.table-note { color: var(--muted); font-size: .86rem; max-width: 88ch; margin: 0 0 8px; }
+table.register { min-width: 1500px; font-size: .84rem; }
+table.register th, table.register td { vertical-align: top; }
+table.register thead th { white-space: normal; }
+.reg-col { min-width: 260px; }
+.reg-col-id { width: 190px; }
+.reg-col .colname { display: block; font-family: var(--mono); font-size: .78rem; letter-spacing: .04em; color: var(--ink); }
+.colmeta { margin-top: 6px; }
+.colmeta > summary { font-size: .72rem; }
+.colmeta .dl-grid { grid-template-columns: 120px 1fr; font-size: .74rem; }
+.reg-req { min-width: 300px; }
+.reg-req .req { display: block; color: var(--ink); font-weight: 600; }
+.reg-scope { min-width: 200px; }
+.reg-flags { min-width: 140px; }
+.reg-cell { min-width: 260px; }
+
+tbody.reg-sectionhead th {
+  background: var(--surface-3);
+  font-family: var(--mono);
+  font-size: .74rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--ink);
+  border-top: 2px solid var(--border-strong);
+  padding: 10px 12px;
+  text-align: left;
+}
+tbody.reg-group { border-bottom: 1px solid var(--table-border); }
+tbody.reg-group:hover { background: var(--row-hover); }
+tr.reg-parent > * { border-top: 1px solid var(--table-border); }
+tr.reg-parent--pinned .reg-id { border-left: 3px solid var(--accent); }
+tr.reg-child > * { background: var(--row-alt); font-size: .95em; }
+tr.reg-child .reg-id { padding-left: 22px; }
+.childmark { color: var(--muted); margin-right: 4px; font-family: var(--mono); }
+
+/* Case expansion toggle. CSS-only; where :has() is unavailable every child row
+ * stays visible, because failing open can hide nothing. */
+.reg-toggle-wrap { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; margin-right: 6px; }
+.reg-toggle { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.reg-toggle-face { font-family: var(--mono); color: var(--muted); transition: transform var(--dur-fast, .16s) ease; }
+.reg-toggle:checked ~ .reg-toggle-face { transform: rotate(90deg); }
+@supports selector(tbody:has(input:checked)) {
+  tbody.reg-group:has(.reg-toggle:not(:checked)) tr.reg-child { display: none; }
+}
+.rollup-col {
+  font-family: var(--mono); font-size: .7rem; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--muted); margin-right: 3px;
+}
+.rollup {
+  display: inline-block; font-family: var(--mono); font-size: .72rem;
+  padding: 1px 5px; margin: 1px 2px 1px 0; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+
+.drill { margin-top: 8px; }
+.drill > summary { font-size: .78rem; color: var(--accent); cursor: pointer; }
+.drill-body {
+  margin-top: 8px; padding: 10px 12px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.drill-body h4 {
+  margin: 12px 0 4px; font-family: var(--mono); font-size: .72rem;
+  text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+}
+.drill-body h4:first-child { margin-top: 0; }
+.drill-body .dl-grid { grid-template-columns: 150px 1fr; font-size: .78rem; }
+table.witness { min-width: 720px; font-size: .78rem; }
+.excerpt {
+  margin: 6px 0 0; padding: 7px 9px;
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: .74rem; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word; max-height: 15em; overflow: auto;
+}
+.chain {
+  display: inline-block; font-family: var(--mono); font-size: .68rem;
+  padding: 0 4px; border-radius: 3px; border: 1px solid transparent;
+}
+.chain--ok    { color: var(--ok);           border-color: var(--ok-border);        background: var(--ok-bg); }
+.chain--bad   { color: var(--bad);          border-color: var(--bad-border);       background: var(--bad-bg); }
+.chain--warn  { color: var(--amber);        border-color: var(--amber-border);     background: var(--amber-bg); }
+.chain--muted { color: var(--muted);        border-color: var(--border);           background: var(--neutral-bg); }
+.integrity-suspect .chain--ok { color: var(--ink); background: var(--neutral-bg); border-color: var(--neutral-border); }
+
+.flagref {
+  display: inline-block; font-family: var(--mono); font-size: .7rem;
+  padding: 1px 5px; margin: 1px 2px 1px 0; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--ink);
+  text-decoration: none;
+}
+.flagref:hover { border-color: var(--border-strong); text-decoration: underline; }
+.flagref--amb { background: var(--lane-amb-bg); border-color: var(--lane-amb-border); color: var(--lane-amb-text); }
+.flagref--gap { background: var(--lane-gap-bg); border-color: var(--lane-gap-border); color: var(--lane-gap-text); }
+.flagref--tax { background: var(--lane-tax-bg); border-color: var(--lane-tax-border); color: var(--lane-tax-text); }
+.flagref--nbo { background: var(--nbo-bg);      border-color: var(--nbo-border);      color: var(--nbo-text); }
+.flagref .sub { display: inline; margin-left: 3px; }
+
+.legend { list-style: none; padding-left: 0; }
+.legend li { margin-bottom: 6px; }
+.prov { margin-top: 6px; }
+.prov > summary { font-size: .74rem; color: var(--accent); cursor: pointer; }
+.prov .dl-grid { grid-template-columns: 150px 1fr; font-size: .76rem; }
+
+/* ------------------------------------------------------------------ *
+ * Flag lanes
+ * ------------------------------------------------------------------ */
+
+.lanes { display: grid; gap: 14px; }
+.lane {
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border); border-left-width: 4px;
+  border-radius: var(--radius); background: var(--card);
+}
+.lane--lane-gap  { border-left-color: var(--lane-gap-border);  background: var(--lane-gap-bg); }
+.lane--lane-tax  { border-left-color: var(--lane-tax-border);  background: var(--lane-tax-bg); }
+.lane--lane-amb  { border-left-color: var(--lane-amb-border);  background: var(--lane-amb-bg); }
+.lane--lane-anom { border-left-color: var(--lane-anom-border); border-left-style: dashed; background: var(--lane-anom-bg); }
+.lane-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.lane-head h3 { margin: 0; flex: 1 1 auto; }
+.lane-glyph { font-family: var(--mono); margin-right: 8px; }
+.lane-blurb { max-width: 82ch; }
+.lane-effect { font-size: .88rem; }
+.pill {
+  font-family: var(--mono); font-size: .72rem; padding: 2px 9px;
+  border-radius: var(--radius-pill); border: 1px solid var(--border-strong); color: var(--ink);
+}
+.lane-entry {
+  margin-top: 12px; padding: 14px 16px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.lane--lane-anom .lane-entry { border-style: dashed; }
+.lane-entry-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.lane-entry-head h4 { margin: 0; flex: 1 1 320px; font-size: .96rem; }
+.atom { margin-top: 8px; }
+.atom .dl-grid { grid-template-columns: 150px 1fr; font-size: .78rem; }
+
+@media (max-width: 720px) {
+  .reg-col, .reg-cell, .reg-req { min-width: 220px; }
+  .lane { padding: 14px 14px 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+@media print {
+  .theme-toggle, .skip-link { display: none; }
+  body { background: #fff; }
+  /* Never `break-inside: avoid` a container that can exceed one page: Chrome
+     clips the overflow and silently drops the sections after it. */
+  .banner, .finding { break-inside: avoid; }
+  .scroll-x { overflow-x: visible; border-radius: 0; }
+  table.audit, table.evidence-table, table.plain {
+    min-width: 0;
+    width: 100%;
+    table-layout: fixed;
+    font-size: .68rem;
+  }
+  table th, table td { overflow-wrap: anywhere; padding: 5px 6px; }
+  thead { display: table-header-group; }
+  thead th { position: static; }
+  .badge { white-space: normal; border-radius: 4px; }
+  /* Deliberately NOT `break-inside: avoid` on rows: a tall row would overflow
+     the page box and Chrome would drop everything after the table. A split row
+     is ugly; a silently truncated report is dishonest. */
+  table.audit { font-size: .66rem; }
+  table.audit .quote, table.audit .sub { font-size: .95em; }
+  /* The register is the deliverable, so it must survive print. Case rows are
+     always shown on paper: a printed page has no toggle, and hiding a case
+     would hide incompleteness. */
+  table.register { min-width: 0; width: 100%; table-layout: fixed; font-size: .58rem; }
+  table.register tr.reg-child { display: table-row !important; }
+  .reg-toggle-wrap { display: none; }
+  .drill, .colmeta, .prov { display: none; }
+  .lane { break-inside: auto; background: #fff; }
+  .lane-entry { break-inside: avoid; }
+  .excerpt { max-height: none; overflow: visible; }
+}
+
+/* ------------------------------------------------------------------ *
+ * v2 — publication state, trust statements, two denominators,         *
+ * operational blockers, respondent consequence.                       *
+ * AMENDMENT A (docs/ui-report-redesign.md).                           *
+ * ------------------------------------------------------------------ */
+
+.cell--pending { background: var(--pending-bg); border-color: var(--pending-border); color: var(--pending-text); }
+.integrity-suspect .cell--pending { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--ink); }
+
+/* A column that is not a current result NEVER takes success styling, whatever
+   its cells say. This is the CSS half of the publication gate. */
+.reg-cell--historical .badge.cell--pass,
+.reg-cell--diagnostic .badge.cell--pass {
+  background: var(--neutral-bg);
+  border-color: var(--neutral-border);
+  color: var(--ink);
+}
+.reg-cell--historical, .reg-cell--diagnostic { opacity: .93; }
+.reg-cell--diagnostic { border-left: 3px dashed var(--border-strong); }
+.reg-cell--historical { border-left: 3px solid var(--border); }
+
+.tile--historical { border-left-color: var(--border-strong); }
+.tile--historical .tile-value { color: var(--muted); }
+
+/* The four trust statements: four cards, never one badge. */
+.trust-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.trust {
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.trust--ok   { border-left-color: var(--ok-border); }
+.trust--warn { border-left-color: var(--amber-border); }
+.trust--bad  { border-left-color: var(--bad-border); }
+.trust-label { font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.trust-value { font-weight: 600; color: var(--ink); }
+.trust-scope { font-size: .85rem; color: var(--muted); }
+
+.result-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.result-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  padding: 14px 16px;
+}
+.result-card--current    { border-left: 4px solid var(--accent); }
+.result-card--none       { border-left: 4px solid var(--amber-border); background: var(--amber-bg); }
+.result-card--historical { border-left: 4px solid var(--border-strong); }
+.result-headline { font-size: 1.05rem; font-weight: 600; color: var(--ink); margin: 6px 0; }
+
+/* Two denominators as two EQUAL cards. Never summed, never one number. */
+.denoms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.denom-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  padding: 14px 16px;
+}
+
+.op-blocker {
+  border: 1px solid var(--bad-border);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+
+.consequence-block {
+  border-left: 3px solid var(--border-strong);
+  padding: 6px 0 6px 12px;
+  margin: 10px 0;
+}
+.consequence-block--no-interview,
+.consequence-block--unusable-variable,
+.consequence-block--missing-data,
+.consequence-block--wrong-screen-out,
+.consequence-block--ineligible-follow-up { border-left-color: var(--bad-border); }
+.consequence-block--device-friction,
+.consequence-block--biased-response { border-left-color: var(--amber-border); }
+.consequence-block--presentation-only,
+.consequence-block--undetermined,
+.consequence-block--unknown { border-left-color: var(--border); }
+.consequence { margin: 2px 0; }
+
+.mixed-line { color: var(--mixed-text); }
+
+@media print {
+  .reg-toggle-wrap, .reg-toggle { display: none !important; }
+  .reg-child { display: table-row !important; }
+  details { display: block !important; }
+  details > summary { display: none !important; }
+}
+
+/* D14 — certification blockers are grouped by WHAT THEY ARE, so an evidence
+   failure, a defect, incompleteness and an unresolved ambiguity no longer
+   share one undifferentiated list. */
+.blocker-class {
+  margin: 1rem 0 0;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--rule, rgba(0, 0, 0, 0.14));
+}
+.blocker-class > h3 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.blocker-class > p {
+  margin: 0 0 0.4rem;
+}
+.blocker-class ul {
+  margin: 0;
+}
+
+/* ==================================================================== *
+ * AMENDMENT B — three views in one artifact                            *
+ * ==================================================================== *
+ * Summary (default) · Full check · Audit trail. They must feel like
+ * separate pages, not one enormous scroll, so exactly one is displayed
+ * at a time.
+ *
+ * View switching, group folding and register filtering are CSS-only
+ * (radio + checkbox + sibling combinators). With scripting disabled the
+ * page still works: every view, group and filter is reachable. Script
+ * only adds cross-view links, CSV download, register printing and the
+ * theme toggle.
+ *
+ * No new colour tokens: every state below reuses a token pair the
+ * computed contrast gate already checks in both themes.
+ * ==================================================================== */
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- masthead (compact: survey identity + run date) ---------- */
+.masthead-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.masthead-row > div { flex: 1 1 min(100%, 560px); min-width: 0; }
+.masthead .brand {
+  /* The survey's identity, not the page's headline: the verdict sentence on the
+     Summary is the largest thing on the page, and this must not compete with it. */
+  margin: 0 0 .2em;
+  font-family: var(--sans);
+  font-size: 1.18rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.run-line { font-size: .88rem; color: var(--muted); margin: 0; }
+
+/* ---------- the view switcher ---------- */
+.viewswitch { padding-top: 18px; padding-bottom: 40px; }
+.tab {
+  display: inline-block;
+  font: inherit;
+  font-size: .92rem;
+  padding: 9px 16px;
+  margin: 0 6px 0 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.tab:hover { background: var(--surface-3); }
+.viewradio:focus-visible + .tab { outline: 3px solid var(--accent); outline-offset: 2px; }
+.viewradio:checked + .tab {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.views { margin-top: 22px; }
+.view { display: none; }
+#v-summary:checked ~ .views [data-view="summary"],
+#v-full:checked ~ .views [data-view="full"],
+#v-audit:checked ~ .views [data-view="audit"] { display: block; }
+
+/* ---------- summary: the first screen ---------- */
+.hero { max-width: 74ch; margin: 0 0 30px; }
+.eyebrow {
+  font-family: var(--mono);
+  font-size: .74rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--kicker);
+  margin: 0 0 .5em;
+}
+.verdict {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(1.7rem, 1.2rem + 2.2vw, 2.6rem);
+  line-height: 1.12;
+  margin: 0 0 .3em;
+}
+.lede { font-size: 1.06rem; margin: 0 0 .5em; }
+.follow { font-size: 1rem; color: var(--text); margin: 0 0 1em; }
+.cta-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px; }
+.cta {
+  display: inline-block;
+  font: inherit;
+  font-size: .9rem;
+  padding: 9px 15px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+.cta:hover { background: var(--surface-3); }
+.cta--danger { border-color: var(--bad-border); background: var(--bad-bg); color: var(--bad); }
+.cta--quiet { border-color: var(--border); color: var(--muted); }
+
+.evidence-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: .9rem;
+  border-left: 3px solid var(--border-strong);
+  padding: 8px 0 8px 12px;
+  margin: 0 0 12px;
+}
+.evidence-line--ok { border-left-color: var(--ok-border); color: var(--ok); }
+.evidence-line--warn { border-left-color: var(--amber-border); color: var(--amber); }
+.evidence-line .glyph { font-weight: 700; }
+.shape-note {
+  font-size: .9rem;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 0;
+}
+
+/* ---------- summary lanes, in the absolute order ---------- */
+.lane-title { margin: 0 0 .25em; }
+.lane-lede { color: var(--muted); font-size: .93rem; max-width: 72ch; }
+section.lane {
+  margin: 0 0 26px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+section.lane--blocker { border-color: var(--bad-border); border-left: 4px solid var(--bad-border); }
+section.lane--problems { border-color: var(--mixed-border); border-left: 4px solid var(--mixed-border); }
+section.lane--decisions { border-color: var(--amber-border); border-left: 4px solid var(--amber-border); }
+/* Passed is deliberately quiet: never an equal green tile beside a blocker. */
+section.lane--passed, section.lane--quiet {
+  background: transparent;
+  border-color: var(--border);
+  border-left: 4px solid var(--border);
+  padding: 12px 16px;
+}
+section.lane--passed .lane-title, section.lane--quiet .lane-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* ---------- finding cards ---------- */
+.fcard {
+  border-top: 1px solid var(--border);
+  padding: 16px 0 4px;
+  margin: 0;
+}
+.fcard:first-of-type { border-top: 0; }
+.fcard-title { font-size: 1.06rem; margin: 0 0 .3em; }
+.fcard-meta { font-size: .82rem; color: var(--muted); margin: 0 0 .6em; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.fcard-consequence { max-width: 76ch; }
+.fcard-reach { font-size: .86rem; color: var(--muted); }
+.fcard-compare, .fcard-fix {
+  font-size: .92rem;
+  border-left: 3px solid var(--border-strong);
+  padding: 6px 0 6px 12px;
+  margin: 10px 0;
+  max-width: 76ch;
+}
+.fcard-fix { border-left-color: var(--info-border); }
+/* Why this question matters, above the readings it asks you to choose between. */
+.fcard-rank { font-size: .88rem; color: var(--muted); margin: 0 0 .6em; max-width: 76ch; }
+.fcard--decision[data-rank="could-change-launch"], .fcard--decision[data-rank="behaviour-seen"] {
+  border-left: 3px solid var(--warn-border, var(--border-strong));
+  padding-left: 12px;
+}
+/* The fold's full accounting: quieter than the verdict, louder than a caption. */
+.follow--accounting { font-size: .95rem; color: var(--muted); margin-top: -.4em; }
+.follow--accounting strong { color: var(--text); }
+.lane-lede--rank { color: var(--text); }
+.fcard-links { font-size: .86rem; display: flex; gap: 14px; flex-wrap: wrap; margin: .4em 0 0; }
+.fcard-links a { cursor: pointer; }
+
+/* ---------- disclosure layers ---------- */
+details.drawer { margin: 10px 0 4px; }
+details.drawer > summary,
+details.tech > summary,
+details.group-fold > summary {
+  cursor: pointer;
+  font-size: .88rem;
+  color: var(--accent);
+  padding: 4px 0;
+}
+details.drawer > .drawer-body {
+  border-left: 2px solid var(--border);
+  padding: 4px 0 4px 14px;
+  margin: 6px 0 0;
+}
+.drawer-body h4 { font-size: .84rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 .3em; }
+.drawer-body h4:first-child { margin-top: 0; }
+.drawer-body p, .drawer-body li { font-size: .9rem; }
+.plain-list { list-style: disc; padding-left: 1.1em; }
+blockquote.quote {
+  margin: 6px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: .82rem;
+  overflow-wrap: anywhere;
+}
+details.tech { margin: 12px 0 0; }
+.tech-dl { display: grid; gap: 4px 14px; margin: 6px 0; font-size: .78rem; }
+.tech-dl > div { display: grid; grid-template-columns: minmax(120px, 220px) 1fr; gap: 10px; }
+.tech-dl dt { color: var(--muted); }
+.tech-dl dd { margin: 0; overflow-wrap: anywhere; }
+.tech-note { font-size: .8rem; color: var(--muted); }
+.small { font-size: .84rem; }
+
+.mini-counts { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 10px; }
+.mini-count { font-size: .84rem; display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---------- the six plain states ---------- */
+.pstate {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: .78rem;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--neutral-border);
+  background: var(--neutral-bg);
+  color: var(--text);
+  white-space: nowrap;
+}
+.pstate--mini { font-weight: 500; font-size: .74rem; }
+.pstate--pass { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+.pstate--fail { background: var(--bad-bg); border-color: var(--bad-border); color: var(--bad); }
+.pstate--amb { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.pstate--warn { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.pstate--nbo { background: var(--nbo-bg); border-color: var(--nbo-border); color: var(--nbo-text); }
+.pstate--neutral { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--text); }
+.pstate--ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+
+/* ---------- full check ---------- */
+.fc-head { margin: 0 0 16px; }
+.fc-counts { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0 0; }
+.filter-chip {
+  display: inline-block;
+  font-size: .84rem;
+  padding: 6px 13px;
+  margin: 0 6px 8px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.regfilter:focus-visible + .filter-chip { outline: 3px solid var(--accent); outline-offset: 2px; }
+.regfilter:checked + .filter-chip {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.showing-wrap { font-size: .84rem; color: var(--muted); margin: 2px 0 14px; }
+.showing { display: none; }
+#f-all:checked ~ .showing-wrap .showing--all,
+#f-attention:checked ~ .showing-wrap .showing--attention,
+#f-problems:checked ~ .showing-wrap .showing--problems,
+#f-decision:checked ~ .showing-wrap .showing--decision,
+#f-incomplete:checked ~ .showing-wrap .showing--incomplete { display: inline; }
+
+.reg-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin: 0 0 10px;
+  background: var(--card);
+}
+.group-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 14px;
+  cursor: pointer;
+}
+.group-head:hover { background: var(--surface-3); }
+.group-toggle:focus-visible + .reg-group .group-head { outline: 3px solid var(--accent); outline-offset: -3px; }
+.group-name { font-weight: 600; }
+.group-count { font-size: .84rem; color: var(--muted); }
+.group-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.group-fold-hint::before { content: "\25BE"; color: var(--muted); }
+.group-toggle:not(:checked) + .reg-group .group-fold-hint::before { content: "\25B8"; }
+.group-toggle:not(:checked) + .reg-group .group-body { display: none; }
+.group-body { padding: 0 14px 8px; }
+
+.reg-row { border-top: 1px solid var(--border); padding: 12px 0 6px; }
+.reg-row-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.reg-id { font-family: var(--mono); font-size: .78rem; color: var(--muted); }
+.reg-row .reg-req { margin: .4em 0 .2em; max-width: 82ch; }
+.reg-why { font-size: .88rem; color: var(--muted); max-width: 82ch; margin: 0 0 .3em; }
+.fc-foot { margin: 18px 0 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* Filters. `All` is always available, so an attention-only view can never be
+   mistaken for the complete denominator. Under any filter every group is
+   forced open — a match must never hide inside a folded group. */
+#f-attention:checked ~ .reg .reg-row:not([data-attention]),
+#f-problems:checked ~ .reg .reg-row:not([data-plain="problem"]),
+#f-decision:checked ~ .reg .reg-row:not([data-plain="decision"]),
+#f-incomplete:checked ~ .reg .reg-row:not([data-plain="partial"]):not([data-plain="no-browser"]):not([data-plain="not-completed"]) {
+  display: none;
+}
+#f-attention:checked ~ .reg .group-body,
+#f-problems:checked ~ .reg .group-body,
+#f-decision:checked ~ .reg .group-body,
+#f-incomplete:checked ~ .reg .group-body { display: block; }
+#f-attention:checked ~ .reg .reg-group:not(:has(.reg-row[data-attention])),
+#f-problems:checked ~ .reg .reg-group:not(:has(.reg-row[data-plain="problem"])),
+#f-decision:checked ~ .reg .reg-group:not(:has(.reg-row[data-plain="decision"])),
+#f-incomplete:checked ~ .reg .reg-group:not(:has(.reg-row[data-plain="partial"], .reg-row[data-plain="no-browser"], .reg-row[data-plain="not-completed"])) {
+  display: none;
+}
+
+/* ---------- audit trail ---------- */
+.audit-intro { margin: 0 0 18px; }
+.audit-nav { margin: 18px 0; font-size: .86rem; }
+.page-foot { font-size: .8rem; color: var(--muted); padding-bottom: 30px; }
+
+/* ---------- deferred blocks ---------- *
+ * A block that ships compressed inside this file and is unpacked when its view
+ * is opened. The note is what a reader sees for the fraction of a second before
+ * the markup lands, and permanently if scripting is off. */
+.deferred { margin: 12px 0; }
+.deferred-note {
+  font-size: .88rem;
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 0;
+}
+.deferred[data-hydrated="done"] > .deferred-note { display: none; }
+.deferred[data-hydrated="failed"] > .deferred-note::after,
+.deferred[data-hydrated="unsupported"] > .deferred-note::after {
+  content: " This browser could not unpack it. Every requirement is in the Full check tab.";
+}
+
+/* ---------- print ---------- *
+ * Default: the Summary only — a decision summary is what a reader prints.
+ * "Print or save the full check" adds .print-register and prints the register
+ * instead, with every group expanded so nothing is hidden on paper. */
+@media print {
+  .tab, .viewswitch > .viewradio, .filter-chip, .regfilter, .fc-foot, .audit-nav { display: none !important; }
+  .view { display: none !important; }
+  body:not(.print-register) [data-view="summary"] { display: block !important; }
+  body.print-register [data-view="full"] { display: block !important; }
+  body.print-register .group-body { display: block !important; }
+  .fcard, section.lane { break-inside: auto; }
+  .hero { max-width: none; }
+  details.drawer > .drawer-body, details.tech { display: none !important; }
+  body.print-register details.drawer > summary { display: none !important; }
+}
+
+</style>
+</head>
+<body class="integrity-suspect">
+<a class="skip-link" href="#main">Skip to the report</a>
+<header class="masthead">
+  <div class="wrap masthead-row">
+    <div>
+      <p class="kicker">Survey QA · questionnaire-to-survey check</p>
+      <h1 class="brand">https://target.survey-qa.local/branching/s1-skip/flawed.html</h1>
+      <p class="run-line">Checked 2026-08-01</p>
+    </div>
+    <button type="button" id="theme-toggle" class="theme-toggle" aria-pressed="false">Switch theme</button>
+  </div>
+</header>
+<div class="wrap global-notices">
+<div class="banner banner--warn" role="alert">
+      <span class="banner-flag">Synthetic fixture — not a real run</span>
+      <p>Derived from scorer/integration/runs/flawed/run-record.json: the run ID was changed and one character of the Ed25519 signature was flipped. Nothing else was touched. This exists only to show the fail-closed path; it is not a real run.</p>
+    </div>
+<div class="banner banner--fail" role="alert">
+      <span class="banner-flag">Fail-closed</span>
+      <h2>Record integrity check failed. Results below are not authoritative.</h2>
+      <p>payloadHash mismatch: attested sha256:edc385d2c4fd32fc8a1de78a16a87015d8762d786bb15e0bf6965357da79893f but recomputed sha256:62d17803acb5d9ca35a7bacdf9b80267c49d4835f5df6416a86adbcf9ed9c5f5 (record modified after signing?)</p>
+      <p>Every coverage count, verdict, and finding on this page is rendered from an unverified record. Success styling is suppressed. Do not act on these results until the record verifies against the pinned key registry.</p>
+    </div>
+</div>
+<div class="wrap viewswitch">
+  <input type="radio" name="reportview" class="sr-only viewradio" id="v-summary" value="summary" checked><label class="tab" for="v-summary">Summary</label><input type="radio" name="reportview" class="sr-only viewradio" id="v-full" value="full"><label class="tab" for="v-full">Full check (18)</label><input type="radio" name="reportview" class="sr-only viewradio" id="v-audit" value="audit"><label class="tab" for="v-audit">Audit trail</label>
+  <main id="main" class="views">
+    <section class="view" data-view="summary" id="summary-view" aria-label="Summary">
+      
+<section class="hero" aria-labelledby="verdict">
+  <p class="eyebrow">Report incomplete · Survey not ready</p>
+  <h2 id="verdict" class="verdict">We cannot tell you yet whether this survey is ready</h2>
+  <p class="lede">No result on this run has cleared our own evidence check, so there is nothing on this page you should act on as a finding about your survey.</p>
+  <p class="follow">We found <strong>3 programming problems</strong>. </p>
+  
+  <div class="cta-row"><a class="cta" href="#lane-problems">Review 3 programming problems</a><a class="cta cta--quiet" href="#full-check" data-goto="full">Open full check register — 18 requirements</a></div>
+  <p class="evidence-line evidence-line--ok">
+    <span class="glyph" aria-hidden="true">✓</span>
+    <span><strong>Evidence was rechecked for all 3 findings on this page.</strong> Every one of them cites at least one evidence file that was re-read and re-checked after the run. “Settled” means the requirement reached Passed or Problem found; the other requirements are accounted for below.</span>
+  </p>
+  
+</section>
+
+<section class="lane lane--quiet" id="lane-blocker">
+        <h2 class="lane-title">Launch blocker</h2>
+        <p class="lane-lede">None. The survey opened in a standard browser in this run.</p>
+      </section>
+
+<section class="lane lane--problems" id="lane-problems" aria-labelledby="lane-problems-h">
+        <h2 id="lane-problems-h" class="lane-title">3 programming problems</h2>
+        <p class="lane-lede">The survey does something different from what the questionnaire says. Each one states what a respondent experiences and what to change.</p>
+        <article class="fcard fcard--problem" id="finding-F-01">
+    <h3 class="fcard-title">Q2 · Q2=No routes to Q6 instead of Q5</h3>
+    <p class="fcard-meta">High impact · Other · <span class="pstate pstate--warn">Needs review</span></p>
+    <p class="fcard-consequence">This record does not carry a respondent consequence for finding category &quot;wrong-skip-target&quot;. A reviewer must state, in survey language, what a respondent experiences. The report will not invent one.</p>
+    <p class="fcard-reach">Reach not classified by this record — a reviewer must decide whether it is universal, route-specific, device-specific or intermittent</p>
+    <p class="fcard-compare"><strong>Questionnaire says:</strong> Answering No at Q2 should take the respondent to Q5, the barriers question.<br>
+           <strong>Survey did:</strong> After answering No at Q2 the survey jumped straight to Q6, so Q5 was never shown.</p>
+    <p class="fcard-fix"><strong>Recommended fix:</strong> Change the survey so it does what the questionnaire says above. Then re-check it: A reviewer must state what to re-test, in survey language.</p>
+    <details class="drawer"><summary>Show evidence</summary><div class="drawer-body"><h4>The answers we gave</h4><p>This run recorded the session but not a step-by-step answer list for it.</p>
+<h4>What the questionnaire says</h4><blockquote class="quote">IF Q2=2 (NO), SKIP TO Q5.</blockquote>
+<h4>What the survey did</h4><p>After answering No at Q2 the survey jumped straight to Q6, so Q5 was never shown.</p>
+<h4>How to see it again</h4><p>A reviewer must state what to re-test, in survey language.</p>
+<h4>Evidence files</h4><ul class="plain-list"><li>EV-F-SKIP — dom-excerpt · file not re-checked in this copy of the report</li><li>EV-F-SKIPSHOT — screenshot · file not re-checked in this copy of the report</li></ul>
+<h4>Our conclusion</h4><p>Needs review — The independent re-check did not land on the same problem, so this is not confirmed.</p>
+<details class="tech">
+      <summary>Technical details</summary>
+      <dl class="tech-dl">
+        <div><dt>Finding id</dt><dd class="mono">F-01</dd></div><div><dt>Requirement ids</dt><dd class="mono">it-q2-skip</dd></div><div><dt>Attempt ids</dt><dd class="mono">AT-2</dd></div><div><dt>Evidence ids</dt><dd class="mono">EV-F-SKIP, EV-F-SKIPSHOT</dd></div><div><dt>Reported severity / category</dt><dd class="mono">high / wrong-skip-target</dd></div><div><dt>Reported confidence</dt><dd class="mono">0.95</dd></div><div><dt>Recorded summary (as the run wrote it)</dt><dd class="mono">Q2=No routes to Q6 instead of Q5</dd></div><div><dt>Recorded expectation (as the run wrote it)</dt><dd class="mono">Answering No at Q2 should take the respondent to Q5, the barriers question.</dd></div><div><dt>Recorded observation (as the run wrote it)</dt><dd class="mono">After answering No at Q2 the survey jumped straight to Q6, so Q5 was never shown.</dd></div><div><dt>it-q2-skip · register state</dt><dd class="mono">no current cell</dd></div><div><dt>it-q2-skip · source locator</dt><dd class="mono">Q2, rule 1</dd></div><div><dt>it-q2-skip · row version</dt><dd class="mono">rv1:cd4bbf7cce6e3992</dd></div><div><dt>EV-F-SKIP · artifact</dt><dd class="mono">runs/RUN-INT-S1-FLAWED/artifacts/dom-skip-wrong-target.txt · sha256:ca2bea2d4343faea07061fde2abc9c66782f1e3dc33347a576ed7d67cf43d4d5 · 238 bytes · 2026-08-01T12:17:00Z</dd></div><div><dt>EV-F-SKIPSHOT · artifact</dt><dd class="mono">runs/RUN-INT-S1-FLAWED/artifacts/shot-after-no.png · sha256:14de00af2b8c985be1bafe8c0e250dfe7d54616d739fa4e9d288dff4ecfe3fbc · 90 bytes · 2026-08-01T12:17:05Z</dd></div>
+      </dl>
+      <p class="tech-note">The complete machinery — signatures, hashes, versions, gate reason codes, raw traces and the full evidence catalogue — is in the <a href="#audit-trail" data-goto="audit">Audit trail</a>.</p>
+    </details></div></details>
+    <p class="fcard-links">
+      <a href="#req-it-q2-skip" data-goto="full">View requirement</a>
+      <a href="#finding-F-01" class="copy-link" data-copy="finding-F-01">Copy link</a>
+    </p>
+  </article>
+<article class="fcard fcard--problem" id="finding-F-02">
+    <h3 class="fcard-title">Q3 · BIMZELX is missing from the Q3 brand list</h3>
+    <p class="fcard-meta">High impact · Other · <span class="pstate pstate--warn">Needs review</span></p>
+    <p class="fcard-consequence">This record does not carry a respondent consequence for finding category &quot;missing-option&quot;. A reviewer must state, in survey language, what a respondent experiences. The report will not invent one.</p>
+    <p class="fcard-reach">Reach not classified by this record — a reviewer must decide whether it is universal, route-specific, device-specific or intermittent</p>
+    <p class="fcard-compare"><strong>Questionnaire says:</strong> Q3 should offer BIMZELX as the fifth brand option.<br>
+           <strong>Survey did:</strong> Q3 rendered only four brands (SKYRIZI, TREMFYA, COSENTYX, TALTZ); BIMZELX is absent.</p>
+    <p class="fcard-fix"><strong>Recommended fix:</strong> Change the survey so it does what the questionnaire says above. Then re-check it: A reviewer must state what to re-test, in survey language.</p>
+    <details class="drawer"><summary>Show evidence</summary><div class="drawer-body"><h4>The answers we gave</h4><p><span class="mono small">Opened the survey</span></p>
+<h4>What the questionnaire says</h4><blockquote class="quote">Q3. Which of the following biologic therapies do you currently prescribe for moderate-to-severe plaque psoriasis?</blockquote>
+<h4>What the survey did</h4><p>Q3 rendered only four brands (SKYRIZI, TREMFYA, COSENTYX, TALTZ); BIMZELX is absent.</p>
+<h4>How to see it again</h4><p>A reviewer must state what to re-test, in survey language.</p>
+<h4>Evidence files</h4><ul class="plain-list"><li>EV-F-Q3 — screenshot · file not re-checked in this copy of the report</li><li>EV-F-Q3L — dom-excerpt · file not re-checked in this copy of the report</li></ul>
+<h4>Our conclusion</h4><p>Needs review — The independent re-check did not land on the same problem, so this is not confirmed.</p>
+<details class="tech">
+      <summary>Technical details</summary>
+      <dl class="tech-dl">
+        <div><dt>Finding id</dt><dd class="mono">F-02</dd></div><div><dt>Requirement ids</dt><dd class="mono">it-q3-options</dd></div><div><dt>Attempt ids</dt><dd class="mono">AT-1</dd></div><div><dt>Evidence ids</dt><dd class="mono">EV-F-Q3, EV-F-Q3L</dd></div><div><dt>Reported severity / category</dt><dd class="mono">high / missing-option</dd></div><div><dt>Reported confidence</dt><dd class="mono">0.95</dd></div><div><dt>Recorded summary (as the run wrote it)</dt><dd class="mono">BIMZELX is missing from the Q3 brand list</dd></div><div><dt>Recorded expectation (as the run wrote it)</dt><dd class="mono">Q3 should offer BIMZELX as the fifth brand option.</dd></div><div><dt>Recorded observation (as the run wrote it)</dt><dd class="mono">Q3 rendered only four brands (SKYRIZI, TREMFYA, COSENTYX, TALTZ); BIMZELX is absent.</dd></div><div><dt>it-q3-options · register state</dt><dd class="mono">no current cell</dd></div><div><dt>it-q3-options · source locator</dt><dd class="mono">Q3</dd></div><div><dt>it-q3-options · row version</dt><dd class="mono">rv1:a882c02828957c6f</dd></div><div><dt>EV-F-Q3 · artifact</dt><dd class="mono">runs/RUN-INT-S1-FLAWED/artifacts/shot-q3.png · sha256:a4c865d513a7c4c0bc0ef7d60bc2ead756e012db831694a9a9156df9675ec06c · 67 bytes · 2026-08-01T12:06:35Z</dd></div><div><dt>EV-F-Q3L · artifact</dt><dd class="mono">runs/RUN-INT-S1-FLAWED/artifacts/dom-q3-options.txt · sha256:c78efe2fe876b4cf540775fa8702a647168c1027e42108a7c77260219f9b6307 · 130 bytes · 2026-08-01T12:06:40Z</dd></div>
+      </dl>
+      <p class="tech-note">The complete machinery — signatures, hashes, versions, gate reason codes, raw traces and the full evidence catalogue — is in the <a href="#audit-trail" data-goto="audit">Audit trail</a>.</p>
+    </details></div></details>
+    <p class="fcard-links">
+      <a href="#req-it-q3-options" data-goto="full">View requirement</a>
+      <a href="#finding-F-02" class="copy-link" data-copy="finding-F-02">Copy link</a>
+    </p>
+  </article>
+<article class="fcard fcard--problem" id="finding-F-03">
+    <h3 class="fcard-title">Q3 · Q3 is missing the &#39;Select all that apply.&#39; instruction</h3>
+    <p class="fcard-meta">Medium impact · Other · <span class="pstate pstate--warn">Needs review</span></p>
+    <p class="fcard-consequence">This record does not carry a respondent consequence for finding category &quot;missing-instruction&quot;. A reviewer must state, in survey language, what a respondent experiences. The report will not invent one.</p>
+    <p class="fcard-reach">Reach not classified by this record — a reviewer must decide whether it is universal, route-specific, device-specific or intermittent</p>
+    <p class="fcard-compare"><strong>Questionnaire says:</strong> Q3 should display the instruction &#39;Select all that apply.&#39;<br>
+           <strong>Survey did:</strong> No &#39;Select all that apply.&#39; instruction is shown above the Q3 options.</p>
+    <p class="fcard-fix"><strong>Recommended fix:</strong> Change the survey so it does what the questionnaire says above. Then re-check it: A reviewer must state what to re-test, in survey language.</p>
+    <details class="drawer"><summary>Show evidence</summary><div class="drawer-body"><h4>The answers we gave</h4><p><span class="mono small">Opened the survey</span></p>
+<h4>What the questionnaire says</h4><blockquote class="quote">[INSTRUCTION: Select all that apply.]</blockquote>
+<h4>What the survey did</h4><p>No &#39;Select all that apply.&#39; instruction is shown above the Q3 options.</p>
+<h4>How to see it again</h4><p>A reviewer must state what to re-test, in survey language.</p>
+<h4>Evidence files</h4><ul class="plain-list"><li>EV-F-Q3I — dom-excerpt · file not re-checked in this copy of the report</li></ul>
+<h4>Our conclusion</h4><p>Needs review — The independent re-check did not land on the same problem, so this is not confirmed.</p>
+<details class="tech">
+      <summary>Technical details</summary>
+      <dl class="tech-dl">
+        <div><dt>Finding id</dt><dd class="mono">F-03</dd></div><div><dt>Requirement ids</dt><dd class="mono">it-q3-instruction</dd></div><div><dt>Attempt ids</dt><dd class="mono">AT-1</dd></div><div><dt>Evidence ids</dt><dd class="mono">EV-F-Q3I</dd></div><div><dt>Reported severity / category</dt><dd class="mono">medium / missing-instruction</dd></div><div><dt>Reported confidence</dt><dd class="mono">0.90</dd></div><div><dt>Recorded summary (as the run wrote it)</dt><dd class="mono">Q3 is missing the &#39;Select all that apply.&#39; instruction</dd></div><div><dt>Recorded expectation (as the run wrote it)</dt><dd class="mono">Q3 should display the instruction &#39;Select all that apply.&#39;</dd></div><div><dt>Recorded observation (as the run wrote it)</dt><dd class="mono">No &#39;Select all that apply.&#39; instruction is shown above the Q3 options.</dd></div><div><dt>it-q3-instruction · register state</dt><dd class="mono">no current cell</dd></div><div><dt>it-q3-instruction · source locator</dt><dd class="mono">Q3, instruction</dd></div><div><dt>it-q3-instruction · row version</dt><dd class="mono">rv1:d4502855271481ab</dd></div><div><dt>EV-F-Q3I · artifact</dt><dd class="mono">runs/RUN-INT-S1-FLAWED/artifacts/dom-q3-no-instruction.txt · sha256:9b9e42a1a0606c328ef5ac32e250b4205aad27776467960879bc1859a4e9f507 · 288 bytes · 2026-08-01T12:06:45Z</dd></div>
+      </dl>
+      <p class="tech-note">The complete machinery — signatures, hashes, versions, gate reason codes, raw traces and the full evidence catalogue — is in the <a href="#audit-trail" data-goto="audit">Audit trail</a>.</p>
+    </details></div></details>
+    <p class="fcard-links">
+      <a href="#req-it-q3-instruction" data-goto="full">View requirement</a>
+      <a href="#finding-F-03" class="copy-link" data-copy="finding-F-03">Copy link</a>
+    </p>
+  </article>
+      </section>
+
+<section class="lane lane--quiet" id="lane-decisions">
+        <h2 class="lane-title">Questions for you</h2>
+        <p class="lane-lede">None. Nothing in the questionnaire needed a decision from you.</p>
+      </section>
+
+
+
+<section class="lane lane--passed" id="lane-passed">
+  <h2 class="lane-title">No settled results</h2>
+  <p class="lane-lede">Nothing on this run cleared our evidence check, so no requirement is being reported as passed.</p>
+  <details class="group-fold">
+    <summary>What was checked, and what is still unresolved</summary>
+    <div class="mini-counts"><span class="mini-count"><span class="pstate pstate--pass">Passed</span> —</span><span class="mini-count"><span class="pstate pstate--fail">Problem found</span> —</span><span class="mini-count"><span class="pstate pstate--amb">Needs your decision</span> —</span><span class="mini-count"><span class="pstate pstate--warn">Partially checked</span> —</span><span class="mini-count"><span class="pstate pstate--nbo">Could not test in the browser</span> —</span><span class="mini-count"><span class="pstate pstate--neutral">Not completed</span> —</span></div>
+    <p class="muted">Full check: 18 requirements · no settled result yet. <a href="#full-check" data-goto="full">Open the full check</a> to see every requirement, including the ones with no result.</p>
+  </details>
+</section>
+
+    </section>
+    <section class="view" data-view="full" id="full-check" aria-label="Full check">
+      <section class="lane lane--quiet">
+      <h2 class="lane-title">Full check — 18 requirements</h2>
+      <p class="lane-lede">No result on this run cleared our evidence check, so this page cannot show you a per-requirement outcome. The complete list of requirements and everything recorded against them is in the <a href="#audit-trail" data-goto="audit">Audit trail</a>.</p>
+    </section>
+    </section>
+    <section class="view" data-view="audit" id="audit-trail" aria-label="Audit trail">
+      
+<section class="audit-intro">
+  <h2 class="lane-title">Audit trail</h2>
+  <p class="lane-lede">Everything behind the two customer views: how the run was driven, what it recorded, what was re-checked, and every identifier, hash, version and reason code. Nothing on the Summary or the Full check is asserted without a source here.</p>
+</section>
+<section id="operational" aria-labelledby="op-h">
+      <div class="banner banner--neutral" role="status">
+        <span class="banner-flag">Operational blockers</span>
+        <h2 id="op-h">No operational blocker was recorded for this run.</h2>
+        <p>Nothing in this record says the survey could not be opened, driven or completed. That is a statement about what the run recorded, not a guarantee that a respondent's browser will behave.</p>
+      </div>
+    </section>
+
+<section id="action" aria-labelledby="action-h">
+      <div class="banner banner--warn" role="alert">
+        <span class="banner-flag">Overall action state</span>
+        <h2 id="action-h">NO CURRENT RESULT — nothing on this page is yet an answer about this survey.</h2>
+        <p>There are NO current results for this run. The only verdicts available are historical (written by the executing agent about its own evidence) or diagnostic (a judgement that is unattested or does not bind to this run). Neither may be published as a result, so no headline pass/fail count is shown.</p><p>Result review not run — no independent stage re-derived these verdicts — as-recorded verdict totals are provisional and are shown as history, not as results.</p>
+      </div>
+    </section>
+<section id="result-review" aria-labelledby="rr-h">
+      <div class="section-head">
+        <h2 id="rr-h">Result review and what may be published</h2>
+        <p class="lead">Only an attested, run-bound JudgementRecord may produce a current result. Everything else on this page is either historical (what the run said about itself) or an operational diagnostic. These are four separate statements on purpose: a valid signature is not a correct verdict.</p>
+      </div>
+      <div class="trust-grid"><div class="trust trust--bad">
+        <span class="trust-label">Record signature</span>
+        <span class="trust-value">invalid</span>
+        <span class="trust-scope">Integrity only. It proves the record was not altered after signing. It says nothing about whether any verdict in it is correct.</span>
+        <span class="sub">payloadHash mismatch: attested sha256:edc385d2c4fd32fc8a1de78a16a87015d8762d786bb15e0bf6965357da79893f but recomputed sha256:62d17803acb5d9ca35a7bacdf9b80267c49d4835f5df6416a86adbcf9ed9c5f5 (record modified after signing?)</span>
+      </div><div class="trust trust--warn">
+        <span class="trust-label">Evidence files</span>
+        <span class="trust-value">not re-hashed in this render</span>
+        <span class="trust-scope">Whether the stored bytes still hash to the value the signed catalogue records. It is not a statement about what the bytes mean.</span>
+        
+      </div><div class="trust trust--warn">
+        <span class="trust-label">Contract review</span>
+        <span class="trust-value">no sealed revision — the denominator has not been through review</span>
+        <span class="trust-scope">Two facts, kept apart: whether an immutable contract revision identity exists (sealing, which may be automated), and whether a human reviewed the extraction it carries. A contract hash identifies bytes; it is neither a seal nor a review, and a seal is not a review.</span>
+        <span class="sub">No contract revision information was resolved for this record.</span>
+      </div><div class="trust trust--warn">
+        <span class="trust-label">Result review</span>
+        <span class="trust-value">not run — no independent stage re-derived these verdicts</span>
+        <span class="trust-scope">Whether an independent stage re-derived every verdict from the artifacts, and what result policy it used. This is the axis that decides whether the numbers on this page are current.</span>
+        
+      </div></div>
+      <div class="result-cards">
+        <div class="result-card result-card--none">
+         <span class="tile-label">Current result</span>
+         <p class="result-headline">No current result. Nothing on this page may be read as the answer about this survey yet.</p>
+         <p class="muted">There are NO current results for this run. The only verdicts available are historical (written by the executing agent about its own evidence) or diagnostic (a judgement that is unattested or does not bind to this run). Neither may be published as a result, so no headline pass/fail count is shown.</p>
+         <p class="muted">No judgement document was supplied for this run, so no independent stage re-derived these verdicts. This is "not run", not "rejected".</p>
+         
+       </div>
+        <div class="result-card result-card--historical">
+          <span class="tile-label">As recorded by the run — historical</span>
+          <p class="result-headline">3 failing · 15 passing · 0 withheld · 0 without a verdict, of 18 document requirements — as the executing agent recorded them.</p>
+          <p class="muted">Historical. These are the verdicts the executing agent wrote in the same pass that produced the evidence, with nothing re-reading the artifacts to check them. They are shown for the audit trail and are excluded from every current count on this page.</p>
+        </div>
+      </div>
+      
+      
+    </section>
+<div class="banner banner--neutral" role="status">
+        <span class="banner-flag">Certification</span>
+        <h2>Certification state unknown</h2>
+        <p>No adjudication stage ran for this record, so this report makes no certification claim either way. Absence of a blocker is not a clearance.</p>
+      </div>
+<nav aria-label="Audit trail sections" class="panel audit-nav">
+      <strong>In the audit trail:</strong>
+      <a href="#operational">Operational blockers</a> · <a href="#action">Action state</a> · <a href="#result-review">Result review and trust statements</a> · <a href="#scope">Scope and completeness</a> · <a href="#findings">Findings, as recorded</a> · <a href="#document-questions">Document questions</a> · <a href="#not-verifiable">Not verifiable from a browser</a> · <a href="#register">Requirement register (both run columns)</a> · <a href="#flag-lanes">Flag lanes</a> · <a href="#delta">Before / after</a> · <a href="#exploration">Tier 2 exploration</a> · <a href="#summary">Execution summary and cost</a> · <a href="#identity">Run identity and hashes</a> · <a href="#method">How it was driven</a> · <a href="#attempts">Attempts</a> · <a href="#evidence">Evidence</a> · <a href="#scorecard">Corpus appendix</a> · <a href="#provenance">Provenance</a>
+    </nav>
+<section id="scope" aria-labelledby="scope-h">
+      <div class="section-head">
+        <h2 id="scope-h">Scope and completeness</h2>
+        <p class="lead">Two denominators, two cards, never one number. One document requirement can require several mandatory checks; these totals describe different things and must not be added. Where they disagree, the weaker execution outcome controls.</p>
+      </div>
+      <div class="denoms">
+        <div class="denom-card">
+          <span class="tile-label">Document requirements</span>
+          <div class="tile-value num">18</div>
+          <p class="tile-denom">One row per requirement the sealed contract carries. A scoped or global rule is ONE requirement here no matter how many cases it materializes.</p>
+        </div>
+        <div class="denom-card">
+          <span class="tile-label">Mandatory browser checks</span>
+          <div class="tile-value num">18</div>
+          <p class="tile-denom"><span class="chain chain--warn">no column may report completion</span> There is no current result for this run, so no stage can say how many mandatory checks completed. The historical column's case outcomes are in the register.</p>
+          <p class="tile-denom">One entry per case a requirement must be exercised on. Scoped rules expand from the sealed floor-case ledger or from an enumeration the document itself makes; single-locus rules materialize exactly one case. This total may never be added to the document-requirement total.</p>
+          
+        </div>
+      </div>
+      <p class="table-note">Document requirements and mandatory execution cases are reported as two separately labelled totals. They are never added together, and no percentage spans both. This record carries no sealed floor-case ledger (contract.facetInstances[] / contract.floorCases[], merged contract §5). Mandatory cases are therefore materialized only where the document itself enumerates them. Where it does not, the count is reported as NOT ESTABLISHED rather than derived from what the run observed — a denominator that shrinks when execution is missing would hide the missing execution.</p>
+
+      <div class="panel">
+        <h3>The documented mandate population</h3>
+        <p>The record declares no mandate that requires a non-browser verification method, so the 18 browser-testable requirements are the whole documented population this run knows about.</p>
+        <p class="muted">The record names no mandate requiring a non-browser verification method.</p>
+      </div>
+
+      <div class="panel">
+        <h3>Execution completeness</h3>
+        <ul class="outcome-pair">
+          <li><span class="lbl">Report completeness</span><span class="val">Report complete — the report accounts for all 18 extracted obligations.</span></li>
+          <li><span class="lbl">Testing completeness</span><span class="val">Testing complete against the extracted contract — every extracted obligation reached a terminal coverage state. This does not certify that extraction itself was complete.</span></li>
+        </ul>
+        <p><strong>Stopping reason:</strong> No enforced limit was reached. Recorded attempt stop reasons: confirmed mismatch ×1, path complete ×1.</p>
+        <p>18 of 18 document requirements were exercised at least once. Exercised is not passed.</p>
+        <p class="muted">No scorecard was supplied, so testing completeness is stated only against the extracted contract — not against an independent oracle.</p>
+      </div>
+    </section>
+<section id="findings" aria-labelledby="findings-h">
+      <div class="section-head">
+        <h2 id="findings-h">Findings requiring action</h2>
+        <p class="lead">Ordered by kind and agent-assigned severity, then questionnaire position. Each entry is an agent-supplied assertion; RunRecord v1.0.0 carries no panel verification record, so none of them is relabelled "confirmed" here.</p>
+      </div>
+      <article class="finding finding--high" id="audit-finding-F-01" aria-labelledby="finding-h-F-01">
+      <div class="finding-head">
+        <h3 id="finding-h-F-01">Q2=No routes to Q6 instead of Q5</h3>
+        <span class="sev sev--high">high</span>
+        <span class="badge badge--neutral">Asserted defect</span>
+        <span class="idref">F-01</span>
+      </div>
+      <p class="muted">Category <span class="mono">wrong-skip-target</span> · finding confidence 0.95 (agent-assigned)</p>
+      
+      <div class="consequence-block consequence-block--unknown">
+      <p class="consequence"><strong>What a respondent experiences:</strong> This record does not carry a respondent consequence for finding category &quot;wrong-skip-target&quot;. A reviewer must state, in survey language, what a respondent experiences. The report will not invent one.</p>
+      <p class="sub"><strong>Class:</strong> Not determined by this record · <strong>Reach:</strong> Reach not classified by this record — a reviewer must decide whether it is universal, route-specific, device-specific or intermittent</p>
+      <p class="sub"><strong>What to re-test:</strong> A reviewer must state what to re-test, in survey language.</p>
+    </div>
+      <div class="eo">
+        <div class="eo-expected"><span class="eo-label">Expected (from the questionnaire)</span>Answering No at Q2 should take the respondent to Q5, the barriers question.</div>
+        <div class="eo-observed"><span class="eo-label">Observed (in the running survey)</span>After answering No at Q2 the survey jumped straight to Q6, so Q5 was never shown.</div>
+      </div>
+      <p class="muted"><strong>Verification disposition:</strong> Not routed for panel review — RunRecord v1.0.0 carries no VerificationRecord, so this remains an agent-supplied assertion.</p>
+      
+      
+      <div class="refs">
+        <span>Affected obligations: <a class="idref" href="#row-it-q2-skip">it-q2-skip</a></span>
+        <span>Attempts: <span class="idref">AT-2</span></span>
+        <span>Evidence: <a class="idref" href="#ev-EV-F-SKIP">EV-F-SKIP</a>, <a class="idref" href="#ev-EV-F-SKIPSHOT">EV-F-SKIPSHOT</a></span>
+      </div>
+    </article><article class="finding finding--high" id="audit-finding-F-02" aria-labelledby="finding-h-F-02">
+      <div class="finding-head">
+        <h3 id="finding-h-F-02">BIMZELX is missing from the Q3 brand list</h3>
+        <span class="sev sev--high">high</span>
+        <span class="badge badge--neutral">Asserted defect</span>
+        <span class="idref">F-02</span>
+      </div>
+      <p class="muted">Category <span class="mono">missing-option</span> · finding confidence 0.95 (agent-assigned)</p>
+      
+      <div class="consequence-block consequence-block--unknown">
+      <p class="consequence"><strong>What a respondent experiences:</strong> This record does not carry a respondent consequence for finding category &quot;missing-option&quot;. A reviewer must state, in survey language, what a respondent experiences. The report will not invent one.</p>
+      <p class="sub"><strong>Class:</strong> Not determined by this record · <strong>Reach:</strong> Reach not classified by this record — a reviewer must decide whether it is universal, route-specific, device-specific or intermittent</p>
+      <p class="sub"><strong>What to re-test:</strong> A reviewer must state what to re-test, in survey language.</p>
+    </div>
+      <div class="eo">
+        <div class="eo-expected"><span class="eo-label">Expected (from the questionnaire)</span>Q3 should offer BIMZELX as the fifth brand option.</div>
+        <div class="eo-observed"><span class="eo-label">Observed (in the running survey)</span>Q3 rendered only four brands (SKYRIZI, TREMFYA, COSENTYX, TALTZ); BIMZELX is absent.</div>
+      </div>
+      <p class="muted"><strong>Verification disposition:</strong> Not routed for panel review — RunRecord v1.0.0 carries no VerificationRecord, so this remains an agent-supplied assertion.</p>
+      
+      
+      <div class="refs">
+        <span>Affected obligations: <a class="idref" href="#row-it-q3-options">it-q3-options</a></span>
+        <span>Attempts: <span class="idref">AT-1</span></span>
+        <span>Evidence: <a class="idref" href="#ev-EV-F-Q3">EV-F-Q3</a>, <a class="idref" href="#ev-EV-F-Q3L">EV-F-Q3L</a></span>
+      </div>
+    </article><article class="finding finding--medium" id="audit-finding-F-03" aria-labelledby="finding-h-F-03">
+      <div class="finding-head">
+        <h3 id="finding-h-F-03">Q3 is missing the &#39;Select all that apply.&#39; instruction</h3>
+        <span class="sev sev--medium">medium</span>
+        <span class="badge badge--neutral">Asserted defect</span>
+        <span class="idref">F-03</span>
+      </div>
+      <p class="muted">Category <span class="mono">missing-instruction</span> · finding confidence 0.90 (agent-assigned)</p>
+      
+      <div class="consequence-block consequence-block--unknown">
+      <p class="consequence"><strong>What a respondent experiences:</strong> This record does not carry a respondent consequence for finding category &quot;missing-instruction&quot;. A reviewer must state, in survey language, what a respondent experiences. The report will not invent one.</p>
+      <p class="sub"><strong>Class:</strong> Not determined by this record · <strong>Reach:</strong> Reach not classified by this record — a reviewer must decide whether it is universal, route-specific, device-specific or intermittent</p>
+      <p class="sub"><strong>What to re-test:</strong> A reviewer must state what to re-test, in survey language.</p>
+    </div>
+      <div class="eo">
+        <div class="eo-expected"><span class="eo-label">Expected (from the questionnaire)</span>Q3 should display the instruction &#39;Select all that apply.&#39;</div>
+        <div class="eo-observed"><span class="eo-label">Observed (in the running survey)</span>No &#39;Select all that apply.&#39; instruction is shown above the Q3 options.</div>
+      </div>
+      <p class="muted"><strong>Verification disposition:</strong> Not routed for panel review — RunRecord v1.0.0 carries no VerificationRecord, so this remains an agent-supplied assertion.</p>
+      
+      
+      <div class="refs">
+        <span>Affected obligations: <a class="idref" href="#row-it-q3-instruction">it-q3-instruction</a></span>
+        <span>Attempts: <span class="idref">AT-1</span></span>
+        <span>Evidence: <a class="idref" href="#ev-EV-F-Q3I">EV-F-Q3I</a></span>
+      </div>
+    </article>
+      
+    </section>
+
+<section id="document-questions" aria-labelledby="dq-h">
+      <div class="section-head">
+        <h2 id="dq-h">Document questions</h2>
+        <p class="lead">Where the questionnaire is genuinely unclear, this section surfaces the question and judges nothing. An ambiguity is not a confirmed survey defect; its effect is that the scope or the expected behaviour is uncertain.</p>
+      </div>
+      <div class="panel">
+        <div class="empty-state"><strong>No ambiguity was recorded for this run.</strong><p>The record contains no finding of kind <span class="mono">ambiguity</span>, and no obligation was closed with reason <span class="mono">ambiguous-requirement</span>. The contract assumptions below are the only recorded interpretation risk.</p></div>
+        <h3>Low-confidence extraction</h3>
+       <p class="muted">No contract item fell below the report-builder rule (contract item extraction confidence below 0.80). Lowest recorded extraction confidence is shown per row in the coverage audit.</p>
+        <h3>Contract assumptions (3)</h3>
+       <p class="muted">Interpretations the extractor committed to. If one of these is wrong, the scope built on it is wrong.</p>
+       <ul><li>Rendered locale is en-US.</li><li>Option codes follow the order printed in the questionnaire.</li><li>Numeric-entry and rating tags in the document are treated as range validation rules.</li></ul>
+      </div>
+    </section>
+<section id="not-verifiable" aria-labelledby="nv-h">
+      <div class="section-head">
+        <h2 id="nv-h">Not verifiable from the browser</h2>
+        <p class="lead">Obligations that could not be settled by driving the live survey: blocked, proven unreachable, route not found, or stopped at a safety boundary. They are neither passes nor failures. Document mandates that were declared out of browser scope before the run are listed separately and are not in the denominator.</p>
+      </div>
+      <div class="panel">
+        <div class="empty-state"><strong>Every extracted obligation in this run was reachable from the browser.</strong><p>No obligation was recorded as blocked, proven-unreachable, route-not-found, or safety-stopped, and no blocker finding was asserted. Obligations that a browser can never settle (back-end quota logic, panel routing, data delivery) would be listed here.</p></div>
+      </div>
+    </section>
+<section id="register" aria-labelledby="reg-h">
+      <div class="section-head">
+        <p class="kicker">The deliverable</p>
+        <h2 id="reg-h">Requirement register</h2>
+        <p class="lead">Every requirement the document imposes, in questionnaire order with global rules pinned first, and what each run did to it. This table is a <strong>projection</strong> of the signed records — it is never edited, and scoring never reads it. A miss is visible because the row is still here with an explicit state; no cell is ever blank.</p>
+      </div>
+
+      <div class="panel">
+        <h3>Two denominators, reported separately</h3>
+        <p class="muted">Document requirements and mandatory execution cases are reported as two separately labelled totals. They are never added together, and no percentage spans both.</p>
+        <div class="tiles">
+      <div class="tile ">
+      <span class="tile-label">Document requirements</span>
+      <div class="tile-value num">18</div>
+      <div class="tile-denom">rows in the sealed contract</div>
+      
+    </div>
+      <div class="tile ">
+      <span class="tile-label">Mandatory execution cases</span>
+      <div class="tile-value num">18</div>
+      <div class="tile-denom">cases a run must exercise · 18 enumerated here from 0 expanded rule(s)</div>
+      
+    </div>
+      <div class="tile tile--historical">
+      <span class="tile-label">As recorded by the run — requirement outcomes</span>
+      <div class="tile-value num">3 fail</div>
+      <div class="tile-denom">of 18 document requirements · 15 pass · 0 withheld · 0 no verdict<br>NOT a current result — historical</div>
+      
+    </div>
+    </div>
+        <dl class="dl-grid">
+          <div><dt>Document requirements</dt><dd>One row per requirement the sealed contract carries. A scoped or global rule is ONE requirement here no matter how many cases it materializes.</dd></div>
+          <div><dt>Mandatory execution cases</dt><dd>One entry per case a requirement must be exercised on. Scoped rules expand from the sealed floor-case ledger or from an enumeration the document itself makes; single-locus rules materialize exactly one case. This total may never be added to the document-requirement total.</dd></div>
+        </dl>
+        <h3>Withheld from pass/fail</h3>
+        <ul><li><strong>As recorded by the run:</strong> 0 row(s) withheld — not counted as pass or fail. 0 row(s) carry no verdict at all.</li></ul>
+        <h3>Execution-case outcomes (separate total, never added to the row total)</h3>
+        <ul><li><strong>As recorded by the run:</strong> Fail 3 · Pass 15</li></ul>
+      </div>
+
+      <details class="panel">
+        <summary>Cell-state legend — every state, what it means, and how it counts</summary>
+        <p class="muted">Coverage and verdict are two axes and are never merged into one badge. Colour is never the only signal: every state carries a glyph and a full-word label, and <em>exercised</em> is deliberately neutral, never success green. States with a zero count are still listed, so a reader can see which dispositions exist.</p>
+        <ul class="legend"><li><span class="badge cell--pass" title="The observed behaviour matches what the document requires, on complete evidence."><span class="glyph" aria-hidden="true">✓</span>Pass</span> <span class="mono">PASS</span> — The observed behaviour matches what the document requires, on complete evidence. <span class="muted">Counts as: pass.</span></li><li><span class="badge cell--fail" title="A divergence from the document was observed. The document is the source of truth."><span class="glyph" aria-hidden="true">✕</span>Fail</span> <span class="mono">FAIL</span> — A divergence from the document was observed. The document is the source of truth. <span class="muted">Counts as: fail.</span></li><li><span class="badge cell--mixed" title="This requirement passed on one route and failed on another inside the same run. The aggregate is fail-if-any; a later pass never erases a fail. Open the cell for route-level detail."><span class="glyph" aria-hidden="true">◧</span>Mixed</span> <span class="mono">MIXED</span> — This requirement passed on one route and failed on another inside the same run. The aggregate is fail-if-any; a later pass never erases a fail. Open the cell for route-level detail. <span class="muted">Counts as: fail.</span></li><li><span class="badge cell--amb" title="The document admits two or more typed readings at this locus, so site judgment is withheld. Withheld rows are visible but are counted as neither pass nor fail."><span class="glyph" aria-hidden="true">≡</span>Ambiguous — withheld</span> <span class="mono">AMBIGUOUS</span> — The document admits two or more typed readings at this locus, so site judgment is withheld. Withheld rows are visible but are counted as neither pass nor fail. <span class="muted">Counts as: withheld.</span></li><li><span class="badge cell--amb" title="A verdict was asserted with no cited evidence. Per the report contract a verdict with no cited evidence renders as unsupported, never as a pass."><span class="glyph" aria-hidden="true">⚠</span>Unsupported — no evidence cited</span> <span class="mono">UNSUPPORTED</span> — A verdict was asserted with no cited evidence. Per the report contract a verdict with no cited evidence renders as unsupported, never as a pass. <span class="muted">Counts as: withheld.</span></li><li><span class="badge cell--nbo" title="A reviewed reason establishes that no browser session can settle this requirement. This is not a pass, and it must never be used to absorb a blocked execution — every entry states its reason and, where one exists, an alternative test surface."><span class="glyph" aria-hidden="true">⊘</span>Not browser-observable</span> <span class="mono">NOT_BROWSER_OBSERVABLE</span> — A reviewed reason establishes that no browser session can settle this requirement. This is not a pass, and it must never be used to absorb a blocked execution — every entry states its reason and, where one exists, an alternative test surface. <span class="muted">Counts as: withheld.</span></li><li><span class="badge cell--blocked" title="An external or technical blocker prevented this requirement from being exercised."><span class="glyph" aria-hidden="true">⛔</span>Blocked</span> <span class="mono">BLOCKED</span> — An external or technical blocker prevented this requirement from being exercised. <span class="muted">Counts as: withheld.</span></li><li><span class="badge cell--neutral" title="The state this requirement describes was never reached, so nothing was observed. Not a pass."><span class="glyph" aria-hidden="true">○</span>Not reached</span> <span class="mono">NOT_REACHED</span> — The state this requirement describes was never reached, so nothing was observed. Not a pass. <span class="muted">Counts as: neither pass nor fail.</span></li><li><span class="badge cell--neutral" title="Supported evidence establishes that the state cannot be reached at all."><span class="glyph" aria-hidden="true">⊗</span>Proven unreachable</span> <span class="mono">PROVEN_UNREACHABLE</span> — Supported evidence establishes that the state cannot be reached at all. <span class="muted">Counts as: neither pass nor fail.</span></li><li><span class="badge cell--neutral" title="No verdict was derived. The reason is printed in the cell; it is never left blank."><span class="glyph" aria-hidden="true">—</span>Not assessed</span> <span class="mono">NOT_ASSESSED</span> — No verdict was derived. The reason is printed in the cell; it is never left blank. <span class="muted">Counts as: neither pass nor fail.</span></li><li><span class="badge cell--pending" title="A verdict exists but it did not clear the publication gate: its cited observation does not demonstrably satisfy the named decision predicate, or the cited evidence did not re-verify, or the evidence set contradicts the verdict. Publication fails closed — this is never rendered as a pass and never enters a headline count. Attestation cannot rescue it."><span class="glyph" aria-hidden="true">◇</span>Judgment pending</span> <span class="mono">JUDGMENT_PENDING</span> — A verdict exists but it did not clear the publication gate: its cited observation does not demonstrably satisfy the named decision predicate, or the cited evidence did not re-verify, or the evidence set contradicts the verdict. Publication fails closed — this is never rendered as a pass and never enters a headline count. Attestation cannot rescue it. <span class="muted">Counts as: withheld.</span></li><li><span class="badge cell--warn" title="At least one mandatory execution case under this requirement reached no terminal result, so the requirement cannot be a pass. This is NOT a mixed result: mixed means routes disagreed, incomplete means a required route was never settled."><span class="glyph" aria-hidden="true">◐</span>Incomplete — a mandatory case has no result</span> <span class="mono">INCOMPLETE</span> — At least one mandatory execution case under this requirement reached no terminal result, so the requirement cannot be a pass. This is NOT a mixed result: mixed means routes disagreed, incomplete means a required route was never settled. <span class="muted">Counts as: neither pass nor fail.</span></li><li><span class="badge cell--neutral" title="No terminal disposition was reached for this requirement."><span class="glyph" aria-hidden="true">…</span>Pending</span> <span class="mono">PENDING</span> — No terminal disposition was reached for this requirement. <span class="muted">Counts as: neither pass nor fail.</span></li><li><span class="badge cell--warn" title="Testing stopped at the enforced monetary/resource budget before this requirement was settled."><span class="glyph" aria-hidden="true">◑</span>Budget exhausted</span> <span class="mono">BUDGET_EXHAUSTED</span> — Testing stopped at the enforced monetary/resource budget before this requirement was settled. <span class="muted">Counts as: neither pass nor fail.</span></li><li><span class="badge cell--warn" title="Testing stopped at the wall-clock cap before this requirement was settled."><span class="glyph" aria-hidden="true">◔</span>Time exhausted</span> <span class="mono">TIME_EXHAUSTED</span> — Testing stopped at the wall-clock cap before this requirement was settled. <span class="muted">Counts as: neither pass nor fail.</span></li><li><span class="badge cell--silent" title="The document says nothing about this property, so it is outside the matching predicate. Document-silent is not an agent wildcard and is not the same as a pass."><span class="glyph" aria-hidden="true">∅</span>Document silent</span> <span class="mono">DOCUMENT_SILENT</span> — The document says nothing about this property, so it is outside the matching predicate. Document-silent is not an agent wildcard and is not the same as a pass. <span class="muted">Counts as: neither pass nor fail.</span></li><li><span class="badge cell--silent" title="The document explicitly requires the absence of this behaviour; the row constrains matching negatively."><span class="glyph" aria-hidden="true">⊖</span>Explicit negative</span> <span class="mono">EXPLICIT_NEGATIVE</span> — The document explicitly requires the absence of this behaviour; the row constrains matching negatively. <span class="muted">Counts as: neither pass nor fail.</span></li><li><span class="badge cell--neutral" title="This requirement did not exist in the contract revision that this run was executed against, so the run could not have exercised it. It is not a miss by that run."><span class="glyph" aria-hidden="true">·</span>Not in contract</span> <span class="mono">NOT_IN_CONTRACT</span> — This requirement did not exist in the contract revision that this run was executed against, so the run could not have exercised it. It is not a miss by that run. <span class="muted">Counts as: neither pass nor fail.</span></li></ul>
+        <h3>Coverage axis (rendered alongside every cell state)</h3>
+        <ul class="legend"><li><span class="badge badge--neutral badge--strong" title="The target behaviour was actually exercised."><span class="glyph" aria-hidden="true">●</span>Exercised</span> The target behaviour was actually exercised.</li><li><span class="badge badge--neutral" title="The intended state was not reached."><span class="glyph" aria-hidden="true">○</span>Not reached</span> The intended state was not reached.</li><li><span class="badge badge--neutral" title="Supported evidence establishes that the state cannot be reached."><span class="glyph" aria-hidden="true">⊘</span>Proven unreachable</span> Supported evidence establishes that the state cannot be reached.</li><li><span class="badge badge--neutral" title="An external or technical blocker prevented exercise."><span class="glyph" aria-hidden="true">⛔</span>Blocked</span> An external or technical blocker prevented exercise.</li><li><span class="badge badge--neutral" title="Testing stopped at the enforced monetary/resource budget."><span class="glyph" aria-hidden="true">◑</span>Budget exhausted</span> Testing stopped at the enforced monetary/resource budget.</li><li><span class="badge badge--neutral" title="Testing stopped at the wall-clock cap."><span class="glyph" aria-hidden="true">◔</span>Time exhausted</span> Testing stopped at the wall-clock cap.</li><li><span class="badge badge--neutral" title="No terminal disposition was reached."><span class="glyph" aria-hidden="true">…</span>Pending</span> No terminal disposition was reached.</li></ul>
+      </details>
+
+      <p class="table-note"><strong>Showing all 18 of 18 document requirements · 0 hidden by filters.</strong> No filter is applied to this rendering, and headline totals always reflect the full register whatever is on screen. Print and export expand every row.</p>
+      <p class="table-note">18 document requirements and 18 enumerated execution cases across 1 run column. Scroll sideways inside the box below; the page itself never scrolls sideways. Parent rows with an unresolved case are expanded by default, and a collapsed parent inherits its worst descendant state — collapsing can never make a row look clean while hiding a problem. Global and cross-cutting rules are pinned first; everything else follows the sealed contract&#39;s own order, grouped by the leading segment of each requirement&#39;s source locator. Grouping is presentational and never affects a denominator.</p>
+      <p class="table-note"><span class="chain chain--warn">No column in this table is a current result.</span> There are NO current results for this run. The only verdicts available are historical (written by the executing agent about its own evidence) or diagnostic (a judgement that is unattested or does not bind to this run). Neither may be published as a result, so no headline pass/fail count is shown.</p>
+      <div class="deferred" data-deferred="audit-register">
+      <p class="deferred-note">The full 18-row audit table opens with this tab. It is stored compressed inside this file — nothing is fetched from anywhere. <span class="muted">(127 KB of markup, stored as 10 KB)</span></p>
+      <noscript><p class="deferred-note deferred-note--noscript">This table needs the browser&#39;s scripting to unpack. Every requirement, its result and its evidence are also in the Full check tab, which needs no scripting.</p></noscript>
+      <script type="application/octet-stream" data-deferred-payload="audit-register" data-encoding="gzip" data-bytes="130033" data-sha256="sha256:ee5f4d61f1068dc6f4325a66db21a661e018025f8e342bb5c653827abd121398">H4sIAAAAAAACCu2d3XLkNnbH7/cpUL1VG7uilvj9MdYoNRmP46m1NdaH4/VubaVA4LAbO2ySBkFplCu/QS52U7nJdV5h7/dR/CQpgGR/qSl1a7o1LfnkYjNusQkQBP445/z6HBxzcUVYRqvq5aBissiy4YfByW9I+3/HiiYZdBdIGIlKgZy7gJBjRkslinx6Fzks8uxmcHIOP9VCwgRyRbpvviB2RHjB6vbT6RXVgf4L5PUEJFXACXwAVjf3pRXoPxNZ54QVWT3JD4+P2lYXeqLGQPn8J/ozufiBuYxUrCjh5YAV2WDu4YasyIaCL3b97ZfHR2p8z03mv7HO5Rf634TmnExozqkq5E3znGt8eanDpOv4cCwqVUjBaDb/BquSTt8NK7KcTmBw8qoiElghOXCS3BA1Bj26x0f64p7vVnUyOJk1QX75+W/kCiQXTFXmBu0by0eEjvTAXctCAaFJUSsiVEWK65zAleCQM7i/peNKySIfnXw9bfGQXI6hglmj1yCBXEuhFOTdUyx3QuTm44pOgJS00j2lipSy4DUD3nyl7dMBuRZqTPJCjfX3JQwlUK7/qa+iUomUmmctCBsDe68/nphO3RAqgbyHUpG0kM3lNReKKElFZl6zviCHK5CkrJNMVGOzrmhFWC1lsxaqOlPV4fFR++C3hoiDoiKr5t7lBBTVI1VPJlTenDRrg+inUULdHB91f5hfIzzrbsCz4Ujq2b64YLi4Ojnm6uR1kStJme7ZlahEkR8fcXVyzPnJ4pQaU5ET87/D4TWV+eAkL0gFNANO2PI9zKxRY1GZxXxNq/aFASd0REVeKUJzUuf6erieu8NB+1ipAE60vugXrmfVmFbjdqiOj3TnjvQD3PNIzZdWPY7+y+CkGlPHD164aUJdJ/Q4C6nPQ/Bcx6Ju4Ed24HEn5XFoOy7z3MBN3SCMbNvn1A5i7sY0Zi5L1+3Xl50grtkviKlnWaHHEhcSP03DyHGp69q2BXbsh9S34iAJnASoRa2QcU6DgFmJ61qcxmlorduvSypHoEhSi4yv7pbgEtLBSWUPq/eiPEozeg38cKwmWdfG0sImCw8SeWnMvYBZaRrHLIydwIohsC0vTb0ktmPGYytlAY+t2KaxGwYsdNMo9GzXS6Ig8Nd9kO9kkYoMyJGeT6kY3THQ3RMprcuSD6/stZ6Eul5k+dyxmed6CU0pRDxk3PE9x6LcT9zUDh3XZrbNUurZMbWiGPwkSHzL4hDGa08VuBJMP0hWMJrB9Bk4VO9VURLbiawPsWWRfyaTItHP7MbWh8jzCEzqjJoN9R9/J5CTz1TzdjmktM7U5/c2fW4UipRFJtjN6sGbFHkxODmv83OzuRD70Dq0yGdGioe0VuNCAu8E/PN1n/ldUoG80hKhps06lhMMrWho2Ze288IJXljWH1ff6PiIZwv/XU57q3VncPI2bxSpYmOY0J6tTChodrm281p7IEu1/FNFRPO3IgdSKTqCbichIudQQq6lq9k0DsxuIKZfaS7X/0qFrJSWxd/91o2/qAiHRApISVrUOTc90P359tXl66/fXPzHl+9ef//tm9NLcj3WL5k1f6X5dJ+abnRX7TZXlGVRCQWHx0fl3K5y1G4r3UfrWC9fZXS0wlI5Plo0tvQVSwbZsUoKfjNvwVTA9KTUFw5OtLWmG2NFpqfGy4E3mGt4JIu6HJxcNN8gF/ai2dC+Tr3D2POm5YE2AqY2p7Z55HTmqfGJ6fXxkenYye3+tY0eKzn/aUn1pj0ggr8cyOJ6KNSwsoeyyGB5O50NnSyuF2y3W1svIcvjvkKYZi0tGwirLSnSrEl5Zb+IfI85HuMRc6Mk4c5GN0hL+4UV+zEDGnEXmJ3wZN0bNC9Gz0VjBNCMZCIHPfEFX3WPFVNL8fmhk/DT4M5mzQUXNqHV+0ovETYmReOlJFBpzauYFEm7pCVUZWHWaLv0Sim03aRXTwpV22U95IfrPfHMen3zoQSmrZvCaJg2+l5MLTw9g7XujLVlTCtCSSXyUQbDCjJgivxUQ2X6bNTEaERRy+lUBm761D5YtXHfLpSY1FldzXXoXQmtvVzLK23WqkYOcyVvyPfn3xjx0lbxnGJVTALkIKfd7evIkv2qp8Oc8XpR1JJBI1g5bVyE2+brmkbs0gbyTcG0i3XXnnVh37MbLZuSVMGokHfug92AbHZn4xredds6N4LCN7vtmw/G9DUOtbaBWjdsVTN5PRmcWIexv1kL807zFch+l+FeRVp3pGBCcyUYSUU+AllKkau7WrxDwtZs8ZVSMClVRY7mPNneIbTJEdl0WhWTUmQm/KGFg6r+QWxENS+IuikXv2D8KtbdqfFItcc1H6K4t1PLZlNnPMlpNAg+MJClGhBFE23nfHg5sPRCOiQ/NIKbtpqVZcW1tk6WpPdGi1mv1P7L8VEpYVUPlkbgvLieurxaTue2mRdkZopeNbbomFbaLpsIo5+rpuVslL5pNqm33Uo7IFVhHkkomBDBiXESKm1eGKOuIhlNINODTitS1Wx8SL6spfH053vYxAE4SKFts1QWE0JnYp/XkwTkAaFEFtfE2GyiyA9IIc1VxbIF12PHTXdSfudOaqTk7r00oXwEhEGWDYc51Erq+NLCFaPsphwPCJWCDseCc8hfDpSsYXDyj7+3Y7ckWmtvUvZsc5pFyhZjg33+WTs/JlSBFDQT/9kO9otum80KVi8sC/KZfruzoIWeWdU0dqXb+nwjm6mvnfUHYd6kKbKsLofGAF8dvnvR3rfXArOXoo1z0ZjbjzrViE1svMsloTH2jXnxOmzWGTitzaCntBkbs7CEInOvSgeGKFPZjXGq+l69ib41jyIqsvCm4UOZCSb0HZqbZ91ancYDk5q9B0VUoWhW6SWr1+UNKdQYZHP7HuP07iWlVwrp/jEcmqjj7D9XBGl7V5v5qvlgOGxWwYAooTJ4OdDPXXR+cQJjeiW0nE6oYmPQJm9rui3H2qsDYiyASZmBmsU+D9de0b/871/bUfmOVtXiAK38f31TZSmUnBeK0KVo6OLd71kfzcC1o9Xq1B2D10Y/ZkOnN03KVE2zzEwzyUQFfIOB+Z//avv7pvvy4hLq88xmq2U4AdVzsfFmpI4k6AjKWg5B751eCwX8xUrvshoX2r88LPPR3Z0f3BEFnpom+j0OTdhjeSx+s9on4FJk8+uidQDetLO0acBMFz35DohFWFHnCqS2tEhVl2UhdSDklu9wPIe5TCND7ecPTm5ZEz/csXCMcDRuitmHza7f7Bi3rTYT8Rf5VF7/qSJTx2uFq9PucVzSa5Ba1kTV/odWNrOcx7QsIW+UVCi9jHXb3U1pNWwITnunKSgrT47HXhe8K/JZ9L254vho7DWjdIdXNbNPtbZViqoeu3dZvfZUr24bvnMW+BVIHZqgH0R110Pup9L0Ptc50MqMJL/TuexRo/vuO73lA1Sq99b/3oZa6czauavr5V3vd/ne31ETZswrjaXzu+PZjZB1Hbh/QBrJmwItJgzPvtNf3IqNfbpScG8Jt9GWLoyt5+L2EOohOV2kp33oVKjDnpE0fqdWrEXRNzJ1S62n+j+8FiqHqvoMqs+NLM/vBmThjxIIVYqycaOkRg71wH9BbPPHJhw3BgmH5PXi3aEyV2R6zvA2/JUAo3VlQvgNBp4fD0I1Bc9HzbiJUV5IqA7Ja1qqWq+Q0gT/4YNqF42xQkUOUhGoGDVms/5r6142jmNHTGdu4PHKH3Es/najzPTW2T7ITNibCH0Xd1/4RYMJMesA+dIfXnWEQfdKQ7DuDa249qLx6VteZWJwK66ajscVzWpYiMrPA4TjLkYv53+gsouVdHFr7syIAb+j8dbtu21E9cTUGWeO5bGURjxmjP7y8/89wNwq3ncUcrqdmvUqRvmc7hBGFc2KUQ0rvcRVBlxyo6GXVr9WUmb2jJmtSxbiOkPzy89/u3tIXr/6bmgPLXvNm06DYGbmENZNpM7Omc66nlFtHFH9wjQVFRM6gqP+17am0TsH/bIbrYRXIM0PF/oHbAFCtTpolm8rjYsCOR/pudcdTTWsG/SMWw4rB3qpQ1uldk4vtXOXfhD2ONjOGSrIa/ko4K5ra2N0Z1vUc+IoAB7Gtmf5G6O7JPDsIHJcL3Ao5xbbd3TnNOhuXFzr4M8NuQEql2mdCeYmOpCkl2EmchNMKA3mYFtndc6M1RnDlhLzY0XBWjyWCsj4NiDcq7zSbp+ml/qHY/xKu4iNqaJ/Q/bh2SA3B5Hb4yO3HiXZIXLrkR5EbltDbs4h+XpRKMf0CjRg65dH5GvI15CvIV9DvoZ8DflaYlyOxcj1SgP/4VDNQaiGUA2hGkK1B0C1NaUJSRqSNCRpSNKeGUlz7idpSRD7Fvg6vzFwPUCSNiVpDpK0vSZpm4AqvQnK2kSUH4dWzTW4MbLise1SYLFDqQtxxDZGVlFKUy+K44h53HOdYP+RFRdVmdGbRjXmxo6YvLI3xqei5Hqsf/7UhCFJAupah2osswf41qG5dLvo6nKpN2Yj3LRLRDtKOrRsDNALZxuk67yza+Z7p1/Wkrnb39qeA64DcnsFbZF2XdFMcOMYD2WdwVOFXtbOoVePFu0QevWIF0KvbUGvP709vbg8//715dt3py/IekL2Z2ReyLyQeSHzQuaFzAuZl/FZ+k3vK5AJVWLyEOTFi8mS/3ioPiikX0i/kH4h/dqYfq0jUgi/EH4h/EL49Wzg19021GrDDywn5L4XeqntBp5nIwfrOJj7SBxMv7U2YqVBmF53R2bRIAnbIgmTNB89UsaWaWpj+kV1TV7XdbkHcQBJujH9CrkVJkEa+FGahGA9Afo1qXX1ZsZ0GWxToXk+GFvdjsZuH3IVtRoWafPG2vVrpOUvzfc636otblgpjepMSuI2YFYTgo5jXTRRp6/pxuSNCVE1KVxPlmHNrwCkV0v0Ktp9ylaPluyQXvWID9KrrdGr0++/fXP+9jV5c3p5/mO7xIj1y89/9S2kVEipkFIhpUJKhZQKKVWXmdXa8GrZzC9lkXTGfhx/BKsyt0NKhZQKKRVSqgfmaK0rUsiqkFUhq0JW9dxY1S0barXh5ztOEkMSAYuCwHF9pFQdpfKQUj3byodn9n5VPvzJHmpXPysofwSSNtfaxjAtCWyLWQAQxyH4YbIxTOM0SbgbODRIEje20j2HaWf2UvXDScHNschDVQwrvSMCKTP6Uw2krAopaKWjv1QJPXuWiyROaE5H0MRqdRTcxB0mRa7GWyZwZ/ajVUhsayKWtGqcp2lBxBXnk020VD3pQolneDbZJyiU2CM6O6RuPSqF1G1b1O3MniuUONVLo1XrKCwvTEnFEmSl94LsptXWFdKK1RWR4SHDQ4aHDA8ZHjK8xLg0u6yu+BMeWYbkDskdkrsHkLt1pQmhHUI7hHYI7Z5XdcWf1jinLLYS7oa+b1Hf4nGMWWVTXudjdcXnkVP2k/3I1RUXG9wYiYEPlmW7fkJtn3oJ3xiJOZbHA993/ZByCna4/0hsC9UV97G84sr6imf2Y9ZX7G9tz7kY1lfcj/qKPWq0Q1bWI1/Iyj5hfUUssIjYC7EXYi/EXoi9EHt12Gt3BRYXXUhMXUMAhgAMAdiDABgWWET+hfwL+devLmmt34Zabfi5ENAoCuIUHGrZIaauTVFYgKlrzwiGPVaBxa6pjQGYA17oRwENAy9OfSvaGIB5ge9YCfch8p2Y+8H+A7ANCyzuUYXF7eCstsKiZekSizpH7nmUWNQYC0ssftoSiz1qskOA1SM/CLAeo8Qi1lhEUIWgCkEVgioEVQiqpvlZa5Uvs6yP4FVYZBFJFZIqJFUfk6q1tkohsEJghcAKgdVzA1ZrVlnk+uT52HLcNKYAcYKoqkNVIaKq51tl0dmzKovOsJRQMSkSkI8B1Obbe0ClxSCwkyD1Us/hIfM2pmqB59CERnHg8TD2PLbvVM1pKi1ej8HEZZZqJ7YBg+yGTMe0IokosmIkmL5Y0lJAZULba1QQ23bBRWdWcFEb/eRHqI5Oiy4AWUEGTN1b+nCjwot5pX3Glr09aejmYE3FT1FTcaW87BCz9egRYrat1VR0DsmXTWHEFWr5EWKJJRQR0SGiQ0SHiA4RHSK6xPgq06yMXnP/4RUUHaygiFgOsRxiuQdgufWUCXkc8jjkccjjnlkBRef+Aoos8PwoCLkfBpxFDhZQnKK4CAsoPpOcMWdYvRfl4xAu3dLGbItxL0nSkDEIwI1jZ2O2xezATyInZEkSs5TuO9t6m7aEiBpqA5ycFgfLhEuPZEXo2GzhBTnzd5A0luudrY340FQ7bk2/zvwvyJlrdpczz2ypzb5nNuYt4qrTwiSMOc8AWh0QncdFdnAgWCJpzsbDolasmGCpw16E1aMiO0RYPbKzM4Tl/NoQ1tuvyJnz0iGfnb77/IBc/P7td+TyXSOFSKCQQCGBQgL1tAlUSkX2QAJlvro6zPmKcHEFcmScTiMhC7Fcrehd8LcZpOmfRDUfVi9SomStxpuEd/+7HZavqMgQQW0XQYnKRBd6XePGqtYhk6lhrSd244yfBQdmGM/8h2aJaY9kaIJpw2Z85n7p3I+vjF8xzIv9h1h6yi5CLAch1n5BLC16+ypzSLHWolhLIrY2ylpb3LYFs9K7Xi3CrF8XzHIeALMchFkIs7aUXHaX7dWHtqiTAHW453puSoEi2jJoyxla9q80y+xJUNtV/sLqt2l7HCyLpk4SsTjyMY1yOsEdZLfbZre0+1B/oL1bMpaQvhz8NhU5F/lo+NXQsgcnXxl1obuEuToEKfIaHgfodq1tnrBIPRZFIaNW5DlplG4MdXnipbYdOGCldkhZuudQ94cx5MtY98dOTJqqm91YGsP1zH1MoOtukdrqp3o+2JZDSnUYQxa1AqS3n6rOZ49c7JDe9ugLJiAivUV6i/QW6S3SW8wfRHj7CPmDM7QxM607X6H58af74MqezrA1cLG2J/JXTCLEJEL1EeT1DnnCFEKkrphCiNT1eZX0XGk9rTb2/Dixo8iKOE00cQ2RRnWZhDEW9Xy+RT3d3qKezicp6ukOi1L3rHoMPDZtbGM6RqPIYZYTOVHshyzYnI4lrsspt6woilw/DK19L+fpduU8BRuvqj23Tn3PT1TM010q5jmpMyW6Ip7XQo1JKq6AaNLDqxfk4vc/nr/949sDcnn+5tuvfnx1QF6/u3hzevnjHw7I5atvLv9ottx/ffvtH99884ddY7nGOGo7Z2yepwnqXCwK+vhFQXtEaodMrkfVMKNya0VB3UPyg9Fg/av3MZC0yLLiWtvIK0SZ95cPxVqhyPqQ9SHrw0xNzNRE2LdppuaZ28UfzXHhqe54tyFrX6J7zVoYjFvx8Oqh7twPqfsx4dST3X9MiGmamKaJaZr7mqb5AGXDhE1Eh5iwiejwmVUfde/PYNO/eQ987tsuDZnHLGSGLTO0rV9lBtuTYOIrXYWeFOQwghScFKIwSDyW4vzu5reNTPzT5Gg6JkfT2WmOpjvUdp+sDc95HA491+DGLJp7vuVEvu+EthfZNNmYRYMdRz7jUZBS6jk+7D+L5qIqM3rTCMnc2JHf/daNv7ho0C7NssbUpWWZ3RyaP20/ZXO+dWPr3dcF/W+gsmrQ83YyO887U32+N/plzI6PuKe1PcfHB+T2CtkiS76imeAm+DPUZYCxSG8fUu7Rmh0i5R5xwjTPbSHlP709vbg8//715dt3py/IauH6M2JgxMCIgREDIwZGDIwYuHvi0+K2wT2NPsxs7gcnf7rDvJh3DZ8i3MUcUIS7CHf3A+6urVeIdBHpYjYoIt3nlQ16lzm12hqMkxg8h9rUCqyAuQ4CsA6AOQjAPg0Acw0Acx8AwD4iS9TrzRK15wMMj5Uk6g0rqkSV0kcjdIstbp4u6ocpJBbjlu27Nn/ACZkRt62Y88CnVszp3qeLek266Li4Js3AidYsmcsRFRUxNn2WNYanyXNcmVl68zEpTNtOJ/WW0kn1zyKHZSH0mZ9zc4RUjGawxfzQ9kDPJ12v1cM00E+QBrpafHZ5sOZqtUJmt7U0UO+QvGu082BJZLW/o5M+75JUTApFGog0EGkgFoDFArAIAz++AOyZN4uh02rh5Zqg5MxB0D7Bw3NBvf0/hBOLwGIRWCwCu39FYDeVKKwHiwQQCSASwGeW1Ondn9SZUoe7FBhnzAHXs5H5dczPxWMJn2sZWH+/AJ8/TKiUAuRjsL1pYxtjPS9MUidxeOCncUS9eGOslzp2Ak4SJK7PnMQJ9x3r+Q3Wa6Ld0IWMEjEagd51m2HUG/g06Kx3YTrRu+0i/TOpcNU60WZSUiV0CeJtgzx/CeS1IcG2MKy2J/TPGpvasM2TVVvK1WNj3XqRExAmoGXOLjQ799Q862LOT5Pz+cj5Hp/z9ajRDjlfj3wh59sa5/N1uVc6+7X1eoIrco345EbqilAPoR5CPYR6CPUQ6iHUS4yzs5gYs7IGYrsDtyWVOvijz3JYOJB8c9bnI+tD1oesD1nfA1jfdpQLESAiQESAiACfGQL070eAbhhZQeQkccwDN7Qw7W+KAD1EgM8VAQa9CND9JCdBBsO8fJRTIE1Dm6f0QRQC9yLmsxQSm23M/jwniEIGPEwCz018d9/ZXzBL6cvEe8huVuTzqcIYZJMJ5Hw58eSmiUixIsuAjmogSgI1Uv4JkviCRfaXE2toW0Q2/dl65p6/6kjHVOh397Q5X4Cc7xPk861Wnh1yvh6pQs63Nc4XHJKvZ8La5fDtTE4R9iHsQ9iHsA9hH8I+hH2J8W7m02OWHAJZXD8c5AUI8hDkIchDkPcAkHe/KiGkQ0iHkA4h3TODdMH9kM5yHB54lHI3Dl1mBwjpOkjnI6Tba0i3CQN75JPogo86iS6iEXctFoHn+akTb54PZwcJd6wg8i0XIsqt/WdiCyfRGXB0+zw6i7zUWzuhzblKTZD3gNj6c00YYKKDvs3H5guH2z+mrukazdm4kNUDu9WeXNeWiQ8e9eC64IkCMjy4bj8OruuRph1Csx4tQ2i2m4PrNlEzPM4O8RfiL8RfiL8QfyH+avDXooMwtb6vQCZUicmDz7ALntYBdojCEIUhCttLFHavQiELQxaGLAxZ2PM6tS7Y7Mg6aoUx93zwQjuNUsdHLNZhsQCPrHtGYEzSfASPg8RMUxvDsJj74Kc+85LEcfh09m0AwyLOvZBFLKAed9x0/2HYpK4UoYxBqT2C7IZcj4sM2qhjRRJQ1zo0YzUbq7UDzFXUalikzRtr16+Rlr803+scq6qWV3CjHY4bU/lgOzDrjfEYbVvHoHW6nG5MmjyNqk4mM0vlySGs+QWA8GoJXkW7z/jqkZJdwqvV2oPwamvw6vzV5dvTfyMXr19984ZYv/z8V9tCLIVYCrEUYinEUoilEEt1WVmt6a6WrftSFkln49v2R/ApczskU0imkEwhmXpgkta6IoWIChEVIipEVM8NUd2yoXrC2qEdUQ8ogyRiVsgRTnVwKkQ49WxLK75Ktb1+FpDPWu7QGneiyD/fq3PXZv16BLA2a2xjtJaGqccsP0o8FkLyALTmer7v+GkCQegEbmTvOVq7nCEr0BGd1hHKCzmh2dxsaoNMO+Bqt9poUsguxzR/b0qV6fB5d1F72FvT48Mmdawrt7jFsopN6GoaRNYO6HyB89mhag19M33KqD7VLYcnieLu0pHt0zkFcqJLVGJOWR+W65GhHWK5Ht1CLLctLPedLEaSTiYiH70wYfipvJQgO3kl59OitzoCf2MsxpxeiRFVOkrC3l9TyatD8iqbFXidPoEu40IbBUsgLWRDX0Rei3x0iAQQCSASQCSASACRACIBbDyftNZTy1jzOsLA73N/HlyqsZsgWLARWSCyQGSBm7PAh8kVQkGEgggFEQo+rxqOq6ypnkqObuLaDgUWxG4UWgypYEcFI6zkuEdM8Ddzn5pOTXute/X/w3rUO/H7AQA=</script>
+    </div>
+    </section>
+<section id="flag-lanes" aria-labelledby="lanes-h">
+      <div class="section-head">
+        <p class="kicker">Everything that is not a row</p>
+        <h2 id="lanes-h">Flag lanes</h2>
+        <p class="lead">"Flag other stuff" is four separate lanes, not one bucket, because they have four different effects on the result. They are a permanent section of this report and are never folded into the findings list: a taxonomy gap and a site oddity are not findings, and treating them as one is how a report starts lying.</p>
+      </div>
+      <p class="muted">No sidecar was supplied. Every entry below is derived from the signed record and the derived-verdict bundle.</p>
+      <div class="lanes"><div class="lane lane--lane-gap" id="lane-contract-gap">
+          <div class="lane-head">
+            <h3><span class="lane-glyph" aria-hidden="true">◆</span>Document-backed contract gap</h3>
+            <span class="pill">0 entries</span>
+          </div>
+          <p class="lane-blurb">A requirement the source document demonstrably states, which the sealed contract does not carry as a row. This is the only lane whose entries can become register rows — and only through an explicit contract revision, never by editing this table.</p>
+          <p class="lane-effect"><strong>Effect on scoring:</strong> Neutral for precision, but BLOCKS final certification while an entry is pending adjudication. This is the only lane whose entries can become register rows, and only through an explicit contract revision.</p>
+          
+          <p class="muted">Source: no sidecar supplied.</p>
+          <div class="empty-state"><strong>Document-backed contract gap — none recorded.</strong><p>No source-verified requirement was proposed that the sealed contract does not already carry. Absence of an entry here is not proof of extraction completeness: a reviewer cannot see a row that was never proposed. The reverse source-coverage ledger is the mechanism for that, and it is not yet built.</p></div>
+        </div><div class="lane lane--lane-tax" id="lane-taxonomy-gap">
+          <div class="lane-head">
+            <h3><span class="lane-glyph" aria-hidden="true">▤</span>Taxonomy gap</h3>
+            <span class="pill">0 entries</span>
+          </div>
+          <p class="lane-blurb">The closed claim-kind registry cannot express this observation, or the compiler could not derive a typed expectation for a requirement it holds. Recorded so the gap is visible instead of being forced into a kind that does not fit.</p>
+          <p class="lane-effect"><strong>Effect on scoring:</strong> Neutral and capped. Blocks the final score pending adjudication; it never earns or loses credit. Entries in this lane can never become register rows.</p>
+          <p class="muted">Cap 25, used 0. Capped so a flood of unexpressible claims cannot be used to force adjudication.</p>
+          <p class="muted">Source: derived from finding claim kinds and from the expectation compiler&#39;s own coverage.</p>
+          <div class="empty-state"><strong>Taxonomy gap — none recorded.</strong><p>Every observation and every compiled expectation fitted the closed claim-kind registry. Nothing was forced into an ill-fitting kind and nothing was silently dropped.</p></div>
+        </div><div class="lane lane--lane-amb" id="lane-ambiguity">
+          <div class="lane-head">
+            <h3><span class="lane-glyph" aria-hidden="true">≡</span>Ambiguity</h3>
+            <span class="pill">0 entries</span>
+          </div>
+          <p class="lane-blurb">Two or more typed readings of the same document locus. The document is the source of truth, so where the document itself is unclear the honest answer is a query, not a guess — and never a defect assertion.</p>
+          <p class="lane-effect"><strong>Effect on scoring:</strong> Scored on its own track. Never enters defect recall, coverage, or the site verdict. Affected rows are withheld from pass/fail. Entries in this lane can never become register rows.</p>
+          
+          <p class="muted">Source: derived from the run&#39;s ambiguity findings and the judging engine&#39;s ambiguity index.</p>
+          <div class="empty-state"><strong>Ambiguity — none recorded.</strong><p>Extraction surfaced no locus admitting two typed readings. That is a claim about what extraction found, not a guarantee that the document is unambiguous.</p></div>
+        </div><div class="lane lane--lane-anom" id="lane-site-anomaly">
+          <div class="lane-head">
+            <h3><span class="lane-glyph" aria-hidden="true">◇</span>Unsupported site anomaly</h3>
+            <span class="pill">0 entries</span>
+          </div>
+          <p class="lane-blurb">An undocumented vendor oddity observed on the site with no normative basis in the document. Interesting to a human, worth nothing to the score: the document is the only authority, so a site behaviour it never mentions can neither pass nor fail.</p>
+          <p class="lane-effect"><strong>Effect on scoring:</strong> Recorded, not scored — permanently. It cannot become a row and cannot affect any verdict. Entries in this lane can never become register rows.</p>
+          
+          <p class="muted">Source: derived from findings that bind to no contract row, plus reviewer-supplied entries.</p>
+          <div class="empty-state"><strong>Unsupported site anomaly — none recorded.</strong><p>No undocumented site behaviour was recorded outside the contract in this run.</p></div>
+        </div></div>
+    </section>
+<section id="delta" aria-labelledby="delta-h">
+      <div class="section-head"><h2 id="delta-h">Before and after the judgement fix</h2></div>
+      <div class="empty-state"><strong>No re-derived verdict bundle was supplied for this run.</strong><p>The register therefore shows a single run column: the verdicts as the run itself wrote them. Where a derived-verdict bundle exists, a second column appears beside it and every changed row is listed here.</p></div>
+    </section>
+<section id="summary" aria-labelledby="summary-h">
+      <div class="section-head">
+        <p class="kicker">Methods and audit</p>
+        <h2 id="summary-h">Execution summary — what the run did, and what it cost</h2>
+        <p class="lead">Every number below names its own denominator. Coverage and verdict are separate axes: an exercised obligation is not a passed obligation, and an unassessed obligation is not a pass. Verdict counts in this section are AS RECORDED by the run and are historical; the current result is stated at the top of the page.</p>
+      </div>
+      <div class="tiles">
+        <div class="tile ">
+      <span class="tile-label">Obligations exercised</span>
+      <div class="tile-value num">18 / 18</div>
+      <div class="tile-denom">of the sealed contract total (18 extracted obligations)</div>
+      <ul><li>Exercised: <span class="num">18</span></li></ul>
+    </div>
+        <div class="tile tile--historical">
+      <span class="tile-label">Verdicts among exercised — AS RECORDED, historical</span>
+      <div class="tile-value num">18 / 18</div>
+      <div class="tile-denom">denominator is exercised obligations only. These are the verdicts the executing agent wrote about its own evidence; they are history, not the current result. The current result is at the top of this page.</div>
+      <ul><li>Pass: <span class="num">15</span></li><li>Fail: <span class="num">3</span></li><li>Inconclusive: <span class="num">0</span></li></ul>
+    </div>
+        <div class="tile ">
+      <span class="tile-label">Unassessed by cause</span>
+      <div class="tile-value num">0</div>
+      <div class="tile-denom">of 18 extracted obligations carry no usable verdict — these are not passes</div>
+      <ul><li class="muted">No obligation is unassessed.</li></ul>
+    </div>
+        <div class="tile ">
+      <span class="tile-label">Proven unreachable</span>
+      <div class="tile-value num">0</div>
+      <div class="tile-denom">obligations with supported evidence that the state cannot be reached</div>
+      
+    </div>
+        <div class="tile tile--flag">
+      <span class="tile-label">Findings asserted</span>
+      <div class="tile-value num">3</div>
+      <div class="tile-denom">agent-supplied assertions, by kind and severity</div>
+      <ul><li>defect: <span class="num">3</span></li></ul><ul><li>high: <span class="num">2</span></li><li>medium: <span class="num">1</span></li></ul>
+    </div>
+        <div class="tile ">
+      <span class="tile-label">Attested cost</span>
+      <div class="tile-value num">$0.6709</div>
+      <div class="tile-denom">cap $25.00 · 2.7% of the cost cap<br>reserves inside the cap: verification $3.00, reporting $2.00</div>
+      
+    </div>
+        <div class="tile ">
+      <span class="tile-label">Wall clock</span>
+      <div class="tile-value num">25m 30s</div>
+      <div class="tile-denom">cap 1h 0m 0s · 42.5% of the time cap</div>
+      
+    </div>
+        <div class="tile ">
+      <span class="tile-label">Model / tool calls</span>
+      <div class="tile-value num">3 / 15</div>
+      <div class="tile-denom">caps 100 model calls, 400 tool calls</div>
+      
+    </div>
+        
+      </div>
+    </section>
+<section id="identity" aria-labelledby="identity-h">
+      <div class="section-head">
+        <h2 id="identity-h">Run identity and trust</h2>
+        <p class="lead">Which document, which build, which configuration, and whether the signed record verifies. Everything else on this page is derived from this record.</p>
+      </div>
+      <div class="panel">
+        <dl class="dl-grid">
+          <div><dt>Run ID</dt><dd><span class="idref">RUN-FIXTURE-TAMPERED</span></dd></div>
+          <div><dt>RunRecord schema</dt><dd><span class="mono">1.0.0</span></dd></div>
+          <div><dt>Target URL</dt><dd><span class="hash">https://target.survey-qa.local/branching/s1-skip/flawed.html</span></dd></div>
+          <div><dt>Environment</dt><dd>integration</dd></div>
+          <div><dt>Target build ID</dt><dd><span class="idref">s1-skip/flawed.html</span></dd></div>
+          <div><dt>Target build hash</dt><dd><span class="hash">sha256:84f9d46c0ff99c792609e6104ff4b919cd90fc6d9091a9376c73f874134b8665</span></dd></div>
+          <div><dt>Questionnaire document hash</dt><dd><span class="hash">sha256:e9a40074cb3eb5ff7823a33110e1957a5096b62bea0a07cdda66c0b330da9f70</span></dd></div>
+          <div><dt>Contract hash (sealed denominator)</dt><dd><span class="hash">sha256:3fba3274dc7a5d7e4320a3658164d2fd97123c4363f3678115da169d39a9c3cf</span></dd></div>
+          <div><dt>Run profile</dt><dd><span class="idref">standard-v1</span></dd></div>
+          <div><dt>Configuration hash</dt><dd><span class="hash">sha256:a34805d21c434bafae8d7cd25420ad5b3f17231c11cfa419a089e5b6b500de79</span></dd></div>
+          <div><dt>Effective parameters</dt><dd><span class="mono">device=desktop, locale=en-US, syntheticIdentity=synthetic-integration-01, viewport=1280x900</span></dd></div>
+          <div><dt>Created / started / ended</dt><dd>2026-08-01T12:00:00Z<span class="sub">2026-08-01T12:00:30Z → 2026-08-01T12:26:00Z</span></dd></div>
+        </dl>
+      </div>
+      <div class="panel">
+        <h3>Attestation</h3>
+        <p class="muted">This is an integrity statement about the bytes of the record. It proves the record was not altered after signing. It does not say a single verdict in it is correct — see the four trust statements at the top of this page.</p>
+        <dl class="dl-grid">
+          <div><dt>State</dt><dd><span class="badge badge--fail badge--strong"><span class="glyph" aria-hidden="true">✕</span>Signature invalid</span></dd></div>
+          <div><dt>Reason</dt><dd>payloadHash mismatch: attested sha256:edc385d2c4fd32fc8a1de78a16a87015d8762d786bb15e0bf6965357da79893f but recomputed sha256:62d17803acb5d9ca35a7bacdf9b80267c49d4835f5df6416a86adbcf9ed9c5f5 (record modified after signing?)</dd></div>
+          <div><dt>Algorithm / canonicalization / scope</dt><dd><span class="mono">Ed25519 · RFC8785 · entire-record-excluding-attestation</span></dd></div>
+          <div><dt>Signing key ID</dt><dd><span class="idref">fixture-harness-key-1</span></dd></div>
+          <div><dt>Key registry used</dt><dd><span class="hash">E:\survey-qa\scorer\fixtures\keys\registry.json</span></dd></div>
+          <div><dt>Signed at</dt><dd>2026-08-01T12:26:30Z</dd></div>
+          <div><dt>Payload hash</dt><dd><span class="hash">sha256:edc385d2c4fd32fc8a1de78a16a87015d8762d786bb15e0bf6965357da79893f</span></dd></div>
+          <div><dt>Signature</dt><dd><span class="hash">ABSOjHe2bKTSrQeRJVlVky5ms4Ui3JaNylbuaZ5TmhXDZkXvJBp0Nd0cY3K6UA0ZGUMe-hTiYj7lBZKkyteQDg</span></dd></div>
+          <div><dt>Scorer / matcher</dt><dd><span class="muted">no scorecard supplied</span></dd></div>
+        </dl>
+      </div>
+      
+    </section>
+<section id="method" aria-labelledby="method-h">
+      <div class="section-head">
+        <h2 id="method-h">How this run was driven</h2>
+        <p class="lead">What actually touched the survey, what was deliberately not read, and how much was walked. Read this before the verdicts: a verdict is only as good as the layer that produced it.</p>
+      </div>
+      <div class="panel">
+      <h3>Driver</h3>
+      <dl class="dl-grid">
+        <div><dt>Layer</dt><dd>not recorded</dd></div>
+        <div><dt>Tool</dt><dd>not recorded</dd></div>
+        <div><dt>Browser</dt><dd>not recorded</dd></div>
+        <div><dt>Serving</dt><dd>not recorded</dd></div>
+        <div><dt>Viewports</dt><dd><span class="muted">not recorded</span></dd></div>
+        <div><dt>Interactions</dt><dd>not recorded</dd></div>
+      </dl>
+    </div>
+    </section>
+<section id="attempts" aria-labelledby="att-h">
+      <div class="section-head">
+        <h2 id="att-h">Attempt ledger</h2>
+        <p class="lead">Append-only record of what was actually walked. Retries never overwrite an earlier attempt. Full per-action drill-down is P2; the counts below are the harness-attested totals.</p>
+      </div>
+      <div class="scroll-x">
+        <table class="plain">
+          <caption>2 attempt(s) recorded.</caption>
+          <thead><tr>
+            <th scope="col">Attempt</th><th scope="col">Path</th><th scope="col">Window</th>
+            <th scope="col">Actions</th><th scope="col">States</th><th scope="col">Stop</th><th scope="col">Targeted obligations</th>
+          </tr></thead>
+          <tbody><tr>
+      <th scope="row">AT-1</th>
+      <td><span class="idref">PATH-FULL</span><span class="sub">attempt #1</span></td>
+      <td>2026-08-01T12:02:00Z<span class="sub">→ 2026-08-01T12:14:00Z</span></td>
+      <td class="num">12<span class="sub">actions</span></td>
+      <td class="num">9<span class="sub">states</span></td>
+      <td><span class="mono">path-complete</span><span class="sub">Completion screen reached; two content mismatches recorded at Q3</span><span class="sub">last valid state ST-1-09</span></td>
+      <td><a class="idref" href="#row-it-s1-role">it-s1-role</a>, <a class="idref" href="#row-it-s2-tenure">it-s2-tenure</a>, <a class="idref" href="#row-it-s2-instruction">it-s2-instruction</a>, <a class="idref" href="#row-it-s2-range">it-s2-range</a>, <a class="idref" href="#row-it-q1-caseload">it-q1-caseload</a>, <a class="idref" href="#row-it-q1-instruction">it-q1-instruction</a>, <a class="idref" href="#row-it-q1-range">it-q1-range</a>, <a class="idref" href="#row-it-q2-prescriber">it-q2-prescriber</a>, <a class="idref" href="#row-it-q2-continue">it-q2-continue</a>, <a class="idref" href="#row-it-q3-options">it-q3-options</a>, <a class="idref" href="#row-it-q3-instruction">it-q3-instruction</a>, <a class="idref" href="#row-it-q4-satisfaction">it-q4-satisfaction</a>, <a class="idref" href="#row-it-q5-barrier">it-q5-barrier</a>, <a class="idref" href="#row-it-q6-nps">it-q6-nps</a>, <a class="idref" href="#row-it-q6-instruction">it-q6-instruction</a>, <a class="idref" href="#row-it-q6-range">it-q6-range</a>, <a class="idref" href="#row-it-completion">it-completion</a></td>
+    </tr><tr>
+      <th scope="row">AT-2</th>
+      <td><span class="idref">PATH-SKIP</span><span class="sub">attempt #1</span></td>
+      <td>2026-08-01T12:15:00Z<span class="sub">→ 2026-08-01T12:20:00Z</span></td>
+      <td class="num">3<span class="sub">actions</span></td>
+      <td class="num">3<span class="sub">states</span></td>
+      <td><span class="mono">confirmed-mismatch</span><span class="sub">No-route reached completion but landed on Q6 instead of Q5; routing mismatch confirmed</span><span class="sub">last valid state ST-2-03</span></td>
+      <td><a class="idref" href="#row-it-q2-skip">it-q2-skip</a></td>
+    </tr></tbody>
+        </table>
+      </div>
+    </section>
+<section id="evidence" aria-labelledby="ev-h">
+      <div class="section-head">
+        <h2 id="ev-h">Evidence catalogue</h2>
+        <p class="lead">20 artifact(s): dom-excerpt ×10, screenshot ×10. Metadata and hashes render here; artifact bytes are never inlined. Where an artifacts directory was supplied, stored bytes were re-hashed and a link is offered only when the bytes match the signed <span class="mono">contentHash</span>.</p>
+      </div>
+      <div class="scroll-x">
+        <table class="evidence-table">
+          <caption>Signed evidence catalogue from <span class="mono">RunRecord.evidence</span>.</caption>
+          <thead><tr>
+            <th scope="col">Evidence ID</th><th scope="col">Type</th><th scope="col">Artifact reference</th>
+            <th scope="col">Content hash</th><th scope="col">Captured</th><th scope="col">Redaction</th>
+          </tr></thead>
+          <tbody><tr id="ev-EV-F-S1">
+        <th scope="row">EV-F-S1</th>
+        <td><span class="mono">screenshot</span><span class="sub">image/png · 73 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/shot-s1.png</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:fcdc204cfa8d9cca65e16f9125781c82dc3fd3522bfbfd4bdcf894382de63e2b</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:02:20Z<span class="sub">after-action · attempt AT-1 · action ACT-1-01 · state ST-1-01</span></td>
+        <td><span class="mono">redacted</span><span class="sub">pixel-blur/1</span></td>
+      </tr><tr id="ev-EV-F-S2">
+        <th scope="row">EV-F-S2</th>
+        <td><span class="mono">screenshot</span><span class="sub">image/png · 72 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/shot-s2.png</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:b6950e50da9634ea3559b70aeaf7b5433df0c050ad88ee6bb5c1e5cc8c288798</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:03:00Z<span class="sub">after-action · attempt AT-1 · action ACT-1-02 · state ST-1-02</span></td>
+        <td><span class="mono">redacted</span><span class="sub">pixel-blur/1</span></td>
+      </tr><tr id="ev-EV-F-S2I">
+        <th scope="row">EV-F-S2I</th>
+        <td><span class="mono">dom-excerpt</span><span class="sub">text/plain · 116 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/dom-s2-instruction.txt</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:e027d5474f1364414c20fae934173ac881f94e56aee5a75ab115ca50840b8f1f</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:03:05Z<span class="sub">after-action · attempt AT-1 · action ACT-1-02 · state ST-1-02</span></td>
+        <td><span class="mono">redacted</span><span class="sub">text-scrub/1</span></td>
+      </tr><tr id="ev-EV-F-S2R">
+        <th scope="row">EV-F-S2R</th>
+        <td><span class="mono">dom-excerpt</span><span class="sub">text/plain · 129 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/dom-s2-range.txt</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:522b9eb8ec866235c959c6da0f44e0cb338daf61e181fafbf8bd8f270fd1801d</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:03:40Z<span class="sub">after-action · attempt AT-1 · action ACT-1-03 · state ST-1-02</span></td>
+        <td><span class="mono">redacted</span><span class="sub">text-scrub/1</span></td>
+      </tr><tr id="ev-EV-F-Q1">
+        <th scope="row">EV-F-Q1</th>
+        <td><span class="mono">screenshot</span><span class="sub">image/png · 63 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/shot-q1.png</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:90bd37550a50d991ad60bb6cd5468886a2cc59b2f6e78589eed93b54d1f10b9b</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:04:20Z<span class="sub">after-action · attempt AT-1 · action ACT-1-04 · state ST-1-03</span></td>
+        <td><span class="mono">redacted</span><span class="sub">pixel-blur/1</span></td>
+      </tr><tr id="ev-EV-F-Q1I">
+        <th scope="row">EV-F-Q1I</th>
+        <td><span class="mono">dom-excerpt</span><span class="sub">text/plain · 117 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/dom-q1-instruction.txt</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:3e6a8869fe2a01752ff3d877d9fc8bd99120dfbc59ab4b18eabe9f3322b720eb</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:04:25Z<span class="sub">after-action · attempt AT-1 · action ACT-1-04 · state ST-1-03</span></td>
+        <td><span class="mono">redacted</span><span class="sub">text-scrub/1</span></td>
+      </tr><tr id="ev-EV-F-Q1R">
+        <th scope="row">EV-F-Q1R</th>
+        <td><span class="mono">dom-excerpt</span><span class="sub">text/plain · 131 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/dom-q1-range.txt</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:d4d439023f9aee9bebc9eef86fe8cceb38931e4079f06a7d679972beb83f630f</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:05:00Z<span class="sub">after-action · attempt AT-1 · action ACT-1-05 · state ST-1-03</span></td>
+        <td><span class="mono">redacted</span><span class="sub">text-scrub/1</span></td>
+      </tr><tr id="ev-EV-F-Q2">
+        <th scope="row">EV-F-Q2</th>
+        <td><span class="mono">screenshot</span><span class="sub">image/png · 62 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/shot-q2.png</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:c645867d576dc821cfe4cd7154f655bcf83283c4d1080f9da4da2e8adbb17050</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:05:40Z<span class="sub">after-action · attempt AT-1 · action ACT-1-06 · state ST-1-04</span></td>
+        <td><span class="mono">redacted</span><span class="sub">pixel-blur/1</span></td>
+      </tr><tr id="ev-EV-F-Q2D">
+        <th scope="row">EV-F-Q2D</th>
+        <td><span class="mono">dom-excerpt</span><span class="sub">text/plain · 162 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/dom-q2-default.txt</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:59b18808dab43437e536f52fe9b211c09bc5c248ed96d1023d7f6b32f9aa7ac5</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:06:30Z<span class="sub">after-action · attempt AT-1 · action ACT-1-07 · state ST-1-05</span></td>
+        <td><span class="mono">redacted</span><span class="sub">text-scrub/1</span></td>
+      </tr><tr id="ev-EV-F-Q3">
+        <th scope="row">EV-F-Q3</th>
+        <td><span class="mono">screenshot</span><span class="sub">image/png · 67 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/shot-q3.png</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:a4c865d513a7c4c0bc0ef7d60bc2ead756e012db831694a9a9156df9675ec06c</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:06:35Z<span class="sub">after-action · attempt AT-1 · action ACT-1-07 · state ST-1-05</span></td>
+        <td><span class="mono">redacted</span><span class="sub">pixel-blur/1</span></td>
+      </tr><tr id="ev-EV-F-Q3L">
+        <th scope="row">EV-F-Q3L</th>
+        <td><span class="mono">dom-excerpt</span><span class="sub">text/plain · 130 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/dom-q3-options.txt</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:c78efe2fe876b4cf540775fa8702a647168c1027e42108a7c77260219f9b6307</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:06:40Z<span class="sub">after-action · attempt AT-1 · action ACT-1-07 · state ST-1-05</span></td>
+        <td><span class="mono">redacted</span><span class="sub">text-scrub/1</span></td>
+      </tr><tr id="ev-EV-F-Q3I">
+        <th scope="row">EV-F-Q3I</th>
+        <td><span class="mono">dom-excerpt</span><span class="sub">text/plain · 288 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/dom-q3-no-instruction.txt</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:9b9e42a1a0606c328ef5ac32e250b4205aad27776467960879bc1859a4e9f507</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:06:45Z<span class="sub">after-action · attempt AT-1 · action ACT-1-07 · state ST-1-05</span></td>
+        <td><span class="mono">redacted</span><span class="sub">text-scrub/1</span></td>
+      </tr><tr id="ev-EV-F-Q4">
+        <th scope="row">EV-F-Q4</th>
+        <td><span class="mono">screenshot</span><span class="sub">image/png · 76 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/shot-q4.png</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:fa2d3aecdcc2e3419debeb2feb00f8ea2332ffa2efbaf8fe68437d10c9eee645</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:07:40Z<span class="sub">after-action · attempt AT-1 · action ACT-1-08 · state ST-1-06</span></td>
+        <td><span class="mono">redacted</span><span class="sub">pixel-blur/1</span></td>
+      </tr><tr id="ev-EV-F-Q5">
+        <th scope="row">EV-F-Q5</th>
+        <td><span class="mono">screenshot</span><span class="sub">image/png · 67 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/shot-q5.png</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:3780682b99d637026591256de5819a26e37a50df40139a6de459154e647ccb43</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:08:50Z<span class="sub">after-action · attempt AT-1 · action ACT-1-09 · state ST-1-07</span></td>
+        <td><span class="mono">redacted</span><span class="sub">pixel-blur/1</span></td>
+      </tr><tr id="ev-EV-F-Q6">
+        <th scope="row">EV-F-Q6</th>
+        <td><span class="mono">screenshot</span><span class="sub">image/png · 65 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/shot-q6.png</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:022d64aad3973c162535230de19a552818627dd301a52ce5959484c9ec740443</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:10:00Z<span class="sub">after-action · attempt AT-1 · action ACT-1-10 · state ST-1-08</span></td>
+        <td><span class="mono">redacted</span><span class="sub">pixel-blur/1</span></td>
+      </tr><tr id="ev-EV-F-Q6I">
+        <th scope="row">EV-F-Q6I</th>
+        <td><span class="mono">dom-excerpt</span><span class="sub">text/plain · 72 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/dom-q6-instruction.txt</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:a079d45e471f8f254151aef3fef78ad58a0ddd2aefe4f544888662af30347a20</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:10:05Z<span class="sub">after-action · attempt AT-1 · action ACT-1-10 · state ST-1-08</span></td>
+        <td><span class="mono">redacted</span><span class="sub">text-scrub/1</span></td>
+      </tr><tr id="ev-EV-F-Q6R">
+        <th scope="row">EV-F-Q6R</th>
+        <td><span class="mono">dom-excerpt</span><span class="sub">text/plain · 129 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/dom-q6-range.txt</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:f718a4eaceb8c07db55c4eb592b4d407b9c1a62907b13ddf57add0c650f95d91</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:11:10Z<span class="sub">after-action · attempt AT-1 · action ACT-1-11 · state ST-1-08</span></td>
+        <td><span class="mono">redacted</span><span class="sub">text-scrub/1</span></td>
+      </tr><tr id="ev-EV-F-END">
+        <th scope="row">EV-F-END</th>
+        <td><span class="mono">screenshot</span><span class="sub">image/png · 92 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/shot-complete.png</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:03b312aec693870c64447d1dd623899e19c4d6451caf2cebacf06aef46c80dbe</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:12:40Z<span class="sub">after-action · attempt AT-1 · action ACT-1-12 · state ST-1-09</span></td>
+        <td><span class="mono">redacted</span><span class="sub">pixel-blur/1</span></td>
+      </tr><tr id="ev-EV-F-SKIP">
+        <th scope="row">EV-F-SKIP</th>
+        <td><span class="mono">dom-excerpt</span><span class="sub">text/plain · 238 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/dom-skip-wrong-target.txt</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:ca2bea2d4343faea07061fde2abc9c66782f1e3dc33347a576ed7d67cf43d4d5</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:17:00Z<span class="sub">after-action · attempt AT-2 · action ACT-2-02 · state ST-2-02</span></td>
+        <td><span class="mono">redacted</span><span class="sub">text-scrub/1</span></td>
+      </tr><tr id="ev-EV-F-SKIPSHOT">
+        <th scope="row">EV-F-SKIPSHOT</th>
+        <td><span class="mono">screenshot</span><span class="sub">image/png · 90 B</span></td>
+        <td><span class="hash">runs/RUN-INT-S1-FLAWED/artifacts/shot-after-no.png</span><span class="sub"><span class="muted">metadata only in this render</span></span></td>
+        <td><span class="hash">sha256:14de00af2b8c985be1bafe8c0e250dfe7d54616d739fa4e9d288dff4ecfe3fbc</span><span class="sub"><span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span></span></td>
+        <td>2026-08-01T12:17:05Z<span class="sub">after-action · attempt AT-2 · action ACT-2-02 · state ST-2-02</span></td>
+        <td><span class="mono">redacted</span><span class="sub">pixel-blur/1</span></td>
+      </tr></tbody>
+        </table>
+      </div>
+    </section>
+<section id="scorecard" aria-labelledby="sc-h">
+      <div class="section-head"><h2 id="sc-h">Corpus acceptance appendix</h2></div>
+      <div class="empty-state"><strong>No scorecard was supplied for this run.</strong><p>This appendix only exists for corpus runs scored against a private oracle. An ordinary survey run has no oracle and therefore no seeded-defect metrics.</p></div>
+    </section>
+<footer class="report-footer" id="provenance">
+      <div class="wrap">
+        <h2>Cost, limits, and provenance</h2>
+        <div class="panel">
+          <dl class="dl-grid">
+            <div><dt>Extraction method</dt><dd><span class="mono">llm</span><span class="sub">survey-qa-extractor/0.4.0</span></dd></div>
+            <div><dt>Extraction model calls</dt><dd><span class="idref">MC-EXTRACT</span></dd></div>
+            <div><dt>Extracted at</dt><dd>2026-08-01T12:01:40Z</dd></div>
+            <div><dt>Matcher version</dt><dd><span class="muted">no scorecard supplied</span></dd></div>
+            <div><dt>Pricing version</dt><dd><span class="mono">fixture-pricing/2026-08-01</span></dd></div>
+            <div><dt>Evidence artifacts</dt><dd>20 catalogued</dd></div>
+            <div><dt>Tool versions</dt><dd><span class="mono">survey-qa-browser 1.2.0</span><br><span class="mono">survey-qa-runner 0.9.1</span></dd></div>
+            <div><dt>Report view version</dt><dd><span class="mono">survey-qa-report-view/2.0.0</span></dd></div>
+            <div><dt>Rendered at</dt><dd>2026-08-01T22:30:00Z</dd></div>
+          </dl>
+        </div>
+        <div class="panel">
+          <h3>Resource totals against enforced limits</h3>
+          <dl class="dl-grid">
+            <div><dt>Total attested cost</dt><dd>$0.6709 of $25.00 cap</dd></div>
+            <div><dt>Cost split</dt><dd>model $0.4709 · browser $0.1800 · other $0.0200</dd></div>
+            <div><dt>Reserves inside the cap</dt><dd>verification $3.00 · reporting $2.00</dd></div>
+            <div><dt>Wall clock</dt><dd>25m 30s of 1h 0m 0s cap</dd></div>
+            <div><dt>Browser time</dt><dd>17m 0s</dd></div>
+            <div><dt>Model calls</dt><dd>3 of 100 cap</dd></div>
+            <div><dt>Tool calls</dt><dd>15 of 400 cap</dd></div>
+            <div><dt>Retries / escalations</dt><dd>0 / 0</dd></div>
+            <div><dt>Tokens</dt><dd>386,000 in · 138,000 cached in · 27,700 out</dd></div>
+          </dl>
+        </div>
+        <div class="panel">
+          <h3>Model calls</h3>
+          <div class="scroll-x">
+            <table class="plain">
+              <caption>Provider calls observed by the harness. Prompt hashes identify the exact prompt version used.</caption>
+              <thead><tr>
+                <th scope="col">Call</th><th scope="col">Role</th><th scope="col">Provider / model</th>
+                <th scope="col">Prompt</th><th scope="col">Status</th><th scope="col">Tokens</th><th scope="col">Cost</th>
+              </tr></thead>
+              <tbody><tr>
+        <th scope="row">MC-EXTRACT</th>
+        <td><span class="mono">extractor</span></td>
+        <td>fixture-ai<span class="sub mono">fixture-ai/overseer</span></td>
+        <td><span class="mono">prompts/extract-coverage-contract/1.2</span><span class="sub hash">sha256:ad91fb5612edf1bd8837a5176fe2eff028e56f6ad3f345a10547ac2a208b2b12</span></td>
+        <td><span class="mono">succeeded</span></td>
+        <td class="num">48,000 in / 6,200 out<span class="sub">0 cached in</span></td>
+        <td class="num">$0.2370</td>
+      </tr><tr>
+        <th scope="row">MC-NAVIGATE</th>
+        <td><span class="mono">navigator</span></td>
+        <td>fixture-ai<span class="sub mono">fixture-ai/navigator</span></td>
+        <td><span class="mono">prompts/walk-path/1.4</span><span class="sub hash">sha256:678a1e8d73ef2ed1a2172c52c8fa9de8927b549ca31efd6cc7cb5c0ad9e559a7</span></td>
+        <td><span class="mono">succeeded</span></td>
+        <td class="num">312,000 in / 18,400 out<span class="sub">120,000 cached in</span></td>
+        <td class="num">$0.1040</td>
+      </tr><tr>
+        <th scope="row">MC-VERIFY</th>
+        <td><span class="mono">verifier</span></td>
+        <td>fixture-ai<span class="sub mono">fixture-ai/overseer</span></td>
+        <td><span class="mono">prompts/verify-observations/1.1</span><span class="sub hash">sha256:c2d0da6fc22f73116079c732d8ca7c1e278d832b724abfb76786ade3c2c3d5b2</span></td>
+        <td><span class="mono">succeeded</span></td>
+        <td class="num">26,000 in / 3,100 out<span class="sub">18,000 cached in</span></td>
+        <td class="num">$0.1299</td>
+      </tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Source records</h3>
+          <ul class="downloads"><li><a href="derived-invalid-attestation.run-record.json">Signed RunRecord (canonical source)</a> <span class="muted">— the authority for everything on this page</span></li></ul>
+          <p class="muted">This page is a view generated from the signed source records above. The signed <span class="mono">RunRecord</span> and the scorer output remain the authority; where this page and those records disagree, the records win.</p>
+        </div>
+      </div>
+    </footer>
+
+    </section>
+  </main>
+</div>
+<footer class="page-foot wrap">
+  <p>This page is a view generated from the signed run record. The record, not this page, is the authority. Generated 2026-08-01T22:30:00Z.</p>
+</footer>
+<script type="application/json" id="register-csv">"requirement_id,section,applies_across_survey,result,why,requirement,what_should_be_on_screen,questionnaire_quote,source_locator,recorded_state,recorded_reason_code,evidence_files_cited,evidence_rechecked,related_findings\r\nit-s1-role,S1,no,no current result,No result was reached for this requirement.,S1 asks which option best describes the respondent's primary professional role.,S1 is shown as a single-select question with the four documented role options.,S1. Which of the following best describes your primary professional role?,S1,,,,no,\r\nit-s2-tenure,S2,no,no current result,No result was reached for this requirement.,S2 asks how many years the respondent has been in clinical practice.,S2 is shown with a numeric entry field.,S2. How many years have you been in clinical practice?,S2,,,,no,\r\nit-s2-instruction,S2,no,no current result,No result was reached for this requirement.,S2 displays the instruction 'Enter a whole number between 0 and 50.',The instruction text 'Enter a whole number between 0 and 50.' appears with S2.,[INSTRUCTION: Enter a whole number between 0 and 50.],\"S2, instruction\",,,,no,\r\nit-s2-range,S2,no,no current result,No result was reached for this requirement.,S2 must accept only whole numbers between 0 and 50.,The out-of-range value is rejected and the survey stays on S2.,\"[NUMERIC ENTRY, range 0–50]\",\"S2, range\",,,,no,\r\nit-q1-caseload,Q1,no,no current result,No result was reached for this requirement.,Q1 asks how many moderate-to-severe plaque psoriasis patients the respondent manages in a typical month.,Q1 is shown with a numeric entry field.,Q1. How many patients with moderate-to-severe plaque psoriasis do you personally manage in a typical month?,Q1,,,,no,\r\nit-q1-instruction,Q1,no,no current result,No result was reached for this requirement.,Q1 displays the instruction 'Enter a whole number between 0 and 500.',The instruction text 'Enter a whole number between 0 and 500.' appears with Q1.,[INSTRUCTION: Enter a whole number between 0 and 500.],\"Q1, instruction\",,,,no,\r\nit-q1-range,Q1,no,no current result,No result was reached for this requirement.,Q1 must accept only whole numbers between 0 and 500.,The out-of-range value is rejected and the survey stays on Q1.,\"[NUMERIC ENTRY, range 0–500]\",\"Q1, range\",,,,no,\r\nit-q2-prescriber,Q2,no,no current result,No result was reached for this requirement.,Q2 asks whether the respondent currently prescribes biologic therapies for moderate-to-severe plaque psoriasis.,Q2 is shown as a Yes/No single-select question.,Q2. Do you currently prescribe biologic therapies for moderate-to-severe plaque psoriasis?,Q2,,,,no,\r\nit-q2-skip,Q2,no,no current result,No result was reached for this requirement.,\"If Q2 is answered No, the respondent skips ahead to Q5.\",The next screen after Q2 is Q5; Q3 and Q4 are never shown.,\"IF Q2=2 (NO), SKIP TO Q5.\",\"Q2, rule 1\",,,,no,F-01\r\nit-q2-continue,Q2,no,no current result,No result was reached for this requirement.,When Q2 is answered Yes the survey continues to Q3.,The next screen after Q2 is Q3.,\"IF Q2=2 (NO), SKIP TO Q5.\",\"Q2, default route\",,,,no,\r\nit-q3-options,Q3,no,no current result,No result was reached for this requirement.,Q3 asks which biologic therapies the respondent currently prescribes for moderate-to-severe plaque psoriasis.,\"Q3 is shown as a multi-select with five brands: SKYRIZI, TREMFYA, COSENTYX, TALTZ and BIMZELX.\",Q3. Which of the following biologic therapies do you currently prescribe for moderate-to-severe plaque psoriasis?,Q3,,,,no,F-02\r\nit-q3-instruction,Q3,no,no current result,No result was reached for this requirement.,Q3 displays the instruction 'Select all that apply.',The instruction text 'Select all that apply.' appears with Q3.,[INSTRUCTION: Select all that apply.],\"Q3, instruction\",,,,no,F-03\r\nit-q4-satisfaction,Q4,no,no current result,No result was reached for this requirement.,Q4 asks how satisfied the respondent is overall with the biologic therapies they currently prescribe for moderate-to-severe plaque psoriasis.,Q4 is shown as a five-point satisfaction scale.,\"Q4. Overall, how satisfied are you with the biologic therapies you currently prescribe for moderate-to-severe plaque psoriasis?\",Q4,,,,no,\r\nit-q5-barrier,Q5,no,no current result,No result was reached for this requirement.,Q5 asks for the single biggest barrier to biologic use among the respondent's moderate-to-severe plaque psoriasis patients.,Q5 is shown as a single-select list of five barriers.,Q5. What is the single biggest barrier to biologic use in your moderate-to-severe plaque psoriasis patients?,Q5,,,,no,\r\nit-q6-nps,Q6,no,no current result,No result was reached for this requirement.,Q6 asks how likely the respondent is to recommend biologic therapy to a colleague treating moderate-to-severe plaque psoriasis.,Q6 is shown as an 0-10 rating scale.,Q6. How likely are you to recommend biologic therapy to a colleague treating moderate-to-severe plaque psoriasis?,Q6,,,,no,\r\nit-q6-instruction,Q6,no,no current result,No result was reached for this requirement.,\"Q6 displays the scale instruction '0 = Not at all likely, 10 = Extremely likely'.\",\"The scale anchors '0 = Not at all likely, 10 = Extremely likely' appear with Q6.\",\"[INSTRUCTION: 0 = Not at all likely, 10 = Extremely likely]\",\"Q6, instruction\",,,,no,\r\nit-q6-range,Q6,no,no current result,No result was reached for this requirement.,Q6 must accept only whole numbers between 0 and 10.,The out-of-range value is rejected and the survey stays on Q6.,[RATING SCALE 0–10],\"Q6, range\",,,,no,\r\nit-completion,After Q6 (survey completion),no,no current result,No result was reached for this requirement.,The survey ends on the normal completion screen.,The completion screen 'Thank you for completing the survey.' is shown.,Programming: one question per screen. Respondents may not navigate backwards. All questions require an answer before continuing.,After Q6 (survey completion),,,,no,"</script>
+<script>
+    (function () {
+      var VIEWS = { summary: 'v-summary', full: 'v-full', audit: 'v-audit' };
+      function show(name) {
+        var el = document.getElementById(VIEWS[name]);
+        if (el) el.checked = true;
+      }
+      function viewOf(hash) {
+        if (!hash) return null;
+        var id = hash.replace(/^#/, '');
+        var el = document.getElementById(id);
+        if (!el) return null;
+        var host = el.closest('[data-view]');
+        return host ? host.getAttribute('data-view') : null;
+      }
+      document.addEventListener('click', function (ev) {
+        var a = ev.target.closest('a[href^="#"]');
+        if (a) {
+          var want = a.getAttribute('data-goto') || viewOf(a.getAttribute('href'));
+          if (want && VIEWS[want]) {
+            show(want);
+            hydrateView(want);
+            var t = document.getElementById(a.getAttribute('href').slice(1));
+            if (t) { ev.preventDefault(); t.scrollIntoView(); history.replaceState(null, '', a.getAttribute('href')); }
+          }
+        }
+        var copy = ev.target.closest('.copy-link');
+        if (copy) {
+          ev.preventDefault();
+          var url = location.href.split('#')[0] + '#' + copy.getAttribute('data-copy');
+          if (navigator.clipboard) navigator.clipboard.writeText(url);
+          copy.textContent = 'Link copied';
+          setTimeout(function () { copy.textContent = 'Copy link'; }, 2000);
+        }
+      });
+      /* Deferred blocks: unpack the compressed markup stored in this file when
+         the view that holds it is opened. Nothing is fetched. If the browser
+         has no DecompressionStream the note stays and points at the Full check,
+         which carries every requirement and needs no scripting. */
+      function hydrate(root) {
+        var hosts = (root || document).querySelectorAll('[data-deferred]:not([data-hydrated])');
+        for (var i = 0; i < hosts.length; i += 1) (function (host) {
+          var payload = host.querySelector('script[data-deferred-payload]');
+          if (!payload) return;
+          host.setAttribute('data-hydrated', 'pending');
+          if (typeof DecompressionStream === 'undefined' || typeof Response === 'undefined') {
+            host.setAttribute('data-hydrated', 'unsupported');
+            return;
+          }
+          try {
+            var raw = atob(payload.textContent.replace(/\s+/g, ''));
+            var bytes = new Uint8Array(raw.length);
+            for (var j = 0; j < raw.length; j += 1) bytes[j] = raw.charCodeAt(j);
+            new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text().then(function (html) {
+              host.innerHTML = html;
+              host.setAttribute('data-hydrated', 'done');
+            }).catch(function () { host.setAttribute('data-hydrated', 'failed'); });
+          } catch (e) { host.setAttribute('data-hydrated', 'failed'); }
+        })(hosts[i]);
+      }
+      function hydrateView(name) {
+        var host = document.querySelector('[data-view="' + name + '"]');
+        if (host) hydrate(host);
+      }
+      /* Listening only — the switcher itself is the CSS radio mechanism and
+         keeps working with this script removed. */
+      var radios = document.querySelectorAll('.viewradio');
+      for (var r = 0; r < radios.length; r += 1) {
+        radios[r].addEventListener('change', function () { if (this.checked) hydrateView(this.value); });
+      }
+      window.addEventListener('beforeprint', function () { hydrate(document); });
+
+      var want = viewOf(location.hash);
+      if (want) { show(want); hydrateView(want); }
+
+      var csvBtn = document.getElementById('csv-btn');
+      if (csvBtn) csvBtn.addEventListener('click', function () {
+        var node = document.getElementById('register-csv');
+        if (!node) return;
+        var blob = new Blob([JSON.parse(node.textContent)], { type: 'text/csv;charset=utf-8' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = "full-check-RUN-FIXTURE-TAMPERED.csv";
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+      });
+
+      var printReg = document.getElementById('print-register');
+      if (printReg) printReg.addEventListener('click', function () {
+        document.body.classList.add('print-register');
+        window.print();
+      });
+      window.addEventListener('afterprint', function () {
+        document.body.classList.remove('print-register');
+      });
+
+      var root = document.documentElement;
+      var btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      var stored = null;
+      try { stored = localStorage.getItem('survey-qa-report-theme'); } catch (e) {}
+      if (stored === 'dark' || stored === 'light') root.setAttribute('data-theme', stored);
+      function current() {
+        var explicit = root.getAttribute('data-theme');
+        if (explicit) return explicit;
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      function paint() {
+        var mode = current();
+        btn.textContent = mode === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+        btn.setAttribute('aria-pressed', mode === 'dark' ? 'true' : 'false');
+      }
+      btn.addEventListener('click', function () {
+        var next = current() === 'dark' ? 'light' : 'dark';
+        root.setAttribute('data-theme', next);
+        try { localStorage.setItem('survey-qa-report-theme', next); } catch (e) {}
+        paint();
+      });
+      paint();
+    })();
+  </script>
+</body>
+</html>

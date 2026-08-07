@@ -1,0 +1,976 @@
+{
+  "schemaVersion": "1.0.0",
+  "oracleRecordId": "s2-screener.flawed",
+  "provenance": {
+    "generatorId": "scorer/oracle/build-oracle.mjs",
+    "generatorVersion": "1.0.0",
+    "generatedAt": "2026-08-01T00:00:00Z",
+    "sourceHash": "sha256:70f74c0b27fc2898fae2305b4e86c21e4a5549f62c9dc19ae4a4f2bc45f9bf11"
+  },
+  "survey": {
+    "surveyId": "s2-screener",
+    "title": "Living with Migraine: Treatment Experiences and Preferences",
+    "variant": {
+      "variantId": "s2-screener.flawed",
+      "kind": "flawed",
+      "basedOnVariantId": "s2-screener.clean"
+    },
+    "document": {
+      "documentId": "s2-screener/questionnaire.docx",
+      "contentHash": "sha256:a27a94edea713e459f50dd602c454358d686163590ff665f7faa7165543b30a4"
+    },
+    "targetBuild": {
+      "buildId": "s2-screener/flawed.html",
+      "contentHash": "sha256:373fdab30ff6f8cd1f010443c07f8b7c2d3adc1e8369eab19affe70fbdc2dadf"
+    }
+  },
+  "obligations": [
+    {
+      "oracleId": "s2-screener/question:Q1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q1",
+        "quote": "Which of the following do you currently use to treat a migraine attack when it happens?"
+      },
+      "requirement": "Q1. Which of the following do you currently use to treat a migraine attack when it happens?",
+      "contentHash": "sha256:725844c6c9f9f29f4f93774e9d50183269a4d0f09bce0424a4202e92cd9812c0",
+      "preconditions": [],
+      "stimulus": "Reach question Q1",
+      "expectedObservables": [
+        "Question Q1 is displayed with text: \"Which of the following do you currently use to treat a migraine attack when it happens?\"",
+        "Answer input is of type checkbox",
+        "Option 1: \"Prescription oral medication\"",
+        "Option 2: \"Over-the-counter pain relievers\"",
+        "Option 3: \"Injectable or nasal rescue treatment\"",
+        "Option 4: \"Non-drug approaches (rest, dark room, ice, caffeine)\"",
+        "Option 99: \"None of these\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/question:Q2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q2",
+        "quote": "Are you currently using a preventive (daily or monthly) treatment for migraine?"
+      },
+      "requirement": "Q2. Are you currently using a preventive (daily or monthly) treatment for migraine?",
+      "contentHash": "sha256:20949e1c4a0dafb3f9865c382cb00a40a6517628e8ede651c2d1196212846b46",
+      "preconditions": [],
+      "stimulus": "Reach question Q2",
+      "expectedObservables": [
+        "Question Q2 is displayed with text: \"Are you currently using a preventive (daily or monthly) treatment for migraine?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Yes, a daily oral preventive\"",
+        "Option 2: \"Yes, an injectable preventive\"",
+        "Option 3: \"No, but I am considering one\"",
+        "Option 4: \"No, and I am not interested\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/question:Q3",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q3",
+        "quote": "Overall, how satisfied are you with your current approach to managing migraine?"
+      },
+      "requirement": "Q3. Overall, how satisfied are you with your current approach to managing migraine?",
+      "contentHash": "sha256:1fcfb303fbe2db6a481e6269b8f33f28529d1dc726ee170af60303d257a40c9f",
+      "preconditions": [],
+      "stimulus": "Reach question Q3",
+      "expectedObservables": [
+        "Question Q3 is displayed with text: \"Overall, how satisfied are you with your current approach to managing migraine?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Very satisfied\"",
+        "Option 2: \"Somewhat satisfied\"",
+        "Option 3: \"Neither satisfied nor dissatisfied\"",
+        "Option 4: \"Somewhat dissatisfied\"",
+        "Option 5: \"Very dissatisfied\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/question:Q4",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q4",
+        "quote": "How much do migraines interfere with your daily activities?"
+      },
+      "requirement": "Q4. How much do migraines interfere with your daily activities?",
+      "contentHash": "sha256:8576feaf0d408a7ec81cbd79bc4bbeb454b3dd0d9ba2e5d15601610cf91a9771",
+      "preconditions": [],
+      "stimulus": "Reach question Q4",
+      "expectedObservables": [
+        "Question Q4 is displayed with text: \"How much do migraines interfere with your daily activities?\"",
+        "Answer input is of type rating"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/question:Q5",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q5",
+        "quote": "In your own words, what is the most frustrating part of managing your migraines?"
+      },
+      "requirement": "Q5. In your own words, what is the most frustrating part of managing your migraines?",
+      "contentHash": "sha256:315931115ecd156a04296fdca863c3e4b899fcf6b19fc8ce840fc25618786520",
+      "preconditions": [],
+      "stimulus": "Reach question Q5",
+      "expectedObservables": [
+        "Question Q5 is displayed with text: \"In your own words, what is the most frustrating part of managing your migraines?\"",
+        "Answer input is of type text"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/question:Q6",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q6",
+        "quote": "How likely are you to ask your doctor about a new preventive migraine treatment in the next 6 months?"
+      },
+      "requirement": "Q6. How likely are you to ask your doctor about a new preventive migraine treatment in the next 6 months?",
+      "contentHash": "sha256:3a4151c1c40966096232c62e6b8daf106d749ca1771e70a150b2639ae4a82b8c",
+      "preconditions": [],
+      "stimulus": "Reach question Q6",
+      "expectedObservables": [
+        "Question Q6 is displayed with text: \"How likely are you to ask your doctor about a new preventive migraine treatment in the next 6 months?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Definitely will\"",
+        "Option 2: \"Probably will\"",
+        "Option 3: \"Might or might not\"",
+        "Option 4: \"Probably will not\"",
+        "Option 5: \"Definitely will not\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/question:S1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S1",
+        "quote": "What is your age?"
+      },
+      "requirement": "S1. What is your age?",
+      "contentHash": "sha256:d5d5f801c8c7cdad434926429d68ce88dda5bd3a427da82150126ceb550a2219",
+      "preconditions": [],
+      "stimulus": "Reach question S1",
+      "expectedObservables": [
+        "Question S1 is displayed with text: \"What is your age?\"",
+        "Answer input is of type number"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003",
+          "p004"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/question:S2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S2",
+        "quote": "Have you ever been diagnosed with migraine by a healthcare professional?"
+      },
+      "requirement": "S2. Have you ever been diagnosed with migraine by a healthcare professional?",
+      "contentHash": "sha256:75832e40f104c1ee65018fb650b6e6e874ab0f92b47bade9feba4ab77c79d92a",
+      "preconditions": [],
+      "stimulus": "Reach question S2",
+      "expectedObservables": [
+        "Question S2 is displayed with text: \"Have you ever been diagnosed with migraine by a healthcare professional?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Yes\"",
+        "Option 2: \"No\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/question:S3",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S3",
+        "quote": "Do you or does anyone in your household work in any of the following industries?"
+      },
+      "requirement": "S3. Do you or does anyone in your household work in any of the following industries?",
+      "contentHash": "sha256:df434fb876856c8b8ad9eab354e134008f7f48bac5d75989f754c3fd6fefed2a",
+      "preconditions": [],
+      "stimulus": "Reach question S3",
+      "expectedObservables": [
+        "Question S3 is displayed with text: \"Do you or does anyone in your household work in any of the following industries?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Market research\"",
+        "Option 2: \"Pharmaceutical or biotechnology\"",
+        "Option 3: \"Advertising or public relations\"",
+        "Option 4: \"None of these\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/question:S4",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S4",
+        "quote": "On average, how many days per month do you experience migraine headaches?"
+      },
+      "requirement": "S4. On average, how many days per month do you experience migraine headaches?",
+      "contentHash": "sha256:52536de240632783dc2942be9768ae87d7743cecdc545c01fc270d0931d322b3",
+      "preconditions": [],
+      "stimulus": "Reach question S4",
+      "expectedObservables": [
+        "Question S4 is displayed with text: \"On average, how many days per month do you experience migraine headaches?\"",
+        "Answer input is of type number"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/rule:Q1:exclusive:99",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, option 99 (exclusive)"
+      },
+      "requirement": "Q1: 'NONE OF THESE' CANNOT BE COMBINED WITH OTHER SELECTIONS.",
+      "contentHash": "sha256:9c17263573d128d9551b161efb0a81d4f7ef54606b2a82f9cda7b6aee5b23507",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "Select option 99 (\"None of these\") together with any other option at Q1",
+      "expectedObservables": [
+        "Option 99 (\"None of these\") cannot be combined with other selections at Q1"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/rule:Q1:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, instruction",
+        "quote": "Select all that apply."
+      },
+      "requirement": "[INSTRUCTION: Select all that apply.]",
+      "contentHash": "sha256:2d8e4555565a8c9ebe364c99ba066b4c1fd70535743044af0f3e7be287ab94bb",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "View question Q1",
+      "expectedObservables": [
+        "Instruction shown: \"Select all that apply.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/rule:Q4:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q4, instruction",
+        "quote": "0 = No interference, 10 = Complete interference"
+      },
+      "requirement": "[INSTRUCTION: 0 = No interference, 10 = Complete interference]",
+      "contentHash": "sha256:22eace1ec6aaf800460c66e3a3b69c99fda2098549def2c4a9eb5d725a91f670",
+      "preconditions": [
+        "Question Q4 is displayed"
+      ],
+      "stimulus": "View question Q4",
+      "expectedObservables": [
+        "Instruction shown: \"0 = No interference, 10 = Complete interference\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/rule:Q4:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q4, range validation"
+      },
+      "requirement": "Q4: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 10.",
+      "contentHash": "sha256:4fd27448550402451217f546d718fcfe1443d8e5f405a424c0e91e4a181bd775",
+      "preconditions": [
+        "Question Q4 is displayed"
+      ],
+      "stimulus": "Submit an answer at Q4 outside the documented bounds",
+      "expectedObservables": [
+        "Q4 accepts only whole numbers between 0 and 10",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/rule:S1:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S1, instruction",
+        "quote": "Enter your age in years."
+      },
+      "requirement": "[INSTRUCTION: Enter your age in years.]",
+      "contentHash": "sha256:ac9f184a286b0b264c369693d7ebead91324efdfab0716b9d0e06ad580929774",
+      "preconditions": [
+        "Question S1 is displayed"
+      ],
+      "stimulus": "View question S1",
+      "expectedObservables": [
+        "Instruction shown: \"Enter your age in years.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003",
+          "p004"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/rule:S1:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S1, range validation"
+      },
+      "requirement": "S1: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 99.",
+      "contentHash": "sha256:6fa6b23b133c57ea3fc871df360952f899d29a7a7e2ec1505ba6bc8668ac7484",
+      "preconditions": [
+        "Question S1 is displayed"
+      ],
+      "stimulus": "Submit an answer at S1 outside the documented bounds",
+      "expectedObservables": [
+        "S1 accepts only whole numbers between 0 and 99",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003",
+          "p004"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/rule:S4:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S4, instruction",
+        "quote": "Enter a whole number between 0 and 31."
+      },
+      "requirement": "[INSTRUCTION: Enter a whole number between 0 and 31.]",
+      "contentHash": "sha256:cab7fc623b6ceb7f4de05d022e159aebfd71e5d012cc30a10e918369e926424e",
+      "preconditions": [
+        "Question S4 is displayed"
+      ],
+      "stimulus": "View question S4",
+      "expectedObservables": [
+        "Instruction shown: \"Enter a whole number between 0 and 31.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/rule:S4:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S4, range validation"
+      },
+      "requirement": "S4: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 31.",
+      "contentHash": "sha256:fd666f35e66f32ae0a2efe632db9db9b96974bc7396ed55b6370756562f3ff64",
+      "preconditions": [
+        "Question S4 is displayed"
+      ],
+      "stimulus": "Submit an answer at S4 outside the documented bounds",
+      "expectedObservables": [
+        "S4 accepts only whole numbers between 0 and 31",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/branch:S1:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "S1, default continue"
+      },
+      "requirement": "AFTER S1, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO S2.",
+      "contentHash": "sha256:8fa3c30fff421a1391e66cb37a096a66d48a359f8a7443b3df97e0566d1d769b",
+      "preconditions": [
+        "Question S1 is reached",
+        "Condition does not hold: S1 < 18"
+      ],
+      "stimulus": "Answer S1 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at S2 immediately after S1"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003",
+          "p004"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/branch:S1:terminate:under-18:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "S1, rule 1",
+        "quote": "TERMINATE IF S1 < 18."
+      },
+      "requirement": "TERMINATE IF S1 < 18.",
+      "contentHash": "sha256:306f20c21783ece74b9b4d67f99dcc9fd107dfc36954c3c3a396d5f6acd180d6",
+      "preconditions": [
+        "Question S1 is reached"
+      ],
+      "stimulus": "Answer S1 such that S1 < 18",
+      "expectedObservables": [
+        "The survey terminates in state under-18",
+        "Termination reason: Respondent is under 18 years of age."
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003",
+          "p004"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/branch:S2:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "S2, default continue"
+      },
+      "requirement": "AFTER S2, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO S3.",
+      "contentHash": "sha256:8782e9decc9b1f11b1a1b2ab821b8321e01fd625e55e8b9ba51ba4f2892f68a8",
+      "preconditions": [
+        "Question S2 is reached",
+        "Condition does not hold: S2=2 (NO)"
+      ],
+      "stimulus": "Answer S2 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at S3 immediately after S2"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/branch:S2:terminate:no-diagnosis:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "S2, rule 1",
+        "quote": "TERMINATE IF S2=2 (NO)."
+      },
+      "requirement": "TERMINATE IF S2=2 (NO).",
+      "contentHash": "sha256:fa2d60ddb57e5dd96b1e08e9d1d0d71a4a512888e8cce7e48ed0d609efa07ba0",
+      "preconditions": [
+        "Question S2 is reached"
+      ],
+      "stimulus": "Answer S2 such that S2=2 (NO)",
+      "expectedObservables": [
+        "The survey terminates in state no-diagnosis",
+        "Termination reason: No professional migraine diagnosis."
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/branch:S3:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "S3, default continue"
+      },
+      "requirement": "AFTER S3, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO S4.",
+      "contentHash": "sha256:474963155186d1f39b5809710819d09021e69988f6878b22710fa9c45740bc76",
+      "preconditions": [
+        "Question S3 is reached",
+        "Condition does not hold: S3 IS NOT 4 (NONE OF THESE)"
+      ],
+      "stimulus": "Answer S3 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at S4 immediately after S3"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/branch:S3:terminate:industry-conflict:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "S3, rule 1",
+        "quote": "TERMINATE IF S3 IS NOT 4 (NONE OF THESE)."
+      },
+      "requirement": "TERMINATE IF S3 IS NOT 4 (NONE OF THESE).",
+      "contentHash": "sha256:47e15f336dc777a43263bee7887dcb1c281b1fc2505b1ae8a35e1f9ceb5b7851",
+      "preconditions": [
+        "Question S3 is reached"
+      ],
+      "stimulus": "Answer S3 such that S3 IS NOT 4 (NONE OF THESE)",
+      "expectedObservables": [
+        "The survey terminates in state industry-conflict",
+        "Termination reason: Household works in a conflicting industry."
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/branch:S4:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "S4, default continue"
+      },
+      "requirement": "AFTER S4, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO Q1.",
+      "contentHash": "sha256:faee1b1f72d4111d52762c564898f1d659143d070d1911a4c7251967658be579",
+      "preconditions": [
+        "Question S4 is reached",
+        "Condition does not hold: S4 >= 15"
+      ],
+      "stimulus": "Answer S4 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at Q1 immediately after S4"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/branch:S4:terminate:quota-full-chronic:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "S4, rule 1",
+        "quote": "TERMINATE IF S4 >= 15."
+      },
+      "requirement": "TERMINATE IF S4 >= 15.",
+      "contentHash": "sha256:fedd4c14f2a86269a5876b9b933f7ff1418cf1b2b0d14a0215a69154ab587349",
+      "preconditions": [
+        "Question S4 is reached"
+      ],
+      "stimulus": "Answer S4 such that S4 >= 15",
+      "expectedObservables": [
+        "The survey terminates in state quota-full-chronic",
+        "Termination reason: Chronic migraine (15+ headache days) quota is full."
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/terminal:complete",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Survey completion"
+      },
+      "requirement": "SURVEY REACHES THE NORMAL COMPLETION SCREEN.",
+      "contentHash": "sha256:4f3cf01f982a93503d371c54b26a213ff51323829cbc80303365b1855ae1486f",
+      "preconditions": [],
+      "stimulus": "Reach the end of the questionnaire without triggering any terminate rule",
+      "expectedObservables": [
+        "The normal completion screen is shown"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/terminal:terminate:industry-conflict",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Terminate state industry-conflict"
+      },
+      "requirement": "TERMINATION STATE 'industry-conflict': Household works in a conflicting industry.",
+      "contentHash": "sha256:8a21e874c82234f6ae49e2bd4f4a52d01913e4e55e8ea6ac5a005936be7a7dd3",
+      "preconditions": [
+        "A rule fires that terminates in industry-conflict (fired from S3)"
+      ],
+      "stimulus": "Trigger any rule that terminates in industry-conflict",
+      "expectedObservables": [
+        "The termination screen for state industry-conflict is shown",
+        "Documented reason: Household works in a conflicting industry."
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/terminal:terminate:no-diagnosis",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Terminate state no-diagnosis"
+      },
+      "requirement": "TERMINATION STATE 'no-diagnosis': No professional migraine diagnosis.",
+      "contentHash": "sha256:6a8a7c32c28b2448b0d65357f21736cbf5895465f1af65626b13209698f967d4",
+      "preconditions": [
+        "A rule fires that terminates in no-diagnosis (fired from S2)"
+      ],
+      "stimulus": "Trigger any rule that terminates in no-diagnosis",
+      "expectedObservables": [
+        "The termination screen for state no-diagnosis is shown",
+        "Documented reason: No professional migraine diagnosis."
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/terminal:terminate:quota-full-chronic",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Terminate state quota-full-chronic"
+      },
+      "requirement": "TERMINATION STATE 'quota-full-chronic': Chronic migraine (15+ headache days) quota is full.",
+      "contentHash": "sha256:529ade09096a035497d1bd681c72325fe77bd16cf5fb23e4bdb6b21d6f95cd6e",
+      "preconditions": [
+        "A rule fires that terminates in quota-full-chronic (fired from S4)"
+      ],
+      "stimulus": "Trigger any rule that terminates in quota-full-chronic",
+      "expectedObservables": [
+        "The termination screen for state quota-full-chronic is shown",
+        "Documented reason: Chronic migraine (15+ headache days) quota is full."
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s2-screener/terminal:terminate:under-18",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Terminate state under-18"
+      },
+      "requirement": "TERMINATION STATE 'under-18': Respondent is under 18 years of age.",
+      "contentHash": "sha256:96b305421d0c335cf772ea7917b3de07098995f45928498b17250e24859a2a37",
+      "preconditions": [
+        "A rule fires that terminates in under-18 (fired from S1)"
+      ],
+      "stimulus": "Trigger any rule that terminates in under-18",
+      "expectedObservables": [
+        "The termination screen for state under-18 is shown",
+        "Documented reason: Respondent is under 18 years of age."
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p004"
+        ]
+      }
+    }
+  ],
+  "witnessPaths": [
+    {
+      "witnessPathId": "p001",
+      "answerVector": {
+        "S1": 16,
+        "S2": 1,
+        "S3": 1,
+        "S4": 14,
+        "Q1": [
+          1
+        ],
+        "Q2": 1,
+        "Q3": 1,
+        "Q4": 0,
+        "Q5": "Response text.",
+        "Q6": 1
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "Q5",
+        "Q6"
+      ],
+      "terminalId": null
+    },
+    {
+      "witnessPathId": "p002",
+      "answerVector": {
+        "S1": 16,
+        "S2": 1,
+        "S3": 1,
+        "S4": 16
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "S3",
+        "S4"
+      ],
+      "terminalId": "quota-full-chronic"
+    },
+    {
+      "witnessPathId": "p003",
+      "answerVector": {
+        "S1": 16,
+        "S2": 2
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2"
+      ],
+      "terminalId": "no-diagnosis"
+    },
+    {
+      "witnessPathId": "p004",
+      "answerVector": {
+        "S1": 15
+      },
+      "expectedVisitedSourceRefs": [
+        "S1"
+      ],
+      "terminalId": "under-18"
+    }
+  ],
+  "seededDefects": [
+    {
+      "defectId": "S2-E01",
+      "category": "terminate-not-enforced",
+      "sourceAnchor": {
+        "locator": "S3, rule 1"
+      },
+      "expected": {
+        "requirement": "AFTER S3, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO S4.\nTERMINATE IF S3 IS NOT 4 (NONE OF THESE).\nTERMINATION STATE 'industry-conflict': Household works in a conflicting industry.",
+        "contentHash": "sha256:0d8bf37ee6ab44a21c55c1d567b2f97e2585a4a563571e0196a560da1457f852"
+      },
+      "observed": {
+        "requirement": "Docx says TERMINATE IF S3 IS NOT 4 (industry conflict); the site never terminates on S3 and lets conflicted respondents through.",
+        "contentHash": "sha256:4bd60f20c0d1863f7854df06b888f850b08c1e067bb9b1169861bec5eea66ae2"
+      },
+      "affectedObligationIds": [
+        "s2-screener/branch:S3:default",
+        "s2-screener/branch:S3:terminate:industry-conflict:taken",
+        "s2-screener/terminal:terminate:industry-conflict"
+      ]
+    },
+    {
+      "defectId": "S2-E02",
+      "category": "wrong-threshold",
+      "sourceAnchor": {
+        "locator": "S1, rule 1"
+      },
+      "expected": {
+        "requirement": "TERMINATE IF S1 < 18.",
+        "contentHash": "sha256:24737d054d79855823e6c62470f1baec1ee7c1d146e1b62a21dc473cc3d36eb5"
+      },
+      "observed": {
+        "requirement": "AFTER S1, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO S2.\nTERMINATE IF S1 < 16.",
+        "contentHash": "sha256:985a03c4eda762558aaaaaa742feb2a2d6e02884d5baf31c15d97e57d4ee478b"
+      },
+      "affectedObligationIds": [
+        "s2-screener/branch:S1:default",
+        "s2-screener/branch:S1:terminate:under-18:taken"
+      ]
+    },
+    {
+      "defectId": "S2-E03",
+      "category": "boundary-off-by-one",
+      "sourceAnchor": {
+        "locator": "S4, rule 1"
+      },
+      "expected": {
+        "requirement": "TERMINATE IF S4 >= 15.",
+        "contentHash": "sha256:de480474b8a4afef44b5f7f318e0a7a77426ec8121b739682e69ca0a49946afd"
+      },
+      "observed": {
+        "requirement": "AFTER S4, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO Q1.\nTERMINATE IF S4 > 15.",
+        "contentHash": "sha256:9f0ba769ba8fbca67b91cbfbc1e412164f64a85afbb3b2bc4c2aa59eef1a3e9e"
+      },
+      "affectedObligationIds": [
+        "s2-screener/branch:S4:default",
+        "s2-screener/branch:S4:terminate:quota-full-chronic:taken"
+      ]
+    }
+  ]
+}

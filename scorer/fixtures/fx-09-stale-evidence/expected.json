@@ -1,0 +1,26 @@
+{
+  "description": "Stale evidence: artifact capture lineage points at another attempt. EVIDENCE_LINEAGE_MISMATCH; artifact rejected; affected item and defect claim get no credit.",
+  "expectErrors": [
+    "EVIDENCE_LINEAGE_MISMATCH"
+  ],
+  "forbidErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "assertions": [
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "approx",
+      "value": 0.9230769230769231
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "approx",
+      "value": 0.5
+    },
+    {
+      "path": "metrics.evidenceCompleteness",
+      "op": "approx",
+      "value": 0.875
+    }
+  ]
+}

@@ -1,0 +1,790 @@
+{
+  "id": "EXP-99",
+  "tier": 2,
+  "class": "validation",
+  "trace": [
+    {
+      "seq": 1,
+      "screen": "WELCOME",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "WELCOME",
+        "clicked": [],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 2,
+      "screen": "Q1",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q1",
+        "clicked": [
+          {
+            "label": "A watering can",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 3,
+      "screen": "Q2",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q2",
+        "clicked": [
+          {
+            "label": "Metal",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 4,
+      "screen": "Q7",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q7",
+        "clicked": [
+          {
+            "label": "Bought new",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 5,
+      "screen": "Q3",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q3",
+        "clicked": [
+          {
+            "label": "On a windowsill",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 6,
+      "screen": "Q4",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q4",
+        "clicked": [
+          {
+            "label": "Yes",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 7,
+      "screen": "Q5",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q5",
+        "clicked": [
+          {
+            "label": "Every week",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 8,
+      "screen": "Q6",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q6",
+        "clicked": [],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 9,
+      "screen": "CLOSING",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "CLOSING",
+        "clicked": [],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "step": 1,
+      "seq": 1,
+      "screen_id": "WELCOME",
+      "action_taken": null,
+      "question_text": "Welcome. This short survey is about looking after houseplants.",
+      "heads_html": [
+        "Welcome. This short survey is about looking after houseplants."
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "",
+          "visible": false,
+          "disabled": false
+        },
+        "next": {
+          "text": "Start",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "0",
+          "text": "0%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Welcome. This short survey is about looking after houseplants.",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 2,
+      "seq": 2,
+      "screen_id": "Q1",
+      "action_taken": null,
+      "question_text": "How do you usually water your houseplants?",
+      "heads_html": [
+        "How do you usually water your houseplants?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "A watering can",
+          "value": "1",
+          "name": "Q1",
+          "checked": true,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "The kitchen tap",
+          "value": "2",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "A self-watering pot",
+          "value": "3",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "I do not have any houseplants",
+          "value": "4",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "15",
+          "text": "15%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "How do you usually water your houseplants?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 3,
+      "seq": 3,
+      "screen_id": "Q2",
+      "action_taken": null,
+      "question_text": "Which watering can do you use?",
+      "heads_html": [
+        "Which watering can do you use?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Metal",
+          "value": "1",
+          "name": "Q2",
+          "checked": true,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Plastic",
+          "value": "2",
+          "name": "Q2",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Ceramic",
+          "value": "3",
+          "name": "Q2",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "I do not use a watering can",
+          "value": "4",
+          "name": "Q2",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "30",
+          "text": "30%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Which watering can do you use?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 4,
+      "seq": 4,
+      "screen_id": "Q7",
+      "action_taken": null,
+      "question_text": "How did you get that watering can?",
+      "heads_html": [
+        "How did you get that watering can?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Bought new",
+          "value": "1",
+          "name": "Q7",
+          "checked": true,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Handed down",
+          "value": "2",
+          "name": "Q7",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "35",
+          "text": "35%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "How did you get that watering can?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 5,
+      "seq": 5,
+      "screen_id": "Q3",
+      "action_taken": null,
+      "question_text": "Where do you keep most of your plants?",
+      "heads_html": [
+        "Where do you keep most of your plants?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "On a windowsill",
+          "value": "1",
+          "name": "Q3",
+          "checked": true,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "On a balcony",
+          "value": "2",
+          "name": "Q3",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "On a desk",
+          "value": "3",
+          "name": "Q3",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Somewhere else in the home",
+          "value": "4",
+          "name": "Q3",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "45",
+          "text": "45%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Where do you keep most of your plants?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 6,
+      "seq": 6,
+      "screen_id": "Q4",
+      "action_taken": null,
+      "question_text": "Do you use plant food?",
+      "heads_html": [
+        "Do you use plant food?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Yes",
+          "value": "1",
+          "name": "Q4",
+          "checked": true,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "No",
+          "value": "2",
+          "name": "Q4",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "60",
+          "text": "60%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Do you use plant food?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 7,
+      "seq": 7,
+      "screen_id": "Q5",
+      "action_taken": null,
+      "question_text": "How often do you use plant food?",
+      "heads_html": [
+        "How often do you use plant food?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Every week",
+          "value": "1",
+          "name": "Q5",
+          "checked": true,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Every month",
+          "value": "2",
+          "name": "Q5",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Rarely",
+          "value": "3",
+          "name": "Q5",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "75",
+          "text": "75%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "How often do you use plant food?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 8,
+      "seq": 8,
+      "screen_id": "Q6",
+      "action_taken": null,
+      "question_text": "Anything else about your plants?",
+      "heads_html": [
+        "Anything else about your plants?"
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [
+        {
+          "id": "Q6_txt",
+          "name": "Q6",
+          "tag": "textarea",
+          "label": "Your answer",
+          "value": "",
+          "maxlength": "500",
+          "visible": true,
+          "disabled": false
+        }
+      ],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "90",
+          "text": "90%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Anything else about your plants?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 9,
+      "seq": 9,
+      "screen_id": "CLOSING",
+      "action_taken": null,
+      "question_text": "Thank you. Your answers have been recorded.",
+      "heads_html": [
+        "Thank you. Your answers have been recorded."
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "100",
+          "text": "100%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Thank you. Your answers have been recorded.",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    }
+  ],
+  "page_errors": [],
+  "probes": [
+    {
+      "probe": "submit-without-answering",
+      "at": "Q1",
+      "before": {
+        "texts": [],
+        "checked": [],
+        "full_inventory": []
+      },
+      "after_screen": "Q1",
+      "validation": [
+        "Please choose one answer."
+      ],
+      "advanced": false,
+      "blocked": true
+    }
+  ]
+}

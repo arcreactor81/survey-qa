@@ -1,0 +1,3 @@
+S2 submit with value 99 -> BLOCKED.
+<p class="err">Enter a whole number between 0 and 50.</p>
+Screen did not advance (still S2).

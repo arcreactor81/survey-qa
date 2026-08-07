@@ -1,0 +1,438 @@
+{
+  "schema": "oracle-index/v1",
+  "generatedBy": "scorer/oracle/build-oracle.mjs",
+  "adapterVersion": "1.0.0",
+  "recordSchemaVersion": "1.0.0",
+  "engine": {
+    "module": "test-suite/branching/engine.js",
+    "version": "1.0.0"
+  },
+  "builtFromCorpus": {
+    "schema": "branching-corpus/v1",
+    "generated": "2026-08-01"
+  },
+  "surveys": [
+    {
+      "id": "s1-skip",
+      "variants": {
+        "clean": {
+          "file": "s1-skip.clean.json",
+          "oracleRecordId": "s1-skip.clean",
+          "counts": {
+            "question": 8,
+            "rule": 7,
+            "branch": 2,
+            "terminal": 1,
+            "total": 18,
+            "complexityWeight": 31
+          },
+          "witnessPaths": 2,
+          "corpusRoutingPaths": 2,
+          "unreachableObligations": 0,
+          "seededDefectIds": []
+        },
+        "flawed": {
+          "file": "s1-skip.flawed.json",
+          "oracleRecordId": "s1-skip.flawed",
+          "counts": {
+            "question": 8,
+            "rule": 7,
+            "branch": 2,
+            "terminal": 1,
+            "total": 18,
+            "complexityWeight": 31
+          },
+          "witnessPaths": 2,
+          "corpusRoutingPaths": 2,
+          "unreachableObligations": 0,
+          "seededDefectIds": [
+            "S1-E01",
+            "S1-E02",
+            "S1-E03"
+          ]
+        }
+      },
+      "seededDefects": [
+        {
+          "defectId": "S1-E01",
+          "category": "wrong-skip-target",
+          "locator": "Q2, rule 1",
+          "affectedObligationIds": [
+            "s1-skip/branch:Q2:goto:Q5:taken"
+          ]
+        },
+        {
+          "defectId": "S1-E02",
+          "category": "missing-option",
+          "locator": "Q3, option 5",
+          "affectedObligationIds": [
+            "s1-skip/question:Q3"
+          ]
+        },
+        {
+          "defectId": "S1-E03",
+          "category": "missing-instruction",
+          "locator": "Q3, instruction",
+          "affectedObligationIds": [
+            "s1-skip/rule:Q3:instruction"
+          ]
+        }
+      ],
+      "seededAttributionExact": true
+    },
+    {
+      "id": "s2-screener",
+      "variants": {
+        "clean": {
+          "file": "s2-screener.clean.json",
+          "oracleRecordId": "s2-screener.clean",
+          "counts": {
+            "question": 10,
+            "rule": 8,
+            "branch": 8,
+            "terminal": 5,
+            "total": 31,
+            "complexityWeight": 65
+          },
+          "witnessPaths": 5,
+          "corpusRoutingPaths": 5,
+          "unreachableObligations": 0,
+          "seededDefectIds": []
+        },
+        "flawed": {
+          "file": "s2-screener.flawed.json",
+          "oracleRecordId": "s2-screener.flawed",
+          "counts": {
+            "question": 10,
+            "rule": 8,
+            "branch": 8,
+            "terminal": 5,
+            "total": 31,
+            "complexityWeight": 65
+          },
+          "witnessPaths": 4,
+          "corpusRoutingPaths": 4,
+          "unreachableObligations": 0,
+          "seededDefectIds": [
+            "S2-E01",
+            "S2-E02",
+            "S2-E03"
+          ]
+        }
+      },
+      "seededDefects": [
+        {
+          "defectId": "S2-E01",
+          "category": "terminate-not-enforced",
+          "locator": "S3, rule 1",
+          "affectedObligationIds": [
+            "s2-screener/branch:S3:default",
+            "s2-screener/branch:S3:terminate:industry-conflict:taken",
+            "s2-screener/terminal:terminate:industry-conflict"
+          ]
+        },
+        {
+          "defectId": "S2-E02",
+          "category": "wrong-threshold",
+          "locator": "S1, rule 1",
+          "affectedObligationIds": [
+            "s2-screener/branch:S1:default",
+            "s2-screener/branch:S1:terminate:under-18:taken"
+          ]
+        },
+        {
+          "defectId": "S2-E03",
+          "category": "boundary-off-by-one",
+          "locator": "S4, rule 1",
+          "affectedObligationIds": [
+            "s2-screener/branch:S4:default",
+            "s2-screener/branch:S4:terminate:quota-full-chronic:taken"
+          ]
+        }
+      ],
+      "seededAttributionExact": true
+    },
+    {
+      "id": "s3-multiselect-piping",
+      "variants": {
+        "clean": {
+          "file": "s3-multiselect-piping.clean.json",
+          "oracleRecordId": "s3-multiselect-piping.clean",
+          "counts": {
+            "question": 9,
+            "rule": 10,
+            "branch": 4,
+            "terminal": 1,
+            "total": 24,
+            "complexityWeight": 44
+          },
+          "witnessPaths": 3,
+          "corpusRoutingPaths": 3,
+          "unreachableObligations": 0,
+          "seededDefectIds": []
+        },
+        "flawed": {
+          "file": "s3-multiselect-piping.flawed.json",
+          "oracleRecordId": "s3-multiselect-piping.flawed",
+          "counts": {
+            "question": 9,
+            "rule": 10,
+            "branch": 4,
+            "terminal": 1,
+            "total": 24,
+            "complexityWeight": 44
+          },
+          "witnessPaths": 3,
+          "corpusRoutingPaths": 3,
+          "unreachableObligations": 0,
+          "seededDefectIds": [
+            "S3-E01",
+            "S3-E02",
+            "S3-E03"
+          ]
+        }
+      },
+      "seededDefects": [
+        {
+          "defectId": "S3-E01",
+          "category": "broken-piping",
+          "locator": "Q3, question text",
+          "affectedObligationIds": [
+            "s3-multiselect-piping/rule:Q3:piping:Q2",
+            "s3-multiselect-piping/question:Q3"
+          ]
+        },
+        {
+          "defectId": "S3-E02",
+          "category": "carry-forward-broken",
+          "locator": "Q2, option list",
+          "affectedObligationIds": [
+            "s3-multiselect-piping/rule:Q2:carry-forward",
+            "s3-multiselect-piping/question:Q2"
+          ]
+        },
+        {
+          "defectId": "S3-E03",
+          "category": "inverted-branch",
+          "locator": "Q3, rule 1",
+          "affectedObligationIds": [
+            "s3-multiselect-piping/branch:Q3:default",
+            "s3-multiselect-piping/branch:Q3:goto:Q5:taken"
+          ]
+        }
+      ],
+      "seededAttributionExact": true
+    },
+    {
+      "id": "s4-nested-rotation",
+      "variants": {
+        "clean": {
+          "file": "s4-nested-rotation.clean.json",
+          "oracleRecordId": "s4-nested-rotation.clean",
+          "counts": {
+            "question": 10,
+            "rule": 12,
+            "branch": 7,
+            "terminal": 2,
+            "total": 31,
+            "complexityWeight": 61
+          },
+          "witnessPaths": 4,
+          "corpusRoutingPaths": 4,
+          "unreachableObligations": 0,
+          "seededDefectIds": []
+        },
+        "flawed": {
+          "file": "s4-nested-rotation.flawed.json",
+          "oracleRecordId": "s4-nested-rotation.flawed",
+          "counts": {
+            "question": 10,
+            "rule": 12,
+            "branch": 7,
+            "terminal": 2,
+            "total": 31,
+            "complexityWeight": 61
+          },
+          "witnessPaths": 4,
+          "corpusRoutingPaths": 4,
+          "unreachableObligations": 0,
+          "seededDefectIds": [
+            "S4-E01",
+            "S4-E02",
+            "S4-E03"
+          ]
+        }
+      },
+      "seededDefects": [
+        {
+          "defectId": "S4-E01",
+          "category": "wrong-skip-target",
+          "locator": "Q4, rule 1",
+          "affectedObligationIds": [
+            "s4-nested-rotation/branch:Q4:goto:Q6:taken"
+          ]
+        },
+        {
+          "defectId": "S4-E02",
+          "category": "rotation-anchor-violation",
+          "locator": "Q6, randomization",
+          "affectedObligationIds": [
+            "s4-nested-rotation/rule:Q6:randomize-anchor",
+            "s4-nested-rotation/rule:Q6:randomize-order"
+          ]
+        },
+        {
+          "defectId": "S4-E03",
+          "category": "missing-option",
+          "locator": "Q1, option 5",
+          "affectedObligationIds": [
+            "s4-nested-rotation/question:Q1",
+            "s4-nested-rotation/rule:Q1:randomize-order"
+          ]
+        }
+      ],
+      "seededAttributionExact": true
+    },
+    {
+      "id": "s5-allocation",
+      "variants": {
+        "clean": {
+          "file": "s5-allocation.clean.json",
+          "oracleRecordId": "s5-allocation.clean",
+          "counts": {
+            "question": 9,
+            "rule": 11,
+            "branch": 2,
+            "terminal": 1,
+            "total": 23,
+            "complexityWeight": 40
+          },
+          "witnessPaths": 2,
+          "corpusRoutingPaths": 2,
+          "unreachableObligations": 0,
+          "seededDefectIds": []
+        },
+        "flawed": {
+          "file": "s5-allocation.flawed.json",
+          "oracleRecordId": "s5-allocation.flawed",
+          "counts": {
+            "question": 9,
+            "rule": 11,
+            "branch": 2,
+            "terminal": 1,
+            "total": 23,
+            "complexityWeight": 40
+          },
+          "witnessPaths": 2,
+          "corpusRoutingPaths": 2,
+          "unreachableObligations": 0,
+          "seededDefectIds": [
+            "S5-E01",
+            "S5-E02",
+            "S5-E03"
+          ]
+        }
+      },
+      "seededDefects": [
+        {
+          "defectId": "S5-E01",
+          "category": "allocation-sum-not-validated",
+          "locator": "Q1, allocation validation",
+          "affectedObligationIds": [
+            "s5-allocation/rule:Q1:alloc-sum"
+          ]
+        },
+        {
+          "defectId": "S5-E02",
+          "category": "wrong-branch-threshold",
+          "locator": "Q1, rule 1",
+          "affectedObligationIds": [
+            "s5-allocation/branch:Q1:default",
+            "s5-allocation/branch:Q1:goto:Q3:taken"
+          ]
+        },
+        {
+          "defectId": "S5-E03",
+          "category": "row-cap-removed",
+          "locator": "Q1, row r5",
+          "affectedObligationIds": [
+            "s5-allocation/rule:Q1:alloc-row:r5"
+          ]
+        }
+      ],
+      "seededAttributionExact": true
+    },
+    {
+      "id": "s6-kitchen-sink",
+      "variants": {
+        "clean": {
+          "file": "s6-kitchen-sink.clean.json",
+          "oracleRecordId": "s6-kitchen-sink.clean",
+          "counts": {
+            "question": 12,
+            "rule": 19,
+            "branch": 8,
+            "terminal": 4,
+            "total": 43,
+            "complexityWeight": 86
+          },
+          "witnessPaths": 53,
+          "corpusRoutingPaths": 53,
+          "unreachableObligations": 0,
+          "seededDefectIds": []
+        },
+        "flawed": {
+          "file": "s6-kitchen-sink.flawed.json",
+          "oracleRecordId": "s6-kitchen-sink.flawed",
+          "counts": {
+            "question": 12,
+            "rule": 19,
+            "branch": 8,
+            "terminal": 4,
+            "total": 43,
+            "complexityWeight": 86
+          },
+          "witnessPaths": 12,
+          "corpusRoutingPaths": 12,
+          "unreachableObligations": 0,
+          "seededDefectIds": [
+            "S6-E01",
+            "S6-E02",
+            "S6-E03"
+          ]
+        }
+      },
+      "seededDefects": [
+        {
+          "defectId": "S6-E01",
+          "category": "loop-truncated",
+          "locator": "Loop L1 (Q2-Q3)",
+          "affectedObligationIds": [
+            "s6-kitchen-sink/rule:loop:L1"
+          ]
+        },
+        {
+          "defectId": "S6-E02",
+          "category": "terminate-not-enforced",
+          "locator": "S2, rule 1",
+          "affectedObligationIds": [
+            "s6-kitchen-sink/branch:S2:default",
+            "s6-kitchen-sink/branch:S2:terminate:insufficient-experience:taken",
+            "s6-kitchen-sink/terminal:terminate:insufficient-experience"
+          ]
+        },
+        {
+          "defectId": "S6-E03",
+          "category": "wrong-calc-source",
+          "locator": "computed accessWeight",
+          "affectedObligationIds": [
+            "s6-kitchen-sink/rule:calc:accessWeight"
+          ]
+        }
+      ],
+      "seededAttributionExact": true
+    }
+  ],
+  "unmappedConstructs": [],
+  "problems": []
+}

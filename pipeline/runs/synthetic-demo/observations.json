@@ -1,0 +1,39 @@
+{
+  "kind": "execution-observations/v1",
+  "run": "synthetic-demo",
+  "generated_at": "2026-08-02T00:00:00.000Z",
+  "synthetic": true,
+  "note": "Authored by pipeline/runs/make-synthetic-run.mjs. This run has no blind corpus behind it: the survey, the walks and the planted defects are invented in that file and are listed in full in its header. Nothing here derives from test-suite/blind/.",
+  "driver": {
+    "layer": "simulated",
+    "tool": "make-synthetic-run.mjs",
+    "browser": "none",
+    "serving": "none"
+  },
+  "scale": {
+    "sessions": 28,
+    "screens": 10
+  },
+  "obligation_observations": {},
+  "candidate_divergences": [
+    {
+      "id": "SYN-DIV-001",
+      "obligation": "SYN-ROUTE-Q4-2",
+      "summary": "Q4 code 2 is documented to skip Q5; the site shows Q5 anyway."
+    },
+    {
+      "id": "SYN-DIV-002",
+      "obligation": "SYN-OPT-Q3-4",
+      "summary": "Q3 code 4 renders longer answer text than the code frame documents."
+    }
+  ],
+  "could_not_observe": [
+    {
+      "item": "SYN-DATAFILE — the answer codes written to the data file",
+      "why": "the data file is server-side"
+    }
+  ],
+  "harness_caveats": [
+    "This is a synthetic stand-in run; it proves shape and plumbing, not site behaviour."
+  ]
+}

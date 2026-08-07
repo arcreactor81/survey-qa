@@ -1,0 +1,116 @@
+{
+  "description": "Known-good baseline: complete correct checklist, correct verdicts on both seeded defects, valid evidence and telemetry. Expect integrity valid, exact metrics, no warnings.",
+  "expectErrors": [],
+  "forbidErrors": [
+    "*"
+  ],
+  "assertions": [
+    {
+      "path": "errors.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "warnings.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "integrity.status",
+      "op": "eq",
+      "value": "valid"
+    },
+    {
+      "path": "integrity.gates.attestation",
+      "op": "eq",
+      "value": "passed"
+    },
+    {
+      "path": "integrity.gates.evidence",
+      "op": "eq",
+      "value": "passed"
+    },
+    {
+      "path": "integrity.gates.cost",
+      "op": "eq",
+      "value": "passed"
+    },
+    {
+      "path": "matching.matched",
+      "op": "eq",
+      "value": 14
+    },
+    {
+      "path": "matching.ambiguous.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "matching.duplicates.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "metrics.extractionRecall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.extractionPrecision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.seededDefectPrecision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.evidenceCompleteness",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.reportCompleteness",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.verifiedCoverageUnits",
+      "op": "eq",
+      "value": 13
+    },
+    {
+      "path": "metrics.costPerVerifiedCoverageUnit",
+      "op": "approx",
+      "value": 0.07692307692307693
+    },
+    {
+      "path": "metrics.repeatability",
+      "op": "null"
+    },
+    {
+      "path": "completeness.reportComplete",
+      "op": "true"
+    },
+    {
+      "path": "completeness.testComplete",
+      "op": "true"
+    },
+    {
+      "path": "completeness.cohort",
+      "op": "eq",
+      "value": "complete"
+    }
+  ]
+}

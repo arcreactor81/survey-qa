@@ -1,0 +1,29 @@
+{
+  "description": "Prototype-pollution attestation bypass (defect 10): a raw __proto__ member injected into the signed record after signing. The strict parser keeps it as an ordinary own key, so the recomputed RFC 8785 payload differs from the signed one: ATTESTATION_INVALID, quality suppressed, never a verified score.",
+  "expectErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "forbidErrors": [
+    "RESOURCE_MISMATCH"
+  ],
+  "assertions": [
+    {
+      "path": "metrics",
+      "op": "null"
+    },
+    {
+      "path": "completeness",
+      "op": "null"
+    },
+    {
+      "path": "integrity.gates.attestation",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "integrity.status",
+      "op": "eq",
+      "value": "invalid"
+    }
+  ]
+}

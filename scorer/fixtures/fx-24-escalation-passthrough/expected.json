@@ -1,0 +1,57 @@
+{
+  "description": "escalationCount passthrough (advisory iv): an absurd attested escalation count changes nothing. It is echoed in resources.reportedTotals for display and consulted by no gate, reconciliation or metric.",
+  "expectErrors": [],
+  "forbidErrors": [
+    "*"
+  ],
+  "assertions": [
+    {
+      "path": "errors.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "warnings.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "resources.reportedTotals.escalationCount",
+      "op": "eq",
+      "value": 999
+    },
+    {
+      "path": "integrity.status",
+      "op": "eq",
+      "value": "valid"
+    },
+    {
+      "path": "integrity.gates.cost",
+      "op": "eq",
+      "value": "passed"
+    },
+    {
+      "path": "resources.limitsOk",
+      "op": "true"
+    },
+    {
+      "path": "completeness.testComplete",
+      "op": "true"
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.verifiedCoverageUnits",
+      "op": "eq",
+      "value": 13
+    },
+    {
+      "path": "metrics.costPerVerifiedCoverageUnit",
+      "op": "approx",
+      "value": 0.07692307692307693
+    }
+  ]
+}

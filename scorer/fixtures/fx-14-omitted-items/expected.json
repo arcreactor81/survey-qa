@@ -1,0 +1,35 @@
+{
+  "description": "Omitted partial items: contract contains items absent from itemResults. DENOMINATOR_MISMATCH; report completeness decreases; items remain unassessed.",
+  "expectErrors": [
+    "DENOMINATOR_MISMATCH"
+  ],
+  "forbidErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "assertions": [
+    {
+      "path": "metrics.reportCompleteness",
+      "op": "approx",
+      "value": 0.8571428571428571
+    },
+    {
+      "path": "completeness.reportComplete",
+      "op": "false"
+    },
+    {
+      "path": "completeness.unaccountedItemIds.length",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "approx",
+      "value": 0.8461538461538461
+    },
+    {
+      "path": "completeness.cohort",
+      "op": "eq",
+      "value": "partial"
+    }
+  ]
+}

@@ -1,0 +1,284 @@
+{
+  "schemaVersion": "1.0.0",
+  "run": {
+    "runId": "mini-run",
+    "target": {
+      "url": "http://127.0.0.1:0/fixture",
+      "environment": "selftest",
+      "buildId": "mini-run-build",
+      "buildHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "documentHash": "sha256:17ac44a3b19647c86a7a0c233942f939ba5ab2064a56ef159335a9e8b4118875",
+    "contractHash": "sha256:89112decaaa615f987f1f2c8d4294de03205304419fc7a34663b0fd8c9e85e8a",
+    "configuration": {
+      "profileId": "selftest",
+      "configurationHash": "sha256:fc16224726ccb539d3b58dbd5765df18a5596a3fe7aa88b3ddccea2ed9a1bcd1",
+      "parameters": {}
+    },
+    "timestamps": {
+      "startedAt": "2026-08-02T00:00:00.000Z",
+      "endedAt": "2026-08-02T00:00:00.000Z"
+    }
+  },
+  "contract": {
+    "extraction": {
+      "method": "fixture",
+      "extractorVersion": "selftest@1",
+      "extractedAt": "2026-08-02T00:00:00.000Z"
+    },
+    "revision": {
+      "contractRevisionId": "contract-revision:mini-run@1",
+      "contractRevisionHash": "sha256:0feeab97e42310ec195d3c00f02dde63cccbd297dc18bbf9f5ea7019cac773f1",
+      "reviewState": "sealed",
+      "sealedAt": "2026-08-02T00:00:00.000Z",
+      "sealedBy": "selftest-fixture"
+    },
+    "assumptions": [
+      "ambiguity:AMB-SELF-01@sha256:bf01b8736d0a2d34e74f5aee5a2e8a60cfa69e8a008d9524bd540827f4e1e6df"
+    ],
+    "items": [
+      {
+        "itemId": "SELF-OPT-PASS",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SELF-OPT-PASS",
+          "quote": "| 1 | Alpha |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"Alpha\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Alpha appears on Q1.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-OPT-ABSENT",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SELF-OPT-ABSENT",
+          "quote": "| 3 | Gamma |",
+          "aliases": []
+        },
+        "requirement": "Option 3 with answer text \"Gamma\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Gamma appears on Q1.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-OPT-LABEL",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SELF-OPT-LABEL",
+          "quote": "| 2 | Beta as documented |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"Beta as documented\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Beta as documented appears on Q1.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-OPT-LAST",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SELF-OPT-LAST",
+          "quote": "| 3 | Beta |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"Beta\" appears as the last option on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Beta is the final option on Q1.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-ROUTE-PASS",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SELF-ROUTE-PASS",
+          "quote": "Q1 | Code 1 selected | Continue to Q2",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"Alpha\" (code 1) at Q1, the next screen must be Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Q2 follows.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-ROUTE-FAIL",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SELF-ROUTE-FAIL",
+          "quote": "Q1 | Code 2 selected | Continue to Q2",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"Beta\" (code 2) at Q1, the next screen must be Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Q2 follows.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-ROUTE-SKIP",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SELF-ROUTE-SKIP",
+          "quote": "Q1 | Code 2 selected | Skip Q2 and go straight to Q3",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"Alpha\" (code 1) at Q1, the survey must skip Q2 and go directly to Q3.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Q3 follows and Q2 is not shown.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-ROUTE-AMBIGUOUS",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SELF-ROUTE-AMBIGUOUS",
+          "quote": "Q1 | Code 2 selected | Continue to Q2",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"Beta\" (code 2) at Q1, the next screen must be Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Q2 follows.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-ROUTE-UNEXERCISED",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SELF-ROUTE-UNEXERCISED",
+          "quote": "Q1 | Code 4 selected | Continue to Q3",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"Delta\" (code 4) at Q1, the next screen must be Q3.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Q3 follows.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-PRESENCE",
+        "type": "question-presence",
+        "sourceAnchor": {
+          "locator": "SELF-PRESENCE",
+          "quote": "ASK ONLY THOSE WHO ANSWERED CODE 1 AT Q1.",
+          "aliases": []
+        },
+        "requirement": "Q2 must be displayed only for respondents who answered \"Alpha\" at Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Q2 only after Alpha.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-NO-OBSERVATION",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SELF-NO-OBSERVATION",
+          "quote": "| 1 | Zeta |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"Zeta\" is displayed on Q9.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Zeta appears on Q9.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SELF-UNTYPED",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "SELF-UNTYPED",
+          "quote": "THE INTERVIEW MUST FEEL PLEASANT.",
+          "aliases": []
+        },
+        "requirement": "The interview must feel pleasant and reflect the client's brand values appropriately.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Subjective.",
+        "variants": [],
+        "confidence": 1
+      }
+    ]
+  },
+  "attempts": [],
+  "itemResults": [],
+  "findings": [],
+  "evidence": [
+    {
+      "evidenceId": "EV-SELF-01.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-run/artifacts/SELF-01.json",
+      "contentHash": "sha256:ed939831dc8214453b7cf4c723b86748bdc07a57b05bfda993a2be1d2ccf061b",
+      "byteLength": 5783,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-SELF-02.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-run/artifacts/SELF-02.json",
+      "contentHash": "sha256:eaecf58c8e5ca86e7ace7e73d6eac1a272eb28012eebda336e2647d42b38831e",
+      "byteLength": 4260,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-SELF-03.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-run/artifacts/SELF-03.json",
+      "contentHash": "sha256:b368d1bf0654296b640fbd7fbc45a93db66094c6f1e2e619d4564cfc4df34b6f",
+      "byteLength": 7693,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-SELF-04.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-run/artifacts/SELF-04.json",
+      "contentHash": "sha256:73ab8e04ad9208a9be28da619f91d001eec7df9ec93533420af0b17c22f4d735",
+      "byteLength": 4788,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-shot.png",
+      "type": "screenshot",
+      "artifactRef": "runs/mini-run/artifacts/shot.png",
+      "contentHash": "sha256:5b5e54f823c09bbdac2418ef0cedbe67b8389423b8895098a2abf8bc9b952a52",
+      "byteLength": 55,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    }
+  ],
+  "resources": {
+    "modelCalls": []
+  },
+  "attestation": {
+    "algorithm": "Ed25519",
+    "canonicalization": "RFC8785",
+    "scope": "entire-record-excluding-attestation",
+    "keyId": "fixture-harness-key-1",
+    "signedAt": "2026-08-02T00:00:00.000Z",
+    "payloadHash": "sha256:665200f2d3a9cc6d658cef4f28deffc810123a2b0dbb097382e80f24315d263a",
+    "signature": "pjVhh76I3mskTD1K2fDxo8Dq5UJU7WAWJBtC9qU1Ninyqxj0T_Eir0ZMtvFsEpkzZySNTPiV9RzgI61lykjwBw"
+  }
+}

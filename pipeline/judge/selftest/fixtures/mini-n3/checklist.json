@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "target": {
+    "name": "mini-n3"
+  },
+  "source_document": "mini-n3",
+  "ambiguities": [],
+  "unverifiable_from_browser": [],
+  "obligations": [
+    {
+      "id": "N3-ONEQ",
+      "category": "general",
+      "doc_quote": "",
+      "browser_observable": "full",
+      "statement": "Each question must be displayed on a separate screen."
+    },
+    {
+      "id": "N3-LEAK",
+      "category": "general",
+      "doc_quote": "",
+      "browser_observable": "full",
+      "statement": "Programmer instructions within square brackets and capital letters must not be displayed to respondents."
+    },
+    {
+      "id": "N3-BACK",
+      "category": "general",
+      "doc_quote": "",
+      "browser_observable": "full",
+      "statement": "The welcome screen must not display a back button."
+    },
+    {
+      "id": "N3-WELC",
+      "category": "general",
+      "doc_quote": "",
+      "browser_observable": "full",
+      "statement": "The welcome screen must present only a single \"Start survey\" button and no answer fields or other input controls."
+    },
+    {
+      "id": "N3-FORB",
+      "category": "copy",
+      "doc_quote": "",
+      "browser_observable": "full",
+      "statement": "The client name \"Acme Beverages\" must never be displayed to respondents."
+    },
+    {
+      "id": "N3-Q1-OPT-1",
+      "category": "option-set",
+      "doc_quote": "| 1 | Alpha option |",
+      "browser_observable": "full",
+      "statement": "Option 1 with answer text \"Alpha option\" is displayed on Q1."
+    },
+    {
+      "id": "N3-Q1-OPT-2",
+      "category": "option-set",
+      "doc_quote": "| 2 | Beta option |",
+      "browser_observable": "full",
+      "statement": "Option 2 with answer text \"Beta option\" is displayed on Q1."
+    },
+    {
+      "id": "N3-Q1-OPT-3",
+      "category": "option-set",
+      "doc_quote": "| 3 | Gamma option |",
+      "browser_observable": "full",
+      "statement": "Option 3 with answer text \"Gamma option\" is displayed on Q1."
+    },
+    {
+      "id": "N3-Q2-OPT-1",
+      "category": "option-set",
+      "doc_quote": "| 1 | Alpha option |",
+      "browser_observable": "full",
+      "statement": "Option 1 with answer text \"Alpha option\" is displayed on Q2."
+    },
+    {
+      "id": "N3-Q2-OPT-2",
+      "category": "option-set",
+      "doc_quote": "| 2 | Beta option |",
+      "browser_observable": "full",
+      "statement": "Option 2 with answer text \"Beta option\" is displayed on Q2."
+    },
+    {
+      "id": "N3-Q2-OPT-3",
+      "category": "option-set",
+      "doc_quote": "| 3 | Gamma option |",
+      "browser_observable": "full",
+      "statement": "Option 3 with answer text \"Gamma option\" is displayed on Q2."
+    }
+  ]
+}

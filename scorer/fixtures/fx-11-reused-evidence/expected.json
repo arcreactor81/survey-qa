@@ -1,0 +1,26 @@
+{
+  "description": "Reused evidence: a prior-run artifact relabelled for this run. EVIDENCE_CROSS_RUN_REUSE; artifact rejected; the item it supported gets no coverage credit.",
+  "expectErrors": [
+    "EVIDENCE_CROSS_RUN_REUSE"
+  ],
+  "forbidErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "assertions": [
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "approx",
+      "value": 0.9230769230769231
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.evidenceCompleteness",
+      "op": "approx",
+      "value": 0.9375
+    }
+  ]
+}

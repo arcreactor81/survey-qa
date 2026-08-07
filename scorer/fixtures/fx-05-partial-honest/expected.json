@@ -1,0 +1,57 @@
+{
+  "description": "Partial baseline: honest budget/time-exhausted results, every local item represented. Report completeness 100%; test partial; coverage decreases; unassessed seeded defect counts as missed.",
+  "expectErrors": [],
+  "forbidErrors": [
+    "*"
+  ],
+  "assertions": [
+    {
+      "path": "errors.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "metrics.reportCompleteness",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "completeness.reportComplete",
+      "op": "true"
+    },
+    {
+      "path": "completeness.testComplete",
+      "op": "false"
+    },
+    {
+      "path": "completeness.cohort",
+      "op": "eq",
+      "value": "partial"
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "approx",
+      "value": 0.8461538461538461
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "approx",
+      "value": 0.5
+    },
+    {
+      "path": "metrics.evidenceCompleteness",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.verifiedCoverageUnits",
+      "op": "eq",
+      "value": 11
+    },
+    {
+      "path": "metrics.costPerVerifiedCoverageUnit",
+      "op": "approx",
+      "value": 0.09090909090909091
+    }
+  ]
+}

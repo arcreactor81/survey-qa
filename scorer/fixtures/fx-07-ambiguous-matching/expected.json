@@ -1,0 +1,118 @@
+{
+  "description": "Ambiguous matching: two vague rating-rule items are mutually swappable across two near-identical oracle rules, so an alternate global assignment ties the optimum. MATCH_AMBIGUOUS; no automatic match or credit for either; private candidate IDs and scores emitted for adjudication.",
+  "expectErrors": [
+    "MATCH_AMBIGUOUS"
+  ],
+  "forbidErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "expectErrorMessages": [
+    "alternate global assignment"
+  ],
+  "assertions": [
+    {
+      "path": "matching.ambiguous.length",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "matching.ambiguous.0.itemId",
+      "op": "eq",
+      "value": "T-10"
+    },
+    {
+      "path": "matching.ambiguous.1.itemId",
+      "op": "eq",
+      "value": "T-12"
+    },
+    {
+      "path": "matching.ambiguous.0.assignedOracleId",
+      "op": "eq",
+      "value": "ORC-OB-R4"
+    },
+    {
+      "path": "matching.ambiguous.0.alternateOracleId",
+      "op": "eq",
+      "value": "ORC-OB-R5"
+    },
+    {
+      "path": "matching.ambiguous.0.candidates.length",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "matching.ambiguous.0.candidates.0.oracleId",
+      "op": "eq",
+      "value": "ORC-OB-R4"
+    },
+    {
+      "path": "matching.ambiguous.0.candidates.0.score",
+      "op": "approx",
+      "value": 0.883884
+    },
+    {
+      "path": "matching.ambiguous.0.candidates.1.oracleId",
+      "op": "eq",
+      "value": "ORC-OB-R5"
+    },
+    {
+      "path": "matching.ambiguous.0.candidates.1.score",
+      "op": "approx",
+      "value": 0.883884
+    },
+    {
+      "path": "matching.ambiguous.0.optimalTotal",
+      "op": "approx",
+      "value": 13.631494
+    },
+    {
+      "path": "matching.ambiguous.0.alternateTotal",
+      "op": "approx",
+      "value": 13.631494
+    },
+    {
+      "path": "matching.ambiguous.1.candidates.0.oracleId",
+      "op": "eq",
+      "value": "ORC-OB-R5"
+    },
+    {
+      "path": "matching.ambiguous.1.candidates.0.score",
+      "op": "approx",
+      "value": 0.74761
+    },
+    {
+      "path": "matching.ambiguous.1.candidates.1.oracleId",
+      "op": "eq",
+      "value": "ORC-OB-R4"
+    },
+    {
+      "path": "matching.ambiguous.1.candidates.1.score",
+      "op": "approx",
+      "value": 0.74761
+    },
+    {
+      "path": "matching.matched",
+      "op": "eq",
+      "value": 12
+    },
+    {
+      "path": "metrics.extractionRecall",
+      "op": "approx",
+      "value": 0.8571428571428571
+    },
+    {
+      "path": "metrics.extractionPrecision",
+      "op": "approx",
+      "value": 0.8571428571428571
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "approx",
+      "value": 0.8461538461538461
+    },
+    {
+      "path": "completeness.testComplete",
+      "op": "false"
+    }
+  ]
+}

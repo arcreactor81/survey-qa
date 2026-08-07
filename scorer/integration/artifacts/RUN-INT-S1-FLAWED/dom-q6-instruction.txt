@@ -1,0 +1,1 @@
+<p class="instruction">0 = Not at all likely, 10 = Extremely likely</p>

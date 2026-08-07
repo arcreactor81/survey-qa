@@ -1,0 +1,234 @@
+{
+  "scorecardVersion": "1.0.0",
+  "scoredAt": "2026-08-01T13:00:00Z",
+  "matcherVersion": "survey-qa-scorer-matcher/1.1.0",
+  "defectMatcherVersion": "survey-qa-scorer-defect-matcher/1.1.0",
+  "evidencePolicyVersion": "survey-qa-scorer-evidence-policy/1.1.0",
+  "pricingVersion": "fixture-pricing/2026-08-01",
+  "subject": {
+    "runId": "RUN-INT-S1-CLEAN",
+    "oracleRecordId": "s1-skip.clean",
+    "surveyId": "s1-skip",
+    "variantKind": "clean",
+    "documentHash": "sha256:e9a40074cb3eb5ff7823a33110e1957a5096b62bea0a07cdda66c0b330da9f70",
+    "buildId": "s1-skip/index.html"
+  },
+  "integrity": {
+    "status": "valid",
+    "evaluationInvalid": false,
+    "gates": {
+      "parse": "passed",
+      "schema": "passed",
+      "attestation": "passed",
+      "identity": "passed",
+      "oracleIsolation": "passed",
+      "structure": "passed",
+      "evidence": "passed",
+      "resources": "passed",
+      "cost": "passed"
+    }
+  },
+  "errors": [],
+  "warnings": [],
+  "completeness": {
+    "reportComplete": true,
+    "reportCompleteness": 1,
+    "unaccountedItemIds": [],
+    "testComplete": false,
+    "oracleObligations": 18,
+    "oracleObligationsAccounted": 17,
+    "unaccountedOracleIds": [
+      "s1-skip/branch:Q2:default"
+    ],
+    "cohort": "partial"
+  },
+  "matching": {
+    "profile": {
+      "matcherVersion": "survey-qa-scorer-matcher/1.1.0",
+      "normalization": "nfkc-casefold-ws-punct-operators-signednumbers/2",
+      "locatorCanonicalization": "pinned-locator-rules/1",
+      "weights": {
+        "anchor": 0.45,
+        "requirement": 0.55
+      },
+      "eligibilityThreshold": 0.55,
+      "ambiguityMargin": 0.05,
+      "ambiguityRule": "alternate-global-assignment-within-margin"
+    },
+    "contractItems": 18,
+    "oracleObligations": 18,
+    "matched": 17,
+    "matches": [
+      {
+        "itemId": "it-completion",
+        "oracleId": "s1-skip/terminal:complete",
+        "score": 0.642129
+      },
+      {
+        "itemId": "it-q1-caseload",
+        "oracleId": "s1-skip/question:Q1",
+        "score": 0.783024
+      },
+      {
+        "itemId": "it-q1-instruction",
+        "oracleId": "s1-skip/rule:Q1:instruction",
+        "score": 0.832983
+      },
+      {
+        "itemId": "it-q1-range",
+        "oracleId": "s1-skip/rule:Q1:range",
+        "score": 0.581747
+      },
+      {
+        "itemId": "it-q2-prescriber",
+        "oracleId": "s1-skip/question:Q2",
+        "score": 0.802787
+      },
+      {
+        "itemId": "it-q2-skip",
+        "oracleId": "s1-skip/branch:Q2:goto:Q5:taken",
+        "score": 0.657177
+      },
+      {
+        "itemId": "it-q3-instruction",
+        "oracleId": "s1-skip/rule:Q3:instruction",
+        "score": 0.756352
+      },
+      {
+        "itemId": "it-q3-options",
+        "oracleId": "s1-skip/question:Q3",
+        "score": 0.802994
+      },
+      {
+        "itemId": "it-q4-satisfaction",
+        "oracleId": "s1-skip/question:Q4",
+        "score": 0.854965
+      },
+      {
+        "itemId": "it-q5-barrier",
+        "oracleId": "s1-skip/question:Q5",
+        "score": 0.821052
+      },
+      {
+        "itemId": "it-q6-instruction",
+        "oracleId": "s1-skip/rule:Q6:instruction",
+        "score": 0.809855
+      },
+      {
+        "itemId": "it-q6-nps",
+        "oracleId": "s1-skip/question:Q6",
+        "score": 0.867974
+      },
+      {
+        "itemId": "it-q6-range",
+        "oracleId": "s1-skip/rule:Q6:range",
+        "score": 0.580237
+      },
+      {
+        "itemId": "it-s1-role",
+        "oracleId": "s1-skip/question:S1",
+        "score": 0.746862
+      },
+      {
+        "itemId": "it-s2-instruction",
+        "oracleId": "s1-skip/rule:S2:instruction",
+        "score": 0.831517
+      },
+      {
+        "itemId": "it-s2-range",
+        "oracleId": "s1-skip/rule:S2:range",
+        "score": 0.580237
+      },
+      {
+        "itemId": "it-s2-tenure",
+        "oracleId": "s1-skip/question:S2",
+        "score": 0.785861
+      }
+    ],
+    "duplicates": [],
+    "ambiguous": [],
+    "unmatchedTesterItemIds": [
+      "it-q2-continue"
+    ],
+    "unmatchedOracleIds": [
+      "s1-skip/branch:Q2:default"
+    ]
+  },
+  "defects": {
+    "profile": {
+      "defectMatcherVersion": "survey-qa-scorer-defect-matcher/1.1.0",
+      "ambiguityRule": "alternate-global-assignment-within-margin",
+      "duplicatePolicy": "one-true-positive-rest-redundant"
+    },
+    "seededTotal": 0,
+    "asserted": 0,
+    "precisionDenominator": 0,
+    "truePositives": [],
+    "falsePositives": [],
+    "redundant": [],
+    "unsupported": [],
+    "falseNegatives": [],
+    "ambiguous": []
+  },
+  "evidence": {
+    "policyVersion": "survey-qa-scorer-evidence-policy/1.1.0",
+    "artifactsTotal": 19,
+    "artifactsValid": 19,
+    "artifactsRejected": [],
+    "requiredClaims": 18,
+    "sufficientClaims": 18
+  },
+  "resources": {
+    "costKnown": true,
+    "limitsOk": true,
+    "reportedTotals": {
+      "modelCalls": 3,
+      "toolCalls": 15,
+      "retryCount": 0,
+      "escalationCount": 0,
+      "inputTokens": 386000,
+      "cachedInputTokens": 138000,
+      "outputTokens": 27700,
+      "browserMilliseconds": 1020000,
+      "wallClockMilliseconds": 1530000,
+      "modelCostUsd": 0.4709,
+      "browserCostUsd": 0.18,
+      "otherCostUsd": 0.02,
+      "totalCostUsd": 0.6709,
+      "currency": "USD",
+      "pricingVersion": "fixture-pricing/2026-08-01"
+    },
+    "recomputed": {
+      "modelCalls": 3,
+      "toolCalls": 15,
+      "retryCount": 0,
+      "inputTokens": 386000,
+      "cachedInputTokens": 138000,
+      "outputTokens": 27700,
+      "modelCostUsd": 0.4709,
+      "browserMilliseconds": 1020000,
+      "wallClockMilliseconds": 1530000,
+      "maxStepsInAnyAttempt": 12,
+      "maxAttemptsForAnyItem": 1
+    }
+  },
+  "metrics": {
+    "extractionRecall": 0.9444444444444444,
+    "extractionPrecision": 0.9444444444444444,
+    "reachableCoverage": 0.9444444444444444,
+    "reachableObligations": 18,
+    "reachableExercisedVerified": 17,
+    "seededDefectRecall": null,
+    "seededDefectPrecision": null,
+    "seededDefectsTotal": 0,
+    "assertedDefectFindings": 0,
+    "redundantDefectFindings": 0,
+    "defectPrecisionDenominator": 0,
+    "evidenceCompleteness": 1,
+    "reportCompleteness": 1,
+    "verifiedCoverageUnits": 17,
+    "costPerVerifiedCoverageUnit": 0.03946470588235294,
+    "costCohort": "partial",
+    "repeatability": null
+  }
+}

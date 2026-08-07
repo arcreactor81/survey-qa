@@ -1,0 +1,391 @@
+{
+  "schema_version": "synthetic-1",
+  "target": "synthetic-demo",
+  "source_document": "synthetic",
+  "counts": {
+    "obligations": 36,
+    "ambiguities": 2
+  },
+  "obligations": [
+    {
+      "id": "SYN-OPT-Q1-1",
+      "category": "option-set",
+      "doc_quote": "| 1 | A watering can |",
+      "statement": "Option 1 with answer text \"A watering can\" is displayed on Q1.",
+      "stimulus": [],
+      "expected_observable": "A watering can appears on Q1.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q1-2",
+      "category": "option-set",
+      "doc_quote": "| 2 | The kitchen tap |",
+      "statement": "Option 2 with answer text \"The kitchen tap\" is displayed on Q1.",
+      "stimulus": [],
+      "expected_observable": "The kitchen tap appears on Q1.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q1-3",
+      "category": "option-set",
+      "doc_quote": "| 3 | A self-watering pot |",
+      "statement": "Option 3 with answer text \"A self-watering pot\" is displayed on Q1.",
+      "stimulus": [],
+      "expected_observable": "A self-watering pot appears on Q1.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q1-4",
+      "category": "option-set",
+      "doc_quote": "| 4 | I do not have any houseplants |",
+      "statement": "Option 4 with answer text \"I do not have any houseplants\" is displayed as the final option on Q1.",
+      "stimulus": [],
+      "expected_observable": "I do not have any houseplants appears on Q1.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q2-1",
+      "category": "option-set",
+      "doc_quote": "| 1 | Metal |",
+      "statement": "Option 1 with answer text \"Metal\" is displayed on Q2.",
+      "stimulus": [],
+      "expected_observable": "Metal appears on Q2.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q2-2",
+      "category": "option-set",
+      "doc_quote": "| 2 | Plastic |",
+      "statement": "Option 2 with answer text \"Plastic\" is displayed on Q2.",
+      "stimulus": [],
+      "expected_observable": "Plastic appears on Q2.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q2-3",
+      "category": "option-set",
+      "doc_quote": "| 3 | Ceramic |",
+      "statement": "Option 3 with answer text \"Ceramic\" is displayed on Q2.",
+      "stimulus": [],
+      "expected_observable": "Ceramic appears on Q2.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q2-4",
+      "category": "option-set",
+      "doc_quote": "| 4 | I do not use a watering can |",
+      "statement": "Option 4 with answer text \"I do not use a watering can\" is displayed as the final option on Q2.",
+      "stimulus": [],
+      "expected_observable": "I do not use a watering can appears on Q2.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q3-1",
+      "category": "option-set",
+      "doc_quote": "| 1 | On a windowsill |",
+      "statement": "Option 1 with answer text \"On a windowsill\" is displayed on Q3.",
+      "stimulus": [],
+      "expected_observable": "On a windowsill appears on Q3.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q3-2",
+      "category": "option-set",
+      "doc_quote": "| 2 | On a balcony |",
+      "statement": "Option 2 with answer text \"On a balcony\" is displayed on Q3.",
+      "stimulus": [],
+      "expected_observable": "On a balcony appears on Q3.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q3-3",
+      "category": "option-set",
+      "doc_quote": "| 3 | On a desk |",
+      "statement": "Option 3 with answer text \"On a desk\" is displayed on Q3.",
+      "stimulus": [],
+      "expected_observable": "On a desk appears on Q3.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q3-4",
+      "category": "option-set",
+      "doc_quote": "| 4 | Somewhere else |",
+      "statement": "Option 4 with answer text \"Somewhere else\" is displayed on Q3.",
+      "stimulus": [],
+      "expected_observable": "Somewhere else appears on Q3.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q4-1",
+      "category": "option-set",
+      "doc_quote": "| 1 | Yes |",
+      "statement": "Option 1 with answer text \"Yes\" is displayed on Q4.",
+      "stimulus": [],
+      "expected_observable": "Yes appears on Q4.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q4-2",
+      "category": "option-set",
+      "doc_quote": "| 2 | No |",
+      "statement": "Option 2 with answer text \"No\" is displayed as the final option on Q4.",
+      "stimulus": [],
+      "expected_observable": "No appears on Q4.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q5-1",
+      "category": "option-set",
+      "doc_quote": "| 1 | Every week |",
+      "statement": "Option 1 with answer text \"Every week\" is displayed on Q5.",
+      "stimulus": [],
+      "expected_observable": "Every week appears on Q5.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q5-2",
+      "category": "option-set",
+      "doc_quote": "| 2 | Every month |",
+      "statement": "Option 2 with answer text \"Every month\" is displayed on Q5.",
+      "stimulus": [],
+      "expected_observable": "Every month appears on Q5.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q5-3",
+      "category": "option-set",
+      "doc_quote": "| 3 | Rarely |",
+      "statement": "Option 3 with answer text \"Rarely\" is displayed as the final option on Q5.",
+      "stimulus": [],
+      "expected_observable": "Rarely appears on Q5.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q7-1",
+      "category": "option-set",
+      "doc_quote": "| 1 | Bought new |",
+      "statement": "Option 1 with answer text \"Bought new\" is displayed on Q7.",
+      "stimulus": [],
+      "expected_observable": "Bought new appears on Q7.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-OPT-Q7-2",
+      "category": "option-set",
+      "doc_quote": "| 2 | Handed down |",
+      "statement": "Option 2 with answer text \"Handed down\" is displayed as the final option on Q7.",
+      "stimulus": [],
+      "expected_observable": "Handed down appears on Q7.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-ROUTE-Q1-1",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Code 1 selected | Continue to Q2",
+      "statement": "If a respondent selects \"A watering can\" (code 1) at Q1, the next screen must be Q2.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-ROUTE-Q1-2",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Code 2 selected | Skip Q2 and continue to Q3",
+      "statement": "If a respondent selects \"The kitchen tap\" (code 2) at Q1, the survey must skip Q2 and the next screen must be Q3.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-ROUTE-Q1-3",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Code 3 selected | Skip Q2 and continue to Q3",
+      "statement": "If a respondent selects \"A self-watering pot\" (code 3) at Q1, the survey must skip Q2 and the next screen must be Q3.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-ROUTE-Q1-4",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Code 4 selected | TERMINATE",
+      "statement": "If a respondent selects \"I do not have any houseplants\" (code 4) at Q1, the next screen must be the screen-out screen.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-ROUTE-Q4-1",
+      "category": "branch-outcome",
+      "doc_quote": "Q4 | Code 1 selected | Continue to Q5",
+      "statement": "If a respondent selects \"Yes\" (code 1) at Q4, the next screen must be Q5.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-ROUTE-Q4-2",
+      "category": "branch-outcome",
+      "doc_quote": "Q4 | Code 2 selected | Skip Q5 and continue to Q6",
+      "statement": "If a respondent selects \"No\" (code 2) at Q4, the survey must skip Q5 and the next screen must be Q6.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-PRESENCE-Q2",
+      "category": "question-presence",
+      "doc_quote": "ASK ONLY THOSE WHO ANSWERED CODE 1 AT Q1.",
+      "statement": "Q2 must be displayed only to respondents who selected answer code 1 on Q1.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-PRESENCE-Q7",
+      "category": "question-presence",
+      "doc_quote": "ASK ONLY THOSE WHO ANSWERED CODE 1 AT Q2.",
+      "statement": "Q7 must be displayed only to respondents who selected answer code 1 on Q2.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-TERM-CLOSING",
+      "category": "terminal",
+      "doc_quote": "THE CLOSING SCREEN ENDS THE INTERVIEW.",
+      "statement": "The closing screen must be shown to every respondent who reaches the end of the interview.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-TERM-SCREENOUT",
+      "category": "terminal",
+      "doc_quote": "RESPONDENTS WITHOUT HOUSEPLANTS ARE SCREENED OUT.",
+      "statement": "The survey must present a screen identified as the screen-out screen after routing from S1 code 4.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-REQ-Q1",
+      "category": "instruction",
+      "doc_quote": "Q1 IS COMPULSORY.",
+      "statement": "Q1 requires the respondent to select at least one answer before proceeding.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-BACKBUTTON",
+      "category": "instruction",
+      "doc_quote": "NO BACK BUTTON ON THE WELCOME SCREEN.",
+      "statement": "The welcome screen must not display a back button.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-PROGRESS",
+      "category": "instruction",
+      "doc_quote": "A PROGRESS BAR MUST APPEAR THROUGHOUT.",
+      "statement": "A progress bar must be displayed on every survey screen.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-WELCOME-LINE",
+      "category": "instruction",
+      "doc_quote": "WELCOME TEXT (VERBATIM).",
+      "statement": "The welcome screen must contain the exact line \"Welcome. This short survey is about looking after houseplants.\".",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-NO-CLIENT-NAME",
+      "category": "instruction",
+      "doc_quote": "DO NOT NAME THE CLIENT ANYWHERE IN THE SURVEY.",
+      "statement": "The client name \"Fernbrook Botanicals\" must never be displayed to the respondent.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-SINGLE-Q1",
+      "category": "instruction",
+      "doc_quote": "Q1 IS A SINGLE-CODE QUESTION.",
+      "statement": "Q1 must allow only a single answer to be selected.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SYN-DATAFILE",
+      "category": "instruction",
+      "doc_quote": "THE ANSWER CODES MUST BE WRITTEN TO THE DATA FILE.",
+      "statement": "The answer codes for Q1 must be written to the data file exactly as documented.",
+      "stimulus": [],
+      "expected_observable": "",
+      "browser_observable": "none"
+    }
+  ],
+  "ambiguities": [
+    {
+      "id": "AMB-SYN-LABEL",
+      "doc_quote": "| 4 | Somewhere else |",
+      "reading_a": "The answer text is exactly \"Somewhere else\".",
+      "reading_b": "The answer text is \"Somewhere else in the home\", shortened to fit the code frame.",
+      "why_ambiguous": "The code frame and the question wording give different answer text for code 4.",
+      "locus": {
+        "fields": [
+          "labels"
+        ],
+        "screens": [
+          "Q3"
+        ],
+        "codes": [
+          "4"
+        ]
+      },
+      "affects": [
+        "SYN-OPT-Q3-4"
+      ]
+    },
+    {
+      "id": "AMB-SYN-CLOSING",
+      "doc_quote": "THE LAST TWO CLOSING SCREENS CARRY THE PRIVACY NOTICE.",
+      "reading_a": "The two closing screens are the completion screen and the screen-out screen.",
+      "reading_b": "The two closing screens are the closing screen and a debrief screen shown before it.",
+      "why_ambiguous": "The document never says which screens it counts as closing screens.",
+      "locus": {
+        "fields": [
+          "screen",
+          "screenScope"
+        ],
+        "screens": [
+          "CLOSING",
+          "SCREENOUT"
+        ],
+        "codes": []
+      },
+      "affects": [
+        "SYN-OPT-Q1-1",
+        "SYN-OPT-Q1-2",
+        "SYN-OPT-Q1-3",
+        "SYN-OPT-Q1-4",
+        "SYN-OPT-Q5-1",
+        "SYN-OPT-Q5-2",
+        "SYN-OPT-Q5-3"
+      ]
+    }
+  ],
+  "unverifiable_from_browser": [
+    {
+      "id": "SYN-DATAFILE",
+      "why": "the data file is written server-side and is not observable from a browser"
+    }
+  ]
+}

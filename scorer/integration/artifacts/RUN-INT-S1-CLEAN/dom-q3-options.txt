@@ -1,0 +1,6 @@
+Q3 checkbox labels in DOM order:
+1) SKYRIZI
+2) TREMFYA
+3) COSENTYX
+4) TALTZ
+5) BIMZELX

@@ -1,0 +1,2 @@
+Q2 answered 2 (No) -> next screen heading is "Q6. How likely are you to recommend biologic therapy to a colleague treating moderate-to-severe plaque psoriasis?"
+Expected the barriers question Q5 here. Q5 was never rendered on this route.

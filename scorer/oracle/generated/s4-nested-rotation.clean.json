@@ -1,0 +1,951 @@
+{
+  "schemaVersion": "1.0.0",
+  "oracleRecordId": "s4-nested-rotation.clean",
+  "provenance": {
+    "generatorId": "scorer/oracle/build-oracle.mjs",
+    "generatorVersion": "1.0.0",
+    "generatedAt": "2026-08-01T00:00:00Z",
+    "sourceHash": "sha256:3ff5ece570c654f055bc6c60f6bc61cbf0325e6e22a0281e7fc4c46f576b1b91"
+  },
+  "survey": {
+    "surveyId": "s4-nested-rotation",
+    "title": "Oncologist Decision-Making in First-Line Metastatic NSCLC Immunotherapy",
+    "variant": {
+      "variantId": "s4-nested-rotation.clean",
+      "kind": "clean"
+    },
+    "document": {
+      "documentId": "s4-nested-rotation/questionnaire.docx",
+      "contentHash": "sha256:3d0b01db308fb8fe60dc959be83a531c7739e79831c275499685ac177a33149d"
+    },
+    "targetBuild": {
+      "buildId": "s4-nested-rotation/index.html",
+      "contentHash": "sha256:130ae756a8e568f6262d797e7c03386470fda4e4d45c0fd2ccdeb235ceab30c4"
+    }
+  },
+  "obligations": [
+    {
+      "oracleId": "s4-nested-rotation/question:Q1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q1",
+        "quote": "Which of the following immunotherapies for metastatic non-small cell lung cancer are you aware of?"
+      },
+      "requirement": "Q1. Which of the following immunotherapies for metastatic non-small cell lung cancer are you aware of?",
+      "contentHash": "sha256:36395f1ba2a6d8949a5e6e36438ef77473a4c1e161f821b67692b86460dbea65",
+      "preconditions": [],
+      "stimulus": "Reach question Q1",
+      "expectedObservables": [
+        "Question Q1 is displayed with text: \"Which of the following immunotherapies for metastatic non-small cell lung cancer are you aware of?\"",
+        "Answer input is of type checkbox",
+        "Option 1: \"KEYTRUDA\"",
+        "Option 2: \"OPDIVO\"",
+        "Option 3: \"TECENTRIQ\"",
+        "Option 4: \"IMFINZI\"",
+        "Option 5: \"LIBTAYO\"",
+        "Option 99: \"None of the above\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/question:Q2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q2",
+        "quote": "Do you routinely order PD-L1 biomarker testing before selecting first-line therapy for metastatic NSCLC?"
+      },
+      "requirement": "Q2. Do you routinely order PD-L1 biomarker testing before selecting first-line therapy for metastatic NSCLC?",
+      "contentHash": "sha256:deca92e89cce8bed8544b374ae1e8eb063fbf8049a452c20c6f35136f258545d",
+      "preconditions": [],
+      "stimulus": "Reach question Q2",
+      "expectedObservables": [
+        "Question Q2 is displayed with text: \"Do you routinely order PD-L1 biomarker testing before selecting first-line therapy for metastatic NSCLC?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Yes\"",
+        "Option 2: \"No\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/question:Q3",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q3",
+        "quote": "Approximately what share of your newly diagnosed metastatic NSCLC patients have PD-L1 expression of 50% or higher?"
+      },
+      "requirement": "Q3. Approximately what share of your newly diagnosed metastatic NSCLC patients have PD-L1 expression of 50% or higher?",
+      "contentHash": "sha256:e6060456ac62c702a30dc4ebd75c37f46527d57bfd7162cb975ca2692dc94472",
+      "preconditions": [],
+      "stimulus": "Reach question Q3",
+      "expectedObservables": [
+        "Question Q3 is displayed with text: \"Approximately what share of your newly diagnosed metastatic NSCLC patients have PD-L1 expression of 50% or higher?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Half or more\"",
+        "Option 2: \"Fewer than half\"",
+        "Option 3: \"Not sure\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/question:Q4",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q4",
+        "quote": "For patients with PD-L1 expression of 50% or higher, what is your preferred first-line approach?"
+      },
+      "requirement": "Q4. For patients with PD-L1 expression of 50% or higher, what is your preferred first-line approach?",
+      "contentHash": "sha256:31dcef931065a6ef9b9f6d3efd0665eb87faedea887119cb0290970a0511df1a",
+      "preconditions": [],
+      "stimulus": "Reach question Q4",
+      "expectedObservables": [
+        "Question Q4 is displayed with text: \"For patients with PD-L1 expression of 50% or higher, what is your preferred first-line approach?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Immunotherapy monotherapy\"",
+        "Option 2: \"Immunotherapy plus chemotherapy\"",
+        "Option 3: \"Chemotherapy alone\"",
+        "Option 4: \"Other\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/question:Q5",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q5",
+        "quote": "For patients with PD-L1 expression below 50%, what is your preferred first-line approach?"
+      },
+      "requirement": "Q5. For patients with PD-L1 expression below 50%, what is your preferred first-line approach?",
+      "contentHash": "sha256:146781552accd059b0dacb9d15b3d182c9c0da34b2156dc11d5eace4b23fed38",
+      "preconditions": [],
+      "stimulus": "Reach question Q5",
+      "expectedObservables": [
+        "Question Q5 is displayed with text: \"For patients with PD-L1 expression below 50%, what is your preferred first-line approach?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Immunotherapy plus chemotherapy\"",
+        "Option 2: \"Immunotherapy monotherapy\"",
+        "Option 3: \"Chemotherapy alone\"",
+        "Option 4: \"Other\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/question:Q6",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q6",
+        "quote": "Which attribute most influences your choice of first-line immunotherapy?"
+      },
+      "requirement": "Q6. Which attribute most influences your choice of first-line immunotherapy?",
+      "contentHash": "sha256:d7ab519bbe06b675820d88185a70e9355061e17088844467765aff6e54ed2edd",
+      "preconditions": [],
+      "stimulus": "Reach question Q6",
+      "expectedObservables": [
+        "Question Q6 is displayed with text: \"Which attribute most influences your choice of first-line immunotherapy?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Overall survival data\"",
+        "Option 2: \"Progression-free survival data\"",
+        "Option 3: \"Tolerability profile\"",
+        "Option 4: \"Dosing schedule convenience\"",
+        "Option 5: \"Access and reimbursement\"",
+        "Option 98: \"Other\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/question:Q7",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q7",
+        "quote": "What percentage of your metastatic NSCLC patients receive any immunotherapy in the first line?"
+      },
+      "requirement": "Q7. What percentage of your metastatic NSCLC patients receive any immunotherapy in the first line?",
+      "contentHash": "sha256:08ebd4ce4645b4da712ea8ec1421ea77117ff57e5987771669e6f44b4928508a",
+      "preconditions": [],
+      "stimulus": "Reach question Q7",
+      "expectedObservables": [
+        "Question Q7 is displayed with text: \"What percentage of your metastatic NSCLC patients receive any immunotherapy in the first line?\"",
+        "Answer input is of type number"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/question:Q8",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q8",
+        "quote": "How likely are you to recommend first-line immunotherapy to a colleague treating metastatic NSCLC?"
+      },
+      "requirement": "Q8. How likely are you to recommend first-line immunotherapy to a colleague treating metastatic NSCLC?",
+      "contentHash": "sha256:258a0cc186a564a7bbc8ea764a5068f70aa9dbb8edeb0fa5c89ed321127181c5",
+      "preconditions": [],
+      "stimulus": "Reach question Q8",
+      "expectedObservables": [
+        "Question Q8 is displayed with text: \"How likely are you to recommend first-line immunotherapy to a colleague treating metastatic NSCLC?\"",
+        "Answer input is of type rating"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/question:S1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S1",
+        "quote": "Which of the following best describes your primary clinical role?"
+      },
+      "requirement": "S1. Which of the following best describes your primary clinical role?",
+      "contentHash": "sha256:07d8d007163815839918429c1654a4f68e2ddbc9e0fa7aaa53a63a4ef35ae5a8",
+      "preconditions": [],
+      "stimulus": "Reach question S1",
+      "expectedObservables": [
+        "Question S1 is displayed with text: \"Which of the following best describes your primary clinical role?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Medical oncologist\"",
+        "Option 2: \"Hematologist-oncologist\"",
+        "Option 3: \"Pulmonologist\"",
+        "Option 4: \"Radiation oncologist\"",
+        "Option 5: \"Other\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003",
+          "p004"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/question:S2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S2",
+        "quote": "How many years have you been treating patients with non-small cell lung cancer?"
+      },
+      "requirement": "S2. How many years have you been treating patients with non-small cell lung cancer?",
+      "contentHash": "sha256:da461589c0af017ba6cb1d2fe02612d6f8d9103f492246e3f3af73a65ee180c2",
+      "preconditions": [],
+      "stimulus": "Reach question S2",
+      "expectedObservables": [
+        "Question S2 is displayed with text: \"How many years have you been treating patients with non-small cell lung cancer?\"",
+        "Answer input is of type number"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:Q1:exclusive:99",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, option 99 (exclusive)"
+      },
+      "requirement": "Q1: 'NONE OF THE ABOVE' CANNOT BE COMBINED WITH OTHER SELECTIONS.",
+      "contentHash": "sha256:8151f8f552057e6ca5f72dced8dc46098f95de4a374a1292772d2b60f15ba309",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "Select option 99 (\"None of the above\") together with any other option at Q1",
+      "expectedObservables": [
+        "Option 99 (\"None of the above\") cannot be combined with other selections at Q1"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:Q1:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, instruction",
+        "quote": "Select all that apply."
+      },
+      "requirement": "[INSTRUCTION: Select all that apply.]",
+      "contentHash": "sha256:2d8e4555565a8c9ebe364c99ba066b4c1fd70535743044af0f3e7be287ab94bb",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "View question Q1",
+      "expectedObservables": [
+        "Instruction shown: \"Select all that apply.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:Q1:randomize-anchor",
+      "category": "rule",
+      "type": "randomization-quota",
+      "sourceAnchor": {
+        "locator": "Q1, randomization anchor"
+      },
+      "requirement": "PROGRAMMER: ALWAYS KEEP 'NONE OF THE ABOVE' LAST AT Q1.",
+      "contentHash": "sha256:3170357af6c5f0e5bd14eb365ca08e32d55f44682ca898f18a2118de66d97dd7",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "Load Q1 under the survey's pinned seed",
+      "expectedObservables": [
+        "Anchored last at Q1 regardless of randomization: \"None of the above\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:Q1:randomize-order",
+      "category": "rule",
+      "type": "randomization-quota",
+      "sourceAnchor": {
+        "locator": "Q1, randomization"
+      },
+      "requirement": "PROGRAMMER: ROTATE OPTION ORDER ACROSS RESPONDENTS.",
+      "contentHash": "sha256:b2626973aaf2c34c787818ffe4e2f41b12b0b67eb88e3e31101d8a227f7e4f5a",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "Load Q1 under the survey's pinned seed",
+      "expectedObservables": [
+        "Options at Q1 are presented in rotate order",
+        "Expected option order for the pinned seed: 2, 3, 4, 5, 1, 99"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:Q6:randomize-anchor",
+      "category": "rule",
+      "type": "randomization-quota",
+      "sourceAnchor": {
+        "locator": "Q6, randomization anchor"
+      },
+      "requirement": "PROGRAMMER: ALWAYS KEEP 'OTHER' LAST AT Q6.",
+      "contentHash": "sha256:c12271390ece4ced3337b1ebd0a49182a22419e2c892242b4838851668d8342e",
+      "preconditions": [
+        "Question Q6 is displayed"
+      ],
+      "stimulus": "Load Q6 under the survey's pinned seed",
+      "expectedObservables": [
+        "Anchored last at Q6 regardless of randomization: \"Other\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:Q6:randomize-order",
+      "category": "rule",
+      "type": "randomization-quota",
+      "sourceAnchor": {
+        "locator": "Q6, randomization"
+      },
+      "requirement": "PROGRAMMER: RANDOMIZE OPTION ORDER.",
+      "contentHash": "sha256:21fe9fecbf8e57d32ddcb4916babe1c73f8e0c4c4109862937216aa199bde1dd",
+      "preconditions": [
+        "Question Q6 is displayed"
+      ],
+      "stimulus": "Load Q6 under the survey's pinned seed",
+      "expectedObservables": [
+        "Options at Q6 are presented in shuffle order",
+        "Expected option order for the pinned seed: 5, 4, 3, 1, 2, 98"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:Q7:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q7, instruction",
+        "quote": "Enter a whole number between 0 and 100."
+      },
+      "requirement": "[INSTRUCTION: Enter a whole number between 0 and 100.]",
+      "contentHash": "sha256:03aa34fd4e5cbd3c007264f7b1f82f62706bc14bf9585b8860c2aea066015db8",
+      "preconditions": [
+        "Question Q7 is displayed"
+      ],
+      "stimulus": "View question Q7",
+      "expectedObservables": [
+        "Instruction shown: \"Enter a whole number between 0 and 100.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:Q7:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q7, range validation"
+      },
+      "requirement": "Q7: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 100.",
+      "contentHash": "sha256:a206bb4542580e2f5872ae5673cc20594183c1f96bba87fe1191a8727b44efb6",
+      "preconditions": [
+        "Question Q7 is displayed"
+      ],
+      "stimulus": "Submit an answer at Q7 outside the documented bounds",
+      "expectedObservables": [
+        "Q7 accepts only whole numbers between 0 and 100",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:Q8:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q8, instruction",
+        "quote": "0 = Not at all likely, 10 = Extremely likely"
+      },
+      "requirement": "[INSTRUCTION: 0 = Not at all likely, 10 = Extremely likely]",
+      "contentHash": "sha256:d79ded640997e93e858fcdac000bfb2fa1f1dff558249cee7d16e65973e78ffb",
+      "preconditions": [
+        "Question Q8 is displayed"
+      ],
+      "stimulus": "View question Q8",
+      "expectedObservables": [
+        "Instruction shown: \"0 = Not at all likely, 10 = Extremely likely\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:Q8:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q8, range validation"
+      },
+      "requirement": "Q8: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 10.",
+      "contentHash": "sha256:c776f5bf3d0fed20a4ec5b566e02103e55df50fceaba91cd58fa28ecfff41bc7",
+      "preconditions": [
+        "Question Q8 is displayed"
+      ],
+      "stimulus": "Submit an answer at Q8 outside the documented bounds",
+      "expectedObservables": [
+        "Q8 accepts only whole numbers between 0 and 10",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:S2:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S2, instruction",
+        "quote": "Enter a whole number between 0 and 50."
+      },
+      "requirement": "[INSTRUCTION: Enter a whole number between 0 and 50.]",
+      "contentHash": "sha256:1f90ea3c18ea1b23e737a1aefdbae2315cf7a5657c416123c3ba08f6ea57fe45",
+      "preconditions": [
+        "Question S2 is displayed"
+      ],
+      "stimulus": "View question S2",
+      "expectedObservables": [
+        "Instruction shown: \"Enter a whole number between 0 and 50.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/rule:S2:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S2, range validation"
+      },
+      "requirement": "S2: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 50.",
+      "contentHash": "sha256:d0690cd2b973efb937d49e629e08b52b544b9c094e60e616d1a3ad6d5eb0cb5f",
+      "preconditions": [
+        "Question S2 is displayed"
+      ],
+      "stimulus": "Submit an answer at S2 outside the documented bounds",
+      "expectedObservables": [
+        "S2 accepts only whole numbers between 0 and 50",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/branch:Q2:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q2, default continue"
+      },
+      "requirement": "AFTER Q2, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO Q3.",
+      "contentHash": "sha256:f4d5beb2608406903e8bc6032aaf22b834b8eac08e30e9f051a81b3e3eb2af10",
+      "preconditions": [
+        "Question Q2 is reached",
+        "Condition does not hold: Q2=2 (NO)"
+      ],
+      "stimulus": "Answer Q2 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at Q3 immediately after Q2"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/branch:Q2:goto:Q7:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q2, rule 1",
+        "quote": "IF Q2=2 (NO), SKIP TO Q7."
+      },
+      "requirement": "IF Q2=2 (NO), SKIP TO Q7.",
+      "contentHash": "sha256:cff55c7577ee1cdf2a0cade20fbd5e27466c8ee0d39faa7afd6489f49168093d",
+      "preconditions": [
+        "Question Q2 is reached"
+      ],
+      "stimulus": "Answer Q2 such that Q2=2 (NO)",
+      "expectedObservables": [
+        "Navigation continues at Q7 immediately after Q2"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/branch:Q3:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q3, default continue"
+      },
+      "requirement": "AFTER Q3, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO Q4.",
+      "contentHash": "sha256:3417ab13040cd04eebb17aab79165ef7c4b5ad6a448cb00503a9acad2ef258f3",
+      "preconditions": [
+        "Question Q3 is reached",
+        "Condition does not hold: Q3=2 (FEWER THAN HALF) OR Q3=3 (NOT SURE)"
+      ],
+      "stimulus": "Answer Q3 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at Q4 immediately after Q3"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/branch:Q3:goto:Q5:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q3, rule 1",
+        "quote": "IF Q3=2 (FEWER THAN HALF) OR Q3=3 (NOT SURE), SKIP TO Q5."
+      },
+      "requirement": "IF Q3=2 (FEWER THAN HALF) OR Q3=3 (NOT SURE), SKIP TO Q5.",
+      "contentHash": "sha256:710531329200c6b92becac356e34091eac6e7eeb731bab690050b3f5d26c5402",
+      "preconditions": [
+        "Question Q3 is reached"
+      ],
+      "stimulus": "Answer Q3 such that Q3=2 (FEWER THAN HALF) OR Q3=3 (NOT SURE)",
+      "expectedObservables": [
+        "Navigation continues at Q5 immediately after Q3"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/branch:Q4:goto:Q6:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q4, rule 1",
+        "quote": "AFTER THIS QUESTION, SKIP TO Q6."
+      },
+      "requirement": "AFTER THIS QUESTION, SKIP TO Q6.",
+      "contentHash": "sha256:881b21d00bcdda5dd21b9dde99c996a526aaf679a870c054112f0b3827c54c2d",
+      "preconditions": [
+        "Question Q4 is reached"
+      ],
+      "stimulus": "Complete Q4",
+      "expectedObservables": [
+        "Navigation continues at Q6 immediately after Q4"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/branch:S1:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "S1, default continue"
+      },
+      "requirement": "AFTER S1, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO S2.",
+      "contentHash": "sha256:172e1e5e5ad24e27683f10ddade2e2dc6389591070b5ed92ec9d87e52496beef",
+      "preconditions": [
+        "Question S1 is reached",
+        "Condition does not hold: S1=5 (OTHER)"
+      ],
+      "stimulus": "Answer S1 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at S2 immediately after S1"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/branch:S1:terminate:non-treater:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "S1, rule 1",
+        "quote": "TERMINATE IF S1=5 (OTHER)."
+      },
+      "requirement": "TERMINATE IF S1=5 (OTHER).",
+      "contentHash": "sha256:f0df79f1168ea46add051ae2f3137074009c9b8dc2a87240dcdb0e57d26e15ff",
+      "preconditions": [
+        "Question S1 is reached"
+      ],
+      "stimulus": "Answer S1 such that S1=5 (OTHER)",
+      "expectedObservables": [
+        "The survey terminates in state non-treater",
+        "Termination reason: Does not treat metastatic NSCLC systemically."
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p004"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/terminal:complete",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Survey completion"
+      },
+      "requirement": "SURVEY REACHES THE NORMAL COMPLETION SCREEN.",
+      "contentHash": "sha256:4f3cf01f982a93503d371c54b26a213ff51323829cbc80303365b1855ae1486f",
+      "preconditions": [],
+      "stimulus": "Reach the end of the questionnaire without triggering any terminate rule",
+      "expectedObservables": [
+        "The normal completion screen is shown"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s4-nested-rotation/terminal:terminate:non-treater",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Terminate state non-treater"
+      },
+      "requirement": "TERMINATION STATE 'non-treater': Does not treat metastatic NSCLC systemically.",
+      "contentHash": "sha256:094a126156bfce6e51d0453b933b4a1d780734b588230cbadab4b6e7628cca22",
+      "preconditions": [
+        "A rule fires that terminates in non-treater (fired from S1)"
+      ],
+      "stimulus": "Trigger any rule that terminates in non-treater",
+      "expectedObservables": [
+        "The termination screen for state non-treater is shown",
+        "Documented reason: Does not treat metastatic NSCLC systemically."
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p004"
+        ]
+      }
+    }
+  ],
+  "witnessPaths": [
+    {
+      "witnessPathId": "p001",
+      "answerVector": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": [
+          2
+        ],
+        "Q2": 1,
+        "Q3": 1,
+        "Q4": 1,
+        "Q6": 5,
+        "Q7": 0,
+        "Q8": 0
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "Q6",
+        "Q7",
+        "Q8"
+      ],
+      "terminalId": null
+    },
+    {
+      "witnessPathId": "p002",
+      "answerVector": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": [
+          2
+        ],
+        "Q2": 1,
+        "Q3": 2,
+        "Q5": 1,
+        "Q6": 5,
+        "Q7": 0,
+        "Q8": 0
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q5",
+        "Q6",
+        "Q7",
+        "Q8"
+      ],
+      "terminalId": null
+    },
+    {
+      "witnessPathId": "p003",
+      "answerVector": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": [
+          2
+        ],
+        "Q2": 2,
+        "Q7": 0,
+        "Q8": 0
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "Q1",
+        "Q2",
+        "Q7",
+        "Q8"
+      ],
+      "terminalId": null
+    },
+    {
+      "witnessPathId": "p004",
+      "answerVector": {
+        "S1": 5
+      },
+      "expectedVisitedSourceRefs": [
+        "S1"
+      ],
+      "terminalId": "non-treater"
+    }
+  ],
+  "seededDefects": []
+}

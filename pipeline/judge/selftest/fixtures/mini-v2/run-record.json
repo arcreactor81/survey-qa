@@ -1,0 +1,369 @@
+{
+  "schemaVersion": "1.0.0",
+  "run": {
+    "runId": "mini-v2",
+    "target": {
+      "url": "http://127.0.0.1:0/fixture",
+      "environment": "selftest",
+      "buildId": "mini-v2-build",
+      "buildHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "documentHash": "sha256:a29e914ece0d2102073e30593d17e59c9d6b3fd4f0db7a21458c836ff5c32d1d",
+    "contractHash": "sha256:53dea3b2ae572381adda89d7b536964f44e8d8e4e349c8bc152649264a32a709",
+    "configuration": {
+      "profileId": "selftest",
+      "configurationHash": "sha256:fc16224726ccb539d3b58dbd5765df18a5596a3fe7aa88b3ddccea2ed9a1bcd1",
+      "parameters": {}
+    },
+    "timestamps": {
+      "startedAt": "2026-08-02T00:00:00.000Z",
+      "endedAt": "2026-08-02T00:00:00.000Z"
+    }
+  },
+  "contract": {
+    "extraction": {
+      "method": "fixture",
+      "extractorVersion": "selftest@1",
+      "extractedAt": "2026-08-02T00:00:00.000Z"
+    },
+    "revision": {
+      "contractRevisionId": "contract-revision:mini-v2@1",
+      "contractRevisionHash": "sha256:4cf6b8884eb039dec63a40ebc4f632301c83513c317939d43d4fbc18497d7115",
+      "reviewState": "sealed",
+      "sealedAt": "2026-08-02T00:00:00.000Z",
+      "sealedBy": "selftest-fixture"
+    },
+    "assumptions": [
+      "ambiguity:AMB-V2-IRRELEVANT@sha256:d61c728d852591f739f46a020dd0dccce473b26dfe2bb3d2bb97a4c68b3f01a3",
+      "ambiguity:AMB-V2-RELEVANT@sha256:49b024beba264706b28f82e81df9472cc492334bb873761d9cc3eba0ba22797b"
+    ],
+    "items": [
+      {
+        "itemId": "V2-OPT-1",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "V2-OPT-1",
+          "quote": "| 1 | Alpha option |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"Alpha option\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "V2-OPT-2",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "V2-OPT-2",
+          "quote": "| 2 | Beta option |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"Beta option\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "V2-OPT-3",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "V2-OPT-3",
+          "quote": "| 3 | Gamma option |",
+          "aliases": []
+        },
+        "requirement": "Option 3 with answer text \"Gamma option\" is displayed as the final option on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "V2-ROUTE-DOCCODE",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "V2-ROUTE-DOCCODE",
+          "quote": "Q1 | Code 2 selected (Beta) | Continue to Q3",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"Beta\" for Q1, the next screen must be Q3.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "V2-ROUTE-EXCLUDE",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "V2-ROUTE-EXCLUDE",
+          "quote": "Q1 | Any code other than code 1 | Continue to Q3",
+          "aliases": []
+        },
+        "requirement": "If a respondent does not select code 1 at Q1, the next screen must be Q3.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "V2-ROUTE-UNSEALED",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "V2-ROUTE-UNSEALED",
+          "quote": "Q3 | Any code other than code 1 | Continue to D1",
+          "aliases": []
+        },
+        "requirement": "If a respondent does not select code 1 at Q3, the next screen must be D1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "V2-PRESENCE",
+        "type": "question-presence",
+        "sourceAnchor": {
+          "locator": "V2-PRESENCE",
+          "quote": "ASK ONLY THOSE WHO ANSWERED CODE 1 AT Q1.",
+          "aliases": []
+        },
+        "requirement": "Q2 must be displayed only to respondents who selected answer code 1 on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "V2-REQ-FROZEN",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "V2-REQ-FROZEN",
+          "quote": "Q4 IS COMPULSORY.",
+          "aliases": []
+        },
+        "requirement": "Q4 requires the respondent to select at least one answer before proceeding.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "V2-REQ-CONTRA",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "V2-REQ-CONTRA",
+          "quote": "Q6 IS COMPULSORY.",
+          "aliases": []
+        },
+        "requirement": "Q6 requires the respondent to select at least one answer before proceeding.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "V2-REQ-ENFORCED",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "V2-REQ-ENFORCED",
+          "quote": "Q7 IS COMPULSORY.",
+          "aliases": []
+        },
+        "requirement": "Q7 requires the respondent to select at least one answer before proceeding.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "V2-BACKBUTTON",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "V2-BACKBUTTON",
+          "quote": "NO BACK BUTTON ON THE WELCOME SCREEN.",
+          "aliases": []
+        },
+        "requirement": "The welcome screen must not display a back button.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      }
+    ]
+  },
+  "attempts": [],
+  "itemResults": [],
+  "findings": [],
+  "evidence": [
+    {
+      "evidenceId": "EV-V2-BROKEN.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-BROKEN.json",
+      "contentHash": "sha256:c2e1149359f42da485762364fa95d1958d3d4d60e062e689c1c13ba76056d8b3",
+      "byteLength": 3844,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-CLEAN-A.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-CLEAN-A.json",
+      "contentHash": "sha256:767e57d7fd2991f53e376904488e75d5159320c63a8f0385ad16184f9e10c25f",
+      "byteLength": 3053,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-CLEAN-B.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-CLEAN-B.json",
+      "contentHash": "sha256:a30e9cfb708d44147374fc62210e0c754878192f68160fc8ad6cb33bf49239ab",
+      "byteLength": 3052,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-CLEAN-C.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-CLEAN-C.json",
+      "contentHash": "sha256:7c7bd7a50d33b1468e8482ebc6461bcc572970b7f3c755d7fb6d1ca3e53d6a09",
+      "byteLength": 3053,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-CONTRA.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-CONTRA.json",
+      "contentHash": "sha256:7317436a1c5c7bb6688b8594086d8cc6cfaef6fcae106e58ac51c4040f513445",
+      "byteLength": 3342,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-DOCCODE.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-DOCCODE.json",
+      "contentHash": "sha256:371ff696e8fc47c7209773989bca10188d1e901b1838aab5ba97ff9b5ea30c1e",
+      "byteLength": 3058,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-ENFORCED.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-ENFORCED.json",
+      "contentHash": "sha256:a1721e8acf1bb8365f710b0028dac1e42ca7c12cddcbb0781dbb179acbe9fd16",
+      "byteLength": 3391,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-FROZEN.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-FROZEN.json",
+      "contentHash": "sha256:7a54e225b82c98ab44c895b01fa869737376f8216faa4a232f663d2022f1d499",
+      "byteLength": 3344,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-GAP.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-GAP.json",
+      "contentHash": "sha256:041c7562dde3ba990fafa748baec49a1bf6afa9122fd381fd8f47ccc87699b8b",
+      "byteLength": 3009,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-Q3-ONWARD.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-Q3-ONWARD.json",
+      "contentHash": "sha256:49637b083e3fdbee5b207b9446a7d2302d32438c8219ba7af1409034ca105115",
+      "byteLength": 5107,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-SAMESCRN.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-SAMESCRN.json",
+      "contentHash": "sha256:311cb59eb2fd2bbab666b76e8807a08a479e5f4d110f0af46429cfe881f99060",
+      "byteLength": 3836,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-TYPED.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-TYPED.json",
+      "contentHash": "sha256:f1a2660d29c8a7f4dcfe7d4b0491a92177051deed0877c3b91b40d3daa24a1f1",
+      "byteLength": 2513,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-V2-WELCOME.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/V2-WELCOME.json",
+      "contentHash": "sha256:04bc8800e7a0dafe84e31851fa8ae2b74c64c8f1bfbfc69c34856cf7405025ba",
+      "byteLength": 4089,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-_analysis.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/_analysis.json",
+      "contentHash": "sha256:f02a40a058839635a572f4acd8a00e4b9e5dd48ea32315240118a3f3566c642d",
+      "byteLength": 114,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-mystery.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-v2/artifacts/mystery.json",
+      "contentHash": "sha256:b62c652b7672b91d60a94b33d4bdf8a6323d5c027cf4a00f7f6bd95d7159b263",
+      "byteLength": 97,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-shot.png",
+      "type": "screenshot",
+      "artifactRef": "runs/mini-v2/artifacts/shot.png",
+      "contentHash": "sha256:1bb5eeb95c53aa415e4222efa146a385f5210ab42d0122aa949e98ef41c0675d",
+      "byteLength": 15,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    }
+  ],
+  "resources": {
+    "modelCalls": []
+  },
+  "attestation": {
+    "algorithm": "Ed25519",
+    "canonicalization": "RFC8785",
+    "scope": "entire-record-excluding-attestation",
+    "keyId": "fixture-harness-key-1",
+    "signedAt": "2026-08-02T00:00:00.000Z",
+    "payloadHash": "sha256:d5cd15ebaae68593ef4ba61814b5b461136ba4f53748c7765fa67a7135b1b5c7",
+    "signature": "_a5f8C9ZbSaZPDN287qb43OM0C-1jled4GfQOxRBXY6yaIbD2-t2tlk9zdBu5Lq_kCE0WSKaNzp1tCLlgzPtCA"
+  }
+}

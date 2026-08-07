@@ -1,0 +1,2 @@
+<p class="instruction">Select all that apply.</p>
+(rendered directly under the Q3 question heading)

@@ -1,0 +1,1352 @@
+/* survey-qa audit report — self-contained stylesheet (inlined by render-report.mjs).
+ *
+ * Palette is the project "Editorial Medical" token set (src/theme-css.ts), reduced
+ * to a font-stack-only variant so a rendered report is fully self-contained: no
+ * @font-face, no CDN, no external asset of any kind.
+ *
+ * Honesty constraints encoded here:
+ *   - `exercised` is NEUTRAL (surface tint), never success green.
+ *   - every status carries a text label + a glyph; colour is decoration only.
+ *   - `.integrity-suspect` (invalid attestation) strips success styling globally.
+ *   - wide tables scroll inside `.scroll-x`; the page itself never scrolls sideways.
+ */
+
+:root {
+  color-scheme: light dark;
+  --serif: "Iowan Old Style", Georgia, "Palatino Linotype", "Times New Roman", serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --radius: 14px;
+  --radius-sm: 8px;
+  --radius-pill: 999px;
+
+  --paper: #ECEFEA;
+  --card: #EFF1ED;
+  --surface-2: #E8ECE6;
+  --surface-3: #E2E7E1;
+
+  --ink: #2F352F;
+  --text: #3C433D;
+  --muted: #545C54;
+  --border: #B4BBB3;
+  --border-strong: #7D857D;
+
+  --accent: #574589;
+  --accent-ink: #FFFFFF;
+  --kicker: #40592F;
+
+  --ok: #2F4A28;
+  --ok-bg: #DCEBD4;
+  --ok-border: #A9C69C;
+  --bad: #7C3936;
+  --bad-bg: #F5E4E4;
+  --bad-border: #D9AFAC;
+  --amber: #5E4A1C;
+  --amber-bg: #F2EAD4;
+  --amber-border: #D3C08A;
+  --info: #2C566F;
+  --info-bg: #E2ECF3;
+  --info-border: #B3CCDC;
+
+  --neutral-bg: #E2E7E1;
+  --neutral-border: #B4BBB3;
+
+  /* v2 register vocabulary. The existing set had no token for the states the
+   * Requirement Register must distinguish, and reusing ok/bad for any of them
+   * would make a withheld row read as a pass or a fail. Every one of these is
+   * paired with a glyph and a full word in the markup: colour is never the
+   * only signal, and none of them borrows success green. */
+  --neutral-strong-bg: #DDE3DC;      /* `exercised` — neutral by design */
+  --neutral-strong-border: #7C857B;
+
+  --nbo-bg: #E6E3F2;                 /* NOT_BROWSER_OBSERVABLE */
+  --nbo-text: #463F6B;
+  --nbo-border: #7E75AC;
+
+  --blocked-bg: #F0E6DC;             /* BLOCKED */
+  --blocked-text: #67462A;
+  --blocked-border: #A17F5C;
+
+  --mixed-bg: #F7E7DA;               /* MIXED — a fail, but a distinguishable one */
+  --mixed-text: #83441E;
+  --mixed-border: #B0764C;
+
+  --silent-bg: #E6E9EE;              /* document-silent / explicit-negative */
+  --silent-text: #454C59;
+  --silent-border: #7B8493;
+
+  --lane-gap-bg: #E2ECF3;            /* lane 1: document-backed contract gap */
+  --lane-gap-text: #2A5068;
+  --lane-gap-border: #5F8AA5;
+  --lane-tax-bg: #E9EBEE;            /* lane 2: taxonomy gap */
+  --lane-tax-text: #454C59;
+  --lane-tax-border: #7B8493;
+  --lane-amb-bg: #F2EAD4;            /* lane 3: ambiguity */
+  --lane-amb-text: #59451A;
+  --lane-amb-border: #97844E;
+  --lane-anom-bg: #EAEDE9;           /* lane 4: unsupported site anomaly */
+  --lane-anom-text: #4A524A;
+  --lane-anom-border: #7D857D;
+
+  /* JUDGMENT_PENDING — a recorded verdict that did not clear the publication
+   * gate. Deliberately its own hue: it is neither a pass (never green) nor a
+   * fail, and a reader must not mistake it for either. */
+  --pending-bg: #DFEAE7;
+  --pending-text: #1F4C45;
+  --pending-border: #558C82;
+
+  --code-bg: #E4E8E2;
+  --table-border: #C6CDC5;
+  --row-alt: #E9ECE7;
+  --row-hover: #E4E9E3;
+
+  --shadow-sm: 0 1px 2px rgba(32, 30, 27, .06);
+  --shadow: 0 1px 2px rgba(32, 30, 27, .05), 0 7px 20px rgba(32, 30, 27, .05);
+}
+
+@media screen and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #181A18;
+    --card: #20231F;
+    --surface-2: #252925;
+    --surface-3: #2B302B;
+
+    --ink: #E4E8E1;
+    --text: #CDD2CA;
+    --muted: #A9AFA7;
+    --border: #3A403A;
+    --border-strong: #565D56;
+
+    --accent: #C3B2E6;
+    --accent-ink: #1C1A26;
+    --kicker: #AECBA6;
+
+    --ok: #C8DCC1;
+    --ok-bg: rgba(168, 196, 160, .16);
+    --ok-border: rgba(168, 196, 160, .45);
+    --bad: #EBC6C6;
+    --bad-bg: rgba(212, 154, 154, .18);
+    --bad-border: rgba(212, 154, 154, .5);
+    --amber: #E7D5A2;
+    --amber-bg: rgba(212, 184, 106, .16);
+    --amber-border: rgba(212, 184, 106, .45);
+    --info: #BCD7E9;
+    --info-bg: rgba(137, 184, 212, .14);
+    --info-border: rgba(137, 184, 212, .38);
+
+    --neutral-bg: rgba(164, 170, 162, .14);
+    --neutral-border: #4A514A;
+
+    --neutral-strong-bg: rgba(164, 170, 162, .22);
+    --neutral-strong-border: #767E76;
+    --nbo-bg: rgba(176, 164, 224, .17);
+    --nbo-text: #C9C0EC;
+    --nbo-border: #8478B4;
+    --blocked-bg: rgba(205, 164, 124, .17);
+    --blocked-text: #E4C4A4;
+    --blocked-border: #A07E58;
+    --mixed-bg: rgba(224, 150, 100, .19);
+    --mixed-text: #F2BC96;
+    --mixed-border: #B0764C;
+    --silent-bg: rgba(160, 175, 195, .15);
+    --silent-text: #C4CCD8;
+    --silent-border: #78838F;
+    --lane-gap-bg: rgba(137, 184, 212, .14);
+    --lane-gap-text: #BCD7E9;
+    --lane-gap-border: #6F98B4;
+    --lane-tax-bg: rgba(160, 175, 195, .13);
+    --lane-tax-text: #C4CCD8;
+    --lane-tax-border: #78838F;
+    --lane-amb-bg: rgba(212, 184, 106, .15);
+    --lane-amb-text: #E7D5A2;
+    --lane-amb-border: #93803F;
+    --lane-anom-bg: rgba(164, 170, 162, .1);
+    --lane-anom-text: #B4BBB2;
+    --lane-anom-border: #767E76;
+    --pending-bg: rgba(120, 190, 178, .16);
+    --pending-text: #BFE0D8;
+    --pending-border: #5F978C;
+    --row-hover: rgba(255, 255, 255, .05);
+
+    --code-bg: #14170F14;
+    --code-bg: rgba(0, 0, 0, .25);
+    --table-border: #3A403A;
+    --row-alt: rgba(255, 255, 255, .028);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 9px 24px rgba(0, 0, 0, .22);
+  }
+}
+
+/* Manual override must win in both directions. */
+@media screen {
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #181A18;
+    --card: #20231F;
+    --surface-2: #252925;
+    --surface-3: #2B302B;
+    --ink: #E4E8E1;
+    --text: #CDD2CA;
+    --muted: #A9AFA7;
+    --border: #3A403A;
+    --border-strong: #565D56;
+    --accent: #C3B2E6;
+    --accent-ink: #1C1A26;
+    --kicker: #AECBA6;
+    --ok: #C8DCC1;
+    --ok-bg: rgba(168, 196, 160, .16);
+    --ok-border: rgba(168, 196, 160, .45);
+    --bad: #EBC6C6;
+    --bad-bg: rgba(212, 154, 154, .18);
+    --bad-border: rgba(212, 154, 154, .5);
+    --amber: #E7D5A2;
+    --amber-bg: rgba(212, 184, 106, .16);
+    --amber-border: rgba(212, 184, 106, .45);
+    --info: #BCD7E9;
+    --info-bg: rgba(137, 184, 212, .14);
+    --info-border: rgba(137, 184, 212, .38);
+    --neutral-bg: rgba(164, 170, 162, .14);
+    --neutral-border: #4A514A;
+    --neutral-strong-bg: rgba(164, 170, 162, .22);
+    --neutral-strong-border: #767E76;
+    --nbo-bg: rgba(176, 164, 224, .17);
+    --nbo-text: #C9C0EC;
+    --nbo-border: #8478B4;
+    --blocked-bg: rgba(205, 164, 124, .17);
+    --blocked-text: #E4C4A4;
+    --blocked-border: #A07E58;
+    --mixed-bg: rgba(224, 150, 100, .19);
+    --mixed-text: #F2BC96;
+    --mixed-border: #B0764C;
+    --silent-bg: rgba(160, 175, 195, .15);
+    --silent-text: #C4CCD8;
+    --silent-border: #78838F;
+    --lane-gap-bg: rgba(137, 184, 212, .14);
+    --lane-gap-text: #BCD7E9;
+    --lane-gap-border: #6F98B4;
+    --lane-tax-bg: rgba(160, 175, 195, .13);
+    --lane-tax-text: #C4CCD8;
+    --lane-tax-border: #78838F;
+    --lane-amb-bg: rgba(212, 184, 106, .15);
+    --lane-amb-text: #E7D5A2;
+    --lane-amb-border: #93803F;
+    --lane-anom-bg: rgba(164, 170, 162, .1);
+    --lane-anom-text: #B4BBB2;
+    --lane-anom-border: #767E76;
+    --pending-bg: rgba(120, 190, 178, .16);
+    --pending-text: #BFE0D8;
+    --pending-border: #5F978C;
+    --row-hover: rgba(255, 255, 255, .05);
+
+    --code-bg: rgba(0, 0, 0, .25);
+    --table-border: #3A403A;
+    --row-alt: rgba(255, 255, 255, .028);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 9px 24px rgba(0, 0, 0, .22);
+  }
+  :root[data-theme="light"] { color-scheme: light; }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.55;
+}
+/* Screen-only belt and braces against sideways page scroll. It must NOT apply
+   to print: `overflow: hidden` on the root in paged media clips the document
+   and silently drops every page after the first overflowing block. */
+@media screen {
+  html, body { overflow-x: hidden; }
+}
+main { display: block; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+h1, h2, h3, h4 { color: var(--ink); line-height: 1.22; margin: 0 0 .4em; font-weight: 600; }
+h1 { font-family: var(--serif); font-size: clamp(1.75rem, 1.2rem + 2vw, 2.5rem); font-weight: 400; }
+h2 { font-size: clamp(1.15rem, 1rem + .7vw, 1.5rem); }
+h3 { font-size: 1.02rem; }
+p { margin: 0 0 .7em; }
+p:last-child { margin-bottom: 0; }
+a { color: var(--accent); }
+a:hover { text-decoration-thickness: 2px; }
+code, .mono { font-family: var(--mono); font-size: .86em; }
+.hash, .idref {
+  font-family: var(--mono);
+  font-size: .84em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.num { font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+ul, ol { margin: 0 0 .7em; padding-left: 1.2em; }
+li { margin-bottom: .25em; }
+
+:where(a, button, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.skip-link {
+  position: absolute;
+  /* Parked ABOVE the page, not to the left of it: a large negative `left`
+     makes the body's scrollWidth exceed the viewport, which reads as a
+     horizontal overflow in every automated layout check. */
+  left: 12px;
+  top: -80px;
+  background: var(--card);
+  color: var(--ink);
+  padding: 10px 16px;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-sm);
+  z-index: 20;
+}
+.skip-link:focus { left: 12px; top: 12px; }
+
+/* ---------- masthead ---------- */
+.masthead {
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  padding: 22px 0 18px;
+}
+.masthead .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.masthead .row > div { flex: 1 1 min(100%, 520px); min-width: 0; }
+.masthead .theme-toggle { margin-left: auto; flex: 0 0 auto; }
+.kicker {
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--kicker);
+  margin: 0 0 .35em;
+}
+.view-note {
+  font-size: .85rem;
+  color: var(--muted);
+  max-width: 62ch;
+}
+.theme-toggle {
+  font: inherit;
+  font-size: .82rem;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.theme-toggle:hover { background: var(--surface-3); }
+
+/* ---------- banners ---------- */
+.banner {
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  margin: 18px 0;
+  background: var(--surface-2);
+}
+.banner h2 { margin-bottom: .35em; }
+.banner--fail { background: var(--bad-bg); border-color: var(--bad-border); }
+.banner--fail h2 { color: var(--bad); }
+.banner--warn { background: var(--amber-bg); border-color: var(--amber-border); }
+.banner--warn h2 { color: var(--amber); }
+.banner--info { background: var(--info-bg); border-color: var(--info-border); }
+.banner--neutral { background: var(--surface-2); border-color: var(--border-strong); }
+.banner-flag {
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: .4em;
+}
+.outcome-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin: 12px 0 6px;
+  padding: 0;
+  list-style: none;
+}
+.outcome-pair li {
+  margin: 0;
+  border-left: 3px solid var(--border-strong);
+  padding-left: 10px;
+  min-width: 260px;
+  flex: 1 1 260px;
+}
+.outcome-pair .lbl {
+  display: block;
+  font-family: var(--mono);
+  font-size: .7rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.outcome-pair .val { font-weight: 600; color: var(--ink); }
+
+/* ---------- sections & panels ---------- */
+section { margin: 34px 0; scroll-margin-top: 12px; }
+.section-head { margin-bottom: 10px; }
+.section-head .lead { color: var(--muted); font-size: .92rem; max-width: 78ch; }
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+}
+.panel + .panel { margin-top: 12px; }
+.empty-state {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  color: var(--muted);
+  background: transparent;
+}
+.empty-state strong { color: var(--ink); }
+
+/* ---------- definition grids ---------- */
+.dl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px 22px;
+  margin: 0;
+}
+.dl-grid > div { min-width: 0; }
+.dl-grid dt {
+  font-family: var(--mono);
+  font-size: .7rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.dl-grid dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+
+/* ---------- stat tiles ---------- */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 12px;
+}
+.tile {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+.tile .tile-label {
+  font-family: var(--mono);
+  font-size: .69rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: block;
+}
+.tile .tile-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.tile .tile-denom { font-size: .84rem; color: var(--muted); }
+.tile ul { margin: 6px 0 0; padding-left: 1.1em; font-size: .88rem; }
+.tile--flag { border-left-color: var(--bad); }
+.tile--warn { border-left-color: var(--amber); }
+
+/* ---------- status badges (text + glyph; colour never alone) ---------- */
+.badge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: .4em;
+  border: 1px solid var(--neutral-border);
+  background: var(--neutral-bg);
+  color: var(--ink);
+  border-radius: var(--radius-pill);
+  padding: 2px 10px;
+  font-size: .8rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.badge .glyph { font-family: var(--mono); font-weight: 700; }
+.badge--pass { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+.badge--fail { background: var(--bad-bg); border-color: var(--bad-border); color: var(--bad); }
+.badge--warn { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.badge--info { background: var(--info-bg); border-color: var(--info-border); color: var(--info); }
+/* `exercised` and every non-terminal coverage state stay deliberately neutral. */
+.badge--neutral { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--ink); }
+.badge--strong { border-width: 2px; }
+
+/* When record integrity is suspect nothing may look like a success. */
+.integrity-suspect .badge--pass,
+.integrity-suspect .tile,
+.integrity-suspect .banner--ok {
+  background: var(--neutral-bg);
+  border-color: var(--neutral-border);
+  color: var(--ink);
+}
+.integrity-suspect .badge--pass { color: var(--ink); }
+
+.sev {
+  display: inline-block;
+  border-radius: var(--radius-sm);
+  padding: 1px 8px;
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  border: 1px solid var(--neutral-border);
+  background: var(--neutral-bg);
+  color: var(--ink);
+}
+.sev--critical, .sev--high { background: var(--bad-bg); border-color: var(--bad-border); color: var(--bad); }
+.sev--medium { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.sev--low, .sev--info { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--ink); }
+
+/* ---------- findings ---------- */
+.finding {
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+.finding--critical, .finding--high { border-left-color: var(--bad); }
+.finding--medium { border-left-color: var(--amber); }
+.finding--unsupported { border-left-style: dashed; }
+.finding-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.finding-head h3 { margin: 0; flex: 1 1 340px; min-width: 0; }
+.eo {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+}
+.eo > div {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--surface-2);
+  min-width: 0;
+}
+.eo .eo-label {
+  font-family: var(--mono);
+  font-size: .69rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 2px;
+}
+.eo .eo-expected { border-left: 3px solid var(--info-border); }
+.eo .eo-observed { border-left: 3px solid var(--bad-border); }
+.refs {
+  font-size: .84rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.refs .idref { color: var(--ink); }
+
+/* ---------- tables ---------- */
+.scroll-x {
+  overflow-x: auto;
+  border: 1px solid var(--table-border);
+  border-radius: var(--radius);
+  background: var(--card);
+  max-width: 100%;
+}
+table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+table.audit { min-width: 1080px; }
+table.evidence-table { min-width: 780px; }
+table.plain { min-width: 520px; }
+caption {
+  text-align: left;
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: .86rem;
+  border-bottom: 1px solid var(--table-border);
+}
+th, td {
+  text-align: left;
+  vertical-align: top;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--table-border);
+}
+thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-3);
+  color: var(--ink);
+  font-size: .74rem;
+  font-family: var(--mono);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  z-index: 1;
+}
+tbody tr:nth-child(even) { background: var(--row-alt); }
+tbody th[scope="row"] { font-weight: 600; color: var(--ink); font-family: var(--mono); font-size: .8rem; }
+.sub { display: block; color: var(--muted); font-size: .85em; margin-top: 2px; }
+.quote {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 8px;
+  color: var(--muted);
+  font-style: italic;
+  display: block;
+  margin-top: 3px;
+}
+.col-narrow { width: 92px; }
+
+/* ---------- footer ---------- */
+.report-footer {
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  margin-top: 40px;
+  padding: 24px 0 40px;
+  font-size: .9rem;
+}
+.report-footer h2 { font-size: 1.05rem; }
+.dl-inline { display: flex; flex-wrap: wrap; gap: 4px 18px; margin: 0; }
+.downloads { list-style: none; padding: 0; }
+
+/* ------------------------------------------------------------------ *
+ * Requirement Register
+ * ------------------------------------------------------------------ */
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* Cell-state tones. Each one is ALSO carried by a glyph and a full word in
+ * the markup — these rules add emphasis, they never carry the meaning. */
+.cell--pass    { background: var(--ok-bg);             border-color: var(--ok-border);             color: var(--ok); }
+.cell--fail    { background: var(--bad-bg);            border-color: var(--bad-border);            color: var(--bad); }
+.cell--amb     { background: var(--lane-amb-bg);       border-color: var(--lane-amb-border);       color: var(--lane-amb-text); }
+.cell--warn    { background: var(--amber-bg);          border-color: var(--amber-border);          color: var(--amber); }
+.cell--nbo     { background: var(--nbo-bg);            border-color: var(--nbo-border);            color: var(--nbo-text); }
+.cell--blocked { background: var(--blocked-bg);        border-color: var(--blocked-border);        color: var(--blocked-text); }
+.cell--silent  { background: var(--silent-bg);         border-color: var(--silent-border);         color: var(--silent-text); }
+.cell--neutral { background: var(--neutral-strong-bg); border-color: var(--neutral-strong-border); color: var(--ink); }
+/* MIXED counts as a fail but gets its own hue, so a uniform failure and a
+ * route-dependent one are not the same mark on the page. */
+.cell--mixed   { background: var(--mixed-bg);          border-color: var(--mixed-border);          color: var(--mixed-text); border-width: 2px; }
+.reg-cell--fail .badge.cell--fail, .reg-cell--mixed .badge.cell--mixed { border-width: 2px; }
+.integrity-suspect .cell--pass { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--ink); }
+
+/* A caption inside `.scroll-x` inherits the table's min-width and gets clipped,
+ * which silently truncates the sentence that explains the table. The register's
+ * explanation therefore lives outside the scroller. */
+.table-note { color: var(--muted); font-size: .86rem; max-width: 88ch; margin: 0 0 8px; }
+table.register { min-width: 1500px; font-size: .84rem; }
+table.register th, table.register td { vertical-align: top; }
+table.register thead th { white-space: normal; }
+.reg-col { min-width: 260px; }
+.reg-col-id { width: 190px; }
+.reg-col .colname { display: block; font-family: var(--mono); font-size: .78rem; letter-spacing: .04em; color: var(--ink); }
+.colmeta { margin-top: 6px; }
+.colmeta > summary { font-size: .72rem; }
+.colmeta .dl-grid { grid-template-columns: 120px 1fr; font-size: .74rem; }
+.reg-req { min-width: 300px; }
+.reg-req .req { display: block; color: var(--ink); font-weight: 600; }
+.reg-scope { min-width: 200px; }
+.reg-flags { min-width: 140px; }
+.reg-cell { min-width: 260px; }
+
+tbody.reg-sectionhead th {
+  background: var(--surface-3);
+  font-family: var(--mono);
+  font-size: .74rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--ink);
+  border-top: 2px solid var(--border-strong);
+  padding: 10px 12px;
+  text-align: left;
+}
+tbody.reg-group { border-bottom: 1px solid var(--table-border); }
+tbody.reg-group:hover { background: var(--row-hover); }
+tr.reg-parent > * { border-top: 1px solid var(--table-border); }
+tr.reg-parent--pinned .reg-id { border-left: 3px solid var(--accent); }
+tr.reg-child > * { background: var(--row-alt); font-size: .95em; }
+tr.reg-child .reg-id { padding-left: 22px; }
+.childmark { color: var(--muted); margin-right: 4px; font-family: var(--mono); }
+
+/* Case expansion toggle. CSS-only; where :has() is unavailable every child row
+ * stays visible, because failing open can hide nothing. */
+.reg-toggle-wrap { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; margin-right: 6px; }
+.reg-toggle { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.reg-toggle-face { font-family: var(--mono); color: var(--muted); transition: transform var(--dur-fast, .16s) ease; }
+.reg-toggle:checked ~ .reg-toggle-face { transform: rotate(90deg); }
+@supports selector(tbody:has(input:checked)) {
+  tbody.reg-group:has(.reg-toggle:not(:checked)) tr.reg-child { display: none; }
+}
+.rollup-col {
+  font-family: var(--mono); font-size: .7rem; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--muted); margin-right: 3px;
+}
+.rollup {
+  display: inline-block; font-family: var(--mono); font-size: .72rem;
+  padding: 1px 5px; margin: 1px 2px 1px 0; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+
+.drill { margin-top: 8px; }
+.drill > summary { font-size: .78rem; color: var(--accent); cursor: pointer; }
+.drill-body {
+  margin-top: 8px; padding: 10px 12px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.drill-body h4 {
+  margin: 12px 0 4px; font-family: var(--mono); font-size: .72rem;
+  text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
+}
+.drill-body h4:first-child { margin-top: 0; }
+.drill-body .dl-grid { grid-template-columns: 150px 1fr; font-size: .78rem; }
+table.witness { min-width: 720px; font-size: .78rem; }
+.excerpt {
+  margin: 6px 0 0; padding: 7px 9px;
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: .74rem; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word; max-height: 15em; overflow: auto;
+}
+.chain {
+  display: inline-block; font-family: var(--mono); font-size: .68rem;
+  padding: 0 4px; border-radius: 3px; border: 1px solid transparent;
+}
+.chain--ok    { color: var(--ok);           border-color: var(--ok-border);        background: var(--ok-bg); }
+.chain--bad   { color: var(--bad);          border-color: var(--bad-border);       background: var(--bad-bg); }
+.chain--warn  { color: var(--amber);        border-color: var(--amber-border);     background: var(--amber-bg); }
+.chain--muted { color: var(--muted);        border-color: var(--border);           background: var(--neutral-bg); }
+.integrity-suspect .chain--ok { color: var(--ink); background: var(--neutral-bg); border-color: var(--neutral-border); }
+
+.flagref {
+  display: inline-block; font-family: var(--mono); font-size: .7rem;
+  padding: 1px 5px; margin: 1px 2px 1px 0; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--ink);
+  text-decoration: none;
+}
+.flagref:hover { border-color: var(--border-strong); text-decoration: underline; }
+.flagref--amb { background: var(--lane-amb-bg); border-color: var(--lane-amb-border); color: var(--lane-amb-text); }
+.flagref--gap { background: var(--lane-gap-bg); border-color: var(--lane-gap-border); color: var(--lane-gap-text); }
+.flagref--tax { background: var(--lane-tax-bg); border-color: var(--lane-tax-border); color: var(--lane-tax-text); }
+.flagref--nbo { background: var(--nbo-bg);      border-color: var(--nbo-border);      color: var(--nbo-text); }
+.flagref .sub { display: inline; margin-left: 3px; }
+
+.legend { list-style: none; padding-left: 0; }
+.legend li { margin-bottom: 6px; }
+.prov { margin-top: 6px; }
+.prov > summary { font-size: .74rem; color: var(--accent); cursor: pointer; }
+.prov .dl-grid { grid-template-columns: 150px 1fr; font-size: .76rem; }
+
+/* ------------------------------------------------------------------ *
+ * Flag lanes
+ * ------------------------------------------------------------------ */
+
+.lanes { display: grid; gap: 14px; }
+.lane {
+  padding: 18px 20px 16px;
+  border: 1px solid var(--border); border-left-width: 4px;
+  border-radius: var(--radius); background: var(--card);
+}
+.lane--lane-gap  { border-left-color: var(--lane-gap-border);  background: var(--lane-gap-bg); }
+.lane--lane-tax  { border-left-color: var(--lane-tax-border);  background: var(--lane-tax-bg); }
+.lane--lane-amb  { border-left-color: var(--lane-amb-border);  background: var(--lane-amb-bg); }
+.lane--lane-anom { border-left-color: var(--lane-anom-border); border-left-style: dashed; background: var(--lane-anom-bg); }
+.lane-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.lane-head h3 { margin: 0; flex: 1 1 auto; }
+.lane-glyph { font-family: var(--mono); margin-right: 8px; }
+.lane-blurb { max-width: 82ch; }
+.lane-effect { font-size: .88rem; }
+.pill {
+  font-family: var(--mono); font-size: .72rem; padding: 2px 9px;
+  border-radius: var(--radius-pill); border: 1px solid var(--border-strong); color: var(--ink);
+}
+.lane-entry {
+  margin-top: 12px; padding: 14px 16px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.lane--lane-anom .lane-entry { border-style: dashed; }
+.lane-entry-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.lane-entry-head h4 { margin: 0; flex: 1 1 320px; font-size: .96rem; }
+.atom { margin-top: 8px; }
+.atom .dl-grid { grid-template-columns: 150px 1fr; font-size: .78rem; }
+
+@media (max-width: 720px) {
+  .reg-col, .reg-cell, .reg-req { min-width: 220px; }
+  .lane { padding: 14px 14px 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+@media print {
+  .theme-toggle, .skip-link { display: none; }
+  body { background: #fff; }
+  /* Never `break-inside: avoid` a container that can exceed one page: Chrome
+     clips the overflow and silently drops the sections after it. */
+  .banner, .finding { break-inside: avoid; }
+  .scroll-x { overflow-x: visible; border-radius: 0; }
+  table.audit, table.evidence-table, table.plain {
+    min-width: 0;
+    width: 100%;
+    table-layout: fixed;
+    font-size: .68rem;
+  }
+  table th, table td { overflow-wrap: anywhere; padding: 5px 6px; }
+  thead { display: table-header-group; }
+  thead th { position: static; }
+  .badge { white-space: normal; border-radius: 4px; }
+  /* Deliberately NOT `break-inside: avoid` on rows: a tall row would overflow
+     the page box and Chrome would drop everything after the table. A split row
+     is ugly; a silently truncated report is dishonest. */
+  table.audit { font-size: .66rem; }
+  table.audit .quote, table.audit .sub { font-size: .95em; }
+  /* The register is the deliverable, so it must survive print. Case rows are
+     always shown on paper: a printed page has no toggle, and hiding a case
+     would hide incompleteness. */
+  table.register { min-width: 0; width: 100%; table-layout: fixed; font-size: .58rem; }
+  table.register tr.reg-child { display: table-row !important; }
+  .reg-toggle-wrap { display: none; }
+  .drill, .colmeta, .prov { display: none; }
+  .lane { break-inside: auto; background: #fff; }
+  .lane-entry { break-inside: avoid; }
+  .excerpt { max-height: none; overflow: visible; }
+}
+
+/* ------------------------------------------------------------------ *
+ * v2 — publication state, trust statements, two denominators,         *
+ * operational blockers, respondent consequence.                       *
+ * AMENDMENT A (docs/ui-report-redesign.md).                           *
+ * ------------------------------------------------------------------ */
+
+.cell--pending { background: var(--pending-bg); border-color: var(--pending-border); color: var(--pending-text); }
+.integrity-suspect .cell--pending { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--ink); }
+
+/* A column that is not a current result NEVER takes success styling, whatever
+   its cells say. This is the CSS half of the publication gate. */
+.reg-cell--historical .badge.cell--pass,
+.reg-cell--diagnostic .badge.cell--pass {
+  background: var(--neutral-bg);
+  border-color: var(--neutral-border);
+  color: var(--ink);
+}
+.reg-cell--historical, .reg-cell--diagnostic { opacity: .93; }
+.reg-cell--diagnostic { border-left: 3px dashed var(--border-strong); }
+.reg-cell--historical { border-left: 3px solid var(--border); }
+
+.tile--historical { border-left-color: var(--border-strong); }
+.tile--historical .tile-value { color: var(--muted); }
+
+/* The four trust statements: four cards, never one badge. */
+.trust-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.trust {
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.trust--ok   { border-left-color: var(--ok-border); }
+.trust--warn { border-left-color: var(--amber-border); }
+.trust--bad  { border-left-color: var(--bad-border); }
+.trust-label { font-size: .78rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.trust-value { font-weight: 600; color: var(--ink); }
+.trust-scope { font-size: .85rem; color: var(--muted); }
+
+.result-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.result-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  padding: 14px 16px;
+}
+.result-card--current    { border-left: 4px solid var(--accent); }
+.result-card--none       { border-left: 4px solid var(--amber-border); background: var(--amber-bg); }
+.result-card--historical { border-left: 4px solid var(--border-strong); }
+.result-headline { font-size: 1.05rem; font-weight: 600; color: var(--ink); margin: 6px 0; }
+
+/* Two denominators as two EQUAL cards. Never summed, never one number. */
+.denoms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+.denom-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  padding: 14px 16px;
+}
+
+.op-blocker {
+  border: 1px solid var(--bad-border);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+
+.consequence-block {
+  border-left: 3px solid var(--border-strong);
+  padding: 6px 0 6px 12px;
+  margin: 10px 0;
+}
+.consequence-block--no-interview,
+.consequence-block--unusable-variable,
+.consequence-block--missing-data,
+.consequence-block--wrong-screen-out,
+.consequence-block--ineligible-follow-up { border-left-color: var(--bad-border); }
+.consequence-block--device-friction,
+.consequence-block--biased-response { border-left-color: var(--amber-border); }
+.consequence-block--presentation-only,
+.consequence-block--undetermined,
+.consequence-block--unknown { border-left-color: var(--border); }
+.consequence { margin: 2px 0; }
+
+.mixed-line { color: var(--mixed-text); }
+
+@media print {
+  .reg-toggle-wrap, .reg-toggle { display: none !important; }
+  .reg-child { display: table-row !important; }
+  details { display: block !important; }
+  details > summary { display: none !important; }
+}
+
+/* D14 — certification blockers are grouped by WHAT THEY ARE, so an evidence
+   failure, a defect, incompleteness and an unresolved ambiguity no longer
+   share one undifferentiated list. */
+.blocker-class {
+  margin: 1rem 0 0;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--rule, rgba(0, 0, 0, 0.14));
+}
+.blocker-class > h3 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.blocker-class > p {
+  margin: 0 0 0.4rem;
+}
+.blocker-class ul {
+  margin: 0;
+}
+
+/* ==================================================================== *
+ * AMENDMENT B — three views in one artifact                            *
+ * ==================================================================== *
+ * Summary (default) · Full check · Audit trail. They must feel like
+ * separate pages, not one enormous scroll, so exactly one is displayed
+ * at a time.
+ *
+ * View switching, group folding and register filtering are CSS-only
+ * (radio + checkbox + sibling combinators). With scripting disabled the
+ * page still works: every view, group and filter is reachable. Script
+ * only adds cross-view links, CSV download, register printing and the
+ * theme toggle.
+ *
+ * No new colour tokens: every state below reuses a token pair the
+ * computed contrast gate already checks in both themes.
+ * ==================================================================== */
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- masthead (compact: survey identity + run date) ---------- */
+.masthead-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.masthead-row > div { flex: 1 1 min(100%, 560px); min-width: 0; }
+.masthead .brand {
+  /* The survey's identity, not the page's headline: the verdict sentence on the
+     Summary is the largest thing on the page, and this must not compete with it. */
+  margin: 0 0 .2em;
+  font-family: var(--sans);
+  font-size: 1.18rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.run-line { font-size: .88rem; color: var(--muted); margin: 0; }
+
+/* ---------- the view switcher ---------- */
+.viewswitch { padding-top: 18px; padding-bottom: 40px; }
+.tab {
+  display: inline-block;
+  font: inherit;
+  font-size: .92rem;
+  padding: 9px 16px;
+  margin: 0 6px 0 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.tab:hover { background: var(--surface-3); }
+.viewradio:focus-visible + .tab { outline: 3px solid var(--accent); outline-offset: 2px; }
+.viewradio:checked + .tab {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.views { margin-top: 22px; }
+.view { display: none; }
+#v-summary:checked ~ .views [data-view="summary"],
+#v-full:checked ~ .views [data-view="full"],
+#v-audit:checked ~ .views [data-view="audit"] { display: block; }
+
+/* ---------- summary: the first screen ---------- */
+.hero { max-width: 74ch; margin: 0 0 30px; }
+.eyebrow {
+  font-family: var(--mono);
+  font-size: .74rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--kicker);
+  margin: 0 0 .5em;
+}
+.verdict {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(1.7rem, 1.2rem + 2.2vw, 2.6rem);
+  line-height: 1.12;
+  margin: 0 0 .3em;
+}
+.lede { font-size: 1.06rem; margin: 0 0 .5em; }
+.follow { font-size: 1rem; color: var(--text); margin: 0 0 1em; }
+.cta-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px; }
+.cta {
+  display: inline-block;
+  font: inherit;
+  font-size: .9rem;
+  padding: 9px 15px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+.cta:hover { background: var(--surface-3); }
+.cta--danger { border-color: var(--bad-border); background: var(--bad-bg); color: var(--bad); }
+.cta--quiet { border-color: var(--border); color: var(--muted); }
+
+.evidence-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: .9rem;
+  border-left: 3px solid var(--border-strong);
+  padding: 8px 0 8px 12px;
+  margin: 0 0 12px;
+}
+.evidence-line--ok { border-left-color: var(--ok-border); color: var(--ok); }
+.evidence-line--warn { border-left-color: var(--amber-border); color: var(--amber); }
+.evidence-line .glyph { font-weight: 700; }
+.shape-note {
+  font-size: .9rem;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 0;
+}
+
+/* ---------- summary lanes, in the absolute order ---------- */
+.lane-title { margin: 0 0 .25em; }
+.lane-lede { color: var(--muted); font-size: .93rem; max-width: 72ch; }
+section.lane {
+  margin: 0 0 26px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+section.lane--blocker { border-color: var(--bad-border); border-left: 4px solid var(--bad-border); }
+section.lane--problems { border-color: var(--mixed-border); border-left: 4px solid var(--mixed-border); }
+section.lane--decisions { border-color: var(--amber-border); border-left: 4px solid var(--amber-border); }
+/* Passed is deliberately quiet: never an equal green tile beside a blocker. */
+section.lane--passed, section.lane--quiet {
+  background: transparent;
+  border-color: var(--border);
+  border-left: 4px solid var(--border);
+  padding: 12px 16px;
+}
+section.lane--passed .lane-title, section.lane--quiet .lane-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* ---------- finding cards ---------- */
+.fcard {
+  border-top: 1px solid var(--border);
+  padding: 16px 0 4px;
+  margin: 0;
+}
+.fcard:first-of-type { border-top: 0; }
+.fcard-title { font-size: 1.06rem; margin: 0 0 .3em; }
+.fcard-meta { font-size: .82rem; color: var(--muted); margin: 0 0 .6em; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.fcard-consequence { max-width: 76ch; }
+.fcard-reach { font-size: .86rem; color: var(--muted); }
+.fcard-compare, .fcard-fix {
+  font-size: .92rem;
+  border-left: 3px solid var(--border-strong);
+  padding: 6px 0 6px 12px;
+  margin: 10px 0;
+  max-width: 76ch;
+}
+.fcard-fix { border-left-color: var(--info-border); }
+/* Why this question matters, above the readings it asks you to choose between. */
+.fcard-rank { font-size: .88rem; color: var(--muted); margin: 0 0 .6em; max-width: 76ch; }
+.fcard--decision[data-rank="could-change-launch"], .fcard--decision[data-rank="behaviour-seen"] {
+  border-left: 3px solid var(--warn-border, var(--border-strong));
+  padding-left: 12px;
+}
+/* The fold's full accounting: quieter than the verdict, louder than a caption. */
+.follow--accounting { font-size: .95rem; color: var(--muted); margin-top: -.4em; }
+.follow--accounting strong { color: var(--text); }
+.lane-lede--rank { color: var(--text); }
+.fcard-links { font-size: .86rem; display: flex; gap: 14px; flex-wrap: wrap; margin: .4em 0 0; }
+.fcard-links a { cursor: pointer; }
+
+/* ---------- disclosure layers ---------- */
+details.drawer { margin: 10px 0 4px; }
+details.drawer > summary,
+details.tech > summary,
+details.group-fold > summary {
+  cursor: pointer;
+  font-size: .88rem;
+  color: var(--accent);
+  padding: 4px 0;
+}
+details.drawer > .drawer-body {
+  border-left: 2px solid var(--border);
+  padding: 4px 0 4px 14px;
+  margin: 6px 0 0;
+}
+.drawer-body h4 { font-size: .84rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 0 .3em; }
+.drawer-body h4:first-child { margin-top: 0; }
+.drawer-body p, .drawer-body li { font-size: .9rem; }
+.plain-list { list-style: disc; padding-left: 1.1em; }
+blockquote.quote {
+  margin: 6px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: .82rem;
+  overflow-wrap: anywhere;
+}
+details.tech { margin: 12px 0 0; }
+.tech-dl { display: grid; gap: 4px 14px; margin: 6px 0; font-size: .78rem; }
+.tech-dl > div { display: grid; grid-template-columns: minmax(120px, 220px) 1fr; gap: 10px; }
+.tech-dl dt { color: var(--muted); }
+.tech-dl dd { margin: 0; overflow-wrap: anywhere; }
+.tech-note { font-size: .8rem; color: var(--muted); }
+.small { font-size: .84rem; }
+
+.mini-counts { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 10px; }
+.mini-count { font-size: .84rem; display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---------- the six plain states ---------- */
+.pstate {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: .78rem;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--neutral-border);
+  background: var(--neutral-bg);
+  color: var(--text);
+  white-space: nowrap;
+}
+.pstate--mini { font-weight: 500; font-size: .74rem; }
+.pstate--pass { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+.pstate--fail { background: var(--bad-bg); border-color: var(--bad-border); color: var(--bad); }
+.pstate--amb { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.pstate--warn { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.pstate--nbo { background: var(--nbo-bg); border-color: var(--nbo-border); color: var(--nbo-text); }
+.pstate--neutral { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--text); }
+.pstate--ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+
+/* ---------- full check ---------- */
+.fc-head { margin: 0 0 16px; }
+.fc-counts { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0 0; }
+.filter-chip {
+  display: inline-block;
+  font-size: .84rem;
+  padding: 6px 13px;
+  margin: 0 6px 8px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.regfilter:focus-visible + .filter-chip { outline: 3px solid var(--accent); outline-offset: 2px; }
+.regfilter:checked + .filter-chip {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.showing-wrap { font-size: .84rem; color: var(--muted); margin: 2px 0 14px; }
+.showing { display: none; }
+#f-all:checked ~ .showing-wrap .showing--all,
+#f-attention:checked ~ .showing-wrap .showing--attention,
+#f-problems:checked ~ .showing-wrap .showing--problems,
+#f-decision:checked ~ .showing-wrap .showing--decision,
+#f-incomplete:checked ~ .showing-wrap .showing--incomplete { display: inline; }
+
+.reg-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin: 0 0 10px;
+  background: var(--card);
+}
+.group-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 14px;
+  cursor: pointer;
+}
+.group-head:hover { background: var(--surface-3); }
+.group-toggle:focus-visible + .reg-group .group-head { outline: 3px solid var(--accent); outline-offset: -3px; }
+.group-name { font-weight: 600; }
+.group-count { font-size: .84rem; color: var(--muted); }
+.group-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.group-fold-hint::before { content: "\25BE"; color: var(--muted); }
+.group-toggle:not(:checked) + .reg-group .group-fold-hint::before { content: "\25B8"; }
+.group-toggle:not(:checked) + .reg-group .group-body { display: none; }
+.group-body { padding: 0 14px 8px; }
+
+.reg-row { border-top: 1px solid var(--border); padding: 12px 0 6px; }
+.reg-row-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.reg-id { font-family: var(--mono); font-size: .78rem; color: var(--muted); }
+.reg-row .reg-req { margin: .4em 0 .2em; max-width: 82ch; }
+.reg-why { font-size: .88rem; color: var(--muted); max-width: 82ch; margin: 0 0 .3em; }
+.fc-foot { margin: 18px 0 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* Filters. `All` is always available, so an attention-only view can never be
+   mistaken for the complete denominator. Under any filter every group is
+   forced open — a match must never hide inside a folded group. */
+#f-attention:checked ~ .reg .reg-row:not([data-attention]),
+#f-problems:checked ~ .reg .reg-row:not([data-plain="problem"]),
+#f-decision:checked ~ .reg .reg-row:not([data-plain="decision"]),
+#f-incomplete:checked ~ .reg .reg-row:not([data-plain="partial"]):not([data-plain="no-browser"]):not([data-plain="not-completed"]) {
+  display: none;
+}
+#f-attention:checked ~ .reg .group-body,
+#f-problems:checked ~ .reg .group-body,
+#f-decision:checked ~ .reg .group-body,
+#f-incomplete:checked ~ .reg .group-body { display: block; }
+#f-attention:checked ~ .reg .reg-group:not(:has(.reg-row[data-attention])),
+#f-problems:checked ~ .reg .reg-group:not(:has(.reg-row[data-plain="problem"])),
+#f-decision:checked ~ .reg .reg-group:not(:has(.reg-row[data-plain="decision"])),
+#f-incomplete:checked ~ .reg .reg-group:not(:has(.reg-row[data-plain="partial"], .reg-row[data-plain="no-browser"], .reg-row[data-plain="not-completed"])) {
+  display: none;
+}
+
+/* ---------- audit trail ---------- */
+.audit-intro { margin: 0 0 18px; }
+.audit-nav { margin: 18px 0; font-size: .86rem; }
+.page-foot { font-size: .8rem; color: var(--muted); padding-bottom: 30px; }
+
+/* ---------- deferred blocks ---------- *
+ * A block that ships compressed inside this file and is unpacked when its view
+ * is opened. The note is what a reader sees for the fraction of a second before
+ * the markup lands, and permanently if scripting is off. */
+.deferred { margin: 12px 0; }
+.deferred-note {
+  font-size: .88rem;
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 0;
+}
+.deferred[data-hydrated="done"] > .deferred-note { display: none; }
+.deferred[data-hydrated="failed"] > .deferred-note::after,
+.deferred[data-hydrated="unsupported"] > .deferred-note::after {
+  content: " This browser could not unpack it. Every requirement is in the Full check tab.";
+}
+
+/* ---------- print ---------- *
+ * Default: the Summary only — a decision summary is what a reader prints.
+ * "Print or save the full check" adds .print-register and prints the register
+ * instead, with every group expanded so nothing is hidden on paper. */
+@media print {
+  .tab, .viewswitch > .viewradio, .filter-chip, .regfilter, .fc-foot, .audit-nav { display: none !important; }
+  .view { display: none !important; }
+  body:not(.print-register) [data-view="summary"] { display: block !important; }
+  body.print-register [data-view="full"] { display: block !important; }
+  body.print-register .group-body { display: block !important; }
+  .fcard, section.lane { break-inside: auto; }
+  .hero { max-width: none; }
+  details.drawer > .drawer-body, details.tech { display: none !important; }
+  body.print-register details.drawer > summary { display: none !important; }
+}

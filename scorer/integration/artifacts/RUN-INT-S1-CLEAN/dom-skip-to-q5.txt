@@ -1,0 +1,1 @@
+Q2 answered 2 (No) -> next screen heading is "Q5. What is the single biggest barrier to biologic use in your moderate-to-severe plaque psoriasis patients?" (Q3 and Q4 were not rendered)

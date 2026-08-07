@@ -1,0 +1,1403 @@
+{
+  "schemaVersion": "1.0.0",
+  "run": {
+    "runId": "synthetic-demo",
+    "target": {
+      "url": "http://127.0.0.1:0/fixture",
+      "environment": "selftest",
+      "buildId": "synthetic-demo-build",
+      "buildHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "documentHash": "sha256:223e51e773fd6d8125c5713ab9db960234bda33260630f2203404dd60a34a210",
+    "contractHash": "sha256:afeb4b2b32d2099b54240b65c79edd547cd1f5d009a6f6bf029b34c2907a00b5",
+    "configuration": {
+      "profileId": "selftest",
+      "configurationHash": "sha256:fc16224726ccb539d3b58dbd5765df18a5596a3fe7aa88b3ddccea2ed9a1bcd1",
+      "parameters": {}
+    },
+    "timestamps": {
+      "startedAt": "2026-08-02T00:00:00.000Z",
+      "endedAt": "2026-08-02T00:00:00.000Z"
+    }
+  },
+  "contract": {
+    "extraction": {
+      "method": "fixture",
+      "extractorVersion": "selftest@1",
+      "extractedAt": "2026-08-02T00:00:00.000Z"
+    },
+    "items": [
+      {
+        "itemId": "SYN-OPT-Q1-1",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q1-1",
+          "quote": "| 1 | A watering can |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"A watering can\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "A watering can appears on Q1.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q1-2",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q1-2",
+          "quote": "| 2 | The kitchen tap |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"The kitchen tap\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "The kitchen tap appears on Q1.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q1-3",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q1-3",
+          "quote": "| 3 | A self-watering pot |",
+          "aliases": []
+        },
+        "requirement": "Option 3 with answer text \"A self-watering pot\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "A self-watering pot appears on Q1.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q1-4",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q1-4",
+          "quote": "| 4 | I do not have any houseplants |",
+          "aliases": []
+        },
+        "requirement": "Option 4 with answer text \"I do not have any houseplants\" is displayed as the final option on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "I do not have any houseplants appears on Q1.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q2-1",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q2-1",
+          "quote": "| 1 | Metal |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"Metal\" is displayed on Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Metal appears on Q2.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q2-2",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q2-2",
+          "quote": "| 2 | Plastic |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"Plastic\" is displayed on Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Plastic appears on Q2.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q2-3",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q2-3",
+          "quote": "| 3 | Ceramic |",
+          "aliases": []
+        },
+        "requirement": "Option 3 with answer text \"Ceramic\" is displayed on Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Ceramic appears on Q2.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q2-4",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q2-4",
+          "quote": "| 4 | I do not use a watering can |",
+          "aliases": []
+        },
+        "requirement": "Option 4 with answer text \"I do not use a watering can\" is displayed as the final option on Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "I do not use a watering can appears on Q2.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q3-1",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q3-1",
+          "quote": "| 1 | On a windowsill |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"On a windowsill\" is displayed on Q3.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "On a windowsill appears on Q3.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q3-2",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q3-2",
+          "quote": "| 2 | On a balcony |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"On a balcony\" is displayed on Q3.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "On a balcony appears on Q3.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q3-3",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q3-3",
+          "quote": "| 3 | On a desk |",
+          "aliases": []
+        },
+        "requirement": "Option 3 with answer text \"On a desk\" is displayed on Q3.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "On a desk appears on Q3.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q3-4",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q3-4",
+          "quote": "| 4 | Somewhere else |",
+          "aliases": []
+        },
+        "requirement": "Option 4 with answer text \"Somewhere else\" is displayed on Q3.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Somewhere else appears on Q3.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q4-1",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q4-1",
+          "quote": "| 1 | Yes |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"Yes\" is displayed on Q4.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Yes appears on Q4.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q4-2",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q4-2",
+          "quote": "| 2 | No |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"No\" is displayed as the final option on Q4.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "No appears on Q4.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q5-1",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q5-1",
+          "quote": "| 1 | Every week |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"Every week\" is displayed on Q5.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Every week appears on Q5.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q5-2",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q5-2",
+          "quote": "| 2 | Every month |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"Every month\" is displayed on Q5.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Every month appears on Q5.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q5-3",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q5-3",
+          "quote": "| 3 | Rarely |",
+          "aliases": []
+        },
+        "requirement": "Option 3 with answer text \"Rarely\" is displayed as the final option on Q5.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Rarely appears on Q5.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q7-1",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q7-1",
+          "quote": "| 1 | Bought new |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"Bought new\" is displayed on Q7.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Bought new appears on Q7.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-OPT-Q7-2",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "SYN-OPT-Q7-2",
+          "quote": "| 2 | Handed down |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"Handed down\" is displayed as the final option on Q7.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "Handed down appears on Q7.",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-ROUTE-Q1-1",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SYN-ROUTE-Q1-1",
+          "quote": "Q1 | Code 1 selected | Continue to Q2",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"A watering can\" (code 1) at Q1, the next screen must be Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-ROUTE-Q1-2",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SYN-ROUTE-Q1-2",
+          "quote": "Q1 | Code 2 selected | Skip Q2 and continue to Q3",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"The kitchen tap\" (code 2) at Q1, the survey must skip Q2 and the next screen must be Q3.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-ROUTE-Q1-3",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SYN-ROUTE-Q1-3",
+          "quote": "Q1 | Code 3 selected | Skip Q2 and continue to Q3",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"A self-watering pot\" (code 3) at Q1, the survey must skip Q2 and the next screen must be Q3.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-ROUTE-Q1-4",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SYN-ROUTE-Q1-4",
+          "quote": "Q1 | Code 4 selected | TERMINATE",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"I do not have any houseplants\" (code 4) at Q1, the next screen must be the screen-out screen.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-ROUTE-Q4-1",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SYN-ROUTE-Q4-1",
+          "quote": "Q4 | Code 1 selected | Continue to Q5",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"Yes\" (code 1) at Q4, the next screen must be Q5.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-ROUTE-Q4-2",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "SYN-ROUTE-Q4-2",
+          "quote": "Q4 | Code 2 selected | Skip Q5 and continue to Q6",
+          "aliases": []
+        },
+        "requirement": "If a respondent selects \"No\" (code 2) at Q4, the survey must skip Q5 and the next screen must be Q6.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-PRESENCE-Q2",
+        "type": "question-presence",
+        "sourceAnchor": {
+          "locator": "SYN-PRESENCE-Q2",
+          "quote": "ASK ONLY THOSE WHO ANSWERED CODE 1 AT Q1.",
+          "aliases": []
+        },
+        "requirement": "Q2 must be displayed only to respondents who selected answer code 1 on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-PRESENCE-Q7",
+        "type": "question-presence",
+        "sourceAnchor": {
+          "locator": "SYN-PRESENCE-Q7",
+          "quote": "ASK ONLY THOSE WHO ANSWERED CODE 1 AT Q2.",
+          "aliases": []
+        },
+        "requirement": "Q7 must be displayed only to respondents who selected answer code 1 on Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-TERM-CLOSING",
+        "type": "terminal",
+        "sourceAnchor": {
+          "locator": "SYN-TERM-CLOSING",
+          "quote": "THE CLOSING SCREEN ENDS THE INTERVIEW.",
+          "aliases": []
+        },
+        "requirement": "The closing screen must be shown to every respondent who reaches the end of the interview.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-TERM-SCREENOUT",
+        "type": "terminal",
+        "sourceAnchor": {
+          "locator": "SYN-TERM-SCREENOUT",
+          "quote": "RESPONDENTS WITHOUT HOUSEPLANTS ARE SCREENED OUT.",
+          "aliases": []
+        },
+        "requirement": "The survey must present a screen identified as the screen-out screen after routing from S1 code 4.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-REQ-Q1",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "SYN-REQ-Q1",
+          "quote": "Q1 IS COMPULSORY.",
+          "aliases": []
+        },
+        "requirement": "Q1 requires the respondent to select at least one answer before proceeding.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-BACKBUTTON",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "SYN-BACKBUTTON",
+          "quote": "NO BACK BUTTON ON THE WELCOME SCREEN.",
+          "aliases": []
+        },
+        "requirement": "The welcome screen must not display a back button.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-PROGRESS",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "SYN-PROGRESS",
+          "quote": "A PROGRESS BAR MUST APPEAR THROUGHOUT.",
+          "aliases": []
+        },
+        "requirement": "A progress bar must be displayed on every survey screen.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-WELCOME-LINE",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "SYN-WELCOME-LINE",
+          "quote": "WELCOME TEXT (VERBATIM).",
+          "aliases": []
+        },
+        "requirement": "The welcome screen must contain the exact line \"Welcome. This short survey is about looking after houseplants.\".",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-NO-CLIENT-NAME",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "SYN-NO-CLIENT-NAME",
+          "quote": "DO NOT NAME THE CLIENT ANYWHERE IN THE SURVEY.",
+          "aliases": []
+        },
+        "requirement": "The client name \"Fernbrook Botanicals\" must never be displayed to the respondent.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-SINGLE-Q1",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "SYN-SINGLE-Q1",
+          "quote": "Q1 IS A SINGLE-CODE QUESTION.",
+          "aliases": []
+        },
+        "requirement": "Q1 must allow only a single answer to be selected.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "SYN-DATAFILE",
+        "type": "instruction",
+        "sourceAnchor": {
+          "locator": "SYN-DATAFILE",
+          "quote": "THE ANSWER CODES MUST BE WRITTEN TO THE DATA FILE.",
+          "aliases": []
+        },
+        "requirement": "The answer codes for Q1 must be written to the data file exactly as documented.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      }
+    ],
+    "assumptions": []
+  },
+  "attempts": [],
+  "itemResults": [
+    {
+      "itemId": "SYN-OPT-Q1-1",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q1-2",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q1-3",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q1-4",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q2-1",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q2-2",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q2-3",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q2-4",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q3-1",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q3-2",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q3-3",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q3-4",
+      "coverageStatus": "exercised",
+      "verdict": "inconclusive",
+      "reason": {
+        "code": "ambiguous-requirement",
+        "summary": "The rendered answer text is longer than the code frame; the document gives both."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q4-1",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q4-2",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q5-1",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q5-2",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q5-3",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q7-1",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-OPT-Q7-2",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-ROUTE-Q1-1",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-ROUTE-Q1-2",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-ROUTE-Q1-3",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-ROUTE-Q1-4",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-ROUTE-Q4-1",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-ROUTE-Q4-2",
+      "coverageStatus": "exercised",
+      "verdict": "fail",
+      "reason": {
+        "code": "requirement-mismatch",
+        "summary": "Q5 was displayed after Q4 code 2, which the document says to skip."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [
+        "SYN-DIV-001"
+      ],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-PRESENCE-Q2",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-PRESENCE-Q7",
+      "coverageStatus": "exercised",
+      "verdict": "inconclusive",
+      "reason": {
+        "code": "insufficient-evidence",
+        "summary": "No session selected Q2 code 4, so the conditional rule was not exercised over its whole domain."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-TERM-CLOSING",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-TERM-SCREENOUT",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-REQ-Q1",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-BACKBUTTON",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-PROGRESS",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-WELCOME-LINE",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-NO-CLIENT-NAME",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-SINGLE-Q1",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Observed on every capture that carried the screen."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    },
+    {
+      "itemId": "SYN-DATAFILE",
+      "coverageStatus": "blocked",
+      "verdict": "not-assessed",
+      "reason": {
+        "code": "external-block",
+        "summary": "The data file is written server-side and is not observable from a browser."
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "findingId": "SYN-DIV-001",
+      "kind": "defect",
+      "severity": "major",
+      "category": "routing",
+      "summary": "Q4 code 2 (\"No\") is documented to skip Q5 and continue to Q6. Every session that answered code 2 was shown Q5.",
+      "expected": "Q4 | Code 2 selected | Skip Q5 and continue to Q6",
+      "observed": "Q5 was displayed immediately after Q4 in every session that selected code 2.",
+      "confidence": 1,
+      "itemRefs": [
+        "SYN-ROUTE-Q4-2"
+      ],
+      "attemptRefs": [],
+      "evidenceRefs": [
+        "EV-FLOOR-01.json"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "evidenceId": "EV-EXP-07.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-07.json",
+      "contentHash": "sha256:676b6010b9474dcd670d79495302accee30d0238db114823eb3a27e79b4bc55d",
+      "byteLength": 12895,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-08.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-08.json",
+      "contentHash": "sha256:7da4731d33fafe8af1a59878c10529310cd7a59ab6c6c448fcb79c0cefb15007",
+      "byteLength": 12891,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-09.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-09.json",
+      "contentHash": "sha256:556c753a67e941811d9381775d04e17a0382119f2cc1742b36a813f8b3928e69",
+      "byteLength": 12889,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-10.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-10.json",
+      "contentHash": "sha256:c238a17ca1cc2724e8c1481def5e3135e615d0cc212893732bd81759b530b54e",
+      "byteLength": 12901,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-11.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-11.json",
+      "contentHash": "sha256:acbd530f71213c8d39619c1acbd0e0c7e7ef9e5838384da3e09f2d6a09f6878d",
+      "byteLength": 12899,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-12.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-12.json",
+      "contentHash": "sha256:03f95e6cd97c8f822f5d43deecb96b4ad5726a91bfa22704c93a3e561967c2a3",
+      "byteLength": 12895,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-13.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-13.json",
+      "contentHash": "sha256:638c2df5ce51fcec3c91a2eb95348ed68bc93ea7a9977aaf35f8753782bc1e56",
+      "byteLength": 12893,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-14.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-14.json",
+      "contentHash": "sha256:3deadbf892036860ba010303957dab3620cd9a9e59b939c1ed5c2f5601abe47b",
+      "byteLength": 12905,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-15.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-15.json",
+      "contentHash": "sha256:a60415f4831646982553d89020d5087c00ae0c4cb0ca91409d116b6c880afd2e",
+      "byteLength": 5202,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-16.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-16.json",
+      "contentHash": "sha256:b74aa605682943ab6f372acbf5473e2065162b747cdcdce8bd26980f97954357",
+      "byteLength": 5202,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-17.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-17.json",
+      "contentHash": "sha256:eb6f6b8a017b4f2c514130be0b5007af43160b823d2569e289405e092beb7d91",
+      "byteLength": 5202,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-18.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-18.json",
+      "contentHash": "sha256:a10e69880c0141b8ce3765ddbd1865dba0b3f68ac3ee3765de39fd3074d89a3f",
+      "byteLength": 5202,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-19.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-19.json",
+      "contentHash": "sha256:df139484d8afeda86dfbc8707a15c558ba9fa363e885c6f2da43bcdc8e91980c",
+      "byteLength": 12891,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-20.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-20.json",
+      "contentHash": "sha256:409d316e087799cc62e0d6a3996ff8de8b6492115b29fd34c0b325543a532ab7",
+      "byteLength": 12892,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-21.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-21.json",
+      "contentHash": "sha256:abb282e559ec4cb4c7be69512a7f8e741d3a048c166e10a1876f6639a7e1ef39",
+      "byteLength": 12887,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-22.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-22.json",
+      "contentHash": "sha256:3523536793fc33ac46a2b05a4fd337bf4c26e88ec0921c7194d25085a62d39bc",
+      "byteLength": 12888,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-23.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-23.json",
+      "contentHash": "sha256:d3e1c295cd78dcdb40a3b4519511812507e0e4289c9886dba919fae7e93768e1",
+      "byteLength": 12889,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-24.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-24.json",
+      "contentHash": "sha256:9470f78a3d81c86f0d246f6101d18bbc806fe8b3c2a1a5bd31745c1a4175fa00",
+      "byteLength": 12884,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-25.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-25.json",
+      "contentHash": "sha256:b832a9b21c9a086d68fdd5e05130228a41efd22da5df31d981cd8fec699d8c8a",
+      "byteLength": 12905,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-26.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-26.json",
+      "contentHash": "sha256:8ccedc3fbb571b05ed168cc90590d532235fa2acc00e01ff4b6fba129eb6ee50",
+      "byteLength": 12906,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-27.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-27.json",
+      "contentHash": "sha256:6e439bd2ab15f7a18ecab49fee8e696deb7e0f567af2ff9ce0f2f7e411e2c408",
+      "byteLength": 12901,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-EXP-99.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/EXP-99.json",
+      "contentHash": "sha256:5ff913833b307243bda23deb22fb8996b6488e045a5b74dfb3fff9e8c8f9989c",
+      "byteLength": 17454,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-FLOOR-01.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/FLOOR-01.json",
+      "contentHash": "sha256:c31708fa07f4d17d91a7a1039fb3d91a343f47735e014075a8db6782d5c7e299",
+      "byteLength": 17117,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-FLOOR-02.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/FLOOR-02.json",
+      "contentHash": "sha256:a6d1af557bbfaa268452cfa4b189ce376126b949654a659a803ceade3f62f60b",
+      "byteLength": 17116,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-FLOOR-03.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/FLOOR-03.json",
+      "contentHash": "sha256:bc466bc96dd422c786330182bb45a5d065f7fba615c5e666e417125a4f7d8862",
+      "byteLength": 15250,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-FLOOR-04.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/FLOOR-04.json",
+      "contentHash": "sha256:2f8b9cd57f35b40028543492e36079c9c3c2deebe7d47845ec40eb6d6aa12d91",
+      "byteLength": 15249,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-FLOOR-05.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/FLOOR-05.json",
+      "contentHash": "sha256:58471e5f19f7935c726818dd6964d9d43c33e94c9e1f5db9991d5eb6d74b970f",
+      "byteLength": 15250,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-FLOOR-06.json",
+      "type": "action-trace",
+      "artifactRef": "runs/synthetic-demo/artifacts/FLOOR-06.json",
+      "contentHash": "sha256:d6127fdf18fdbcc2358739fc24978a1553d91a7870247ea83476b775b55cacc3",
+      "byteLength": 15249,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    }
+  ],
+  "resources": {
+    "modelCalls": []
+  },
+  "attestation": {
+    "algorithm": "Ed25519",
+    "canonicalization": "RFC8785",
+    "scope": "entire-record-excluding-attestation",
+    "keyId": "fixture-harness-key-1",
+    "signedAt": "2026-08-02T00:00:00.000Z",
+    "payloadHash": "sha256:c1b5e3dbf3633e3f3f7a3cc1bec526a6e8fcf21a9f2ad6245846562ae645e7d0",
+    "signature": "37RhLQ1m-2sIKUpUMKDSq8YbzMKOSib7y05SkcgvpV-k3pkiCXtqurr30RvtoGO3T96j5jcXa1Eswlv-IpRRBQ"
+  }
+}

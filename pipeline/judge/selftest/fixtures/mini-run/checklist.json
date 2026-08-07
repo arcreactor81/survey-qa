@@ -1,0 +1,127 @@
+{
+  "schema_version": "selftest-1",
+  "target": "mini-run",
+  "source_document": "synthetic",
+  "counts": { "obligations": 12, "ambiguities": 1 },
+  "obligations": [
+    {
+      "id": "SELF-OPT-PASS",
+      "category": "option-set",
+      "doc_quote": "| 1 | Alpha |",
+      "statement": "Option 1 with answer text \"Alpha\" is displayed on Q1.",
+      "stimulus": [],
+      "expected_observable": "Alpha appears on Q1.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-OPT-ABSENT",
+      "category": "option-set",
+      "doc_quote": "| 3 | Gamma |",
+      "statement": "Option 3 with answer text \"Gamma\" is displayed on Q1.",
+      "stimulus": [],
+      "expected_observable": "Gamma appears on Q1.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-OPT-LABEL",
+      "category": "option-set",
+      "doc_quote": "| 2 | Beta as documented |",
+      "statement": "Option 2 with answer text \"Beta as documented\" is displayed on Q1.",
+      "stimulus": [],
+      "expected_observable": "Beta as documented appears on Q1.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-OPT-LAST",
+      "category": "option-set",
+      "doc_quote": "| 3 | Beta |",
+      "statement": "Option 2 with answer text \"Beta\" appears as the last option on Q1.",
+      "stimulus": [],
+      "expected_observable": "Beta is the final option on Q1.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-ROUTE-PASS",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Code 1 selected | Continue to Q2",
+      "statement": "If a respondent selects \"Alpha\" (code 1) at Q1, the next screen must be Q2.",
+      "stimulus": [],
+      "expected_observable": "Q2 follows.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-ROUTE-FAIL",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Code 2 selected | Continue to Q2",
+      "statement": "If a respondent selects \"Beta\" (code 2) at Q1, the next screen must be Q2.",
+      "stimulus": [],
+      "expected_observable": "Q2 follows.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-ROUTE-SKIP",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Code 2 selected | Skip Q2 and go straight to Q3",
+      "statement": "If a respondent selects \"Alpha\" (code 1) at Q1, the survey must skip Q2 and go directly to Q3.",
+      "stimulus": [],
+      "expected_observable": "Q3 follows and Q2 is not shown.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-ROUTE-AMBIGUOUS",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Code 2 selected | Continue to Q2",
+      "statement": "If a respondent selects \"Beta\" (code 2) at Q1, the next screen must be Q2.",
+      "stimulus": [],
+      "expected_observable": "Q2 follows.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-ROUTE-UNEXERCISED",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Code 4 selected | Continue to Q3",
+      "statement": "If a respondent selects \"Delta\" (code 4) at Q1, the next screen must be Q3.",
+      "stimulus": [],
+      "expected_observable": "Q3 follows.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-PRESENCE",
+      "category": "question-presence",
+      "doc_quote": "ASK ONLY THOSE WHO ANSWERED CODE 1 AT Q1.",
+      "statement": "Q2 must be displayed only for respondents who answered \"Alpha\" at Q1.",
+      "stimulus": [],
+      "expected_observable": "Q2 only after Alpha.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-NO-OBSERVATION",
+      "category": "option-set",
+      "doc_quote": "| 1 | Zeta |",
+      "statement": "Option 1 with answer text \"Zeta\" is displayed on Q9.",
+      "stimulus": [],
+      "expected_observable": "Zeta appears on Q9.",
+      "browser_observable": "full"
+    },
+    {
+      "id": "SELF-UNTYPED",
+      "category": "instruction",
+      "doc_quote": "THE INTERVIEW MUST FEEL PLEASANT.",
+      "statement": "The interview must feel pleasant and reflect the client's brand values appropriately.",
+      "stimulus": [],
+      "expected_observable": "Subjective.",
+      "browser_observable": "partial"
+    }
+  ],
+  "ambiguities": [
+    {
+      "id": "AMB-SELF-01",
+      "doc_quote": "Q1 | Code 2 selected | Continue to Q2",
+      "reading_a": "Code 2 continues to Q2.",
+      "reading_b": "Code 2 is a screen-out and never reaches Q2.",
+      "why_ambiguous": "The table and the prose disagree about code 2.",
+      "affects": ["SELF-ROUTE-AMBIGUOUS"]
+    }
+  ],
+  "unverifiable_from_browser": []
+}

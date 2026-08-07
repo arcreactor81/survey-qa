@@ -1,0 +1,705 @@
+{
+  "schemaVersion": "1.0.0",
+  "oracleRecordId": "s5-allocation.clean",
+  "provenance": {
+    "generatorId": "scorer/oracle/build-oracle.mjs",
+    "generatorVersion": "1.0.0",
+    "generatedAt": "2026-08-01T00:00:00Z",
+    "sourceHash": "sha256:92725807b0e08a73a264af5e0f3025aa78930bea038589162383deaf3444db53"
+  },
+  "survey": {
+    "surveyId": "s5-allocation",
+    "title": "Treatment Mix in Moderate-to-Severe Plaque Psoriasis: An Allocation Study",
+    "variant": {
+      "variantId": "s5-allocation.clean",
+      "kind": "clean"
+    },
+    "document": {
+      "documentId": "s5-allocation/questionnaire.docx",
+      "contentHash": "sha256:180c15562776e337ae7bb019522f1ff631996f36159f6cd853f72f042e7c1a9b"
+    },
+    "targetBuild": {
+      "buildId": "s5-allocation/index.html",
+      "contentHash": "sha256:f47a24afe326ef26f3e57aed9c2279754e8bc267e526aaed001f59ed4d44ffb2"
+    }
+  },
+  "obligations": [
+    {
+      "oracleId": "s5-allocation/question:Q1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q1",
+        "quote": "Thinking about all of your moderate-to-severe plaque psoriasis patients, what percentage is currently managed primarily with each of the following approaches?"
+      },
+      "requirement": "Q1. Thinking about all of your moderate-to-severe plaque psoriasis patients, what percentage is currently managed primarily with each of the following approaches?",
+      "contentHash": "sha256:3d9d281d75c7ea2758b5a8355180709b0be4a2ce6b3aed7f8afada54335a6966",
+      "preconditions": [],
+      "stimulus": "Reach question Q1",
+      "expectedObservables": [
+        "Question Q1 is displayed with text: \"Thinking about all of your moderate-to-severe plaque psoriasis patients, what percentage is currently managed primarily with each of the following approaches?\"",
+        "Answer input is of type allocation",
+        "Allocation row r1: \"Topical therapy alone\"",
+        "Allocation row r2: \"Phototherapy\"",
+        "Allocation row r3: \"Oral systemic agents\"",
+        "Allocation row r4: \"Biologic therapy\"",
+        "Allocation row r5: \"Other approaches\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/question:Q2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q2",
+        "quote": "You indicated that half or more of your patients receive an oral systemic or biologic therapy. Which factor has been most important in expanding your use of advanced therapies?"
+      },
+      "requirement": "Q2. You indicated that half or more of your patients receive an oral systemic or biologic therapy. Which factor has been most important in expanding your use of advanced therapies?",
+      "contentHash": "sha256:84d7acb9436e4b3921add4c33d533db26cd88501290ec89f85bef815848e7530",
+      "preconditions": [],
+      "stimulus": "Reach question Q2",
+      "expectedObservables": [
+        "Question Q2 is displayed with text: \"You indicated that half or more of your patients receive an oral systemic or biologic therapy. Which factor has been most important in expanding your use of advanced therapies?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Stronger efficacy data\"",
+        "Option 2: \"Improved long-term safety evidence\"",
+        "Option 3: \"Better insurance coverage\"",
+        "Option 4: \"Patient demand\"",
+        "Option 5: \"Guideline changes\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/question:Q3",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q3",
+        "quote": "What is the single biggest barrier to moving more of your patients to advanced therapies?"
+      },
+      "requirement": "Q3. What is the single biggest barrier to moving more of your patients to advanced therapies?",
+      "contentHash": "sha256:191bb6460f0afa83129d6ae44f62eb85421b22c5ba62bb8dd867c05c82d25868",
+      "preconditions": [],
+      "stimulus": "Reach question Q3",
+      "expectedObservables": [
+        "Question Q3 is displayed with text: \"What is the single biggest barrier to moving more of your patients to advanced therapies?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Insurance / prior authorization requirements\"",
+        "Option 2: \"Out-of-pocket cost to patients\"",
+        "Option 3: \"Safety or monitoring concerns\"",
+        "Option 4: \"Patient preference for topical or non-drug approaches\"",
+        "Option 5: \"Other\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/question:Q4",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q4",
+        "quote": "Which biologic class do you consider first for a biologic-naive patient with moderate-to-severe plaque psoriasis?"
+      },
+      "requirement": "Q4. Which biologic class do you consider first for a biologic-naive patient with moderate-to-severe plaque psoriasis?",
+      "contentHash": "sha256:b1dafc8600ed8af54cb43c7158cc4b36be440ae1ca8f1a9fc0b76ec4c37f2df6",
+      "preconditions": [],
+      "stimulus": "Reach question Q4",
+      "expectedObservables": [
+        "Question Q4 is displayed with text: \"Which biologic class do you consider first for a biologic-naive patient with moderate-to-severe plaque psoriasis?\"",
+        "Answer input is of type radio",
+        "Option 1: \"IL-23 inhibitor\"",
+        "Option 2: \"IL-17 inhibitor\"",
+        "Option 3: \"TNF inhibitor\"",
+        "Option 4: \"IL-12/23 inhibitor\"",
+        "Option 5: \"No consistent class preference\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/question:Q5",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q5",
+        "quote": "Of your patients on biologic therapy, approximately what percentage achieve clear or almost-clear skin within 6 months?"
+      },
+      "requirement": "Q5. Of your patients on biologic therapy, approximately what percentage achieve clear or almost-clear skin within 6 months?",
+      "contentHash": "sha256:0e156e4fed2c33f5ba093714e9b39fd04e4aead8313add990562937f85a44544",
+      "preconditions": [],
+      "stimulus": "Reach question Q5",
+      "expectedObservables": [
+        "Question Q5 is displayed with text: \"Of your patients on biologic therapy, approximately what percentage achieve clear or almost-clear skin within 6 months?\"",
+        "Answer input is of type number"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/question:Q6",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q6",
+        "quote": "What single change would most increase your use of biologic therapy in moderate-to-severe plaque psoriasis?"
+      },
+      "requirement": "Q6. What single change would most increase your use of biologic therapy in moderate-to-severe plaque psoriasis?",
+      "contentHash": "sha256:8ef60e0d365e9540211c40de382cfaddf986388204a479592bceb8799d01b304",
+      "preconditions": [],
+      "stimulus": "Reach question Q6",
+      "expectedObservables": [
+        "Question Q6 is displayed with text: \"What single change would most increase your use of biologic therapy in moderate-to-severe plaque psoriasis?\"",
+        "Answer input is of type text"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/question:Q7",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q7",
+        "quote": "How likely are you to recommend advanced therapy to a colleague treating moderate-to-severe plaque psoriasis?"
+      },
+      "requirement": "Q7. How likely are you to recommend advanced therapy to a colleague treating moderate-to-severe plaque psoriasis?",
+      "contentHash": "sha256:fc58a4e88241f75e8b013d8403ccb7d081f5d94e7241bab9b4d0a15541bea17d",
+      "preconditions": [],
+      "stimulus": "Reach question Q7",
+      "expectedObservables": [
+        "Question Q7 is displayed with text: \"How likely are you to recommend advanced therapy to a colleague treating moderate-to-severe plaque psoriasis?\"",
+        "Answer input is of type rating"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/question:S1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S1",
+        "quote": "Which of the following best describes your primary professional role?"
+      },
+      "requirement": "S1. Which of the following best describes your primary professional role?",
+      "contentHash": "sha256:3a53b30da56e83855695eb6fbb49e3df52fab0e562d37a0f2f5e66cd3c5aa51d",
+      "preconditions": [],
+      "stimulus": "Reach question S1",
+      "expectedObservables": [
+        "Question S1 is displayed with text: \"Which of the following best describes your primary professional role?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Practicing dermatologist\"",
+        "Option 2: \"Dermatology nurse practitioner\"",
+        "Option 3: \"Physician assistant\"",
+        "Option 4: \"Other healthcare professional\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/question:S2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S2",
+        "quote": "How many patients with moderate-to-severe plaque psoriasis do you personally manage in a typical month?"
+      },
+      "requirement": "S2. How many patients with moderate-to-severe plaque psoriasis do you personally manage in a typical month?",
+      "contentHash": "sha256:8635947581b8b3832782381fcedb0f272dd38da0dbdcaf988401e94a694a0f71",
+      "preconditions": [],
+      "stimulus": "Reach question S2",
+      "expectedObservables": [
+        "Question S2 is displayed with text: \"How many patients with moderate-to-severe plaque psoriasis do you personally manage in a typical month?\"",
+        "Answer input is of type number"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:Q1:alloc-bounds",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, allocation row bounds",
+        "quote": "EACH ROW: MINIMUM 0, MAXIMUM 100, WHOLE NUMBERS ONLY."
+      },
+      "requirement": "EACH ROW: MINIMUM 0, MAXIMUM 100, WHOLE NUMBERS ONLY.",
+      "contentHash": "sha256:23fd2a0e56d46df545c48657c2011c3629a152848266c806015e193a889bd71a",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "Enter a row value at Q1 outside 0..100",
+      "expectedObservables": [
+        "Each row at Q1 accepts only whole numbers between 0 and 100",
+        "A non-conforming row value is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:Q1:alloc-row:r5",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, row r5",
+        "quote": "ROW r5 ('OTHER APPROACHES'): MAXIMUM 20."
+      },
+      "requirement": "ROW r5 ('OTHER APPROACHES'): MAXIMUM 20.",
+      "contentHash": "sha256:1e34d34a44a0407bcd436817a84b377768dbb3444c9b63fc5c36df066f729455",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "Enter a value in row r5 at Q1 outside its documented cap",
+      "expectedObservables": [
+        "Row r5 (\"Other approaches\") at Q1 accepts only values of at most 20",
+        "A non-conforming row value is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:Q1:alloc-sum",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, allocation validation",
+        "quote": "SUM OF ALL ROWS MUST EQUAL 100."
+      },
+      "requirement": "SUM OF ALL ROWS MUST EQUAL 100.",
+      "contentHash": "sha256:18d61357421425145f2a89d3d2c25253220a24b966a2b82270dcad4ddeec4e09",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "Submit allocations at Q1 totalling other than 100",
+      "expectedObservables": [
+        "Allocations at Q1 must total exactly 100",
+        "A non-conforming total is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:Q1:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, instruction",
+        "quote": "Enter a whole number in every row. Your answers must sum to exactly 100."
+      },
+      "requirement": "[INSTRUCTION: Enter a whole number in every row. Your answers must sum to exactly 100.]",
+      "contentHash": "sha256:929575c9aba9691b8988dac6c38fdca240d90572036646e3ef852a7aef31367f",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "View question Q1",
+      "expectedObservables": [
+        "Instruction shown: \"Enter a whole number in every row. Your answers must sum to exactly 100.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:Q5:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q5, instruction",
+        "quote": "Enter a whole number between 0 and 100."
+      },
+      "requirement": "[INSTRUCTION: Enter a whole number between 0 and 100.]",
+      "contentHash": "sha256:3d2368d0ca84a4cd8b5aabb399046cf335929e08e42eb965b01a9ee15d49bde6",
+      "preconditions": [
+        "Question Q5 is displayed"
+      ],
+      "stimulus": "View question Q5",
+      "expectedObservables": [
+        "Instruction shown: \"Enter a whole number between 0 and 100.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:Q5:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q5, range validation"
+      },
+      "requirement": "Q5: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 100.",
+      "contentHash": "sha256:1f26632020d207d7a08c5bde2faba73d71d1075fbbfc8a6e302d96cc3244d984",
+      "preconditions": [
+        "Question Q5 is displayed"
+      ],
+      "stimulus": "Submit an answer at Q5 outside the documented bounds",
+      "expectedObservables": [
+        "Q5 accepts only whole numbers between 0 and 100",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:Q7:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q7, instruction",
+        "quote": "0 = Not at all likely, 10 = Extremely likely"
+      },
+      "requirement": "[INSTRUCTION: 0 = Not at all likely, 10 = Extremely likely]",
+      "contentHash": "sha256:e0d68b7c68610c3fc0bee3045037d6f08e09127749c721604686bc7280a78774",
+      "preconditions": [
+        "Question Q7 is displayed"
+      ],
+      "stimulus": "View question Q7",
+      "expectedObservables": [
+        "Instruction shown: \"0 = Not at all likely, 10 = Extremely likely\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:Q7:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q7, range validation"
+      },
+      "requirement": "Q7: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 10.",
+      "contentHash": "sha256:06b55c281152b12f300e1263af56f74b29b7226912ed6659fb932a4f14351a49",
+      "preconditions": [
+        "Question Q7 is displayed"
+      ],
+      "stimulus": "Submit an answer at Q7 outside the documented bounds",
+      "expectedObservables": [
+        "Q7 accepts only whole numbers between 0 and 10",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:S2:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S2, instruction",
+        "quote": "Enter a whole number between 0 and 500."
+      },
+      "requirement": "[INSTRUCTION: Enter a whole number between 0 and 500.]",
+      "contentHash": "sha256:ea4b59e6a748b9df5c042ebe3446930773a4519a22df48074198a7b25084e6ae",
+      "preconditions": [
+        "Question S2 is displayed"
+      ],
+      "stimulus": "View question S2",
+      "expectedObservables": [
+        "Instruction shown: \"Enter a whole number between 0 and 500.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:S2:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S2, range validation"
+      },
+      "requirement": "S2: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 500.",
+      "contentHash": "sha256:87f49554886da460221098239e944e896cab3ecfbbf2357c0d5b15830cf171bd",
+      "preconditions": [
+        "Question S2 is displayed"
+      ],
+      "stimulus": "Submit an answer at S2 outside the documented bounds",
+      "expectedObservables": [
+        "S2 accepts only whole numbers between 0 and 500",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/rule:calc:advancedShare",
+      "category": "rule",
+      "type": "calculation",
+      "sourceAnchor": {
+        "locator": "Computed advancedShare",
+        "quote": "COMPUTE ADVANCED-THERAPY SHARE = Q1 r3 (ORAL SYSTEMIC AGENTS) + Q1 r4 (BIOLOGIC THERAPY)."
+      },
+      "requirement": "COMPUTE ADVANCED-THERAPY SHARE = Q1 r3 (ORAL SYSTEMIC AGENTS) + Q1 r4 (BIOLOGIC THERAPY).",
+      "contentHash": "sha256:f41792384dc084775be36642d90cd5cf9e78b31066969b1d62221b4b732f8dd3",
+      "preconditions": [
+        "All inputs referenced by advancedShare have been answered"
+      ],
+      "stimulus": "Answer the questions referenced by advancedShare",
+      "expectedObservables": [
+        "Computed variable advancedShare (\"ADVANCED-THERAPY SHARE\") takes the documented derived value",
+        "Derived from Q1 r3 (ORAL SYSTEMIC AGENTS)",
+        "Derived from Q1 r4 (BIOLOGIC THERAPY)"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/branch:Q1:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q1, default continue"
+      },
+      "requirement": "AFTER Q1, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO Q2.",
+      "contentHash": "sha256:15295e8ec0ac9da80fd3084b9014adcc38ce83f720288b848fde036444be1bfe",
+      "preconditions": [
+        "Question Q1 is reached",
+        "Condition does not hold: ADVANCED-THERAPY SHARE < 50"
+      ],
+      "stimulus": "Answer Q1 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at Q2 immediately after Q1"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/branch:Q1:goto:Q3:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q1, rule 1",
+        "quote": "IF ADVANCED-THERAPY SHARE < 50, SKIP TO Q3."
+      },
+      "requirement": "IF ADVANCED-THERAPY SHARE < 50, SKIP TO Q3.",
+      "contentHash": "sha256:0a0fb604622f32dfd275cf733abb1ebad32d85dc890bd56c8ce729034aaae050",
+      "preconditions": [
+        "Question Q1 is reached"
+      ],
+      "stimulus": "Answer Q1 such that ADVANCED-THERAPY SHARE < 50",
+      "expectedObservables": [
+        "Navigation continues at Q3 immediately after Q1"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s5-allocation/terminal:complete",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Survey completion"
+      },
+      "requirement": "SURVEY REACHES THE NORMAL COMPLETION SCREEN.",
+      "contentHash": "sha256:4f3cf01f982a93503d371c54b26a213ff51323829cbc80303365b1855ae1486f",
+      "preconditions": [],
+      "stimulus": "Reach the end of the questionnaire without triggering any terminate rule",
+      "expectedObservables": [
+        "The normal completion screen is shown"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    }
+  ],
+  "witnessPaths": [
+    {
+      "witnessPathId": "p001",
+      "answerVector": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": {
+          "r1": 50,
+          "r2": 0,
+          "r3": 50,
+          "r4": 0,
+          "r5": 0
+        },
+        "Q2": 1,
+        "Q3": 1,
+        "Q4": 1,
+        "Q5": 0,
+        "Q6": "Response text.",
+        "Q7": 0
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "Q5",
+        "Q6",
+        "Q7"
+      ],
+      "terminalId": null
+    },
+    {
+      "witnessPathId": "p002",
+      "answerVector": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": {
+          "r1": 100,
+          "r2": 0,
+          "r3": 0,
+          "r4": 0,
+          "r5": 0
+        },
+        "Q3": 1,
+        "Q4": 1,
+        "Q5": 0,
+        "Q6": "Response text.",
+        "Q7": 0
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "Q1",
+        "Q3",
+        "Q4",
+        "Q5",
+        "Q6",
+        "Q7"
+      ],
+      "terminalId": null
+    }
+  ],
+  "seededDefects": []
+}

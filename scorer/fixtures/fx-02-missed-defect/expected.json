@@ -1,0 +1,39 @@
+{
+  "description": "Missed-defect baseline: reachable seeded defect exercised but reported pass. Coverage stays credited; one false negative; recall decreases.",
+  "expectErrors": [],
+  "forbidErrors": [
+    "*"
+  ],
+  "assertions": [
+    {
+      "path": "errors.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "approx",
+      "value": 0.5
+    },
+    {
+      "path": "metrics.seededDefectPrecision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "defects.falseNegatives.length",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "defects.truePositives.length",
+      "op": "eq",
+      "value": 1
+    }
+  ]
+}

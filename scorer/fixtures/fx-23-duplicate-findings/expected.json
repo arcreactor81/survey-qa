@@ -1,0 +1,62 @@
+{
+  "description": "Duplicate findings (advisory i): two valid findings describe the same seeded defect. Exactly one is the true positive; the other is classified REDUNDANT — not a second true positive, not a false positive — and leaves the precision denominator instead of zeroing both through ambiguity.",
+  "expectErrors": [],
+  "forbidErrors": [
+    "*"
+  ],
+  "expectWarnings": [
+    "DEFECT_FINDING_REDUNDANT"
+  ],
+  "assertions": [
+    {
+      "path": "defects.asserted",
+      "op": "eq",
+      "value": 3
+    },
+    {
+      "path": "defects.truePositives.length",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "defects.redundant.length",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "defects.redundant.0.defectId",
+      "op": "eq",
+      "value": "ORC-DEF-2"
+    },
+    {
+      "path": "defects.falsePositives.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "defects.ambiguous.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "defects.precisionDenominator",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.seededDefectPrecision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.redundantDefectFindings",
+      "op": "eq",
+      "value": 1
+    }
+  ]
+}

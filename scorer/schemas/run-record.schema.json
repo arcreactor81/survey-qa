@@ -1,0 +1,1389 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:survey-qa:schema:run-record:1.0.0",
+  "title": "Survey QA Public RunRecord",
+  "description": "The final public record for one tested-agent run. The tested agent supplies semantic claims; the trusted harness supplies or independently observes identity, execution events, artifacts, usage, limits, and attestation. The harness assembles and signs the final record. A signature preserves the agent's exact claims but does not make those claims correct.",
+  "$comment": "P1 core only. JSON Schema cannot enforce identifier uniqueness, cross-reference resolution, equality of contract and result denominators, chronological ordering, arithmetic totals, or oracle isolation; the scorer MUST enforce those rules as described in scorer/docs/threat-model.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "run",
+    "contract",
+    "attempts",
+    "itemResults",
+    "findings",
+    "evidence",
+    "resources",
+    "attestation"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0",
+      "description": "[HARNESS-ATTESTED] Semantic version of this RunRecord interface."
+    },
+    "run": {
+      "$ref": "#/$defs/runIdentity"
+    },
+    "contract": {
+      "$ref": "#/$defs/coverageContract"
+    },
+    "attempts": {
+      "type": "array",
+      "description": "Mixed ownership: plans and stop claims are AGENT-SUPPLIED; IDs, timestamps, actions, and captured states are HARNESS-ATTESTED. Retries are append-only attempts and never overwrite earlier attempts.",
+      "items": {
+        "$ref": "#/$defs/attempt"
+      }
+    },
+    "itemResults": {
+      "type": "array",
+      "description": "[AGENT-SUPPLIED] Exactly one final disposition for every tester-local contract item. Empty is valid only when extraction produced no items; the scorer enforces denominator equality and uniqueness.",
+      "items": {
+        "$ref": "#/$defs/itemResult"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "description": "[AGENT-SUPPLIED] Asserted defects, document/live disagreements, ambiguities, and blockers. Empty is valid.",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "description": "[HARNESS-ATTESTED] Artifact catalog. Results and findings reference these entries instead of embedding artifacts.",
+      "items": {
+        "$ref": "#/$defs/evidenceArtifact"
+      }
+    },
+    "resources": {
+      "$ref": "#/$defs/resources"
+    },
+    "attestation": {
+      "$ref": "#/$defs/attestation"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$"
+    },
+    "nullableIdentifier": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/identifier"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "jsonValue": {
+      "description": "Sanitized JSON only. Secrets and real respondent PII are forbidden by policy.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        }
+      ]
+    },
+    "obligationType": {
+      "enum": [
+        "question",
+        "branch-outcome",
+        "validation-rule",
+        "display-skip",
+        "piping",
+        "calculation",
+        "randomization-quota",
+        "terminal",
+        "loop",
+        "carry-forward"
+      ]
+    },
+    "sourceAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[AGENT-SUPPLIED] Document-local anchor used for private oracle matching; it must not contain an oracle ID.",
+      "required": [
+        "locator",
+        "quote"
+      ],
+      "properties": {
+        "locator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable location such as 'Q2, rule 1' or 'Loop L1 (Q2-Q3)'."
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Short exact questionnaire excerpt supporting the obligation."
+        },
+        "aliases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          },
+          "description": "Equivalent document labels only; never manifest paths or oracle IDs."
+        }
+      }
+    },
+    "runIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Run subject, hashes, effective configuration, and clock values.",
+      "required": [
+        "runId",
+        "target",
+        "documentHash",
+        "contractHash",
+        "configuration",
+        "timestamps"
+      ],
+      "properties": {
+        "runId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "target": {
+          "$ref": "#/$defs/targetIdentity"
+        },
+        "documentHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "SHA-256 of the exact questionnaire document delivered to the tester."
+        },
+        "contractHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "SHA-256 of the RFC 8785 canonical form of contract."
+        },
+        "configuration": {
+          "$ref": "#/$defs/configuration"
+        },
+        "timestamps": {
+          "$ref": "#/$defs/runTimestamps"
+        }
+      }
+    },
+    "targetIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Opaque identity of the exact target fixture or deployment. IDs exposed before execution must not encode clean/flawed truth.",
+      "required": [
+        "url",
+        "environment",
+        "buildId",
+        "buildHash"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "environment": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "buildId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "buildHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest of the immutable tester-facing build or fixture bundle."
+        }
+      }
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Sanitized effective run configuration. It must contain no credentials.",
+      "required": [
+        "profileId",
+        "configurationHash",
+        "parameters"
+      ],
+      "properties": {
+        "profileId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "configurationHash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        }
+      }
+    },
+    "runTimestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "createdAt",
+        "startedAt",
+        "endedAt"
+      ],
+      "properties": {
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "endedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "coverageContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The tested system's extracted checklist. Semantic content is AGENT-SUPPLIED; extraction timestamps and model-call linkage are HARNESS-ATTESTED.",
+      "required": [
+        "extraction",
+        "assumptions",
+        "items"
+      ],
+      "properties": {
+        "extraction": {
+          "$ref": "#/$defs/extractionProvenance"
+        },
+        "assumptions": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "[AGENT-SUPPLIED] Explicit document interpretations or run assumptions; empty when none.",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "items": {
+          "type": "array",
+          "description": "[AGENT-SUPPLIED] The tester-local scoring denominator. Item IDs must not contain or derive from private oracle IDs.",
+          "items": {
+            "$ref": "#/$defs/contractItem"
+          }
+        }
+      }
+    },
+    "extractionProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Observed extractor implementation and model calls.",
+      "required": [
+        "method",
+        "extractorVersion",
+        "modelCallRefs",
+        "extractedAt"
+      ],
+      "properties": {
+        "method": {
+          "enum": [
+            "deterministic",
+            "llm",
+            "hybrid"
+          ]
+        },
+        "extractorVersion": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "modelCallRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "extractedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "contractItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[AGENT-SUPPLIED] One extracted test obligation.",
+      "required": [
+        "itemId",
+        "type",
+        "sourceAnchor",
+        "requirement",
+        "preconditions",
+        "stimulus",
+        "expectedObservable",
+        "variants",
+        "confidence"
+      ],
+      "properties": {
+        "itemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$",
+          "description": "Tester-local ID; never a private oracle ID."
+        },
+        "type": {
+          "$ref": "#/$defs/obligationType"
+        },
+        "sourceAnchor": {
+          "$ref": "#/$defs/sourceAnchor"
+        },
+        "requirement": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Plain-language obligation extracted from the questionnaire."
+        },
+        "preconditions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          },
+          "description": "Conditions required before exercising the obligation; empty when unconditional."
+        },
+        "stimulus": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Answer or interaction that exercises the obligation."
+        },
+        "expectedObservable": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Externally observable behavior expected from the questionnaire."
+        },
+        "variants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contractVariant"
+          },
+          "description": "Required outcome variants within the item; empty when none."
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        }
+      }
+    },
+    "contractVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[AGENT-SUPPLIED] A required variant or witness condition within a contract item.",
+      "required": [
+        "variantId",
+        "stimulus",
+        "expectedObservable"
+      ],
+      "properties": {
+        "variantId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "stimulus": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "expectedObservable": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One append-only execution attempt. The harness observes execution facts; the agent supplies intent and semantic stop classification.",
+      "required": [
+        "attemptId",
+        "pathId",
+        "attemptNumber",
+        "retryOfAttemptId",
+        "retryReason",
+        "targetItemIds",
+        "syntheticInputs",
+        "startingState",
+        "plannedTransitions",
+        "timestamps",
+        "actions",
+        "stateFingerprints",
+        "stop"
+      ],
+      "properties": {
+        "attemptId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$",
+          "description": "[HARNESS-ATTESTED] Unique attempt ID."
+        },
+        "pathId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$",
+          "description": "[AGENT-SUPPLIED] Tester-local ID grouping attempts of one planned path."
+        },
+        "attemptNumber": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "[HARNESS-ATTESTED] Monotonic attempt number within pathId."
+        },
+        "retryOfAttemptId": {
+          "$ref": "#/$defs/nullableIdentifier",
+          "description": "[HARNESS-ATTESTED] Immediate predecessor attempt, or null."
+        },
+        "retryReason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "[AGENT-SUPPLIED] Reason for retry, or null for the first attempt."
+        },
+        "targetItemIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "[AGENT-SUPPLIED] Contract items this path intends to witness.",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "syntheticInputs": {
+          "type": "object",
+          "description": "[AGENT-SUPPLIED] Synthetic respondent input vector; real respondent data is forbidden.",
+          "additionalProperties": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        "startingState": {
+          "$ref": "#/$defs/startingState"
+        },
+        "plannedTransitions": {
+          "type": "array",
+          "description": "[AGENT-SUPPLIED] Expected transitions in order.",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "timestamps": {
+          "$ref": "#/$defs/attemptTimestamps"
+        },
+        "actions": {
+          "type": "array",
+          "description": "[HARNESS-ATTESTED] Actual constrained-tool actions observed by the harness.",
+          "items": {
+            "$ref": "#/$defs/action"
+          }
+        },
+        "stateFingerprints": {
+          "type": "array",
+          "description": "[HARNESS-ATTESTED] Actual meaningful browser states captured by the harness.",
+          "items": {
+            "$ref": "#/$defs/stateFingerprint"
+          }
+        },
+        "stop": {
+          "$ref": "#/$defs/attemptStop"
+        }
+      }
+    },
+    "startingState": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[AGENT-SUPPLIED] Known starting state for this attempt.",
+      "required": [
+        "resetStrategy",
+        "expectedUrl",
+        "description"
+      ],
+      "properties": {
+        "resetStrategy": {
+          "enum": [
+            "fresh-session",
+            "restart-from-url",
+            "replay-input-trace",
+            "checkpoint"
+          ]
+        },
+        "expectedUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "description": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "attemptTimestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Observed attempt timing.",
+      "required": [
+        "startedAt",
+        "endedAt"
+      ],
+      "properties": {
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "endedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] One actual constrained-tool action.",
+      "required": [
+        "actionId",
+        "sequence",
+        "occurredAt",
+        "operation",
+        "target",
+        "parameters",
+        "outcome",
+        "errorCode",
+        "beforeStateId",
+        "afterStateId",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "actionId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "operation": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Harness-normalized operation name."
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "Sanitized accessible name, selector, or target description."
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Sanitized actual tool parameters.",
+          "additionalProperties": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        "outcome": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "blocked",
+            "cancelled"
+          ]
+        },
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "beforeStateId": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "afterStateId": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        }
+      }
+    },
+    "stateFingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] One normalized browser state.",
+      "required": [
+        "stateId",
+        "sequence",
+        "capturedAt",
+        "fingerprintHash",
+        "normalizedUrl",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "stateId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "capturedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fingerprintHash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "normalizedUrl": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        }
+      }
+    },
+    "attemptStop": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[AGENT-SUPPLIED] Semantic stop claim. The scorer compares it with harness events and enforced limits.",
+      "required": [
+        "reason",
+        "detail",
+        "lastValidStateId"
+      ],
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/stopReason"
+        },
+        "detail": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "lastValidStateId": {
+          "$ref": "#/$defs/nullableIdentifier"
+        }
+      }
+    },
+    "stopReason": {
+      "enum": [
+        "path-complete",
+        "evidence-acquired",
+        "confirmed-mismatch",
+        "external-block",
+        "repeated-state",
+        "safety-boundary",
+        "time-limit",
+        "budget-limit",
+        "provider-error",
+        "browser-error",
+        "agent-error",
+        "cancelled",
+        "other"
+      ]
+    },
+    "coverageStatus": {
+      "enum": [
+        "exercised",
+        "not-reached",
+        "proven-unreachable",
+        "blocked",
+        "budget-exhausted",
+        "time-exhausted",
+        "pending"
+      ]
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive",
+        "not-assessed"
+      ]
+    },
+    "resultReason": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[AGENT-SUPPLIED] Structured disposition reason; summary is concise justification, never private chain-of-thought.",
+      "required": [
+        "code",
+        "summary"
+      ],
+      "properties": {
+        "code": {
+          "enum": [
+            "requirement-met",
+            "requirement-mismatch",
+            "insufficient-evidence",
+            "not-attempted",
+            "route-not-found",
+            "proven-unreachable",
+            "external-block",
+            "budget-exhausted",
+            "time-exhausted",
+            "safety-stop",
+            "ambiguous-requirement",
+            "execution-error",
+            "other"
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "itemResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[AGENT-SUPPLIED] Final two-axis disposition for one tester-local contract item.",
+      "required": [
+        "itemId",
+        "coverageStatus",
+        "verdict",
+        "reason",
+        "confidence",
+        "attemptRefs",
+        "findingRefs",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "itemId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "coverageStatus": {
+          "$ref": "#/$defs/coverageStatus"
+        },
+        "verdict": {
+          "$ref": "#/$defs/verdict"
+        },
+        "reason": {
+          "$ref": "#/$defs/resultReason"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "attemptRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "findingRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "coverageStatus": {
+                "const": "exercised"
+              }
+            },
+            "required": [
+              "coverageStatus"
+            ]
+          },
+          "then": {
+            "properties": {
+              "verdict": {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "inconclusive"
+                ]
+              },
+              "attemptRefs": {
+                "minItems": 1
+              },
+              "evidenceRefs": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "verdict": {
+                "const": "not-assessed"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[AGENT-SUPPLIED] One asserted finding. Evidence may be empty structurally so the scorer can classify unsupported claims.",
+      "required": [
+        "findingId",
+        "kind",
+        "severity",
+        "category",
+        "summary",
+        "expected",
+        "observed",
+        "confidence",
+        "itemRefs",
+        "attemptRefs",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "findingId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "kind": {
+          "enum": [
+            "defect",
+            "document-live-disagreement",
+            "ambiguity",
+            "blocker",
+            "other"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "info"
+          ],
+          "description": "Agent-assigned severity. P1 uses it to identify unsupported critical claims; it is not oracle truth."
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "summary": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "expected": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "observed": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "itemRefs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "attemptRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        }
+      }
+    },
+    "evidenceArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] One immutable stored artifact.",
+      "required": [
+        "evidenceId",
+        "type",
+        "artifactRef",
+        "contentHash",
+        "byteLength",
+        "mediaType",
+        "capturedAt",
+        "capture",
+        "redaction"
+      ],
+      "properties": {
+        "evidenceId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "enum": [
+            "screenshot",
+            "dom-excerpt",
+            "accessibility-tree",
+            "action-trace",
+            "state-snapshot",
+            "blocker-packet",
+            "reachability-packet",
+            "session-recording",
+            "other"
+          ]
+        },
+        "artifactRef": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque run-scoped artifact reference."
+        },
+        "contentHash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mediaType": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "capturedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "capture": {
+          "$ref": "#/$defs/capturePoint"
+        },
+        "redaction": {
+          "$ref": "#/$defs/redaction"
+        }
+      }
+    },
+    "capturePoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Execution point at which an artifact was captured.",
+      "required": [
+        "captureStep",
+        "attemptId",
+        "actionId",
+        "stateId",
+        "phase"
+      ],
+      "properties": {
+        "captureStep": {
+          "$ref": "#/$defs/identifier"
+        },
+        "attemptId": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "actionId": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "stateId": {
+          "$ref": "#/$defs/nullableIdentifier"
+        },
+        "phase": {
+          "enum": [
+            "run",
+            "before-action",
+            "during-action",
+            "after-action",
+            "attempt-end"
+          ]
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Redaction state verified before artifact persistence.",
+      "required": [
+        "status",
+        "method"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "redacted",
+            "not-required",
+            "quarantined"
+          ]
+        },
+        "method": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "description": "Redaction process/version, or null only when not-required. The scorer enforces that relationship."
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Observed model/tool provenance, resource use, actual cost, and enforced limits.",
+      "required": [
+        "modelCalls",
+        "toolVersions",
+        "totals",
+        "limits"
+      ],
+      "properties": {
+        "modelCalls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/modelCall"
+          }
+        },
+        "toolVersions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/toolVersion"
+          }
+        },
+        "totals": {
+          "$ref": "#/$defs/resourceTotals"
+        },
+        "limits": {
+          "$ref": "#/$defs/enforcedLimits"
+        }
+      }
+    },
+    "modelCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] One provider call observed through the gateway or runner.",
+      "required": [
+        "callId",
+        "role",
+        "provider",
+        "model",
+        "promptVersion",
+        "promptHash",
+        "parametersHash",
+        "timestamps",
+        "status",
+        "inputTokens",
+        "cachedInputTokens",
+        "outputTokens",
+        "costUsd"
+      ],
+      "properties": {
+        "callId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "role": {
+          "enum": [
+            "extractor",
+            "planner",
+            "navigator",
+            "verifier",
+            "panelist",
+            "panel-reconciler",
+            "reporter",
+            "other"
+          ]
+        },
+        "provider": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "model": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "promptVersion": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "promptHash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "parametersHash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "timestamps": {
+          "$ref": "#/$defs/callTimestamps"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "inputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cachedInputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "costUsd": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "callTimestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startedAt",
+        "endedAt"
+      ],
+      "properties": {
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "endedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "toolVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Exact runner, browser, browser-control, parser, or other tool version.",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "version": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "resourceTotals": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Run totals. The scorer recomputes arithmetic consistency from call and runtime telemetry.",
+      "required": [
+        "modelCalls",
+        "toolCalls",
+        "retryCount",
+        "escalationCount",
+        "inputTokens",
+        "cachedInputTokens",
+        "outputTokens",
+        "browserMilliseconds",
+        "wallClockMilliseconds",
+        "modelCostUsd",
+        "browserCostUsd",
+        "otherCostUsd",
+        "totalCostUsd",
+        "currency",
+        "pricingVersion"
+      ],
+      "properties": {
+        "modelCalls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "toolCalls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retryCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "escalationCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cachedInputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "browserMilliseconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wallClockMilliseconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "modelCostUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "browserCostUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "otherCostUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "totalCostUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "USD"
+        },
+        "pricingVersion": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "enforcedLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] Limits actually enforced for this run. Monetary reserves are inside maxCostUsd.",
+      "required": [
+        "maxCostUsd",
+        "maxWallClockMilliseconds",
+        "maxModelCalls",
+        "maxToolCalls",
+        "maxStepsPerAttempt",
+        "maxAttemptsPerItem",
+        "verificationReserveUsd",
+        "reportReserveUsd"
+      ],
+      "properties": {
+        "maxCostUsd": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "maxWallClockMilliseconds": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "maxModelCalls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxToolCalls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxStepsPerAttempt": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "maxAttemptsPerItem": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "verificationReserveUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "reportReserveUsd": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "[HARNESS-ATTESTED] The harness signs the SHA-256 digest of the RFC 8785 canonical form of the entire record with attestation omitted. The signature binds agent claims, harness observations, limits, totals, and every external artifact hash; it does not certify semantic correctness.",
+      "required": [
+        "algorithm",
+        "canonicalization",
+        "scope",
+        "keyId",
+        "signedAt",
+        "payloadHash",
+        "signature"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "Ed25519"
+        },
+        "canonicalization": {
+          "const": "RFC8785"
+        },
+        "scope": {
+          "const": "entire-record-excluding-attestation"
+        },
+        "keyId": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "signedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "payloadHash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$",
+          "description": "Unpadded base64url Ed25519 signature over the raw 32-byte payload digest."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "id": "V2-CLEAN-C",
+  "tier": 1,
+  "class": "floor",
+  "trace": [
+    {
+      "seq": 1,
+      "screen": "Q1",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q1",
+        "clicked": [
+          {
+            "label": "Gamma option",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 2,
+      "screen": "Q3"
+    }
+  ],
+  "evidence": [
+    {
+      "step": 1,
+      "seq": 1,
+      "screen_id": "Q1",
+      "action_taken": null,
+      "question_text": "Which one?",
+      "heads_html": [
+        "Which one?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Alpha option",
+          "value": "1",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Beta option",
+          "value": "2",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Gamma option",
+          "value": "3",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "20",
+          "text": "20%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Which one?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 2,
+      "seq": 2,
+      "screen_id": "Q3",
+      "action_taken": null,
+      "question_text": "Q3 body",
+      "heads_html": [
+        "Q3 body"
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "60",
+          "text": "60%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Q3 body",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    }
+  ],
+  "page_errors": []
+}

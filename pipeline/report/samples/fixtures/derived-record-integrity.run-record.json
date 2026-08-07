@@ -1,0 +1,1661 @@
+{
+  "schemaVersion": "1.0.0",
+  "run": {
+    "runId": "RUN-FIXTURE-BROKEN-RECORD",
+    "target": {
+      "url": "https://target.survey-qa.local/branching/s1-skip/flawed.html",
+      "environment": "integration",
+      "buildId": "s1-skip/flawed.html",
+      "buildHash": "sha256:84f9d46c0ff99c792609e6104ff4b919cd90fc6d9091a9376c73f874134b8665"
+    },
+    "documentHash": "sha256:e9a40074cb3eb5ff7823a33110e1957a5096b62bea0a07cdda66c0b330da9f70",
+    "contractHash": "sha256:3fba3274dc7a5d7e4320a3658164d2fd97123c4363f3678115da169d39a9c3cf",
+    "configuration": {
+      "profileId": "standard-v1",
+      "configurationHash": "sha256:a34805d21c434bafae8d7cd25420ad5b3f17231c11cfa419a089e5b6b500de79",
+      "parameters": {
+        "device": "desktop",
+        "locale": "en-US",
+        "syntheticIdentity": "synthetic-integration-01",
+        "viewport": "1280x900"
+      }
+    },
+    "timestamps": {
+      "createdAt": "2026-08-01T12:00:00Z",
+      "startedAt": "2026-08-01T12:00:30Z",
+      "endedAt": "2026-08-01T12:26:00Z"
+    }
+  },
+  "contract": {
+    "extraction": {
+      "method": "llm",
+      "extractorVersion": "survey-qa-extractor/0.4.0",
+      "modelCallRefs": [
+        "MC-EXTRACT"
+      ],
+      "extractedAt": "2026-08-01T12:01:40Z"
+    },
+    "assumptions": [
+      "Rendered locale is en-US.",
+      "Option codes follow the order printed in the questionnaire.",
+      "Numeric-entry and rating tags in the document are treated as range validation rules."
+    ],
+    "items": [
+      {
+        "itemId": "it-s1-role",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "S1",
+          "quote": "S1. Which of the following best describes your primary professional role?"
+        },
+        "requirement": "S1 asks which option best describes the respondent's primary professional role.",
+        "preconditions": [],
+        "stimulus": "Open the survey at the entry URL and read the first screener question.",
+        "expectedObservable": "S1 is shown as a single-select question with the four documented role options.",
+        "variants": [],
+        "confidence": 0.95
+      },
+      {
+        "itemId": "it-s2-tenure",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "S2",
+          "quote": "S2. How many years have you been in clinical practice?"
+        },
+        "requirement": "S2 asks how many years the respondent has been in clinical practice.",
+        "preconditions": [
+          "S1 has been answered"
+        ],
+        "stimulus": "Answer S1 and advance to the next screener question.",
+        "expectedObservable": "S2 is shown with a numeric entry field.",
+        "variants": [],
+        "confidence": 0.95
+      },
+      {
+        "itemId": "it-s2-instruction",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "S2, instruction",
+          "quote": "[INSTRUCTION: Enter a whole number between 0 and 50.]"
+        },
+        "requirement": "S2 displays the instruction 'Enter a whole number between 0 and 50.'",
+        "preconditions": [
+          "S2 is displayed"
+        ],
+        "stimulus": "Read the instruction line rendered with S2.",
+        "expectedObservable": "The instruction text 'Enter a whole number between 0 and 50.' appears with S2.",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "it-s2-range",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "S2, range",
+          "quote": "[NUMERIC ENTRY, range 0–50]"
+        },
+        "requirement": "S2 must accept only whole numbers between 0 and 50.",
+        "preconditions": [
+          "S2 is displayed"
+        ],
+        "stimulus": "Enter 99 at S2 and try to advance.",
+        "expectedObservable": "The out-of-range value is rejected and the survey stays on S2.",
+        "variants": [],
+        "confidence": 0.85
+      },
+      {
+        "itemId": "it-q1-caseload",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q1",
+          "quote": "Q1. How many patients with moderate-to-severe plaque psoriasis do you personally manage in a typical month?"
+        },
+        "requirement": "Q1 asks how many moderate-to-severe plaque psoriasis patients the respondent manages in a typical month.",
+        "preconditions": [
+          "The screener has been completed"
+        ],
+        "stimulus": "Advance past the screener and read the first main question.",
+        "expectedObservable": "Q1 is shown with a numeric entry field.",
+        "variants": [],
+        "confidence": 0.95
+      },
+      {
+        "itemId": "it-q1-instruction",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "Q1, instruction",
+          "quote": "[INSTRUCTION: Enter a whole number between 0 and 500.]"
+        },
+        "requirement": "Q1 displays the instruction 'Enter a whole number between 0 and 500.'",
+        "preconditions": [
+          "Q1 is displayed"
+        ],
+        "stimulus": "Read the instruction line rendered with Q1.",
+        "expectedObservable": "The instruction text 'Enter a whole number between 0 and 500.' appears with Q1.",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "it-q1-range",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "Q1, range",
+          "quote": "[NUMERIC ENTRY, range 0–500]"
+        },
+        "requirement": "Q1 must accept only whole numbers between 0 and 500.",
+        "preconditions": [
+          "Q1 is displayed"
+        ],
+        "stimulus": "Enter 900 at Q1 and try to advance.",
+        "expectedObservable": "The out-of-range value is rejected and the survey stays on Q1.",
+        "variants": [],
+        "confidence": 0.85
+      },
+      {
+        "itemId": "it-q2-prescriber",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q2",
+          "quote": "Q2. Do you currently prescribe biologic therapies for moderate-to-severe plaque psoriasis?"
+        },
+        "requirement": "Q2 asks whether the respondent currently prescribes biologic therapies for moderate-to-severe plaque psoriasis.",
+        "preconditions": [
+          "Q1 has been answered"
+        ],
+        "stimulus": "Answer Q1 and advance.",
+        "expectedObservable": "Q2 is shown as a Yes/No single-select question.",
+        "variants": [],
+        "confidence": 0.95
+      },
+      {
+        "itemId": "it-q2-skip",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "Q2, rule 1",
+          "quote": "IF Q2=2 (NO), SKIP TO Q5."
+        },
+        "requirement": "If Q2 is answered No, the respondent skips ahead to Q5.",
+        "preconditions": [
+          "Q2 is displayed"
+        ],
+        "stimulus": "Answer No at Q2 and advance.",
+        "expectedObservable": "The next screen after Q2 is Q5; Q3 and Q4 are never shown.",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "it-q2-continue",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "Q2, default route",
+          "quote": "IF Q2=2 (NO), SKIP TO Q5."
+        },
+        "requirement": "When Q2 is answered Yes the survey continues to Q3.",
+        "preconditions": [
+          "Q2 is displayed"
+        ],
+        "stimulus": "Answer Yes at Q2 and advance.",
+        "expectedObservable": "The next screen after Q2 is Q3.",
+        "variants": [],
+        "confidence": 0.85
+      },
+      {
+        "itemId": "it-q3-options",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q3",
+          "quote": "Q3. Which of the following biologic therapies do you currently prescribe for moderate-to-severe plaque psoriasis?"
+        },
+        "requirement": "Q3 asks which biologic therapies the respondent currently prescribes for moderate-to-severe plaque psoriasis.",
+        "preconditions": [
+          "Q2 was answered Yes"
+        ],
+        "stimulus": "Answer Yes at Q2 and advance to the brand list.",
+        "expectedObservable": "Q3 is shown as a multi-select with five brands: SKYRIZI, TREMFYA, COSENTYX, TALTZ and BIMZELX.",
+        "variants": [],
+        "confidence": 0.95
+      },
+      {
+        "itemId": "it-q3-instruction",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "Q3, instruction",
+          "quote": "[INSTRUCTION: Select all that apply.]"
+        },
+        "requirement": "Q3 displays the instruction 'Select all that apply.'",
+        "preconditions": [
+          "Q3 is displayed"
+        ],
+        "stimulus": "Read the instruction line rendered with Q3.",
+        "expectedObservable": "The instruction text 'Select all that apply.' appears with Q3.",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "it-q4-satisfaction",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q4",
+          "quote": "Q4. Overall, how satisfied are you with the biologic therapies you currently prescribe for moderate-to-severe plaque psoriasis?"
+        },
+        "requirement": "Q4 asks how satisfied the respondent is overall with the biologic therapies they currently prescribe for moderate-to-severe plaque psoriasis.",
+        "preconditions": [
+          "Q3 has been answered"
+        ],
+        "stimulus": "Answer Q3 and advance.",
+        "expectedObservable": "Q4 is shown as a five-point satisfaction scale.",
+        "variants": [],
+        "confidence": 0.95
+      },
+      {
+        "itemId": "it-q5-barrier",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q5",
+          "quote": "Q5. What is the single biggest barrier to biologic use in your moderate-to-severe plaque psoriasis patients?"
+        },
+        "requirement": "Q5 asks for the single biggest barrier to biologic use among the respondent's moderate-to-severe plaque psoriasis patients.",
+        "preconditions": [],
+        "stimulus": "Reach Q5 on either route and read the question.",
+        "expectedObservable": "Q5 is shown as a single-select list of five barriers.",
+        "variants": [],
+        "confidence": 0.95
+      },
+      {
+        "itemId": "it-q6-nps",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q6",
+          "quote": "Q6. How likely are you to recommend biologic therapy to a colleague treating moderate-to-severe plaque psoriasis?"
+        },
+        "requirement": "Q6 asks how likely the respondent is to recommend biologic therapy to a colleague treating moderate-to-severe plaque psoriasis.",
+        "preconditions": [
+          "Q5 has been answered"
+        ],
+        "stimulus": "Answer Q5 and advance to the final question.",
+        "expectedObservable": "Q6 is shown as an 0-10 rating scale.",
+        "variants": [],
+        "confidence": 0.95
+      },
+      {
+        "itemId": "it-q6-instruction",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "Q6, instruction",
+          "quote": "[INSTRUCTION: 0 = Not at all likely, 10 = Extremely likely]"
+        },
+        "requirement": "Q6 displays the scale instruction '0 = Not at all likely, 10 = Extremely likely'.",
+        "preconditions": [
+          "Q6 is displayed"
+        ],
+        "stimulus": "Read the instruction line rendered with Q6.",
+        "expectedObservable": "The scale anchors '0 = Not at all likely, 10 = Extremely likely' appear with Q6.",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "it-q6-range",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "Q6, range",
+          "quote": "[RATING SCALE 0–10]"
+        },
+        "requirement": "Q6 must accept only whole numbers between 0 and 10.",
+        "preconditions": [
+          "Q6 is displayed"
+        ],
+        "stimulus": "Enter 11 at Q6 and try to submit.",
+        "expectedObservable": "The out-of-range value is rejected and the survey stays on Q6.",
+        "variants": [],
+        "confidence": 0.85
+      },
+      {
+        "itemId": "it-completion",
+        "type": "terminal",
+        "sourceAnchor": {
+          "locator": "After Q6 (survey completion)",
+          "quote": "Programming: one question per screen. Respondents may not navigate backwards. All questions require an answer before continuing."
+        },
+        "requirement": "The survey ends on the normal completion screen.",
+        "preconditions": [],
+        "stimulus": "Answer every question on a documented route and submit the last one.",
+        "expectedObservable": "The completion screen 'Thank you for completing the survey.' is shown.",
+        "variants": [],
+        "confidence": 0.9
+      }
+    ]
+  },
+  "attempts": [
+    {
+      "attemptId": "AT-1",
+      "pathId": "PATH-FULL",
+      "attemptNumber": 1,
+      "retryOfAttemptId": null,
+      "retryReason": null,
+      "targetItemIds": [
+        "it-s1-role",
+        "it-s2-tenure",
+        "it-s2-instruction",
+        "it-s2-range",
+        "it-q1-caseload",
+        "it-q1-instruction",
+        "it-q1-range",
+        "it-q2-prescriber",
+        "it-q2-continue",
+        "it-q3-options",
+        "it-q3-instruction",
+        "it-q4-satisfaction",
+        "it-q5-barrier",
+        "it-q6-nps",
+        "it-q6-instruction",
+        "it-q6-range",
+        "it-completion"
+      ],
+      "syntheticInputs": {
+        "S1": 1,
+        "S2": 0,
+        "S2_probe": 99,
+        "Q1": 0,
+        "Q1_probe": 900,
+        "Q2": 1,
+        "Q3": [
+          1
+        ],
+        "Q4": 1,
+        "Q5": 1,
+        "Q6": 0,
+        "Q6_probe": 11
+      },
+      "startingState": {
+        "resetStrategy": "fresh-session",
+        "expectedUrl": "https://target.survey-qa.local/branching/s1-skip/flawed.html",
+        "description": "Fresh session at the survey entry screen"
+      },
+      "plannedTransitions": [
+        "S1 to S2",
+        "S2 to Q1",
+        "Q1 to Q2",
+        "Q2 to Q3",
+        "Q3 to Q4",
+        "Q4 to Q5",
+        "Q5 to Q6",
+        "Q6 to completion"
+      ],
+      "timestamps": {
+        "startedAt": "2026-08-01T12:02:00Z",
+        "endedAt": "2026-08-01T12:14:00Z"
+      },
+      "actions": [
+        {
+          "actionId": "ACT-1-01",
+          "sequence": 1,
+          "occurredAt": "2026-08-01T12:02:10Z",
+          "operation": "navigate",
+          "target": "survey entry screen",
+          "parameters": {
+            "url": "https://target.survey-qa.local/branching/s1-skip/flawed.html"
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": null,
+          "afterStateId": "ST-1-01",
+          "evidenceRefs": [
+            "EV-F-S1"
+          ]
+        },
+        {
+          "actionId": "ACT-1-02",
+          "sequence": 2,
+          "occurredAt": "2026-08-01T12:02:50Z",
+          "operation": "answer-and-advance",
+          "target": "S1 role radio group",
+          "parameters": {
+            "S1": 1
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-1-01",
+          "afterStateId": "ST-1-02",
+          "evidenceRefs": [
+            "EV-F-S2",
+            "EV-F-S2I"
+          ]
+        },
+        {
+          "actionId": "ACT-1-03",
+          "sequence": 3,
+          "occurredAt": "2026-08-01T12:03:30Z",
+          "operation": "probe-invalid-value",
+          "target": "S2 numeric input",
+          "parameters": {
+            "S2": 99
+          },
+          "outcome": "blocked",
+          "errorCode": "VALIDATION_REJECTED",
+          "beforeStateId": "ST-1-02",
+          "afterStateId": "ST-1-02",
+          "evidenceRefs": [
+            "EV-F-S2R"
+          ]
+        },
+        {
+          "actionId": "ACT-1-04",
+          "sequence": 4,
+          "occurredAt": "2026-08-01T12:04:10Z",
+          "operation": "answer-and-advance",
+          "target": "S2 numeric input",
+          "parameters": {
+            "S2": 0
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-1-02",
+          "afterStateId": "ST-1-03",
+          "evidenceRefs": [
+            "EV-F-Q1",
+            "EV-F-Q1I"
+          ]
+        },
+        {
+          "actionId": "ACT-1-05",
+          "sequence": 5,
+          "occurredAt": "2026-08-01T12:04:50Z",
+          "operation": "probe-invalid-value",
+          "target": "Q1 numeric input",
+          "parameters": {
+            "Q1": 900
+          },
+          "outcome": "blocked",
+          "errorCode": "VALIDATION_REJECTED",
+          "beforeStateId": "ST-1-03",
+          "afterStateId": "ST-1-03",
+          "evidenceRefs": [
+            "EV-F-Q1R"
+          ]
+        },
+        {
+          "actionId": "ACT-1-06",
+          "sequence": 6,
+          "occurredAt": "2026-08-01T12:05:30Z",
+          "operation": "answer-and-advance",
+          "target": "Q1 numeric input",
+          "parameters": {
+            "Q1": 0
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-1-03",
+          "afterStateId": "ST-1-04",
+          "evidenceRefs": [
+            "EV-F-Q2"
+          ]
+        },
+        {
+          "actionId": "ACT-1-07",
+          "sequence": 7,
+          "occurredAt": "2026-08-01T12:06:20Z",
+          "operation": "answer-and-advance",
+          "target": "Q2 radio group",
+          "parameters": {
+            "Q2": 1
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-1-04",
+          "afterStateId": "ST-1-05",
+          "evidenceRefs": [
+            "EV-F-Q2D",
+            "EV-F-Q3",
+            "EV-F-Q3L",
+            "EV-F-Q3I"
+          ]
+        },
+        {
+          "actionId": "ACT-1-08",
+          "sequence": 8,
+          "occurredAt": "2026-08-01T12:07:30Z",
+          "operation": "answer-and-advance",
+          "target": "Q3 checkbox group",
+          "parameters": {
+            "Q3": [
+              1
+            ]
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-1-05",
+          "afterStateId": "ST-1-06",
+          "evidenceRefs": [
+            "EV-F-Q4"
+          ]
+        },
+        {
+          "actionId": "ACT-1-09",
+          "sequence": 9,
+          "occurredAt": "2026-08-01T12:08:40Z",
+          "operation": "answer-and-advance",
+          "target": "Q4 radio group",
+          "parameters": {
+            "Q4": 1
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-1-06",
+          "afterStateId": "ST-1-07",
+          "evidenceRefs": [
+            "EV-F-Q5"
+          ]
+        },
+        {
+          "actionId": "ACT-1-10",
+          "sequence": 10,
+          "occurredAt": "2026-08-01T12:09:50Z",
+          "operation": "answer-and-advance",
+          "target": "Q5 radio group",
+          "parameters": {
+            "Q5": 1
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-1-07",
+          "afterStateId": "ST-1-08",
+          "evidenceRefs": [
+            "EV-F-Q6",
+            "EV-F-Q6I"
+          ]
+        },
+        {
+          "actionId": "ACT-1-11",
+          "sequence": 11,
+          "occurredAt": "2026-08-01T12:11:00Z",
+          "operation": "probe-invalid-value",
+          "target": "Q6 rating row",
+          "parameters": {
+            "Q6": 11
+          },
+          "outcome": "blocked",
+          "errorCode": "VALIDATION_REJECTED",
+          "beforeStateId": "ST-1-08",
+          "afterStateId": "ST-1-08",
+          "evidenceRefs": [
+            "EV-F-Q6R"
+          ]
+        },
+        {
+          "actionId": "ACT-1-12",
+          "sequence": 12,
+          "occurredAt": "2026-08-01T12:12:30Z",
+          "operation": "answer-and-submit",
+          "target": "Q6 rating row",
+          "parameters": {
+            "Q6": 0
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-1-08",
+          "afterStateId": "ST-1-09",
+          "evidenceRefs": [
+            "EV-F-END"
+          ]
+        }
+      ],
+      "stateFingerprints": [
+        {
+          "stateId": "ST-1-01",
+          "sequence": 1,
+          "capturedAt": "2026-08-01T12:02:15Z",
+          "fingerprintHash": "sha256:503388d1bf779b36daf727b118edc8d7a6724c8112846af3ded8e0ac48394240",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#s1",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-1-02",
+          "sequence": 2,
+          "capturedAt": "2026-08-01T12:02:55Z",
+          "fingerprintHash": "sha256:3f28afe380061332d9eb5b56b9108e10480cb611d7a72163525989d7d4f4bece",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#s2",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-1-03",
+          "sequence": 3,
+          "capturedAt": "2026-08-01T12:04:15Z",
+          "fingerprintHash": "sha256:9cadf96693f7913f023d5c090aa1e174e0622c095e61f3a69c2becac939c21b4",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#q1",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-1-04",
+          "sequence": 4,
+          "capturedAt": "2026-08-01T12:05:35Z",
+          "fingerprintHash": "sha256:9f6f0be249da7fe40107885f0deb3c9584f0ab8c797a07d318082533e8a6cba0",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#q2",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-1-05",
+          "sequence": 5,
+          "capturedAt": "2026-08-01T12:06:25Z",
+          "fingerprintHash": "sha256:30a0c3e7581ed098374817d0b3c21250631b321a0087bb11dfe56f14ecd967b6",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#q3",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-1-06",
+          "sequence": 6,
+          "capturedAt": "2026-08-01T12:07:35Z",
+          "fingerprintHash": "sha256:124868329ea7111be5b6d8c5244dbcf4364cd1ab8c6ced5b5268c0dde508e867",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#q4",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-1-07",
+          "sequence": 7,
+          "capturedAt": "2026-08-01T12:08:45Z",
+          "fingerprintHash": "sha256:a3c5774af17618706ba5e32aa7e8409954ef5f5c36c69e5eb8504240aa69d95a",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#q5",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-1-08",
+          "sequence": 8,
+          "capturedAt": "2026-08-01T12:09:55Z",
+          "fingerprintHash": "sha256:d3a59da0ea0dc3bf1a7e0d248234bdf71e1578133c3aff482c5adea60b242727",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#q6",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-1-09",
+          "sequence": 9,
+          "capturedAt": "2026-08-01T12:12:35Z",
+          "fingerprintHash": "sha256:6409fc92c9aa7a0a1757e125256cb8730830b95899047f6d239dbbecdf042dcb",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#complete",
+          "evidenceRefs": []
+        }
+      ],
+      "stop": {
+        "reason": "path-complete",
+        "detail": "Completion screen reached; two content mismatches recorded at Q3",
+        "lastValidStateId": "ST-1-09"
+      }
+    },
+    {
+      "attemptId": "AT-2",
+      "pathId": "PATH-SKIP",
+      "attemptNumber": 1,
+      "retryOfAttemptId": null,
+      "retryReason": null,
+      "targetItemIds": [
+        "it-q2-skip"
+      ],
+      "syntheticInputs": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": 0,
+        "Q2": 2,
+        "Q6": 0
+      },
+      "startingState": {
+        "resetStrategy": "fresh-session",
+        "expectedUrl": "https://target.survey-qa.local/branching/s1-skip/flawed.html",
+        "description": "Fresh session at the survey entry screen"
+      },
+      "plannedTransitions": [
+        "S1 to S2",
+        "S2 to Q1",
+        "Q1 to Q2",
+        "Q2 to Q5 (skip)",
+        "Q5 to Q6",
+        "Q6 to completion"
+      ],
+      "timestamps": {
+        "startedAt": "2026-08-01T12:15:00Z",
+        "endedAt": "2026-08-01T12:20:00Z"
+      },
+      "actions": [
+        {
+          "actionId": "ACT-2-01",
+          "sequence": 1,
+          "occurredAt": "2026-08-01T12:15:20Z",
+          "operation": "answer-sequence",
+          "target": "screener and Q1 inputs",
+          "parameters": {
+            "S1": 1,
+            "S2": 0,
+            "Q1": 0
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": null,
+          "afterStateId": "ST-2-01",
+          "evidenceRefs": []
+        },
+        {
+          "actionId": "ACT-2-02",
+          "sequence": 2,
+          "occurredAt": "2026-08-01T12:16:40Z",
+          "operation": "answer-and-advance",
+          "target": "Q2 radio group",
+          "parameters": {
+            "Q2": 2
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-2-01",
+          "afterStateId": "ST-2-02",
+          "evidenceRefs": [
+            "EV-F-SKIP",
+            "EV-F-SKIPSHOT"
+          ]
+        },
+        {
+          "actionId": "ACT-2-03",
+          "sequence": 3,
+          "occurredAt": "2026-08-01T12:18:00Z",
+          "operation": "answer-and-submit",
+          "target": "Q6 rating row",
+          "parameters": {
+            "Q6": 0
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-2-02",
+          "afterStateId": "ST-2-03",
+          "evidenceRefs": []
+        }
+      ],
+      "stateFingerprints": [
+        {
+          "stateId": "ST-2-01",
+          "sequence": 1,
+          "capturedAt": "2026-08-01T12:15:30Z",
+          "fingerprintHash": "sha256:c32e2dcda7e4ecb2626f3355d408226bb102f4ba32881b537ed198f823b26d19",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#q2",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-2-02",
+          "sequence": 2,
+          "capturedAt": "2026-08-01T12:16:50Z",
+          "fingerprintHash": "sha256:e0b85069bf11a6b24eb543e3dd625c73656eb7b8d09075c1f3d62604a8c9df8f",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#q6",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-2-03",
+          "sequence": 3,
+          "capturedAt": "2026-08-01T12:18:10Z",
+          "fingerprintHash": "sha256:9ebdaee12be095997fb8e703d14bd867ee6e8b9c173407c74caf8e2620437787",
+          "normalizedUrl": "https://target.survey-qa.local/branching/s1-skip/index.html#complete",
+          "evidenceRefs": []
+        }
+      ],
+      "stop": {
+        "reason": "confirmed-mismatch",
+        "detail": "No-route reached completion but landed on Q6 instead of Q5; routing mismatch confirmed",
+        "lastValidStateId": "ST-2-03"
+      }
+    }
+  ],
+  "itemResults": [
+    {
+      "itemId": "it-s1-role",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "S1 rendered with the four documented role options"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-S1"
+      ]
+    },
+    {
+      "itemId": "it-s2-tenure",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "S2 rendered with a numeric entry field"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-S2"
+      ]
+    },
+    {
+      "itemId": "it-s2-instruction",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "S2 instruction line rendered verbatim"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-S2I"
+      ]
+    },
+    {
+      "itemId": "it-s2-range",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "S2 rejected the out-of-range probe value 99"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-S2R"
+      ]
+    },
+    {
+      "itemId": "it-q1-caseload",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q1 rendered with a numeric entry field"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-Q1"
+      ]
+    },
+    {
+      "itemId": "it-q1-instruction",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q1 instruction line rendered verbatim"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-Q1I"
+      ]
+    },
+    {
+      "itemId": "it-q1-range",
+      "coverageStatus": "not-reached",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q1 rejected the out-of-range probe value 900"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": []
+    },
+    {
+      "itemId": "it-q2-prescriber",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q2 rendered as a Yes/No single-select"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-Q2"
+      ]
+    },
+    {
+      "itemId": "it-q2-skip",
+      "coverageStatus": "exercised",
+      "verdict": "fail",
+      "reason": {
+        "code": "requirement-mismatch",
+        "summary": "Answering No at Q2 landed on Q6, not Q5"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-2"
+      ],
+      "findingRefs": [
+        "F-01"
+      ],
+      "evidenceRefs": [
+        "EV-F-SKIP",
+        "EV-F-SKIPSHOT"
+      ]
+    },
+    {
+      "itemId": "it-q2-continue",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Answering Yes at Q2 continued to Q3"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-Q2D"
+      ]
+    },
+    {
+      "itemId": "it-q3-options",
+      "coverageStatus": "exercised",
+      "verdict": "fail",
+      "reason": {
+        "code": "requirement-mismatch",
+        "summary": "Q3 listed only four of the five documented brands"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [
+        "F-02"
+      ],
+      "evidenceRefs": [
+        "EV-F-Q3",
+        "EV-F-Q3L"
+      ]
+    },
+    {
+      "itemId": "it-q3-instruction",
+      "coverageStatus": "exercised",
+      "verdict": "fail",
+      "reason": {
+        "code": "requirement-mismatch",
+        "summary": "No instruction line is rendered with Q3"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [
+        "F-03"
+      ],
+      "evidenceRefs": [
+        "EV-F-Q3I"
+      ]
+    },
+    {
+      "itemId": "it-q6-nps",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q6 rendered as an 0-10 rating row"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-Q6"
+      ]
+    },
+    {
+      "itemId": "it-q6-instruction",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q6 scale anchors rendered verbatim"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-Q6I"
+      ]
+    },
+    {
+      "itemId": "it-q6-range",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q6 rejected the out-of-range probe value 11"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-Q6R"
+      ]
+    },
+    {
+      "itemId": "it-completion",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "The full route ended on the normal completion screen"
+      },
+      "confidence": 0.95,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "EV-F-END"
+      ]
+    },
+    {
+      "itemId": "it-does-not-exist",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Disposition for an obligation that is not in the contract"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "evidenceRefs": [
+        "EV-F-S1"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "findingId": "F-01",
+      "kind": "defect",
+      "severity": "high",
+      "category": "wrong-skip-target",
+      "summary": "Q2=No routes to Q6 instead of Q5",
+      "expected": "Answering No at Q2 should take the respondent to Q5, the barriers question.",
+      "observed": "After answering No at Q2 the survey jumped straight to Q6, so Q5 was never shown.",
+      "confidence": 0.95,
+      "itemRefs": [
+        "it-q2-skip"
+      ],
+      "attemptRefs": [
+        "AT-2"
+      ],
+      "evidenceRefs": [
+        "EV-F-SKIP",
+        "EV-F-SKIPSHOT"
+      ]
+    },
+    {
+      "findingId": "F-02",
+      "kind": "defect",
+      "severity": "high",
+      "category": "missing-option",
+      "summary": "BIMZELX is missing from the Q3 brand list",
+      "expected": "Q3 should offer BIMZELX as the fifth brand option.",
+      "observed": "Q3 rendered only four brands (SKYRIZI, TREMFYA, COSENTYX, TALTZ); BIMZELX is absent.",
+      "confidence": 0.95,
+      "itemRefs": [
+        "it-q3-options"
+      ],
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "evidenceRefs": [
+        "EV-F-Q3",
+        "EV-F-Q3L"
+      ]
+    },
+    {
+      "findingId": "F-03",
+      "kind": "defect",
+      "severity": "medium",
+      "category": "missing-instruction",
+      "summary": "Q3 is missing the 'Select all that apply.' instruction",
+      "expected": "Q3 should display the instruction 'Select all that apply.'",
+      "observed": "No 'Select all that apply.' instruction is shown above the Q3 options.",
+      "confidence": 0.9,
+      "itemRefs": [
+        "it-q3-instruction"
+      ],
+      "attemptRefs": [
+        "AT-1"
+      ],
+      "evidenceRefs": [
+        "EV-F-Q3I"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "evidenceId": "EV-F-S1",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/shot-s1.png",
+      "contentHash": "sha256:fcdc204cfa8d9cca65e16f9125781c82dc3fd3522bfbfd4bdcf894382de63e2b",
+      "byteLength": 73,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T12:02:20Z",
+      "capture": {
+        "captureStep": "CAP-1-01",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-01",
+        "stateId": "ST-1-01",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-S2",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/shot-s2.png",
+      "contentHash": "sha256:b6950e50da9634ea3559b70aeaf7b5433df0c050ad88ee6bb5c1e5cc8c288798",
+      "byteLength": 72,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T12:03:00Z",
+      "capture": {
+        "captureStep": "CAP-1-02",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-02",
+        "stateId": "ST-1-02",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-S2I",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/dom-s2-instruction.txt",
+      "contentHash": "sha256:e027d5474f1364414c20fae934173ac881f94e56aee5a75ab115ca50840b8f1f",
+      "byteLength": 116,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T12:03:05Z",
+      "capture": {
+        "captureStep": "CAP-1-03",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-02",
+        "stateId": "ST-1-02",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-S2R",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/dom-s2-range.txt",
+      "contentHash": "sha256:522b9eb8ec866235c959c6da0f44e0cb338daf61e181fafbf8bd8f270fd1801d",
+      "byteLength": 129,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T12:03:40Z",
+      "capture": {
+        "captureStep": "CAP-1-04",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-03",
+        "stateId": "ST-1-02",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q1",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/shot-q1.png",
+      "contentHash": "sha256:90bd37550a50d991ad60bb6cd5468886a2cc59b2f6e78589eed93b54d1f10b9b",
+      "byteLength": 63,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T12:04:20Z",
+      "capture": {
+        "captureStep": "CAP-1-05",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-04",
+        "stateId": "ST-1-03",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q1I",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/dom-q1-instruction.txt",
+      "contentHash": "sha256:3e6a8869fe2a01752ff3d877d9fc8bd99120dfbc59ab4b18eabe9f3322b720eb",
+      "byteLength": 117,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T12:04:25Z",
+      "capture": {
+        "captureStep": "CAP-1-06",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-04",
+        "stateId": "ST-1-03",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q1R",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/dom-q1-range.txt",
+      "contentHash": "sha256:d4d439023f9aee9bebc9eef86fe8cceb38931e4079f06a7d679972beb83f630f",
+      "byteLength": 131,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T12:05:00Z",
+      "capture": {
+        "captureStep": "CAP-1-07",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-05",
+        "stateId": "ST-1-03",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q2",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/shot-q2.png",
+      "contentHash": "sha256:c645867d576dc821cfe4cd7154f655bcf83283c4d1080f9da4da2e8adbb17050",
+      "byteLength": 62,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T12:05:40Z",
+      "capture": {
+        "captureStep": "CAP-1-08",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-06",
+        "stateId": "ST-1-04",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q2D",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/dom-q2-default.txt",
+      "contentHash": "sha256:59b18808dab43437e536f52fe9b211c09bc5c248ed96d1023d7f6b32f9aa7ac5",
+      "byteLength": 162,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T12:06:30Z",
+      "capture": {
+        "captureStep": "CAP-1-09",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-07",
+        "stateId": "ST-1-05",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q3",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/shot-q3.png",
+      "contentHash": "sha256:a4c865d513a7c4c0bc0ef7d60bc2ead756e012db831694a9a9156df9675ec06c",
+      "byteLength": 67,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T12:06:35Z",
+      "capture": {
+        "captureStep": "CAP-1-10",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-07",
+        "stateId": "ST-1-05",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q3L",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/dom-q3-options.txt",
+      "contentHash": "sha256:c78efe2fe876b4cf540775fa8702a647168c1027e42108a7c77260219f9b6307",
+      "byteLength": 130,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T12:06:40Z",
+      "capture": {
+        "captureStep": "CAP-1-11",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-07",
+        "stateId": "ST-1-05",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q3I",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/dom-q3-no-instruction.txt",
+      "contentHash": "sha256:9b9e42a1a0606c328ef5ac32e250b4205aad27776467960879bc1859a4e9f507",
+      "byteLength": 288,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T12:06:45Z",
+      "capture": {
+        "captureStep": "CAP-1-12",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-07",
+        "stateId": "ST-1-05",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q4",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/shot-q4.png",
+      "contentHash": "sha256:fa2d3aecdcc2e3419debeb2feb00f8ea2332ffa2efbaf8fe68437d10c9eee645",
+      "byteLength": 76,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T12:07:40Z",
+      "capture": {
+        "captureStep": "CAP-1-13",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-08",
+        "stateId": "ST-1-06",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q5",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/shot-q5.png",
+      "contentHash": "sha256:3780682b99d637026591256de5819a26e37a50df40139a6de459154e647ccb43",
+      "byteLength": 67,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T12:08:50Z",
+      "capture": {
+        "captureStep": "CAP-1-14",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-09",
+        "stateId": "ST-1-07",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q6",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/shot-q6.png",
+      "contentHash": "sha256:022d64aad3973c162535230de19a552818627dd301a52ce5959484c9ec740443",
+      "byteLength": 65,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T12:10:00Z",
+      "capture": {
+        "captureStep": "CAP-1-15",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-10",
+        "stateId": "ST-1-08",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q6I",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/dom-q6-instruction.txt",
+      "contentHash": "sha256:a079d45e471f8f254151aef3fef78ad58a0ddd2aefe4f544888662af30347a20",
+      "byteLength": 72,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T12:10:05Z",
+      "capture": {
+        "captureStep": "CAP-1-16",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-10",
+        "stateId": "ST-1-08",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-Q6R",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/dom-q6-range.txt",
+      "contentHash": "sha256:f718a4eaceb8c07db55c4eb592b4d407b9c1a62907b13ddf57add0c650f95d91",
+      "byteLength": 129,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T12:11:10Z",
+      "capture": {
+        "captureStep": "CAP-1-17",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-11",
+        "stateId": "ST-1-08",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-END",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/shot-complete.png",
+      "contentHash": "sha256:03b312aec693870c64447d1dd623899e19c4d6451caf2cebacf06aef46c80dbe",
+      "byteLength": 92,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T12:12:40Z",
+      "capture": {
+        "captureStep": "CAP-1-18",
+        "attemptId": "AT-1",
+        "actionId": "ACT-1-12",
+        "stateId": "ST-1-09",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-SKIP",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/dom-skip-wrong-target.txt",
+      "contentHash": "sha256:ca2bea2d4343faea07061fde2abc9c66782f1e3dc33347a576ed7d67cf43d4d5",
+      "byteLength": 238,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T12:17:00Z",
+      "capture": {
+        "captureStep": "CAP-2-01",
+        "attemptId": "AT-2",
+        "actionId": "ACT-2-02",
+        "stateId": "ST-2-02",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "EV-F-SKIPSHOT",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-INT-S1-FLAWED/artifacts/shot-after-no.png",
+      "contentHash": "sha256:14de00af2b8c985be1bafe8c0e250dfe7d54616d739fa4e9d288dff4ecfe3fbc",
+      "byteLength": 90,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T12:17:05Z",
+      "capture": {
+        "captureStep": "CAP-2-02",
+        "attemptId": "AT-2",
+        "actionId": "ACT-2-02",
+        "stateId": "ST-2-02",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    }
+  ],
+  "resources": {
+    "modelCalls": [
+      {
+        "callId": "MC-EXTRACT",
+        "role": "extractor",
+        "provider": "fixture-ai",
+        "model": "fixture-ai/overseer",
+        "promptVersion": "prompts/extract-coverage-contract/1.2",
+        "promptHash": "sha256:ad91fb5612edf1bd8837a5176fe2eff028e56f6ad3f345a10547ac2a208b2b12",
+        "parametersHash": "sha256:21feab4a47a5973d7cbde8faaa24f0e38d8c016eaa9bc08bbe51f25c0a0f825f",
+        "timestamps": {
+          "startedAt": "2026-08-01T12:00:40Z",
+          "endedAt": "2026-08-01T12:01:40Z"
+        },
+        "status": "succeeded",
+        "inputTokens": 48000,
+        "cachedInputTokens": 0,
+        "outputTokens": 6200,
+        "costUsd": 0.237
+      },
+      {
+        "callId": "MC-NAVIGATE",
+        "role": "navigator",
+        "provider": "fixture-ai",
+        "model": "fixture-ai/navigator",
+        "promptVersion": "prompts/walk-path/1.4",
+        "promptHash": "sha256:678a1e8d73ef2ed1a2172c52c8fa9de8927b549ca31efd6cc7cb5c0ad9e559a7",
+        "parametersHash": "sha256:21feab4a47a5973d7cbde8faaa24f0e38d8c016eaa9bc08bbe51f25c0a0f825f",
+        "timestamps": {
+          "startedAt": "2026-08-01T12:02:00Z",
+          "endedAt": "2026-08-01T12:20:00Z"
+        },
+        "status": "succeeded",
+        "inputTokens": 312000,
+        "cachedInputTokens": 120000,
+        "outputTokens": 18400,
+        "costUsd": 0.104
+      },
+      {
+        "callId": "MC-VERIFY",
+        "role": "verifier",
+        "provider": "fixture-ai",
+        "model": "fixture-ai/overseer",
+        "promptVersion": "prompts/verify-observations/1.1",
+        "promptHash": "sha256:c2d0da6fc22f73116079c732d8ca7c1e278d832b724abfb76786ade3c2c3d5b2",
+        "parametersHash": "sha256:21feab4a47a5973d7cbde8faaa24f0e38d8c016eaa9bc08bbe51f25c0a0f825f",
+        "timestamps": {
+          "startedAt": "2026-08-01T12:21:00Z",
+          "endedAt": "2026-08-01T12:24:00Z"
+        },
+        "status": "succeeded",
+        "inputTokens": 26000,
+        "cachedInputTokens": 18000,
+        "outputTokens": 3100,
+        "costUsd": 0.1299
+      }
+    ],
+    "toolVersions": [
+      {
+        "name": "survey-qa-browser",
+        "version": "1.2.0"
+      },
+      {
+        "name": "survey-qa-runner",
+        "version": "0.9.1"
+      }
+    ],
+    "totals": {
+      "modelCalls": 3,
+      "toolCalls": 15,
+      "retryCount": 0,
+      "escalationCount": 0,
+      "inputTokens": 386000,
+      "cachedInputTokens": 138000,
+      "outputTokens": 27700,
+      "browserMilliseconds": 1020000,
+      "wallClockMilliseconds": 1530000,
+      "modelCostUsd": 0.4709,
+      "browserCostUsd": 0.18,
+      "otherCostUsd": 0.02,
+      "totalCostUsd": 0.6709,
+      "currency": "USD",
+      "pricingVersion": "fixture-pricing/2026-08-01"
+    },
+    "limits": {
+      "maxCostUsd": 25,
+      "maxWallClockMilliseconds": 3600000,
+      "maxModelCalls": 100,
+      "maxToolCalls": 400,
+      "maxStepsPerAttempt": 40,
+      "maxAttemptsPerItem": 2,
+      "verificationReserveUsd": 3,
+      "reportReserveUsd": 2
+    }
+  },
+  "attestation": {
+    "algorithm": "Ed25519",
+    "canonicalization": "RFC8785",
+    "scope": "entire-record-excluding-attestation",
+    "keyId": "fixture-harness-key-1",
+    "signedAt": "2026-08-01T22:30:00Z",
+    "payloadHash": "sha256:e4cb6caf1e925ed1a18d641258399baa9fc40a490e80e12a236316f9663bcb02",
+    "signature": "dSS-JNGE1X0T8ccUfkHYIf8OjC76ksumrZDQfnX5j3Q04Jp1HFsHIKjy95lmmDx2EhHXctUhaGYAlOsudzfOCA"
+  }
+}

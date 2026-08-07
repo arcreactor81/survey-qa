@@ -1,0 +1,361 @@
+{
+  "id": "N3-A",
+  "tier": 1,
+  "class": "floor",
+  "probing": "planted violations",
+  "trace": [
+    {
+      "seq": 1,
+      "screen": "WELCOME",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": []
+    },
+    {
+      "seq": 2,
+      "screen": "Q1",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q1",
+        "clicked": [
+          {
+            "label": "Alpha option",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 3,
+      "screen": "Q2",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q2",
+        "clicked": [
+          {
+            "label": "Beta option",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 4,
+      "screen": "Q3",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": []
+    },
+    {
+      "seq": 5,
+      "screen": "CLOSING",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": []
+    }
+  ],
+  "evidence": [
+    {
+      "step": 1,
+      "seq": 1,
+      "screen_id": "WELCOME",
+      "action_taken": null,
+      "question_text": "Welcome",
+      "heads_html": [
+        "Welcome"
+      ],
+      "option_inventory": [
+        {
+          "kind": "checkbox",
+          "label": "I agree to take part",
+          "value": "1",
+          "name": "CONSENT",
+          "checked": false,
+          "disabled": false,
+          "visible": true
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Start survey",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "0",
+          "text": "in progress"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Welcome to our survey. Acme Beverages thanks you for taking part.",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 2,
+      "seq": 2,
+      "screen_id": "Q1",
+      "action_taken": null,
+      "question_text": "Which do you own?",
+      "heads_html": [
+        "Which do you own?",
+        "How often do you buy?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Alpha option",
+          "value": "1",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true
+        },
+        {
+          "kind": "radio",
+          "label": "Beta option",
+          "value": "2",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "0",
+          "text": "in progress"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Which do you own? [ASK ALL] Also, how often do you buy?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 3,
+      "seq": 3,
+      "screen_id": "Q2",
+      "action_taken": null,
+      "question_text": "Which have you bought?",
+      "heads_html": [
+        "Which have you bought?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "checkbox",
+          "label": "Beta option",
+          "value": "2",
+          "name": "Q2",
+          "checked": false,
+          "disabled": false,
+          "visible": true
+        },
+        {
+          "kind": "checkbox",
+          "label": "Alpha option",
+          "value": "1",
+          "name": "Q2",
+          "checked": false,
+          "disabled": false,
+          "visible": true
+        },
+        {
+          "kind": "checkbox",
+          "label": "Gamma option",
+          "value": "3",
+          "name": "Q2",
+          "checked": false,
+          "disabled": false,
+          "visible": true
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "0",
+          "text": "in progress"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Which have you bought?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 4,
+      "seq": 4,
+      "screen_id": "Q3",
+      "action_taken": null,
+      "question_text": "How much do you agree?",
+      "heads_html": [
+        "How much do you agree?"
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [
+        {
+          "headers": [
+            "",
+            "Yes",
+            "No"
+          ],
+          "rows": [
+            {
+              "label": "Row one",
+              "inputs": [
+                {
+                  "name": "Q3_R1",
+                  "value": "1"
+                },
+                {
+                  "name": "Q3_R1",
+                  "value": "2"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "0",
+          "text": "in progress"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "How much do you agree?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 5,
+      "seq": 5,
+      "screen_id": "CLOSING",
+      "action_taken": null,
+      "question_text": "Thank you",
+      "heads_html": [
+        "Thank you"
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "",
+          "visible": false,
+          "disabled": false
+        },
+        "next": {
+          "text": "",
+          "visible": false,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "0",
+          "text": "in progress"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Thank you.",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    }
+  ],
+  "probes": [],
+  "page_errors": []
+}

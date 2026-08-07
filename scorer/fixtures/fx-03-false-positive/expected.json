@@ -1,0 +1,29 @@
+{
+  "description": "False-positive baseline: expected behavior asserted as defective. One FP; precision decreases; seeded-defect recall unchanged.",
+  "expectErrors": [],
+  "forbidErrors": [
+    "*"
+  ],
+  "assertions": [
+    {
+      "path": "errors.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "defects.falsePositives.length",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.seededDefectPrecision",
+      "op": "approx",
+      "value": 0.6666666666666666
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "eq",
+      "value": 1
+    }
+  ]
+}

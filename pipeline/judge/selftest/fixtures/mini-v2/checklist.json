@@ -1,0 +1,143 @@
+{
+  "schema_version": "selftest-2",
+  "target": "mini-v2",
+  "source_document": "synthetic",
+  "obligations": [
+    {
+      "id": "V2-OPT-1",
+      "category": "option-set",
+      "doc_quote": "| 1 | Alpha option |",
+      "statement": "Option 1 with answer text \"Alpha option\" is displayed on Q1.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "V2-OPT-2",
+      "category": "option-set",
+      "doc_quote": "| 2 | Beta option |",
+      "statement": "Option 2 with answer text \"Beta option\" is displayed on Q1.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "V2-OPT-3",
+      "category": "option-set",
+      "doc_quote": "| 3 | Gamma option |",
+      "statement": "Option 3 with answer text \"Gamma option\" is displayed as the final option on Q1.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "V2-ROUTE-DOCCODE",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Code 2 selected (Beta) | Continue to Q3",
+      "statement": "If a respondent selects \"Beta\" for Q1, the next screen must be Q3.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "V2-ROUTE-EXCLUDE",
+      "category": "branch-outcome",
+      "doc_quote": "Q1 | Any code other than code 1 | Continue to Q3",
+      "statement": "If a respondent does not select code 1 at Q1, the next screen must be Q3.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "V2-ROUTE-UNSEALED",
+      "category": "branch-outcome",
+      "doc_quote": "Q3 | Any code other than code 1 | Continue to D1",
+      "statement": "If a respondent does not select code 1 at Q3, the next screen must be D1.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "V2-PRESENCE",
+      "category": "question-presence",
+      "doc_quote": "ASK ONLY THOSE WHO ANSWERED CODE 1 AT Q1.",
+      "statement": "Q2 must be displayed only to respondents who selected answer code 1 on Q1.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "V2-REQ-FROZEN",
+      "category": "instruction",
+      "doc_quote": "Q4 IS COMPULSORY.",
+      "statement": "Q4 requires the respondent to select at least one answer before proceeding.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "V2-REQ-CONTRA",
+      "category": "instruction",
+      "doc_quote": "Q6 IS COMPULSORY.",
+      "statement": "Q6 requires the respondent to select at least one answer before proceeding.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "V2-REQ-ENFORCED",
+      "category": "instruction",
+      "doc_quote": "Q7 IS COMPULSORY.",
+      "statement": "Q7 requires the respondent to select at least one answer before proceeding.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    },
+    {
+      "id": "V2-BACKBUTTON",
+      "category": "instruction",
+      "doc_quote": "NO BACK BUTTON ON THE WELCOME SCREEN.",
+      "statement": "The welcome screen must not display a back button.",
+      "expected_observable": "",
+      "browser_observable": "full"
+    }
+  ],
+  "ambiguities": [
+    {
+      "id": "AMB-V2-IRRELEVANT",
+      "doc_quote": "SHOW A BACK BUTTON ON EVERY SCREEN EXCEPT THE WELCOME SCREEN AND THE TWO CLOSING SCREENS.",
+      "reading_a": "The two closing screens are the final thank-you screen and the screen-out screen.",
+      "reading_b": "The two closing screens are the penultimate debrief screen and the final completion screen.",
+      "why_ambiguous": "The document never says which screens are the closing ones.",
+      "locus": {
+        "fields": [
+          "screen",
+          "screenScope"
+        ],
+        "screens": [
+          "CLOSING",
+          "SCREENOUT"
+        ],
+        "codes": []
+      },
+      "affects": [
+        "V2-BACKBUTTON"
+      ]
+    },
+    {
+      "id": "AMB-V2-RELEVANT",
+      "doc_quote": "Q1 | Code 2 selected (Beta) | Continue to Q3",
+      "reading_a": "Code 2 continues to Q3.",
+      "reading_b": "Code 2 continues to Q2 and only then to Q3.",
+      "why_ambiguous": "The routing table and the prose disagree about the destination for code 2.",
+      "locus": {
+        "fields": [
+          "destination",
+          "sequence",
+          "order"
+        ],
+        "screens": [
+          "Q2",
+          "Q3"
+        ],
+        "codes": [
+          "2"
+        ]
+      },
+      "affects": [
+        "V2-ROUTE-DOCCODE"
+      ]
+    }
+  ],
+  "unverifiable_from_browser": []
+}

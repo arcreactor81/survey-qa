@@ -1,0 +1,669 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:survey-qa:schema:oracle-record:1.0.0",
+  "title": "Survey QA Private OracleRecord",
+  "description": "Private normalized ground truth for one exact survey variant and target build. Corpus adapters produce this interface; corpus-manifest structure must not leak into it. The record, stable oracle IDs, witness paths, reachability truth, and seeded-defect labels are scorer-only and must never be available to the tested agent or browser.",
+  "$comment": "P1 core only. JSON Schema cannot enforce identifier uniqueness or cross-reference integrity; the scorer MUST reject duplicate oracleId, defectId, or witnessPathId values and unresolved affectedObligationIds or witnessPathIds. For flawed targets, obligations remain questionnaire/document truth; target-specific deviations belong only in seededDefects.observed. Defect severity is intentionally absent until an owner-approved criticality rubric exists.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "oracleRecordId",
+    "provenance",
+    "survey",
+    "obligations",
+    "witnessPaths",
+    "seededDefects"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0",
+      "description": "Semantic version of this OracleRecord interface."
+    },
+    "oracleRecordId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$",
+      "description": "Stable private ID for this exact survey-variant oracle."
+    },
+    "provenance": {
+      "$ref": "#/$defs/oracleProvenance"
+    },
+    "survey": {
+      "$ref": "#/$defs/surveyMetadata"
+    },
+    "obligations": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Authoritative document-derived scoring denominator for this survey. The same expected obligation meaning is retained for clean and flawed targets.",
+      "items": {
+        "$ref": "#/$defs/oracleObligation"
+      }
+    },
+    "witnessPaths": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Private concrete answer vectors produced by reachability analysis. Obligations refer to these by witnessPathId.",
+      "items": {
+        "$ref": "#/$defs/witnessPath"
+      }
+    },
+    "seededDefects": {
+      "type": "array",
+      "description": "Ground-truth deviations present in this exact target variant. Clean variants contain an empty array.",
+      "items": {
+        "$ref": "#/$defs/seededDefect"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "survey": {
+            "properties": {
+              "variant": {
+                "properties": {
+                  "kind": {
+                    "const": "clean"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            },
+            "required": [
+              "variant"
+            ]
+          }
+        },
+        "required": [
+          "survey"
+        ]
+      },
+      "then": {
+        "properties": {
+          "seededDefects": {
+            "maxItems": 0
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "seededDefects": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$"
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "jsonValue": {
+      "description": "Normalized synthetic answer value.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        }
+      ]
+    },
+    "obligationCategory": {
+      "enum": [
+        "question",
+        "rule",
+        "branch",
+        "terminal"
+      ],
+      "description": "Adapter-facing coarse category retained from the neutral ObligationSet."
+    },
+    "obligationType": {
+      "enum": [
+        "question",
+        "branch-outcome",
+        "validation-rule",
+        "display-skip",
+        "piping",
+        "calculation",
+        "randomization-quota",
+        "terminal",
+        "loop",
+        "carry-forward"
+      ],
+      "description": "Fine-grained type shared with the public RunRecord."
+    },
+    "oracleProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Adapter provenance without coupling this interface to any source-manifest shape.",
+      "required": [
+        "generatorId",
+        "generatorVersion",
+        "generatedAt",
+        "sourceHash"
+      ],
+      "properties": {
+        "generatorId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "generatorVersion": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "generatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sourceHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest of the private neutral representation consumed by the serialization adapter."
+        }
+      }
+    },
+    "surveyMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "surveyId",
+        "title",
+        "variant",
+        "document",
+        "targetBuild"
+      ],
+      "properties": {
+        "surveyId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$",
+          "description": "Stable identity shared by variants of one survey."
+        },
+        "title": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "locale": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 35,
+          "description": "BCP 47 locale when specified."
+        },
+        "variant": {
+          "$ref": "#/$defs/variantMetadata"
+        },
+        "document": {
+          "$ref": "#/$defs/documentIdentity"
+        },
+        "targetBuild": {
+          "$ref": "#/$defs/targetBuildIdentity"
+        }
+      }
+    },
+    "variantMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "variantId",
+        "kind"
+      ],
+      "properties": {
+        "variantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$",
+          "description": "Stable private variant identity."
+        },
+        "kind": {
+          "enum": [
+            "clean",
+            "flawed"
+          ]
+        },
+        "basedOnVariantId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$",
+          "description": "Baseline variant for a flawed target."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "flawed"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "basedOnVariantId"
+            ]
+          }
+        }
+      ]
+    },
+    "documentIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentId",
+        "contentHash"
+      ],
+      "properties": {
+        "documentId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "contentHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest of the exact questionnaire document supplied to the tester."
+        }
+      }
+    },
+    "targetBuildIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "buildId",
+        "contentHash"
+      ],
+      "properties": {
+        "buildId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "contentHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest of the exact tester-facing target build or fixture bundle."
+        }
+      }
+    },
+    "sourceAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "locator"
+      ],
+      "properties": {
+        "locator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Canonical document location derived from sourceRef, such as 'Q2, rule 1' or 'Loop L1 (Q2-Q3)'."
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Short exact questionnaire excerpt when available."
+        },
+        "aliases": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          },
+          "description": "Equivalent document labels only; never tester IDs."
+        }
+      }
+    },
+    "oracleObligation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One document-derived test obligation. category is the adapter's coarse class; type is the scorer/public-contract taxonomy.",
+      "required": [
+        "oracleId",
+        "category",
+        "type",
+        "sourceAnchor",
+        "requirement",
+        "contentHash",
+        "preconditions",
+        "stimulus",
+        "expectedObservables",
+        "reachability"
+      ],
+      "properties": {
+        "oracleId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$",
+          "description": "Stable scorer-only obligation ID. It must never appear in a public RunRecord."
+        },
+        "category": {
+          "$ref": "#/$defs/obligationCategory"
+        },
+        "type": {
+          "$ref": "#/$defs/obligationType"
+        },
+        "sourceAnchor": {
+          "$ref": "#/$defs/sourceAnchor"
+        },
+        "requirement": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Canonical questionnaire/document requirement. For flawed targets this remains clean expected intent."
+        },
+        "contentHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest of the adapter's canonical semantic content for this obligation."
+        },
+        "preconditions": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Conditions that must hold before exercising this obligation; empty when unconditional.",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "stimulus": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Canonical action or input that witnesses the obligation."
+        },
+        "expectedObservables": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Externally observable outcomes expected by the questionnaire.",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "reachability": {
+          "$ref": "#/$defs/reachability"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "question"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "type": {
+                "const": "question"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "branch"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "type": {
+                "const": "branch-outcome"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "terminal"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "type": {
+                "const": "terminal"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "rule"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "then": {
+            "properties": {
+              "type": {
+                "enum": [
+                  "validation-rule",
+                  "display-skip",
+                  "piping",
+                  "calculation",
+                  "randomization-quota",
+                  "loop",
+                  "carry-forward"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "reachability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "basis",
+        "witnessPathIds"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "reachable",
+            "unreachable"
+          ],
+          "description": "Whether the obligation's exercise point can be reached in this exact target variant. This does not assert that target behavior is correct."
+        },
+        "basis": {
+          "enum": [
+            "exhaustive-walk",
+            "static-analysis",
+            "manual-review"
+          ]
+        },
+        "witnessPathIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Private WitnessPath references. Reachable obligations require at least one; unreachable obligations require none.",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "reachable"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "witnessPathIds": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "witnessPathIds": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "witnessPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Private concrete path witness from the corpus walk. It is evidence for oracle reachability, not an execution script exposed to the tester.",
+      "required": [
+        "witnessPathId",
+        "answerVector"
+      ],
+      "properties": {
+        "witnessPathId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "answerVector": {
+          "type": "object",
+          "description": "Concrete synthetic answers keyed by source question/reference ID.",
+          "additionalProperties": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        "expectedVisitedSourceRefs": {
+          "type": "array",
+          "description": "Expected visit order when the source walker provides it.",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "terminalId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/identifier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Expected terminal-state ID, or null for non-terminating paths."
+        }
+      }
+    },
+    "defectSide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement",
+        "contentHash"
+      ],
+      "properties": {
+        "requirement": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "seededDefect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "defectId",
+        "category",
+        "sourceAnchor",
+        "expected",
+        "observed",
+        "affectedObligationIds"
+      ],
+      "properties": {
+        "defectId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "description": "Stable normalized label such as 'wrong-skip-target'."
+        },
+        "sourceAnchor": {
+          "$ref": "#/$defs/sourceAnchor"
+        },
+        "expected": {
+          "$ref": "#/$defs/defectSide",
+          "description": "Clean questionnaire requirement and its canonical content hash."
+        },
+        "observed": {
+          "$ref": "#/$defs/defectSide",
+          "description": "Flawed target behavior and its canonical content hash."
+        },
+        "affectedObligationIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "References to obligations in this record violated by the defect.",
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "description": "Clean-target defect assertions (defect 6): the target has no seeded defects, so EVERY asserted defect is a false positive — including the evidence-insufficient one, which is additionally listed as unsupported. No approved oracle correction exists.",
+  "oracle": "oracle-record-clean.json",
+  "expectErrors": [],
+  "forbidErrors": [
+    "RUN_IDENTITY_MISMATCH",
+    "ATTESTATION_INVALID"
+  ],
+  "expectWarnings": [
+    "EVIDENCE_INSUFFICIENT"
+  ],
+  "assertions": [
+    {
+      "path": "subject.variantKind",
+      "op": "eq",
+      "value": "clean"
+    },
+    {
+      "path": "defects.seededTotal",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "defects.asserted",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "defects.falsePositives.length",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "defects.falsePositives.0",
+      "op": "eq",
+      "value": "F-1"
+    },
+    {
+      "path": "defects.falsePositives.1",
+      "op": "eq",
+      "value": "F-2"
+    },
+    {
+      "path": "defects.unsupported.length",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "defects.unsupported.0",
+      "op": "eq",
+      "value": "F-2"
+    },
+    {
+      "path": "defects.truePositives.length",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "null"
+    },
+    {
+      "path": "metrics.seededDefectPrecision",
+      "op": "eq",
+      "value": 0
+    }
+  ]
+}

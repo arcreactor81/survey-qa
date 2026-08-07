@@ -1,0 +1,9 @@
+{
+  "note": "TEST-ONLY fixture harness keys for scorer fixtures/self-tests. NEVER use for real runs; real harness keys are provisioned separately and the private key is never checked in.",
+  "testOnly": true,
+  "keys": {
+    "fixture-harness-key-1": {
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEABgUDRb+w3FDusRwrcvQrQI/n0p0RAdhFCh+YOUQe8K8=\n-----END PUBLIC KEY-----\n"
+    }
+  }
+}

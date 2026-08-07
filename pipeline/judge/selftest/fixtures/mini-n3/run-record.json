@@ -1,0 +1,240 @@
+{
+  "schemaVersion": "1.0.0",
+  "run": {
+    "runId": "mini-n3",
+    "target": {
+      "url": "http://127.0.0.1:0/fixture",
+      "environment": "selftest",
+      "buildId": "mini-n3-build",
+      "buildHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "documentHash": "sha256:c93383e6a60dba5bdf41ee3da45359abf23ff332edf6d22be0ebf9df3ca093fe",
+    "contractHash": "sha256:fc5985d9aacaa60570ffe08cd93b64a1245eb1b5bd38b8def8899efd0a3d97f4",
+    "configuration": {
+      "profileId": "selftest",
+      "configurationHash": "sha256:fc16224726ccb539d3b58dbd5765df18a5596a3fe7aa88b3ddccea2ed9a1bcd1",
+      "parameters": {}
+    },
+    "timestamps": {
+      "startedAt": "2026-08-02T00:00:00.000Z",
+      "endedAt": "2026-08-02T00:00:00.000Z"
+    }
+  },
+  "contract": {
+    "extraction": {
+      "method": "fixture",
+      "extractorVersion": "selftest@1",
+      "extractedAt": "2026-08-02T00:00:00.000Z"
+    },
+    "revision": {
+      "contractRevisionId": "contract-revision:mini-n3@1",
+      "contractRevisionHash": "sha256:2fcd1e5c245df210b2f7b3070b4cb2a143f48fbd23e48b1812f0a5d9f1ff8013",
+      "reviewState": "sealed",
+      "sealedAt": "2026-08-02T00:00:00.000Z",
+      "sealedBy": "selftest-fixture"
+    },
+    "assumptions": [],
+    "items": [
+      {
+        "itemId": "N3-ONEQ",
+        "type": "general",
+        "sourceAnchor": {
+          "locator": "N3-ONEQ",
+          "quote": "",
+          "aliases": []
+        },
+        "requirement": "Each question must be displayed on a separate screen.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "N3-LEAK",
+        "type": "general",
+        "sourceAnchor": {
+          "locator": "N3-LEAK",
+          "quote": "",
+          "aliases": []
+        },
+        "requirement": "Programmer instructions within square brackets and capital letters must not be displayed to respondents.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "N3-BACK",
+        "type": "general",
+        "sourceAnchor": {
+          "locator": "N3-BACK",
+          "quote": "",
+          "aliases": []
+        },
+        "requirement": "The welcome screen must not display a back button.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "N3-WELC",
+        "type": "general",
+        "sourceAnchor": {
+          "locator": "N3-WELC",
+          "quote": "",
+          "aliases": []
+        },
+        "requirement": "The welcome screen must present only a single \"Start survey\" button and no answer fields or other input controls.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "N3-FORB",
+        "type": "copy",
+        "sourceAnchor": {
+          "locator": "N3-FORB",
+          "quote": "",
+          "aliases": []
+        },
+        "requirement": "The client name \"Acme Beverages\" must never be displayed to respondents.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "N3-Q1-OPT-1",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "N3-Q1-OPT-1",
+          "quote": "| 1 | Alpha option |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"Alpha option\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "N3-Q1-OPT-2",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "N3-Q1-OPT-2",
+          "quote": "| 2 | Beta option |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"Beta option\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "N3-Q1-OPT-3",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "N3-Q1-OPT-3",
+          "quote": "| 3 | Gamma option |",
+          "aliases": []
+        },
+        "requirement": "Option 3 with answer text \"Gamma option\" is displayed on Q1.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "N3-Q2-OPT-1",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "N3-Q2-OPT-1",
+          "quote": "| 1 | Alpha option |",
+          "aliases": []
+        },
+        "requirement": "Option 1 with answer text \"Alpha option\" is displayed on Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "N3-Q2-OPT-2",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "N3-Q2-OPT-2",
+          "quote": "| 2 | Beta option |",
+          "aliases": []
+        },
+        "requirement": "Option 2 with answer text \"Beta option\" is displayed on Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      },
+      {
+        "itemId": "N3-Q2-OPT-3",
+        "type": "option-set",
+        "sourceAnchor": {
+          "locator": "N3-Q2-OPT-3",
+          "quote": "| 3 | Gamma option |",
+          "aliases": []
+        },
+        "requirement": "Option 3 with answer text \"Gamma option\" is displayed on Q2.",
+        "preconditions": [],
+        "stimulus": [],
+        "expectedObservable": "",
+        "variants": [],
+        "confidence": 1
+      }
+    ]
+  },
+  "attempts": [],
+  "itemResults": [],
+  "findings": [],
+  "evidence": [
+    {
+      "evidenceId": "EV-N3-A.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-n3/artifacts/N3-A.json",
+      "contentHash": "sha256:4fe8b48f212060ed1c8dfee3d7efdd5b28d918403f38c39e40a61cbd8c21f6d5",
+      "byteLength": 7785,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    },
+    {
+      "evidenceId": "EV-N3-B.json",
+      "type": "action-trace",
+      "artifactRef": "runs/mini-n3/artifacts/N3-B.json",
+      "contentHash": "sha256:728385f04120f03db9e2eb5546bbb8f4ce426471050b08a1c8e47b1ec7fc6325",
+      "byteLength": 7788,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-02T00:00:00.000Z"
+    }
+  ],
+  "resources": {
+    "modelCalls": []
+  },
+  "attestation": {
+    "algorithm": "Ed25519",
+    "canonicalization": "RFC8785",
+    "scope": "entire-record-excluding-attestation",
+    "keyId": "fixture-harness-key-1",
+    "signedAt": "2026-08-02T00:00:00.000Z",
+    "payloadHash": "sha256:5536da8ea4c103216c1e882577d4d7685fe7558c46050dd02213879b5c9e12c6",
+    "signature": "J0r0xJ_nk9lJDxEHXhRCyd13VqMGxG0F0NPVqLXNLUgJhGjf1kR6lpBzgS7ohdCoiB75LDVUeEv12ZhdeVqMBg"
+  }
+}

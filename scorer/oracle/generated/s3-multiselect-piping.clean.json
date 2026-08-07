@@ -1,0 +1,756 @@
+{
+  "schemaVersion": "1.0.0",
+  "oracleRecordId": "s3-multiselect-piping.clean",
+  "provenance": {
+    "generatorId": "scorer/oracle/build-oracle.mjs",
+    "generatorVersion": "1.0.0",
+    "generatedAt": "2026-08-01T00:00:00Z",
+    "sourceHash": "sha256:0b649a6b31a71b4e188e51daa0836d1bf8305e9d59e38cc267647bd2da136d23"
+  },
+  "survey": {
+    "surveyId": "s3-multiselect-piping",
+    "title": "Clinician Use of Incretin-Based Therapies in Type 2 Diabetes",
+    "variant": {
+      "variantId": "s3-multiselect-piping.clean",
+      "kind": "clean"
+    },
+    "document": {
+      "documentId": "s3-multiselect-piping/questionnaire.docx",
+      "contentHash": "sha256:c18e75e1aae06fe95e28097bac6b9ae9d759c3a4f3c23130f5b754754273d334"
+    },
+    "targetBuild": {
+      "buildId": "s3-multiselect-piping/index.html",
+      "contentHash": "sha256:ec08d9729ef60c71547ab75192762ac6328d491525ee95b92c7424fa9bfaaebe"
+    }
+  },
+  "obligations": [
+    {
+      "oracleId": "s3-multiselect-piping/question:Q1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q1",
+        "quote": "Which of the following GLP-1 or dual-incretin therapies do you currently prescribe for type 2 diabetes?"
+      },
+      "requirement": "Q1. Which of the following GLP-1 or dual-incretin therapies do you currently prescribe for type 2 diabetes?",
+      "contentHash": "sha256:7552fcc0049c93570c8900ab2f0e09882aca7d562bc2d0a92ce48e690990e956",
+      "preconditions": [],
+      "stimulus": "Reach question Q1",
+      "expectedObservables": [
+        "Question Q1 is displayed with text: \"Which of the following GLP-1 or dual-incretin therapies do you currently prescribe for type 2 diabetes?\"",
+        "Answer input is of type checkbox",
+        "Option 1: \"OZEMPIC\"",
+        "Option 2: \"MOUNJARO\"",
+        "Option 3: \"TRULICITY\"",
+        "Option 4: \"RYBELSUS\"",
+        "Option 99: \"None of the above\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/question:Q2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q2",
+        "quote": "Which one of these therapies do you prescribe most often for type 2 diabetes?"
+      },
+      "requirement": "Q2. Which one of these therapies do you prescribe most often for type 2 diabetes?",
+      "contentHash": "sha256:f396d3d16b6b9a14cf35c7bbea38ec3855a39ab14931fb4947382dd3b23d6885",
+      "preconditions": [],
+      "stimulus": "Reach question Q2",
+      "expectedObservables": [
+        "Question Q2 is displayed with text: \"Which one of these therapies do you prescribe most often for type 2 diabetes?\"",
+        "Answer input is of type radio",
+        "Options are carried forward from a prior answer"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/question:Q3",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q3",
+        "quote": "How satisfied are you with [PIPE: Q2 selection] for your type 2 diabetes patients?"
+      },
+      "requirement": "Q3. How satisfied are you with [PIPE: Q2 selection] for your type 2 diabetes patients?",
+      "contentHash": "sha256:10efe5efc8a74548a492d2d0a46f81c48f91d4b0549cc4be4b3f46ec4044a3b6",
+      "preconditions": [],
+      "stimulus": "Reach question Q3",
+      "expectedObservables": [
+        "Question Q3 is displayed with text: \"How satisfied are you with {Q2} for your type 2 diabetes patients?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Very satisfied\"",
+        "Option 2: \"Somewhat satisfied\"",
+        "Option 3: \"Neither satisfied nor dissatisfied\"",
+        "Option 4: \"Somewhat dissatisfied\"",
+        "Option 5: \"Very dissatisfied\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/question:Q4",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q4",
+        "quote": "You prescribe three or more incretin-based therapies. What is the main factor that determines which one a new patient starts on?"
+      },
+      "requirement": "Q4. You prescribe three or more incretin-based therapies. What is the main factor that determines which one a new patient starts on?",
+      "contentHash": "sha256:7fc76c2077a2f8d499289f7f0612ae698072d4673b4dacfba26b5610d284d17b",
+      "preconditions": [],
+      "stimulus": "Reach question Q4",
+      "expectedObservables": [
+        "Question Q4 is displayed with text: \"You prescribe three or more incretin-based therapies. What is the main factor that determines which one a new patient starts on?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Glycemic efficacy\"",
+        "Option 2: \"Weight-loss benefit\"",
+        "Option 3: \"Cardiovascular outcomes data\"",
+        "Option 4: \"Insurance coverage and access\"",
+        "Option 5: \"Patient preference for device or administration\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/question:Q5",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q5",
+        "quote": "What is the single biggest barrier to starting patients on an incretin-based therapy?"
+      },
+      "requirement": "Q5. What is the single biggest barrier to starting patients on an incretin-based therapy?",
+      "contentHash": "sha256:9413b40bd4da319fe0a1b22adf9e8dfd48441b5532a0650ffe71a75c43262d55",
+      "preconditions": [],
+      "stimulus": "Reach question Q5",
+      "expectedObservables": [
+        "Question Q5 is displayed with text: \"What is the single biggest barrier to starting patients on an incretin-based therapy?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Insurance / prior authorization requirements\"",
+        "Option 2: \"Out-of-pocket cost to patients\"",
+        "Option 3: \"Product supply or availability\"",
+        "Option 4: \"Patient reluctance to use injectables\"",
+        "Option 5: \"Other\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/question:Q6",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q6",
+        "quote": "What percentage of your type 2 diabetes patients are currently on any incretin-based therapy?"
+      },
+      "requirement": "Q6. What percentage of your type 2 diabetes patients are currently on any incretin-based therapy?",
+      "contentHash": "sha256:c998fe6289729be7607263d2c9856642b00e93af27220534e4b16670f04039dc",
+      "preconditions": [],
+      "stimulus": "Reach question Q6",
+      "expectedObservables": [
+        "Question Q6 is displayed with text: \"What percentage of your type 2 diabetes patients are currently on any incretin-based therapy?\"",
+        "Answer input is of type number"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/question:Q7",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q7",
+        "quote": "How likely are you to recommend incretin-based therapy to a colleague managing type 2 diabetes?"
+      },
+      "requirement": "Q7. How likely are you to recommend incretin-based therapy to a colleague managing type 2 diabetes?",
+      "contentHash": "sha256:04de9824593bddfce9576d949fc824ecf2968d8a786fb5b4fd06b9d27f910b62",
+      "preconditions": [],
+      "stimulus": "Reach question Q7",
+      "expectedObservables": [
+        "Question Q7 is displayed with text: \"How likely are you to recommend incretin-based therapy to a colleague managing type 2 diabetes?\"",
+        "Answer input is of type rating"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/question:S1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S1",
+        "quote": "Which of the following best describes your primary clinical role?"
+      },
+      "requirement": "S1. Which of the following best describes your primary clinical role?",
+      "contentHash": "sha256:097ffc9930ad3f7ba9e2be19c7300e38960c923f8f3dc599087c0239c97d5797",
+      "preconditions": [],
+      "stimulus": "Reach question S1",
+      "expectedObservables": [
+        "Question S1 is displayed with text: \"Which of the following best describes your primary clinical role?\"",
+        "Answer input is of type radio",
+        "Option 1: \"Primary care physician\"",
+        "Option 2: \"Endocrinologist\"",
+        "Option 3: \"Nurse practitioner\"",
+        "Option 4: \"Physician assistant\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/question:S2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "S2",
+        "quote": "How many years have you been in clinical practice?"
+      },
+      "requirement": "S2. How many years have you been in clinical practice?",
+      "contentHash": "sha256:d84e4c86111df2c5cbf66aeee51b617cff389219a189cb44dbd40b8cdd556473",
+      "preconditions": [],
+      "stimulus": "Reach question S2",
+      "expectedObservables": [
+        "Question S2 is displayed with text: \"How many years have you been in clinical practice?\"",
+        "Answer input is of type number"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/rule:Q1:exclusive:99",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, option 99 (exclusive)"
+      },
+      "requirement": "Q1: 'NONE OF THE ABOVE' CANNOT BE COMBINED WITH OTHER SELECTIONS.",
+      "contentHash": "sha256:8151f8f552057e6ca5f72dced8dc46098f95de4a374a1292772d2b60f15ba309",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "Select option 99 (\"None of the above\") together with any other option at Q1",
+      "expectedObservables": [
+        "Option 99 (\"None of the above\") cannot be combined with other selections at Q1"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/rule:Q1:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, instruction",
+        "quote": "Select all that apply."
+      },
+      "requirement": "[INSTRUCTION: Select all that apply.]",
+      "contentHash": "sha256:2d8e4555565a8c9ebe364c99ba066b4c1fd70535743044af0f3e7be287ab94bb",
+      "preconditions": [
+        "Question Q1 is displayed"
+      ],
+      "stimulus": "View question Q1",
+      "expectedObservables": [
+        "Instruction shown: \"Select all that apply.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/rule:Q2:carry-forward",
+      "category": "rule",
+      "type": "carry-forward",
+      "sourceAnchor": {
+        "locator": "Q2, carried-forward options (from Q1)",
+        "quote": "PROGRAMMER: SHOW ONLY THE OPTIONS SELECTED AT Q1 (EXCLUDE 'NONE OF THE ABOVE')."
+      },
+      "requirement": "PROGRAMMER: SHOW ONLY THE OPTIONS SELECTED AT Q1 (EXCLUDE 'NONE OF THE ABOVE').",
+      "contentHash": "sha256:bdfbaede65d8bb9ae360f6314af05fb468b6e52ef7cb2fde41b9fec7826093f2",
+      "preconditions": [
+        "Q1 has been answered"
+      ],
+      "stimulus": "Reach Q2 after selecting options at Q1",
+      "expectedObservables": [
+        "Q2 offers only the options selected at Q1",
+        "Excluded from the carried-forward list: option 99 (\"None of the above\")"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/rule:Q3:piping:Q2",
+      "category": "rule",
+      "type": "piping",
+      "sourceAnchor": {
+        "locator": "Q3, piping {Q2}"
+      },
+      "requirement": "Q3: PIPE THE Q2 SELECTION INTO THE text.",
+      "contentHash": "sha256:2b5e523e58a56a56cffef6c3fe240b1e5173c1c8770149412d68be12f862f30d",
+      "preconditions": [
+        "Q2 has been answered"
+      ],
+      "stimulus": "Reach Q3 after answering Q2",
+      "expectedObservables": [
+        "The Q2 answer is piped into the Q3 text in place of {Q2}"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/rule:Q6:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q6, instruction",
+        "quote": "Enter a whole number between 0 and 100."
+      },
+      "requirement": "[INSTRUCTION: Enter a whole number between 0 and 100.]",
+      "contentHash": "sha256:3301780b0e563eb6706a8f6632195cb43b2ded599e6e45eef9aa605ff5562a9a",
+      "preconditions": [
+        "Question Q6 is displayed"
+      ],
+      "stimulus": "View question Q6",
+      "expectedObservables": [
+        "Instruction shown: \"Enter a whole number between 0 and 100.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/rule:Q6:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q6, range validation"
+      },
+      "requirement": "Q6: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 100.",
+      "contentHash": "sha256:018d31e74cbe957e3c145683e20991af959eeb6345dd63446d45ed633dab6b3e",
+      "preconditions": [
+        "Question Q6 is displayed"
+      ],
+      "stimulus": "Submit an answer at Q6 outside the documented bounds",
+      "expectedObservables": [
+        "Q6 accepts only whole numbers between 0 and 100",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/rule:Q7:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q7, instruction",
+        "quote": "0 = Not at all likely, 10 = Extremely likely"
+      },
+      "requirement": "[INSTRUCTION: 0 = Not at all likely, 10 = Extremely likely]",
+      "contentHash": "sha256:e0d68b7c68610c3fc0bee3045037d6f08e09127749c721604686bc7280a78774",
+      "preconditions": [
+        "Question Q7 is displayed"
+      ],
+      "stimulus": "View question Q7",
+      "expectedObservables": [
+        "Instruction shown: \"0 = Not at all likely, 10 = Extremely likely\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/rule:Q7:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q7, range validation"
+      },
+      "requirement": "Q7: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 10.",
+      "contentHash": "sha256:06b55c281152b12f300e1263af56f74b29b7226912ed6659fb932a4f14351a49",
+      "preconditions": [
+        "Question Q7 is displayed"
+      ],
+      "stimulus": "Submit an answer at Q7 outside the documented bounds",
+      "expectedObservables": [
+        "Q7 accepts only whole numbers between 0 and 10",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/rule:S2:instruction",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S2, instruction",
+        "quote": "Enter a whole number between 0 and 50."
+      },
+      "requirement": "[INSTRUCTION: Enter a whole number between 0 and 50.]",
+      "contentHash": "sha256:1f90ea3c18ea1b23e737a1aefdbae2315cf7a5657c416123c3ba08f6ea57fe45",
+      "preconditions": [
+        "Question S2 is displayed"
+      ],
+      "stimulus": "View question S2",
+      "expectedObservables": [
+        "Instruction shown: \"Enter a whole number between 0 and 50.\""
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/rule:S2:range",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "S2, range validation"
+      },
+      "requirement": "S2: ANSWER MUST BE A WHOLE NUMBER BETWEEN 0 AND 50.",
+      "contentHash": "sha256:d0690cd2b973efb937d49e629e08b52b544b9c094e60e616d1a3ad6d5eb0cb5f",
+      "preconditions": [
+        "Question S2 is displayed"
+      ],
+      "stimulus": "Submit an answer at S2 outside the documented bounds",
+      "expectedObservables": [
+        "S2 accepts only whole numbers between 0 and 50",
+        "A non-conforming answer is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/branch:Q1:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q1, default continue"
+      },
+      "requirement": "AFTER Q1, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO Q2.",
+      "contentHash": "sha256:19448b94d817b9474f9796a914046dcbcf43329893f4b1aef43f2ae697678bdb",
+      "preconditions": [
+        "Question Q1 is reached",
+        "Condition does not hold: Q1 INCLUDES 99 (NONE OF THE ABOVE)"
+      ],
+      "stimulus": "Answer Q1 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at Q2 immediately after Q1"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/branch:Q1:goto:Q5:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q1, rule 1",
+        "quote": "IF Q1 INCLUDES 99 (NONE OF THE ABOVE), SKIP TO Q5."
+      },
+      "requirement": "IF Q1 INCLUDES 99 (NONE OF THE ABOVE), SKIP TO Q5.",
+      "contentHash": "sha256:8ff0b9b81238cd721ae5d94936cb801c0763c0249a8dd9953d958864efb4687d",
+      "preconditions": [
+        "Question Q1 is reached"
+      ],
+      "stimulus": "Answer Q1 such that Q1 INCLUDES 99 (NONE OF THE ABOVE)",
+      "expectedObservables": [
+        "Navigation continues at Q5 immediately after Q1"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p003"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/branch:Q3:default",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q3, default continue"
+      },
+      "requirement": "AFTER Q3, IF NO SKIP/TERMINATE CONDITION APPLIES, CONTINUE TO Q4.",
+      "contentHash": "sha256:306eccebd751a36863ff8668a81152fca6a46d46b3b57b5537d3651b59fd07f0",
+      "preconditions": [
+        "Question Q3 is reached",
+        "Condition does not hold: FEWER THAN 3 OPTIONS SELECTED AT Q1"
+      ],
+      "stimulus": "Answer Q3 so that no skip or terminate condition applies",
+      "expectedObservables": [
+        "Navigation continues at Q4 immediately after Q3"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/branch:Q3:goto:Q5:taken",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q3, rule 1",
+        "quote": "IF FEWER THAN 3 OPTIONS SELECTED AT Q1, SKIP TO Q5."
+      },
+      "requirement": "IF FEWER THAN 3 OPTIONS SELECTED AT Q1, SKIP TO Q5.",
+      "contentHash": "sha256:969d34e487a4a29a0e541b6ad3336a59852ba09209dc64b6235f5ddb2566b0f5",
+      "preconditions": [
+        "Question Q3 is reached"
+      ],
+      "stimulus": "Answer Q3 such that FEWER THAN 3 OPTIONS SELECTED AT Q1",
+      "expectedObservables": [
+        "Navigation continues at Q5 immediately after Q3"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p002"
+        ]
+      }
+    },
+    {
+      "oracleId": "s3-multiselect-piping/terminal:complete",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Survey completion"
+      },
+      "requirement": "SURVEY REACHES THE NORMAL COMPLETION SCREEN.",
+      "contentHash": "sha256:4f3cf01f982a93503d371c54b26a213ff51323829cbc80303365b1855ae1486f",
+      "preconditions": [],
+      "stimulus": "Reach the end of the questionnaire without triggering any terminate rule",
+      "expectedObservables": [
+        "The normal completion screen is shown"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "p001",
+          "p002",
+          "p003"
+        ]
+      }
+    }
+  ],
+  "witnessPaths": [
+    {
+      "witnessPathId": "p001",
+      "answerVector": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": [
+          1,
+          2,
+          3
+        ],
+        "Q2": 1,
+        "Q3": 1,
+        "Q4": 1,
+        "Q5": 1,
+        "Q6": 0,
+        "Q7": 0
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "Q5",
+        "Q6",
+        "Q7"
+      ],
+      "terminalId": null
+    },
+    {
+      "witnessPathId": "p002",
+      "answerVector": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": [
+          1
+        ],
+        "Q2": 1,
+        "Q3": 1,
+        "Q5": 1,
+        "Q6": 0,
+        "Q7": 0
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q5",
+        "Q6",
+        "Q7"
+      ],
+      "terminalId": null
+    },
+    {
+      "witnessPathId": "p003",
+      "answerVector": {
+        "S1": 1,
+        "S2": 0,
+        "Q1": [
+          99
+        ],
+        "Q5": 1,
+        "Q6": 0,
+        "Q7": 0
+      },
+      "expectedVisitedSourceRefs": [
+        "S1",
+        "S2",
+        "Q1",
+        "Q5",
+        "Q6",
+        "Q7"
+      ],
+      "terminalId": null
+    }
+  ],
+  "seededDefects": []
+}

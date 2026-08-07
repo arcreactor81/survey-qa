@@ -1,0 +1,2 @@
+<p class="instruction">Enter a whole number between 0 and 500.</p>
+(rendered directly under the Q1 question heading)

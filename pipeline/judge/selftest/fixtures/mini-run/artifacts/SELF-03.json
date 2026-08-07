@@ -1,0 +1,355 @@
+{
+  "id": "SELF-03",
+  "tier": 2,
+  "class": "revisit-mutation",
+  "probing": "answer, go back, change, go forward",
+  "trace": [
+    {
+      "seq": 1,
+      "screen": "WELCOME",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": []
+    },
+    {
+      "seq": 2,
+      "screen": "Q1",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q1",
+        "clicked": [
+          {
+            "label": "Alpha",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 6,
+      "screen": "Q3",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": []
+    }
+  ],
+  "evidence": [
+    {
+      "step": 1,
+      "seq": 1,
+      "screen_id": "WELCOME",
+      "action_taken": null,
+      "question_text": "Welcome to the mini survey.",
+      "heads_html": [
+        "Welcome to the mini survey."
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "",
+          "visible": false,
+          "disabled": false
+        },
+        "next": {
+          "text": "Continue",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "0",
+          "text": "0% complete"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Welcome to the mini survey.",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 2,
+      "seq": 2,
+      "screen_id": "Q1",
+      "action_taken": null,
+      "question_text": "Which one?",
+      "heads_html": [
+        "Which one?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Alpha",
+          "value": "1",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Beta",
+          "value": "2",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 140,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "25",
+          "text": "25% complete"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Which one?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 3,
+      "seq": 3,
+      "screen_id": "Q2",
+      "action_taken": "reached the screen after Q1",
+      "question_text": "Follow-up for Alpha only.",
+      "heads_html": [
+        "Follow-up for Alpha only."
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "50",
+          "text": "50% complete"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Follow-up for Alpha only.",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 4,
+      "seq": 4,
+      "screen_id": "Q1",
+      "action_taken": "back hop",
+      "question_text": "Which one?",
+      "heads_html": [
+        "Which one?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Alpha",
+          "value": "1",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Beta",
+          "value": "2",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 140,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "25",
+          "text": "25% complete"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Which one?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 5,
+      "seq": 5,
+      "screen_id": "Q1",
+      "action_taken": "mutated Q1 to [\"Beta\"]",
+      "question_text": "Which one?",
+      "heads_html": [
+        "Which one?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Alpha",
+          "value": "1",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Beta",
+          "value": "2",
+          "name": "Q1",
+          "checked": true,
+          "disabled": false,
+          "visible": true,
+          "y": 140,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "25",
+          "text": "25% complete"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Which one?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 6,
+      "seq": 6,
+      "screen_id": "Q3",
+      "action_taken": null,
+      "question_text": "Last question.",
+      "heads_html": [
+        "Last question."
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "75",
+          "text": "75% complete"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Last question.",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    }
+  ],
+  "page_errors": []
+}

@@ -1,0 +1,36 @@
+{
+  "description": "Tampered evidence: stored bytes no longer match the signed content hash. EVIDENCE_HASH_MISMATCH; both artifacts rejected; evidence integrity gate fails; every claim that rested on them loses credit.",
+  "expectErrors": [
+    "EVIDENCE_HASH_MISMATCH"
+  ],
+  "forbidErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "assertions": [
+    {
+      "path": "integrity.gates.evidence",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "evidence.artifactsRejected.length",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "approx",
+      "value": 0.6923076923076923
+    },
+    {
+      "path": "metrics.evidenceCompleteness",
+      "op": "approx",
+      "value": 0.75
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "eq",
+      "value": 1
+    }
+  ]
+}

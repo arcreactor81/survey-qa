@@ -1,0 +1,23 @@
+{
+  "description": "Wrong document/build hashes: run and oracle describe different subjects. RUN_IDENTITY_MISMATCH; fail closed; quality scores suppressed.",
+  "expectErrors": [
+    "RUN_IDENTITY_MISMATCH"
+  ],
+  "forbidErrors": [],
+  "assertions": [
+    {
+      "path": "metrics",
+      "op": "null"
+    },
+    {
+      "path": "integrity.status",
+      "op": "eq",
+      "value": "invalid"
+    },
+    {
+      "path": "integrity.gates.identity",
+      "op": "eq",
+      "value": "failed"
+    }
+  ]
+}

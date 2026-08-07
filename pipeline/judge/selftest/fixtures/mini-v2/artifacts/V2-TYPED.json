@@ -1,0 +1,125 @@
+{
+  "id": "V2-TYPED",
+  "tier": 2,
+  "class": "exploration",
+  "trace": [
+    {
+      "seq": 1,
+      "screen": "Q9",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q9",
+        "clicked": [],
+        "typed": {
+          "ok": true,
+          "id": "NOT_A_REAL_CONTROL",
+          "applied": 8,
+          "requested": 8,
+          "maxlength": "500"
+        },
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 2,
+      "screen": "D1"
+    }
+  ],
+  "evidence": [
+    {
+      "step": 1,
+      "seq": 1,
+      "screen_id": "Q9",
+      "action_taken": null,
+      "question_text": "Q9?",
+      "heads_html": [
+        "Q9?"
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [
+        {
+          "id": "Q9_txt",
+          "name": "Q9",
+          "tag": "textarea",
+          "label": "Your answer",
+          "value": "",
+          "maxlength": "500",
+          "visible": true,
+          "disabled": false
+        }
+      ],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "90",
+          "text": "90%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Q9?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 2,
+      "seq": 2,
+      "screen_id": "D1",
+      "action_taken": null,
+      "question_text": "D1 body",
+      "heads_html": [
+        "D1 body"
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "95",
+          "text": "95%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "D1 body",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    }
+  ],
+  "page_errors": []
+}

@@ -1,0 +1,605 @@
+{
+  "generatedAt": "2026-08-01T13:00:00Z",
+  "matcherVersion": "survey-qa-scorer-matcher/1.1.0",
+  "defectMatcherVersion": "survey-qa-scorer-defect-matcher/1.1.0",
+  "evidencePolicyVersion": "survey-qa-scorer-evidence-policy/1.1.0",
+  "pricingVersion": "fixture-pricing/2026-08-01",
+  "clean": {
+    "subject": {
+      "runId": "RUN-INT-S1-CLEAN",
+      "oracleRecordId": "s1-skip.clean",
+      "surveyId": "s1-skip",
+      "variantKind": "clean",
+      "documentHash": "sha256:e9a40074cb3eb5ff7823a33110e1957a5096b62bea0a07cdda66c0b330da9f70",
+      "buildId": "s1-skip/index.html"
+    },
+    "integrity": {
+      "status": "valid",
+      "evaluationInvalid": false,
+      "gates": {
+        "parse": "passed",
+        "schema": "passed",
+        "attestation": "passed",
+        "identity": "passed",
+        "oracleIsolation": "passed",
+        "structure": "passed",
+        "evidence": "passed",
+        "resources": "passed",
+        "cost": "passed"
+      }
+    },
+    "errors": [],
+    "warnings": [],
+    "metrics": {
+      "extractionRecall": 0.9444444444444444,
+      "extractionPrecision": 0.9444444444444444,
+      "reachableCoverage": 0.9444444444444444,
+      "reachableObligations": 18,
+      "reachableExercisedVerified": 17,
+      "seededDefectRecall": null,
+      "seededDefectPrecision": null,
+      "seededDefectsTotal": 0,
+      "assertedDefectFindings": 0,
+      "redundantDefectFindings": 0,
+      "defectPrecisionDenominator": 0,
+      "evidenceCompleteness": 1,
+      "reportCompleteness": 1,
+      "verifiedCoverageUnits": 17,
+      "costPerVerifiedCoverageUnit": 0.03946470588235294,
+      "costCohort": "partial",
+      "repeatability": null
+    },
+    "completeness": {
+      "reportComplete": true,
+      "reportCompleteness": 1,
+      "unaccountedItemIds": [],
+      "testComplete": false,
+      "oracleObligations": 18,
+      "oracleObligationsAccounted": 17,
+      "unaccountedOracleIds": [
+        "s1-skip/branch:Q2:default"
+      ],
+      "cohort": "partial"
+    },
+    "matchedScores": [
+      {
+        "itemId": "it-completion",
+        "oracleId": "s1-skip/terminal:complete",
+        "score": 0.642129
+      },
+      {
+        "itemId": "it-q1-caseload",
+        "oracleId": "s1-skip/question:Q1",
+        "score": 0.783024
+      },
+      {
+        "itemId": "it-q1-instruction",
+        "oracleId": "s1-skip/rule:Q1:instruction",
+        "score": 0.832983
+      },
+      {
+        "itemId": "it-q1-range",
+        "oracleId": "s1-skip/rule:Q1:range",
+        "score": 0.581747
+      },
+      {
+        "itemId": "it-q2-prescriber",
+        "oracleId": "s1-skip/question:Q2",
+        "score": 0.802787
+      },
+      {
+        "itemId": "it-q2-skip",
+        "oracleId": "s1-skip/branch:Q2:goto:Q5:taken",
+        "score": 0.657177
+      },
+      {
+        "itemId": "it-q3-instruction",
+        "oracleId": "s1-skip/rule:Q3:instruction",
+        "score": 0.756352
+      },
+      {
+        "itemId": "it-q3-options",
+        "oracleId": "s1-skip/question:Q3",
+        "score": 0.802994
+      },
+      {
+        "itemId": "it-q4-satisfaction",
+        "oracleId": "s1-skip/question:Q4",
+        "score": 0.854965
+      },
+      {
+        "itemId": "it-q5-barrier",
+        "oracleId": "s1-skip/question:Q5",
+        "score": 0.821052
+      },
+      {
+        "itemId": "it-q6-instruction",
+        "oracleId": "s1-skip/rule:Q6:instruction",
+        "score": 0.809855
+      },
+      {
+        "itemId": "it-q6-nps",
+        "oracleId": "s1-skip/question:Q6",
+        "score": 0.867974
+      },
+      {
+        "itemId": "it-q6-range",
+        "oracleId": "s1-skip/rule:Q6:range",
+        "score": 0.580237
+      },
+      {
+        "itemId": "it-s1-role",
+        "oracleId": "s1-skip/question:S1",
+        "score": 0.746862
+      },
+      {
+        "itemId": "it-s2-instruction",
+        "oracleId": "s1-skip/rule:S2:instruction",
+        "score": 0.831517
+      },
+      {
+        "itemId": "it-s2-range",
+        "oracleId": "s1-skip/rule:S2:range",
+        "score": 0.580237
+      },
+      {
+        "itemId": "it-s2-tenure",
+        "oracleId": "s1-skip/question:S2",
+        "score": 0.785861
+      }
+    ],
+    "diagnostics": {
+      "unmatchedTesterItems": [
+        {
+          "itemId": "it-q2-continue",
+          "type": "branch-outcome",
+          "eligibilityThreshold": 0.55,
+          "topCandidates": [
+            {
+              "oracleId": "s1-skip/branch:Q2:default",
+              "score": 0.448316,
+              "sameType": true
+            },
+            {
+              "oracleId": "s1-skip/branch:Q2:goto:Q5:taken",
+              "score": 0.372812,
+              "sameType": true
+            }
+          ],
+          "shortfall": 0.101684
+        }
+      ],
+      "unmatchedOracleObligations": [
+        {
+          "oracleId": "s1-skip/branch:Q2:default",
+          "type": "branch-outcome",
+          "oracleHasQuote": false,
+          "topTesterItems": [
+            {
+              "itemId": "it-q2-continue",
+              "score": 0.448316
+            },
+            {
+              "itemId": "it-q2-skip",
+              "score": 0.269717
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "flawed": {
+    "subject": {
+      "runId": "RUN-INT-S1-FLAWED",
+      "oracleRecordId": "s1-skip.flawed",
+      "surveyId": "s1-skip",
+      "variantKind": "flawed",
+      "documentHash": "sha256:e9a40074cb3eb5ff7823a33110e1957a5096b62bea0a07cdda66c0b330da9f70",
+      "buildId": "s1-skip/flawed.html"
+    },
+    "integrity": {
+      "status": "valid",
+      "evaluationInvalid": false,
+      "gates": {
+        "parse": "passed",
+        "schema": "passed",
+        "attestation": "passed",
+        "identity": "passed",
+        "oracleIsolation": "passed",
+        "structure": "passed",
+        "evidence": "passed",
+        "resources": "passed",
+        "cost": "passed"
+      }
+    },
+    "errors": [],
+    "warnings": [],
+    "metrics": {
+      "extractionRecall": 0.9444444444444444,
+      "extractionPrecision": 0.9444444444444444,
+      "reachableCoverage": 0.9444444444444444,
+      "reachableObligations": 18,
+      "reachableExercisedVerified": 17,
+      "seededDefectRecall": 0.3333333333333333,
+      "seededDefectPrecision": 0.3333333333333333,
+      "seededDefectsTotal": 3,
+      "assertedDefectFindings": 3,
+      "redundantDefectFindings": 0,
+      "defectPrecisionDenominator": 3,
+      "evidenceCompleteness": 1,
+      "reportCompleteness": 1,
+      "verifiedCoverageUnits": 17,
+      "costPerVerifiedCoverageUnit": 0.03946470588235294,
+      "costCohort": "partial",
+      "repeatability": null
+    },
+    "completeness": {
+      "reportComplete": true,
+      "reportCompleteness": 1,
+      "unaccountedItemIds": [],
+      "testComplete": false,
+      "oracleObligations": 18,
+      "oracleObligationsAccounted": 17,
+      "unaccountedOracleIds": [
+        "s1-skip/branch:Q2:default"
+      ],
+      "cohort": "partial"
+    },
+    "defects": {
+      "profile": {
+        "defectMatcherVersion": "survey-qa-scorer-defect-matcher/1.1.0",
+        "ambiguityRule": "alternate-global-assignment-within-margin",
+        "duplicatePolicy": "one-true-positive-rest-redundant"
+      },
+      "seededTotal": 3,
+      "asserted": 3,
+      "precisionDenominator": 3,
+      "truePositives": [
+        {
+          "findingId": "F-03",
+          "defectId": "S1-E03",
+          "score": 0.507172
+        }
+      ],
+      "falsePositives": [
+        "F-01",
+        "F-02"
+      ],
+      "redundant": [],
+      "unsupported": [],
+      "falseNegatives": [
+        "S1-E01",
+        "S1-E02"
+      ],
+      "ambiguous": []
+    },
+    "diagnostics": {
+      "unmatchedTesterItems": [
+        {
+          "itemId": "it-q2-continue",
+          "type": "branch-outcome",
+          "eligibilityThreshold": 0.55,
+          "topCandidates": [
+            {
+              "oracleId": "s1-skip/branch:Q2:default",
+              "score": 0.448316,
+              "sameType": true
+            },
+            {
+              "oracleId": "s1-skip/branch:Q2:goto:Q5:taken",
+              "score": 0.372812,
+              "sameType": true
+            }
+          ],
+          "shortfall": 0.101684
+        }
+      ],
+      "unmatchedOracleObligations": [
+        {
+          "oracleId": "s1-skip/branch:Q2:default",
+          "type": "branch-outcome",
+          "oracleHasQuote": false,
+          "topTesterItems": [
+            {
+              "itemId": "it-q2-continue",
+              "score": 0.448316
+            },
+            {
+              "itemId": "it-q2-skip",
+              "score": 0.269717
+            }
+          ]
+        }
+      ]
+    },
+    "newlyReachable": {
+      "unreachableObligations": [],
+      "affected": [
+        {
+          "oracleId": "s1-skip/branch:Q2:goto:Q5:taken",
+          "reachability": "reachable",
+          "testerItemId": "it-q2-skip",
+          "coverageStatus": "exercised",
+          "verdict": "fail"
+        },
+        {
+          "oracleId": "s1-skip/question:Q3",
+          "reachability": "reachable",
+          "testerItemId": "it-q3-options",
+          "coverageStatus": "exercised",
+          "verdict": "fail"
+        },
+        {
+          "oracleId": "s1-skip/rule:Q3:instruction",
+          "reachability": "reachable",
+          "testerItemId": "it-q3-instruction",
+          "coverageStatus": "exercised",
+          "verdict": "fail"
+        }
+      ],
+      "ok": true
+    }
+  },
+  "couplingCheck": {
+    "profile": {
+      "defectMatcherVersion": "survey-qa-scorer-defect-matcher/1.1.0",
+      "weights": {
+        "expected": 0.5,
+        "observed": 0.5
+      },
+      "minSideSimilarity": 0.3,
+      "eligibilityThreshold": 0.45,
+      "ambiguityMargin": 0.05,
+      "ambiguityRule": "alternate-global-assignment-within-margin",
+      "duplicatePolicy": "one-true-positive-rest-redundant",
+      "assignment": "hungarian-max-weight-one-to-one",
+      "approvedCleanTargetCorrections": []
+    },
+    "perDefect": [
+      {
+        "defectId": "S1-E01",
+        "category": "wrong-skip-target",
+        "matched": false,
+        "creditedFindingId": null,
+        "itemMappingReachesAffectedObligation": true,
+        "intendedFinding": {
+          "findingId": "F-01",
+          "expectedSim": 0.234589,
+          "observedSim": 0.201266,
+          "combined": 0.217927,
+          "minSideSimilarity": 0.3,
+          "eligibilityThreshold": 0.45,
+          "clearsSideFloor": false,
+          "clearsThreshold": false,
+          "sideShortfall": {
+            "expected": 0.065411,
+            "observed": 0.098734
+          },
+          "thresholdShortfall": 0.232073
+        },
+        "oracleExpected": "IF Q2=2 (NO), SKIP TO Q5.",
+        "oracleObserved": "IF Q2=2 (NO), SKIP TO Q6."
+      },
+      {
+        "defectId": "S1-E02",
+        "category": "missing-option",
+        "matched": false,
+        "creditedFindingId": null,
+        "itemMappingReachesAffectedObligation": true,
+        "intendedFinding": {
+          "findingId": "F-02",
+          "expectedSim": 0.282653,
+          "observedSim": 0.168831,
+          "combined": 0.225742,
+          "minSideSimilarity": 0.3,
+          "eligibilityThreshold": 0.45,
+          "clearsSideFloor": false,
+          "clearsThreshold": false,
+          "sideShortfall": {
+            "expected": 0.017347,
+            "observed": 0.131169
+          },
+          "thresholdShortfall": 0.224258
+        },
+        "oracleExpected": "Q3: Option 5: \"BIMZELX\"",
+        "oracleObserved": "BIMZELX is listed in the docx but absent from the Q3 option list on the site."
+      },
+      {
+        "defectId": "S1-E03",
+        "category": "missing-instruction",
+        "matched": true,
+        "creditedFindingId": "F-03",
+        "itemMappingReachesAffectedObligation": true,
+        "intendedFinding": {
+          "findingId": "F-03",
+          "expectedSim": 0.577778,
+          "observedSim": 0.436567,
+          "combined": 0.507173,
+          "minSideSimilarity": 0.3,
+          "eligibilityThreshold": 0.45,
+          "clearsSideFloor": true,
+          "clearsThreshold": true,
+          "sideShortfall": {
+            "expected": -0.277778,
+            "observed": -0.136567
+          },
+          "thresholdShortfall": -0.057173
+        },
+        "oracleExpected": "[INSTRUCTION: Select all that apply.]",
+        "oracleObserved": "The docx instruction 'Select all that apply.' is not shown on the site."
+      }
+    ],
+    "allPairs": [
+      {
+        "defectId": "S1-E01",
+        "findingId": "F-01",
+        "intendedPair": true,
+        "expectedSim": 0.234589,
+        "observedSim": 0.201266,
+        "combined": 0.217927,
+        "clearsSideFloor": false,
+        "clearsThreshold": false
+      },
+      {
+        "defectId": "S1-E01",
+        "findingId": "F-02",
+        "intendedPair": false,
+        "expectedSim": 0.091837,
+        "observedSim": 0.084416,
+        "combined": 0.088126,
+        "clearsSideFloor": false,
+        "clearsThreshold": false
+      },
+      {
+        "defectId": "S1-E01",
+        "findingId": "F-03",
+        "intendedPair": false,
+        "expectedSim": 0.1,
+        "observedSim": 0.117225,
+        "combined": 0.108613,
+        "clearsSideFloor": false,
+        "clearsThreshold": false
+      },
+      {
+        "defectId": "S1-E02",
+        "findingId": "F-01",
+        "intendedPair": false,
+        "expectedSim": 0.082192,
+        "observedSim": 0.124836,
+        "combined": 0.103514,
+        "clearsSideFloor": false,
+        "clearsThreshold": false
+      },
+      {
+        "defectId": "S1-E02",
+        "findingId": "F-02",
+        "intendedPair": true,
+        "expectedSim": 0.282653,
+        "observedSim": 0.168831,
+        "combined": 0.225742,
+        "clearsSideFloor": false,
+        "clearsThreshold": false
+      },
+      {
+        "defectId": "S1-E02",
+        "findingId": "F-03",
+        "intendedPair": false,
+        "expectedSim": 0.150758,
+        "observedSim": 0.203375,
+        "combined": 0.177067,
+        "clearsSideFloor": false,
+        "clearsThreshold": false
+      },
+      {
+        "defectId": "S1-E03",
+        "findingId": "F-01",
+        "intendedPair": false,
+        "expectedSim": 0.10274,
+        "observedSim": 0.152386,
+        "combined": 0.127563,
+        "clearsSideFloor": false,
+        "clearsThreshold": false
+      },
+      {
+        "defectId": "S1-E03",
+        "findingId": "F-02",
+        "intendedPair": false,
+        "expectedSim": 0.132653,
+        "observedSim": 0.112648,
+        "combined": 0.12265,
+        "clearsSideFloor": false,
+        "clearsThreshold": false
+      },
+      {
+        "defectId": "S1-E03",
+        "findingId": "F-03",
+        "intendedPair": true,
+        "expectedSim": 0.577778,
+        "observedSim": 0.436567,
+        "combined": 0.507173,
+        "clearsSideFloor": true,
+        "clearsThreshold": true
+      }
+    ]
+  },
+  "sensitivityProbe": [
+    {
+      "defectId": "S1-E01",
+      "label": "as-shipped agent prose",
+      "expectedSim": 0.234589,
+      "observedSim": 0.201266,
+      "combined": 0.217927,
+      "clears": false
+    },
+    {
+      "defectId": "S1-E01",
+      "label": "terse spec register",
+      "expectedSim": 0.710317,
+      "observedSim": 0.75,
+      "combined": 0.730158,
+      "clears": true
+    },
+    {
+      "defectId": "S1-E02",
+      "label": "as-shipped agent prose",
+      "expectedSim": 0.282653,
+      "observedSim": 0.168831,
+      "combined": 0.225742,
+      "clears": false
+    },
+    {
+      "defectId": "S1-E02",
+      "label": "terse spec register",
+      "expectedSim": 1,
+      "observedSim": 0.635526,
+      "combined": 0.817763,
+      "clears": true
+    },
+    {
+      "defectId": "S1-E03",
+      "label": "as-shipped agent prose",
+      "expectedSim": 0.577778,
+      "observedSim": 0.436567,
+      "combined": 0.507173,
+      "clears": true
+    }
+  ],
+  "determinism": {
+    "clean": true,
+    "flawed": true
+  },
+  "failures": [
+    {
+      "assertion": "clean: extractionRecall == 1",
+      "detail": "got 0.9444444444444444 (17/18); unmatched oracle: s1-skip/branch:Q2:default"
+    },
+    {
+      "assertion": "clean: extractionPrecision == 1",
+      "detail": "got 0.9444444444444444; unmatched tester items: it-q2-continue"
+    },
+    {
+      "assertion": "clean: reachableCoverage == 1",
+      "detail": "got 0.9444444444444444 (17/18)"
+    },
+    {
+      "assertion": "clean: testComplete",
+      "detail": "unaccounted oracle: s1-skip/branch:Q2:default"
+    },
+    {
+      "assertion": "flawed: seededDefectRecall == 3/3",
+      "detail": "got 0.3333333333333333; missed: S1-E01, S1-E02"
+    },
+    {
+      "assertion": "flawed: no defect false positives",
+      "detail": "got [\"F-01\",\"F-02\"]"
+    },
+    {
+      "assertion": "flawed: seededDefectPrecision == 1",
+      "detail": "got 0.3333333333333333"
+    },
+    {
+      "assertion": "flawed: testComplete",
+      "detail": "unaccounted oracle: s1-skip/branch:Q2:default"
+    }
+  ]
+}

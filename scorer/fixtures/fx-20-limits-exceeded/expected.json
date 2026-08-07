@@ -1,0 +1,48 @@
+{
+  "description": "Enforced-limit violations (defect 8): actions per attempt exceed maxStepsPerAttempt and two items were attempted more often than maxAttemptsPerItem. Both limits are now recomputed from attested telemetry: limitsOk false and the cost gate fails.",
+  "expectErrors": [
+    "RESOURCE_LIMIT_EXCEEDED"
+  ],
+  "forbidErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "expectErrorMessages": [
+    "maxStepsPerAttempt",
+    "maxAttemptsPerItem"
+  ],
+  "assertions": [
+    {
+      "path": "resources.limitsOk",
+      "op": "false"
+    },
+    {
+      "path": "integrity.gates.cost",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "integrity.gates.resources",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "resources.recomputed.maxStepsInAnyAttempt",
+      "op": "eq",
+      "value": 4
+    },
+    {
+      "path": "resources.recomputed.maxAttemptsForAnyItem",
+      "op": "eq",
+      "value": 2
+    },
+    {
+      "path": "resources.costKnown",
+      "op": "true"
+    },
+    {
+      "path": "metrics.costPerVerifiedCoverageUnit",
+      "op": "approx",
+      "value": 0.07692307692307693
+    }
+  ]
+}

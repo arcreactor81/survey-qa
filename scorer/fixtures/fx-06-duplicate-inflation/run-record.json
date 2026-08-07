@@ -1,0 +1,1295 @@
+{
+  "schemaVersion": "1.0.0",
+  "run": {
+    "runId": "RUN-FX-0001",
+    "target": {
+      "url": "https://target.fixture.local/s/entry",
+      "environment": "fixture",
+      "buildId": "BUILD-FLAWED-1",
+      "buildHash": "sha256:855f9ee0a236b0650af4bc8687469d12e49707ad65011dc508588823b303c50d"
+    },
+    "documentHash": "sha256:9ba886bc726a577d54588a6f8f5a244ed867137e4271e59e529bd1cf869ab346",
+    "contractHash": "sha256:051176a34ca7cb20fb3f5d0fc57f283b3d845fecfe7790cacb3718c090c84579",
+    "configuration": {
+      "profileId": "standard-v1",
+      "configurationHash": "sha256:3224b4ccf56b7f7b51c0bc4712b2721657c30b97cac16f889262ab59b0bd82c2",
+      "parameters": {
+        "device": "desktop",
+        "locale": "en-US",
+        "syntheticIdentity": "synthetic-01"
+      }
+    },
+    "timestamps": {
+      "createdAt": "2026-08-01T09:59:00Z",
+      "startedAt": "2026-08-01T10:00:00Z",
+      "endedAt": "2026-08-01T10:30:00Z"
+    }
+  },
+  "contract": {
+    "extraction": {
+      "method": "llm",
+      "extractorVersion": "fixture-extractor/0.3.0",
+      "modelCallRefs": [
+        "MC-1"
+      ],
+      "extractedAt": "2026-08-01T10:00:28Z"
+    },
+    "assumptions": [
+      "Locale en-US assumed for all rendered text"
+    ],
+    "items": [
+      {
+        "itemId": "T-01",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q1",
+          "quote": "Q1. What is your age?",
+          "aliases": [
+            "age question"
+          ]
+        },
+        "requirement": "Q1 age question is shown with a numeric entry field",
+        "preconditions": [],
+        "stimulus": "Open the survey and observe Q1",
+        "expectedObservable": "Q1 rendered with a numeric entry field",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-02",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "Q1, rule 1",
+          "quote": "Answer must be between 18 and 99.",
+          "aliases": [
+            "Q1 range rule"
+          ]
+        },
+        "requirement": "Q1 answer must be between 18 and 99",
+        "preconditions": [],
+        "stimulus": "Enter 5 at Q1",
+        "expectedObservable": "Value outside 18-99 is rejected with a validation message",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-03",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q2",
+          "quote": "Q2. Have you used Product X in the past month? (Yes/No)",
+          "aliases": [
+            "product usage question"
+          ]
+        },
+        "requirement": "Q2 product usage question is shown with Yes and No options",
+        "preconditions": [],
+        "stimulus": "Advance from Q1 with a valid age",
+        "expectedObservable": "Q2 rendered with Yes/No options",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-04",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "Q2, skip",
+          "quote": "IF Q2=No SKIP TO Q5.",
+          "aliases": [
+            "No branch"
+          ]
+        },
+        "requirement": "Answering No to Q2 skips directly to Q5",
+        "preconditions": [
+          "Q2 answered No"
+        ],
+        "stimulus": "Answer No at Q2",
+        "expectedObservable": "Q5 shown next; Q3 and Q4 never shown",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-05",
+        "type": "branch-outcome",
+        "sourceAnchor": {
+          "locator": "Q2, continue",
+          "quote": "IF Q2=Yes CONTINUE TO Q3.",
+          "aliases": [
+            "Yes branch"
+          ]
+        },
+        "requirement": "Answering Yes to Q2 continues to Q3",
+        "preconditions": [
+          "Q2 answered Yes"
+        ],
+        "stimulus": "Answer Yes at Q2",
+        "expectedObservable": "Q3 shown next",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-06",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q3",
+          "quote": "Q3. How often do you use Product X? (Daily/Weekly/Never)",
+          "aliases": [
+            "frequency question"
+          ]
+        },
+        "requirement": "Q3 frequency question is shown with Daily, Weekly and Never options",
+        "preconditions": [
+          "Q2 answered Yes"
+        ],
+        "stimulus": "Answer Yes at Q2 and advance",
+        "expectedObservable": "Q3 rendered with Daily/Weekly/Never options",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-07",
+        "type": "terminal",
+        "sourceAnchor": {
+          "locator": "Q3, terminate",
+          "quote": "TERMINATE IF Q3=Never.",
+          "aliases": [
+            "screen-out"
+          ]
+        },
+        "requirement": "Answering Never to Q3 ends the survey with a screen-out",
+        "preconditions": [
+          "Q2 answered Yes"
+        ],
+        "stimulus": "Answer Never at Q3",
+        "expectedObservable": "Screen-out terminal page shown",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-08",
+        "type": "display-skip",
+        "sourceAnchor": {
+          "locator": "Q4, display",
+          "quote": "SHOW Q4 ONLY IF Q3 <> Never.",
+          "aliases": [
+            "Q4 display rule"
+          ]
+        },
+        "requirement": "Q4 is shown only when Q3 is not Never",
+        "preconditions": [
+          "Q2 answered Yes"
+        ],
+        "stimulus": "Answer Weekly at Q3 and advance",
+        "expectedObservable": "Q4 shown after a non-Never Q3 answer",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-09",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q4",
+          "quote": "Q4. How satisfied are you with Product X?",
+          "aliases": [
+            "satisfaction question"
+          ]
+        },
+        "requirement": "Q4 satisfaction question is shown with a rating entry",
+        "preconditions": [
+          "Q3 answered Daily or Weekly"
+        ],
+        "stimulus": "Advance past Q3 with a non-Never answer",
+        "expectedObservable": "Q4 rendered with a rating entry",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-10",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "Q4, rule 1",
+          "quote": "Enter a whole number between 1 and 5.",
+          "aliases": [
+            "Q4 rating rule"
+          ]
+        },
+        "requirement": "Q4 answer must be a whole number between 1 and 5",
+        "preconditions": [
+          "Q4 shown"
+        ],
+        "stimulus": "Enter an out-of-range rating at Q4",
+        "expectedObservable": "Value outside 1-5 is rejected at Q4",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-11",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q5",
+          "quote": "Q5. How likely are you to recommend Product X to a friend?",
+          "aliases": [
+            "recommendation question"
+          ]
+        },
+        "requirement": "Q5 recommendation question is shown with a rating entry",
+        "preconditions": [],
+        "stimulus": "Reach Q5 on either branch",
+        "expectedObservable": "Q5 rendered with a rating entry",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-12",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "Q5, rule 1",
+          "quote": "Enter a whole number between 1 and 5.",
+          "aliases": [
+            "Q5 rating rule"
+          ]
+        },
+        "requirement": "Q5 answer must be a whole number between 1 and 5",
+        "preconditions": [
+          "Q5 shown"
+        ],
+        "stimulus": "Enter an out-of-range rating at Q5",
+        "expectedObservable": "Value outside 1-5 is rejected at Q5",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-13",
+        "type": "piping",
+        "sourceAnchor": {
+          "locator": "Q4, piping",
+          "quote": "Q4 text shows the Q3 frequency answer.",
+          "aliases": [
+            "frequency piping"
+          ]
+        },
+        "requirement": "Q4 question text pipes in the frequency selected at Q3",
+        "preconditions": [
+          "Q4 shown"
+        ],
+        "stimulus": "Answer Weekly at Q3 and inspect the Q4 text",
+        "expectedObservable": "Q4 text contains the selected Q3 frequency",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-14",
+        "type": "validation-rule",
+        "sourceAnchor": {
+          "locator": "Q6, rule 1",
+          "quote": "Percentages must total 100.",
+          "aliases": [
+            "Q6 allocation rule"
+          ]
+        },
+        "requirement": "Q6 allocation answers must total 100 percent",
+        "preconditions": [
+          "Q6 shown"
+        ],
+        "stimulus": "Enter allocation values at Q6",
+        "expectedObservable": "Allocation not totalling 100 is rejected at Q6",
+        "variants": [],
+        "confidence": 0.9
+      },
+      {
+        "itemId": "T-99",
+        "type": "question",
+        "sourceAnchor": {
+          "locator": "Q3",
+          "quote": "Q3. How often do you use Product X? (Daily/Weekly/Never)",
+          "aliases": [
+            "frequency question"
+          ]
+        },
+        "requirement": "Q3 frequency question is shown with Daily, Weekly and Never options",
+        "preconditions": [
+          "Q2 answered Yes"
+        ],
+        "stimulus": "Answer Yes at Q2 and advance",
+        "expectedObservable": "Q3 rendered with Daily/Weekly/Never options",
+        "variants": [],
+        "confidence": 0.9
+      }
+    ]
+  },
+  "attempts": [
+    {
+      "attemptId": "AT-A",
+      "pathId": "P-A",
+      "attemptNumber": 1,
+      "retryOfAttemptId": null,
+      "retryReason": null,
+      "targetItemIds": [
+        "T-01",
+        "T-02",
+        "T-03",
+        "T-05",
+        "T-06",
+        "T-08",
+        "T-09",
+        "T-10",
+        "T-11",
+        "T-12",
+        "T-13"
+      ],
+      "syntheticInputs": {
+        "Q1_probe": 5,
+        "Q1": 25,
+        "Q2": "Yes",
+        "Q3": "Weekly",
+        "Q4": 4,
+        "Q5": 5
+      },
+      "startingState": {
+        "resetStrategy": "fresh-session",
+        "expectedUrl": "https://target.fixture.local/s/entry",
+        "description": "Fresh session at survey entry"
+      },
+      "plannedTransitions": [
+        "Q1 to Q2",
+        "Q2 to Q3",
+        "Q3 to Q4",
+        "Q4 to Q5",
+        "Q5 to complete"
+      ],
+      "timestamps": {
+        "startedAt": "2026-08-01T10:01:00Z",
+        "endedAt": "2026-08-01T10:10:00Z"
+      },
+      "actions": [
+        {
+          "actionId": "ACT-A1",
+          "sequence": 1,
+          "occurredAt": "2026-08-01T10:01:10Z",
+          "operation": "fill",
+          "target": "Q1 age input",
+          "parameters": {
+            "value": 5
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": null,
+          "afterStateId": "ST-A1",
+          "evidenceRefs": [
+            "E-AQ1",
+            "E-D2"
+          ]
+        },
+        {
+          "actionId": "ACT-A2",
+          "sequence": 2,
+          "occurredAt": "2026-08-01T10:02:00Z",
+          "operation": "fill-and-advance",
+          "target": "Q1 age input",
+          "parameters": {
+            "value": 25
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-A1",
+          "afterStateId": "ST-A2",
+          "evidenceRefs": [
+            "E-AQ2"
+          ]
+        },
+        {
+          "actionId": "ACT-A3",
+          "sequence": 3,
+          "occurredAt": "2026-08-01T10:04:00Z",
+          "operation": "answer-sequence",
+          "target": "Q2/Q3/Q4 inputs",
+          "parameters": {
+            "Q2": "Yes",
+            "Q3": "Weekly",
+            "Q4": 4
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-A2",
+          "afterStateId": "ST-A3",
+          "evidenceRefs": [
+            "E-AQ3",
+            "E-AQ4",
+            "E-AQ4V",
+            "E-A2"
+          ]
+        },
+        {
+          "actionId": "ACT-A4",
+          "sequence": 4,
+          "occurredAt": "2026-08-01T10:09:00Z",
+          "operation": "answer-and-submit",
+          "target": "Q5 input",
+          "parameters": {
+            "Q5": 5
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-A3",
+          "afterStateId": "ST-A3",
+          "evidenceRefs": [
+            "E-A1",
+            "E-AQ5V"
+          ]
+        }
+      ],
+      "stateFingerprints": [
+        {
+          "stateId": "ST-A1",
+          "sequence": 1,
+          "capturedAt": "2026-08-01T10:01:20Z",
+          "fingerprintHash": "sha256:18e2872966f81cea483bdabc388da02327ff6ef2ed65abb306ba05120de00a8d",
+          "normalizedUrl": "https://target.fixture.local/s/entry#q1",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-A2",
+          "sequence": 2,
+          "capturedAt": "2026-08-01T10:02:10Z",
+          "fingerprintHash": "sha256:f0b7150fb481ee3edad7d58bf23bb21f869546123595cbdd658c26877a12f430",
+          "normalizedUrl": "https://target.fixture.local/s/entry#q2",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-A3",
+          "sequence": 3,
+          "capturedAt": "2026-08-01T10:04:10Z",
+          "fingerprintHash": "sha256:ba763cc98c727c330db944d7b968682b26780d6609364bd0f868324e62bcfe0a",
+          "normalizedUrl": "https://target.fixture.local/s/entry#q5",
+          "evidenceRefs": []
+        }
+      ],
+      "stop": {
+        "reason": "path-complete",
+        "detail": "Reached completion terminal with all targeted items witnessed",
+        "lastValidStateId": "ST-A3"
+      }
+    },
+    {
+      "attemptId": "AT-B",
+      "pathId": "P-B",
+      "attemptNumber": 1,
+      "retryOfAttemptId": null,
+      "retryReason": null,
+      "targetItemIds": [
+        "T-04",
+        "T-11",
+        "T-12"
+      ],
+      "syntheticInputs": {
+        "Q1": 30,
+        "Q2": "No",
+        "Q5": 3
+      },
+      "startingState": {
+        "resetStrategy": "fresh-session",
+        "expectedUrl": "https://target.fixture.local/s/entry",
+        "description": "Fresh session at survey entry"
+      },
+      "plannedTransitions": [
+        "Q1 to Q2",
+        "Q2 to Q5",
+        "Q5 to complete"
+      ],
+      "timestamps": {
+        "startedAt": "2026-08-01T10:11:00Z",
+        "endedAt": "2026-08-01T10:15:00Z"
+      },
+      "actions": [
+        {
+          "actionId": "ACT-B1",
+          "sequence": 1,
+          "occurredAt": "2026-08-01T10:11:30Z",
+          "operation": "answer-sequence",
+          "target": "Q1/Q2 inputs",
+          "parameters": {
+            "Q1": 30,
+            "Q2": "No"
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": null,
+          "afterStateId": "ST-B1",
+          "evidenceRefs": [
+            "E-B1",
+            "E-D1"
+          ]
+        },
+        {
+          "actionId": "ACT-B2",
+          "sequence": 2,
+          "occurredAt": "2026-08-01T10:14:00Z",
+          "operation": "answer-and-submit",
+          "target": "Q5 input",
+          "parameters": {
+            "Q5": 3
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": "ST-B1",
+          "afterStateId": "ST-B2",
+          "evidenceRefs": []
+        }
+      ],
+      "stateFingerprints": [
+        {
+          "stateId": "ST-B1",
+          "sequence": 1,
+          "capturedAt": "2026-08-01T10:11:40Z",
+          "fingerprintHash": "sha256:af37c7f94d34c87b56e6b5c4dacf4211bee8a7dc2a60febbc3474ee2a209588c",
+          "normalizedUrl": "https://target.fixture.local/s/entry#after-no",
+          "evidenceRefs": []
+        },
+        {
+          "stateId": "ST-B2",
+          "sequence": 2,
+          "capturedAt": "2026-08-01T10:14:10Z",
+          "fingerprintHash": "sha256:bebe30c94c749f9e90d8eced3c45f0bcf21afff99ee64a02d75f4ac30b358a8b",
+          "normalizedUrl": "https://target.fixture.local/s/entry#complete",
+          "evidenceRefs": []
+        }
+      ],
+      "stop": {
+        "reason": "path-complete",
+        "detail": "No-branch walked to completion; skip mismatch recorded as finding",
+        "lastValidStateId": "ST-B2"
+      }
+    },
+    {
+      "attemptId": "AT-C",
+      "pathId": "P-C",
+      "attemptNumber": 1,
+      "retryOfAttemptId": null,
+      "retryReason": null,
+      "targetItemIds": [
+        "T-07"
+      ],
+      "syntheticInputs": {
+        "Q1": 40,
+        "Q2": "Yes",
+        "Q3": "Never"
+      },
+      "startingState": {
+        "resetStrategy": "fresh-session",
+        "expectedUrl": "https://target.fixture.local/s/entry",
+        "description": "Fresh session at survey entry"
+      },
+      "plannedTransitions": [
+        "Q1 to Q2",
+        "Q2 to Q3",
+        "Q3 to screen-out"
+      ],
+      "timestamps": {
+        "startedAt": "2026-08-01T10:16:00Z",
+        "endedAt": "2026-08-01T10:20:00Z"
+      },
+      "actions": [
+        {
+          "actionId": "ACT-C1",
+          "sequence": 1,
+          "occurredAt": "2026-08-01T10:16:30Z",
+          "operation": "answer-sequence",
+          "target": "Q1/Q2/Q3 inputs",
+          "parameters": {
+            "Q1": 40,
+            "Q2": "Yes",
+            "Q3": "Never"
+          },
+          "outcome": "succeeded",
+          "errorCode": null,
+          "beforeStateId": null,
+          "afterStateId": "ST-C1",
+          "evidenceRefs": [
+            "E-C1"
+          ]
+        }
+      ],
+      "stateFingerprints": [
+        {
+          "stateId": "ST-C1",
+          "sequence": 1,
+          "capturedAt": "2026-08-01T10:16:40Z",
+          "fingerprintHash": "sha256:463ed33c1ba9f4eb61dded1331be6bb24569d5c619daf6cbc2af269bf74872f8",
+          "normalizedUrl": "https://target.fixture.local/s/entry#screenout",
+          "evidenceRefs": []
+        }
+      ],
+      "stop": {
+        "reason": "evidence-acquired",
+        "detail": "Screen-out terminal captured",
+        "lastValidStateId": "ST-C1"
+      }
+    }
+  ],
+  "itemResults": [
+    {
+      "itemId": "T-01",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q1 rendered with numeric entry"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-AQ1"
+      ]
+    },
+    {
+      "itemId": "T-02",
+      "coverageStatus": "exercised",
+      "verdict": "fail",
+      "reason": {
+        "code": "requirement-mismatch",
+        "summary": "Q1 accepted the out-of-range value 5"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [
+        "F-2"
+      ],
+      "evidenceRefs": [
+        "E-D2"
+      ]
+    },
+    {
+      "itemId": "T-03",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q2 rendered with Yes/No options"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-AQ2"
+      ]
+    },
+    {
+      "itemId": "T-04",
+      "coverageStatus": "exercised",
+      "verdict": "fail",
+      "reason": {
+        "code": "requirement-mismatch",
+        "summary": "No-branch showed Q4 instead of skipping to Q5"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-B"
+      ],
+      "findingRefs": [
+        "F-1"
+      ],
+      "evidenceRefs": [
+        "E-B1"
+      ]
+    },
+    {
+      "itemId": "T-05",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Yes-branch continued to Q3"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-AQ3"
+      ]
+    },
+    {
+      "itemId": "T-06",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q3 rendered with all three options"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-AQ3"
+      ]
+    },
+    {
+      "itemId": "T-07",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Never at Q3 produced the screen-out terminal"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-C"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-C1"
+      ]
+    },
+    {
+      "itemId": "T-08",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q4 shown after Weekly at Q3"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-AQ3"
+      ]
+    },
+    {
+      "itemId": "T-09",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q4 rendered with rating entry"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-AQ4"
+      ]
+    },
+    {
+      "itemId": "T-10",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Out-of-range Q4 rating rejected"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-AQ4V"
+      ]
+    },
+    {
+      "itemId": "T-11",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q5 rendered with rating entry"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-A1"
+      ]
+    },
+    {
+      "itemId": "T-12",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Out-of-range Q5 rating rejected"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-AQ5V"
+      ]
+    },
+    {
+      "itemId": "T-13",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q4 text piped the Weekly answer"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-A2"
+      ]
+    },
+    {
+      "itemId": "T-14",
+      "coverageStatus": "proven-unreachable",
+      "verdict": "not-assessed",
+      "reason": {
+        "code": "proven-unreachable",
+        "summary": "No route to Q6 exists in this build"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-U1"
+      ]
+    },
+    {
+      "itemId": "T-99",
+      "coverageStatus": "exercised",
+      "verdict": "pass",
+      "reason": {
+        "code": "requirement-met",
+        "summary": "Q3 rendered with all three options (duplicate extraction)"
+      },
+      "confidence": 0.9,
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "findingRefs": [],
+      "evidenceRefs": [
+        "E-A1"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "findingId": "F-1",
+      "kind": "defect",
+      "severity": "high",
+      "category": "wrong-skip-target",
+      "summary": "No-branch routing defect: Q4 shown after Q2=No",
+      "expected": "Answering No to Q2 skips directly to Q5",
+      "observed": "After answering No to Q2 the survey shows Q4 instead of skipping to Q5",
+      "confidence": 0.95,
+      "itemRefs": [
+        "T-04"
+      ],
+      "attemptRefs": [
+        "AT-B"
+      ],
+      "evidenceRefs": [
+        "E-B1",
+        "E-D1"
+      ]
+    },
+    {
+      "findingId": "F-2",
+      "kind": "defect",
+      "severity": "medium",
+      "category": "missing-validation",
+      "summary": "Q1 range validation missing",
+      "expected": "Q1 answer must be between 18 and 99",
+      "observed": "Q1 accepted the out-of-range value 5",
+      "confidence": 0.9,
+      "itemRefs": [
+        "T-02"
+      ],
+      "attemptRefs": [
+        "AT-A"
+      ],
+      "evidenceRefs": [
+        "E-D2"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "evidenceId": "E-AQ1",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/shot-a-q1.png",
+      "contentHash": "sha256:96e61b5071644e51a37717ed79d1ec6822427729d703e7f54d7797b3d72e46da",
+      "byteLength": 39,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T10:01:25Z",
+      "capture": {
+        "captureStep": "CAP-A0",
+        "attemptId": "AT-A",
+        "actionId": "ACT-A1",
+        "stateId": "ST-A1",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "E-D2",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/dom-q1-invalid.txt",
+      "contentHash": "sha256:e0150692d9c3838179f64af3b6439140fa1f9aca69e3394d92bd8b44a0ec81c1",
+      "byteLength": 91,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T10:01:30Z",
+      "capture": {
+        "captureStep": "CAP-A3",
+        "attemptId": "AT-A",
+        "actionId": "ACT-A1",
+        "stateId": "ST-A1",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "E-AQ2",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/shot-a-q2.png",
+      "contentHash": "sha256:1d4bd791ffde6c54be73d581d6f504204375478110117e95f39dca1e548325b4",
+      "byteLength": 39,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T10:02:15Z",
+      "capture": {
+        "captureStep": "CAP-A4",
+        "attemptId": "AT-A",
+        "actionId": "ACT-A2",
+        "stateId": "ST-A2",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "E-AQ3",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/dom-a-q3.txt",
+      "contentHash": "sha256:08f2cd317ea1d5c275fcb1ed6b0c82036eba0679fd629d02c386707cc0e01340",
+      "byteLength": 123,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T10:04:20Z",
+      "capture": {
+        "captureStep": "CAP-A5",
+        "attemptId": "AT-A",
+        "actionId": "ACT-A3",
+        "stateId": "ST-A3",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "E-AQ4",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/shot-a-q4.png",
+      "contentHash": "sha256:ed87da171bdb6c22b12ddfdf54560f033327c4ac173111ccdb35e48d0bd3f97d",
+      "byteLength": 39,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T10:04:40Z",
+      "capture": {
+        "captureStep": "CAP-A6",
+        "attemptId": "AT-A",
+        "actionId": "ACT-A3",
+        "stateId": "ST-A3",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "E-AQ4V",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/dom-a-q4-invalid.txt",
+      "contentHash": "sha256:b3ec58bdd970bfa719738198170f9dd1070cef8859129910804171733f072521",
+      "byteLength": 77,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T10:04:50Z",
+      "capture": {
+        "captureStep": "CAP-A7",
+        "attemptId": "AT-A",
+        "actionId": "ACT-A3",
+        "stateId": "ST-A3",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "E-A2",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/dom-piping.txt",
+      "contentHash": "sha256:b3c1d283fa28680222441415eb83991f13917d543ebb05b0b023298e9b3f8e2f",
+      "byteLength": 83,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T10:04:30Z",
+      "capture": {
+        "captureStep": "CAP-A2",
+        "attemptId": "AT-A",
+        "actionId": "ACT-A3",
+        "stateId": "ST-A3",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "E-A1",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/shot-a-final.png",
+      "contentHash": "sha256:fc05aa62fbaeb5e3170418ae275fa96390658b1f6a4647e8b9d4e9fe1105c9ac",
+      "byteLength": 41,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T10:09:30Z",
+      "capture": {
+        "captureStep": "CAP-A1",
+        "attemptId": "AT-A",
+        "actionId": "ACT-A4",
+        "stateId": "ST-A3",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "E-AQ5V",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/dom-a-q5-invalid.txt",
+      "contentHash": "sha256:afad2fbd4ac2030391221f271082596d33ab269e2ecf3f661b5249aca544a59b",
+      "byteLength": 77,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T10:09:40Z",
+      "capture": {
+        "captureStep": "CAP-A8",
+        "attemptId": "AT-A",
+        "actionId": "ACT-A4",
+        "stateId": "ST-A3",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "E-B1",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/shot-b1.png",
+      "contentHash": "sha256:27a8b1b9568e11dc0124e05f7a92a4ff7dbaddca848937dc6eae86f62f80870a",
+      "byteLength": 38,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T10:11:50Z",
+      "capture": {
+        "captureStep": "CAP-B1",
+        "attemptId": "AT-B",
+        "actionId": "ACT-B1",
+        "stateId": "ST-B1",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "E-D1",
+      "type": "dom-excerpt",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/dom-defect1.txt",
+      "contentHash": "sha256:7c4983f1b8fb81ebd1299617df437040e7cf44f4c6e68d2a859192c85a618ec8",
+      "byteLength": 88,
+      "mediaType": "text/plain",
+      "capturedAt": "2026-08-01T10:12:00Z",
+      "capture": {
+        "captureStep": "CAP-B2",
+        "attemptId": "AT-B",
+        "actionId": "ACT-B1",
+        "stateId": "ST-B1",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "text-scrub/1"
+      }
+    },
+    {
+      "evidenceId": "E-C1",
+      "type": "screenshot",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/shot-c-screenout.png",
+      "contentHash": "sha256:27a9b23a69e727cadeeb83b81e75ff4b74ec4a96da7e6426f5aa739791a8bf0c",
+      "byteLength": 39,
+      "mediaType": "image/png",
+      "capturedAt": "2026-08-01T10:16:50Z",
+      "capture": {
+        "captureStep": "CAP-C1",
+        "attemptId": "AT-C",
+        "actionId": "ACT-C1",
+        "stateId": "ST-C1",
+        "phase": "after-action"
+      },
+      "redaction": {
+        "status": "redacted",
+        "method": "pixel-blur/1"
+      }
+    },
+    {
+      "evidenceId": "E-U1",
+      "type": "reachability-packet",
+      "artifactRef": "runs/RUN-FX-0001/artifacts/reach-u1.json",
+      "contentHash": "sha256:61465e34c1c790a48075144c8d74075bda199275236c6135dae29162ba108592",
+      "byteLength": 127,
+      "mediaType": "application/json",
+      "capturedAt": "2026-08-01T10:25:00Z",
+      "capture": {
+        "captureStep": "CAP-RUN-U1",
+        "attemptId": null,
+        "actionId": null,
+        "stateId": null,
+        "phase": "run"
+      },
+      "redaction": {
+        "status": "not-required",
+        "method": null
+      }
+    }
+  ],
+  "resources": {
+    "modelCalls": [
+      {
+        "callId": "MC-1",
+        "role": "extractor",
+        "provider": "fixture-ai",
+        "model": "fixture-ai/overseer",
+        "promptVersion": "prompts/extract/1.0",
+        "promptHash": "sha256:4e4a25c9cb4f6904e3607181f0c015a1b023ac9f60fe69eb7ee45db69f1c4cdc",
+        "parametersHash": "sha256:e4ff491169b8a9ea78518a7972422b5a24d5e3790e0d9a9e5cbfb384d9b621e0",
+        "timestamps": {
+          "startedAt": "2026-08-01T10:00:05Z",
+          "endedAt": "2026-08-01T10:00:25Z"
+        },
+        "status": "succeeded",
+        "inputTokens": 100000,
+        "cachedInputTokens": 0,
+        "outputTokens": 4000,
+        "costUsd": 0.36
+      },
+      {
+        "callId": "MC-2",
+        "role": "navigator",
+        "provider": "fixture-ai",
+        "model": "fixture-ai/navigator",
+        "promptVersion": "prompts/navigate/1.0",
+        "promptHash": "sha256:766c3b60456e8d5aa991f34fca7158f2d46e7862ae3efbe9177c2e26a409294d",
+        "parametersHash": "sha256:e4ff491169b8a9ea78518a7972422b5a24d5e3790e0d9a9e5cbfb384d9b621e0",
+        "timestamps": {
+          "startedAt": "2026-08-01T10:01:05Z",
+          "endedAt": "2026-08-01T10:19:00Z"
+        },
+        "status": "succeeded",
+        "inputTokens": 400000,
+        "cachedInputTokens": 0,
+        "outputTokens": 8000,
+        "costUsd": 0.11
+      },
+      {
+        "callId": "MC-3",
+        "role": "verifier",
+        "provider": "fixture-ai",
+        "model": "fixture-ai/overseer",
+        "promptVersion": "prompts/verify/1.0",
+        "promptHash": "sha256:54482c3cb629d4f2840ee28e47f5797eb4ae9b692edf6369db31f8a32f58f927",
+        "parametersHash": "sha256:e4ff491169b8a9ea78518a7972422b5a24d5e3790e0d9a9e5cbfb384d9b621e0",
+        "timestamps": {
+          "startedAt": "2026-08-01T10:21:00Z",
+          "endedAt": "2026-08-01T10:24:00Z"
+        },
+        "status": "succeeded",
+        "inputTokens": 50000,
+        "cachedInputTokens": 50000,
+        "outputTokens": 2000,
+        "costUsd": 0.195
+      }
+    ],
+    "toolVersions": [
+      {
+        "name": "fixture-browser",
+        "version": "1.0.0"
+      },
+      {
+        "name": "fixture-runner",
+        "version": "1.0.0"
+      }
+    ],
+    "totals": {
+      "modelCalls": 3,
+      "toolCalls": 7,
+      "retryCount": 0,
+      "escalationCount": 0,
+      "inputTokens": 550000,
+      "cachedInputTokens": 50000,
+      "outputTokens": 14000,
+      "browserMilliseconds": 1020000,
+      "wallClockMilliseconds": 1800000,
+      "modelCostUsd": 0.665,
+      "browserCostUsd": 0.3,
+      "otherCostUsd": 0.035,
+      "totalCostUsd": 1,
+      "currency": "USD",
+      "pricingVersion": "fixture-pricing/2026-08-01"
+    },
+    "limits": {
+      "maxCostUsd": 30,
+      "maxWallClockMilliseconds": 3600000,
+      "maxModelCalls": 200,
+      "maxToolCalls": 500,
+      "maxStepsPerAttempt": 40,
+      "maxAttemptsPerItem": 2,
+      "verificationReserveUsd": 4.5,
+      "reportReserveUsd": 3
+    }
+  },
+  "attestation": {
+    "algorithm": "Ed25519",
+    "canonicalization": "RFC8785",
+    "scope": "entire-record-excluding-attestation",
+    "keyId": "fixture-harness-key-1",
+    "signedAt": "2026-08-01T10:31:00Z",
+    "payloadHash": "sha256:ec3100568d7044b705dcc22aa9ec79d950d4457ed25d9d89db5d2dba5eb63ec6",
+    "signature": "LyID12vC4ZdPRCisTf8udshztAQqxQBYSLpKRYiw0iJbAQ-bXQO9Tet6fOamXa-3HYBSblgqrgqPfpVPcXlnBQ"
+  }
+}

@@ -1,0 +1,1 @@
+After Q2=Yes the rendered question is Q3 with options Daily/Weekly/Never; after Q3=Weekly the next rendered question is Q4.

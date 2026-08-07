@@ -1,0 +1,32 @@
+{
+  "description": "Fabricated evidence: signed registry metadata whose artifact bytes do not exist. EVIDENCE_MISSING; the defect claim loses evidence and defect credit.",
+  "expectErrors": [
+    "EVIDENCE_MISSING"
+  ],
+  "forbidErrors": [
+    "ATTESTATION_INVALID",
+    "RUN_IDENTITY_MISMATCH"
+  ],
+  "assertions": [
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "approx",
+      "value": 0.5
+    },
+    {
+      "path": "metrics.evidenceCompleteness",
+      "op": "approx",
+      "value": 0.9375
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "defects.unsupported.length",
+      "op": "eq",
+      "value": 1
+    }
+  ]
+}

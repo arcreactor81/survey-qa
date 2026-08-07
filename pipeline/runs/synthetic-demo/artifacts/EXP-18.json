@@ -1,0 +1,227 @@
+{
+  "id": "EXP-18",
+  "tier": 2,
+  "class": "exploration",
+  "trace": [
+    {
+      "seq": 1,
+      "screen": "WELCOME",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "WELCOME",
+        "clicked": [],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 2,
+      "screen": "Q1",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q1",
+        "clicked": [
+          {
+            "label": "I do not have any houseplants",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 3,
+      "screen": "SCREENOUT",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "SCREENOUT",
+        "clicked": [],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    }
+  ],
+  "evidence": [
+    {
+      "step": 1,
+      "seq": 1,
+      "screen_id": "WELCOME",
+      "action_taken": null,
+      "question_text": "Welcome. This short survey is about looking after houseplants.",
+      "heads_html": [
+        "Welcome. This short survey is about looking after houseplants."
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "",
+          "visible": false,
+          "disabled": false
+        },
+        "next": {
+          "text": "Start",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "0",
+          "text": "0%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Welcome. This short survey is about looking after houseplants.",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 2,
+      "seq": 2,
+      "screen_id": "Q1",
+      "action_taken": null,
+      "question_text": "How do you usually water your houseplants?",
+      "heads_html": [
+        "How do you usually water your houseplants?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "A watering can",
+          "value": "1",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "The kitchen tap",
+          "value": "2",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "A self-watering pot",
+          "value": "3",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "I do not have any houseplants",
+          "value": "4",
+          "name": "Q1",
+          "checked": true,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "15",
+          "text": "15%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "How do you usually water your houseplants?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 3,
+      "seq": 3,
+      "screen_id": "SCREENOUT",
+      "action_taken": null,
+      "question_text": "Thank you for your interest. This survey is for houseplant owners.",
+      "heads_html": [
+        "Thank you for your interest. This survey is for houseplant owners."
+      ],
+      "option_inventory": [],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "100",
+          "text": "100%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Thank you for your interest. This survey is for houseplant owners.",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    }
+  ],
+  "page_errors": []
+}

@@ -1,0 +1,2 @@
+<p class="instruction">Enter a whole number between 0 and 50.</p>
+(rendered directly under the S2 question heading)

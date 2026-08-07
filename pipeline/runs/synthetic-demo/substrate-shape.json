@@ -1,0 +1,61 @@
+{
+  "runId": "synthetic-demo",
+  "synthetic": true,
+  "note": "Written by pipeline/runs/make-synthetic-run.mjs. See pipeline/runs/run-source.mjs.",
+  "sampleArtifact": "FLOOR-01.json",
+  "divergingRoute": {
+    "question": "Q4",
+    "codes": [
+      "2"
+    ],
+    "destination": "Q6",
+    "mustNotShow": [
+      "Q5"
+    ]
+  },
+  "routeDefectObligation": "SYN-ROUTE-Q4-2",
+  "routeDefectReason": "ROUTE_SKIPPED_SCREEN_SHOWN",
+  "conditionalScreen": {
+    "screen": "Q5",
+    "question": "Q4",
+    "codes": [
+      "1"
+    ]
+  },
+  "notUniversalScreen": "Q2",
+  "notFirstScreen": "Q6",
+  "universalScreen": "Q1",
+  "sealedDomain": {
+    "question": "Q1",
+    "rule": "last-option-anchor"
+  },
+  "unsealedDomain": {
+    "question": "Q3"
+  },
+  "unexercisedDomainObligation": "SYN-PRESENCE-Q7",
+  "irrelevantAmbiguity": "AMB-SYN-CLOSING",
+  "irrelevantAmbiguityMinDeclines": 5,
+  "obligationCount": 36,
+  "artifactCount": 28,
+  "v1BaselineDistribution": {
+    "pass": 30,
+    "fail": 1,
+    "inconclusive": 2,
+    "not-assessed": 3
+  },
+  "narrowedLocusAttack": {
+    "control": {
+      "pass": 30,
+      "fail": 1,
+      "inconclusive": 2,
+      "not-assessed": 3
+    },
+    "attacked": {
+      "pass": 23,
+      "fail": 1,
+      "inconclusive": 9,
+      "not-assessed": 3
+    },
+    "withheld": 1
+  }
+}

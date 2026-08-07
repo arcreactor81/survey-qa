@@ -1,0 +1,62 @@
+{
+  "description": "Unreachable obligation omitted entirely (defect 9): the report never extracts the unreachable Q6 rule, so it carries no proven-unreachable claim. Report completeness is still 100% and every reachable obligation is exercised, but the oracle denominator is not fully accounted: testComplete false, cohort partial.",
+  "expectErrors": [],
+  "forbidErrors": [
+    "*"
+  ],
+  "assertions": [
+    {
+      "path": "completeness.reportComplete",
+      "op": "true"
+    },
+    {
+      "path": "metrics.reportCompleteness",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "completeness.testComplete",
+      "op": "false"
+    },
+    {
+      "path": "completeness.cohort",
+      "op": "eq",
+      "value": "partial"
+    },
+    {
+      "path": "completeness.unaccountedOracleIds.length",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "completeness.unaccountedOracleIds.0",
+      "op": "eq",
+      "value": "ORC-OB-U1"
+    },
+    {
+      "path": "completeness.oracleObligationsAccounted",
+      "op": "eq",
+      "value": 13
+    },
+    {
+      "path": "metrics.extractionRecall",
+      "op": "approx",
+      "value": 0.9285714285714286
+    },
+    {
+      "path": "metrics.extractionPrecision",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "eq",
+      "value": 1
+    },
+    {
+      "path": "metrics.evidenceCompleteness",
+      "op": "eq",
+      "value": 1
+    }
+  ]
+}

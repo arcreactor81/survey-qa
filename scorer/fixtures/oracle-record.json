@@ -1,0 +1,512 @@
+{
+  "schemaVersion": "1.0.0",
+  "oracleRecordId": "orec-fixture-survey-flawed-1",
+  "provenance": {
+    "generatorId": "fixture-oracle-adapter",
+    "generatorVersion": "1.0.0",
+    "generatedAt": "2026-08-01T09:00:00Z",
+    "sourceHash": "sha256:dd051cca9108551377f8999526e0a2326b67ff5e8023646a2f42df6566beb6cc"
+  },
+  "survey": {
+    "surveyId": "fixture-survey",
+    "title": "Product X Usage Survey (synthetic scorer fixture)",
+    "locale": "en-US",
+    "variant": {
+      "variantId": "fixture-survey-flawed-1",
+      "kind": "flawed",
+      "basedOnVariantId": "fixture-survey-clean-1"
+    },
+    "document": {
+      "documentId": "DOC-FX-1",
+      "contentHash": "sha256:9ba886bc726a577d54588a6f8f5a244ed867137e4271e59e529bd1cf869ab346"
+    },
+    "targetBuild": {
+      "buildId": "BUILD-FLAWED-1",
+      "contentHash": "sha256:855f9ee0a236b0650af4bc8687469d12e49707ad65011dc508588823b303c50d"
+    }
+  },
+  "obligations": [
+    {
+      "oracleId": "ORC-OB-Q1",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q1",
+        "quote": "Q1. What is your age?",
+        "aliases": [
+          "age question"
+        ]
+      },
+      "requirement": "Q1 age question is shown with a numeric entry field",
+      "contentHash": "sha256:cf0973bbeb5242a3ed2656dc2b127535398adaf9a6d24e3c1ef65b3f5e40f4c4",
+      "preconditions": [],
+      "stimulus": "Reach Q1 at survey start",
+      "expectedObservables": [
+        "Q1 rendered with a numeric entry field"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A",
+          "ORC-WP-B",
+          "ORC-WP-C"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-R1",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q1, rule 1",
+        "quote": "Answer must be between 18 and 99.",
+        "aliases": [
+          "Q1 range rule"
+        ]
+      },
+      "requirement": "Q1 answer must be between 18 and 99",
+      "contentHash": "sha256:e5100c90801d94874d5b0b6580b793ceb4fc7e5456b4169937c9258399a24dd6",
+      "preconditions": [],
+      "stimulus": "Enter an out-of-range age such as 5 at Q1",
+      "expectedObservables": [
+        "Value outside 18-99 is rejected with a validation message"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-Q2",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q2",
+        "quote": "Q2. Have you used Product X in the past month? (Yes/No)",
+        "aliases": [
+          "product usage question"
+        ]
+      },
+      "requirement": "Q2 product usage question is shown with Yes and No options",
+      "contentHash": "sha256:454c92c6a0656fe160b004dc273bb7db48394efc909df42cf591e984a3f1ae6c",
+      "preconditions": [],
+      "stimulus": "Advance from Q1 with a valid age",
+      "expectedObservables": [
+        "Q2 rendered with Yes/No options"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A",
+          "ORC-WP-B",
+          "ORC-WP-C"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-B1",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q2, skip",
+        "quote": "IF Q2=No SKIP TO Q5.",
+        "aliases": [
+          "No branch"
+        ]
+      },
+      "requirement": "Answering No to Q2 skips directly to Q5",
+      "contentHash": "sha256:096f168a54abdc0c89f5d3a2fec263a6aa8e20423667ee51edb3c7d94a8b3788",
+      "preconditions": [
+        "Q2 answered No"
+      ],
+      "stimulus": "Answer No at Q2",
+      "expectedObservables": [
+        "Q5 shown next",
+        "Q3 and Q4 never shown"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-B"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-B2",
+      "category": "branch",
+      "type": "branch-outcome",
+      "sourceAnchor": {
+        "locator": "Q2, continue",
+        "quote": "IF Q2=Yes CONTINUE TO Q3.",
+        "aliases": [
+          "Yes branch"
+        ]
+      },
+      "requirement": "Answering Yes to Q2 continues to Q3",
+      "contentHash": "sha256:e738eaa73512a84cb124e7d67dc6b0ff6a0f15bf5e852c75f2020cf37092c00f",
+      "preconditions": [
+        "Q2 answered Yes"
+      ],
+      "stimulus": "Answer Yes at Q2",
+      "expectedObservables": [
+        "Q3 shown next"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A",
+          "ORC-WP-C"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-Q3",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q3",
+        "quote": "Q3. How often do you use Product X? (Daily/Weekly/Never)",
+        "aliases": [
+          "frequency question"
+        ]
+      },
+      "requirement": "Q3 frequency question is shown with Daily, Weekly and Never options",
+      "contentHash": "sha256:7fc7494c96b3d63e8b9900ff72c30be5bc8e5fd3a4d1549fec4f4c0e4eedb94b",
+      "preconditions": [],
+      "stimulus": "Answer Yes at Q2 and advance",
+      "expectedObservables": [
+        "Q3 rendered with Daily/Weekly/Never options"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A",
+          "ORC-WP-C"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-T1",
+      "category": "terminal",
+      "type": "terminal",
+      "sourceAnchor": {
+        "locator": "Q3, terminate",
+        "quote": "TERMINATE IF Q3=Never.",
+        "aliases": [
+          "screen-out"
+        ]
+      },
+      "requirement": "Answering Never to Q3 ends the survey with a screen-out",
+      "contentHash": "sha256:8e696e36f1a160564756942e869c63ef5af9d02cd1e2547dc93c32f3445627a0",
+      "preconditions": [
+        "Q2 answered Yes"
+      ],
+      "stimulus": "Answer Never at Q3",
+      "expectedObservables": [
+        "Screen-out terminal page shown"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-C"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-D1",
+      "category": "rule",
+      "type": "display-skip",
+      "sourceAnchor": {
+        "locator": "Q4, display",
+        "quote": "SHOW Q4 ONLY IF Q3 <> Never.",
+        "aliases": [
+          "Q4 display rule"
+        ]
+      },
+      "requirement": "Q4 is shown only when Q3 is not Never",
+      "contentHash": "sha256:62d7f82a77cc20aed5da8452aa7df3c6342e49e4692f2846e4c5f86493530e72",
+      "preconditions": [
+        "Q2 answered Yes"
+      ],
+      "stimulus": "Answer Weekly at Q3 and advance",
+      "expectedObservables": [
+        "Q4 shown after a non-Never Q3 answer"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-Q4",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q4",
+        "quote": "Q4. How satisfied are you with Product X?",
+        "aliases": [
+          "satisfaction question"
+        ]
+      },
+      "requirement": "Q4 satisfaction question is shown with a rating entry",
+      "contentHash": "sha256:f287d512aec9aba6fa3bb9f8202d6e3829b48d1402836d0b1b345a136790c5ff",
+      "preconditions": [
+        "Q3 answered Daily or Weekly"
+      ],
+      "stimulus": "Advance past Q3 with a non-Never answer",
+      "expectedObservables": [
+        "Q4 rendered with a rating entry"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-R4",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q4, rule 1",
+        "quote": "Enter a whole number between 1 and 5.",
+        "aliases": [
+          "Q4 rating rule"
+        ]
+      },
+      "requirement": "Q4 answer must be a whole number between 1 and 5",
+      "contentHash": "sha256:711ae127a34718cc5a1c049badb4e4dfad04842aee71256c7e4a27140b73f87e",
+      "preconditions": [
+        "Q4 shown"
+      ],
+      "stimulus": "Enter an out-of-range rating at Q4",
+      "expectedObservables": [
+        "Value outside 1-5 is rejected at Q4"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-Q5",
+      "category": "question",
+      "type": "question",
+      "sourceAnchor": {
+        "locator": "Q5",
+        "quote": "Q5. How likely are you to recommend Product X to a friend?",
+        "aliases": [
+          "recommendation question"
+        ]
+      },
+      "requirement": "Q5 recommendation question is shown with a rating entry",
+      "contentHash": "sha256:7be44d0afcf76ef7a65497013bc0a0acfb882b2fd8d8c1e7a80bc48aa13c85c2",
+      "preconditions": [],
+      "stimulus": "Reach Q5 on either branch",
+      "expectedObservables": [
+        "Q5 rendered with a rating entry"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A",
+          "ORC-WP-B"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-R5",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q5, rule 1",
+        "quote": "Enter a whole number between 1 and 5.",
+        "aliases": [
+          "Q5 rating rule"
+        ]
+      },
+      "requirement": "Q5 answer must be a whole number between 1 and 5",
+      "contentHash": "sha256:7d26b2e7028b4b981d8efc988f595810ac8231c8a6a98f2168773485464de9cf",
+      "preconditions": [
+        "Q5 shown"
+      ],
+      "stimulus": "Enter an out-of-range rating at Q5",
+      "expectedObservables": [
+        "Value outside 1-5 is rejected at Q5"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A",
+          "ORC-WP-B"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-P1",
+      "category": "rule",
+      "type": "piping",
+      "sourceAnchor": {
+        "locator": "Q4, piping",
+        "quote": "Q4 text shows the Q3 frequency answer.",
+        "aliases": [
+          "frequency piping"
+        ]
+      },
+      "requirement": "Q4 question text pipes in the frequency selected at Q3",
+      "contentHash": "sha256:95e5505c44792a82f8920497702082b3c142412f896f699a3be224aa784c74bc",
+      "preconditions": [
+        "Q4 shown"
+      ],
+      "stimulus": "Answer Weekly at Q3 and inspect the Q4 text",
+      "expectedObservables": [
+        "Q4 text contains the selected Q3 frequency"
+      ],
+      "reachability": {
+        "status": "reachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [
+          "ORC-WP-A"
+        ]
+      }
+    },
+    {
+      "oracleId": "ORC-OB-U1",
+      "category": "rule",
+      "type": "validation-rule",
+      "sourceAnchor": {
+        "locator": "Q6, rule 1",
+        "quote": "Percentages must total 100.",
+        "aliases": [
+          "Q6 allocation rule"
+        ]
+      },
+      "requirement": "Q6 allocation answers must total 100 percent",
+      "contentHash": "sha256:a1b8bb47cc5ce9f11afd07f9e08d95f8b9398f6b603b61ea7f04683eb08bd046",
+      "preconditions": [],
+      "stimulus": "Enter allocation values at Q6",
+      "expectedObservables": [
+        "Allocation not totalling 100 is rejected at Q6"
+      ],
+      "reachability": {
+        "status": "unreachable",
+        "basis": "exhaustive-walk",
+        "witnessPathIds": [],
+        "rationale": "Q6 was removed from this build; the exhaustive walk found no incoming route."
+      }
+    }
+  ],
+  "witnessPaths": [
+    {
+      "witnessPathId": "ORC-WP-A",
+      "answerVector": {
+        "Q1": 25,
+        "Q2": "Yes",
+        "Q3": "Weekly",
+        "Q4": 4,
+        "Q5": 5
+      },
+      "expectedVisitedSourceRefs": [
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "Q5"
+      ],
+      "terminalId": "TERM-COMPLETE"
+    },
+    {
+      "witnessPathId": "ORC-WP-B",
+      "answerVector": {
+        "Q1": 30,
+        "Q2": "No",
+        "Q5": 3
+      },
+      "expectedVisitedSourceRefs": [
+        "Q1",
+        "Q2",
+        "Q5"
+      ],
+      "terminalId": "TERM-COMPLETE"
+    },
+    {
+      "witnessPathId": "ORC-WP-C",
+      "answerVector": {
+        "Q1": 40,
+        "Q2": "Yes",
+        "Q3": "Never"
+      },
+      "expectedVisitedSourceRefs": [
+        "Q1",
+        "Q2",
+        "Q3"
+      ],
+      "terminalId": "TERM-SCREENOUT"
+    }
+  ],
+  "seededDefects": [
+    {
+      "defectId": "ORC-DEF-1",
+      "category": "wrong-skip-target",
+      "sourceAnchor": {
+        "locator": "Q2, skip",
+        "quote": "IF Q2=No SKIP TO Q5.",
+        "aliases": [
+          "No branch"
+        ]
+      },
+      "expected": {
+        "requirement": "Answering No to Q2 skips directly to Q5",
+        "contentHash": "sha256:a7294f69f420872fd005722fa6705179bd59088b1f59d34bbdc08d9deb24a1e3"
+      },
+      "observed": {
+        "requirement": "Answering No to Q2 shows Q4 instead of skipping to Q5",
+        "contentHash": "sha256:61245b1b27a62ee5ac87f3fc105fde3d07637c0cd0a3700c3c39587ad5e440f1"
+      },
+      "affectedObligationIds": [
+        "ORC-OB-B1"
+      ]
+    },
+    {
+      "defectId": "ORC-DEF-2",
+      "category": "missing-validation",
+      "sourceAnchor": {
+        "locator": "Q1, rule 1",
+        "quote": "Answer must be between 18 and 99.",
+        "aliases": [
+          "Q1 range rule"
+        ]
+      },
+      "expected": {
+        "requirement": "Q1 answer must be between 18 and 99",
+        "contentHash": "sha256:a2dbaa682353d05980b05da73a17d7cb8467b489c862c28e35caccf26b2b9832"
+      },
+      "observed": {
+        "requirement": "Q1 accepts out-of-range values such as 5",
+        "contentHash": "sha256:1812c2a8d3e42f3c6b3e30760432f932c7d54eba81e64559a65b66bb35e80f4f"
+      },
+      "affectedObligationIds": [
+        "ORC-OB-R1"
+      ]
+    }
+  ]
+}

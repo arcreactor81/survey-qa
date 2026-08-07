@@ -1,0 +1,25 @@
+{
+  "description": "Record modified after signing (the ATTESTATION_INVALID half of the falsified-telemetry row). Payload hash no longer matches; fail closed; quality suppressed.",
+  "expectErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "forbidErrors": [
+    "RESOURCE_MISMATCH"
+  ],
+  "assertions": [
+    {
+      "path": "metrics",
+      "op": "null"
+    },
+    {
+      "path": "integrity.gates.attestation",
+      "op": "eq",
+      "value": "failed"
+    },
+    {
+      "path": "integrity.status",
+      "op": "eq",
+      "value": "invalid"
+    }
+  ]
+}

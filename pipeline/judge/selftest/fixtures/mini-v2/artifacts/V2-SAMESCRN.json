@@ -1,0 +1,185 @@
+{
+  "id": "V2-SAMESCRN",
+  "tier": 2,
+  "class": "validation",
+  "trace": [
+    {
+      "seq": 1,
+      "screen": "Q8",
+      "options": [],
+      "texts": [],
+      "grid_rows": [],
+      "grid_headers": [],
+      "errs": [],
+      "applied": {
+        "question": "Q8",
+        "clicked": [
+          {
+            "label": "Alpha option",
+            "ok": true,
+            "via": "input",
+            "alias_used": null
+          }
+        ],
+        "typed": null,
+        "grid": [],
+        "notes": []
+      }
+    },
+    {
+      "seq": 2,
+      "screen": "Q8"
+    }
+  ],
+  "evidence": [
+    {
+      "step": 1,
+      "seq": 1,
+      "screen_id": "Q8",
+      "action_taken": null,
+      "question_text": "Q8?",
+      "heads_html": [
+        "Q8?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Alpha option",
+          "value": "1",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Beta option",
+          "value": "2",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Gamma option",
+          "value": "3",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "80",
+          "text": "80%"
+        }
+      },
+      "validation_messages": [],
+      "visible_text": "Q8?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    },
+    {
+      "step": 2,
+      "seq": 2,
+      "screen_id": "Q8",
+      "action_taken": null,
+      "question_text": "Q8?",
+      "heads_html": [
+        "Q8?"
+      ],
+      "option_inventory": [
+        {
+          "kind": "radio",
+          "label": "Alpha option",
+          "value": "1",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Beta option",
+          "value": "2",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        },
+        {
+          "kind": "radio",
+          "label": "Gamma option",
+          "value": "3",
+          "name": "Q1",
+          "checked": false,
+          "disabled": false,
+          "visible": true,
+          "y": 100,
+          "x": 40
+        }
+      ],
+      "button_options": [],
+      "text_inputs": [],
+      "grid": [],
+      "controls_state": {
+        "back": {
+          "text": "Back",
+          "visible": true,
+          "disabled": false
+        },
+        "next": {
+          "text": "Next",
+          "visible": true,
+          "disabled": false
+        },
+        "progress": {
+          "visible": true,
+          "now": "80",
+          "text": "80%"
+        }
+      },
+      "validation_messages": [
+        "Please answer this question."
+      ],
+      "visible_text": "Q8?",
+      "page_errors": [],
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "shimmed": false
+    }
+  ],
+  "page_errors": []
+}

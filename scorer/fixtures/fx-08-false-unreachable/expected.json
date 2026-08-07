@@ -1,0 +1,30 @@
+{
+  "description": "False proven-unreachable: reachable oracle item labelled unreachable. REACHABILITY_FALSE_CLAIM; no coverage credit; item unassessed; run partial.",
+  "expectErrors": [
+    "REACHABILITY_FALSE_CLAIM"
+  ],
+  "forbidErrors": [
+    "ATTESTATION_INVALID"
+  ],
+  "assertions": [
+    {
+      "path": "metrics.reachableCoverage",
+      "op": "approx",
+      "value": 0.9230769230769231
+    },
+    {
+      "path": "completeness.testComplete",
+      "op": "false"
+    },
+    {
+      "path": "completeness.cohort",
+      "op": "eq",
+      "value": "partial"
+    },
+    {
+      "path": "metrics.seededDefectRecall",
+      "op": "eq",
+      "value": 1
+    }
+  ]
+}
