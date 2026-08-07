@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<script src="/theme.js"></script>
+<title>Run watch &middot; Survey QA v2</title>
+<meta name="description" content="A ledger of recorded work for one survey QA run. No projected completion, no fake timer.">
+<link rel="preload" href="/fonts/instrument-serif-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/dm-sans-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/jetbrains-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles-v2.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%8D%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+
+<div class="aurora" aria-hidden="true"><span class="aurora__glow"></span></div>
+
+<button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+  <span class="tt-moon" aria-hidden="true">&#127769;</span>
+  <span class="tt-sun" aria-hidden="true">&#9728;&#65039;</span>
+</button>
+
+<header class="band band--slim">
+  <div class="watch-wrap">
+    <div class="masthead">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="28" height="28" role="img" aria-label="Survey QA logo">
+          <rect x="3" y="3" width="42" height="42" rx="11" fill="currentColor"></rect>
+          <rect x="13" y="26" width="5" height="11" rx="1.5" data-paper opacity=".95"></rect>
+          <rect x="21.5" y="19" width="5" height="18" rx="1.5" data-paper opacity=".95"></rect>
+          <rect x="30" y="12" width="5" height="25" rx="1.5" data-paper opacity=".95"></rect>
+        </svg>
+      </span>
+      <div class="masthead-text">
+        <h1 class="brand" style="font-size:26px">Survey <em>QA</em></h1>
+      </div>
+      <a class="band-link" href="/">Start another run</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="watch-wrap">
+    <!-- The tracker itself is NOT a live region: it is re-rendered wholesale when the
+         snapshot changes, and a polite region over it would re-read the entire page on
+         every poll. A short summary is announced from #trackerLive instead, and only when
+         the summary actually changes. -->
+    <p id="trackerLive" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+    <div id="tracker" class="tracker">
+      <div class="empty-state">
+        <strong>Loading the latest update&hellip;</strong>
+        <p>If this message stays, the browser has not been able to reach the server. It will say so
+        in words rather than leaving this text in place.</p>
+      </div>
+    </div>
+
+    <section class="game-panel">
+      <div class="game-head">
+        <div>
+          <div class="kicker">Entertainment</div>
+          <div class="game-title">A game, while you wait</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <button type="button" id="gameMotion" class="motion-toggle" aria-pressed="false">Crawling: on</button>
+          <button type="button" id="gameToggle" class="btn btn-ghost" aria-pressed="false">Play while you wait</button>
+        </div>
+      </div>
+      <p class="game-disclaimer">
+        This is entertainment, not progress. It is off by default, it never moves with the run, and
+        squashing a bug here has nothing to do with your survey. Under reduced motion the bugs do not
+        crawl &mdash; they appear and stay put, and keyboard focus holds one in place.
+      </p>
+      <div class="game-field" id="gameField" hidden></div>
+      <p class="game-score" id="gameScore">0 bugs squashed (a game score, not a finding count)</p>
+    </section>
+  </div>
+</main>
+
+<footer>
+  Survey QA v2 &middot; This page shows what the run recorded. The saved records are the authority.
+</footer>
+
+<script src="/tracker.js"></script>
+<script src="/watch.js"></script>
+<script src="/bug-game.js"></script>
+<script>
+(function () {
+  var b = document.getElementById("themeToggle");
+  if (!b) return;
+  b.addEventListener("click", function () {
+    var next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("sqa-theme", next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,144 @@
+{
+  "title": "Testing complete, reporting failed",
+  "why": "Report-file existence is never proof that testing completed — and the reverse also has to render. This is the last authoritative coverage snapshot, explicitly not a report.",
+  "view": {
+    "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+    "surveyUrl": "https://fieldwork.example.com/s/9d2b41",
+    "documentName": "Q3-tracker-questionnaire-v4.docx",
+    "documentSha256": "sha256:1b8e0c7f5a94d2306ec1f4b78d5a20c39e6f817b4a2d0c5e93f6b1a874c2d0e5",
+    "policy": {
+      "profile": "standard",
+      "profileVersion": "v2-profile/standard/1.0.0",
+      "deepModeAvailable": false,
+      "limits": {
+        "maxUsd": 30,
+        "verificationReserveUsd": 4.5,
+        "reportReserveUsd": 3,
+        "maxModelCalls": 400,
+        "maxToolCalls": 4000,
+        "maxWallClockMs": 3600000
+      },
+      "humanReviewMode": "high-risk-only",
+      "oracleGapPolicy": "neutral-blocking"
+    },
+    "transport": {
+      "state": "ok",
+      "failStreak": 0,
+      "maxFails": 24,
+      "lastConfirmedAt": "2026-08-02T14:07:28.000Z"
+    },
+    "integrity": {
+      "state": "unknown",
+      "code": null,
+      "detail": null
+    },
+    "now": "2026-08-02T14:07:30.000Z",
+    "status": {
+      "schemaVersion": "run-status/2.0.0",
+      "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+      "phase": "reporting",
+      "phases": [
+        {
+          "name": "extracting",
+          "state": "complete",
+          "observedAt": "2026-08-02T12:44:10.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "planning",
+          "state": "complete",
+          "observedAt": "2026-08-02T12:45:50.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "executing",
+          "state": "complete",
+          "observedAt": "2026-08-02T13:55:50.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "verifying",
+          "state": "complete",
+          "observedAt": "2026-08-02T14:00:50.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "adjudicating",
+          "state": "complete",
+          "observedAt": "2026-08-02T14:02:30.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "reporting",
+          "state": "stopped",
+          "observedAt": "2026-08-02T14:06:00.000Z",
+          "reasonCode": "REPORT_ASSEMBLY_FAILED"
+        }
+      ],
+      "completion": {
+        "test": "complete",
+        "report": "failed",
+        "reasonCode": "REPORT_ASSEMBLY_FAILED"
+      },
+      "heartbeatAt": "2026-08-02T14:06:02.000Z",
+      "lastProgressAt": "2026-08-02T14:06:00.000Z",
+      "progressRevision": 140,
+      "reportAvailable": false,
+      "recoveryMode": false,
+      "error": "report assembly failed: evidence catalog entry EXP-049 could not be resolved from R2"
+    },
+    "coverage": {
+      "schemaVersion": "coverage-snapshot/1.0.0",
+      "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+      "revision": 140,
+      "observedAt": "2026-08-02T14:06:00.000Z",
+      "sourceCheckpointHash": "sha256:6d55…",
+      "contract": {
+        "state": "sealed",
+        "contractRevisionId": "cr_9f1c4a7b2e",
+        "contractHash": "sha256:9f1c4a7b2e6d08c31f5ba24e7d90c6813a4f2b5e9c0d7a138e6f4b2c5d1a9e07",
+        "total": 137,
+        "requirements": {
+          "total": 119,
+          "ambiguous": 3,
+          "disputed": 1,
+          "notBrowserObservable": 17
+        }
+      },
+      "counts": {
+        "exercised": 130,
+        "not-reached": 3,
+        "proven-unreachable": 2,
+        "blocked": 2,
+        "budget-exhausted": 0,
+        "time-exhausted": 0,
+        "pending": 0
+      },
+      "currentAttempt": null,
+      "attempts": {
+        "started": 151,
+        "completed": 151
+      },
+      "usage": {
+        "cost": {
+          "usedUsd": 19.06,
+          "maxUsd": 30,
+          "verificationReserveUsd": 4.5,
+          "reportReserveUsd": 3
+        },
+        "modelCalls": {
+          "used": 301,
+          "max": 400
+        },
+        "toolCalls": {
+          "used": 3688,
+          "max": 4000
+        },
+        "wallClock": {
+          "usedMilliseconds": 3120000,
+          "maxMilliseconds": 3600000
+        }
+      }
+    }
+  }
+}

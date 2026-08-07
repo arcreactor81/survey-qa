@@ -1,0 +1,107 @@
+{
+  "pass": "A",
+  "provider": "xai",
+  "model": "grok-4.3",
+  "requirements": [
+    {
+      "id": "A-01",
+      "construct": "rendered-state",
+      "scope": "survey",
+      "quantifier": "every",
+      "selector": null,
+      "exceptions": [],
+      "statement": "Every screen must display exactly one question at a time.",
+      "docQuote": "Each screen of the survey will present a single question.",
+      "blockIds": ["b0001"],
+      "browserObservable": "full",
+      "confidence": 0.95,
+      "expansion": null,
+      "pass": "A",
+      "origin": "whole-document"
+    },
+    {
+      "id": "A-02",
+      "construct": "piping",
+      "scope": "survey",
+      "quantifier": "every",
+      "selector": null,
+      "exceptions": [],
+      "statement": "Previously selected brand names must be piped into subsequent attribute questions.",
+      "docQuote": "Questions about specific brands will reference the brands you selected earlier.",
+      "blockIds": ["b0005"],
+      "browserObservable": "partial",
+      "confidence": 0.88,
+      "expansion": null,
+      "pass": "A",
+      "origin": "whole-document"
+    },
+    {
+      "id": "A-03",
+      "construct": "terminate",
+      "scope": "survey",
+      "quantifier": "any",
+      "selector": null,
+      "exceptions": [],
+      "statement": "Respondents who select 'None of the above' for all brand awareness questions will be screened out.",
+      "docQuote": "If you have not heard of any of these brands, you will not qualify for this survey.",
+      "blockIds": ["b0012", "b0013"],
+      "browserObservable": "full",
+      "confidence": 0.92,
+      "expansion": {
+        "kind": "route",
+        "routeAnswers": [
+          { "code": null, "label": "None of the above", "destination": "TERMINATE:screenout" }
+        ],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "A",
+      "origin": "whole-document"
+    },
+    {
+      "id": "A-04",
+      "construct": "instruction",
+      "scope": "survey",
+      "quantifier": "every",
+      "selector": null,
+      "exceptions": [],
+      "statement": "All multiple-choice questions must include a 'Prefer not to answer' option.",
+      "docQuote": "A 'Prefer not to answer' option is available for every question.",
+      "blockIds": ["b0002"],
+      "browserObservable": "full",
+      "confidence": 0.90,
+      "expansion": null,
+      "pass": "A",
+      "origin": "whole-document"
+    },
+    {
+      "id": "A-05",
+      "construct": "validation",
+      "scope": "survey",
+      "quantifier": "every",
+      "selector": null,
+      "exceptions": [],
+      "statement": "Numeric open-end responses must reject non-numeric input immediately.",
+      "docQuote": "Enter only numbers in this field. Letters and special characters are not accepted.",
+      "blockIds": ["b0020"],
+      "browserObservable": "full",
+      "confidence": 0.87,
+      "expansion": null,
+      "pass": "A",
+      "origin": "whole-document"
+    }
+  ],
+  "ambiguities": [],
+  "unverifiable": [],
+  "dispositions": [],
+  "constructs": [
+    { "construct": "rendered-state", "present": true, "blockIds": ["b0001"] },
+    { "construct": "piping", "present": true, "blockIds": ["b0005"] },
+    { "construct": "terminate", "present": true, "blockIds": ["b0012"] },
+    { "construct": "instruction", "present": true, "blockIds": ["b0002"] },
+    { "construct": "validation", "present": true, "blockIds": ["b0020"] }
+  ],
+  "failedUnits": [],
+  "calls": []
+}

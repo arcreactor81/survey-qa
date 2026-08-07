@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<!-- No-FOUC theme bootstrap (same-origin, runs before first paint). -->
+<script src="/theme.js"></script>
+<title>Survey QA &mdash; evidence-backed questionnaire verification</title>
+<meta name="description" content="Survey QA drives a real browser through a programmed survey and checks it against the Word questionnaire that defines it. The document is the source of truth; every reported result is tied to a recorded observation.">
+<link rel="preload" href="/fonts/instrument-serif-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/dm-sans-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/jetbrains-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles-v2.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%8D%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+
+<div class="aurora" aria-hidden="true"><span class="aurora__glow"></span></div>
+
+<button type="button" id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+  <span class="tt-moon" aria-hidden="true">&#127769;</span>
+  <span class="tt-sun" aria-hidden="true">&#9728;&#65039;</span>
+</button>
+
+<header class="band">
+  <div class="wrap">
+    <div class="masthead">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" width="34" height="34" role="img" aria-label="Survey QA logo">
+          <rect x="3" y="3" width="42" height="42" rx="11" fill="currentColor"></rect>
+          <rect x="13" y="26" width="5" height="11" rx="1.5" data-paper opacity=".95"></rect>
+          <rect x="21.5" y="19" width="5" height="18" rx="1.5" data-paper opacity=".95"></rect>
+          <rect x="30" y="12" width="5" height="25" rx="1.5" data-paper opacity=".95"></rect>
+        </svg>
+      </span>
+      <div class="masthead-text">
+        <p class="kicker">Evidence-backed questionnaire verification</p>
+        <h1 class="brand">Survey <em>QA</em></h1>
+      </div>
+    </div>
+    <p class="value-prop">
+      Survey QA reads the <strong>Word questionnaire</strong> that defines your survey, turns it into
+      a fixed list of <strong>requirements</strong>, and then drives a <strong>real browser</strong>
+      through the programmed survey until every requirement has been checked or explicitly accounted
+      for. <strong>The document is the source of truth:</strong> where the live survey disagrees with
+      it, that is a problem in the survey, and where the document itself is unclear, we say so instead
+      of guessing. Every result is tied to something we recorded, and anything we did not test is
+      reported as <em>not tested</em> &mdash; never as passed.
+    </p>
+
+    <!-- HONESTY BANNER. Submission was switched off while four of the six steps below were
+         placeholders. They are not placeholders any more: extraction, planning, browser execution
+         and verdict derivation are all implemented, and a full run completed on the deployed
+         Worker (DEPLOYED.md §3, §10, §11). Submission was re-enabled 2026-08-08.
+         This banner is REPLACED, NOT DELETED. Two real caveats remain — reports stay non-final
+         until a target build identity is configured, and no real survey has been walked end to end
+         from inside the service — and a silent page would be the same overclaim in the opposite
+         direction from the one this banner originally existed to stop. -->
+    <div class="dev-banner" role="status">
+      <p class="dev-banner__flag">Runs are real &middot; they spend real money &middot; results are not final</p>
+      <p class="dev-banner__head">You can test a survey with this build. What comes back is evidence, not a certification.</p>
+      <p class="dev-banner__body">
+        <strong>What works today:</strong> all six steps below run for real. Your questionnaire is
+        read by two independent passes, the requirement list is fixed and fingerprinted before any
+        browser starts, checks are planned against it, a real browser drives your survey, verdicts
+        are worked out from the recorded evidence, and the report is built from that record. A
+        submitted run does real work and <strong>spends real money</strong> up to the cap shown
+        below.
+      </p>
+      <p class="dev-banner__body">
+        <strong>What is not settled yet:</strong> a result has to name <em>which build of the
+        survey</em> it is about, and no such name is configured here, so every report is marked
+        <strong>&ldquo;no current results&rdquo;</strong> and should be read as evidence rather than
+        as a pass. Separately, <strong>no real survey has yet been walked end to end from inside
+        this service</strong> &mdash; the one completed live run was pointed at a placeholder URL
+        and stopped, correctly, with a named reason. A run can also stop early because the
+        requirement list refused to freeze, or because a limit was reached; a run that stopped early
+        still produces a report that says so.
+      </p>
+    </div>
+
+    <div class="hero-ctas">
+      <a class="btn btn-ghost" href="#how">How a run works</a>
+      <a class="btn btn-ghost" href="#method">What a run does not prove</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+
+    <section id="how" aria-labelledby="how-title">
+      <div class="kicker">The six steps</div>
+      <h2 id="how-title">How a run works</h2>
+      <p style="max-width:760px;margin:0 0 18px">Each step below says what it does and how far it has
+      been proven, because a description of what something does is not evidence that it did it. All
+      six are implemented and have run on the deployed service; the one that has not yet been proven
+      against a real survey says so on its own card.</p>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">Step 1 &middot; Reading questionnaire</div>
+          <span class="build-flag build-flag--yes">Built</span>
+          <p>The questionnaire is read into a list of requirements, each tied to the passage it came
+          from. The list is fixed and fingerprinted before any browser starts, so a run can never
+          quietly rewrite its own total.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">Step 2 &middot; Preparing checks</div>
+          <span class="build-flag build-flag--yes">Built</span>
+          <p>Checks are planned that cover every requirement on the list, plus extra exploring on top.
+          Exploring can only add findings; it can never change the total.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">Step 3 &middot; Testing survey</div>
+          <span class="build-flag build-flag--part">Built &middot; not yet proven on a real survey</span>
+          <p>A real browser walks the routes a respondent would take and records what it saw, with
+          evidence. A real browser catches what a simulated one cannot &mdash; including a survey that
+          does not open at all. This step is implemented and has acquired and driven real browser
+          sessions on the deployed service, but the only run to reach it was pointed at a placeholder
+          URL, so it stopped with <em>walks blocked by site</em> &mdash; the correct answer for a page
+          that is not a survey. No real survey has been walked end to end here yet.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">Step 4 &middot; Reviewing evidence</div>
+          <span class="build-flag build-flag--yes">Built</span>
+          <p>Results are worked out from the recorded evidence rather than written by whatever made
+          the claim. A claim its own evidence contradicts does not become a pass.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">Step 5 &middot; Resolving findings</div>
+          <span class="build-flag build-flag--yes">Built</span>
+          <p>Disagreements are settled with the disagreement kept on the record. Anything still
+          unclear is held back from pass/fail and shown as unresolved rather than decided by
+          majority. The engine that does this now runs inside the service, as part of every run.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">Step 6 &middot; Preparing report</div>
+          <span class="build-flag build-flag--yes">Built</span>
+          <p>The requirement list becomes the report: every requirement visible, every result an
+          explicit state, the two totals reported separately, and a finished report is allowed to
+          describe testing that stopped early.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="run" aria-labelledby="run-title">
+      <div class="kicker">Submitting a run &middot; this starts real work and spends real money</div>
+      <h2 id="run-title">QA a survey <span class="sub">the live URL plus the document that defines it</span></h2>
+
+      <div class="dev-banner dev-banner--inline" role="status">
+        <p class="dev-banner__head">This form submits a real run.</p>
+        <p class="dev-banner__body">Pressing the button uploads your questionnaire, starts the
+        pipeline, calls real models and drives a real browser, and bills against the cap below
+        &mdash; which the server decides, not this page. The report it produces is marked
+        <strong>not final</strong>, because no target build identity is configured for this
+        deployment; read it as evidence rather than as a certification.</p>
+      </div>
+
+      <!-- SERVER-AUTHORED POLICY. Rendered from GET /api/v2/policy BEFORE submission.
+           If it cannot be loaded, submission is refused rather than shown against
+           client-side defaults the server would not honour. -->
+      <div class="policy" id="policyBlock" aria-live="polite">
+        <div class="policy-head">
+          <div>
+            <div class="kicker">Effective run policy</div>
+            <div class="policy-title">Loading the server&rsquo;s policy&hellip;</div>
+          </div>
+        </div>
+        <p class="policy-note">These limits are set and enforced by the server. This page displays
+        them; it does not choose them.</p>
+      </div>
+
+      <p class="expectations">
+        This is a real test with a real browser, not a three-minute demo.
+        <strong>There is no promised duration, and we never predict when it will finish.</strong> The work costs
+        real money up to the limit shown. A run stops when testing finishes or a limit is reached; a
+        run that stopped early can still produce a finished report. Progress only ever shows work
+        that was actually recorded.
+      </p>
+
+      <form id="runForm" novalidate>
+        <div class="mode-tabs" role="tablist" aria-label="What to run">
+          <button type="button" class="mode-tab is-active" id="modeCustom" role="tab" aria-selected="true" aria-controls="panelCustom">
+            <span class="mode-tab-title">Test your survey</span>
+            <span class="mode-tab-sub">Your URL + the Word questionnaire &middot; starts a real, billed run</span>
+          </button>
+          <button type="button" class="mode-tab" id="modeSample" role="tab" aria-selected="false" aria-controls="panelSample">
+            <span class="mode-tab-title">Sample report</span>
+            <span class="mode-tab-sub">Saved output from a run that already happened &middot; nothing runs</span>
+          </button>
+        </div>
+
+        <div class="mode-panel" id="panelCustom" role="tabpanel" aria-labelledby="modeCustom">
+          <div class="form-grid">
+            <div class="field field-full">
+              <label for="surveyUrl">Survey URL <span class="req">required</span></label>
+              <input type="url" id="surveyUrl" name="surveyUrl" placeholder="https://your-survey.example.com/s/abc123"
+                autocomplete="off" spellcheck="false" required aria-describedby="surveyUrlHint">
+              <p class="hint" id="surveyUrlHint">The system under test. It must be reachable from the
+              public internet by a headless browser, and you must be authorised to test it.</p>
+            </div>
+            <div class="field field-full">
+              <label for="docx">Questionnaire (.docx) <span class="req">required</span></label>
+              <div class="dropzone" id="dropzone" tabindex="0" role="button"
+                   aria-label="Upload or drop the Word questionnaire (.docx)" aria-describedby="docxHint">
+                <input type="file" id="docx" name="docx"
+                  accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+                <span class="dropzone-icon" aria-hidden="true">&#128196;</span>
+                <span class="dropzone-text" id="dropzoneText">Drag &amp; drop the Word questionnaire, or <span class="dropzone-link">browse</span></span>
+              </div>
+              <p class="hint" id="docxHint"><strong>A run without a document is refused.</strong> The
+              document is the source of truth &mdash; there is nothing to test against without it, and
+              a run that guessed its own requirements would only be measuring itself.</p>
+            </div>
+
+            <div class="field field-full">
+              <label for="profile">Run profile</label>
+              <select id="profile" name="profile" disabled>
+                <option value="standard" selected>Standard</option>
+              </select>
+              <p class="hint" id="profileHint">Loading the server&rsquo;s available profiles&hellip;</p>
+            </div>
+
+            <div class="field field-full">
+              <div class="check-row">
+                <input type="checkbox" id="ackAuth" name="ackAuth">
+                <label for="ackAuth">I am authorised to run automated tests against this URL, and I
+                accept that this run may spend real money up to the cap displayed above.</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mode-panel is-hidden" id="panelSample" role="tabpanel" aria-labelledby="modeSample">
+          <div class="empty-state">
+            <strong>Sample report &mdash; none published for this build yet.</strong>
+            <p>A sample is saved output from a run that already happened. It is never called a
+            &ldquo;live demo&rdquo;, because nothing runs when you open it. No sample has been
+            published for this build; when one is, it will appear here labelled <em>Sample
+            report</em>, with the date of the run it came from and the same warnings the original
+            carried.</p>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="field field-full submit-row">
+            <!-- Starts disabled on purpose: the server's cap has not loaded at first paint, and a
+                 button that spends money must not be pressable before the number beside it is real.
+                 app.js enables it once the policy, the URL, the .docx and the acknowledgement exist. -->
+            <button type="submit" id="runBtn" class="btn" disabled aria-disabled="true">Start capped run</button>
+            <span class="hint" id="runHint">Waiting for the server&rsquo;s limits. This stays disabled until they load, a survey URL and a .docx are supplied, and you confirm the cap.</span>
+          </div>
+          <p class="form-error field-full" id="formError" role="alert" hidden></p>
+        </div>
+      </form>
+    </section>
+
+    <section id="method" aria-labelledby="method-title">
+      <div class="kicker">Method</div>
+      <h2 id="method-title">What a run does <em>not</em> prove</h2>
+      <p style="max-width:760px;margin-top:0">
+        Saying what we cannot show is part of the product. A run shows that the requirements on the
+        list were checked or explicitly accounted for, and that every result shown is tied to
+        something we recorded. It does not show that we read your document perfectly, that every
+        route a respondent could take reached the list, or that a requirement we never tested is
+        fine.
+      </p>
+      <ul style="max-width:760px;font-size:13.5px;line-height:1.7">
+        <li><strong>Checked is not passed.</strong> Whether we tested something and whether it was
+        correct are two different answers with two different labels, everywhere, always.</li>
+        <li><strong>Not tested is not a pass.</strong> Never reached, blocked, stopped at the cost
+        limit, stopped at the time limit, not completed, and could not be tested in the browser each
+        appear as themselves.</li>
+        <li><strong>Two totals are never added.</strong> Requirements from your questionnaire and the
+        individual checks that cover them count different things and are reported separately.</li>
+        <li><strong>A claim is not a result.</strong> The result is worked out from the recorded
+        evidence; whatever made the claim never writes its own verdict.</li>
+        <li><strong>Unclear stays unclear.</strong> A requirement your document does not settle is
+        held back from pass/fail and says so.</li>
+        <li><strong>A signature is not correctness.</strong> Whether the records are intact, whether
+        the evidence files still match, whether a person reviewed the requirement list, and whether
+        the results were re-checked are four separate statements &mdash; and none of them says your
+        survey is fine.</li>
+      </ul>
+      <details style="margin-top:20px;max-width:760px">
+        <summary style="color:var(--accent);cursor:pointer;font-family:var(--mono);font-size:12px">
+          Service endpoints (this deployment)
+        </summary>
+        <ul style="font-family:var(--mono);font-size:12px;line-height:1.8;margin-top:10px">
+          <li>GET&nbsp; /api/v2/health &mdash; advertises the contract versions it speaks</li>
+          <li>GET&nbsp; /api/v2/policy &mdash; server-authored effective run policy</li>
+          <li>POST /api/v2/runs &mdash; submit (surveyUrl + base64 .docx, both required)</li>
+          <li>GET&nbsp; /api/v2/runs/:id &middot; /status &middot; /coverage</li>
+          <li>GET&nbsp; /api/v2/runs/:id/report &middot; /report-data &middot; /record &middot; /export</li>
+          <li>GET&nbsp; /api/v2/runs/:id/evidence &middot; /evidence/:evidenceId/content</li>
+        </ul>
+        <p class="hint">This is a separate service from the production <code>survey-qa</code> worker.
+        It shares the artifact bucket and nothing else, and it never reads or writes a v1 run.</p>
+      </details>
+    </section>
+
+  </div>
+</main>
+
+<footer>
+  Survey QA v2 &middot; Cloudflare Workers &middot; Browser Rendering + Workflows + R2 &middot;
+  <a href="/api/v2/health">service health</a>
+</footer>
+
+<script src="/app.js"></script>
+<script>
+(function () {
+  var b = document.getElementById("themeToggle");
+  if (!b) return;
+  b.addEventListener("click", function () {
+    var next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("sqa-theme", next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>

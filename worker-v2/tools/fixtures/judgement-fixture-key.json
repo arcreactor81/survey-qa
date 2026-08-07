@@ -1,0 +1,7 @@
+{
+  "note": "TEST-ONLY Ed25519 keypair. The public half is pinned in wrangler.jsonc with trust:\"fixture\", which the Worker honours ONLY when DEV_SEED is enabled (local dev). It can never sign current results on a deployed build.",
+  "keyId": "fixture-judge-ed25519-1",
+  "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAnLc2qf/YrOD6qP1zAsHHQBIzea2kYaeJ/fFH/9QAQdM=\n-----END PUBLIC KEY-----\n",
+  "publicKeySpki": "MCowBQYDK2VwAyEAnLc2qf/YrOD6qP1zAsHHQBIzea2kYaeJ/fFH/9QAQdM=",
+  "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIF5uzF7hDG5pvkSp3eaecJp6Z1+2zepVOzXWyX5ZfwyY\n-----END PRIVATE KEY-----\n"
+}

@@ -1,0 +1,110 @@
+{
+  "pass": "B",
+  "provider": "deepseek",
+  "model": "deepseek-v4-pro",
+  "requirements": [
+    {
+      "id": "B-01",
+      "construct": "terminate",
+      "scope": "question:Q15",
+      "quantifier": "any",
+      "selector": "Q15",
+      "exceptions": [],
+      "statement": "If the respondent answers Q15 with 'I do not consent', terminate the survey immediately.",
+      "docQuote": "Q15. Do you consent?  ○ I consent  ○ I do not consent [TERMINATE]",
+      "blockIds": ["b0150"],
+      "browserObservable": "full",
+      "confidence": 0.95,
+      "expansion": {
+        "kind": "route",
+        "routeAnswers": [
+          { "code": "2", "label": "I do not consent", "destination": "TERMINATE:complete" }
+        ],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "B",
+      "origin": "chunk-9:Q15"
+    },
+    {
+      "id": "B-02",
+      "construct": "validation",
+      "scope": "question:Q20",
+      "quantifier": "specific",
+      "selector": "Q20",
+      "exceptions": [],
+      "statement": "Q20 must enforce a numeric range of 18 to 99 for age input.",
+      "docQuote": "Q20. Enter your age: ___  (18-99)",
+      "blockIds": ["b0200"],
+      "browserObservable": "full",
+      "confidence": 0.94,
+      "expansion": {
+        "kind": "boundary",
+        "routeAnswers": [],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "B",
+      "origin": "chunk-11:Q20"
+    },
+    {
+      "id": "B-03",
+      "construct": "terminate",
+      "scope": "question:Q3",
+      "quantifier": "any",
+      "selector": "Q3",
+      "exceptions": [],
+      "statement": "If the respondent selects 'None of the above' for Q3, skip to Q6.",
+      "docQuote": "Q3. Which brands do you know? ... ○ None of the above → skip to Q6",
+      "blockIds": ["b0025"],
+      "browserObservable": "full",
+      "confidence": 0.93,
+      "expansion": {
+        "kind": "route",
+        "routeAnswers": [
+          { "code": "999", "label": "None of the above", "destination": "Q6" }
+        ],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "B",
+      "origin": "chunk-2:Q3"
+    },
+    {
+      "id": "B-04",
+      "construct": "terminate",
+      "scope": "question:Q5",
+      "quantifier": "any",
+      "selector": "Q5",
+      "exceptions": [],
+      "statement": "If the respondent answers 'No' to Q5, go to Q8.",
+      "docQuote": "Q5. Have you purchased [brand] recently?  ○ Yes  ○ No → skip to Q8",
+      "blockIds": ["b0035"],
+      "browserObservable": "full",
+      "confidence": 0.94,
+      "expansion": {
+        "kind": "route",
+        "routeAnswers": [
+          { "code": "2", "label": "No", "destination": "Q8" }
+        ],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "B",
+      "origin": "chunk-2:Q5"
+    }
+  ],
+  "ambiguities": [],
+  "unverifiable": [],
+  "dispositions": [],
+  "constructs": [
+    { "construct": "terminate", "present": true, "blockIds": ["b0150", "b0025", "b0035"] },
+    { "construct": "validation", "present": true, "blockIds": ["b0200"] }
+  ],
+  "failedUnits": [],
+  "calls": []
+}

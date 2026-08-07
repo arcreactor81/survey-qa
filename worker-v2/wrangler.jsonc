@@ -1,0 +1,290 @@
+// survey-qa-v2 — the v2 LLM-led pipeline Worker.
+//
+// SEPARATE WORKER, NOT AN EDIT OF PRODUCTION. `survey-qa` (src/**, ../wrangler.jsonc)
+// stays untouched and keeps serving https://survey-qa.wellshit.co.in. This config
+// deliberately shares NOTHING that would let a v1 run and a v2 run misread each
+// other. See MIGRATION.md for the full boundary; the short version:
+//
+//   shared          account · R2 BUCKET survey-qa-artifacts · Browser Rendering quota
+//                   · Workers AI quota · Secrets Store (same store_id, same secrets)
+//                   · Access team domain + IdPs
+//   NEVER shared    worker name · route/hostname · Access application + policies
+//                   · Workflow name + binding + class · R2 KEY PREFIX (v2/)
+//                   · run-id namespace (v2r_*) · envelope filename + schemaVersion
+//                   · sweeper marker prefix · cron ownership
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+
+  "name": "survey-qa-v2",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // The report renderer in `pipeline/report/` is shared verbatim with the offline CLI
+  // renderer, and it takes its stylesheet as a STRING argument. Bundling report.css as a
+  // Text module is what lets the Worker call the same `renderReportHtml(view, { css })`
+  // the CLI calls, instead of keeping a second copy of the stylesheet that can drift.
+  "rules": [{ "type": "Text", "globs": ["**/report.css"], "fallthrough": false }],
+
+  // Prod had to disable workers.dev out-of-band (docs/access-setup.md §5) because a
+  // `wrangler deploy` silently re-enables a route disabled outside Wrangler. v2 is
+  // born closed: no workers.dev, no preview URLs, and NO route until the Access app
+  // for it exists. Adding a `routes` entry here before DEPLOY.md step 3 would publish
+  // an unauthenticated endpoint — that is the one edit that must not be made casually.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "survey-qa-v2.wellshit.co.in", "custom_domain": true }],
+
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    // Worker owns the whole v2 API + report surface; assets serve the shell only.
+    // `/runs/*` is here because the Worker rewrites the shareable watch URL onto the
+    // static shell (src/index.ts); without it the asset router would 404 first.
+    "run_worker_first": ["/api/v2/*", "/runs/*", "/v2/*"]
+  },
+
+  // Browser Rendering. The runtime spike (spikes/runtime-br) proved keep_alive is an
+  // IDLE timeout that RESETS on activity: sessions survived 30/60/90/150/300s gaps
+  // with page state intact across reconnects and lived ~11 minutes. That is what
+  // makes checkpointed Workflow orchestration viable WITHOUT a container runner.
+  // `remote: true` is a LOCAL-DEV field only (it has no effect on a deployed Worker): there
+  // is no local simulation of Browser Rendering, so without it `wrangler dev` cannot drive
+  // a single page. With it, the Worker (and the Workflow, which can ONLY run locally) runs
+  // on this machine while the browser calls are proxied to the real remote browser.
+  "browser": { "binding": "BROWSER", "remote": true },
+
+  // Workers AI: deterministic validators only (free allowance ~10k neurons/day and it
+  // was consumed on 1 Aug — v2 must degrade, never block, when AI is unavailable).
+  // Same local-dev-only note as `browser`: Workers AI has no local simulation.
+  "ai": { "binding": "AI", "remote": true },
+
+  // SAME BUCKET as prod, DIFFERENT BINDING NAME and DIFFERENT KEY PREFIX.
+  // The binding is called EVIDENCE (not ARTIFACTS) so that copy-pasting a v1
+  // helper into v2 is a compile error rather than a silent cross-namespace write.
+  "r2_buckets": [{ "binding": "EVIDENCE", "bucket_name": "survey-qa-artifacts" }],
+
+  // Distinct Workflow NAME, BINDING and CLASS. A v1 sweeper holding RUN_WORKFLOW can
+  // never probe, restart or recreate a v2 instance, and vice versa.
+  "workflows": [
+    {
+      "name": "survey-qa-v2-run",
+      "binding": "V2_RUN_WORKFLOW",
+      "class_name": "SurveyRunWorkflowV2"
+    }
+  ],
+
+  // Same account-level Secrets Store as prod (identifiers, not secrets).
+  "secrets_store_secrets": [
+    {
+      "binding": "ANTHROPIC_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "ANTHROPIC_API_KEY"
+    },
+    {
+      "binding": "DEEPSEEK_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "DEEPSEEK_API_KEY"
+    },
+    {
+      // Grok. The owner's binding ruling: extraction runs TWO independent passes,
+      // Grok + DeepSeek, from day one. Without this binding Grok cannot authenticate
+      // and the second pass silently has no model.
+      "binding": "XAI_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "XAI_API_KEY"
+    }
+  ],
+
+  "vars": {
+    // ---- namespace (a guard reads this; it is not decoration) ----
+    "V2_PREFIX": "v2/",
+
+    // ---- AI Gateway routing (REQUIRED, not optional) ----
+    // The v1 legs (src/llm/grok.ts, src/llm/deepseek.ts) branch on these: when they
+    // are absent the client calls api.x.ai / api.deepseek.com DIRECTLY and bypasses
+    // the gateway entirely — which means no logging, no caching, and no spend limit
+    // can ever apply. Confirmed live: gateway "firstgateway" has authentication:false,
+    // so no CF_AIG_TOKEN is needed.
+    "CF_AIG_ACCOUNT_ID": "f0cbb2076e484454e6567789b9be85d8",
+    "CF_AIG_GATEWAY_ID": "firstgateway",
+
+    // ---- retention posture: CONFIGURATION, not hardcoded ----
+    // Proposal decision 7: 30d raw evidence / 90d final reports, configurable later.
+    // R2 lifecycle rules are BUCKET-wide and the bucket is shared with prod, so a
+    // lifecycle rule would delete v1 data too. Retention is therefore enforced by
+    // v2's own prefix-scoped cron sweep, and it DEFAULTS TO DRY RUN.
+    "RETENTION_RAW_EVIDENCE_DAYS": "30",
+    "RETENTION_REPORT_DAYS": "90",
+    "RETENTION_CONTRACT_DAYS": "0", // 0 = never expire (contract revisions are lineage)
+    "RETENTION_MODE": "report-only", // "report-only" | "delete"
+    "RETENTION_SCAN_BUDGET": "500", // objects examined per cron tick
+
+    // ---- browser session policy (spike-derived) ----
+    "BROWSER_KEEP_ALIVE_MS": "600000", // idle timeout, refreshed by every batch
+    "SESSION_MAX_AGE_MS": "480000", // proactively recycle before the observed ~11min wall
+    "EXEC_BATCH_MAX_MS": "120000", // wall-clock budget for ONE execute-batch step
+    "EXEC_BATCH_MAX_ATTEMPTS": "4", // attempts committed per durable checkpoint
+    "EXEC_MAX_BATCHES": "200", // hard stop on the batch loop
+
+    // ---- execution: walking the survey (workflow/stages/execute-batch.ts) ----
+    // TIER 2 IS BUDGETED, NOT UNBOUNDED. The floor is contractual and always runs to
+    // completion; exploration may only ADD findings, so it gets a cap rather than a
+    // guarantee and the run is free to stop at any entry without affecting coverage.
+    // The t1-easy plan queues 76 entries (~13 screens each); 24 is a few minutes of
+    // walking. Set it to 0 to run the contractual floor and nothing else.
+    "EXEC_MAX_EXPLORATION": "24",
+    "EXEC_MAX_STEPS_PER_PATH": "40", // a survey that never terminates must not hang a batch
+    "EXEC_ADVANCE_TIMEOUT_MS": "3500", // how long a screen may take to change after Next
+    "EXEC_ACQUIRE_TIMEOUT_MS": "45000", // a reconnect to a wedged session never returns
+    "EXEC_WALK_TIMEOUT_MS": "150000", // one walk, bounded; a hang is a named outcome
+    "BROWSER_COMPAT_SHIMS": "auto", // "auto" | "off" — see browser/page-script.ts HISTORY_SHIM
+
+    // ---- run caps (proposal §5; each keeps its own name and denominator) ----
+    "CAP_STANDARD_MAX_USD": "30",
+    "CAP_STANDARD_MIN_USD": "5",
+    "CAP_DEEP_MAX_USD": "75",
+    "CAP_VERIFICATION_RESERVE_FRACTION": "0.15",
+    "CAP_REPORT_RESERVE_FRACTION": "0.10",
+    "CAP_MODEL_CALLS": "400",
+    "CAP_TOOL_CALLS": "4000",
+    "CAP_WALL_CLOCK_MS": "3600000",
+
+    // ---- policy switches that are OPEN OWNER FORKS; surfaced, never buried ----
+    // merged-contract §0: human review for every live run, or high-risk only?
+    "HUMAN_REVIEW_MODE": "high-risk-only", // "always" | "high-risk-only"
+    // merged-contract §7: source-verified unmatched requirement — blocking or FP?
+    "ORACLE_GAP_POLICY": "neutral-blocking", // "neutral-blocking" | "strict-fp"
+
+    // ---- JudgementRecord attestation: PINNED PUBLIC KEYS ----
+    // The derived-verdict engine's output is the only thing allowed to drive "current"
+    // results, so it travels as a signed, run-bound JudgementRecord and the Worker checks
+    // that signature against THIS list. A public key is not a secret; pinning it in the
+    // config a deploy ships is exactly the intent — certifying a new signer must be a
+    // reviewed edit to this file, never something a request can supply.
+    //
+    // `trust: "fixture"` keys are honoured ONLY when DEV_SEED is enabled, which cannot
+    // happen on a deployed build (DEV_SEED is deliberately absent from this file). The
+    // matching private key is committed at tools/fixtures/judgement-fixture-key.json and
+    // exists so the smoke suite can prove the whole attestation path end to end.
+    //
+    // With NO production key listed, every judgement is `unusable` and the report may show
+    // it only as a non-final operational diagnostic. That is the correct posture while the
+    // judging stage is unwired: fail-closed to "no current results".
+    //
+    // 2 Aug 2026 — a production signer is now pinned. Its private half was generated fresh,
+    // written straight into the Worker's secrets (JUDGEMENT_SIGNING_KEY /
+    // JUDGEMENT_SIGNING_KEY_ID) and never printed anywhere. Note the trust boundary this
+    // deliberately relaxes: the comment above says certifying a signer must be a reviewed
+    // edit, and here the same party generated the key and pinned it. For a single-owner
+    // service that is ceremony rather than security, but it IS a real separation to restore
+    // if this ever serves anyone else — the registry is the place that decides who may
+    // certify, and it should not be edited by whoever holds the key.
+    "JUDGEMENT_KEY_REGISTRY": "{\"keys\":{\"judgement-ed25519-c66c5185cc1a\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEA3MhosLSUGY4GocN6qXlY0bT6x1bkJ7nBCWhzUo2qako=\",\"trust\":\"production\",\"note\":\"production judgement signer, generated 2 Aug 2026\"},\"fixture-judge-ed25519-1\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEAnLc2qf/YrOD6qP1zAsHHQBIzea2kYaeJ/fFH/9QAQdM=\",\"trust\":\"fixture\",\"note\":\"local smoke suite only; rejected unless DEV_SEED=enabled\"}}}",
+
+    // ---- submission limits (each keeps its own name and denominator) ----
+    "MAX_DOCUMENT_BYTES": "26214400", // 25 MiB of .docx
+    "MAX_VIEWPORTS": "6",
+    "MAX_LOCALE_LENGTH": "35", // BCP-47 maximum practical tag length
+    "OUTBOUND_URL_POLICY": "block-private", // "block-private" | "allow-private"
+
+    // ---- extraction models: Grok reads the whole document, DeepSeek walks the blocks.
+    //      Two passes, two providers, and — the part that matters — two METHODS.
+    //      Prices are per Mtok and are what the run's cost ledger is computed from; a
+    //      wrong price here makes the cost line wrong, not the run. ----
+    // MEASURED on t1-easy, same document, same prompt, one call each:
+    //   grok-4.3 → 12-18 survey-scoped rules (three runs), 2 cross-references resolved, $0.019
+    //   grok-4.5 → 23 rules, 15 cross-references resolved, 3 ambiguities named, $0.030
+    // 4.5 caught rules 4.3 did not state at all ("code numbers must never be displayed",
+    // "Q8 is the only question a respondent may leave blank"). Pass A exists to find exactly
+    // the class of rule a block-by-block read cannot produce, so a miss here is not recovered
+    // downstream — the extra cent is the cheapest part of this pipeline.
+    "GROK_MODEL": "grok-4.5",
+    "GROK_REASONING_EFFORT": "high",
+    "GROK_INPUT_USD_PER_MTOK": "1.25",
+    "GROK_OUTPUT_USD_PER_MTOK": "2.50",
+    "DEEPSEEK_MODEL": "deepseek-v4-pro",
+    "DEEPSEEK_REASONING_EFFORT": "medium",
+    "DEEPSEEK_INPUT_USD_PER_MTOK": "0.28",
+    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.42",
+
+    // ---- extraction shape (a document that needs smaller chunks must not need code) ----
+    // MEASURED, not guessed. A 45-block chunk of the t1 questionnaire cost 150 s and 13.6 k
+    // output tokens on DeepSeek — one chunk, and the block ledger it owes grows with every
+    // block in it. Fifteen blocks lands each call near a minute, which is what makes the
+    // per-chunk persistence and the resume path useful rather than theoretical.
+    "EXTRACT_PASS_A_WINDOW_CHARS": "90000",
+    "EXTRACT_CHUNK_CHARS": "3000",
+    "EXTRACT_CHUNK_MAX_BLOCKS": "15",
+    "EXTRACT_CHUNK_CONCURRENCY": "5",
+    "EXTRACT_MAX_OUTPUT_TOKENS": "32000",
+    "LLM_TIMEOUT_MS": "300000",
+    "EXTRACT_BUDGET_FRACTION": "0.5",
+    // DECLARED ON PURPOSE, because being UNDECLARED is what made an invariant false in
+    // production. `llm/chat.ts` retries INSIDE one call and bills every attempt, so one
+    // purchase can occupy `EXTRACT_MAX_ATTEMPTS × LLM_TIMEOUT_MS`. The derived step timeouts
+    // (passAStepTimeoutMs / passBStepTimeoutMs) budget for that product — but while this
+    // knob lived only as a default in chat.ts, the live value (2) was invisible here and the
+    // arithmetic that depends on it could not be checked by reading the config. Two is the
+    // money rule, not a default worth raising: raising it multiplies BOTH the bill and every
+    // step timeout derived from it.
+    "EXTRACT_MAX_ATTEMPTS": "2",
+    // The pass-B ledger sweep: extra calls that re-ask about blocks the chunk walk left
+    // unaccounted. Declared in src/types/env.ts but absent from this file until now — the
+    // same gap class as EXTRACT_MAX_ATTEMPTS above.
+    "EXTRACT_SWEEP_MAX_CALLS": "3",
+    "EXTRACT_SWEEP_BLOCKS_PER_CALL": "40",
+
+    // ---- pass-A wave split (the SERIAL window walk does not fit in one Workflow step) ----
+    // Declared at the code defaults, so setting them changes nothing until they are tuned.
+    // EXTRACT_PASS_A_WINDOW_CHARS is 90 000, so a ~180 KB document is already two SERIAL
+    // calls at up to LLM_TIMEOUT_MS each (600 s > the 480 s step the pass used to live in).
+    // The walk is therefore spread over as many STEPS as the document needs, and this is the
+    // wall clock ONE of them may spend ISSUING new calls. A wave never abandons a call
+    // already in flight: the step's own timeout is DERIVED from this plus a whole PURCHASE
+    // plus slack (extract/pass-a.ts#passAStepTimeoutMs).
+    "EXTRACT_PASS_A_WAVE_BUDGET_MS": "600000",
+    // Backstop, not a tuning knob: how many pass-A wave STEPS a run may use before it stops
+    // with a named reason (`extraction-pass-a-waves-exhausted`) naming how many windows are
+    // still owed — never a `partial-*` over a document nobody finished reading. Waves are
+    // bounded by the WINDOW COUNT, since a wave always issues at least one call.
+    "EXTRACT_PASS_A_MAX_WAVES": "10",
+    // How many times ONE pass-A window may be BOUGHT across the WHOLE run. The count lives in
+    // the window's own R2 artifact, so waves, step retries and recovery instances share one
+    // budget. DELIBERATELY NOT the same knob as EXTRACT_CHUNK_MAX_ISSUES: a pass-A window is
+    // a 90 KB purchase and a pass-B chunk is a 5 KB one, so the same number is not the same
+    // money. EXTRACT_MAX_ATTEMPTS still absorbs transport blips INSIDE one purchase.
+    "EXTRACT_PASS_A_WINDOW_MAX_ISSUES": "2",
+
+    // ---- pass-B wave split (the fan-out does not fit in one Workflow step) ----
+    // Declared at the code defaults, so setting them changes nothing until they are tuned.
+    // Wall clock ONE wave may spend ISSUING new model calls; a wave never abandons a call
+    // already in flight, and the step's own timeout is DERIVED from this plus a whole
+    // PURCHASE (which counts EXTRACT_MAX_ATTEMPTS retries inside one call) plus slack, so the
+    // step axe cannot kill — and force a re-buy of — an already-paid-for call.
+    "EXTRACT_WAVE_BUDGET_MS": "600000",
+    // Backstop, not a tuning knob: how many wave STEPS a run may use before it stops with a
+    // named reason (`extraction-pass-b-waves-exhausted`) instead of a partial over work that
+    // never happened. Waves scale with the document.
+    "EXTRACT_PASS_B_MAX_WAVES": "40",
+    // How many times ONE pass-B unit (chunk or ledger sweep) may be BOUGHT across the WHOLE
+    // run. The count lives in the unit's own R2 artifact, so waves, step retries and recovery
+    // instances share one budget — a recovery storm once billed a single chunk 21-24 times.
+    "EXTRACT_CHUNK_MAX_ISSUES": "2",
+
+    // ---- models ----
+    "EXTRACTION_MODEL": "claude-sonnet-4-6",
+    "JUDGE_MODEL": "claude-sonnet-4-6",
+    "WORKERSAI_VALIDATOR_MODEL": "@cf/openai/gpt-oss-120b",
+    "WORKERSAI_ENABLED": "false", // free neurons exhausted; validators degrade, never block
+
+    "AGGREGATOR_VERSION": "v2-aggregator/1.0.0",
+    "RESULT_POLICY_VERSION": "v2-result-policy/1.0.0"
+  },
+
+  // v2 owns its OWN cron. Crons are per-Worker, so this cannot collide with the
+  // prod `*/5` sweeper; the v2 sweeper only ever enumerates v2/active/.
+  "triggers": { "crons": ["*/5 * * * *"] },
+
+  "observability": { "enabled": true }
+}

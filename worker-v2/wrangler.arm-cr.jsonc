@@ -1,0 +1,193 @@
+// ARM C-R — hybrid with randomised traversal (the control). One of four experimental conditions, each in its OWN deployed Worker.
+//
+// READ evaluation/arms/ARCHITECTURE.md BEFORE EDITING THIS FILE. In particular §8, which is
+// why the three lines under "born closed" are not optional, and §9, which is why this arm
+// cannot run yet.
+//
+// ============================ WHAT IS SHARED AND WHAT IS NOT ============================
+//
+//   ONE SOURCE TREE, ONE COMMIT, N MANIFESTS. `main` points at the SAME entrypoint every
+//   other arm uses. There is no per-arm source directory, because a per-arm source directory
+//   is the thing that drifts and turns an architecture comparison into a week-of-changes
+//   comparison. The ONLY experimental difference between this file and wrangler.arm-b.jsonc
+//   is `ARM_MANIFEST`. `build-all.mjs` diffs the four configs and FAILS on any difference
+//   outside the declared per-arm field list — the configs cannot drift silently.
+//
+//   shared          account · R2 BUCKET survey-qa-artifacts · Browser Rendering quota
+//                   · Secrets Store (same store_id, same secrets) · source tree
+//   NEVER shared    worker name · R2 KEY PREFIX · Workflow NAME · AI Gateway id
+//                   · observability stream · ARM_MANIFEST
+//
+// ============================ SECURITY: THIS ARM IS PRODUCTION ==========================
+//
+//   It holds provider credentials and can spend money. `workers_dev: false` is DECLARED in
+//   this file, not set out of band, because Cloudflare re-enables a route disabled outside
+//   Wrangler on the next `wrangler deploy` (docs/access-setup.md §5 — a live regression this
+//   project has already paid for once). There is NO `routes` key: an arm gets a hostname
+//   only after an Access application exists for it, which is the deploy-order constraint
+//   worker-v2/DEPLOY.md step 3 already imposes.
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+
+  "name": "survey-qa-arm-cr",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "rules": [{ "type": "Text", "globs": ["**/report.css"], "fallthrough": false }],
+
+  // ---- born closed. All three declared; none inherited. ----
+  "workers_dev": false,
+  "preview_urls": false,
+  // NO "routes". Adding one before the arm's Access application exists publishes an
+  // unauthenticated endpoint holding provider credentials. That is the one edit that must
+  // never be made casually.
+
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/v2/*", "/runs/*", "/v2/*"]
+  },
+
+  "browser": { "binding": "BROWSER", "remote": true },
+  "ai": { "binding": "AI", "remote": true },
+
+  // SAME bucket, PER-ARM KEY PREFIX (see vars.V2_PREFIX). No arm can read or overwrite
+  // another arm's evidence, and none can touch `v2/` proper.
+  "r2_buckets": [{ "binding": "EVIDENCE", "bucket_name": "survey-qa-artifacts" }],
+
+  // DISTINCT WORKFLOW NAME per arm. The binding and class stay `V2_RUN_WORKFLOW` /
+  // `SurveyRunWorkflowV2` because those are the CODE's symbols and there is one source tree;
+  // the `name` is the account-level resource identity and it is what isolates the instances.
+  // An arm's sweeper can never probe, restart or recreate another arm's instance.
+  "workflows": [
+    {
+      "name": "survey-qa-arm-cr-run",
+      "binding": "V2_RUN_WORKFLOW",
+      "class_name": "SurveyRunWorkflowV2"
+    }
+  ],
+
+  "secrets_store_secrets": [
+    { "binding": "ANTHROPIC_API_KEY", "store_id": "55e6ce4174d645cfa68a6c27eef7847f", "secret_name": "ANTHROPIC_API_KEY" },
+    { "binding": "DEEPSEEK_API_KEY", "store_id": "55e6ce4174d645cfa68a6c27eef7847f", "secret_name": "DEEPSEEK_API_KEY" },
+    { "binding": "XAI_API_KEY", "store_id": "55e6ce4174d645cfa68a6c27eef7847f", "secret_name": "XAI_API_KEY" }
+  ],
+
+  "vars": {
+    // ==================== THE ONLY EXPERIMENTAL DIFFERENCE ====================
+    // The arm's build manifest, pinned as a JSON string — the same mechanism
+    // JUDGEMENT_KEY_REGISTRY uses in wrangler.jsonc, so which components this arm runs is a
+    // reviewed edit to a config file and never something a request supplies.
+    //
+    // MUST STAY BYTE-EQUAL TO evaluation/arms/manifests/arm-cr.json (minus its `_comment`).
+    // `build-all.mjs` recomputes the manifest hash from BOTH and refuses to build on a
+    // mismatch — this string is a copy, and an unchecked copy is how two declarations of one
+    // thing become two different things.
+    //
+    // IDENTICAL TO ARM C IN EVERY SLOT BUT `plan`. Diff `ARM_MANIFEST` against
+    // wrangler.arm-c.jsonc: one slot differs. Everything downstream of path selection —
+    // graph, model, prompts, judging step, budget — must stay identical, or the traversal
+    // control quietly becomes an implementation comparison answering a different question.
+    // build-all.mjs asserts it (CR_OVER_DIFFERS).
+    //
+    // `plan: "random-equal-size"` does not exist. Its construction is fully pinned by
+    // PRE-REGISTRATION.md §5.6 — uniform draw over VALID EXECUTABLE traversals, matched to C
+    // on DISTINCT NODE-VISITS within +/-10%, seed pinned per (surveyId, repeat), R = 3 seeds
+    // scored as a mean with the min-max range always printed — so the specification is not
+    // the blocker; `structure: "routing-graph"` is (see wrangler.arm-b.jsonc).
+    //
+    // `seeds: [0,1,2]` makes this arm 3 of the 5 judgement-billing runs per survey: the
+    // single largest line item in the cost projection (ARCHITECTURE.md §10.2).
+    "ARM_MANIFEST": "{\"manifestVersion\":\"survey-qa-arm-manifest/1.0.0\",\"armId\":\"C-R\",\"label\":\"hybrid, randomised traversal\",\"workerName\":\"survey-qa-arm-cr\",\"components\":{\"ingest\":\"shared-sealed\",\"structure\":\"routing-graph\",\"plan\":\"random-equal-size\",\"traverse\":\"harness-walk\",\"judge\":\"model-attribute\"},\"sharedIngestRevision\":null,\"seeds\":[0,1,2],\"declaredAttribution\":[\"graph\",\"model\",\"graph-located-model-judged\",\"unattributed\"]}",
+
+    // ARM_BUILD_IDENTITY is NOT here on purpose. It is build-dependent (tree hash, build id)
+    // and is injected at deploy time by build-all.mjs via `--var`. A hardcoded identity
+    // would go stale on the first edit and would then be a lie carried on every result.
+
+    // ---- per-arm namespace ----
+    "V2_PREFIX": "v2/arms/cr/",
+
+    // ---- per-arm AI Gateway: isolation AND per-arm cost attribution AND a spend limit ----
+    // PRE-REGISTRATION.md §3.4 requires cost observed at a boundary the arm cannot write.
+    // A deployed arm calls providers directly, so the gateway IS that boundary
+    // (ARCHITECTURE.md §7.1). The gateway `survey-qa-arm-cr` MUST BE CREATED BEFORE THE FIRST
+    // LIVE RUN — if it does not exist the provider calls fail loudly, which is the correct
+    // failure. Leaving CF_AIG_* absent would be the dangerous one: src/llm/{grok,deepseek}.ts
+    // branch on these and, absent, call the provider DIRECTLY with no logging, no cost view
+    // and no spend cap.
+    "CF_AIG_ACCOUNT_ID": "f0cbb2076e484454e6567789b9be85d8",
+    "CF_AIG_GATEWAY_ID": "survey-qa-arm-cr",
+
+    // ---- everything below is IDENTICAL across all four arms, by construction ----
+    "RETENTION_RAW_EVIDENCE_DAYS": "30",
+    "RETENTION_REPORT_DAYS": "90",
+    "RETENTION_CONTRACT_DAYS": "0",
+    "RETENTION_MODE": "report-only",
+    "RETENTION_SCAN_BUDGET": "500",
+
+    "BROWSER_KEEP_ALIVE_MS": "600000",
+    "SESSION_MAX_AGE_MS": "480000",
+    "EXEC_BATCH_MAX_MS": "120000",
+    "EXEC_BATCH_MAX_ATTEMPTS": "4",
+    "EXEC_MAX_BATCHES": "200",
+
+    "EXEC_MAX_EXPLORATION": "24",
+    "EXEC_MAX_STEPS_PER_PATH": "40",
+    "EXEC_ADVANCE_TIMEOUT_MS": "3500",
+    "EXEC_ACQUIRE_TIMEOUT_MS": "45000",
+    "EXEC_WALK_TIMEOUT_MS": "150000",
+    "BROWSER_COMPAT_SHIMS": "auto",
+
+    "CAP_STANDARD_MAX_USD": "30",
+    "CAP_STANDARD_MIN_USD": "5",
+    "CAP_DEEP_MAX_USD": "75",
+    "CAP_VERIFICATION_RESERVE_FRACTION": "0.15",
+    "CAP_REPORT_RESERVE_FRACTION": "0.10",
+    "CAP_MODEL_CALLS": "400",
+    "CAP_TOOL_CALLS": "4000",
+    "CAP_WALL_CLOCK_MS": "3600000",
+
+    "HUMAN_REVIEW_MODE": "high-risk-only",
+    "ORACLE_GAP_POLICY": "neutral-blocking",
+
+    "JUDGEMENT_KEY_REGISTRY": "{\"keys\":{}}",
+
+    "MAX_DOCUMENT_BYTES": "26214400",
+    "MAX_VIEWPORTS": "6",
+    "MAX_LOCALE_LENGTH": "35",
+    "OUTBOUND_URL_POLICY": "block-private",
+
+    "GROK_MODEL": "grok-4.5",
+    "GROK_REASONING_EFFORT": "high",
+    "GROK_INPUT_USD_PER_MTOK": "1.25",
+    "GROK_OUTPUT_USD_PER_MTOK": "2.50",
+    "DEEPSEEK_MODEL": "deepseek-v4-pro",
+    "DEEPSEEK_REASONING_EFFORT": "medium",
+    "DEEPSEEK_INPUT_USD_PER_MTOK": "0.28",
+    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.42",
+
+    "EXTRACT_PASS_A_WINDOW_CHARS": "90000",
+    "EXTRACT_CHUNK_CHARS": "3000",
+    "EXTRACT_CHUNK_MAX_BLOCKS": "15",
+    "EXTRACT_CHUNK_CONCURRENCY": "5",
+    "EXTRACT_MAX_OUTPUT_TOKENS": "32000",
+    "LLM_TIMEOUT_MS": "300000",
+    "EXTRACT_BUDGET_FRACTION": "0.5",
+
+    "EXTRACTION_MODEL": "claude-sonnet-4-6",
+    "JUDGE_MODEL": "claude-sonnet-4-6",
+    "WORKERSAI_VALIDATOR_MODEL": "@cf/openai/gpt-oss-120b",
+    "WORKERSAI_ENABLED": "false",
+
+    "AGGREGATOR_VERSION": "v2-aggregator/1.0.0",
+    "RESULT_POLICY_VERSION": "v2-result-policy/1.0.0"
+  },
+
+  // NO CRON. An arm is invoked; it does not wake up. Declared empty rather than omitted, so
+  // that "this arm has no scheduled work" is a statement in the file instead of an absence
+  // somebody later reads as an oversight and "fixes".
+  "triggers": { "crons": [] },
+
+  "observability": { "enabled": true }
+}

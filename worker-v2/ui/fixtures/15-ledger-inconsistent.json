@@ -1,0 +1,145 @@
+{
+  "exemptFromLedgerCheck": true,
+  "title": "Coverage ledger does not reconcile",
+  "why": "The buckets sum to 130 but the sealed total is 137. The UI must show the served numbers unchanged and raise a record-integrity warning — never quietly normalize them.",
+  "view": {
+    "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+    "surveyUrl": "https://fieldwork.example.com/s/9d2b41",
+    "documentName": "Q3-tracker-questionnaire-v4.docx",
+    "documentSha256": "sha256:1b8e0c7f5a94d2306ec1f4b78d5a20c39e6f817b4a2d0c5e93f6b1a874c2d0e5",
+    "policy": {
+      "profile": "standard",
+      "profileVersion": "v2-profile/standard/1.0.0",
+      "deepModeAvailable": false,
+      "limits": {
+        "maxUsd": 30,
+        "verificationReserveUsd": 4.5,
+        "reportReserveUsd": 3,
+        "maxModelCalls": 400,
+        "maxToolCalls": 4000,
+        "maxWallClockMs": 3600000
+      },
+      "humanReviewMode": "high-risk-only",
+      "oracleGapPolicy": "neutral-blocking"
+    },
+    "transport": {
+      "state": "ok",
+      "failStreak": 0,
+      "maxFails": 24,
+      "lastConfirmedAt": "2026-08-02T14:07:28.000Z"
+    },
+    "integrity": {
+      "state": "unknown",
+      "code": null,
+      "detail": null
+    },
+    "now": "2026-08-02T14:07:30.000Z",
+    "status": {
+      "schemaVersion": "run-status/2.0.0",
+      "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+      "phase": "executing",
+      "phases": [
+        {
+          "name": "extracting",
+          "state": "complete",
+          "observedAt": "2026-08-02T13:42:30.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "planning",
+          "state": "complete",
+          "observedAt": "2026-08-02T13:43:50.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "executing",
+          "state": "active",
+          "observedAt": "2026-08-02T13:44:10.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "verifying",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        },
+        {
+          "name": "adjudicating",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        },
+        {
+          "name": "reporting",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        }
+      ],
+      "completion": {
+        "test": "running",
+        "report": "not-started",
+        "reasonCode": null
+      },
+      "heartbeatAt": "2026-08-02T14:07:21.000Z",
+      "lastProgressAt": "2026-08-02T14:06:45.000Z",
+      "progressRevision": 47,
+      "reportAvailable": false,
+      "recoveryMode": false,
+      "error": null
+    },
+    "coverage": {
+      "schemaVersion": "coverage-snapshot/1.0.0",
+      "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+      "revision": 47,
+      "observedAt": "2026-08-02T14:06:45.000Z",
+      "sourceCheckpointHash": "sha256:dead…",
+      "contract": {
+        "state": "sealed",
+        "contractRevisionId": "cr_9f1c4a7b2e",
+        "contractHash": "sha256:9f1c4a7b2e6d08c31f5ba24e7d90c6813a4f2b5e9c0d7a138e6f4b2c5d1a9e07",
+        "total": 137,
+        "requirements": {
+          "total": 119,
+          "ambiguous": 3,
+          "disputed": 1,
+          "notBrowserObservable": 17
+        }
+      },
+      "counts": {
+        "exercised": 84,
+        "not-reached": 6,
+        "proven-unreachable": 2,
+        "blocked": 3,
+        "budget-exhausted": 0,
+        "time-exhausted": 0,
+        "pending": 35
+      },
+      "currentAttempt": null,
+      "attempts": {
+        "started": 95,
+        "completed": 93
+      },
+      "usage": {
+        "cost": {
+          "usedUsd": 4.12,
+          "maxUsd": 30,
+          "verificationReserveUsd": 4.5,
+          "reportReserveUsd": 3
+        },
+        "modelCalls": {
+          "used": 63,
+          "max": 400
+        },
+        "toolCalls": {
+          "used": 812,
+          "max": 4000
+        },
+        "wallClock": {
+          "usedMilliseconds": 1284000,
+          "maxMilliseconds": 3600000
+        }
+      }
+    }
+  }
+}

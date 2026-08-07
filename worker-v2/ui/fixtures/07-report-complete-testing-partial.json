@@ -1,0 +1,144 @@
+{
+  "title": "Report complete, testing partial",
+  "why": "A complete report may honestly describe a partial test. Both outcomes are stated in words before any count, and neither collapses into one green badge.",
+  "view": {
+    "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+    "surveyUrl": "https://fieldwork.example.com/s/9d2b41",
+    "documentName": "Q3-tracker-questionnaire-v4.docx",
+    "documentSha256": "sha256:1b8e0c7f5a94d2306ec1f4b78d5a20c39e6f817b4a2d0c5e93f6b1a874c2d0e5",
+    "policy": {
+      "profile": "standard",
+      "profileVersion": "v2-profile/standard/1.0.0",
+      "deepModeAvailable": false,
+      "limits": {
+        "maxUsd": 30,
+        "verificationReserveUsd": 4.5,
+        "reportReserveUsd": 3,
+        "maxModelCalls": 400,
+        "maxToolCalls": 4000,
+        "maxWallClockMs": 3600000
+      },
+      "humanReviewMode": "high-risk-only",
+      "oracleGapPolicy": "neutral-blocking"
+    },
+    "transport": {
+      "state": "ok",
+      "failStreak": 0,
+      "maxFails": 24,
+      "lastConfirmedAt": "2026-08-02T14:07:28.000Z"
+    },
+    "integrity": {
+      "state": "ok",
+      "code": null,
+      "detail": null
+    },
+    "now": "2026-08-02T14:07:30.000Z",
+    "status": {
+      "schemaVersion": "run-status/2.0.0",
+      "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+      "phase": "reporting",
+      "phases": [
+        {
+          "name": "extracting",
+          "state": "complete",
+          "observedAt": "2026-08-02T12:57:30.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "planning",
+          "state": "complete",
+          "observedAt": "2026-08-02T12:59:10.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "executing",
+          "state": "stopped",
+          "observedAt": "2026-08-02T13:57:30.000Z",
+          "reasonCode": "BLOCKER_UNRESOLVED"
+        },
+        {
+          "name": "verifying",
+          "state": "complete",
+          "observedAt": "2026-08-02T14:02:30.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "adjudicating",
+          "state": "complete",
+          "observedAt": "2026-08-02T14:04:30.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "reporting",
+          "state": "complete",
+          "observedAt": "2026-08-02T14:06:30.000Z",
+          "reasonCode": null
+        }
+      ],
+      "completion": {
+        "test": "partial-blocked",
+        "report": "complete",
+        "reasonCode": "BLOCKER_UNRESOLVED"
+      },
+      "heartbeatAt": "2026-08-02T14:06:35.000Z",
+      "lastProgressAt": "2026-08-02T14:06:30.000Z",
+      "progressRevision": 88,
+      "reportAvailable": true,
+      "recoveryMode": false,
+      "error": null
+    },
+    "coverage": {
+      "schemaVersion": "coverage-snapshot/1.0.0",
+      "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+      "revision": 88,
+      "observedAt": "2026-08-02T14:06:30.000Z",
+      "sourceCheckpointHash": "sha256:aa19…",
+      "contract": {
+        "state": "sealed",
+        "contractRevisionId": "cr_9f1c4a7b2e",
+        "contractHash": "sha256:9f1c4a7b2e6d08c31f5ba24e7d90c6813a4f2b5e9c0d7a138e6f4b2c5d1a9e07",
+        "total": 137,
+        "requirements": {
+          "total": 119,
+          "ambiguous": 3,
+          "disputed": 1,
+          "notBrowserObservable": 17
+        }
+      },
+      "counts": {
+        "exercised": 88,
+        "not-reached": 12,
+        "proven-unreachable": 2,
+        "blocked": 35,
+        "budget-exhausted": 0,
+        "time-exhausted": 0,
+        "pending": 0
+      },
+      "currentAttempt": null,
+      "attempts": {
+        "started": 110,
+        "completed": 110
+      },
+      "usage": {
+        "cost": {
+          "usedUsd": 14.2,
+          "maxUsd": 30,
+          "verificationReserveUsd": 4.5,
+          "reportReserveUsd": 3
+        },
+        "modelCalls": {
+          "used": 198,
+          "max": 400
+        },
+        "toolCalls": {
+          "used": 2410,
+          "max": 4000
+        },
+        "wallClock": {
+          "usedMilliseconds": 2940000,
+          "maxMilliseconds": 3600000
+        }
+      }
+    }
+  }
+}

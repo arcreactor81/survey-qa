@@ -1,0 +1,219 @@
+{
+  "pass": "B",
+  "provider": "deepseek",
+  "model": "deepseek-v4-pro",
+  "requirements": [
+    {
+      "id": "B-01",
+      "construct": "routing",
+      "scope": "question:Q7",
+      "quantifier": "specific",
+      "selector": "Q7",
+      "exceptions": [],
+      "statement": "When the respondent selects 'Can't remember' for Q7, the survey must route to Q9.",
+      "docQuote": "If Q7 = Can't remember, go to Q9.",
+      "blockIds": ["b0042", "b0043"],
+      "browserObservable": "full",
+      "confidence": 0.94,
+      "expansion": {
+        "kind": "route",
+        "routeAnswers": [
+          { "code": "2", "label": "Can't remember", "destination": "Q9" }
+        ],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "B",
+      "origin": "chunk-3:Q7"
+    },
+    {
+      "id": "B-02",
+      "construct": "option-list",
+      "scope": "question:Q7",
+      "quantifier": "only",
+      "selector": "Q7",
+      "exceptions": [],
+      "statement": "Q7 must present exactly three response options: Yes, No, and Can't remember.",
+      "docQuote": "Q7. Have you purchased this brand in the last 6 months? ○ Yes  ○ No  ○ Can't remember",
+      "blockIds": ["b0040", "b0041"],
+      "browserObservable": "full",
+      "confidence": 0.96,
+      "expansion": null,
+      "pass": "B",
+      "origin": "chunk-3:Q7"
+    },
+    {
+      "id": "B-03",
+      "construct": "validation",
+      "scope": "question:Q12",
+      "quantifier": "specific",
+      "selector": "Q12",
+      "exceptions": [],
+      "statement": "Q12 must enforce a minimum of 1 and a maximum of 10 characters for the open-end text field.",
+      "docQuote": "Please enter your postcode (max 10 characters).",
+      "blockIds": ["b0110"],
+      "browserObservable": "partial",
+      "confidence": 0.89,
+      "expansion": {
+        "kind": "boundary",
+        "routeAnswers": [],
+        "maxLength": 10,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "B",
+      "origin": "chunk-7:Q12"
+    },
+    {
+      "id": "B-04",
+      "construct": "skip-rule",
+      "scope": "question:Q3",
+      "quantifier": "any",
+      "selector": "Q3",
+      "exceptions": [],
+      "statement": "If the respondent selects 'No' for Q3, skip Q4 and Q5 and go directly to Q6.",
+      "docQuote": "If Q3 = No, skip to Q6.",
+      "blockIds": ["b0025", "b0026"],
+      "browserObservable": "full",
+      "confidence": 0.93,
+      "expansion": {
+        "kind": "route",
+        "routeAnswers": [
+          { "code": "1", "label": "No", "destination": "Q6" }
+        ],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "B",
+      "origin": "chunk-2:Q3"
+    },
+    {
+      "id": "B-05",
+      "construct": "carry-forward",
+      "scope": "question:Q8",
+      "quantifier": "only",
+      "selector": "Q8",
+      "exceptions": [],
+      "statement": "Q8 must only display brands the respondent marked as 'Aware of' in Q1.",
+      "docQuote": "Thinking about the brands you have heard of... [brands from Q1]",
+      "blockIds": ["b0050"],
+      "browserObservable": "partial",
+      "confidence": 0.85,
+      "expansion": null,
+      "pass": "B",
+      "origin": "chunk-4:Q8"
+    },
+    {
+      "id": "B-06",
+      "construct": "randomization",
+      "scope": "question:Q1",
+      "quantifier": "every",
+      "selector": "Q1",
+      "exceptions": [],
+      "statement": "The list of 20 brands in Q1 must be presented in random order for each respondent.",
+      "docQuote": "The order of brands below is randomized.",
+      "blockIds": ["b0015"],
+      "browserObservable": "partial",
+      "confidence": 0.91,
+      "expansion": null,
+      "pass": "B",
+      "origin": "chunk-1:Q1"
+    },
+    {
+      "id": "B-07",
+      "construct": "loop",
+      "scope": "question:Q8",
+      "quantifier": "every",
+      "selector": "Q8",
+      "exceptions": [],
+      "statement": "Q8 must loop for each brand the respondent is aware of from Q1, asking attributes separately.",
+      "docQuote": "For each brand you have heard of, please rate the following attributes...",
+      "blockIds": ["b0051"],
+      "browserObservable": "full",
+      "confidence": 0.88,
+      "expansion": null,
+      "pass": "B",
+      "origin": "chunk-4:Q8"
+    },
+    {
+      "id": "B-08",
+      "construct": "calculation",
+      "scope": "question:Q20",
+      "quantifier": "specific",
+      "selector": "Q20",
+      "exceptions": [],
+      "statement": "Q20 must recalculate the total allocation dynamically and prevent submission if not equal to 100.",
+      "docQuote": "Please allocate 100 points across the attributes below. The total must equal 100 to continue.",
+      "blockIds": ["b0200"],
+      "browserObservable": "full",
+      "confidence": 0.92,
+      "expansion": {
+        "kind": "boundary",
+        "routeAnswers": [],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "B",
+      "origin": "chunk-12:Q20"
+    },
+    {
+      "id": "B-09",
+      "construct": "validation",
+      "scope": "question:Q20",
+      "quantifier": "every",
+      "selector": "Q20",
+      "exceptions": [],
+      "statement": "Q20 must reject numeric input outside the range 0-100 for each allocation cell.",
+      "docQuote": "Enter a number between 0 and 100 for each attribute.",
+      "blockIds": ["b0201"],
+      "browserObservable": "full",
+      "confidence": 0.87,
+      "expansion": null,
+      "pass": "B",
+      "origin": "chunk-12:Q20"
+    },
+    {
+      "id": "B-10",
+      "construct": "terminate",
+      "scope": "question:Q15",
+      "quantifier": "any",
+      "selector": "Q15",
+      "exceptions": [],
+      "statement": "If the respondent answers Q15 with 'I do not consent', terminate the survey immediately.",
+      "docQuote": "Q15. Do you consent to participate?  ○ I consent  ○ I do not consent [TERMINATE]",
+      "blockIds": ["b0150"],
+      "browserObservable": "full",
+      "confidence": 0.95,
+      "expansion": {
+        "kind": "route",
+        "routeAnswers": [
+          { "code": "2", "label": "I do not consent", "destination": "TERMINATE:complete" }
+        ],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "B",
+      "origin": "chunk-9:Q15"
+    }
+  ],
+  "ambiguities": [],
+  "unverifiable": [],
+  "dispositions": [],
+  "constructs": [
+    { "construct": "routing", "present": true, "blockIds": ["b0042"] },
+    { "construct": "option-list", "present": true, "blockIds": ["b0040"] },
+    { "construct": "validation", "present": true, "blockIds": ["b0110", "b0201"] },
+    { "construct": "skip-rule", "present": true, "blockIds": ["b0025"] },
+    { "construct": "carry-forward", "present": true, "blockIds": ["b0050"] },
+    { "construct": "randomization", "present": true, "blockIds": ["b0015"] },
+    { "construct": "loop", "present": true, "blockIds": ["b0051"] },
+    { "construct": "calculation", "present": true, "blockIds": ["b0200"] },
+    { "construct": "terminate", "present": true, "blockIds": ["b0150"] }
+  ],
+  "failedUnits": [],
+  "calls": []
+}

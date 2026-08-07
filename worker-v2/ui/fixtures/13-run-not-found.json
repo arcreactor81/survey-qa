@@ -1,0 +1,39 @@
+{
+  "title": "Run not found",
+  "why": "The server does not have this run. Not a failure, not a network problem, and not blank — its own state with its own copy.",
+  "view": {
+    "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+    "surveyUrl": "https://fieldwork.example.com/s/9d2b41",
+    "documentName": "Q3-tracker-questionnaire-v4.docx",
+    "documentSha256": "sha256:1b8e0c7f5a94d2306ec1f4b78d5a20c39e6f817b4a2d0c5e93f6b1a874c2d0e5",
+    "policy": {
+      "profile": "standard",
+      "profileVersion": "v2-profile/standard/1.0.0",
+      "deepModeAvailable": false,
+      "limits": {
+        "maxUsd": 30,
+        "verificationReserveUsd": 4.5,
+        "reportReserveUsd": 3,
+        "maxModelCalls": 400,
+        "maxToolCalls": 4000,
+        "maxWallClockMs": 3600000
+      },
+      "humanReviewMode": "high-risk-only",
+      "oracleGapPolicy": "neutral-blocking"
+    },
+    "transport": {
+      "state": "not-found",
+      "failStreak": 0,
+      "maxFails": 24,
+      "lastConfirmedAt": null
+    },
+    "integrity": {
+      "state": "unknown",
+      "code": null,
+      "detail": null
+    },
+    "now": "2026-08-02T14:07:30.000Z",
+    "status": null,
+    "coverage": null
+  }
+}

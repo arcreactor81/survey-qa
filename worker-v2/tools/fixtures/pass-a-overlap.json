@@ -1,0 +1,80 @@
+{
+  "pass": "A",
+  "provider": "xai",
+  "model": "grok-4.3",
+  "requirements": [
+    {
+      "id": "A-01",
+      "construct": "terminate",
+      "scope": "survey",
+      "quantifier": "any",
+      "selector": null,
+      "exceptions": [],
+      "statement": "Respondents who do not consent in Q15 must be immediately terminated from the survey.",
+      "docQuote": "If consent is not provided, the survey must end.",
+      "blockIds": ["b0150"],
+      "browserObservable": "full",
+      "confidence": 0.95,
+      "expansion": {
+        "kind": "route",
+        "routeAnswers": [
+          { "code": null, "label": "I do not consent", "destination": "TERMINATE:complete" }
+        ],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "A",
+      "origin": "whole-document"
+    },
+    {
+      "id": "A-02",
+      "construct": "validation",
+      "scope": "section:demographics",
+      "quantifier": "every",
+      "selector": null,
+      "exceptions": [],
+      "statement": "Numeric responses in the demographics section must be between 18 and 99 inclusive.",
+      "docQuote": "Enter your age. Must be 18-99.",
+      "blockIds": ["b0200"],
+      "browserObservable": "full",
+      "confidence": 0.92,
+      "expansion": null,
+      "pass": "A",
+      "origin": "whole-document"
+    },
+    {
+      "id": "A-03",
+      "construct": "terminate",
+      "scope": "survey",
+      "quantifier": "any",
+      "selector": null,
+      "exceptions": [],
+      "statement": "Selecting 'None of the above' for all brand questions triggers immediate screenout.",
+      "docQuote": "If no brands are selected, you do not qualify.",
+      "blockIds": ["b0012"],
+      "browserObservable": "full",
+      "confidence": 0.90,
+      "expansion": {
+        "kind": "route",
+        "routeAnswers": [
+          { "code": null, "label": "None of the above", "destination": "TERMINATE:screenout" }
+        ],
+        "maxLength": null,
+        "minSelections": null,
+        "maxSelections": null
+      },
+      "pass": "A",
+      "origin": "whole-document"
+    }
+  ],
+  "ambiguities": [],
+  "unverifiable": [],
+  "dispositions": [],
+  "constructs": [
+    { "construct": "terminate", "present": true, "blockIds": ["b0150", "b0012"] },
+    { "construct": "validation", "present": true, "blockIds": ["b0200"] }
+  ],
+  "failedUnits": [],
+  "calls": []
+}

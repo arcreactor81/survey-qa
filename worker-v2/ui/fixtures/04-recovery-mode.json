@@ -1,0 +1,144 @@
+{
+  "title": "Recovery mode",
+  "why": "The sweeper is rescuing the run. Pre-rescue telemetry is age-stamped rather than presented as live, and counters are not reset.",
+  "view": {
+    "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+    "surveyUrl": "https://fieldwork.example.com/s/9d2b41",
+    "documentName": "Q3-tracker-questionnaire-v4.docx",
+    "documentSha256": "sha256:1b8e0c7f5a94d2306ec1f4b78d5a20c39e6f817b4a2d0c5e93f6b1a874c2d0e5",
+    "policy": {
+      "profile": "standard",
+      "profileVersion": "v2-profile/standard/1.0.0",
+      "deepModeAvailable": false,
+      "limits": {
+        "maxUsd": 30,
+        "verificationReserveUsd": 4.5,
+        "reportReserveUsd": 3,
+        "maxModelCalls": 400,
+        "maxToolCalls": 4000,
+        "maxWallClockMs": 3600000
+      },
+      "humanReviewMode": "high-risk-only",
+      "oracleGapPolicy": "neutral-blocking"
+    },
+    "transport": {
+      "state": "ok",
+      "failStreak": 0,
+      "maxFails": 24,
+      "lastConfirmedAt": "2026-08-02T14:07:28.000Z"
+    },
+    "integrity": {
+      "state": "unknown",
+      "code": null,
+      "detail": null
+    },
+    "now": "2026-08-02T14:07:30.000Z",
+    "status": {
+      "schemaVersion": "run-status/2.0.0",
+      "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+      "phase": "executing",
+      "phases": [
+        {
+          "name": "extracting",
+          "state": "complete",
+          "observedAt": "2026-08-02T13:32:30.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "planning",
+          "state": "complete",
+          "observedAt": "2026-08-02T13:34:00.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "executing",
+          "state": "active",
+          "observedAt": "2026-08-02T13:34:10.000Z",
+          "reasonCode": null
+        },
+        {
+          "name": "verifying",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        },
+        {
+          "name": "adjudicating",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        },
+        {
+          "name": "reporting",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        }
+      ],
+      "completion": {
+        "test": "running",
+        "report": "not-started",
+        "reasonCode": null
+      },
+      "heartbeatAt": "2026-08-02T14:03:56.000Z",
+      "lastProgressAt": "2026-08-02T14:03:04.000Z",
+      "progressRevision": 52,
+      "reportAvailable": false,
+      "recoveryMode": true,
+      "error": null
+    },
+    "coverage": {
+      "schemaVersion": "coverage-snapshot/1.0.0",
+      "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+      "revision": 52,
+      "observedAt": "2026-08-02T14:03:04.000Z",
+      "sourceCheckpointHash": "sha256:88fa…",
+      "contract": {
+        "state": "sealed",
+        "contractRevisionId": "cr_9f1c4a7b2e",
+        "contractHash": "sha256:9f1c4a7b2e6d08c31f5ba24e7d90c6813a4f2b5e9c0d7a138e6f4b2c5d1a9e07",
+        "total": 137,
+        "requirements": {
+          "total": 119,
+          "ambiguous": 3,
+          "disputed": 1,
+          "notBrowserObservable": 17
+        }
+      },
+      "counts": {
+        "exercised": 99,
+        "not-reached": 5,
+        "proven-unreachable": 2,
+        "blocked": 4,
+        "budget-exhausted": 0,
+        "time-exhausted": 0,
+        "pending": 27
+      },
+      "currentAttempt": null,
+      "attempts": {
+        "started": 108,
+        "completed": 106
+      },
+      "usage": {
+        "cost": {
+          "usedUsd": 7.44,
+          "maxUsd": 30,
+          "verificationReserveUsd": 4.5,
+          "reportReserveUsd": 3
+        },
+        "modelCalls": {
+          "used": 94,
+          "max": 400
+        },
+        "toolCalls": {
+          "used": 1219,
+          "max": 4000
+        },
+        "wallClock": {
+          "usedMilliseconds": 2106000,
+          "maxMilliseconds": 3600000
+        }
+      }
+    }
+  }
+}

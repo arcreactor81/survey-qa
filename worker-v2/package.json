@@ -1,0 +1,15 @@
+{
+  "name": "survey-qa-v2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "v2 LLM-led survey QA Worker — separate service from the production survey-qa worker",
+  "comment": "No dependencies of its own on purpose: it resolves wrangler, typescript, @cloudflare/puppeteer and @cloudflare/workers-types from the repo root node_modules. Run every script from the repo root or from here via npx.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node tools/test.mjs",
+    "smoke": "node tools/smoke.mjs",
+    "dry-run": "wrangler deploy --dry-run --outdir .wrangler/dry-run",
+    "dev": "wrangler dev",
+    "//deploy": "DELIBERATELY ABSENT. See DEPLOY.md — deploying is an owner action."
+  }
+}

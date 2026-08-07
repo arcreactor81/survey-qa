@@ -1,0 +1,144 @@
+{
+  "title": "Failure before extraction",
+  "why": "No contract ever existed. The page must say the denominator is unavailable, not report zero coverage against a total it never had.",
+  "view": {
+    "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+    "surveyUrl": "https://fieldwork.example.com/s/9d2b41",
+    "documentName": "Q3-tracker-questionnaire-v4.docx",
+    "documentSha256": "sha256:1b8e0c7f5a94d2306ec1f4b78d5a20c39e6f817b4a2d0c5e93f6b1a874c2d0e5",
+    "policy": {
+      "profile": "standard",
+      "profileVersion": "v2-profile/standard/1.0.0",
+      "deepModeAvailable": false,
+      "limits": {
+        "maxUsd": 30,
+        "verificationReserveUsd": 4.5,
+        "reportReserveUsd": 3,
+        "maxModelCalls": 400,
+        "maxToolCalls": 4000,
+        "maxWallClockMs": 3600000
+      },
+      "humanReviewMode": "high-risk-only",
+      "oracleGapPolicy": "neutral-blocking"
+    },
+    "transport": {
+      "state": "ok",
+      "failStreak": 0,
+      "maxFails": 24,
+      "lastConfirmedAt": "2026-08-02T14:07:28.000Z"
+    },
+    "integrity": {
+      "state": "unknown",
+      "code": null,
+      "detail": null
+    },
+    "now": "2026-08-02T14:07:30.000Z",
+    "status": {
+      "schemaVersion": "run-status/2.0.0",
+      "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+      "phase": "extracting",
+      "phases": [
+        {
+          "name": "extracting",
+          "state": "stopped",
+          "observedAt": "2026-08-02T14:05:30.000Z",
+          "reasonCode": "DOCUMENT_UNREADABLE"
+        },
+        {
+          "name": "planning",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        },
+        {
+          "name": "executing",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        },
+        {
+          "name": "verifying",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        },
+        {
+          "name": "adjudicating",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        },
+        {
+          "name": "reporting",
+          "state": "pending",
+          "observedAt": null,
+          "reasonCode": null
+        }
+      ],
+      "completion": {
+        "test": "failed",
+        "report": "failed",
+        "reasonCode": "DOCUMENT_UNREADABLE"
+      },
+      "heartbeatAt": "2026-08-02T14:05:32.000Z",
+      "lastProgressAt": "2026-08-02T14:05:30.000Z",
+      "progressRevision": 3,
+      "reportAvailable": false,
+      "recoveryMode": false,
+      "error": "docx parse failed: the uploaded file is a .doc (OLE2 compound document), not an Office Open XML .docx"
+    },
+    "coverage": {
+      "schemaVersion": "coverage-snapshot/1.0.0",
+      "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
+      "revision": 3,
+      "observedAt": "2026-08-02T14:05:30.000Z",
+      "sourceCheckpointHash": "sha256:00ab…",
+      "contract": {
+        "state": "unavailable",
+        "contractRevisionId": null,
+        "contractHash": null,
+        "total": null,
+        "requirements": {
+          "total": null,
+          "ambiguous": 0,
+          "disputed": 0,
+          "notBrowserObservable": 0
+        }
+      },
+      "counts": {
+        "exercised": 0,
+        "not-reached": 0,
+        "proven-unreachable": 0,
+        "blocked": 0,
+        "budget-exhausted": 0,
+        "time-exhausted": 0,
+        "pending": 0
+      },
+      "currentAttempt": null,
+      "attempts": {
+        "started": 0,
+        "completed": 0
+      },
+      "usage": {
+        "cost": {
+          "usedUsd": 0.11,
+          "maxUsd": 30,
+          "verificationReserveUsd": 4.5,
+          "reportReserveUsd": 3
+        },
+        "modelCalls": {
+          "used": 2,
+          "max": 400
+        },
+        "toolCalls": {
+          "used": 0,
+          "max": 4000
+        },
+        "wallClock": {
+          "usedMilliseconds": 122000,
+          "maxMilliseconds": 3600000
+        }
+      }
+    }
+  }
+}

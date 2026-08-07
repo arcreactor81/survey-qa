@@ -1,0 +1,143 @@
+{
+  "_comment": [
+    "THE COMPONENT CATALOGUE — the single source of truth for what a manifest may name.",
+    "",
+    "Read by TWO consumers and there is deliberately only ONE file:",
+    "  - worker-v2/src/arms/registry.ts binds these ids to code and asserts at boot that",
+    "    every `implemented` id has an implementation and no `unimplemented` id does;",
+    "  - evaluation/arms/verify.mjs validates manifests and reports maturity blockers.",
+    "A mirrored catalogue would drift, and a drifted catalogue is a flag by another name.",
+    "",
+    "`status` says whether the component EXISTS AS CODE. It does NOT say whether the",
+    "registry binds it to a callable — that is governed by types.ts#WIRED_SLOTS, and today",
+    "only the `plan` slot is wired. The two were conflated in the first version of this file",
+    "and the cost was concrete: resolving the BASELINE manifest demanded a callable for",
+    "`ingest: v2-two-pass`, which exists as code but is reached by DIRECT IMPORT and has no",
+    "registry entry — correctly — so the no-manifest path threw and four green workflow tests",
+    "went red. resolve.ts now calls validateComponent() for all five slots and componentFor()",
+    "only for wired ones.",
+    "",
+    "  implemented   — the code exists and runs today. Reached through the registry if its",
+    "                  slot is WIRED, by direct import otherwise. Both are real.",
+    "  unimplemented — the slot is declared and typed; invoking it THROWS. A manifest may",
+    "                  name it (so the manifest is checkable and the deploy resolves), and",
+    "                  verify.mjs reports it as a MATURITY blocker rather than a config error.",
+    "",
+    "An id ABSENT from this file is UNRESOLVED_COMPONENT and is fatal at resolve time, for",
+    "every slot, wired or not. That is the check a real arm's typo must not survive.",
+    "",
+    "See evaluation/arms/ARCHITECTURE.md §2 for the slot semantics and §9 for why the",
+    "unimplemented ones are unimplemented."
+  ],
+
+  "catalogueVersion": "survey-qa-arm-catalogue/1.0.0",
+
+  "slots": {
+    "ingest": {
+      "signature": "(docx bytes) -> SealedContract",
+      "experimentalVariable": false,
+      "pinnedReason": "PRE-REGISTRATION.md §8.1 shared-ingestion control. Arms consuming different parsers would measure PARSERS and report the answer as ARCHITECTURE.",
+      "implementations": {
+        "v2-two-pass": {
+          "status": "implemented",
+          "binds": "workflow/stages/extract.ts#stagePassA + stagePassB + stageConsolidate",
+          "note": "the baseline. Grok whole-document + DeepSeek block-by-block, merged and sealed."
+        },
+        "shared-sealed": {
+          "status": "implemented",
+          "binds": "store/contract-revision.ts#getContractRevision",
+          "note": "THE CONTROL. Consumes a contract revision sealed ONCE, outside every arm, by id. Every arm manifest must name the SAME revision; verify.mjs fails INGEST_DIVERGENCE otherwise."
+        }
+      }
+    },
+
+    "structure": {
+      "signature": "(SealedContract) -> StructureModel",
+      "experimentalVariable": true,
+      "implementations": {
+        "none": {
+          "status": "implemented",
+          "binds": "(identity) — the empty structure model",
+          "note": "the baseline and arm A: obligations are a flat scoped list, there is no routing graph."
+        },
+        "routing-graph": {
+          "status": "implemented",
+          "binds": "src/structure/index.ts#compileStructureModel — compiles a routing graph from the sealed contract revision's typed case data"
+        }
+      }
+    },
+
+    "plan": {
+      "signature": "(StructureModel, SealedContract) -> ExecutionProgram",
+      "experimentalVariable": true,
+      "note": "THE C vs C-R SEAM, and the only slot where they differ.",
+      "implementations": {
+        "v2-two-tier": {
+          "status": "implemented",
+          "binds": "workflow/stages/plan.ts#planStage",
+          "note": "the baseline. Deterministic: zero model calls, zero I/O, zero site knowledge."
+        },
+        "model-attested": {
+          "status": "unimplemented",
+          "binds": null,
+          "blocker": "arm A as PRE-REGISTRATION.md §1.1 defines it — a model that navigates and decides what to test — has never been built. worker-v2 plans deterministically. ARCHITECTURE.md §11.1 is the resulting amendment."
+        },
+        "graph-exhaustive": {
+          "status": "unimplemented",
+          "binds": null,
+          "blocker": "depends on structure=routing-graph."
+        },
+        "random-equal-size": {
+          "status": "unimplemented",
+          "binds": null,
+          "blocker": "depends on structure=routing-graph. Construction is fully pinned by PRE-REGISTRATION.md §5.6: uniform draw over VALID executable traversals, matched to C on DISTINCT NODE-VISITS within +/-10%, seed pinned per (surveyId, repeat)."
+        }
+      }
+    },
+
+    "traverse": {
+      "signature": "(ExecutionProgram, browser) -> Observations",
+      "experimentalVariable": false,
+      "pinnedReason": "Browser mechanics are not an architecture. A per-arm driver would put an uncontrolled 'whose click handling is better' term into every comparison. It also keeps the visit log HARNESS-owned, without which coverage_honesty (§4.5) is unmeasurable.",
+      "implementations": {
+        "v2-execute-batch": {
+          "status": "implemented",
+          "binds": "workflow/stages/execute-batch.ts#executeBatch",
+          "note": "the deployed-surface walker."
+        },
+        "harness-walk": {
+          "status": "implemented",
+          "binds": "evaluation/run-arm.mjs#makeBrowser (ctx.browser)",
+          "note": "the scored-run walker. Lives in the HARNESS, not in the arm. ARCHITECTURE.md §7."
+        }
+      }
+    },
+
+    "judge": {
+      "signature": "(Observations, SealedContract, StructureModel) -> Findings",
+      "experimentalVariable": true,
+      "implementations": {
+        "v2-deterministic": {
+          "status": "implemented",
+          "binds": "workflow/stages/derive-verdicts.ts#deriveItemResults",
+          "note": "the baseline. Deterministic over observations + the sealed contract; no model call is permitted in it (run-workflow.ts structural commitment #3)."
+        },
+        "deterministic-diff": {
+          "status": "unimplemented",
+          "binds": null,
+          "blocker": "arm B's edge-set arithmetic. graph-spike/diff.mjs levelA/levelB/levelC exist but take (manifest, graphS) — same input problem as structure=routing-graph."
+        },
+        "model-freeform": {
+          "status": "unimplemented",
+          "binds": null,
+          "blocker": "arm A's model judgement. See model-attested."
+        },
+        "model-attribute": {
+          "status": "unimplemented",
+          "binds": null,
+          "blocker": "BLOCKED BY INVARIANT, not by missing code. verify-observations.ts promotes to `verified` ONLY via a closed predicate over a TYPED expectation sealed in the contract; derive-verdicts.ts forbids model calls outright. Both are the fix for nine fabricated verdicts and must not be relaxed. The legitimate path is a typed ModelAttributeObservation that derivation reads deterministically — which needs an OWNER RULING on whether a model-attested observation may earn `verified`. ARCHITECTURE.md §9.3."
+        }
+      }
+    }
+  }
+}
