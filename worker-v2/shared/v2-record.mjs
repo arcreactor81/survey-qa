@@ -422,6 +422,15 @@ export function projectV2ToLegacy(record, revision) {
       // The aggregator's own word is kept beside the translated one so the mapping is
       // auditable from the artifact rather than only from this file.
       derivedVerdict: r.verdict,
+      // THE PER-CASE RESULTS TRAVEL WITH THE ROW, ADDITIVE AND UNCHANGED.
+      //
+      // Dropping them cost the report the ONE exact join between a failing requirement and
+      // the observation that failed it: `facetResults[].observationIds`. Without it the
+      // report could say "2 requirements failed" and could not say WHICH observation, which
+      // route, or in the verifier's own words WHAT the survey did — and reconstructing the
+      // link by intersecting evidence ids would be a convention, not a fact. Nothing reads
+      // this that did not read it before; it is carried, not interpreted.
+      facetResults: arr(r.facetResults),
       coverageStatus: coverageOf(r),
       reason: {
         code: `derived/${r.resultPolicyVersion}`,

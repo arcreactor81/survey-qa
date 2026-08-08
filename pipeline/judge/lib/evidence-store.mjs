@@ -28,6 +28,7 @@ import { EVIDENCE_CLASS, REASON, PROOF_KIND } from './vocab.mjs';
 import { resolvePath } from './locator.mjs';
 import { PROOFS, FIELD_PROJECTIONS } from './proof.mjs';
 import { checkEvidenceSource } from './authority.mjs';
+import { isV2PathObservation, projectPathObservation } from './v2-observation.mjs';
 
 /**
  * N2 — A HASH FAILURE IS RAISED, NEVER RETURNED.
@@ -91,7 +92,12 @@ export class EvidenceStore {
    * @param {object} [opts]
    * @param {import('./authority.mjs').EvidenceAuthority} [opts.authority] the signed allowlist
    */
-  constructor(runDir, { artifactsSubdir = 'artifacts', authority = null } = {}) {
+  /**
+   * @param {string[]} [opts.screenIdVocabulary] the SEALED question ids a v2 walk's screens
+   *   may name themselves with. Only the v2 projection uses it (`v2-observation.mjs`); a v1
+   *   artifact carries its own `screen_id` and is untouched.
+   */
+  constructor(runDir, { artifactsSubdir = 'artifacts', authority = null, screenIdVocabulary = [] } = {}) {
     // N2 — THE STORE MAY ONLY OPEN THE DIRECTORY ITS AUTHORITY DESCRIBES.
     //
     // Structural half of the runDir fix: even constructed directly, a store
@@ -111,6 +117,7 @@ export class EvidenceStore {
     /** Canonical identity of the directory this store reads. */
     this.evidenceSource = src.actual;
     this.authority = authority;
+    this.screenIdVocabulary = Array.isArray(screenIdVocabulary) ? screenIdVocabulary : [];
     this._cache = new Map(); // name -> record
     this._reads = 0;
     this.integrity = [];
@@ -240,6 +247,22 @@ export class EvidenceStore {
     if (/\.json$/i.test(name)) {
       try { data = JSON.parse(buf.toString('utf8')); } catch (e) { parseError = e.message; }
     }
+
+    // A v2 PathObservation IS a capture spine; it is written in a different vocabulary.
+    // The projection happens HERE — after the signed-hash check, before classification —
+    // for two reasons that leave no other option:
+    //   - the bytes on disk must keep hashing to the SIGNED contentHash, so no stage
+    //     upstream of this store may rewrite them;
+    //   - `attest()` re-opens the artifact uncached and runs the proof projection over
+    //     `rec.data`, so the predicates and the re-verification must see the SAME view or
+    //     every witness locator (`evidence[3].screen_id`) fails to resolve.
+    // `sha256` below is still the digest of the bytes on disk, never of the projection.
+    let adapted = null;
+    if (isV2PathObservation(data)) {
+      data = projectPathObservation(data, { screenIdVocabulary: this.screenIdVocabulary });
+      adapted = 'v2-path-observation/1.0.0';
+    }
+
     // Classification is by SHAPE first, filename second. Promotion to
     // PRIMARY_SESSION additionally requires a well-formed capture spine (D7):
     // unique, ordered, consecutive seq values. A gap-free spine is what every
@@ -259,6 +282,8 @@ export class EvidenceStore {
       hashAuthority: signed ? 'signed-run-record' : 'unattested-local-read',
       bytes: buf.length,
       data,
+      /** Non-null when `data` is a PROJECTION of the artifact rather than its literal JSON. */
+      adapted,
       reason: parseError ? 'parse-error' : null,
       parseError,
     };

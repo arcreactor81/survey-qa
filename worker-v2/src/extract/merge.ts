@@ -111,11 +111,110 @@ export interface SourceLedger {
   }>;
 }
 
+/**
+ * ==================== WHY A REQUIREMENT'S IDENTITY HAS LEVELS ====================
+ *
+ * IDENTITY LEVEL 0 IS THE HISTORICAL DERIVATION, BYTE FOR BYTE. It hashes
+ * `{statement, docQuote, scope, quantifier, construct}` and nothing else, which is what
+ * every already-sealed revision's ids were minted from. It is never changed, because a
+ * requirement id is part of a signed artifact and a content-addressed revision id: widening
+ * it for every row would move the identity of every prior revision of every unchanged
+ * document, and cross-run comparison of a result cell — the thing revisions exist for —
+ * would silently start comparing against a different denominator.
+ *
+ * THE DEFECT LEVEL 0 HAS (first real run, v2r_01kzf7ehb2sayx2y2xz4ecm1ed): a rating GRID
+ * states the same mandate once per row. "The response options for this statement must be:
+ * Strongly agree (code 1) ..." is the SAME statement, the SAME quote, the SAME bare scope
+ * ("question", with no id), the SAME quantifier and the SAME construct for grid row D
+ * ("I enjoy trying coffee from parts of the world I have not tried before.") and for grid
+ * row E ("Making coffee at home is better value than buying it from a coffee shop."). The
+ * ONLY fields that tell them apart are `selector` — which names WHICH statement — and the
+ * table cells they cite (r5/D vs r6/E). Neither is in the level-0 hash. So two genuinely
+ * distinct requirements collapsed onto ONE `requirementLineageId` and ONE
+ * `requirementVersionId`, the expander minted byte-identical facet instances from them, and
+ * planning refused the revision. It was right to: `plan.ts:166`, `structure/compile.ts:185`
+ * and `stages/assemble-record.mjs:80` all key MAPS on `requirementLineageId`, so a shared
+ * lineage id means one of the two rows is silently shadowed in every one of them — 189
+ * requirements, 188 map entries.
+ *
+ * THE WIDENING IS COLLISION-SCOPED, NOT UNCONDITIONAL. A row whose level-0 lineage id is
+ * unique in this merge keeps it, unchanged. Only the members of a colliding group escalate,
+ * and they escalate TOGETHER on CONTENT — never on position in the array — so the result is
+ * a pure function of the merge output and does not depend on which pass emitted which row
+ * first.
+ *
+ *   level 1  + `selector`: the field that names which instance of a repeated mandate this is
+ *   level 2  + the source blocks it cites, and the full version tuple, so that two rows
+ *              still sharing a lineage id at this level are provably identical in every
+ *              field identity is derived from — which is what makes the collapse below a
+ *              total rule rather than a guess.
+ *
+ * ACCEPTED CAVEAT, STATED: identity becomes SET-DEPENDENT for a colliding pair. A future
+ * run over a document that states only grid row D would mint the unsuffixed level-0 id for
+ * it, where this run mints a level-1 id. That is the price of keeping every already-unique
+ * id byte-stable, and it is the side the owner chose. The alternative — always hashing the
+ * selector — is a derivation-version bump, not a bug fix; see
+ * `docs/facet-id-collision-notes.md`.
+ */
+const MAX_IDENTITY_LEVEL = 2;
+
+interface IdentitySeed {
+  statement: string;
+  docQuote: string;
+  scope: string;
+  quantifier: string;
+  construct: string;
+  selector: string | null;
+  /** Sorted union of the group's cited blocks — order-independent, so it cannot depend on which raw is primary. */
+  blockIds: string[];
+}
+
+/**
+ * Mint the fingerprint + version digests at a given specificity.
+ *
+ * LEVEL 0 MUST REPRODUCE THE HISTORICAL BYTES EXACTLY — including the key ORDER of the
+ * version object, which is part of the hashed JSON. `tools/tests/d27-identity-collision`
+ * pins this against the literal pre-fix formula.
+ */
+async function mintIdentity(seed: IdentitySeed, level: number): Promise<{ fingerprintHex: string; versionHex: string }> {
+  const base = `${seed.construct}|${normalizeText(seed.statement)}`;
+  const version = {
+    s: seed.statement,
+    q: seed.docQuote,
+    scope: seed.scope,
+    quant: seed.quantifier,
+    f: seed.construct,
+  };
+  if (level <= 0) {
+    return {
+      fingerprintHex: await sha256Hex(base),
+      versionHex: await sha256Hex(JSON.stringify(version)),
+    };
+  }
+  if (level === 1) {
+    return {
+      fingerprintHex: await sha256Hex(`${base}|selector:${normalizeText(seed.selector ?? "")}`),
+      versionHex: await sha256Hex(JSON.stringify({ ...version, sel: seed.selector })),
+    };
+  }
+  // Level 2 folds the WHOLE version tuple into the fingerprint on purpose: two rows that
+  // still share a lineage id here agree on every field identity is derived from, so the
+  // caller may collapse them by rule instead of choosing between them.
+  return {
+    fingerprintHex: await sha256Hex(
+      `${base}|selector:${normalizeText(seed.selector ?? "")}|quote:${normalizeText(seed.docQuote)}` +
+        `|scope:${seed.scope}|quant:${seed.quantifier}|blocks:${seed.blockIds.join(",")}`,
+    ),
+    versionHex: await sha256Hex(JSON.stringify({ ...version, sel: seed.selector, blocks: seed.blockIds })),
+  };
+}
+
 /** Normalize one raw item into a sealed-contract requirement row. */
 async function toRequirement(
   raws: RawRequirement[],
   blocks: Map<string, SourceBlock>,
   assertionStatus: ScopedRequirement["assertionStatus"],
+  identityLevel = 0,
 ): Promise<ScopedRequirement> {
   // The canonical row prefers the reading with the most source support, then the highest
   // stated confidence. Both passes' raws are kept on the MergedRow for the diff.
@@ -123,15 +222,17 @@ async function toRequirement(
     (x, y) => y.blockIds.length - x.blockIds.length || y.confidence - x.confidence,
   )[0]!;
 
-  const fingerprintHex = await sha256Hex(`${primary.construct}|${normalizeText(primary.statement)}`);
-  const versionHex = await sha256Hex(
-    JSON.stringify({
-      s: primary.statement,
-      q: primary.docQuote,
+  const { fingerprintHex, versionHex } = await mintIdentity(
+    {
+      statement: primary.statement,
+      docQuote: primary.docQuote,
       scope: primary.scope,
-      quant: primary.quantifier,
-      f: primary.construct,
-    }),
+      quantifier: primary.quantifier,
+      construct: primary.construct,
+      selector: primary.selector,
+      blockIds: [...new Set(raws.flatMap((r) => r.blockIds))].sort(),
+    },
+    identityLevel,
   );
   const quoteHash = await sha256Hex(primary.docQuote);
 
@@ -237,6 +338,14 @@ export async function mergePasses(
   );
   const rows: MergedRow[] = [];
   const unresolvable: ExtractionDiff["unresolvable"] = [];
+  // Per-row bookkeeping the identity pass below needs: re-minting an id re-runs
+  // `toRequirement`, which needs the group and the status it was built with.
+  const built: Array<{
+    group: RawRequirement[];
+    status: ScopedRequirement["assertionStatus"];
+    routeClash: string | null;
+    level: number;
+  }> = [];
 
   for (let i = 0; i < groups.length; i++) {
     const group = groups[i]!;
@@ -254,13 +363,83 @@ export async function mergePasses(
       raw: group,
       conflict: conflict ? { field: conflict.field, a: conflict.a, b: conflict.b } : null,
     });
-    if (routeClash) {
-      unresolvable.push({
-        lineageId: requirement.requirementLineageId,
-        statement: requirement.normativeStatement,
-        detail: routeClash,
-      });
+    built.push({ group, status, routeClash, level: 0 });
+  }
+
+  // --- 2b. IDENTITY DISAMBIGUATION — see the header on `mintIdentity` ----------------
+  //
+  // A `requirementLineageId` shared by two rows is not a naming nuisance: it is one row
+  // silently shadowing the other in every lineage-keyed map downstream, and it mints
+  // colliding `facetInstanceId`s the moment the expander runs. Escalate the members of
+  // every colliding group — together, on content — until they separate.
+  //
+  // Uniqueness of the lineage id implies uniqueness of the version id at every level: the
+  // fingerprint's input is a projection of the version's, so two rows that differ in the
+  // fingerprint differ in the version too.
+  for (let round = 0; round < MAX_IDENTITY_LEVEL; round++) {
+    const byLineage = new Map<string, number[]>();
+    rows.forEach((row, i) => {
+      const list = byLineage.get(row.requirement.requirementLineageId) ?? [];
+      list.push(i);
+      byLineage.set(row.requirement.requirementLineageId, list);
+    });
+    const escalating = [...byLineage.values()]
+      .filter((idxs) => idxs.length > 1)
+      .flat()
+      .filter((i) => built[i]!.level < MAX_IDENTITY_LEVEL);
+    if (escalating.length === 0) break;
+    for (const i of escalating) {
+      const b = built[i]!;
+      b.level += 1;
+      rows[i]!.requirement = await toRequirement(b.group, blockIndex, b.status, b.level);
     }
+  }
+
+  // --- 2c. THE COLLAPSE — the only case where two rows are ONE requirement ----------
+  //
+  // Rows that STILL share a lineage id after maximum widening agree on statement, quote,
+  // scope, quantifier, construct, selector AND the blocks they cite. There is no field left
+  // that identity is derived from for them to differ in, so they are the same mandate read
+  // twice — one requirement duplicated, not two requirements colliding — and counting it
+  // twice would INFLATE the denominator D10 exists to protect. They collapse into one row
+  // that carries both readings' provenance; the passes that found it are unioned, so a row
+  // found once by each pass is not downgraded to "found by one".
+  const collapsedInto = new Map<string, number>();
+  const kept: MergedRow[] = [];
+  const keptBuilt: typeof built = [];
+  let collapsed = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    const lineage = row.requirement.requirementLineageId;
+    const prior = collapsedInto.get(lineage);
+    if (prior === undefined) {
+      collapsedInto.set(lineage, kept.length);
+      kept.push(row);
+      keptBuilt.push(built[i]!);
+      continue;
+    }
+    const target = kept[prior]!;
+    target.foundBy = [...new Set([...target.foundBy, ...row.foundBy])];
+    target.raw = [...target.raw, ...row.raw];
+    target.conflict = target.conflict ?? row.conflict;
+    keptBuilt[prior]!.routeClash = keptBuilt[prior]!.routeClash ?? built[i]!.routeClash;
+    collapsed += 1;
+  }
+  if (collapsed > 0) {
+    rows.length = 0;
+    rows.push(...kept);
+    built.length = 0;
+    built.push(...keptBuilt);
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const clash = built[i]!.routeClash;
+    if (!clash) continue;
+    unresolvable.push({
+      lineageId: rows[i]!.requirement.requirementLineageId,
+      statement: rows[i]!.requirement.normativeStatement,
+      detail: clash,
+    });
   }
 
   // --- 3. the ledger ----------------------------------------------------------------
@@ -380,6 +559,25 @@ export async function mergePasses(
       ? `${diff.counts.notBrowserVerifiable} mandate(s) cannot be confirmed by a browser at all; they are recorded and excluded from browser verdicts.`
       : `Every mandate found is observable from a browser.`,
   ];
+
+  // A widened or collapsed identity is a fact about the DOCUMENT — a mandate it states once
+  // per grid row — and an auditor must be able to see it happened rather than infer it from
+  // an id shape. Emitted only when it happened, so a document with no repeated mandate reads
+  // exactly as it did before.
+  const widened = built.filter((b) => b.level > 0).length;
+  if (widened > 0) {
+    diff.summary.push(
+      `${widened} requirement(s) state a mandate the document repeats verbatim (a grid states the same rule once per row). ` +
+        `Their identity was widened by the field that tells them apart — the selector, and where needed the cells they cite — ` +
+        `because statement, quote, scope and quantifier are identical across them. Every other row keeps its unwidened id.`,
+    );
+  }
+  if (collapsed > 0) {
+    diff.summary.push(
+      `${collapsed} row(s) were the SAME requirement read twice — identical statement, quote, scope, quantifier, construct, ` +
+        `selector and source blocks — and were collapsed into one row carrying both readings' provenance, rather than counted twice.`,
+    );
+  }
 
   return { rows, requirements: rows.map((r) => r.requirement), diff, ledger };
 }

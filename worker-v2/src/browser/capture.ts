@@ -30,13 +30,39 @@ export interface CaptureContext {
 
 const enc = new TextEncoder();
 
+/**
+ * THE BASENAME OF AN artifactRef IS ITS IDENTITY EVERYWHERE DOWNSTREAM, SO IT MUST BE UNIQUE.
+ *
+ * `pipeline/judge/lib/authority.mjs` keys the SIGNED evidence catalogue by
+ * `basename(artifactRef)`, and `run-inputs.ts` / `judge-runtime.mjs` name the judge's mount
+ * the same way. Refs that differ only in their directory therefore collapse onto one name:
+ * every walk wrote `observations/<pathId>/observation.json`, so the catalogue raised
+ * MANIFEST_DUPLICATE_ARTIFACT for every walk after the first, `manifestComplete` went false,
+ * the authority went unverified, and the run minted NO judgement at all. The mount overwrote
+ * the files into the bargain.
+ *
+ * The fix is here rather than in the judge's keying because the legacy v1 refs are
+ * multi-segment (`runs/<id>/artifacts/EXP-07.json`) and already unique under `basename`.
+ * One rule everywhere beats two.
+ *
+ * `pathId` is unique by construction (`plan.ts` refuses duplicates), but it is composed from
+ * facet-instance ids, so it is squeezed to a filename-safe alphabet before it is used as one.
+ */
+export function artifactSlug(pathId: string): string {
+  const safe = String(pathId).replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^[._-]+/, "");
+  return safe.length > 0 ? safe : "path";
+}
+
+const observationRef = (pathId: string, leaf: string): string =>
+  `observations/${pathId}/${artifactSlug(pathId)}-${leaf}`;
+
 export async function captureScreenJson(
   ctx: CaptureContext,
   screen: RenderedScreen,
   slot: string,
   stepIndex: number,
 ): Promise<string> {
-  const ref = `observations/${ctx.pathId}/step-${String(stepIndex).padStart(3, "0")}-${slot}.json`;
+  const ref = observationRef(ctx.pathId, `step-${String(stepIndex).padStart(3, "0")}-${slot}.json`);
   const entry = await putEvidence(ctx.env, {
     runId: ctx.runId,
     bytes: enc.encode(JSON.stringify(screen)),
@@ -57,7 +83,7 @@ export async function captureScreenshot(
   slot: string,
   stepIndex: number,
 ): Promise<string> {
-  const ref = `observations/${ctx.pathId}/step-${String(stepIndex).padStart(3, "0")}-${slot}.png`;
+  const ref = observationRef(ctx.pathId, `step-${String(stepIndex).padStart(3, "0")}-${slot}.png`);
   const entry = await putEvidence(ctx.env, {
     runId: ctx.runId,
     bytes: png,
@@ -87,7 +113,7 @@ export async function captureFailure(
     routeId: ctx.pathId,
     witnesses: ctx.witnesses,
     sourceEvidenceId: `EV-${ctx.pathId}-${label}`,
-    artifactRef: `observations/${ctx.pathId}/${label}.json`,
+    artifactRef: observationRef(ctx.pathId, `${label}.json`),
   });
   return entry.evidenceId;
 }
@@ -103,7 +129,7 @@ export async function capturePathObservation(ctx: CaptureContext, obs: PathObser
     routeId: ctx.pathId,
     witnesses: ctx.witnesses,
     sourceEvidenceId: `EV-${ctx.pathId}-observation`,
-    artifactRef: `observations/${ctx.pathId}/observation.json`,
+    artifactRef: observationRef(ctx.pathId, "observation.json"),
   });
   return entry.evidenceId;
 }

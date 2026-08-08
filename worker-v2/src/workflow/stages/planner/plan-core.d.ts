@@ -34,6 +34,21 @@ export interface PlannedDecision {
   text_entry?: { required: boolean; value: string; length?: number; note?: string };
   /** Exact sealed stimulus for a case-specific path. Never inferred from `select`. */
   case_action?: PlannedCaseAction;
+  /**
+   * THE DOCUMENT'S OWN WORDING of this question — the driver's PRIMARY identity signal.
+   *
+   * NOT emitted by `plan-core.js`. It is stamped by `stages/plan.ts#stampQuestionWording`
+   * out of the SEALED revision (`facet: "question"` requirements under `scope:
+   * "question:<id>"`), which is why it is optional: a question the contract never words is
+   * a question the driver cannot recognise by wording, and the plan says so by leaving this
+   * absent rather than by inventing a string.
+   *
+   * It is deliberately NOT part of `pathSignature` — two paths that differ only in the
+   * wording stamped on them are the same experiment, and the signature must keep saying so.
+   */
+  question_text?: string;
+  /** WHERE the wording came from: `scope-exact:<scope>` or `scope-sibling:<scope>`. */
+  question_text_source?: string;
   [k: string]: unknown;
 }
 

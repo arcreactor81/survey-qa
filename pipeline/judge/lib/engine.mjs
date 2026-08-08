@@ -30,7 +30,7 @@ import { EvidenceStore, EvidenceIntegrityError } from './evidence-store.mjs';
 import { loadSessions } from './sessions.mjs';
 import { buildRouteTable, sessionWalks, ROUTE_TABLE_VERSION } from './route-table.mjs';
 import { buildCensus } from './census.mjs';
-import { compileObligation, documentOptionOrder, buildDocumentIndex, COMPILER_VERSION } from './compile.mjs';
+import { compileObligation, documentOptionOrder, buildDocumentIndex, documentScreens, COMPILER_VERSION } from './compile.mjs';
 import { buildDocumentModel, DOCUMENT_MODEL_VERSION } from './document-model.mjs';
 import { runPredicate, PREDICATE_VERSION } from './predicates.mjs';
 import { buildAmbiguityIndex, precedenceFor, LOCKED_POLICY, AMBIGUITY_POLICY_VERSION } from './ambiguity.mjs';
@@ -147,17 +147,24 @@ export function evidenceIdentityBinding(ctx, authority) {
 }
 
 export function buildContext(runDir, checklist, { store: injectedStore, sessions: injectedSessions, authority = null } = {}) {
-  const store = injectedStore || new EvidenceStore(runDir, { authority });
+  // D3: the compiler is fed the SIGNED ContractRevision items, never the local
+  // checklist. An unverified authority binds nothing and the run is already
+  // diagnostic-only.
+  //
+  // It is built BEFORE the store because the store needs its screen vocabulary: a v2
+  // PathObservation carries rendered screens and no screen ids, so the projection in
+  // `v2-observation.mjs` recognises a screen by the DOCUMENT-DERIVED id it prints. v1
+  // artifacts carry their own `screen_id` and are unaffected either way.
+  const docIndex = buildDocumentIndex(checklist, authority);
+  const screenIdVocabulary = documentScreens(docIndex);
+
+  const store = injectedStore || new EvidenceStore(runDir, { authority, screenIdVocabulary });
   if (!injectedStore) EVIDENCE_PROVENANCE.set(store, { kind: 'evidence-store', authority, runDir });
   const sessions = injectedSessions || loadSessions(store);
   if (!injectedSessions) EVIDENCE_PROVENANCE.set(sessions, { kind: 'sessions', store });
   const routeTable = buildRouteTable(sessions);
   const census = buildCensus(sessions);
   const walks = sessionWalks(sessions);
-  // D3: the compiler is fed the SIGNED ContractRevision items, never the local
-  // checklist. An unverified authority binds nothing and the run is already
-  // diagnostic-only.
-  const docIndex = buildDocumentIndex(checklist, authority);
   const scopeAttestor = new ScopeAttestor(store, { documentModel: buildDocumentModel(docIndex) });
   const orderCache = new Map();
   return {

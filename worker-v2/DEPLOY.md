@@ -26,8 +26,9 @@ commands for it.**
 >   secrets are set; `wrangler secret list --name survey-qa-v2` returns them.
 > - **§2b "`wrangler.jsonc` pins exactly one key, the fixture"** — no longer true. A
 >   `trust: "production"` signer is pinned alongside it.
-> - **§2c `DEFAULT_TARGET_BUILD_ID` is STILL OPEN** and is still why every report is marked
->   "no current results". It is an owner decision; do not invent a value.
+> - **§2c `DEFAULT_TARGET_BUILD_ID` is NO LONGER A BLOCKER.** A run that captured screens now
+>   derives its own target identity from their content (`src/store/target-build.ts`); the
+>   variable stays an owner override that wins when it is set. Rewritten below.
 > - The box below describes the 2 Aug build. The live version is current — three deploys have
 >   happened since (`DEPLOYED.md` §10, §11, §12) — and submission is **enabled**.
 >
@@ -96,20 +97,37 @@ is. So on the live service every judgement is `unusable` by construction. That i
 fail-closed posture and it must be opened deliberately: add the public half of the production
 `JUDGEMENT_SIGNING_KEY` to the registry with `"trust": "production"`, then redeploy.
 
-### 2c. `DEFAULT_TARGET_BUILD_ID` — an owner decision that blocks publication today
+### 2c. `DEFAULT_TARGET_BUILD_ID` — now an OVERRIDE, not a prerequisite
 
-Observed on a real run: the judgement is refused with
+Observed on a real run: the judgement was refused with
 `PRODUCER_DECLARED_UNPUBLISHABLE (unbindable: targetBuildId)`. A JudgementRecord binds to
-*the thing that was tested*; with no target identity there is nothing to bind to, so results
-stay diagnostic even once everything is signed.
+*the thing that was tested*; with no target identity there was nothing to bind to, so results
+stayed diagnostic even once everything was signed.
 
-No correct value can be invented in code — a survey URL is not a build id, and two different
-builds can be served at one URL. Either:
+That reasoning still holds, and no correct value can be invented in code — a survey URL is
+not a build id, and two different builds can be served at one URL. What changed is where the
+identity comes from: a run that captured screens now **derives** one from their content —
+`site-sha256:<hex>` over the sorted, distinct content hashes of its own captured screens
+(`src/store/target-build.ts`). Same observed content ⇒ same id; a different build at the same
+URL ⇒ a different id; nothing hand-set, per `CLAUDE.md`.
 
-- set `"DEFAULT_TARGET_BUILD_ID": "<a release tag the owner controls>"` in `wrangler.jsonc`
-  `vars`, and change it when the survey under test changes; or
-- accept that every report is marked "no current results" and is read as evidence rather
-  than as a certification.
+Precedence, in code: the identity **recorded** on the run wins, else `DEFAULT_TARGET_BUILD_ID`
+read live, else the derived id, else the run stays unbindable. So the variable is a real
+override — set it and an owner-controlled tag wins — but it is no longer required.
+
+Two things it does **not** mean:
+
+- **It is not a vendor build identity.** It names the content this run observed. Anything
+  that differs on screen — a rendered timestamp, a rotating banner — makes it a different id,
+  so two runs over an unchanged site can legitimately derive different ids today.
+- **A run that captured nothing is still unbindable**, deliberately. The empty set is never
+  hashed; a run that never reached the survey must not be certifiable.
+
+STILL OPEN, and the reason a real run is not final yet: the RunRecord's own
+`run.targetBuildId` is written from the envelope by `src/workflow/stages/assemble-record.mjs`,
+and the judge binds to *that*. Until the derived identity is stamped there too, the judge
+mints a `diagnostic-only` record and the Worker's `target-build` check refuses it. The report
+path resolves the identity correctly; the record-assembly leg has not been wired.
 
 ---
 

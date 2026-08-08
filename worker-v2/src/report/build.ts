@@ -28,16 +28,32 @@
 
 import type { Env } from "../types/env";
 import { edgeCoverageKey, flagLanesKey, judgementKey, recordKey } from "../keys";
-import { EvidenceIntegrityFailure, getVerifiedEvidence, listCatalog } from "../store/evidence";
+import { assertCatalogBinding, EvidenceIntegrityFailure, getVerifiedEvidence, listCatalog } from "../store/evidence";
 import { loadCheckpoint } from "../store/checkpoint";
 import { getEnvelope } from "../store/envelope";
 import { ContractRevisionTampered, getContractRevision } from "../store/contract-revision";
 import { loadJudgement } from "../store/judgement";
+import { loadProgram, programLimitations, type PlanLimitation } from "../workflow/stages/plan";
 import { publishReport } from "../store/publish";
+import { resolveTargetIdentity } from "../store/target-build";
 import { isRunRecordV2, NotRenderable, toRenderable } from "./renderable";
 import { attestationFromRecordHash, judgementTrustFromLoad, renderRunReport, type RenderedReport } from "./render";
 import type { JudgementLoad } from "../types/judgement";
-import type { RunRecordV2 } from "../types/record";
+import type { EvidenceCatalogEntry, RunRecordV2 } from "../types/record";
+
+/**
+ * THE TARGET IDENTITY IS DERIVED, NOT ONLY CONFIGURED — re-exported here so the report
+ * path and its tests reach one implementation. The rules, the precedence and the honest
+ * statement of what the derived id does and does not mean all live in store/target-build.ts.
+ */
+export {
+  deriveObservedSiteBuildId,
+  resolveTargetIdentity,
+  OBSERVED_SITE_BUILD_ID_PREFIX,
+  OBSERVED_SITE_BUILD_ID_VERSION,
+  type TargetIdentity,
+  type TargetIdentitySource,
+} from "../store/target-build";
 
 export type BuildReportResult =
   | {
@@ -152,18 +168,48 @@ export async function buildAndStoreReport(env: Env, runId: string): Promise<Buil
     };
   }
 
-  const evidenceAudit = await auditEvidence(env, runId);
+  // ONE RESOLUTION OF THE EVIDENCE CATALOGUE, USED TWICE: the render-time integrity audit
+  // below, and the derivation of this run's target identity. Two resolutions could observe
+  // two different catalogues and derive an identity for a set the page never showed.
+  //
+  // Unreadable degrades to EMPTY, and empty is unbindable (see below). It is deliberately
+  // not an exception: a report whose evidence catalogue cannot be resolved is still a
+  // report that must be published saying so.
+  const catalogue = await resolveCatalogue(env, runId, record);
+  const catalog = catalogue.entries;
 
   // THE SECOND COLUMN, GATED. Four checks — present, schema-valid, attested against a
   // pinned key, bound to THIS run's durable state — and only `attested` may be rendered
   // as results. See store/judgement.ts for why each one exists.
+  //
+  // ONE resolution of the target identity, read by both the judgement binding below and
+  // the reader-facing note further down. Two independent spellings of the same lookup is
+  // how a page comes to caveat itself over an identity the binding accepted.
+  //
+  // WHAT CHANGED AND WHY. This used to be `envelope ?? record` and nothing else, so with
+  // `DEFAULT_TARGET_BUILD_ID` unset — which is the deployed posture — it was ALWAYS null,
+  // every judgement failed its `target-build` binding check, and no run this service
+  // produced could ever be recorded as a settled result. The identity is now RESOLVED
+  // rather than merely looked up: recorded, else the live override, else derived from the
+  // content of this run's own captured screens, else unbindable. Precedence, the derivation
+  // rule, and an honest statement of what a derived id does and does not mean are all in
+  // store/target-build.ts — one place, because this is exactly the kind of rule that rots
+  // when it is restated.
+  const targetIdentity = await resolveTargetIdentity({
+    recorded:
+      envelope?.input.targetBuildId ??
+      (isRunRecordV2(record) ? (record as RunRecordV2).run?.targetBuildId ?? null : null),
+    override: env.DEFAULT_TARGET_BUILD_ID,
+    catalog,
+  });
+  const targetBuildId = targetIdentity.targetBuildId;
+
   const judgement = await loadJudgement(env, {
     runId,
     record,
     contractRevisionId,
     contractHash: cp?.contract.contractHash ?? null,
-    targetBuildId:
-      envelope?.input.targetBuildId ?? (isRunRecordV2(record) ? (record as RunRecordV2).run?.targetBuildId ?? null : null),
+    targetBuildId,
   });
   if (judgement.state === "unusable") {
     console.error(
@@ -171,6 +217,56 @@ export async function buildAndStoreReport(env: Env, runId: string): Promise<Buil
         .map((p) => `${p.code}: ${p.message}`)
         .join(" | ")}`,
     );
+  }
+
+  // THE AUDIT RUNS AFTER THE JUDGEMENT, BECAUSE BOTH COLUMNS CITE EVIDENCE.
+  //
+  // It used to run before, and D14(a)'s acceptance test caught what that costs: the
+  // register's per-cell evidence chains are resolved from the JUDGED results, so 112 of the
+  // 458 artifacts the register cited were catalogued, displayed, and never re-hashed —
+  // "not checked" rows beneath a card counting the ones that were. Both the record and the
+  // attested judgement are scanned, so an artifact either column relies on is re-hashed.
+  const evidenceAudit = await auditEvidence(env, runId, catalogue, [
+    renderable,
+    judgement.state === "attested" ? judgement.record : null,
+  ]);
+
+  // WHAT THE PLAN SAID IT COULD NOT DO — READ FROM THE PLAN, BECAUSE THE RECORD DOES NOT
+  // CARRY IT.
+  //
+  // `PlanStageResult.limitations` / `ExecutionProgram.limitations` name their shortfalls
+  // with closed codes and emit EVERY code even at zero, precisely so "we looked and found
+  // none" stays distinguishable from "nobody looked" (stages/plan.ts). None of that reaches
+  // `RunRecordV2`: the assembler carries `exploration.planHash` and nothing else from the
+  // plan, so a report reading only the record could not tell a run whose cases all reached a
+  // walk from one where a fifth of them never did.
+  //
+  // The plan artifact itself is one object, addressed by the plan revision the run recorded,
+  // so this is ONE read — not a scan — and it is the same artifact the executor drove from.
+  // `programLimitations` distinguishes a program written before limitations existed from a
+  // program that had none; a missing plan is reported as unread, never as "no shortfalls".
+  const planRevisionId =
+    cp?.execution?.planRevisionId ??
+    (isRunRecordV2(record) ? ((record as RunRecordV2).exploration?.planHash ?? null) : null);
+  let planLimitations: { state: string; entries: PlanLimitation[]; note: string };
+  try {
+    const program = planRevisionId ? await loadProgram(env, runId, planRevisionId) : null;
+    planLimitations = program
+      ? { state: "read", entries: programLimitations(program), note: `from execution plan ${planRevisionId}` }
+      : {
+          state: "unavailable",
+          entries: [],
+          note: planRevisionId
+            ? `the execution plan ${planRevisionId} could not be read, so what it could not do is unknown — this is not a statement that it did everything`
+            : "this run records no execution plan, so what the plan could not do is unknown",
+        };
+  } catch (err) {
+    console.error(`report: execution plan unreadable for ${runId}:`, err);
+    planLimitations = {
+      state: "unavailable",
+      entries: [],
+      note: "the execution plan could not be read, so what it could not do is unknown",
+    };
   }
 
   const flagLanes = await readOptionalJson(env, flagLanesKey(runId), "flag-lane sidecar");
@@ -184,13 +280,50 @@ export async function buildAndStoreReport(env: Env, runId: string): Promise<Buil
   // results for this run", and the manifest for those same bytes said `final: true`.
   const judgementTrust = judgementTrustFromLoad(judgement, renderable, judgementKey(runId));
 
+  // WHY THE READER IS LOOKING AT A DIAGNOSTIC, SAID ON THE PAGE.
+  //
+  // With NO target identity at all — nothing recorded, nothing configured, and no captured
+  // screen to derive one from — nothing can bind a re-checked result to a specific version
+  // of the survey, and no result on the page may be treated as final.
+  //
+  // This note is now the EMPTY-CAPTURE case rather than the standing state of the service:
+  // a run that observed the site derives its own identity (see above), so the note stops
+  // appearing on every run and starts meaning the one thing it says. A run that captured
+  // nothing still cannot be bound, and still says so here.
+  //
+  // The summary already says "we cannot tell you yet whether this survey is ready" — but
+  // that sentence is about the VERDICTS, and a reader meeting it alone will fairly hear
+  // "my run was unlucky, try again". Leaving the actual reason in the JSON and off the page
+  // is the same class of omission this report exists to delete, so it is stated where a
+  // person reads it, in survey language, and it is held to the customer-copy gates like
+  // every other sentence on the page.
+  //
+  // THE COPY NAMES THE REASON THAT IS NOW TRUE. It used to say "this service has not been
+  // told which version of the survey it is testing… rerunning will not change that until a
+  // version is configured". With the identity derived from what the run saw, that sentence
+  // would be false in the only case that still reaches here — a run that saw nothing — and
+  // its advice would be actively wrong, because a rerun that reaches the survey IS the fix.
+  const serviceNote = targetBuildId
+    ? null
+    : {
+        flag: "Diagnostic run — not a final answer.",
+        body:
+          "This run captured none of the survey's screens, so there is nothing to tie these results to the version " +
+          "of the survey that was tested, and nothing here can be recorded as a settled result. Read this page as a " +
+          "diagnosis to act on and check by hand, not as a sign-off. A rerun that reaches the survey gives it " +
+          "something to tie to.",
+      };
+
   let rendered: RenderedReport;
   try {
-    rendered = renderRunReport({
+    // `await` because the deferred-block compressor is async in a Worker
+    // (CompressionStream + crypto.subtle). See report/render.ts, DEFERRED BLOCKS.
+    rendered = await renderRunReport({
       record: renderable,
       attestation,
       evidenceAudit,
       judgementTrust,
+      serviceNote,
       // The record's own results are the only input when the judgement is not trusted.
       judgement:
         judgement.state === "attested"
@@ -207,6 +340,7 @@ export async function buildAndStoreReport(env: Env, runId: string): Promise<Buil
           ? null
           : { state: judgement.state, summary: judgement.summary, problems: judgement.problems },
       flagLanes,
+      planLimitations,
       edgeCoverage: edgeCoverage ?? undefined,
       downloads: [
         {
@@ -237,6 +371,19 @@ export async function buildAndStoreReport(env: Env, runId: string): Promise<Buil
     };
   }
 
+  // Said out loud because it is the difference between the artifact the CLI produces and
+  // the one the Worker used to: an empty list means the audit register shipped INLINE and
+  // the page is roughly twice the size, which is a fact about the bytes just published.
+  console.log(
+    `report: ${runId} deferred blocks — ${
+      rendered.deferred.length
+        ? rendered.deferred
+            .map((d) => `${d.id} ${(d.sourceBytes / 1024).toFixed(0)}KB → ${(d.storedBytes / 1024).toFixed(0)}KB stored`)
+            .join(", ")
+        : "none (everything inline)"
+    }`,
+  );
+
   const encoder = new TextEncoder();
   const htmlBytes = encoder.encode(rendered.html);
   // The Worker adds one field to the non-authoritative view: WHY there is no re-derived
@@ -246,6 +393,15 @@ export async function buildAndStoreReport(env: Env, runId: string): Promise<Buil
     JSON.stringify({
       ...(rendered.view as Record<string, unknown>),
       operationalDiagnostics: {
+        // WHERE THE TARGET IDENTITY CAME FROM, said in the machine-readable half too. A
+        // reader who sees a judgement fail its target-build check needs to know whether the
+        // identity it was compared against was configured by an owner or derived from what
+        // this run saw — those are different problems with different fixes.
+        targetIdentity: {
+          targetBuildId: targetIdentity.targetBuildId,
+          source: targetIdentity.source,
+          note: targetIdentity.note,
+        },
         judgement: {
           state: judgement.state,
           summary: judgement.summary,
@@ -478,18 +634,184 @@ export class EvidenceAuditMap extends Map<string, EvidenceAuditState> {
   }
 }
 
-async function auditEvidence(env: Env, runId: string): Promise<EvidenceAuditMap> {
-  const audit = new EvidenceAuditMap();
-  let catalog: Awaited<ReturnType<typeof listCatalog>>;
-  try {
-    catalog = await listCatalog(env, runId);
-  } catch (err) {
-    console.error(`report: evidence catalog unreadable for ${runId}:`, err);
-    return audit;
+/**
+ * THE CATALOGUE THE REPORT AUDITS, AND WHERE IT COMES FROM.
+ *
+ * `source: "record"` is the normal case and costs ZERO storage reads. `source: "store"` is
+ * the fallback for a record that carries no usable catalogue of its own.
+ */
+export interface ResolvedCatalogue {
+  entries: EvidenceCatalogEntry[];
+  source: "record" | "store" | "unavailable";
+  /** Entries whose citation binding did not recompute. Never offered, always reported. */
+  unbound: Array<{ evidenceId: string; why: string }>;
+  note: string;
+}
+
+const isCatalogueEntry = (v: unknown): v is EvidenceCatalogEntry => {
+  if (!v || typeof v !== "object") return false;
+  const e = v as Record<string, unknown>;
+  return (
+    typeof e.evidenceId === "string" &&
+    typeof e.contentHash === "string" &&
+    typeof e.size === "number" &&
+    Number.isFinite(e.size)
+  );
+};
+
+/**
+ * RESOLVE THE EVIDENCE CATALOGUE WITHOUT ONE STORAGE READ PER ARTIFACT THE RUN CAPTURED.
+ *
+ * THE INCIDENT THIS DELETES. `listCatalog` is a fan-out — one LIST, then one GET per entry
+ * (store/evidence.ts) — and the report path paid it once to enumerate and then re-read
+ * every blob to re-hash it. On a 1,707-entry run that is ~3,400 subrequests from the report
+ * step alone, and Cloudflare's per-invocation subrequest budget is shared across a Workflow
+ * instance's consecutive steps and step ATTEMPTS: D30 measured the identical shape killing
+ * `verify-observations` in 0 seconds on its second attempt because attempt 1 had already
+ * spent the budget. `limits.subrequests` was raised to cover it; a ceiling is not a fix for
+ * a cost that grows with survey size.
+ *
+ * WHY THE RECORD IS THE RIGHT ENUMERATION SOURCE, AND WHY THIS IS NOT A WEAKENING.
+ *
+ *  1. THE RECORD'S CATALOGUE IS THE ONE THE PAGE RENDERS. `view-model.mjs` builds its
+ *     evidence table from `record.evidence`, not from a store listing. Auditing the store's
+ *     listing while rendering the record's was already an unstated mismatch: a store entry
+ *     the record never carried was counted as "verified" in the trust card over a page that
+ *     never showed it.
+ *  2. IT IS THE ATTESTED ONE. `record.evidence` is inside the canonical bytes the record's
+ *     attested digest covers, and the header states whether that digest still holds. A raw
+ *     `EVIDENCE.list()` is covered by nothing at all.
+ *  3. THE BINDING CHECK SURVIVES INTACT. `listCatalog` ran `assertCatalogBinding` on every
+ *     entry it returned; so does this, on every entry it returns. That assertion recomputes
+ *     `evidenceId` from (runId, sourceEvidenceId, contentHash, artifactRef) — it is a hash,
+ *     not a fetch, so it costs nothing and cannot be skipped. An entry that fails is DROPPED
+ *     from the catalogue and reported by id, where `listCatalog` threw and left the caller
+ *     with an empty catalogue and no idea which entry was bad.
+ *
+ * A record with no usable catalogue of its own (the legacy harness shape) falls back to the
+ * store listing, so nothing silently degrades to "this run captured nothing".
+ */
+export async function resolveCatalogue(env: Env, runId: string, record: unknown): Promise<ResolvedCatalogue> {
+  const carried = (record as { evidence?: unknown })?.evidence;
+  const candidates = Array.isArray(carried) ? carried.filter(isCatalogueEntry) : [];
+
+  if (candidates.length > 0) {
+    const entries: EvidenceCatalogEntry[] = [];
+    const unbound: ResolvedCatalogue["unbound"] = [];
+    for (const e of candidates) {
+      try {
+        entries.push(await assertCatalogBinding(runId, e));
+      } catch (err) {
+        unbound.push({ evidenceId: e.evidenceId, why: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    if (unbound.length) {
+      console.error(
+        `report: ${unbound.length} catalogue entr(ies) in the record for ${runId} do not bind to their own ` +
+          `content: ${unbound.map((u) => u.evidenceId).join(", ")}`,
+      );
+    }
+    return {
+      entries,
+      source: "record",
+      unbound,
+      note: "the evidence catalogue carried by this run's attested record, re-bound entry by entry",
+    };
   }
 
-  let budget = AUDIT_BYTE_BUDGET;
-  for (const e of catalog) {
+  // FALLBACK ONLY. Pays the fan-out, and says so, rather than reporting a record that
+  // carries no catalogue of its own as a run that captured nothing.
+  try {
+    const entries = await listCatalog(env, runId);
+    return {
+      entries,
+      source: "store",
+      unbound: [],
+      note: "the record carries no evidence catalogue, so it was listed from storage",
+    };
+  } catch (err) {
+    console.error(`report: evidence catalog unreadable for ${runId}:`, err);
+    return { entries: [], source: "unavailable", unbound: [], note: `evidence catalogue unreadable: ${String(err)}` };
+  }
+}
+
+/**
+ * THE EVIDENCE THE PAGE ACTUALLY RELIES ON — DISCOVERED, NOT ENUMERATED.
+ *
+ * WHY THIS IS A SCAN AND NOT A LIST OF FIELDS. The first version of this walked the fields a
+ * citation "obviously" travels through — `itemResults[].evidenceRefs`, `findings[]`,
+ * attempts, observations — and D14(a)'s acceptance test caught it immediately: 112 of the 458
+ * artifacts the REGISTER cites were not in that list, because the register's per-cell evidence
+ * chains resolve through record-side ids and `artifactRef` paths that no single field name
+ * covers. Enumerating the citation paths is the same mistake in a new place: a citation
+ * namespace nobody remembered is exactly how "verified" and "not checked" came to describe
+ * one artifact on one page.
+ *
+ * So the rule is stated as what it means instead: an artifact is cited if ANY id it answers
+ * to appears ANYWHERE in the record other than in the catalogue's own description of itself.
+ * `record.evidence` is excluded for that reason — every entry names itself there, and
+ * including it would make "cited" mean "captured" and restore the whole fan-out.
+ *
+ * It costs no storage reads. Reading the record is one read the report already made.
+ *
+ * ORDERED, not a set, because the audit is budgeted: if anything must go unchecked it should
+ * be the artifact nobody is being asked to act on. Results and findings first, then the rest
+ * of the record in document order.
+ */
+export function citedEvidenceIds(record: unknown, known: ReadonlySet<string>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > 40 || node == null) return;
+    if (typeof node === "string") {
+      if (known.has(node) && !seen.has(node)) {
+        seen.add(node);
+        out.push(node);
+      }
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const v of node) walk(v, depth + 1);
+      return;
+    }
+    if (typeof node === "object") {
+      for (const v of Object.values(node as Record<string, unknown>)) walk(v, depth + 1);
+    }
+  };
+
+  const r = (record ?? {}) as Record<string, unknown>;
+  // PRIORITY ORDER IS LOAD-BEARING, NOT COSMETIC. The audit is budgeted, so the tail of
+  // this list is what goes unchecked on a large run — and the one artifact that must never
+  // be the unchecked one is the evidence under a FAILING requirement, which is the only
+  // thing on the page a reader is being told to act on. Failing results are walked before
+  // anything else, then the descriptions of them, then everything else in document order.
+  const results = Array.isArray(r.itemResults) ? (r.itemResults as Array<Record<string, unknown>>) : [];
+  for (const it of results) if (it?.verdict === "fail" || it?.derivedVerdict === "fail") walk(it, 0);
+  for (const k of ["findings", "claims", "blockers", "itemResults", "observations", "attempts"]) walk(r[k], 0);
+  // …then everything else EXCEPT the catalogue itself, which describes only itself.
+  for (const [k, v] of Object.entries(r)) {
+    if (k === "evidence") continue;
+    walk(v, 0);
+  }
+  return out;
+}
+
+async function auditEvidence(
+  env: Env,
+  runId: string,
+  // READ BY THE CALLER, NOT HERE. The same catalogue drives this audit and the run's derived
+  // target identity, so the page cannot be audited against one catalogue while its identity
+  // is derived from another. An unresolvable catalogue arrives with no entries.
+  catalogue: ResolvedCatalogue,
+  // EVERY DOCUMENT THE PAGE IS BUILT FROM: the record as it will be rendered, and the
+  // attested judgement when there is one. Their citations decide what is re-hashed here;
+  // everything else in the catalogue is catalogued, shown, and says why it was not opened.
+  citedBy: readonly unknown[],
+): Promise<EvidenceAuditMap> {
+  const audit = new EvidenceAuditMap();
+  const byId = new Map<string, EvidenceCatalogEntry>();
+
+  for (const e of catalogue.entries) {
     // D14(a): KEY UNDER EVERY NAMESPACE THE ENTRY ANSWERS TO.
     //
     // This map was keyed by `sourceEvidenceId ?? evidenceId` while the register's
@@ -507,14 +829,69 @@ async function auditEvidence(env: Env, runId: string): Promise<EvidenceAuditMap>
     // with three keys per artifact would report "partial" over a fully verified catalogue
     // — the same contradiction in the opposite direction.
     audit.alias(e.evidenceId, e.sourceEvidenceId ?? null, e.artifactRef ?? null);
+    // THE LOOKUP INDEX CARRIES EXACTLY THE ALIASES THE AUDIT MAP DOES, BASENAMES INCLUDED.
+    // A record citing `EV-EXP-049.json` or a bare `EXP-002.json` against a store minting
+    // `ev_<12>` is the D14(a) namespace split, and an index that resolves fewer names than
+    // the audit map resolves is how a cited artifact comes to be catalogued, shown, and
+    // never re-hashed.
+    byId.set(e.evidenceId, e);
+    for (const alias of [e.sourceEvidenceId, e.artifactRef]) {
+      if (!alias) continue;
+      byId.set(alias, e);
+      const base = alias.split("/").pop();
+      if (base) byId.set(base, e);
+    }
+    // AND BY CONTENT HASH, IN BOTH SPELLINGS. The register's own evidence resolver
+    // (`pipeline/report/lib/register.mjs#buildEvidenceResolver`) looks an artifact up by
+    // `ref.sha256` first and by artifact BASENAME second — it never sees an `evidenceId` at
+    // all. An index that did not carry those two namespaces left 112 of the 458 artifacts
+    // the register cites catalogued, displayed, and never re-hashed, under a trust card
+    // counting the ones that were. That is D14(a) exactly, so the index carries every
+    // namespace a citation is written in, not the ones this file happens to remember.
+    if (e.contentHash) {
+      const hex = e.contentHash.replace(/^sha256:/, "");
+      byId.set(hex, e);
+      byId.set(`sha256:${hex}`, e);
+    }
+    // EVERY catalogued artifact gets a state, and the DEFAULT state is the honest one.
+    // A row with no entry renders "not checked" with no reason; this says which fact it
+    // is, so "we did not need to open this" cannot be misread as "we could not".
+    audit.set(e.evidenceId, {
+      state: "not-checked",
+      note: "not re-hashed while building this page: nothing on the page cites this artifact. Its bytes are still re-hashed, and refused on a mismatch, whenever the file itself is opened.",
+    });
+  }
+
+  // An entry that did not bind is never offered and never counted as checked.
+  for (const u of catalogue.unbound) {
+    audit.set(u.evidenceId, { state: "mismatch", note: u.why });
+  }
+
+  let byteBudget = AUDIT_BYTE_BUDGET;
+  let entryBudget = AUDIT_ENTRY_BUDGET;
+  const known = new Set(byId.keys());
+  const cited: string[] = [];
+  const seenCitation = new Set<string>();
+  for (const doc of citedBy) {
+    for (const id of citedEvidenceIds(doc, known)) {
+      const entry = byId.get(id)!;
+      if (seenCitation.has(entry.evidenceId)) continue;
+      seenCitation.add(entry.evidenceId);
+      cited.push(id);
+    }
+  }
+  for (const id of cited) {
+    const e = byId.get(id);
+    if (!e) continue;
     const put = (v: { state: string; href?: string; note?: string }) => audit.set(e.evidenceId, v);
     const href = `/api/v2/runs/${runId}/evidence/${e.evidenceId}/content`;
-    if (e.size > budget) {
+    if (entryBudget <= 0 || e.size > byteBudget) {
       // Say "not audited", never "verified". An unchecked artifact is not a checked one.
       put({ state: "missing", note: "not audited at render time: byte budget exhausted" });
       continue;
     }
-    budget -= e.size;
+    entryBudget -= 1;
+    byteBudget -= e.size;
     try {
       await getVerifiedEvidence(env, e);
       put({ state: "verified", href });
@@ -530,3 +907,15 @@ async function auditEvidence(env: Env, runId: string): Promise<EvidenceAuditMap>
 
 /** Bounds one report build's evidence re-hash so a huge run cannot OOM the isolate. */
 const AUDIT_BYTE_BUDGET = 96 * 1024 * 1024;
+
+/**
+ * AND SO A HUGE RUN CANNOT SPEND THE INVOCATION'S SUBREQUEST BUDGET EITHER.
+ *
+ * The byte budget alone does not bound the number of R2 GETs, and the subrequest budget is
+ * what actually killed a run (D30). 500 leaves the whole report step comfortably inside
+ * Cloudflare's 1,000-subrequest default, so the deployment is not relying on the raised
+ * `limits.subrequests` ceiling to publish a report. Anything beyond it is reported as not
+ * audited, in the priority order `citedEvidenceIds` returns, so what goes unchecked is
+ * always the least reader-facing artifact.
+ */
+const AUDIT_ENTRY_BUDGET = 500;

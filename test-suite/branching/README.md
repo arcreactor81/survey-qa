@@ -53,9 +53,20 @@ s1-skip/
 manifest + `../engine.js`, zero network/CDN): **just open them from disk** in
 any browser, or serve the directory (`npx http-server test-suite/branching`).
 The flawed page shares the clean page's title and never embeds
-`seededErrors`/`variant`, so the tool under test cannot cheat by reading the
-answer key out of the DOM. (`window.__surveyEngineState` is exposed for
-debugging/walker use, same as the demo's `window.survey`.)
+`seededErrors`/`variant`, so the **seeded-defect labels and the scorer-only
+oracle are never delivered to the browser**. That is the whole of what is
+protected, and it is narrower than "cannot cheat": every page inlines its own
+complete logic specification (`<script type="application/json"
+id="survey-manifest">`) and the engine publishes live state on
+`window.__surveyEngineState` (exposed for debugging/walker use, same as the
+demo's `window.survey`). A tester that reads page source can therefore diff
+that manifest against the docx and infer every planted deviation **without
+interacting with the survey at all** — and some flawed manifests still ship
+per-object `note` fields stating the clean intent their patched values
+contradict. So a real evaluation harness must bar page-source inspection, or
+serve compiled fixtures that do not carry their own logic; otherwise logic
+*discovery* is not being measured. (See `docs/p0-adversarial-audit.md`
+Finding 8.)
 
 The engine renders one question per screen, forward-only (no back button), all
 answers required — matching the docx programming note. Randomization/rotation

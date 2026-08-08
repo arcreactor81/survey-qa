@@ -25,7 +25,7 @@
 import type { Env } from "../../types/env";
 import { judgementKey, recordKey } from "../../keys";
 import { getContractRevision } from "../../store/contract-revision";
-import { loadRunInputs, loadArtifactBytes, signingKeys, type RunInputs } from "./run-inputs";
+import { ArtifactNameCollision, loadRunInputs, loadArtifactBytes, signingKeys, type RunInputs } from "./run-inputs";
 import { stageNotEvaluated, type StageResult } from "../gates";
 import type { ItemResult } from "../../types/record";
 
@@ -193,7 +193,18 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
       sourceDocument: inputs.envelope?.input.documentName ?? null,
     });
 
-  const artifacts = await loadArtifactBytes(env, inputs.evidence);
+  // A catalogue whose basenames collide cannot be judged honestly: the mount would lose
+  // evidence and the signed manifest would double-count it. Saying so is the right outcome;
+  // judging the survivors would report a smaller evidence set as if it were the whole one.
+  let artifacts: Array<{ name: string; bytes: Uint8Array }>;
+  try {
+    artifacts = await loadArtifactBytes(env, inputs.evidence);
+  } catch (err) {
+    if (err instanceof ArtifactNameCollision) {
+      return stageNotEvaluated<MintedJudgement>("EVIDENCE_NAME_COLLISION", err.message);
+    }
+    throw err;
+  }
   const keys = signingKeys(env);
   // THE REGISTRY IS DERIVED FROM THE WORKER'S OWN KEY, NOT READ OFF THE RECORD.
   // A registry carried inside the document whose signature it checks is circular — whoever

@@ -77,10 +77,101 @@ interface ReportViewShape {
 const buildReportView = buildReportViewUntyped as (input: BuildReportViewInput) => ReportViewShape;
 const renderReportHtml = renderReportHtmlUntyped as (
   view: unknown,
-  opts: { css: string; modelCalls: unknown[]; toolVersions: unknown[] },
+  opts: {
+    css: string;
+    modelCalls: unknown[];
+    toolVersions: unknown[];
+    /** See DEFERRED BLOCKS below. Falsy return = the block ships inline, as before. */
+    defer?: ((markup: string, id: string) => DeferredEntry | null) | null;
+  },
 ) => string;
 const sealedContractRevision = sealedContractRevisionUntyped as (record: unknown) => SealedRevision;
 const reportCss = reportCssUntyped as unknown as string;
+
+/* ------------------------------------------------------------------------- *
+ * DEFERRED BLOCKS — the same size reduction the CLI already gets              *
+ * ------------------------------------------------------------------------- *
+ * `render-html.mjs` ships the auditor's register table gzipped and base64'd
+ * INSIDE the document, unpacked into the DOM when the Audit trail tab is opened.
+ * Self-containment is preserved (no fetch, no companion file), nothing is
+ * deleted, and the artifact roughly halves.
+ *
+ * The compressor is INJECTED rather than imported, because `render-html.mjs` is
+ * shared verbatim with this Worker and so must not depend on `node:zlib`. The
+ * CLI (`pipeline/report/render-report.mjs`) supplies one built on `gzipSync`.
+ * This module supplies the Worker's: `CompressionStream` for the bytes,
+ * `crypto.subtle.digest` for the round-trip digest.
+ *
+ * BOTH OF THOSE ARE ASYNC, and `deferBlock` calls `defer(markup, id)`
+ * synchronously. So the render runs TWICE over ONE view:
+ *
+ *   pass 1  capture-defer returns null → the block stays inline, exactly the
+ *           behaviour a caller with no compressor has always got, and the
+ *           markup is recorded;
+ *   await   gzip + sha256 each captured block;
+ *   pass 2  lookup-defer returns the packed entry.
+ *
+ * The two passes are IDENTICAL BY CONSTRUCTION: `buildReportView` runs once and
+ * both passes read the same view object, and the renderer holds no clock or
+ * randomness (the single `new Date()` in `pipeline/report/lib/` is in
+ * `view-model.mjs`, i.e. inside the view build). That is what makes it sound for
+ * the payload to declare a digest taken over pass-1 bytes — they are the bytes
+ * pass 2 would have emitted inline.
+ *
+ * If compression is unavailable for any reason, the deferred pass is SKIPPED and
+ * the pass-1 (inline) document is served. A bigger honest page beats a page whose
+ * audit trail cannot be unpacked.
+ */
+interface DeferredEntry {
+  id: string;
+  encoding: "gzip";
+  /** Byte length of the SOURCE markup, which `expand-deferred.mjs` re-checks. */
+  bytes: number;
+  sha256: string;
+  base64: string;
+}
+
+/** What the Worker compressed, for the build log and the checkpoint summary. */
+export interface DeferredStat {
+  id: string;
+  sourceBytes: number;
+  storedBytes: number;
+}
+
+/**
+ * base64 of a byte array, chunked.
+ *
+ * `String.fromCharCode(...bytes)` is the obvious spelling and it blows the call
+ * stack somewhere around a few hundred KB — which is exactly the size class this
+ * function exists for. 0x8000 is the usual safe chunk.
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/**
+ * `input.slice().buffer` rather than `new Blob([input])`: `BlobPart` is not a name
+ * `@cloudflare/workers-types` exports, and an `ArrayBuffer` is an unambiguous body in every
+ * runtime this renders in. `slice()` copies, which also makes the offset-into-a-larger-
+ * buffer case impossible rather than merely unlikely.
+ */
+async function gzipBytes(input: Uint8Array): Promise<Uint8Array> {
+  const source = new Response(input.slice().buffer as ArrayBuffer);
+  const stream = source.body!.pipeThrough(new CompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function sha256Prefixed(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.slice().buffer as ArrayBuffer));
+  let hex = "";
+  for (const b of digest) hex += b.toString(16).padStart(2, "0");
+  return `sha256:${hex}`;
+}
 
 /** What `sealedContractRevision` reports about the contract this run was executed against. */
 export interface SealedRevision {
@@ -186,6 +277,15 @@ export interface RenderRunReportInput {
   judgementDiagnostic?: { state: string; summary: string; problems: Array<{ code: string; message: string }> } | null;
   /** Unsigned reviewer sidecar of flag-lane entries. Rendered with a loud banner. */
   flagLanes?: unknown;
+  /**
+   * WHAT THE PLAN SAID IT COULD NOT DO, with its named codes and their counts — including
+   * the zeros, which are the whole point: a limitation reported only when non-zero cannot
+   * distinguish "we looked and found none" from "nobody looked".
+   *
+   * `state` carries that same distinction one level up, for the case where the plan itself
+   * could not be read. An absent block is rendered as "unknown", never as "none".
+   */
+  planLimitations?: { state: string; entries: unknown[]; note: string } | null;
   /** Edge coverage from the routing graph, computed at test-axis close. Omitted when unavailable. */
   edgeCoverage?: unknown;
   /** evidenceId -> { state, href? }. From the R2 catalog, not a filesystem walk. */
@@ -194,6 +294,13 @@ export interface RenderRunReportInput {
   generatedAt?: string;
   /** Loud "this is synthetic" strip. Can only ADD a warning, never remove one. */
   fixtureNote?: string;
+  /**
+   * A standing statement about the SERVICE, in survey language, rendered above the verdict
+   * in the Summary view. Use it for facts that are true of every run this deployment
+   * produces — not for facts about one run's verdicts, which the summary already states.
+   * Absent renders nothing. Can only ADD a caveat.
+   */
+  serviceNote?: { flag: string; body: string } | null;
   confidenceFloor?: number;
   /** Download links rendered in the provenance block. Worker-relative URLs. */
   downloads?: Array<{ label: string; href: string | null; note?: string }>;
@@ -220,6 +327,12 @@ export interface RenderedReport {
     hasCurrentResults: boolean;
     sealedRevisionId: string | null;
   };
+  /**
+   * The blocks that shipped compressed, and the inline size they replaced. Empty
+   * when compression was unavailable — in which case `html` is the inline
+   * document, which is larger and equally complete.
+   */
+  deferred: DeferredStat[];
 }
 
 /**
@@ -244,8 +357,11 @@ export async function attestationFromRecordHash(record: unknown): Promise<Attest
  * Render a report. Throws `NotARunRecord` on a non-record; every other degradation is
  * handled inside the view model, which is where "missing scorecard degrades its section"
  * already lives.
+ *
+ * ASYNC because the deferred-block compressor is (see DEFERRED BLOCKS above). The
+ * returned `html` is a complete, self-contained document either way.
  */
-export function renderRunReport(input: RenderRunReportInput): RenderedReport {
+export async function renderRunReport(input: RenderRunReportInput): Promise<RenderedReport> {
   // Throws NotRenderable with the specific problems. A record that reaches here has
   // already been converged (a v2 record via `projectRunRecordV2`), so this is the second
   // assertion of one interface rather than a second, weaker idea of what a record is.
@@ -260,6 +376,7 @@ export function renderRunReport(input: RenderRunReportInput): RenderedReport {
       confidenceFloor: input.confidenceFloor,
       generatedAt: input.generatedAt,
       fixtureNote: input.fixtureNote,
+      serviceNote: input.serviceNote ?? null,
       evidenceAudit: input.evidenceAudit ?? new Map(),
       judgement: input.judgement ?? null,
       // WHAT THE JUDGEMENT MAY DRIVE. The register reads its trust state, its problems,
@@ -270,6 +387,7 @@ export function renderRunReport(input: RenderRunReportInput): RenderedReport {
       // path that draws the re-derived column.
       judgementDiagnostic: input.judgementDiagnostic ?? null,
       flagLanes: input.flagLanes ?? null,
+      planLimitations: input.planLimitations ?? null,
       edgeCoverage: input.edgeCoverage ?? null,
       sources: {
         recordPath: null,
@@ -283,11 +401,57 @@ export function renderRunReport(input: RenderRunReportInput): RenderedReport {
   // both record shapes (see report/renderable.ts). Passing the v2 scalar count here is
   // what silently rendered "No model calls are recorded in this run" for a run that made
   // several hundred.
-  const html = renderReportHtml(view, {
+  const renderOptions = {
     css: reportCss,
     modelCalls: record.resources.modelCalls,
     toolVersions: record.resources.toolVersions,
+  };
+
+  // PASS 1 — inline, and capture what the renderer offered to defer.
+  const captured: Array<{ id: string; markup: string }> = [];
+  let html = renderReportHtml(view, {
+    ...renderOptions,
+    defer: (markup: string, id: string) => {
+      captured.push({ id, markup });
+      return null; // inline, exactly as a caller with no compressor has always got
+    },
   });
+
+  // PASS 2 — the same view, with each captured block packed. Skipped entirely when the
+  // runtime has no CompressionStream, or when the renderer offered nothing to defer.
+  const deferred: DeferredStat[] = [];
+  if (captured.length > 0 && typeof CompressionStream === "function") {
+    try {
+      const packedById = new Map<string, DeferredEntry>();
+      const encoder = new TextEncoder();
+      for (const block of captured) {
+        const sourceBytes = encoder.encode(block.markup);
+        const [packed, sha256] = await Promise.all([gzipBytes(sourceBytes), sha256Prefixed(sourceBytes)]);
+        const base64 = bytesToBase64(packed);
+        packedById.set(block.id, {
+          id: block.id,
+          encoding: "gzip",
+          bytes: sourceBytes.byteLength,
+          sha256,
+          base64,
+        });
+        deferred.push({ id: block.id, sourceBytes: sourceBytes.byteLength, storedBytes: base64.length });
+      }
+      html = renderReportHtml(view, {
+        ...renderOptions,
+        defer: (_markup: string, id: string) => packedById.get(id) ?? null,
+      });
+    } catch (err) {
+      // The inline document from pass 1 is still in `html` and is complete. Say what
+      // happened rather than failing a report over a size optimisation.
+      deferred.length = 0;
+      console.warn(
+        `report: deferred-block compression unavailable, serving the inline document — ${
+          err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+        }`,
+      );
+    }
+  }
 
   const cert = view.register?.certification;
   const pub = view.register?.publication;
@@ -311,5 +475,6 @@ export function renderRunReport(input: RenderRunReportInput): RenderedReport {
       hasCurrentResults: Boolean(pub?.hasCurrentResults),
       sealedRevisionId: revision?.sealed ? (revision.revisionId ?? null) : null,
     },
+    deferred,
   };
 }

@@ -134,6 +134,40 @@ function routingContractBody() {
 // A walk artifact — the bytes the verifier re-reads
 // ---------------------------------------------------------------------------
 
+/**
+ * A SCREEN THAT CARRIES ITS QUESTION ID IN BOTH PLACES A SCREEN CAN CARRY ONE — the leading
+ * `Q<n>` of the fixture text, mirrored into control `name`/`id`.
+ *
+ * Since the 0.2 fix a text-only foreign id cannot support a destination MISMATCH: rendered
+ * prose also carries back-references ("as you said in Q2…"), so the arm that ACCUSES a survey
+ * of routing wrongly requires a control named after the question it says was reached. These
+ * fixtures are about the observation ledger, not about identity provenance, so they carry both
+ * readings — as a real screen that prints its number and names its inputs after it does.
+ * Text naming no question still yields no controls.
+ */
+const controlsFor = (text) => {
+  const id = /^\s*(Q\d+)\b/.exec(String(text ?? ""))?.[1];
+  if (!id) return [];
+  return ["1", "2"].map((code, i) => ({
+    idx: i,
+    tag: "input",
+    type: "radio",
+    name: id,
+    id: `${id}_${code}`,
+    code,
+    label: code === "1" ? "Yes" : "No",
+    text: "",
+    checked: false,
+    value: null,
+    disabled: false,
+    required: false,
+    visible: true,
+    placeholder: null,
+    maxlength: null,
+    readOnly: false,
+  }));
+};
+
 const screen = (text) => ({
   at: "2026-08-02T00:05:00.000Z",
   url: "https://fixture.invalid/survey",
@@ -144,13 +178,13 @@ const screen = (text) => ({
   visibleText: text,
   visibleTextTruncated: false,
   bracketedInstructionsVisible: [],
-  controls: [],
+  controls: controlsFor(text),
   optionGroups: [],
   grid: null,
   buttons: [],
   progress: { present: false, kind: null, now: null, max: null, text: null },
   validationMessages: [],
-  counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0 },
+  counts: { controls: controlsFor(text).length, optionGroups: 0, options: controlsFor(text).length, textInputs: 0 },
   screenSignature: `sig:${text}`,
 });
 

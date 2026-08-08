@@ -68,6 +68,169 @@ const FILES = [
   // window. It does not bite the small fixture, which is why it needed closing before a real
   // client questionnaire arrived. Evidence they can fail: `tools/mutate-passa.mjs`.
   "./tests/d22-passa-waves.test.mjs",
+  // D23 — the verifier's structural floor may DEMOTE, but it may not author a VERDICT out of
+  // the producer's own `error`/`contradiction` payload keys. Dormant until model-observations
+  // land, at which point every failed model call would have become a defect claim about the
+  // client's survey. Evidence they can fail: `tools/mutate-payload-trust.mjs`.
+  "./tests/d23-payload-trust.test.mjs",
+  // D24 — the verifier must be able to BIND A SCREEN TO ITS QUESTION. Screen identity read
+  // rendered text alone; the instrument under test prints no question ids, so every route and
+  // boundary case exited at binding and the run produced ZERO verdicts — while `page-script.ts`
+  // had been capturing the ids in every control's `name`/`id` the whole time. The positive half
+  // is the null-run-to-measurable proof; the fail-closed half is what stops the extra reading
+  // from buying a guess; the degradation half pins the convention as a NAMED limitation.
+  "./tests/d24-screen-identity.test.mjs",
+  // D25 — the JUDGE could not read v2 evidence at all, so the report's authoritative column was
+  // empty however well a run went. Two stops: every walk's artifactRef flattened to the same
+  // basename (duplicate signed manifest -> unverified authority -> NO judgement minted), and a
+  // `PathObservation` is not the `evidence[]` capture spine every judge module reads, so it was
+  // dropped in silence. The end-to-end half is the bar: a NON-ZERO assessed row count.
+  "./tests/d25-v2-judge-evidence.test.mjs",
+  // D26 — the last stop between a v2 run and a ROUTING verdict. `R-ROUTE-1` gated on the v1
+  // checklist category `branch-outcome`; every v2 revision spells that facet `routing` /
+  // `skip-rule` / `terminate`, so no routing requirement ever compiled to a typed expectation
+  // and routing defects — much of what this product exists to catch — were structurally
+  // invisible in the authoritative column. The facet is SIGNED, so the judge learns the
+  // vocabulary rather than the producer being re-spelled; the mapping is pinned set-equal to
+  // the producer's own route class. The end-to-end half proves BOTH ARMS on one real run.
+  "./tests/d26-routing-facet.test.mjs",
+  // D27 — THE FIRST REAL END-TO-END RUN'S FAILURE. A rating grid states one mandate once per
+  // row, so two distinct requirements agreed on statement, quote, scope, quantifier and
+  // construct — the only five fields identity was derived from — and collapsed onto one
+  // `requirementLineageId`/`requirementVersionId`. The expander minted byte-identical facet
+  // instances from them and planning refused the sealed revision. Two DISTINCT requirements
+  // colliding on a weak id, not one duplicated by a merge, so the fix is a stronger id and
+  // the widening is COLLISION-SCOPED: every already-unique id is byte-stable, because a
+  // revision id is the hash of a body containing them.
+  "./tests/d27-identity-collision.test.mjs",
+  // D28 — WHAT A JUDGEMENT BINDS TO. `DEFAULT_TARGET_BUILD_ID` is unset on the deployed
+  // service, so `report/build.ts` resolved no target identity, every judgement failed its
+  // `target-build` check, and EVERY report was marked diagnostic-only with no rerun able to
+  // differ. The identity is now derived from the content of the screens the run actually
+  // captured. The two load-bearing halves: a run that captured NOTHING stays unbindable with
+  // its existing named reason (hashing the empty set would certify a run that saw nothing),
+  // and a judgement bound to the DERIVED id really does become current results — the only
+  // test that fails if the resolver is ever disconnected from the binding facts.
+  "./tests/d28-target-identity.test.mjs",
+  // THE HEARTBEAT NOTE — the run's own words for what it is doing, surviving the projection.
+  // `readHeartbeat` returned the note and `projectStatus` took only the timestamp, so the note
+  // died at the contract and the tracker had nothing to say through the ~10-minute extraction.
+  // The second test is the guard in the other direction: absent → the field is OMITTED, so a
+  // run without a note is byte-identical to the shape that shipped before it existed.
+  "./tests/heartbeat-note.test.mjs",
+  // D29 — the last two ways a confident defect could be reported about a HEALTHY survey: a
+  // lost advance-timeout race read as a rejection (four states, delta witness, control
+  // attribution, keyed on `advanced` and not on `blocked`), and a prose back-reference read as
+  // the screen's own identity. Half the file is counterweights: every new refusal is paired
+  // with the case that must still reach a verdict.
+  "./tests/d29-fabrication-paths.test.mjs",
+  // THE ITERATION LOOP's two tools (docs/ITERATION-LOOP.md §6): tools/runsum.mjs (scoreboard) and
+  // tools/runcheck.mjs (invariants I1–I7). The negative half is the point — every invariant has a
+  // corrupted in-memory copy of pipeline/runs/synthetic-demo proving it goes red, including the
+  // two failures a naive version could never see: a coverage counter that still sums to the
+  // denominator while a row has moved bucket, and a reason vocabulary checked live instead of frozen.
+  "./tests/runtools.test.mjs",
+  // WHY A FAILED RUN FAILED, reaching a reader. The first real run died with
+  // `reasonCode: "workflow-error"` and an empty `error` while Cloudflare's Workflow API had
+  // the exact sentence on file; the cause is now recorded inside the step closure — where
+  // it still exists, and where the step's name is known — and projected, structured and
+  // sanitised, onto both read surfaces. The propagation assertions are the load-bearing
+  // ones: recording is additive and the original error still errors the instance.
+  "./tests/failure-cause.test.mjs",
+  // D30 — THE FURTHEST A RUN HAS EVER GOT, AND WHAT STOPPED IT. `verify-observations` died with
+  // `Too many API requests by single Worker invocation` on all three attempts — attempts 2 and 3
+  // in 0 seconds each, which is the proof that a Workflow's consecutive steps AND its step
+  // retries share one invocation's subrequest budget. The cost was R2, not the browser:
+  // `listCatalog` reads one object PER CATALOGUE ENTRY (1,707 in that run) and both
+  // `project-observations` and `verify-observations` paid it back to back. Verification now
+  // reads the cited artifacts BY KEY. The load-bearing test is an INVARIANCE, not a ceiling:
+  // 40x the catalogue must cost identical R2 operations, which no catalogue scan can satisfy.
+  // The second suite re-proves the integrity chain on the cheaper path — a repointed or missing
+  // entry must still be `insufficient`, never a pass.
+  "./tests/d30-subrequest-budget.test.mjs",
+  // D31 — the two numbers `v2r_01kzfb6py8pbxznqv022p2qkhb` published. Its exercised gate put
+  // the planner's OWN delegated decisions ("select: []", "source: default:navigator-discretion")
+  // in the denominator, so walks that drove the survey to its terminal screen were disqualified
+  // for not obeying instructions that instructed nothing; and `walks-blocked-by-site` was emitted
+  // from "cases are still pending", publishing an accusation against a healthy customer survey
+  // that had refused NOTHING. Both halves are replayed over the run's REAL 46 WalkRecords and its
+  // REAL plan. The counterweights are the load-bearing half — the hard floor is untouched, an
+  // unapplied sealed stimulus still closes nothing, and a survey that genuinely blocks IS still
+  // named. Evidence they can fail: `tools/mutate-exercised-gate.mjs`.
+  "./tests/d31-exercised-gate.test.mjs",
+  // D32 — the OTHER thing `v2r_01kzfb6py8pbxznqv022p2qkhb` published: three of its eight
+  // "exercised" cases carry evidence FROM THE WRONG QUESTION. The survey prints no question ids
+  // in its text and the planner emitted 275 of 286 decisions with an empty `select`, so binding
+  // ran on containment-tolerant option-label overlap alone — a Q7 decision wanting "Can't
+  // remember" was spent on an earlier screen offering "Don't know / can't remember", and the
+  // real Q7 then took the OPPOSITE branch under `navigator-default` while the case closed as
+  // exercised. Tightening the matcher cannot fix it (one mis-binding matched "Yes" to "Yes"
+  // exactly), so the plan now stamps the document's WORDING on every decision and the driver
+  // binds on identity or REFUSES, counted. Half the file is counterweights: a screen the wording
+  // names must still bind when the option it wants is MISSING, or the defect this product
+  // exists to report becomes invisible. Evidence they can fail: `tools/mutate-binding.mjs`.
+  "./tests/d32-decision-identity.test.mjs",
+  // D33 — THE RECORD MUST CARRY THE DEFECTS THE RUN FOUND. Run 5 derived two real fail
+  // verdicts and signed `claims: []` and `blockers: []` over them, because the assembler took
+  // claims as a PARAMETER and its one caller passed a literal empty array. Claims and blockers
+  // are now DERIVED inside the assembler, so there is no wire left to forget. The tests drive
+  // the real aggregator -> real stage -> stored bytes, because the .mjs import is `@ts-ignore`d
+  // and `tsc` therefore cannot see that seam at all. Half the file is counterweights: a passing
+  // run, an insufficient decision, a cursor-blocked case and an empty ledger must each produce
+  // NOTHING. Evidence they can fail: `tools/mutate-claims.mjs`.
+  "./tests/d33-claims-wire.test.mjs",
+  // D34 — THE READER'S HALF OF THE SAME RUN, AND WHAT IT COST TO PUBLISH. Building run 5's
+  // report paid the D30 fan-out TWICE (list the catalogue: 1 LIST + 1 GET per entry; then
+  // re-hash every entry: 1 more GET each) — ~3,400 storage reads for one page, growing with
+  // survey size, covered only by a raised `limits.subrequests` ceiling. The catalogue is now
+  // enumerated from the run's own ATTESTED record (re-bound entry by entry, which is a hash
+  // and not a fetch) and the blob re-hash is spent only on artifacts the page cites. Proven
+  // on BOTH axes the old code grew along — store size and record size — as an EQUALITY across
+  // a 40x change, which nothing that still scans can satisfy. Half the file is the discipline
+  // that had to survive: repointed bytes, absent bytes and an entry whose citation binding
+  // does not recompute must each still fail closed, and nothing un-re-hashed may be handed a
+  // link or counted as verified.
+  "./tests/d34-report-fanout.test.mjs",
+  // D35 — THE DRIVER AND THE VERIFIER MUST ANSWER "WHICH QUESTION IS THIS SCREEN?" THE SAME WAY.
+  // The driver was rebuilt around the document's WORDING after option-label binding produced
+  // real confident-wrong answers; the verifier went on reading text tokens and markup and never
+  // looked at wording, so it could accept a screen the walker had refused and was blind on every
+  // survey that prints no ids. Wording is now a third witness on the identity union, and the
+  // walker's REFUSALS are read as a veto while its bindings still are not. The load-bearing half
+  // is the fail-closed half: a tie refuses, a conflict refuses, and a destination identified by
+  // wording alone may not accuse — plus both of run 5's real findings, re-produced.
+  // Evidence they can fail: `tools/mutate-verifier-identity.mjs`.
+  "./tests/d35-wording-identity.test.mjs",
+  // D36 — A PLANNED STIMULUS MUST BE SOMETHING A BROWSER CAN PERFORM, OR BE COUNTED AS MISSING.
+  // Three ways a walk carried an instruction it could not execute: a boundary probe whose
+  // `text_entry.value` was the LITERAL string "<exactly 500 characters>" (typed verbatim: a
+  // 24-character answer to a 500-character question, reported as a pass); a route case naming
+  // only an answer CODE, leaving the driver nothing to click while the case still closed; and
+  // 48 unassigned cases all warned under one cause when they have four, 21 of them misfiled.
+  // Evidence they can fail: `tools/mutate-plan.mjs`.
+  "./tests/d36-plan-stimulus.test.mjs",
+  // D37 — THE READER'S SIDE OF RUN 5. Two requirements were settled as FAILING — a skip rule
+  // landing on the wrong question, a boundary the survey accepted that the document says it
+  // must reject — and the published page opened with "there is nothing on this page you
+  // should act on", said "Programming problems: none found", and printed six em dashes where
+  // its counts go. Three causes, each guarded: every customer number hung off a re-derived
+  // column that had not run; the lane's words come from `claims`, signed empty over those
+  // fails; and "none found" was printed with no denominator, so 2-of-227 read like 227 clean.
+  // THE FIRST SUITE IS THE COUNTERWEIGHT and is the load-bearing half — a lane that always
+  // showed would pass every visibility test here and destroy the product. Evidence they can
+  // fail: `tools/mutate-report-defects.mjs`.
+  "./tests/d37-defect-visibility.test.mjs",
+  // D38 — THE BROWSER LAYER ANSWERING CONFIDENTLY AND WRONGLY, both halves measured against a
+  // live survey. A grid's columns were read one place to the right (a `<th scope="row">`
+  // collected as a column, then a SILENT +1 shift), so a documented "Somewhat agree" clicked
+  // "Strongly agree" while a documented "Strongly agree" fell through to `cells[0]` and was
+  // accidentally right. And the navigator's `visible && !disabled` default made an eleven-point
+  // NPS score STRUCTURALLY unreachable — every 0-10 radio is `opacity:0`, so 2 of 2 walks
+  // answered "Don't know" and the coverage report called the screen answered. The reader's own
+  // half lives in a string this suite cannot execute and is proved in a real browser; these are
+  // the driver's: operable-vs-visible in both directions, the fallback that hid the shift now
+  // named, and the reader's limitations reaching the artifact.
+  "./tests/d38-answerable-controls.test.mjs",
 ];
 
 for (const f of FILES) await import(f);

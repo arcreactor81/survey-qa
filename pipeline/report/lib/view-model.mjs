@@ -42,6 +42,116 @@ export const RETIRED_KIND_NORMALIZATION = {
   },
 };
 
+/**
+ * THE DEFECTS THE RUN RECORDED, WHEN NOTHING WROTE THEM DOWN AS FINDINGS.
+ *
+ * WHAT THIS EXISTS FOR. A real run derived two failing requirements — a skip rule landing on
+ * the wrong question, and a boundary the survey accepted that the document says it must
+ * reject — and signed `claims: []` over them. The report therefore said "Programming
+ * problems: none found", and the only trace anywhere on the page was one line in the audit
+ * trail counting "2 failing", labelled historical, with no reason, no words and no evidence.
+ * The report cannot fix the record, but it must not be the second place the defect
+ * disappears.
+ *
+ * WHAT IT IS AND IS NOT.
+ *
+ *  - IT INVENTS NOTHING. Every field is copied: the sentence is the VERIFIER'S OWN `detail`
+ *    string, the location is the observation's route, the evidence is the observation's own
+ *    evidence ids. `severity` and `supported` stay null exactly as `findingFromClaim` leaves
+ *    them, because a fabricated severity in front of a reviewer is the failure this codebase
+ *    keeps re-finding.
+ *  - IT IS NOT A VERDICT. The aggregator already settled the requirement as failing; this
+ *    reads that settlement and the observation it rests on. Nothing here changes a verdict,
+ *    a count, or which column is current.
+ *  - IT DEFERS. The moment the record carries defect claims of its own, this produces
+ *    NOTHING: the record's own words win, and there is one list, not two.
+ *  - ONLY `contradicted` COUNTS. An `insufficient` decision means the verifier could not
+ *    tell — on the same run, one requirement carried both — and reporting "we could not
+ *    check this" as "your survey is broken" would be the same fabrication in the opposite
+ *    direction.
+ */
+export function defectsFromVerifier(record, rawFindings) {
+  const list = (v) => (Array.isArray(v) ? v : []);
+  const observations = new Map(list(record?.observations).map((o) => [o?.observationId, o]));
+  const failing = list(record?.itemResults).filter((r) => r?.verdict === "fail" || r?.derivedVerdict === "fail");
+
+  // SUPPRESSION IS PER REQUIREMENT, KEYED ON WHAT A FINDING IS ABOUT — NOT ON ITS KIND.
+  //
+  // Two earlier spellings were both wrong for the same reason. "Any non-ambiguity finding
+  // suppresses everything" meant a record carrying only the LAUNCH BLOCKER — the exact
+  // half-landed state a partial fix produces — silenced every derivation, and a blocker
+  // says the survey would not open, which is not a description of a skip rule landing on
+  // the wrong question. "Findings of kind `defect` suppress" was worse: `kind` comes
+  // straight from `claimType`, which is an OPEN vocabulary (the real one reads
+  // `routing-mismatch`), so a record's own claim went unrecognised and got described twice.
+  //
+  // A finding suppresses derivation for the requirements it NAMES, and for no others. That
+  // needs no vocabulary, handles a partially-landed record one requirement at a time, and
+  // cannot double-report: `itemRefs` is the same field the register binds findings by.
+  const describedItems = new Set();
+  for (const f of list(rawFindings)) {
+    if (f?.kind === "ambiguity") continue;
+    for (const id of list(f.itemRefs)) describedItems.add(id);
+  }
+  const anyDescription = list(rawFindings).some((f) => f?.kind !== "ambiguity");
+  if (observations.size === 0) {
+    return { source: anyDescription ? "record" : "none", synthesised: [], failingRequirements: failing.length };
+  }
+
+  // What the DOCUMENT required, in the extraction's own sentence. Without it the card
+  // falls back to `expectedObservable`, which reads "skip-rule · scope question:Q7 ·
+  // quantifier any" — true, and not a sentence a researcher can act on.
+  const requirementById = new Map(list(record?.contract?.items).map((i) => [i?.itemId, i]));
+  const synthesised = [];
+  for (const r of failing) {
+    if (describedItems.has(r.itemId)) continue; // the record already says what happened here
+    for (const fr of list(r.facetResults)) {
+      if (fr?.status !== "fail") continue;
+      for (const oid of list(fr.observationIds)) {
+        const o = observations.get(oid);
+        if (!o || o.verifier?.decision !== "contradicted") continue;
+        // NEVER SILENTLY SHORTER THAN THE RECORD. A contradiction with no words recorded
+        // is still a contradiction; dropping it would put the report back in the business
+        // of publishing a shorter list than the run produced. It is described by what it
+        // does carry — the closed reason code — and by saying that no description exists.
+        const detail =
+          typeof o.verifier.detail === "string" && o.verifier.detail.trim()
+            ? o.verifier.detail.trim()
+            : `the check that read this requirement's saved screens reported that the survey contradicts the ` +
+              `questionnaire, and recorded no further description of what it saw`;
+        synthesised.push({
+          findingId: `observed-${oid}`,
+          kind: "defect",
+          severity: null,
+          supported: null,
+          summary: detail,
+          // What the site DID, in the words of the check that read the artifacts, beside
+          // what the DOCUMENT required, in the extraction's own sentence. Both copied.
+          observed: detail,
+          expected: requirementById.get(r.itemId)?.requirement ?? null,
+          itemRefs: [r.itemId].filter(Boolean),
+          evidenceRefs: [...new Set(list(o.evidenceIds))],
+          attemptRefs: [o.attemptId].filter(Boolean),
+          // Provenance, so the page can say where the sentence came from rather than
+          // presenting a derived description as something a reviewer wrote.
+          derivedFrom: {
+            kind: "verifier-observation",
+            observationId: oid,
+            routeId: fr.routeId ?? o.routeId ?? null,
+            predicate: o.verifier.predicate ?? null,
+            reason: o.verifier.reason ?? null,
+          },
+        });
+      }
+    }
+  }
+  return {
+    source: synthesised.length ? "verifier-observations" : anyDescription ? "record" : "none",
+    synthesised,
+    failingRequirements: failing.length,
+  };
+}
+
 function normalizeFindingKind(f) {
   const rule = RETIRED_KIND_NORMALIZATION[f?.kind];
   if (!rule) return { ...f, retiredKind: null, retiredKindNote: null };
@@ -192,7 +302,8 @@ export function buildReportView({ record, scorecard = null, attestation, options
   const items = Array.isArray(record?.contract?.items) ? record.contract.items : [];
   const results = Array.isArray(record?.itemResults) ? record.itemResults : [];
   const rawFindings = Array.isArray(record?.findings) ? record.findings : [];
-  const findings = rawFindings.map(normalizeFindingKind);
+  const recordedDefects = defectsFromVerifier(record, rawFindings);
+  const findings = [...rawFindings, ...recordedDefects.synthesised].map(normalizeFindingKind);
   const normalizedRetiredKinds = findings.filter((f) => f.retiredKind);
   const attempts = Array.isArray(record?.attempts) ? record.attempts : [];
   const evidence = Array.isArray(record?.evidence) ? record.evidence : [];
@@ -701,6 +812,36 @@ export function buildReportView({ record, scorecard = null, attestation, options
     viewVersion: REPORT_VIEW_VERSION,
     generatedAt: options.generatedAt ?? new Date().toISOString(),
     fixtureNote: options.fixtureNote ?? null,
+    /**
+     * A STANDING statement about the SERVICE that produced this page, in survey
+     * language — not about this run's verdicts.
+     *
+     * `fixtureNote` could not carry it: that banner is headed "Synthetic fixture —
+     * not a real run", which is a false statement about a real run, and a false
+     * banner is worse than a missing one. The two facts are also different in kind.
+     * "This run's results did not settle" is about the run and the summary already
+     * says it; "this service is not configured to produce final results at all" is
+     * about the deployment, and a reader cannot infer one from the other — they
+     * would reasonably read the first as "my survey run was unlucky".
+     *
+     * ABSENT BY DEFAULT: `null` renders nothing at all, so every existing caller
+     * produces the bytes it produced before. It can only ADD a caveat.
+     *
+     * `{ flag, body }`. The flag is the short label; the body is the sentence a
+     * reader meets. Both are customer copy and are held to the customer-copy gates
+     * (it renders INSIDE the Summary view, which `jargon-scan.mjs` and
+     * `prove-customer-copy.mjs` scan — a notice outside the scanned views would be
+     * ungated copy on the one page whose copy is the product).
+     */
+    serviceNote: options.serviceNote ?? null,
+    /**
+     * WHAT THE PLAN SAID IT COULD NOT DO. Supplied by the caller because it lives on the
+     * execution plan and not on the record; absent renders as UNKNOWN, never as "none".
+     * Every named code is carried through, INCLUDING the ones at zero — that is what makes
+     * "we looked and found none" different from "nobody looked", and dropping the zeros
+     * here would delete the distinction the plan went to the trouble of emitting.
+     */
+    planLimitations: options.planLimitations ?? null,
     sources: options.sources ?? {},
     record: {
       schemaVersion: record?.schemaVersion ?? null,
@@ -784,6 +925,16 @@ export function buildReportView({ record, scorecard = null, attestation, options
       byKind: findingsByKind,
       bySeverity: findingsBySeverity,
       totalCount: findings.length,
+      /**
+       * WHERE THE DESCRIPTIONS ON THIS PAGE CAME FROM. `record` means the run wrote them
+       * down itself; `verifier-observations` means the run recorded failing requirements and
+       * no descriptions, so the report read the failing cases' own attested observations.
+       * `failingRequirements` is the record's own count either way, so a reader (and a test)
+       * can see whether the page describes as many defects as the run derived.
+       */
+      source: recordedDefects.source,
+      failingRequirements: recordedDefects.failingRequirements,
+      derivedFromObservations: recordedDefects.synthesised.length,
     },
     documentQuestions: {
       ambiguities,

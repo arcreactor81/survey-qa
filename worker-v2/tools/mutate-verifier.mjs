@@ -202,16 +202,13 @@ const MUTANTS = [
     name: "landing on a DIFFERENT sealed question is scored as a pass",
     breaks: "a walk that went somewhere else is contradicted, never verified",
     file: VERIFY,
-    find:
-      "    const other = alsoPresent[0];\n" +
-      "    if (other) {\n" +
-      "      return {\n" +
-      '        outcome: "violated",',
-    replace:
-      "    const other = alsoPresent[0];\n" +
-      "    if (other) {\n" +
-      "      return {\n" +
-      '        outcome: "satisfied",',
+    // RE-ANCHORED for 0.2. The arm now refuses when the foreign id is carried by rendered
+    // prose alone (a back-reference is not an identity), so the old four-line anchor spanning
+    // `if (other) {` straight into the return no longer matches and would report BROKEN-ANCHOR
+    // rather than a kill. The property under test is unchanged: landing somewhere else must
+    // never be scored as arriving.
+    find: '        outcome: "violated",\n        reason: VERIFIER_REASON.ROUTE_DESTINATION_MISMATCH,',
+    replace: '        outcome: "satisfied",\n        reason: VERIFIER_REASON.ROUTE_DESTINATION_MISMATCH,',
     kills: [
       "NEGATIVE: the walk landed on a DIFFERENT documented screen — contradicted, never verified",
       "NEGATIVE: a typed case whose walk landed elsewhere is CONTRADICTED, never verified",
@@ -225,7 +222,8 @@ const MUTANTS = [
       "    return insufficient(\n" +
       "      this.id,\n" +
       "      VERIFIER_REASON.DESTINATION_NOT_IDENTIFIABLE,\n" +
-      "      `the reached screen presents neither ${wanted} nor any other sealed question id, so the destination cannot be identified`,\n" +
+      "      `the reached screen presents neither ${wanted} nor any other sealed question id — not in its rendered text ` +\n" +
+      "        `and not in its controls' name/id attributes — so the destination cannot be identified`,\n" +
       "    );",
     replace:
       "    return {\n" +

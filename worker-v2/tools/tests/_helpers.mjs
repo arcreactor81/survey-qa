@@ -15,6 +15,12 @@ export function testEnv(overrides = {}) {
     // The fixture key is `trust: "fixture"`, honoured only when dev seeding is on. Tests
     // that need the production posture clear this explicitly.
     DEV_SEED: "enabled",
+    // GATEWAY CONFIG IS PART OF THE PRODUCTION POSTURE, so the suite runs with it set.
+    // `llm/chat.ts` refuses to call a provider directly when these are absent, because a
+    // direct call is unmetered and uncapped — tests stub `globalThis.fetch` at the
+    // transport boundary, so they exercise the same gateway URL production builds.
+    CF_AIG_ACCOUNT_ID: "fixture-account",
+    CF_AIG_GATEWAY_ID: "fixture-gateway",
     V2_RUN_WORKFLOW: {
       async get() {
         throw new Error("instance.not_found");

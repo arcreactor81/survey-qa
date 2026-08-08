@@ -165,6 +165,284 @@ const divergenceSet = (facetResults) =>
     : [];
 
 // ---------------------------------------------------------------------------
+// Claims — a PROJECTION of the derived verdicts, never a second opinion
+// ---------------------------------------------------------------------------
+
+export const CLAIM_PROJECTION_ID = "v2-claim-projection/1.0.0";
+export const BLOCKER_PROJECTION_ID = "v2-blocker-projection/1.0.0";
+
+/**
+ * DERIVE THE DEFECT CLAIMS FROM THE VERDICTS THAT WERE ALREADY DERIVED.
+ *
+ * The run that produced two real `contradicted` verifier decisions — a route that landed on
+ * Q8 where the document routes to Q9, and a boundary the site accepted that the document
+ * requires it to reject — nevertheless signed a record whose `claims` was a literal `[]`,
+ * because the assembler took claims as a PARAMETER and its one caller passed nothing. A
+ * researcher reading that record sees a clean survey. So claims are no longer a parameter:
+ * there is no wire left to forget, because the record derives them from the `itemResults`
+ * and `observations` it is already being given.
+ *
+ * ================= THIS INTRODUCES NO JUDGEMENT, AND HERE IS WHY =================
+ *
+ * Every claim is gated TWICE on decisions taken elsewhere, and adds nothing of its own:
+ *
+ *   1. the ItemResult must already be `fail`/`mixed`, and the CASE must already be `fail` —
+ *      both written by `aggregate()` above, whose `derivedBy` the assembler stage rejects
+ *      unless it is the aggregator's own id;
+ *   2. the cited observation's own `verifier.decision` must map to `fail` THROUGH
+ *      `DECISION_TO_STATUS` — the same table `statusForCase` reads, imported rather than
+ *      restated, so the two can never drift into disagreeing about what a fail is.
+ *
+ * `claimType` is the verifier's own closed reason code and `prose` is the verifier's own
+ * `detail` string, VERBATIM. Nothing here composes a narrative, ranks a severity or scores a
+ * confidence; `findingFromClaim` in shared/v2-record.mjs emits `severity: null` for exactly
+ * the same reason, and a claim that arrived carrying one would defeat it.
+ *
+ * NOTE THE PRECEDENCE THIS INHERITS. `statusForCase` lets a cap or an unreachable route
+ * decide a case's status BEFORE it looks at any verifier decision, so a contradicted
+ * observation sitting under a `blocked` case yields no claim. That is the aggregator's
+ * policy, not this projection's, and honouring it is the whole point: a projection that
+ * reached past the verdict to the observation would be authoring a verdict of its own.
+ */
+export function deriveClaims({ itemResults, observations }) {
+  const byId = new Map();
+  for (const o of arr(observations)) if (o?.observationId) byId.set(o.observationId, o);
+
+  const claims = [];
+  const seen = new Set();
+  for (const r of arr(itemResults)) {
+    if (r?.verdict !== "fail" && r?.verdict !== "mixed") continue;
+    for (const f of arr(r.facetResults)) {
+      if (f?.status !== "fail") continue;
+      for (const observationId of arr(f.observationIds)) {
+        const o = byId.get(observationId);
+        // An unresolvable observation is NOT skipped into silence — `deriveBlockers` raises
+        // it as UNRESOLVED_FAIL_OBSERVATION. It cannot become a claim because a claim's
+        // whole substance is the pointer, and this one would point at nothing.
+        if (!o) continue;
+        if (DECISION_TO_STATUS[o?.verifier?.decision] !== "fail") continue;
+        const claimId = `clm_${r.requirementLineageId}_${observationId}`;
+        if (seen.has(claimId)) continue;
+        seen.add(claimId);
+        claims.push({
+          claimId,
+          claimClass: "defect",
+          claimType: claimTypeOf(o),
+          normativeRef: {
+            requirementLineageId: r.requirementLineageId,
+            requirementVersionId: r.requirementVersionId,
+          },
+          observationRefs: [observationId],
+          prose: proseOf(o),
+        });
+      }
+    }
+  }
+  return claims;
+}
+
+/**
+ * The verifier's own closed reason code. A decision this Worker produced always names one
+ * (`VERIFIER_REASON` in verify-observations.ts); a lifted or fixture observation may not, and
+ * the placeholder is deliberately NOT a defect type — an unnamed reason must not be able to
+ * read as a specific finding about the site.
+ */
+const claimTypeOf = (o) => {
+  const reason = o?.verifier?.reason;
+  return typeof reason === "string" && reason.length > 0 ? reason : "VERIFIER_REASON_UNSTATED";
+};
+
+/**
+ * THE VERIFIER'S OWN SENTENCE, VERBATIM. `prose` carries zero matching weight, which is
+ * precisely why it must not be embellished: it is the only thing a human reads, and an
+ * editorialised version would be the one part of the record nothing checks.
+ */
+const proseOf = (o) => {
+  const detail = o?.verifier?.detail;
+  if (typeof detail === "string" && detail.length > 0) return detail;
+  const predicate = o?.verifier?.predicate;
+  return (
+    `${predicate ? `predicate ${predicate}` : "an unnamed predicate"} returned ${claimTypeOf(o)}; ` +
+    `the verifier recorded no detail text`
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Blockers — what qualifies EVERY result in this record
+// ---------------------------------------------------------------------------
+
+/**
+ * WHAT `record.blockers` IS FOR, AND HOW IT DIFFERS FROM `testAxisBlockers`.
+ *
+ * `run-workflow.ts#testAxisBlockers` answers "may `completion.test` be marked complete?" —
+ * bookkeeping about the RUN, computed from the checkpoint, and it takes the assembled record
+ * as an INPUT, so it can never live inside the record it is computed from.
+ *
+ * These blockers answer a different question: WHAT QUALIFIES EVERY RESULT IN THIS DOCUMENT?
+ * They are facts about the target and about the execution that a reader must hold while
+ * reading any verdict here — chief among them that this survey CRASHED ON LOAD and rendered
+ * nothing, and that the run only continued by injecting a compatibility shim, so every later
+ * observation describes the survey the author intended to ship rather than the one a
+ * respondent receives.
+ *
+ * WHY THE LOAD CRASH IS A BLOCKER AND NOT A CLAIM. A `DefectClaim` is a POINTER: it requires
+ * one `normativeRef` and it carries its evidence only through `observationRefs`. The crash
+ * has neither. `project-observations.ts` skips walks that closed no cases, and a crashed walk
+ * closes none, so no Observation exists to point at; and the crash's evidence witnesses ~220
+ * requirements at once, so there is no single requirement it contradicts. Filing it as a
+ * claim would mean inventing a `normativeRef` or manufacturing one claim per witness — both
+ * fabrications. It belongs where a fact about the whole run belongs.
+ *
+ * @param {object} o
+ * @param {Array|null} o.walks  the execution ledger's walk records, or NULL when the run
+ *   wrote no ledger. `null` and `[]` are different facts and must not collapse: `[]` is "the
+ *   ledger says no walk ran", `null` is "there is no ledger", and the second is itself a
+ *   blocker. A parameter that defaulted to empty would rebuild the exact disconnected wire
+ *   this change exists to remove, one field over.
+ */
+export function deriveBlockers({ walks, itemResults, observations, evidence }) {
+  const blockers = [];
+
+  if (!Array.isArray(walks)) {
+    blockers.push(
+      blocker({
+        blockerId: "blk_execution-ledger-unavailable",
+        kind: "EXECUTION_LEDGER_UNAVAILABLE",
+        detail:
+          "the run's execution ledger could not be read, so this record cannot say whether the target loaded, " +
+          "whether any walk crashed, or whether the observations below were taken against a shimmed target",
+      }),
+    );
+  } else {
+    for (const w of walks) {
+      // TYPED, NOT SNIFFED. `loadCrash` is written by `walkRecord()` from
+      // `obs.loadFailure !== null`, and `outcome` is the driver's own closed word.
+      if (w?.loadCrash !== true) continue;
+      blockers.push(
+        blocker({
+          blockerId: `blk_${w.pathId ?? "unknown-path"}_${w.attemptId ?? "unknown-attempt"}_load-crash`,
+          kind: "TARGET_FAILED_TO_LOAD",
+          pathId: w.pathId ?? null,
+          attemptId: w.attemptId ?? null,
+          outcome: typeof w.outcome === "string" ? w.outcome : null,
+          shimmed: typeof w.shimmed === "boolean" ? w.shimmed : null,
+          at: typeof w.at === "string" ? w.at : null,
+          evidenceIds: loadFailureEvidence(evidence, w),
+          // VERBATIM the page's own error, as the driver captured it.
+          detail:
+            typeof w.outcomeDetail === "string" && w.outcomeDetail.length > 0
+              ? w.outcomeDetail
+              : "the walk recorded a load crash with no detail text",
+        }),
+      );
+    }
+
+    // THE SHIM IS HOW THE REST GOT TESTED, AND IT IS ALSO WHY NONE OF IT DESCRIBES THE
+    // SHIPPED SURVEY. Without this the crash disappears from every downstream observation.
+    const shimmed = walks.filter((w) => w?.shimmed === true);
+    if (shimmed.length > 0) {
+      blockers.push(
+        blocker({
+          blockerId: "blk_observations-against-shimmed-target",
+          kind: "OBSERVATIONS_MADE_AGAINST_SHIMMED_TARGET",
+          detail:
+            `${shimmed.length} of ${walks.length} walk(s) ran with a compatibility shim injected into the page, ` +
+            `so their observations describe the survey as patched by this harness, not as served`,
+        }),
+      );
+    }
+  }
+
+  // A FAILING CASE WHOSE OBSERVATION IS NOT IN THIS RECORD IS A HOLE, AND IT IS NAMED.
+  // `deriveClaims` cannot emit a pointer to something absent; refusing to say so would be
+  // the "quietly shorter list" CLAUDE.md forbids.
+  const known = new Set(arr(observations).map((o) => o?.observationId));
+  for (const r of arr(itemResults)) {
+    if (r?.verdict !== "fail" && r?.verdict !== "mixed") continue;
+    for (const f of arr(r.facetResults)) {
+      if (f?.status !== "fail") continue;
+      for (const observationId of arr(f.observationIds)) {
+        if (known.has(observationId)) continue;
+        blockers.push(
+          blocker({
+            blockerId: `blk_${r.requirementLineageId}_${observationId}_unresolved`,
+            kind: "UNRESOLVED_FAIL_OBSERVATION",
+            observationRefs: [observationId],
+            detail:
+              `requirement ${r.requirementLineageId} has a failing case citing observation ${observationId}, ` +
+              `which is not present in this record's observation list, so the failure carries no citable claim`,
+          }),
+        );
+      }
+    }
+  }
+
+  return blockers;
+}
+
+/** One shape for every blocker, with NO severity and NO confidence field to invent. */
+const blocker = ({
+  blockerId,
+  kind,
+  detail,
+  pathId = null,
+  attemptId = null,
+  outcome = null,
+  shimmed = null,
+  at = null,
+  evidenceIds = [],
+  observationRefs = [],
+}) => ({
+  blockerId,
+  kind,
+  pathId,
+  attemptId,
+  outcome,
+  shimmed,
+  at,
+  detail,
+  evidenceIds,
+  observationRefs,
+  derivedBy: BLOCKER_PROJECTION_ID,
+});
+
+/**
+ * The catalogued artifacts of one crashed walk.
+ *
+ * THE TYPED HALF: `browser/capture.ts#captureFailure` is the ONLY producer of a catalogue
+ * entry with `type: "trace"`, and the load-crash branch of `driver.ts` is its only caller.
+ * So a trace entry stamped with this walk's route and attempt IS the failure record, found
+ * by a declared field rather than by reading a name.
+ *
+ * THE ASSUMPTION, WRITTEN DOWN (CLAUDE.md: no silent reliance on a convention): the driver
+ * shoots a screenshot in the same breath as the failure JSON, and `capture.ts` mints the two
+ * ids as `EV-{pathId}-{label}` and `EV-{pathId}-{step}-{label}-png`. The label is therefore
+ * read OFF the trace entry we already found — never hardcoded — and used to recognise its
+ * companion shot. If the scheme changes the companion simply is not located and the blocker
+ * carries the trace alone; it never guesses at another artifact.
+ *
+ * Both filters are scoped to this walk's route AND attempt because a crashed path is retried
+ * under the SAME attempt id, so the catalogue holds the crash and the shimmed retry together.
+ */
+function loadFailureEvidence(evidence, walk) {
+  const onWalk = arr(evidence).filter((e) => e?.routeId === walk?.pathId && e?.attemptId === walk?.attemptId);
+  const traces = onWalk.filter((e) => e?.type === "trace");
+  const ids = traces.map((e) => e.evidenceId);
+  const prefix = `EV-${walk?.pathId}-`;
+  for (const t of traces) {
+    const src = t?.sourceEvidenceId;
+    if (typeof src !== "string" || !src.startsWith(prefix)) continue;
+    const suffix = `-${src.slice(prefix.length)}-png`;
+    for (const e of onWalk) {
+      if (e?.type === "screenshot" && typeof e.sourceEvidenceId === "string" && e.sourceEvidenceId.endsWith(suffix)) {
+        ids.push(e.evidenceId);
+      }
+    }
+  }
+  return [...new Set(ids)].filter((id) => typeof id === "string" && id.length > 0);
+}
+
+// ---------------------------------------------------------------------------
 // The record
 // ---------------------------------------------------------------------------
 
@@ -175,6 +453,16 @@ const divergenceSet = (facetResults) =>
  * may be null (and then the judgement can never bind, which the report says), attempts may
  * be empty. Each of those is a fact about the run, and a record that smoothed them over
  * would be a record the report cannot be honest from.
+ *
+ * `claims` AND `blockers` ARE NOT PARAMETERS, DELIBERATELY. They were, and the record shipped
+ * `claims: []` over two real failures because the one caller passed a literal empty array
+ * while the assembler dutifully stored it. A findings list that a caller can omit is a
+ * findings list that will be omitted. They are derived here, from inputs this function
+ * already has, so the only way to a record with no claims is a run with no failing verdicts.
+ *
+ * `walks` is the one genuinely NEW input, and it is REQUIRED to be distinguishable: pass the
+ * execution ledger's walk records, or `null` if the run has no ledger. Never `[]` to mean
+ * "did not look" — see `deriveBlockers`.
  */
 export function assembleRunRecordV2({
   runId,
@@ -185,13 +473,22 @@ export function assembleRunRecordV2({
   evidence,
   itemResults,
   attempts = [],
-  claims = [],
+  walks,
   checkpoint = null,
   planHash = null,
   startedAt,
   endedAt,
 }) {
   const usage = checkpoint?.usage ?? null;
+  const claims = deriveClaims({ itemResults, observations });
+  const blockers = deriveBlockers({
+    // `undefined` (the caller never passed it) and `null` (the run has no ledger) are the
+    // same fact from the record's point of view: nothing is known about the walks.
+    walks: walks === undefined ? null : walks,
+    itemResults,
+    observations,
+    evidence,
+  });
   return {
     schemaVersion: "run-record/2.0.0",
     kind: V2_RUN_RECORD_KIND,
@@ -211,7 +508,7 @@ export function assembleRunRecordV2({
     claims: arr(claims),
     ambiguities: [],
     taxonomyGaps: [],
-    blockers: [],
+    blockers: arr(blockers),
     itemResults: arr(itemResults),
     exploration: {
       planHash,

@@ -36,6 +36,12 @@ export interface Env {
   // --- AI Gateway routing (unified logging, caching, cost tracking, spend limits) ---
   // The provider legs BRANCH on these: absent, they call api.x.ai / api.deepseek.com
   // directly and the gateway can neither log nor cap the spend.
+  /**
+   * Deliberate bypass of the fail-closed gateway check in `llm/chat.ts`. Set to the string
+   * "true" ONLY to call a provider directly (local dev against a stub, or a gateway
+   * outage). Never set it in production: a direct call is unmetered and uncapped.
+   */
+  ALLOW_DIRECT_LLM_BASE_URL?: string;
   CF_AIG_ACCOUNT_ID?: string;
   CF_AIG_GATEWAY_ID?: string;
   /** Only for a gateway with authentication enabled; `firstgateway` needs none. */

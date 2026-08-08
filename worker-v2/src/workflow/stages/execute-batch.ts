@@ -41,10 +41,58 @@ import {
 import { loadProgram, type ExecutionProgram, type PathAssignment } from "./plan";
 import { walkPath, type PageLike } from "../../browser/driver";
 import type { CaptureContext } from "../../browser/capture";
-import type { PathObservation } from "../../browser/types";
-import type { PlannedPath } from "./planner/plan-core.js";
+import type { PathObservation, StepObservation } from "../../browser/types";
+import type { PlannedPath, PlannedDecision } from "./planner/plan-core.js";
 
 export const execProgressKey = (runId: string) => k("runs", runId, "execution", "progress.json");
+
+// ---------------------------------------------------------------------------
+// THE EXECUTOR'S STOP-REASON VOCABULARY — all of it, in one place.
+//
+// These strings are not decoration. `run-workflow.ts#phase-executing-close` writes whatever
+// the executor returns into BOTH `phases[executing].reasonCode` and `completion.reasonCode`,
+// and the report and the status endpoint print it verbatim. A stop reason is therefore a
+// PUBLISHED CLAIM about why a run did not finish, and the executor is the only thing that
+// knows enough to make it.
+//
+// They were four bare literals scattered through the function below until a run published
+// `walks-blocked-by-site` about a survey that had blocked exactly nothing (see
+// `resolveStopReason`). Naming them here makes the vocabulary enumerable — a test can assert
+// the set, and a new code cannot be invented at a call site without appearing in it.
+//
+// THIS IS THE REGISTRY. There is no other: `run-workflow.ts` names the EXTRACTION phase's
+// codes at its own top and derives everything else structurally (`stopBucket` /
+// `stopCompletion` key off a `-cap` suffix), so an executor code belongs to the executor.
+// ---------------------------------------------------------------------------
+
+/** No execution program could be loaded for this run's plan revision. */
+export const EXEC_STOP_PLAN_MISSING = "plan-missing";
+/** Two consecutive failures to acquire a remote browser. An outage, not a blip. */
+export const EXEC_STOP_BROWSER_UNAVAILABLE = "browser-unavailable";
+/** The executor itself threw. The run stops rather than reporting partial work as whole. */
+export const EXEC_STOP_EXECUTOR_ERROR = "executor-error";
+/**
+ * THE SITE REFUSED TO ADVANCE, ON EVIDENCE. Only emitted when some walk carries positive
+ * blocking evidence — see `hasBlockingEvidence`. It is an accusation against a customer's
+ * survey and it must never be published on the mere absence of coverage.
+ */
+export const EXEC_STOP_WALKS_BLOCKED_BY_SITE = "walks-blocked-by-site";
+/**
+ * OUR SHORTFALL, NOT THEIRS. Every planned walk was attempted, nothing blocked, and cases
+ * are still owed an observation — because the walks that ran did not exercise what the plan
+ * assigned them (an unbound stimulus, a walk that ended before reaching its question). That
+ * is an internal coverage gap and it says so, instead of blaming the site for it.
+ */
+export const EXEC_STOP_COVERAGE_SHORTFALL = "coverage-shortfall-unexercised";
+
+/** The complete set. A code not in here is a bug, not a new feature. */
+export const EXEC_STOP_REASONS = [
+  EXEC_STOP_PLAN_MISSING,
+  EXEC_STOP_BROWSER_UNAVAILABLE,
+  EXEC_STOP_EXECUTOR_ERROR,
+  EXEC_STOP_WALKS_BLOCKED_BY_SITE,
+  EXEC_STOP_COVERAGE_SHORTFALL,
+] as const;
 
 export interface WalkRecord {
   pathId: string;
@@ -63,7 +111,25 @@ export interface WalkRecord {
   exercised: boolean;
   plannedDecisions: number;
   matchedDecisions: number;
+  /**
+   * THE DENOMINATOR THE GATE ACTUALLY USES, and the numerator against it. `plannedDecisions`
+   * counts everything the plan listed INCLUDING the ones it explicitly delegated to the
+   * navigator; those constrain nothing, so they cannot be evidence of anything. See
+   * `isConstrainingDecision`.
+   *
+   * Both are persisted because the only reason run v2r_01kzfb6py8pbxznqv022p2qkhb could be
+   * re-adjudicated at all was that its counts were on disk. A gate whose inputs are not
+   * recorded can only ever be argued about.
+   */
+  constrainingDecisions: number;
+  matchedConstraining: number;
   screensAdvanced: number;
+  /**
+   * Steps carrying POSITIVE evidence that the site refused to advance. Optional on purpose:
+   * records written before this field existed re-read without it and must degrade to "no
+   * evidence" — never to an accusation. See `blockedStepCount`.
+   */
+  blockedSteps?: number;
   at: string;
 }
 
@@ -229,7 +295,7 @@ export function selectWork(program: ExecutionProgram, progress: ExecProgress, ma
 export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutcome> {
   const program = await loadProgram(env, args.runId, args.planRevisionId);
   if (!program) {
-    return { done: true, stopReason: "plan-missing", pathsWalked: 0, casesClosed: 0, steps: 0 };
+    return { done: true, stopReason: EXEC_STOP_PLAN_MISSING, pathsWalked: 0, casesClosed: 0, steps: 0 };
   }
   const progress = await loadProgress(env, args.runId, args.planRevisionId);
 
@@ -281,7 +347,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
     await beat(env, args.runId, `browser unavailable: ${detail.slice(0, 200)}`, `${args.batch}:browser-unavailable`);
     return {
       done: true,
-      stopReason: "browser-unavailable",
+      stopReason: EXEC_STOP_BROWSER_UNAVAILABLE,
       pathsWalked: 0,
       casesClosed: 0,
       steps: 0,
@@ -409,18 +475,20 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       // built out of nothing, which is exactly the failure mode this pipeline exists to
       // make impossible. Cases now close only when the walk reached the end of the survey
       // having advanced at least one screen; a crashed, blocked or capped walk leaves them
-      // PENDING, and the executing-close gate buckets them as blocked rather than
-      // exercised.
-      const plannedDecisions = Array.isArray(item.path.decisions) ? item.path.decisions.length : 0;
-      const matchedDecisions = obs.steps.filter((s) => s.decisionSource === "plan" || s.decisionSource === "probe").length;
-      const exercised = walkExercised(obs) && (plannedDecisions === 0 || matchedDecisions > 0);
+      // PENDING, and the executing-close gate reclassifies them under whichever stop reason
+      // the run ended on — which is why that reason has to be the TRUE one (`resolveStopReason`).
+      // ...AND ONLY IF IT DID WHAT THE PLAN ACTUALLY ASKED. `assessExercised` owns that
+      // judgement whole — the denominator argument, the hard floor and the decision are one
+      // function so there is one place to read, one place to test and one place to break.
+      const audit = assessExercised(obs, item.path.decisions as PlannedDecision[] | undefined);
+      const exercised = audit.exercised;
       const closed =
         item.assignment && exercised
           ? item.assignment.caseIds.filter((id) => !args.cursor.completedCaseIds.includes(id))
           : [];
       const walkedOk = obs.outcome !== "error";
 
-      progress.walks.push(walkRecord(obs, closed, { exercised, plannedDecisions, matchedDecisions }));
+      progress.walks.push(walkRecord(obs, closed, audit));
       progress.totalSteps += obs.steps.length;
       progress.totalEvidence += obs.evidenceIds.length;
 
@@ -488,7 +556,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
     // a named stop reason (the report can say the executor stopped the run, and which
     // error did it) rather than thrown past the session handling below.
     console.error(`v2 exec batch ${args.batch}: executor error`, err);
-    stopReason = "executor-error";
+    stopReason = EXEC_STOP_EXECUTOR_ERROR;
   }
 
   const remaining = selectWork(program, progress, maxExploration).length;
@@ -532,12 +600,16 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
     await closeSession(() => releaseSession(handle), "session disconnect");
   }
 
-  if (done && args.cursor.pendingCaseIds.length > 0 && stopReason === null) {
-    // Every planned walk has been attempted and mandatory cases are still owed an
-    // observation. That is a BLOCKED run, not a finished one, and it keeps its own name
-    // so the report can say the site stopped the walk rather than the budget did.
-    stopReason = "walks-blocked-by-site";
-  }
+  // Every planned walk has been attempted and mandatory cases are still owed an observation.
+  // WHOSE FAULT THAT IS is a question about evidence, not about the pending count — see
+  // `resolveStopReason`. It reads the whole run's walks (durable, cumulative) rather than
+  // this batch's, because the run-level cause is a fact about the run.
+  stopReason = resolveStopReason({
+    done,
+    pendingCases: args.cursor.pendingCaseIds.length,
+    stopReason,
+    walks: progress.walks,
+  });
   return { done, stopReason, pathsWalked, casesClosed, steps };
 }
 
@@ -555,18 +627,202 @@ export function walkExercised(obs: PathObservation): boolean {
   return obs.steps.some((s) => s.advanced);
 }
 
-function walkRecord(
+/**
+ * DOES THIS DECISION CONSTRAIN ANYTHING?
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE. The exercised gate used to read
+ * `plannedDecisions === 0 || matchedDecisions > 0` — every decision the plan listed counted
+ * in the denominator. But a planner that cannot name an answer emits
+ * `{ select: [], source: "default:navigator-discretion", strategy: "choose-the-first-valid-answer" }`,
+ * which asks the driver to do PRECISELY what the driver does with no decision at all. Run
+ * v2r_01kzfb6py8pbxznqv022p2qkhb emitted 515 of 585 decisions in exactly that shape, and 38
+ * walks that drove the survey to its terminal screen were disqualified for "not matching"
+ * instructions that instructed nothing.
+ *
+ * So the denominator is the decisions that DEMAND SOMETHING THE NAVIGATOR WOULD NOT DO BY
+ * ITSELF. Four of them, and the reasons are structural rather than a list of planner strings:
+ *
+ *   - `case_action`  — the sealed stimulus of a typed case. THE MOST IMPORTANT ONE, and the
+ *     one a naive "empty `select` means unconstrained" rule gets catastrophically wrong: a
+ *     route case whose `routeAnswer.label` is null, or a boundary case carrying only an
+ *     input value, has an EMPTY `select` and is still the entire point of the walk. Calling
+ *     it unconstrained would let a walk close that case having answered the question with
+ *     whatever option happened to be first — a closed case whose stimulus never ran.
+ *   - `select` non-empty — a named answer.
+ *   - `action` — a probe ("submit-without-answering"), i.e. a deliberate deviation FROM the
+ *     default behaviour. If it never bound, the probe never happened.
+ *   - `text_entry.value` on a decision the plan did NOT source from its own defaults.
+ *
+ * THE ASSUMPTION IN THAT LAST CLAUSE, WRITTEN DOWN (CLAUDE.md: no silent reliance on a
+ * convention). `driver.ts` fills any text control with its own `PROBE_TEXT` when no decision
+ * matched, and the planner emits that same filler as `text_entry.value` on discretion
+ * decisions — so such a value is a default wearing an instruction's clothes. The planner
+ * declares which those are by prefixing `source` with `default:`. Where `source` is absent
+ * or unrecognised this DEGRADES STRICT: the text is treated as a constraint, so an unknown
+ * planner can only ever make the gate harder to pass, never easier.
+ */
+export function isConstrainingDecision(d: PlannedDecision | null | undefined): boolean {
+  if (!d || typeof d !== "object") return false;
+  if (d.case_action) return true;
+  if (Array.isArray(d.select) && d.select.length > 0) return true;
+  if (typeof d.action === "string" && d.action.length > 0) return true;
+  const planDeclaredDefault = typeof d.source === "string" && d.source.startsWith("default:");
+  const text = d.text_entry?.value;
+  if (!planDeclaredDefault && typeof text === "string" && text.length > 0) return true;
+  return false;
+}
+
+/**
+ * The questions whose decisions constrain. The gate joins the walk back to the PLAN through
+ * this set rather than sniffing the step's own `requested` payload — because a matched
+ * discretion decision records `requested.textEntry = "QA-PROBE"` (the driver's own filler),
+ * and a numerator that read that shape would count a decision the denominator excluded.
+ *
+ * ASSUMPTION: a path answers each question at most once, so a question id identifies its
+ * decision. `matchDecision` removes a decision from `remaining` once it binds, so a decision
+ * cannot be counted twice; a path that legitimately revisits a question with both a
+ * constraining and a delegated decision would count either as the constraining one. That is
+ * generous by at most one step and is the only direction this join can err.
+ */
+export function constrainingQuestions(decisions: readonly PlannedDecision[] | null | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const d of decisions ?? []) {
+    if (isConstrainingDecision(d) && typeof d.question === "string" && d.question.length > 0) out.add(d.question);
+  }
+  return out;
+}
+
+/** Steps where the driver actually applied a constraining decision — never a delegated one. */
+export function countMatchedConstraining(obs: PathObservation, constrained: Set<string>): number {
+  if (constrained.size === 0) return 0;
+  return obs.steps.filter(
+    (s) =>
+      (s.decisionSource === "plan" || s.decisionSource === "probe") &&
+      typeof s.decisionQuestion === "string" &&
+      constrained.has(s.decisionQuestion),
+  ).length;
+}
+
+export interface ExercisedAssessment {
+  exercised: boolean;
+  plannedDecisions: number;
+  matchedDecisions: number;
+  constrainingDecisions: number;
+  matchedConstraining: number;
+}
+
+/**
+ * THE GATE. Everything above is the denominator argument; this is the decision, and it is one
+ * expression on purpose so there is exactly one place to mutate and exactly one place to test.
+ *
+ * `walkExercised` IS THE HARD FLOOR AND IT IS UNCHANGED — the walk must have reached a
+ * terminal screen and advanced at least one screen. That is the line that stops the 119
+ * incident (four walks that never got past a blank first screen closing every mandatory case)
+ * and no amount of decision bookkeeping can talk past it.
+ *
+ * On top of the floor: if the plan named something specific, the walk must have DONE at least
+ * one of those specific things. Note which direction this moves the gate. For a path with any
+ * constraining decision the new rule IMPLIES the old one — the numerator shrank from "any
+ * decision matched" to "a constraining decision matched", so those paths got STRICTER. Only
+ * paths where the plan named nothing at all are freed, and there is nothing there to bind
+ * wrongly: a walk cannot mis-apply an instruction that was never given.
+ *
+ * `> 0` rather than "all matched", deliberately: a routing case whose answer screens the
+ * respondent out ends the survey before the path's later decisions are reachable, and
+ * demanding all of them would disqualify the walk for obeying the plan.
+ */
+export function assessExercised(
   obs: PathObservation,
-  caseIds: string[],
-  audit: { exercised: boolean; plannedDecisions: number; matchedDecisions: number } = {
-    exercised: false,
-    plannedDecisions: 0,
-    matchedDecisions: 0,
-  },
-): WalkRecord {
+  decisions: readonly PlannedDecision[] | null | undefined,
+): ExercisedAssessment {
+  const planned = Array.isArray(decisions) ? decisions : [];
+  const constrained = constrainingQuestions(planned);
+  const matchedConstraining = countMatchedConstraining(obs, constrained);
+  const matchedDecisions = obs.steps.filter((s) => s.decisionSource === "plan" || s.decisionSource === "probe").length;
+  return {
+    exercised: walkExercised(obs) && (constrained.size === 0 || matchedConstraining > 0),
+    plannedDecisions: planned.length,
+    matchedDecisions,
+    constrainingDecisions: constrained.size,
+    matchedConstraining,
+  };
+}
+
+/** Outcomes that ARE the site refusing to advance: the walk died there. */
+const BLOCKING_OUTCOMES = new Set(["blocked", "blocked-after-probe"]);
+
+/**
+ * POSITIVE EVIDENCE THAT THE SITE REFUSED — counted per walk, at the moment it was observed.
+ *
+ * Only two of the four `BlockedReason` values are evidence of anything (see
+ * `browser/types.ts`, which argues this at length):
+ *
+ *   - `validation-visible` / `control-disabled` — the walker saw the survey say no.
+ *   - `advance-timeout` — a LOST POLLING RACE. A slow-but-healthy page is byte-identical to
+ *     a refusal here, so it is not evidence.
+ *   - `no-advance-control` — the screen offered nothing to press. On the LAST screen of a
+ *     survey that is the survey ENDING. Run v2r_01kzfb6py8pbxznqv022p2qkhb published
+ *     `walks-blocked-by-site` because 41 walks ended this way; they had reached "that is the
+ *     end of the survey".
+ *
+ * AND PROBE STEPS ARE EXCLUDED. Exploration probes exist to submit a screen without answering
+ * it; a survey with correct validation answers them with a validation message, which is the
+ * site WORKING. Counting that would rebuild the false accusation out of our own deliberate
+ * misbehaviour. Recovery steps stay counted: a walk still blocked after answering validly is
+ * genuine.
+ */
+export function blockedStepCount(obs: PathObservation): number {
+  return obs.steps.filter((s: StepObservation) => {
+    if (s.decisionSource === "probe") return false;
+    return s.blockedReason === "validation-visible" || s.blockedReason === "control-disabled";
+  }).length;
+}
+
+/** Did anything in this run actually get refused? Absent evidence is NOT evidence. */
+export function hasBlockingEvidence(walks: readonly WalkRecord[]): boolean {
+  return walks.some((w) => BLOCKING_OUTCOMES.has(w.outcome) || (w.blockedSteps ?? 0) > 0);
+}
+
+/**
+ * WHY THE RUN STOPPED SHORT — and specifically, WHOSE FAULT IT WAS.
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE. This was `done && pending > 0 && stopReason === null →
+ * "walks-blocked-by-site"`. That condition is "cases are still owed an observation" and
+ * nothing else: it cannot tell "the site refused us" from "our own gate disqualified walks
+ * that did everything asked of them". Run v2r_01kzfb6py8pbxznqv022p2qkhb published it against
+ * a healthy customer survey that had refused NOTHING — 41 of 46 walks drove it to its terminal
+ * screen. Per CLAUDE.md a confident wrong answer is the cardinal failure, and an unfounded
+ * accusation about a customer's site is the worst-shaped one this pipeline can emit.
+ *
+ * So the accusation now requires evidence, and the shortfall keeps its own name.
+ */
+export function resolveStopReason(args: {
+  done: boolean;
+  pendingCases: number;
+  stopReason: string | null;
+  walks: readonly WalkRecord[];
+}): string | null {
+  if (args.stopReason !== null) return args.stopReason;
+  if (!args.done || args.pendingCases <= 0) return null;
+  return hasBlockingEvidence(args.walks) ? EXEC_STOP_WALKS_BLOCKED_BY_SITE : EXEC_STOP_COVERAGE_SHORTFALL;
+}
+
+const NOT_ASSESSED: ExercisedAssessment = {
+  exercised: false,
+  plannedDecisions: 0,
+  matchedDecisions: 0,
+  constrainingDecisions: 0,
+  matchedConstraining: 0,
+};
+
+function walkRecord(obs: PathObservation, caseIds: string[], audit: ExercisedAssessment = NOT_ASSESSED): WalkRecord {
   return {
     ...audit,
     screensAdvanced: obs.steps.filter((s) => s.advanced).length,
+    // COMPUTED HERE, NOT AT THE CALL SITE, so every record carries it — including the
+    // load-crash record pushed before the shimmed retry, which is written by a different
+    // call and would otherwise be a silent hole in the run-level evidence.
+    blockedSteps: blockedStepCount(obs),
     pathId: obs.pathId,
     tier: obs.tier,
     attemptId: obs.attemptId,

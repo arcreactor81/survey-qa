@@ -22,6 +22,7 @@
 
 import { normLine, norm } from './normalize.mjs';
 import { bindObligations, COMPILED_FROM } from './contract-binding.mjs';
+import { isRouteFacet } from './facet-vocab.mjs';
 
 export const COMPILER_VERSION = '2.0.0';
 
@@ -238,9 +239,16 @@ const RULES = [
     id: 'R-ROUTE-1', kind: 'route',
     match(o) {
       // D3: `o.category` is the SIGNED `contract.items[].type`, never the local
-      // checklist's `category`. A null (unbound) category cannot equal
-      // 'branch-outcome', so an unsigned type fails closed to "no expectation".
-      if (o.category !== 'branch-outcome') return null;
+      // checklist's `category`. A null (unbound) category is refused by
+      // `isRouteFacet`, so an unsigned type still fails closed to "no expectation".
+      //
+      // D26: the gate used to be `!== 'branch-outcome'`, a v1 CHECKLIST category that no v2
+      // revision has ever emitted — v2 spells the same facet `skip-rule` / `routing` /
+      // `terminate`, so every routing requirement on every v2 run compiled to nothing and
+      // published as `not-assessed`. The two vocabularies are both legitimate and simply
+      // unaligned, so the alignment is explicit, tested and documented in
+      // `facet-vocab.mjs` rather than either side being renamed into the other.
+      if (!isRouteFacet(o.category)) return null;
       const st = normLine(o.statement);
 
       // question the answer is given at
@@ -739,6 +747,45 @@ export function buildDocumentIndex(checklist, authority = null) {
     bindingFindings: bound.findings,
     answerDomains: buildAnswerDomains(bound.list),
   };
+}
+
+/**
+ * A screen/question token as the compiler's own rules spell one. Derived from the same
+ * `SCREEN_TOKEN` the extraction rules use, so the vocabulary cannot drift from the grammar
+ * that produced the expectations.
+ */
+const WHOLE_SCREEN_TOKEN = new RegExp(`^${SCREEN_TOKEN}$`, 'i');
+
+/**
+ * EVERY SCREEN THE DOCUMENT NAMES — the vocabulary a capture may identify itself with.
+ *
+ * A v2 `PathObservation` records rendered screens and no screen ids (see
+ * `pipeline/judge/lib/v2-observation.mjs`), so the projection has to recognise a screen by
+ * the id it PRINTS. The set of admissible ids has to come from the DOCUMENT, never from the
+ * implementation under test — inferring the vocabulary from the site would let a survey
+ * define the names it is then judged against, which is the D9 failure
+ * (`ELIGIBILITY_NOT_DOCUMENT_DERIVED`) wearing a different hat.
+ *
+ * Collected by walking each compiled expectation rather than by listing fields per rule: a
+ * new rule with a new screen-bearing field would otherwise silently drop out of the
+ * vocabulary and its screens would stop being recognised.
+ */
+export function documentScreens(docIndex) {
+  const out = new Set();
+  const visit = (v, depth) => {
+    if (depth > 6 || v === null || v === undefined) return;
+    if (typeof v === 'string') { if (WHOLE_SCREEN_TOKEN.test(v)) out.add(v.toUpperCase()); return; }
+    if (Array.isArray(v)) { for (const x of v) visit(x, depth + 1); return; }
+    if (typeof v === 'object') { for (const x of Object.values(v)) visit(x, depth + 1); }
+  };
+  for (const o of (docIndex && docIndex.bound && docIndex.bound.list) || []) {
+    const { expectation } = compileObligation(o, docIndex);
+    if (expectation) visit(expectation, 0);
+  }
+  for (const q of (docIndex && docIndex.answerDomains) ? docIndex.answerDomains.keys() : []) {
+    if (typeof q === 'string' && WHOLE_SCREEN_TOKEN.test(q)) out.add(q.toUpperCase());
+  }
+  return [...out].sort();
 }
 
 /**

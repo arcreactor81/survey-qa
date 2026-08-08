@@ -34,7 +34,39 @@ export default {
     if (watch) {
       const shell = new URL(req.url);
       shell.pathname = "/watch.html";
-      const res = await env.ASSETS.fetch(new Request(shell.toString(), req));
+      let res = await env.ASSETS.fetch(new Request(shell.toString(), req));
+
+      // THE REWRITE IS ONLY A REWRITE IF THE REDIRECT IS ABSORBED HERE.
+      //
+      // The static-asset server applies `html_handling` (default: drop the `.html` and
+      // redirect), so asking it for `/watch.html` gets back a 307 to `/watch` — not the
+      // shell. Returning that response verbatim turned this rewrite into a real redirect:
+      // the browser followed it, the run id fell off the address bar, and every link this
+      // service hands out landed on "this page was opened without a run reference".
+      // Passing the status through was the whole bug; nothing about `/runs/<id>` was wrong.
+      //
+      // So a redirect from ASSETS is followed HERE, against ASSETS, and only its final
+      // body is returned. The browser never sees a 3xx and `location.pathname` stays
+      // `/runs/<id>`, which is where watch.js reads the id from. Two hops is more than the
+      // one this can need and it is bounded, so no asset configuration can loop it.
+      for (let hop = 0; hop < 2 && res.status >= 300 && res.status < 400; hop++) {
+        const location = res.headers.get("location");
+        if (!location) break;
+        const next = new URL(location, shell);
+        // Same-origin only: an asset server that redirects off-origin is not serving our
+        // shell, and following it would fetch someone else's page under our run's URL.
+        if (next.origin !== shell.origin) break;
+        res = await env.ASSETS.fetch(new Request(next.toString(), req));
+      }
+      if (res.status >= 300 && res.status < 400) {
+        // Still a redirect after the bounded follow: say so instead of handing the reader
+        // a redirect that silently discards their run.
+        return new Response(
+          "The run watch page could not be loaded: the static asset server kept redirecting.\n",
+          { status: 500, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } },
+        );
+      }
+
       // Never let a run page be cached as if it were the run: the shell is static, the
       // run it displays is not, and the tracker polls for everything that changes.
       const headers = new Headers(res.headers);

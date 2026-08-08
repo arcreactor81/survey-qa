@@ -74,7 +74,15 @@ import { edgeCoverageKey, structureModelKey } from "../keys";
 // planStage directly at the one site below — two lines, both marked.
 import { resolveArm } from "../arms/resolve";
 import { executeBatch, loadProgress } from "./stages/execute-batch";
-import { OwnershipLost, type RunCheckpoint, type TestCompletion } from "../types/contracts";
+import {
+  ERROR_TEXT_MAX,
+  FAILURE_MESSAGE_MAX,
+  OwnershipLost,
+  sanitiseErrorText,
+  type RunCheckpoint,
+  type RunFailure,
+  type TestCompletion,
+} from "../types/contracts";
 import { mintPlanRevisionId, recoveryInstanceId } from "../ids";
 import type { ContractRevision } from "../types/record";
 import { buildAndStoreReport } from "../report/build";
@@ -147,7 +155,24 @@ export interface RunParamsV2 {
  *  deterministic merge/diff/plan steps. */
 const EXTRACT_POLICY = { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "8 minutes" } as const;
 const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "5 minutes" } as const;
-const DERIVE_POLICY = { retries: { limit: 3, delay: "5 seconds", backoff: "exponential" }, timeout: "3 minutes" } as const;
+/**
+ * THE JUDGING STAGES. `delay` is 30 seconds and NOT 5 for a reason that is not politeness.
+ *
+ * When `verify-observations` exhausted the invocation's subrequest budget on
+ * v2r_01kzfb6py8pbxznqv022p2qkhb, attempt 1 ran 1m19s and errored — and attempts 2 and 3
+ * then errored in **0 seconds each**. They never reached any R2 call. A 5-second delay was
+ * short enough that the retry resumed inside the SAME, already-spent invocation, so the
+ * retry policy was burning attempts against a budget that could not recover.
+ *
+ * Workflows put an instance into the `waiting` state while it is waiting for a retry, and an
+ * instance that resumes from `waiting` is scheduled afresh. The docs are explicit that the
+ * transition "may not occur if the wait duration is very short" and name no threshold, so
+ * this is a BEST-EFFORT boundary, not a guarantee — the guarantee comes from the subrequest
+ * budget in wrangler.jsonc and from these stages costing far less than they used to. What
+ * this buys is that a retry now has a real chance of being a new invocation instead of a
+ * certainty of being the dead one.
+ */
+const DERIVE_POLICY = { retries: { limit: 3, delay: "30 seconds", backoff: "exponential" }, timeout: "3 minutes" } as const;
 const REPORT_POLICY = { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" } as const;
 
 /** Reason codes a run terminates with. Named so the report can say which. */
@@ -168,11 +193,175 @@ const EXTRACTION_WAVES_EXHAUSTED = "extraction-pass-b-waves-exhausted";
 const NOT_IMPLEMENTED_VERIFICATION = "verification-not-implemented";
 const NOT_IMPLEMENTED_ADJUDICATION = "adjudication-not-implemented";
 const TEST_AXIS_NEVER_CLOSED = "test-axis-never-closed";
+/**
+ * PLANNING REFUSED THE SEALED CONTRACT IT WAS HANDED — a deliberate guard declining to
+ * proceed, not a crash.
+ *
+ * The first real run ended `workflow-error`, the code this file uses for "something threw
+ * and we do not know what". That was wrong twice over: the run had not hit an unknown
+ * fault, it had hit a check that exists precisely to stop a malformed sealed contract from
+ * becoming a plan (`planning refused duplicate sealed facetInstanceId fi_…`), and calling
+ * a known refusal "unknown" tells the reader to go looking for an outage. The distinction
+ * is operational: a refusal means the INPUT is wrong and the fix is upstream in extraction
+ * or sealing; `workflow-error` means the SYSTEM is wrong and the fix is here.
+ *
+ * ONE code, not a family. Which guard refused, in which step, is carried by
+ * `checkpoint.failure` (`step` + `message`) — that is what a structured field is FOR, and
+ * minting a reason code per guard would put the same information in a vocabulary every
+ * reader then has to keep up with.
+ */
+const PLANNING_REFUSED = "planning-refused";
+
+/**
+ * The phrases the planner's guards actually throw. Deliberately LITERAL and deliberately
+ * short: this is a recogniser for refusals that already exist, not a taxonomy of failures
+ * that might. Anything not on this list stays `workflow-error`, which is the honest answer
+ * for a fault nobody has classified yet.
+ *
+ * These are matched on the MESSAGE because the guards throw a bare `Error` (plan.ts is
+ * owned elsewhere and was not modified for this). The moment those sites throw a named
+ * error class instead, `classifyFailure` should switch to `err.name` and this list should
+ * shrink to nothing.
+ */
+const PLANNING_REFUSAL_PHRASES = [
+  "planning refused ",
+  "planning produced duplicate ",
+  "sealed facetInstanceIds contain duplicates",
+  "execution case ids contain duplicates",
+  "not an exact sealed-case permutation",
+] as const;
+
+/**
+ * THE RUN RAN OUT OF THE PLATFORM, NOT OUT OF ANSWERS.
+ *
+ * `v2r_01kzfb6py8pbxznqv022p2qkhb` died at `verify-observations-1` and the engine recorded
+ * the cause perfectly on all three retries:
+ *
+ *   Error: Too many API requests by single Worker invocation.
+ *
+ * That is not "something threw and we do not know what" — it is the subrequest ceiling, it
+ * is recognisable from its own sentence, and it is ACTIONABLE in a way no other failure in
+ * this file is: the fix is `limits.subrequests` in the Wrangler config, or fewer R2 round
+ * trips in the stage that spent them. Calling it `workflow-error` sends the reader looking
+ * for a bug in a run that hit a quota.
+ *
+ * It is also the one failure mode that DISABLES THE RECORDER, because writing the cause is
+ * itself a subrequest. See `commitFailure`.
+ */
+const SUBREQUEST_LIMIT_EXCEEDED = "subrequest-limit-exceeded";
+
+/**
+ * The two sentences the platform actually produces for the ceiling. Same discipline as
+ * `PLANNING_REFUSAL_PHRASES`: LITERAL, short, and a recogniser for text we have seen rather
+ * than a taxonomy of text we imagine. Matched case-insensitively because these arrive from
+ * the runtime rather than from this codebase, so their capitalisation is not ours to
+ * promise — the words are.
+ *
+ *   "Too many API requests by single Worker invocation."  — the internal-services ceiling
+ *                                                            (R2/KV/D1), which is the one
+ *                                                            this run hit.
+ *   "Too many subrequests."                                — the general ceiling, documented
+ *                                                            at workflows/reference/limits.
+ */
+const SUBREQUEST_LIMIT_PHRASES = [
+  "too many api requests by single worker invocation",
+  "too many subrequests",
+] as const;
+
+/**
+ * How long the failure path pauses before trying to write its cause a second time.
+ *
+ * SHORT ON PURPOSE, and the two bounds are in tension. Long enough that the engine has a
+ * reason to hibernate the instance (a hibernated instance is re-invoked, and a new
+ * invocation is the only place a new subrequest budget could come from); short enough that
+ * the sweeper — which watches for a run that has stopped beating — is not handed a stalled
+ * run to recover while the run is still in the act of explaining itself.
+ */
+const FAILURE_RECORDING_COOLDOWN = "20 seconds";
+
+/**
+ * A thrown value → the reason code the run should end with, or null when we do not
+ * recognise it. Null is not a failure of this function: `workflow-error` remains the
+ * correct code for an unexpected crash, and widening this beyond failures we have actually
+ * seen would trade a truthful "unknown" for a confident guess.
+ *
+ * EXPORTED because the read surface needs the same vocabulary. When a run is killed by the
+ * subrequest ceiling it cannot write its own cause, and the only copy is the one the
+ * Workflows engine kept; `src/api/runs.ts` fetches that sentence and classifies it HERE, so
+ * a reason code means the same thing whether the run named it or the engine did.
+ */
+export function classifyFailure(err: unknown): string | null {
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err ?? "");
+  if (PLANNING_REFUSAL_PHRASES.some((phrase) => message.includes(phrase))) return PLANNING_REFUSED;
+  const lowered = message.toLowerCase();
+  if (SUBREQUEST_LIMIT_PHRASES.some((phrase) => lowered.includes(phrase))) return SUBREQUEST_LIMIT_EXCEEDED;
+  return null;
+}
+
+/** Build the structured cause from a thrown value. Sanitised at construction, so the
+ *  unsafe form never reaches the checkpoint in the first place. */
+function describeFailure(step: string, err: unknown): RunFailure {
+  const message = sanitiseErrorText(err, FAILURE_MESSAGE_MAX).replace(/^[A-Za-z]*Error:\s*$/, "");
+  return {
+    step,
+    reasonCode: classifyFailure(err) ?? "workflow-error",
+    kind: err instanceof Error && typeof err.name === "string" && err.name ? err.name : "unknown",
+    // NEVER PUBLISH AN EMPTY EXPLANATION. A thrown value that stringifies to nothing —
+    // which is what the boundary can hand back — used to become an empty `error` field,
+    // and an empty field reads as "the system has no idea" when in fact the system knows
+    // exactly where to look. Saying which step, and saying that the message is what went
+    // missing, is strictly more than the incident produced.
+    message:
+      message ||
+      `${step} failed and the error did not survive the workflow step boundary; ` +
+        `the engine's own record for this step has the original message`,
+    at: new Date().toISOString(),
+  };
+}
 
 export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
-  async run(event: WorkflowEvent<RunParamsV2>, step: WorkflowStep): Promise<void> {
+  /**
+   * Steps this INSTANCE has written a cause for. Purely an optimisation: it lets a retry
+   * that succeeds withdraw its own predecessor's cause without every successful step in
+   * the run paying an R2 read to discover it has nothing to withdraw. The durable
+   * backstop for the cross-isolate case is in `finalize`.
+   */
+  private readonly causeRecordedFor = new Set<string>();
+
+  /**
+   * THE COPY OF THE CAUSE THAT NEEDS NO STORAGE.
+   *
+   * `recordFailureCause` writes the cause to R2 — and when the failure IS the subrequest
+   * ceiling, that write is itself a subrequest and throws the same error. It is wrapped in
+   * try/catch on purpose ("a contention on the way to explaining an error must never become
+   * the error the run reports"), so on `v2r_01kzfb6py8pbxznqv022p2qkhb` it swallowed its own
+   * failure and the diagnosis evaporated between the throw and the outer catch six frames
+   * later.
+   *
+   * A field on the instance survives that, because it is memory rather than I/O. FIRST
+   * CAUSE WINS here for the same reason it does durably: `record-failure`'s own throw is
+   * routed through the same wrapper, and last-write-wins would have the run report the
+   * aftershock instead of the illness.
+   *
+   * ITS LIMIT, STATED: this is per-INSTANCE state. A hibernation (`step.sleep`) or a
+   * recovery instance starts with an empty one. `stepInFlight` is what survives that, since
+   * it is re-established by the very act of re-awaiting the step.
+   */
+  private lastFailure: RunFailure | null = null;
+
+  /**
+   * The step currently being awaited. Set BEFORE the call, so it is correct even when the
+   * engine throws a cached failure at the boundary without ever running the body — the one
+   * case where the outer catch has historically had nothing but "unknown" to work with.
+   */
+  private stepInFlight: string | null = null;
+
+  async run(event: WorkflowEvent<RunParamsV2>, rawStep: WorkflowStep): Promise<void> {
     const p = event.payload;
     const runId = p.runId;
+
+    // EVERY STEP, NOT JUST THE ONE THAT FAILED FIRST. See `instrumentSteps`.
+    const step = this.instrumentSteps(rawStep, runId);
 
     // ONE EPOCH PER ATTEMPT, DERIVED — NOT RANDOM. The sweeper creates a replacement at
     // the deterministic id `${runId}-r{n}` and passes `recoveryAttempt: n`, so an instance
@@ -879,6 +1068,35 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       });
 
       // ---------------------------------------------------------------------
+      // YIELD THE INVOCATION BEFORE JUDGING.
+      //
+      // Execution is the expensive half of a run in SUBREQUESTS, not just in time: every
+      // screen read and every screenshot is a `putEvidence` (a head, a conditional put and a
+      // catalogue put), and v2r_01kzfb6py8pbxznqv022p2qkhb wrote 1,707 of them across 14
+      // `execute-batch` steps. Those steps share ONE Worker invocation with everything after
+      // them, and the invocation has a bounded subrequest budget — so by the time the
+      // judging tail ran, the budget was nearly gone and `verify-observations` died on it,
+      // three attempts deep, with `Too many API requests by single Worker invocation`.
+      //
+      // A sleep is the documented way to make a Workflow yield: the instance goes to
+      // `waiting` and is scheduled again when it wakes, and a fresh invocation starts with a
+      // fresh budget. This sleep sits exactly on the execution/judging seam because the tail
+      // behind it — project, verify, derive, assemble, mint, report — is a fixed, bounded
+      // amount of work that has no business inheriting a budget spent on 46 walks. It also
+      // covers the stages this file cannot make cheaper: `derive-verdicts` and `report`
+      // still fetch and re-hash EVERY catalogued artifact.
+      //
+      // HONEST LIMIT OF THE CLAIM: Cloudflare's docs say the running→waiting transition "may
+      // not occur if the wait duration is very short" and publish no threshold, so 30 seconds
+      // is a judgement, not a proof, and nothing local can verify it. Treat this as one of
+      // three layers, not the fix: the load-bearing ones are `limits.subrequests` in
+      // wrangler.jsonc and verify-observations no longer listing the whole catalogue.
+      //
+      // It costs 30 seconds of wall time on a run that takes many minutes, and `step.sleep`
+      // does not count against the Workflow's step limit.
+      await step.sleep("yield-before-judging", "30 seconds");
+
+      // ---------------------------------------------------------------------
       // COMMIT THE OBSERVATION LEDGER.
       //
       // The executor walks PATHS and leaves two durable things: the walk artifacts in the
@@ -1154,23 +1372,62 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         console.log(`v2 ${runId}: ${err.message}`);
         return;
       }
-      const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-      // Honest failure, and still a reportable outcome. The active marker is cleared LAST
-      // so a crash before this line leaves the run visible to the sweeper.
-      await step.do("record-failure", { retries: { limit: 3, delay: "5 seconds" } }, async () => {
-        await updateCheckpoint(
-          this.env,
-          runId,
-          (d) => {
-            d.error = message.slice(0, 2000);
-            d.completion.test = d.completion.test === "running" ? "failed" : d.completion.test;
-            d.completion.reasonCode = d.completion.reasonCode ?? "workflow-error";
-            for (const ph of d.phases) if (ph.state === "active") ph.state = "stopped";
-          },
-          { progressed: true },
+      // THE CAUSE IS ASSEMBLED BEFORE ANY STEP RUNS, AND IT COSTS NOTHING TO HOLD.
+      //
+      // What arrives at `err` is whatever survived the durable step boundary, which on
+      // `v2r_01kzf7ehb2sayx2y2xz4ecm1ed` was not the sentence the engine had recorded three
+      // times. Two in-memory facts, both free, both better than the boundary's leftovers:
+      //
+      //   this.lastFailure   — the FIRST cause a step closure saw, captured in the same
+      //                        isolate as the throw. Present whenever a body actually ran.
+      //   this.stepInFlight  — the name of the step being awaited. Present EVEN WHEN THE
+      //                        BODY DID NOT RUN (a cached failure re-thrown at the boundary
+      //                        on replay), which is exactly when `lastFailure` is empty.
+      //
+      // Neither costs a subrequest, which is the whole point: on the run that prompted this,
+      // storage was the thing that had run out.
+      const cause = this.lastFailure ?? describeFailure(this.stepInFlight ?? "unknown", err);
+
+      // RECORDING CAN FAIL, AND ITS FAILURE MUST NOT BECOME THE RUN'S ENDING.
+      //
+      // `record-failure` used to be an unguarded `await step.do(...)`. On
+      // `v2r_01kzfb6py8pbxznqv022p2qkhb` it threw — the same subrequest-ceiling error, on
+      // all four attempts, 0 seconds each — and that throw left the catch block, so the
+      // reporting call below never ran. The engine's step list ends `verify-observations-1,
+      // record-failure-1`: no `report-1`, no `finalize-1`. A run that could not explain
+      // itself also lost the one artifact that could have explained it.
+      let recorded = await this.commitFailure(step, runId, cause, "record-failure");
+
+      // A SECOND ATTEMPT ON THE OTHER SIDE OF A SLEEP, AND WHAT IT IS AND IS NOT.
+      //
+      // `step.sleep` hibernates the instance; the engine then re-invokes it, and a NEW Worker
+      // invocation is the only thing that could plausibly carry a new subrequest budget.
+      // It is a SECOND CHANCE, NOT A GUARANTEE, and the honest reading of the incident is
+      // that it may not be one at all: the four `record-failure` retries (5s, 10s, 20s
+      // backoff) each failed instantly with the same ceiling error, so short retry delays
+      // demonstrably did NOT reset the budget, and Cloudflare documents the ceiling as
+      // "per Workflow instance" in one place and "per invocation" in another. So this path
+      // is cheap, guarded, and load-bearing for nothing — the surface that actually rescued
+      // this incident is the engine read in `src/api/runs.ts`, which needs no budget here at
+      // all.
+      if (!recorded) {
+        try {
+          await step.sleep("failure-recording-cooldown", FAILURE_RECORDING_COOLDOWN);
+          recorded = await this.commitFailure(step, runId, cause, "record-failure-after-cooldown");
+        } catch (sleepErr) {
+          console.error(`v2 ${runId}: could not pause before re-recording the cause — ${String(sleepErr).slice(0, 300)}`);
+        }
+      }
+      if (!recorded) {
+        // THE ACTIVE MARKER STAYS SET, DELIBERATELY. `commitFailure` clears it only after
+        // the cause is durable; a run whose ending was never written down is precisely the
+        // run the sweeper must keep seeing.
+        console.error(
+          `v2 ${runId}: the run's cause could not be written to durable storage at all ` +
+            `(${cause.reasonCode} in ${cause.step}). It remains readable from the Workflows engine, ` +
+            `which is what the status endpoint falls back to.`,
         );
-        await clearActive(this.env, runId);
-      });
+      }
 
       // AND THEN IT REPORTS. Every deliberate stop above ends with `reportAndFinalize`; the
       // uncaught-failure path did not, so a step that threw produced a run with an error on
@@ -1193,6 +1450,252 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         }
       }
       throw err;
+    }
+  }
+
+  /**
+   * RECORD THE CAUSE WHERE THE CAUSE STILL EXISTS.
+   *
+   * This is the whole fix, and it is a fix about WHERE, not about what. The outer catch
+   * below already recorded a failure and already rethrew; what it could not do was say
+   * why, because by the time a step's error reaches it the error has crossed the durable
+   * Workflow step boundary and arrives as whatever the engine chose to hand back. On
+   * `v2r_01kzf7ehb2sayx2y2xz4ecm1ed` the engine's own step record held
+   * `Error: planning refused duplicate sealed facetInstanceId fi_b74430a941910fc9a6f9`
+   * across all three attempts — a perfect diagnosis — and the run published
+   * `reasonCode: "workflow-error"` with nothing in `error`. Two surfaces, one of them the
+   * product's, and only the one nobody can reach had the answer.
+   *
+   * Wrapping the step BODY puts the recorder in the same isolate as the throw, before any
+   * boundary, holding the real error object. It also learns the step's NAME, which the
+   * outer catch has never had and which was only ever obtainable from the engine API.
+   *
+   * IT SWALLOWS NOTHING. Every path here ends in `throw err` with the original value, so
+   * the step still fails, the retry policy still applies, and the Workflow instance still
+   * genuinely errors. Recording is strictly additive: a failure to record is logged and
+   * discarded, because a contention on the way to explaining an error must never become
+   * the error the run reports.
+   */
+  private instrumentSteps(step: WorkflowStep, runId: string): WorkflowStep {
+    // NEVER `.bind`, `.call` or `.apply` ANYTHING ON `step`, AND NEVER READ A METHOD OFF IT
+    // TO HOLD ONTO. In production `step` is a JSRPC stub: property access is intercepted and
+    // resolved as a method name on the far side, so `step.do.bind(step)` asks the remote for
+    // a method literally called "bind" and the instance dies with
+    // `TypeError: The RPC receiver does not implement the method "bind"` — in 0 seconds,
+    // before step 1, which is what killed v2r_01kzfa0dx1pg90xcvamef6zb6c.
+    //
+    // The plain `target.method(...)` call form is the ONLY form a stub supports, so every
+    // forward below uses it. This cannot be caught by the suite: the test double is an
+    // ordinary object where `.bind` is `Function.prototype.bind` and works. The guard that
+    // CAN fail is the source assertion in tools/tests/failure-cause.test.mjs.
+    const inner = (name: string, a: unknown, b?: unknown): Promise<unknown> =>
+      (b === undefined
+        ? (step.do as (n: string, x: unknown) => Promise<unknown>)(name, a)
+        : (step.do as (n: string, x: unknown, y: unknown) => Promise<unknown>)(name, a, b));
+
+    const wrapped = (name: string, a: unknown, b?: unknown): Promise<unknown> => {
+      // WHICH STEP WE ARE IN, RECORDED WHERE A REPLAY CAN STILL SEE IT. Set here rather
+      // than inside `guarded`, because `guarded` is the BODY: on a replay after hibernation
+      // the engine re-throws a step's persisted failure at the boundary and the body never
+      // runs at all, and that is precisely the case where the outer catch would otherwise
+      // be reduced to the word "unknown". One assignment, no I/O, correct on both passes.
+      this.stepInFlight = name;
+      const body = (typeof a === "function" ? a : b) as () => Promise<unknown>;
+      const guarded = async (): Promise<unknown> => {
+        try {
+          const result = await body();
+          await this.withdrawFailureCause(runId, name);
+          return result;
+        } catch (err) {
+          // NOT this run's failure — this instance's loss of the run. The outer catch
+          // already treats it as "stop quietly"; writing a cause here would put a
+          // superseded instance's complaint on the live owner's checkpoint.
+          if (err instanceof OwnershipLost) throw err;
+          await this.recordFailureCause(runId, name, err);
+          throw err;
+        }
+      };
+      return typeof a === "function" ? inner(name, guarded) : inner(name, a, guarded);
+    };
+
+    // A proxy rather than a hand-written delegate: `sleep`, `sleepUntil`, `waitForEvent`
+    // and anything the platform adds later keep working without this file listing them,
+    // and a test double's own properties (`calls`) stay visible to the test holding it.
+    return new Proxy(step, {
+      get(target, prop) {
+        if (prop === "do") return wrapped;
+
+        // `then` MUST NOT be forwarded. A stub answers every property, so a forwarded
+        // `then` would make this proxy look thenable and any `await` on it would call a
+        // remote method that does not exist — the same crash in a subtler place.
+        if (prop === "then") return undefined;
+
+        // Reading a property off a stub can itself throw. Losing an optional platform
+        // method is survivable; taking down the run to look one up is not.
+        let value: unknown;
+        try {
+          value = Reflect.get(target, prop);
+        } catch {
+          return undefined;
+        }
+        if (typeof value !== "function") return value;
+
+        // Direct call form, resolved at CALL time — never a detached reference and never
+        // `.bind`. On a stub this is the one shape that works; on a plain test double it
+        // is an ordinary method call with the correct receiver.
+        // MUST stay an inline `host[prop](...)` member call. Lifting it to
+        // `const fn = host[prop]; fn(...)` detaches the receiver, which is the same defect
+        // in a different shape. The `!` is type-level only and emits the member call.
+        const host = target as unknown as Record<PropertyKey, (...a: unknown[]) => unknown>;
+        return (...args: unknown[]): unknown => host[prop]!(...args);
+      },
+    }) as WorkflowStep;
+  }
+
+  /**
+   * COMMIT THE RUN'S ENDING — and report whether it actually landed.
+   *
+   * A `boolean` return rather than a throw, because the caller's next move depends on the
+   * answer and a throw takes that decision away from it. This is the difference between the
+   * run that prompted the change and the one that follows it: `record-failure` used to be an
+   * unguarded `await step.do(...)` inside the catch, so when it exhausted its retries the
+   * throw walked out of the catch block and reporting — the next statement — never ran.
+   *
+   * THE MUTATION IS THE HONEST-REASON RULE. See the comments inside.
+   */
+  private async commitFailure(
+    step: WorkflowStep,
+    runId: string,
+    cause: RunFailure,
+    stepName: string,
+  ): Promise<boolean> {
+    try {
+      await step.do(stepName, { retries: { limit: 3, delay: "5 seconds" } }, async () => {
+        await updateCheckpoint(
+          this.env,
+          runId,
+          (d) => {
+            // The in-closure record names the step and carries the untruncated cause; the
+            // in-memory `cause` is the same object when the closure ran at all. Never
+            // overwrite the better of the two.
+            const failure = d.failure ?? cause;
+            d.failure = failure;
+            // ONE TRUTH, TWO SPELLINGS. `error` is the sentence a person reads and
+            // `failure.message` is the same sentence a client renders; deriving one from
+            // the other is what stops them from ever disagreeing.
+            d.error = failure.message.slice(0, ERROR_TEXT_MAX);
+
+            // ---------------------------------------------------------------
+            // A PHASE OUTCOME IS NOT A RUN OUTCOME, AND THE HEADLINE BELONGS TO THE RUN.
+            //
+            // `v2r_01kzfb6py8pbxznqv022p2qkhb` published
+            // `test: partial-blocked · reasonCode: walks-blocked-by-site`. Both halves were
+            // once true — the site really did block most walks — and by the time a reader
+            // saw them the run had been dead for minutes, killed in VERIFICATION by
+            // something with nothing to do with the site. The old rule produced that: it
+            // only promoted `running` to `failed`, and its `??` treated any reason already
+            // on file as settled.
+            //
+            // `partial-*` is PROVISIONAL when the run reaches this catch. It is written by
+            // `phase-executing-close` with verification, adjudication and reporting still
+            // ahead; arriving here means those never happened, so the run did not end
+            // partially — it died holding a partial result. `complete` and `failed` are
+            // different: something downstream already closed the axis and already named a
+            // cause, and THAT one is the deliberate ending. Do not touch it.
+            //
+            // NOTHING IS LOST. The phase rail keeps `executing: stopped ·
+            // walks-blocked-by-site` untouched below, because this loop only ever writes to
+            // phases still marked `active`. Two facts, two places, both true: what happened
+            // in the walk phase, and what ended the run.
+            // ---------------------------------------------------------------
+            const alreadySettled = d.completion.test === "complete" || d.completion.test === "failed";
+            if (alreadySettled) {
+              // A NAMED REASON WHEN WE HAVE ONE. `workflow-error` is the code for "something
+              // threw and we do not know what", and a guard that deliberately refused is not
+              // that — `failure.reasonCode` says `planning-refused` where the classifier
+              // recognised the refusal, and falls back to `workflow-error` where it did not.
+              d.completion.reasonCode = d.completion.reasonCode ?? failure.reasonCode;
+            } else {
+              d.completion.test = "failed";
+              d.completion.reasonCode = failure.reasonCode;
+            }
+
+            for (const ph of d.phases) {
+              if (ph.state === "active") {
+                ph.state = "stopped";
+                // The phase rail has carried a `reasonCode` for `stopped` since it was
+                // written and the uncaught path was the one branch that stopped a phase
+                // without filling it in, so the rail showed which phase died and refused
+                // to say why.
+                ph.reasonCode = ph.reasonCode ?? failure.reasonCode;
+              }
+            }
+          },
+          { progressed: true },
+        );
+        // CLEARED LAST, AND ONLY ONCE THE CAUSE IS DURABLE. A crash before this line leaves
+        // the run visible to the sweeper, which is the correct place for a run whose ending
+        // nobody managed to write down.
+        await clearActive(this.env, runId);
+      });
+      return true;
+    } catch (recordErr) {
+      console.error(
+        `v2 ${runId}: ${stepName} could not reach durable storage — ` +
+          `${sanitiseErrorText(recordErr, FAILURE_MESSAGE_MAX)}. The cause it was carrying was ` +
+          `${cause.reasonCode} in ${cause.step}.`,
+      );
+      return false;
+    }
+  }
+
+  /** Write the structured cause. Best-effort by construction; never replaces the error. */
+  private async recordFailureCause(runId: string, stepName: string, err: unknown): Promise<void> {
+    // FULL FIDELITY TO THE OPERATOR, SANITISED TEXT TO THE USER. Workers observability is
+    // an authenticated surface and keeps the whole object, stack and all; the checkpoint
+    // is a published one and gets only what `sanitiseErrorText` allows out.
+    console.error(`v2 ${runId}: step ${stepName} threw —`, err);
+    const failure = describeFailure(stepName, err);
+    // THE FREE COPY, TAKEN BEFORE THE EXPENSIVE ONE IS ATTEMPTED. If the write below is the
+    // thing that cannot happen — which is the whole shape of the subrequest-ceiling
+    // failure — this line has already preserved everything the outer catch needs.
+    if (!this.lastFailure) this.lastFailure = failure;
+    try {
+      await updateCheckpoint(this.env, runId, (d) => {
+        // FIRST CAUSE WINS. `plan` failed three times with the same message; a run that
+        // fails in extraction and then fails again while reporting the failure should
+        // report the extraction, not the aftershock. Returning false writes nothing.
+        if (d.failure) return false;
+        d.failure = failure;
+      });
+      this.causeRecordedFor.add(stepName);
+    } catch (recordErr) {
+      console.error(
+        `v2 ${runId}: could not record why ${stepName} failed — ${sanitiseErrorText(recordErr, FAILURE_MESSAGE_MAX)}`,
+      );
+    }
+  }
+
+  /**
+   * A RETRY THAT SUCCEEDED IS NOT A FAILURE. `plan` runs under a 2-retry policy: if
+   * attempt 1 throws and attempt 2 works, the run is fine and must not carry a cause that
+   * contradicts its own outcome for the rest of its life.
+   */
+  private async withdrawFailureCause(runId: string, stepName: string): Promise<void> {
+    // The in-memory copy is withdrawn too, and BEFORE the early return — it is written on
+    // every throw, including the ones whose durable write never landed, so gating its
+    // withdrawal on `causeRecordedFor` would let a step that eventually succeeded keep
+    // handing the outer catch a cause its own outcome contradicts.
+    if (this.lastFailure && this.lastFailure.step === stepName) this.lastFailure = null;
+    if (!this.causeRecordedFor.has(stepName)) return;
+    this.causeRecordedFor.delete(stepName);
+    try {
+      await updateCheckpoint(this.env, runId, (d) => {
+        if (!d.failure || d.failure.step !== stepName) return false;
+        d.failure = null;
+      });
+    } catch (err) {
+      console.warn(`v2 ${runId}: could not withdraw ${stepName}'s superseded failure cause:`, err);
     }
   }
 
@@ -1281,6 +1784,14 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         runId,
         (d) => {
           if (d.recovery?.active) d.recovery = { ...d.recovery, active: false };
+          // A CAUSE WITH NO ERROR BEHIND IT IS A STEP THAT WAS RETRIED AWAY. Every path
+          // that actually ends a run badly — `record-failure`, each deliberate stop, the
+          // sweeper, the axis check just above — writes `error` as it writes the outcome.
+          // A `failure` sitting beside a null `error` therefore belongs to an attempt that
+          // subsequently succeeded, and leaving it would show a finished, healthy run a
+          // cause it recovered from. `withdrawFailureCause` handles this in the common
+          // case; this is the backstop for a retry that resumed in a different isolate.
+          if (d.failure && d.error === null) d.failure = null;
         },
         { fence },
       );

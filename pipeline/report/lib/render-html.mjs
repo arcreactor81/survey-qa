@@ -853,6 +853,22 @@ function renderFindings(view) {
       <div class="section-head">
         <h2 id="findings-h">Findings requiring action</h2>
         <p class="lead">Ordered by kind and agent-assigned severity, then questionnaire position. Each entry is an agent-supplied assertion; RunRecord v1.0.0 carries no panel verification record, so none of them is relabelled "confirmed" here.</p>
+        ${
+          /* THE AUDITOR SURFACE MAY NOT ASSERT A PROVENANCE THE SIGNED RECORD CONTRADICTS.
+             "Each entry is an agent-supplied assertion" is true of a record that carries
+             its own claims. When the record carried NONE and the entries below were read
+             back off the failing cases' own attested observations, that sentence is a false
+             statement about the artifact — the exact class of component-contradicts-artifact
+             failure this section exists to make visible. So it is corrected here rather than
+             left to be inferred from the `observed-` id prefix. */
+          view.findings?.source === "verifier-observations"
+            ? `<p class="lead"><strong>Not agent-supplied.</strong> This run's record asserts no findings of its own (<code>claims: []</code>) while its aggregator settled ${
+                view.findings.failingRequirements
+              } requirement(s) as failing. The ${
+                view.findings.derivedFromObservations
+              } entr${view.findings.derivedFromObservations === 1 ? "y" : "ies"} below were derived at render time from those cases' own attested observations — each one names its source observation, predicate and reason code under <code>derivedFrom</code> in the ReportView. Nothing was authored here.</p>`
+            : ""
+        }
       </div>
       ${body}
       ${unsupported}

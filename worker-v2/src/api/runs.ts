@@ -14,7 +14,20 @@ import { assertV2RunId, isV2RunId, mintRunId } from "../ids";
 import { inputDocumentKey, inputManifestKey } from "../keys";
 import { createCheckpoint, initialCheckpoint, loadCheckpoint, readHeartbeat, updateCheckpoint } from "../store/checkpoint";
 import { clearActive, markActive, putEnvelope, updateEnvelope } from "../store/envelope";
-import { projectCoverage, projectStatus } from "../types/contracts";
+import {
+  ERROR_TEXT_MAX,
+  FAILURE_MESSAGE_MAX,
+  projectCoverage,
+  projectFailure,
+  projectStatus,
+  sanitiseErrorText,
+  type RunCheckpoint,
+  type RunFailure,
+} from "../types/contracts";
+// ONE CLASSIFIER, NOT TWO. The engine's sentence is classified with the very function the
+// run itself uses, so `subrequest-limit-exceeded` cannot come to mean two different things
+// depending on which surface managed to write it down.
+import { classifyFailure } from "../workflow/run-workflow";
 import { ENVELOPE_KIND, ENVELOPE_SCHEMA, type RunEnvelopeV2 } from "../types/record";
 import { sha256Hex } from "../store/hash";
 
@@ -217,11 +230,25 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
       },
     });
   } catch (err) {
-    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    // SANITISED BEFORE IT IS STORED AND BEFORE IT IS ANSWERED. This detail is a Cloudflare
+    // API error body verbatim, so it is exactly the shape that can arrive carrying an
+    // internal endpoint or a credential fragment — and it goes to two places, the durable
+    // checkpoint and the 503 the caller reads.
+    const detail = sanitiseErrorText(err, FAILURE_MESSAGE_MAX);
     await updateCheckpoint(env, runId, (d) => {
       d.completion.test = "failed";
       d.completion.reasonCode = "workflow-create-failed";
       d.error = `the run was accepted but its Workflow instance could not be created: ${detail}`.slice(0, 2000);
+      d.failure = {
+        step: "create-instance",
+        reasonCode: "workflow-create-failed",
+        kind: err instanceof Error && err.name ? err.name : "unknown",
+        message: `the run was accepted but its Workflow instance could not be created: ${detail}`.slice(
+          0,
+          FAILURE_MESSAGE_MAX,
+        ),
+        at: new Date().toISOString(),
+      };
       for (const ph of d.phases) if (ph.state === "active") ph.state = "stopped";
     }, { progressed: true });
     await updateEnvelope(env, runId, (e) => {
@@ -312,15 +339,171 @@ export function checkOutboundUrl(url: URL, policy: string): { code: string; mess
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// THE CAUSE THE RUN COULD NOT WRITE DOWN
+// ---------------------------------------------------------------------------
+
+/**
+ * WHEN THE RUN CANNOT SPEAK, ASK THE ENGINE — IT WAS LISTENING.
+ *
+ * THE INCIDENT. `v2r_01kzfb6py8pbxznqv022p2qkhb` died at `verify-observations-1` with
+ * `Error: Too many API requests by single Worker invocation.` The Workflows engine recorded
+ * that sentence on all four attempts. The product surfaced NOTHING: `failure` absent,
+ * `error` null, and a headline reading `partial-blocked · walks-blocked-by-site` — a fact
+ * about the walk phase, minutes stale, standing in for a run that had died elsewhere for an
+ * unrelated reason.
+ *
+ * THE REASON NOTHING WAS SURFACED IS STRUCTURAL, NOT A MISSING TRY/CATCH. The run's own
+ * recorder writes to R2, and an R2 write is a subrequest, and subrequests were the exact
+ * resource that had run out. Every in-run recovery path — the in-closure recorder, the outer
+ * `record-failure` step, its three retries — needed the one thing that was gone. The engine
+ * needed nothing: it holds the instance's terminal error in ITS storage, on the other side
+ * of the boundary, and this request is a DIFFERENT Worker invocation with its own budget.
+ *
+ * SO THIS IS NOT A COMPUTATION AT READ TIME. The header of this file says the GET handlers
+ * are deliberately dumb — they load one checkpoint and project it, and nothing derives a
+ * value the durable state cannot vouch for. That rule stands. This is a second READ, of a
+ * second durable source, consulted only when the first one is provably silent about a run
+ * the platform has already declared dead. It invents nothing; the sentence it publishes was
+ * written by the engine.
+ *
+ * THE GATE IS THREE FACTS, ALL CHEAP, ALL FROM THE CHECKPOINT ALREADY IN HAND:
+ *
+ *   1. no `failure` recorded — a run that explained itself is never second-guessed;
+ *   2. a phase still `active` — the checkpoint believes work is in flight;
+ *   3. nothing has been heard for `ENGINE_CAUSE_AFTER_MS`.
+ *
+ * WHAT IT COSTS WHEN IT DOES FIRE: one binding call, per poll, on a run that has gone quiet.
+ * That is the whole reason gate (3) is not tight. A watching page polls every couple of
+ * seconds, so a threshold shorter than a legitimate quiet stage would bill every one of
+ * those polls an engine round trip to be told "running" — and quiet stages are real here:
+ * `project-observations` and `verify-observations` beat once on entry and then work for up
+ * to a step attempt's timeout (3 minutes under `DERIVE_POLICY`) before saying anything else.
+ * Five minutes is past that bound, so a run this quiet has already missed a step boundary,
+ * and it is still an order of magnitude inside the sweeper's own silence threshold (45
+ * minutes) — the reader learns the truth long before any recovery machinery would act on it.
+ */
+const ENGINE_CAUSE_AFTER_MS = 5 * 60 * 1000;
+
+/** The subset of `InstanceStatus` this file relies on, narrowed at the boundary. */
+interface EngineStatus {
+  status?: string;
+  error?: { name?: string; message?: string } | null;
+}
+
+/**
+ * Ask the engine why the instance ended, or return null. NEVER throws: a run whose cause is
+ * merely unavailable must still return a status, and `V2_RUN_WORKFLOW.get` throws a stable
+ * `instance.not_found` for an id the engine has forgotten (retention), which is not an
+ * error condition for a reader — it is the honest end of what can be known.
+ */
+async function engineDeclaredFailure(
+  env: Env,
+  runId: string,
+  cp: { ownership?: { instanceId?: string } | null; phases: { name: string; state: string }[]; failure?: unknown },
+  heartbeatAt: string | null,
+  observedAt: string,
+): Promise<{ failure: RunFailure; phase: string } | null> {
+  if (projectFailure(cp.failure as RunFailure | null | undefined)) return null;
+  const active = cp.phases.find((ph) => ph.state === "active");
+  if (!active) return null;
+  const lastHeard = Date.parse(heartbeatAt ?? observedAt);
+  if (Number.isFinite(lastHeard) && Date.now() - lastHeard < ENGINE_CAUSE_AFTER_MS) return null;
+
+  try {
+    // THE RECOVERY INSTANCE, NOT THE RUN ID. A swept run runs as `${runId}-r{n}` and the
+    // checkpoint already knows which epoch owns it, so the id comes from ownership and
+    // falls back to the run id only for a run that never recovered.
+    const instanceId = cp.ownership?.instanceId ?? runId;
+    const inst = await env.V2_RUN_WORKFLOW.get(instanceId);
+    const st = (await inst.status()) as unknown as EngineStatus;
+    if (st.status !== "errored" && st.status !== "terminated") return null;
+
+    const raw = st.error?.message ?? "";
+    const message = sanitiseErrorText(raw, FAILURE_MESSAGE_MAX);
+    return {
+      phase: active.name,
+      failure: {
+        // NOT A STEP NAME, AND IT DOES NOT PRETEND TO BE ONE. `InstanceStatus` carries the
+        // instance's terminal error, not the step that produced it, so the honest locator is
+        // the phase the checkpoint was in when it went quiet. A reader gets "verifying"
+        // rather than a step name this surface cannot actually see.
+        step: `phase:${active.name}`,
+        // SAME VOCABULARY, SAME CLASSIFIER, ONE PLACE. A reason code must mean the same
+        // thing whether the run named it or the engine did.
+        reasonCode: classifyFailure(raw) ?? "workflow-error",
+        kind: st.error?.name || "unknown",
+        message:
+          message ||
+          `the run stopped without recording a cause; the Workflows engine reports the ` +
+            `instance ${st.status} with no message attached`,
+        at: new Date().toISOString(),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Project the checkpoint the reader should see. Returns the stored one untouched in the
+ * ordinary case, or a CORRECTED COPY when the engine has declared the instance dead and the
+ * run never got to say so.
+ *
+ * THE CORRECTION IS DELIBERATELY WHOLE, because half of it would be a new lie. Publishing
+ * `failure: subrequest-limit-exceeded` beside a headline still reading `partial-blocked ·
+ * walks-blocked-by-site` puts two answers to one question on one screen. So the headline
+ * moves to the run-level cause and the dead phase is marked `stopped` — and the walk phase
+ * keeps `walks-blocked-by-site` exactly as the run wrote it, because the site really did
+ * block those walks and that fact belongs to the phase that observed it.
+ *
+ * NOTHING IS WRITTEN BACK. A GET does not author durable state; if a sweeper or a recovered
+ * instance later records the cause for real, it wins, and this projection quietly stops
+ * firing because gate (1) closes.
+ */
+async function reconcileWithEngine(
+  env: Env,
+  runId: string,
+  cp: RunCheckpoint,
+  heartbeatAt: string | null,
+): Promise<{ checkpoint: RunCheckpoint; corrected: boolean }> {
+  const found = await engineDeclaredFailure(env, runId, cp, heartbeatAt, cp.observedAt);
+  if (!found) return { checkpoint: cp, corrected: false };
+
+  const copy = JSON.parse(JSON.stringify(cp)) as RunCheckpoint;
+  copy.failure = found.failure;
+  copy.error = found.failure.message;
+  // `complete` and `failed` already carry a deliberate ending; the provisional states
+  // (`running`, `not-started`, `partial-*`) do not, and this run did not finish.
+  if (copy.completion.test !== "complete" && copy.completion.test !== "failed") {
+    copy.completion.test = "failed";
+    copy.completion.reasonCode = found.failure.reasonCode;
+  }
+  for (const ph of copy.phases) {
+    if (ph.state === "active") {
+      ph.state = "stopped";
+      ph.reasonCode = ph.reasonCode ?? found.failure.reasonCode;
+    }
+  }
+  return { checkpoint: copy, corrected: true };
+}
+
 /** GET /api/v2/runs/:id/status — run-status/2.0.0 */
 export async function getStatus(req: Request, env: Env, runId: string): Promise<Response> {
   if (!isV2RunId(runId)) return notV2(runId);
   const loaded = await loadCheckpoint(env, runId);
   if (!loaded) return fail(404, "RUN_NOT_FOUND", `no v2 run ${runId}`);
   const hb = await readHeartbeat(env, runId);
-  const status = projectStatus(loaded.checkpoint, hb?.at ?? null);
+  const { checkpoint, corrected } = await reconcileWithEngine(env, runId, loaded.checkpoint, hb?.at ?? null);
+  // The note travels with the timestamp. Without it the long quiet stages have a liveness
+  // signal but nothing to say, and a legitimate ten-minute step reads as a hung page.
+  const status = projectStatus(checkpoint, hb?.at ?? null, hb?.note ?? null);
   // ETag keys on the revision: the client's only question is "is there a newer snapshot".
-  return snapshot(req, status, `s${loaded.checkpoint.revision}`);
+  //
+  // AND ON WHETHER THE ENGINE ANSWERED. The correction above changes the body WITHOUT
+  // changing the revision — the run is dead and can never advance it again — so an ETag of
+  // the revision alone would 304 the poller that is waiting for exactly this news, forever.
+  return snapshot(req, status, `s${loaded.checkpoint.revision}${corrected ? "e" : ""}`);
 }
 
 /** GET /api/v2/runs/:id/coverage — coverage-snapshot/1.0.0 */
@@ -338,18 +521,35 @@ export async function getCoverage(req: Request, env: Env, runId: string): Promis
   }
 }
 
-/** GET /api/v2/runs/:id — envelope-level identity (input, policy, contract binding). */
+/**
+ * GET /api/v2/runs/:id — envelope-level identity (input, policy, contract binding).
+ *
+ * THE RUN RECORD USED TO CARRY `completion` AND NOT ITS CAUSE, which meant the one
+ * endpoint named after the run could report `test: "failed", reasonCode: "workflow-error"`
+ * and had, structurally, no field in which to say more. A reader who asked the product
+ * what happened to their run got a verdict and no evidence; the sentence that explained it
+ * existed, on the checkpoint and in the engine, and simply was not projected here.
+ */
 export async function getRunSummary(_req: Request, env: Env, runId: string): Promise<Response> {
   if (!isV2RunId(runId)) return notV2(runId);
   const loaded = await loadCheckpoint(env, runId);
   if (!loaded) return fail(404, "RUN_NOT_FOUND", `no v2 run ${runId}`);
-  const cp = loaded.checkpoint;
+  // THE SAME RECONCILIATION AS `getStatus`, THROUGH THE SAME FUNCTION. Two endpoints
+  // answering "what happened to my run" from two different sources is the disagreement this
+  // whole file exists to prevent.
+  const hb = await readHeartbeat(env, runId);
+  const { checkpoint: cp } = await reconcileWithEngine(env, runId, loaded.checkpoint, hb?.at ?? null);
+  // Sanitised by the same function the status projection uses, for the same reason: this
+  // is published text, and there must not be two answers to "what is safe to emit".
+  const failure = projectFailure(cp.failure);
   return json({
     runId: assertV2RunId(runId),
     policy: cp.policy,
     contract: cp.contract,
     completion: cp.completion,
     reportAvailable: cp.reportAvailable,
+    error: cp.error === null || cp.error === undefined ? null : sanitiseErrorText(cp.error, ERROR_TEXT_MAX),
+    ...(failure ? { failure } : {}),
   });
 }
 

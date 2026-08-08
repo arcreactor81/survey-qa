@@ -1111,6 +1111,25 @@ table.witness { min-width: 720px; font-size: .78rem; }
   margin: 0;
 }
 
+/* A standing statement about the SERVICE, sitting above the verdict because it changes
+   how the verdict should be read. Styled as a caution rather than a banner: it is true
+   of every run this deployment produces, and a full-width alarm repeated on every page
+   stops being read. */
+.service-note {
+  font-size: .95rem;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  /* `--amber-border` is the sheet's caution token. The text pair is `--text` on
+     `--surface-2`, identical to `.shape-note` above, so `check-contrast.mjs` already
+     covers it — a new pair would have needed a new entry there. */
+  border-left: 4px solid var(--amber-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin: 0 0 4px;
+}
+
 /* ---------- summary lanes, in the absolute order ---------- */
 .lane-title { margin: 0 0 .25em; }
 .lane-lede { color: var(--muted); font-size: .93rem; max-width: 72ch; }

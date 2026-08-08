@@ -882,11 +882,34 @@ suite("D14(a) — the evidence audit and the rows agree about the same artifacts
   test("a row's cited artifact resolves to the SAME audit state the trust card counts", async () => {
     const a = await assembled();
     const card = a.data.publication.trustStatements.find((t) => t.id === "evidence-files");
-    assertEq(card.state, "verified", `the trust card says ${card.state}: ${card.value}`);
+
+    // THE CARD'S NUMBERS ARE CHECKED AGAINST THE ROWS, NOT AGAINST A CONSTANT.
+    //
+    // This used to be `assertEq(card.state, "verified")`, which was true only because the
+    // report re-hashed EVERY catalogued artifact — one storage read each, ~3,400 subrequests
+    // on a real run, the fan-out D34 removes. The report now re-hashes what the page cites,
+    // so the honest card reads "N of M hash-verified" and the state is `partial`.
+    //
+    // `partial` is not the defect D14(a) found. The defect was the card and the rows
+    // DISAGREEING about the same artifacts — "103 of 103 hash-verified" over a page where
+    // every row said "not checked". So the property is asserted as what it is: the card's
+    // numerator is exactly the rows the page shows as re-checked, its denominator is exactly
+    // the catalogue it shows, and no CITED artifact is left unchecked. That fails on the
+    // original defect in either direction, and it cannot be satisfied by a constant.
+    const rows = a.data.evidence.rows;
+    const verifiedRows = rows.filter((r) => r.audit?.state === "verified").length;
+    const m = /^(\d+) of (\d+) hash-verified/.exec(card.value ?? "");
+    assert(m, `the trust card does not state a checked-of-catalogued count: ${JSON.stringify(card.value)}`);
+    assertEq(Number(m[1]), verifiedRows, `the card's numerator disagrees with the rows it is about: ${card.value}`);
+    assertEq(Number(m[2]), rows.length, `the card's denominator is not the catalogue the page shows: ${card.value}`);
+    assert(
+      rows.every((r) => r.audit?.state === "verified" || !r.audit?.href),
+      "an artifact that was not re-hashed at render time is still being offered as a link",
+    );
 
     // The contradiction shape: the card counts `values()` (keyed one way) while each row
-    // resolves by another id. Any row saying "not checked" under a "verified" card is the
-    // defect, whichever direction the keys were wrong in.
+    // resolves by another id. Any row saying "not checked" under a card that counts it as
+    // verified is the defect, whichever direction the keys were wrong in.
     const chains = a.data.register.rows.flatMap((r) =>
       Object.values(r.cellsByColumn ?? {}).flatMap((c) => (c.evidence ?? []).map((e) => e.chain)),
     );

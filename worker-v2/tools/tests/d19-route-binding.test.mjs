@@ -147,6 +147,46 @@ function contractBody(extraFacets = []) {
 // Walk fixtures — the bytes the verifier re-reads
 // ---------------------------------------------------------------------------
 
+/**
+ * A SCREEN THAT CARRIES ITS QUESTION ID IN BOTH PLACES A SCREEN CAN CARRY ONE.
+ *
+ * These fixtures are about WHICH STEP DECIDES A CASE (D19 binding). They are not about where a
+ * screen's identity comes from, and since the 0.2 fix those are different questions: rendered
+ * prose also carries BACK-REFERENCES ("as you said in Q2…"), so a text-only foreign id can no
+ * longer support a destination MISMATCH — the accusing arm requires a control named after the
+ * question. Mirroring the leading id from the text into control attributes keeps every scenario
+ * below testing the thing it was written to test, on a screen shaped like a real one that both
+ * prints its number and names its inputs after it.
+ *
+ * A screen whose text names no question still gets NO controls, so every "the destination
+ * printed no id" case keeps refusing for the reason it always did.
+ */
+const controlsFor = (text) => {
+  const id = /^\s*(Q\d+)\b/.exec(String(text ?? ""))?.[1];
+  if (!id) return [];
+  return [
+    { code: "1", label: "Yes" },
+    { code: "2", label: "No" },
+  ].map((o, i) => ({
+    idx: i,
+    tag: "input",
+    type: "radio",
+    name: id,
+    id: `${id}_${o.code}`,
+    code: o.code,
+    label: o.label,
+    text: "",
+    checked: false,
+    value: null,
+    disabled: false,
+    required: false,
+    visible: true,
+    placeholder: null,
+    maxlength: null,
+    readOnly: false,
+  }));
+};
+
 const screen = (text, { validationMessages = [] } = {}) => ({
   at: "2026-08-05T00:05:00.000Z",
   url: "https://fixture.invalid/survey",
@@ -157,13 +197,13 @@ const screen = (text, { validationMessages = [] } = {}) => ({
   visibleText: text,
   visibleTextTruncated: false,
   bracketedInstructionsVisible: [],
-  controls: [],
+  controls: controlsFor(text),
   optionGroups: [],
   grid: null,
   buttons: [],
   progress: { present: false, kind: null, now: null, max: null, text: null },
   validationMessages,
-  counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0 },
+  counts: { controls: controlsFor(text).length, optionGroups: 0, options: controlsFor(text).length, textInputs: 0 },
   screenSignature: `sig:${text}`,
 });
 

@@ -102,12 +102,24 @@ export function judgeRunInIsolate({
     writeFileSync(revisionPath, JSON.stringify(revision), "utf8");
     if (keyRegistry) writeFileSync(registryPath, JSON.stringify(keyRegistry), "utf8");
 
+    // A basename is all the judge resolves by, so two artifacts sharing one is not a
+    // cosmetic problem: the second write DESTROYS the first walk's evidence and the run
+    // then judges a smaller evidence set without saying so. It used to happen on every v2
+    // run, because each walk's artifactRef ended in `observation.json`. Refuse, loudly.
+    const written = new Set();
     for (const a of artifacts) {
-      // A basename is all the judge resolves by, and anything with a separator in it would
-      // escape the artifacts directory. The judge's own store re-checks this; refusing here
-      // means a malformed catalogue never reaches the filesystem at all.
+      // Anything with a separator in it would escape the artifacts directory. The judge's
+      // own store re-checks this; refusing here means a malformed catalogue never reaches
+      // the filesystem at all.
       const base = String(a.name).split("/").pop();
       if (!base || base === "." || base === ".." || base.includes("\\")) continue;
+      if (written.has(base)) {
+        throw new Error(
+          `two catalogued artifacts both mount as ${base}; a basename is the judge's whole `
+          + 'identity for an artifact, so writing the second would silently delete the first',
+        );
+      }
+      written.add(base);
       writeFileSync(`${artifactsDir}/${base}`, Buffer.from(a.bytes));
     }
 

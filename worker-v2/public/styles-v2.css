@@ -792,6 +792,10 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .phase-step.is-stopped { background: var(--phase-stopped-bg); border-color: var(--phase-stopped-border); color: var(--phase-stopped-text); }
 .phase-step.is-unknown { background: var(--phase-unknown-bg); border-color: var(--phase-unknown-border); color: var(--phase-unknown-text); }
 .phase-rail-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+/* The "why the long step is quiet" line. Larger and in body colour than the tick note
+   above it: it is the answer to "is this stuck", which is the question a reader has ten
+   minutes into a run, and a 12px muted footnote is not where an answer belongs. */
+.phase-rail-note--quiet { font-size: 13px; color: var(--text); line-height: 1.55; max-width: 62ch; }
 @media (max-width: 820px) { .phase-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .phase-rail { grid-template-columns: 1fr; } }
 
@@ -822,6 +826,80 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
   background: var(--err-bg); border: 1px solid var(--err-border);
   border-radius: var(--radius-sm); padding: 10px 12px; word-break: break-word;
 }
+/* ---- the recorded cause, and where it came from ----------------------------
+ *
+ * THE PROVENANCE IS CARRIED BY STATIC STYLING ONLY. This machine reports reduced motion, so
+ * anything that distinguished a recovered cause from a first-hand one by animating would be
+ * invisible exactly where it is being checked. The difference is therefore carried three
+ * ways that survive with motion off and in both themes: the flag WORD (real DOM text, so a
+ * screen reader gets it too), the border STYLE (dashed for a reconstruction, solid for
+ * testimony), and the tint. */
+.cause {
+  margin: 16px 0 0; padding: 14px 16px; border-radius: var(--radius-sm);
+  border: 1px solid var(--site-border); border-left: 3px solid var(--bad);
+  background: var(--bad-bg);
+}
+.cause__head { margin: 0; font-size: 15px; font-weight: 700; color: var(--red-text); line-height: 1.35; }
+.cause__body { margin: 6px 0 0; font-size: 13px; color: var(--text); line-height: 1.55; max-width: 68ch; }
+.cause__said { margin: 10px 0 0; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.cause__said-label {
+  font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--slate);
+}
+.cause__refs { margin: 10px 0 0; font-size: 11.5px; color: var(--muted); }
+
+.provenance {
+  margin: 12px 0 0; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+}
+.provenance__flag {
+  margin: 0; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--slate);
+}
+.provenance__text { margin: 4px 0 0; font-size: 12.5px; color: var(--text); line-height: 1.55; max-width: 68ch; }
+/* SECOND-HAND. Dashed, because the block is a reconstruction and the border says so before
+   the words do. */
+.provenance--recovered {
+  border: 1px dashed var(--amber); background: var(--wait-bg);
+}
+.provenance--recovered .provenance__flag { color: var(--wait-text); font-weight: 700; }
+.provenance--recovered .provenance__text { color: var(--wait-text); }
+/* FIRST-HAND. Solid and quiet: the ordinary case needs no emphasis. */
+.provenance--firsthand { border-style: solid; }
+
+/* ---- what the checks could not cover ----------------------------------------
+ * Three states, three appearances, and none of them share one: a number found, an explicit
+ * none that was looked for, and a "never counted" whose zero means nothing at all. */
+.shortfall-list { display: grid; gap: 10px; }
+.shortfall-row {
+  border: 1px solid var(--border); border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm); background: var(--surface-2); padding: 12px 14px;
+}
+.shortfall-row__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.shortfall-row__name { font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.35; }
+.shortfall-row__count {
+  flex: none; font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em;
+  color: var(--slate); white-space: nowrap;
+}
+.shortfall-row__what { margin: 6px 0 0; font-size: 12.5px; color: var(--text); line-height: 1.55; }
+.shortfall-row__sub { margin: 5px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.shortfall-row .detail-meta { margin: 8px 0 0; }
+/* Found: it bit, so it is tinted like the other things that changed an outcome. */
+.shortfall-row[data-limitation-state="found"] {
+  border-left-color: var(--amber); background: var(--wait-bg);
+}
+.shortfall-row[data-limitation-state="found"] .shortfall-row__count { color: var(--wait-text); font-weight: 700; }
+/* Looked for, none found: a real, earned zero. Quiet, and NOT styled as a problem. */
+.shortfall-row[data-limitation-state="none-found"] { border-left-color: var(--border-strong); }
+/* Never counted: a zero that means nothing. Dashed, like every other "we were not told"
+   state on this page, so it can never be mistaken for the earned zero above. */
+.shortfall-row[data-limitation-state="never-counted"],
+.shortfall-row[data-limitation-state="not-reported"] {
+  border: 1px dashed var(--border-strong); background: transparent;
+}
+.shortfall-row[data-limitation-state="never-counted"] .shortfall-row__count,
+.shortfall-row[data-limitation-state="not-reported"] .shortfall-row__count { color: var(--muted); }
+
 .run-actions { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 
 /* ---- run details: nothing is deleted, it is one click down ---- */
@@ -892,6 +970,32 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .completion-axis .axis-state { font-size: 15px; font-weight: 600; color: var(--ink); margin-top: 3px; }
 .completion-axis .axis-why { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
+/* THE ONE THAT IS HAPPENING NOW. Tinted, with the same thick left edge the banners use,
+   so "which of these two is running" is answerable without reading. Keyed off the state
+   the server recorded (data-outcome-state, set in tracker.js) and matched here by an
+   explicit two-word list: an unrecognised value can never light up by accident.
+   Testing and Report are independent — both may be lit at once, or neither.
+
+   DELIBERATELY STILL. No pulse, no glow-and-fade: the motion budget at the top of this
+   file allows exactly one moving thing on this page, the poll dot, and this machine
+   reports reduced motion anyway, so an animated cue would be invisible to the person who
+   asked for it. The tint, the edge and the colour carry the meaning on their own.
+   The left border thickens by 2px and the left padding gives back the same 2px, so
+   nothing beside it shifts when a run changes state. */
+.completion-axis[data-outcome-state="running"],
+.completion-axis[data-outcome-state="building"] {
+  background: var(--phase-active-bg);
+  border-color: var(--phase-active-border);
+  border-left-width: 3px;
+  padding-left: 13px;
+}
+.completion-axis[data-outcome-state="running"] .axis-name,
+.completion-axis[data-outcome-state="building"] .axis-name,
+.completion-axis[data-outcome-state="running"] .axis-state,
+.completion-axis[data-outcome-state="building"] .axis-state {
+  color: var(--phase-active-text);
+}
+
 /* banners */
 .banner {
   display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 12px;
@@ -935,6 +1039,10 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .integrity-suspect .denominator .d-value,
 .integrity-suspect .limit-value { color: var(--slate) !important; }
 .integrity-suspect .meter__fill { background: var(--slate) !important; }
+/* Same rule for the check-state bar: on a record that did not verify, a coloured picture
+   of the counts is a confident-looking claim about numbers nobody should act on. The bar
+   still shows the shape of the ledger; it stops speaking in states. */
+.integrity-suspect .propbar__seg { background: var(--slate) !important; }
 
 /* ---- phase chips ---- */
 .phases { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; list-style: none; }
@@ -1004,6 +1112,43 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .bucket-count { font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums; color: var(--ink); }
 .bucket-row.is-exercised { background: transparent; }
 .bucket-row.is-exercised .bucket-glyph { color: var(--neutral-strong-text); }
+
+/* Each state's glyph takes the colour its segment takes in the bar below, so the bar can
+   be read against these rows without a separate legend. Every value is an existing token
+   and every one of them is a *-text token, measured against the card at 5.5:1 or better —
+   the glyph is text and is held to the text threshold. The colour is still only
+   decoration: the glyph shape and the full word are what carry the state. */
+.bucket-row[data-check-state="not-reached"] .bucket-glyph { color: var(--phase-pending-text); }
+.bucket-row[data-check-state="proven-unreachable"] .bucket-glyph { color: var(--nbo-text); }
+.bucket-row[data-check-state="blocked"] .bucket-glyph { color: var(--negative-text); }
+.bucket-row[data-check-state="budget-exhausted"] .bucket-glyph,
+.bucket-row[data-check-state="time-exhausted"] .bucket-glyph { color: var(--phase-stopped-text); }
+.bucket-row[data-check-state="pending"] .bucket-glyph { color: var(--silent-text); }
+
+/* ---- the seven states, drawn to scale ----
+   A stacked share of the SAME fixed total the sum line underneath reports. It is about the
+   individual checks and nothing else; the requirement total in this block is a different
+   number and the two are never added together.
+   No transition and no animation, for the reason .meter has none: a bar that eases between
+   snapshots draws values the server never reported. Widths change by replacement. */
+.propbar {
+  display: flex; height: 10px; margin-top: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
+  background: var(--meter-track); overflow: hidden;
+}
+/* Exact shares, never stretched to fill: flex-shrink is off so a ledger that falls short
+   of its total leaves a visible gap instead of being quietly normalized. min-width keeps a
+   single check from rounding away to nothing on a narrow screen. */
+.propbar__seg { flex: 0 0 auto; min-width: 2px; height: 100%; }
+.propbar__seg + .propbar__seg { box-shadow: inset 1px 0 0 var(--card); }
+.propbar__seg[data-check-state="exercised"] { background: var(--neutral-strong-text); }
+.propbar__seg[data-check-state="not-reached"] { background: var(--phase-pending-text); }
+.propbar__seg[data-check-state="proven-unreachable"] { background: var(--nbo-text); }
+.propbar__seg[data-check-state="blocked"] { background: var(--negative-text); }
+.propbar__seg[data-check-state="budget-exhausted"] { background: var(--phase-stopped-text); }
+.propbar__seg[data-check-state="time-exhausted"] { background: var(--phase-stopped-border); }
+.propbar__seg[data-check-state="pending"] { background: var(--silent-text); }
+
 .bucket-total {
   display: flex; justify-content: space-between; gap: 12px;
   margin-top: 10px; padding-top: 10px; border-top: 2px solid var(--border);

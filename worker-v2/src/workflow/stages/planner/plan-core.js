@@ -1042,6 +1042,41 @@ function defaultAnswer(model, Q, c) {
   };
 }
 
+/**
+ * THE ACTUAL TEXT A CHARACTER-LIMIT WALK TYPES.
+ *
+ * THE DEFECT THIS CLOSES. This decision used to carry the LITERAL STRING
+ * `"<exactly 500 characters>"` as its `text_entry.value`, with a note telling the navigator to
+ * "count, not approximate". `browser/driver.ts` types `text_entry.value` verbatim — it has no
+ * expander and never had one — so the boundary walk for a 500-character limit typed 24
+ * characters into the field, the field accepted them (of course it did), and the walk reported
+ * a clean pass. A boundary probe that never reaches the boundary is worse than no probe: it
+ * closes the obligation with a confident wrong answer, which is this system's cardinal failure.
+ *
+ * WHAT "EXACTLY N CHARACTERS" MEANS HERE, stated so it cannot drift:
+ *   - N is a count of CHARACTERS, and every character emitted is one ASCII code point, hence
+ *     one UTF-16 code unit and one byte: `value.length === N` under every measure a browser,
+ *     a `maxlength` attribute, or a server-side validator could apply. A multi-byte or
+ *     astral filler would make those three numbers disagree and the probe unfalsifiable.
+ *   - The filler is a NON-WHITESPACE letter. A field that trims its input cannot silently
+ *     shorten the payload, so "the site truncated at the limit" stays distinguishable from
+ *     "the planner sent whitespace and the site ate it".
+ *   - It is the SAME filler `src/extract/expand.ts` seals into `boundaryInput.value`
+ *     (`"x".repeat(max)`). The planner's Tier-2 probe and the sealed Tier-1 case therefore
+ *     agree on what a length-N input is, rather than testing the limit two different ways.
+ *   - N = 0 yields the EMPTY STRING, which the driver's blank path handles: typing zero
+ *     characters IS leaving the field empty. That is the correct stimulus for the
+ *     just-below side of a 1-character minimum, not a degenerate case to be worked around.
+ *
+ * The `length` field is kept beside the value so a reader (and the report) can see the
+ * intended count without measuring a 500-character string.
+ */
+const BOUNDARY_FILL_CHAR = 'x';
+function boundaryText(n) {
+  const len = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  return BOUNDARY_FILL_CHAR.repeat(len);
+}
+
 function walk(model, constraints) {
   const decisions = [], decided = new Map(), skipped = [];
   let terminatedAt = null;
@@ -1068,7 +1103,14 @@ function walk(model, constraints) {
     if (c?.action) { dec.action = c.action; dec.select = []; dec.note = 'PROBE: perform this action instead of answering normally, observe the response, then recover by answering validly'; }
     const needsText = c?.freeText || (Q.openText && !d.select.length) || d.select.some((s) => Q.options.find((o) => o.text === s && o.specify));
     if (needsText && !dec.action) dec.text_entry = c?.textLength != null
-      ? { required: true, length: c.textLength, value: `<exactly ${c.textLength} characters>`, note: `type exactly ${c.textLength} characters — the point of this walk is the length, so the navigator must count, not approximate` }
+      ? {
+          required: true,
+          length: c.textLength,
+          value: boundaryText(c.textLength),
+          note: c.textLength > 0
+            ? `the value is the payload: ${c.textLength} character(s), already expanded, to be entered VERBATIM — the point of this walk is the length, so nothing may shorten, pad or re-generate it`
+            : 'zero characters: the field is submitted deliberately empty, which is what a length of 0 means',
+        }
       : { required: true, value: 'QA-PROBE', note: 'the [SPECIFY]/open-text field attached to this answer must be filled' };
     if (dec.action === 'leave-blank-and-continue') dec.text_entry = { required: false, value: '', note: 'leave the field deliberately empty, then press Next' };
     decisions.push(dec); decided.set(q, dec);

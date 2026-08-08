@@ -43,6 +43,10 @@
     coverage: null,
     transport: { state: "in-flight", failStreak: 0, maxFails: MAX_POLL_FAILS, lastConfirmedAt: null },
     integrity: { state: "unknown", code: null, detail: null },
+    // Whether a technical record exists to link to. "unknown" until something is ASKED —
+    // never inferred from completion state, because a link that 404s and an honest "the
+    // run never got that far" look identical to a reader only if the page guesses.
+    record: { state: "unknown", code: null },
     now: new Date().toISOString()
   };
 
@@ -52,6 +56,7 @@
   var stopped = false;
   var lastRevision = -1;
   var attestationProbed = false;
+  var recordProbed = false;
 
   function resolveRunId() {
     var m = /^\/runs\/([^/?#]+)/.exec(location.pathname);
@@ -74,10 +79,64 @@
       s ? String(s.recoveryMode) : "-",
       s ? String(s.reportAvailable) : "-",
       s ? String(s.error) : "-",
+      // THE RECOVERED CAUSE ARRIVES WITHOUT A NEW REVISION, ON PURPOSE. When a run dies
+      // without recording why, the server answers the next poll with a cause it fetched from
+      // the engine — but the run is dead and can never advance `progressRevision` again, and
+      // it may well have been carrying the same `error` text already. Keying the repaint on
+      // the revision or on `error` alone would therefore suppress the one repaint that
+      // matters. The cause's own identity is cheap and it is what actually changed.
+      s && s.failure ? String(s.failure.reasonCode) + "@" + String(s.failure.step) : "-",
+      // Named shortfalls, when a feed starts carrying them: their arrival changes a whole
+      // block from "never told" to a list, which is a material change by any reading.
+      s && (s.planLimitations || s.limitations)
+        ? "lim:" + (s.planLimitations || s.limitations).length
+        : "-",
       c ? c.revision : "-",
       view.integrity.state,
-      view.transport.state === "in-flight" ? "poll" : view.transport.state
+      view.record ? view.record.state : "-",
+      // "in-flight" and "ok" are the SAME token on purpose. They are the two halves of one
+      // ordinary poll — a request going out and coming back — and the only thing that
+      // differs between them on the page is the badge, which applyPollState mutates in
+      // place. Giving them different tokens is what made this guard never hold: the
+      // signature flipped on every poll, so the "rebuild only when something material
+      // changed" rule rebuilt the whole tree twice every five seconds.
+      view.transport.state === "in-flight" || view.transport.state === "ok"
+        ? "live"
+        : view.transport.state
     ].join("|");
+  }
+
+  // WHAT THE READER OPENED STAYS OPEN.
+  //
+  // render() rebuilds the tracker subtree from scratch, so every <details> comes back
+  // closed and any element the reader had expanded collapses under them. That is fine for
+  // server data — it is the whole honesty rule that nothing on the page moves except
+  // between snapshots — but it is not fine for the reader's own view state, which is not
+  // the server's to reset. So the open/closed state is lifted out before the rebuild and
+  // put back after it, keyed by the element's class rather than by position so that a
+  // block appearing or disappearing between snapshots cannot shift the mapping.
+  //
+  // Kept HERE rather than in tracker.js deliberately: tracker.js renders, this file owns
+  // the poll loop that destroys the render, so the repair belongs beside the destruction.
+  function detailsKey(node, index) {
+    return (node.className || "") + "#" + index;
+  }
+
+  function captureOpenState() {
+    var open = {};
+    var nodes = root.querySelectorAll("details");
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].open) open[detailsKey(nodes[i], i)] = true;
+    }
+    return open;
+  }
+
+  function restoreOpenState(open) {
+    if (!open) return;
+    var nodes = root.querySelectorAll("details");
+    for (var i = 0; i < nodes.length; i++) {
+      if (open[detailsKey(nodes[i], i)]) nodes[i].open = true;
+    }
   }
 
   function announce() {
@@ -94,7 +153,9 @@
       return;
     }
     lastSignature = sig;
+    var open = captureOpenState();
     SurveyQATracker.render(root, view);
+    restoreOpenState(open);
     announce();
     document.title = (runId ? runId + " — " : "") + "Run watch · Survey QA v2";
   }
@@ -191,6 +252,15 @@
         await probeAttestation();
       }
 
+      // The technical-record link is only offered once we know there is something behind
+      // it. The record is written at the END of a run, so there is nothing to ask about
+      // until the run is terminal — before that the page says so in words rather than
+      // spending a request to be told 404.
+      if (!recordProbed && (status.reportAvailable || SurveyQATracker.isTerminal(view))) {
+        recordProbed = true;
+        await probeRecord();
+      }
+
       paint();
 
       var terminal = status.completion &&
@@ -258,6 +328,28 @@
         view.integrity = { state: "ok", code: null, detail: null };
       }
     } catch (err) { /* unknown stays unknown; we never assert "verified" without evidence */ }
+  }
+
+  // DOES A TECHNICAL RECORD EXIST? The page used to offer the link unconditionally, so on
+  // a run that failed before writing one it sent the reader to a bare 404 body — a dead
+  // end that says nothing about why. The endpoint's own answer is the evidence: 200 means
+  // link it, 404 means there is none and the page must say why, 409 means one exists but
+  // did not verify (and is deliberately not served). The body is cancelled: this asks
+  // whether the record is there, and does not need to download it to find out.
+  async function probeRecord() {
+    try {
+      var res = await fetch("/api/v2/runs/" + encodeURIComponent(runId) + "/record", {
+        headers: { accept: "application/json" }, cache: "no-store"
+      });
+      if (res.body && res.body.cancel) { try { res.body.cancel(); } catch (e) {} }
+      if (res.ok) view.record = { state: "available", code: null };
+      else if (res.status === 404) view.record = { state: "absent", code: "RECORD_NOT_FOUND" };
+      else if (res.status === 409) view.record = { state: "invalid", code: "ATTESTATION_INVALID" };
+      else view.record = { state: "unreachable", code: "HTTP_" + res.status };
+    } catch (err) {
+      // Not "absent" — we failed to ask, which is a different thing and is said as such.
+      view.record = { state: "unreachable", code: null };
+    }
   }
 
   async function loadSummary() {

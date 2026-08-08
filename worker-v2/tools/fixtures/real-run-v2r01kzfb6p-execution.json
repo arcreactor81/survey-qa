@@ -1,0 +1,5577 @@
+{
+ "note": "REAL production artifacts from run v2r_01kzfb6py8pbxznqv022p2qkhb, verbatim. walks = v2/runs/<id>/execution/progress.json .walks ; decisionsByPath = the .decisions array of every path in v2/runs/<id>/plan/plan_hnjpwq5vfhng.json. Nothing here is invented.",
+ "runId": "v2r_01kzfb6py8pbxznqv022p2qkhb",
+ "planRevisionId": "plan_hnjpwq5vfhng",
+ "tierByPath": {
+  "FLOOR-01": 1,
+  "FLOOR-01--fi_8e1bf66783d8308bf028": 1,
+  "FLOOR-01--fi_d69730e220aeffd7565f": 1,
+  "FLOOR-01--fi_c0cf124cc2a72f439ac1": 1,
+  "FLOOR-01--fi_731d9c3f4099ae534bb0": 1,
+  "FLOOR-01--fi_669a7305f04d7d6cb68a": 1,
+  "FLOOR-01--fi_40e18174555745b9710c": 1,
+  "FLOOR-01--fi_0a7b1763978f04fc14a7": 1,
+  "FLOOR-01--fi_410e606955adaff5cb9f": 1,
+  "FLOOR-01--fi_c67c781fa24e517d0688": 1,
+  "FLOOR-01--fi_cba411f93b970c06168c": 1,
+  "FLOOR-01--fi_ee202c235ba9d6c0beaa": 1,
+  "FLOOR-01--fi_568d5ff6cc9d8b6ef159": 1,
+  "FLOOR-01--fi_d2db2a271da3fc008605": 1,
+  "FLOOR-01--fi_8e0f48c84b17932ee9f4": 1,
+  "FLOOR-01--fi_dca735737abf504274e5": 1,
+  "FLOOR-01--fi_b76f764a1a8e6788bb56": 1,
+  "FLOOR-01--fi_97592cbb04112585c2f6": 1,
+  "FLOOR-01--fi_81c300cb4dfd0d67a41d": 1,
+  "FLOOR-01--fi_9c8195a76539014098d4": 1,
+  "FLOOR-01--fi_942d3e0ff0af3c2a7f85": 1,
+  "FLOOR-01--fi_fcf5066c3748c7820ab4": 1,
+  "EXP-001": 2,
+  "EXP-002": 2,
+  "EXP-003": 2,
+  "EXP-004": 2,
+  "EXP-005": 2,
+  "EXP-006": 2,
+  "EXP-007": 2,
+  "EXP-008": 2,
+  "EXP-009": 2,
+  "EXP-010": 2,
+  "EXP-011": 2,
+  "EXP-012": 2,
+  "EXP-013": 2,
+  "EXP-014": 2,
+  "EXP-015": 2,
+  "EXP-016": 2,
+  "EXP-017": 2,
+  "EXP-018": 2,
+  "EXP-019": 2,
+  "EXP-020": 2,
+  "EXP-021": 2,
+  "EXP-022": 2,
+  "EXP-023": 2
+ },
+ "walks": [
+  {
+   "exercised": false,
+   "plannedDecisions": 0,
+   "matchedDecisions": 0,
+   "screensAdvanced": 0,
+   "pathId": "FLOOR-01",
+   "tier": 1,
+   "attemptId": "att_tqjex4yz4k13",
+   "outcome": "load-crash",
+   "outcomeDetail": "Cannot set property history of #<Window> which has only a getter",
+   "steps": 0,
+   "wallMs": 2947,
+   "shimmed": false,
+   "loadCrash": true,
+   "evidenceCount": 3,
+   "caseIds": [],
+   "at": "2026-08-08T00:18:27.623Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 11,
+   "pathId": "FLOOR-01",
+   "tier": 1,
+   "attemptId": "att_tqjex4yz4k13",
+   "outcome": "time-cap",
+   "outcomeDetail": "walk hit its wall-clock budget",
+   "steps": 11,
+   "wallMs": 111276,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 34,
+   "caseIds": [],
+   "at": "2026-08-08T00:20:20.737Z"
+  },
+  {
+   "exercised": true,
+   "plannedDecisions": 13,
+   "matchedDecisions": 1,
+   "screensAdvanced": 3,
+   "pathId": "FLOOR-01--fi_8e1bf66783d8308bf028",
+   "tier": 1,
+   "attemptId": "att_gaaqj80tjbdh",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 3 offered no enabled control that advances the survey",
+   "steps": 4,
+   "wallMs": 23784,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 13,
+   "caseIds": [
+    "fi_8e1bf66783d8308bf028"
+   ],
+   "at": "2026-08-08T00:20:49.239Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 10,
+   "pathId": "FLOOR-01--fi_d69730e220aeffd7565f",
+   "tier": 1,
+   "attemptId": "att_1kydwn4kb5b4",
+   "outcome": "time-cap",
+   "outcomeDetail": "walk hit its wall-clock budget",
+   "steps": 10,
+   "wallMs": 97867,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 31,
+   "caseIds": [],
+   "at": "2026-08-08T00:22:29.715Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_c0cf124cc2a72f439ac1",
+   "tier": 1,
+   "attemptId": "att_7cgnyyxfxvy7",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 113480,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:24:27.967Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 1,
+   "pathId": "FLOOR-01--fi_731d9c3f4099ae534bb0",
+   "tier": 1,
+   "attemptId": "att_hh419bagqzws",
+   "outcome": "time-cap",
+   "outcomeDetail": "walk hit its wall-clock budget",
+   "steps": 1,
+   "wallMs": 6957,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 4,
+   "caseIds": [],
+   "at": "2026-08-08T00:24:37.369Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_669a7305f04d7d6cb68a",
+   "tier": 1,
+   "attemptId": "att_9fzfe8hy5ywz",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 113265,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:26:35.113Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 1,
+   "pathId": "FLOOR-01--fi_40e18174555745b9710c",
+   "tier": 1,
+   "attemptId": "att_xd778gc03d5v",
+   "outcome": "time-cap",
+   "outcomeDetail": "walk hit its wall-clock budget",
+   "steps": 1,
+   "wallMs": 6970,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 4,
+   "caseIds": [],
+   "at": "2026-08-08T00:26:44.578Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_0a7b1763978f04fc14a7",
+   "tier": 1,
+   "attemptId": "att_321p32ajsz5x",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 23296,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:27:17.837Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_410e606955adaff5cb9f",
+   "tier": 1,
+   "attemptId": "att_fhscmtwgj3f6",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 23127,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:27:42.379Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_c67c781fa24e517d0688",
+   "tier": 1,
+   "attemptId": "att_fdnqry8wd56q",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 22715,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:28:06.661Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_cba411f93b970c06168c",
+   "tier": 1,
+   "attemptId": "att_j6wj44s6g3y1",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 22912,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:28:30.929Z"
+  },
+  {
+   "exercised": true,
+   "plannedDecisions": 13,
+   "matchedDecisions": 1,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_ee202c235ba9d6c0beaa",
+   "tier": 1,
+   "attemptId": "att_dz4tgvv2sx3z",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 22593,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [
+    "fi_ee202c235ba9d6c0beaa"
+   ],
+   "at": "2026-08-08T00:28:56.114Z"
+  },
+  {
+   "exercised": true,
+   "plannedDecisions": 13,
+   "matchedDecisions": 1,
+   "screensAdvanced": 11,
+   "pathId": "FLOOR-01--fi_568d5ff6cc9d8b6ef159",
+   "tier": 1,
+   "attemptId": "att_xj7ah909rf2v",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 11 offered no enabled control that advances the survey",
+   "steps": 12,
+   "wallMs": 20930,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 37,
+   "caseIds": [
+    "fi_568d5ff6cc9d8b6ef159"
+   ],
+   "at": "2026-08-08T00:29:18.384Z"
+  },
+  {
+   "exercised": true,
+   "plannedDecisions": 13,
+   "matchedDecisions": 1,
+   "screensAdvanced": 13,
+   "pathId": "FLOOR-01--fi_d2db2a271da3fc008605",
+   "tier": 1,
+   "attemptId": "att_v6359zw32s8g",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 13 offered no enabled control that advances the survey",
+   "steps": 14,
+   "wallMs": 24435,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 43,
+   "caseIds": [
+    "fi_d2db2a271da3fc008605"
+   ],
+   "at": "2026-08-08T00:29:44.239Z"
+  },
+  {
+   "exercised": true,
+   "plannedDecisions": 13,
+   "matchedDecisions": 1,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_8e0f48c84b17932ee9f4",
+   "tier": 1,
+   "attemptId": "att_7dadx3spq6pt",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 23704,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [
+    "fi_8e0f48c84b17932ee9f4"
+   ],
+   "at": "2026-08-08T00:30:09.346Z"
+  },
+  {
+   "exercised": true,
+   "plannedDecisions": 13,
+   "matchedDecisions": 1,
+   "screensAdvanced": 11,
+   "pathId": "FLOOR-01--fi_dca735737abf504274e5",
+   "tier": 1,
+   "attemptId": "att_k2ykwvgnrxw5",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 11 offered no enabled control that advances the survey",
+   "steps": 12,
+   "wallMs": 21084,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 37,
+   "caseIds": [
+    "fi_dca735737abf504274e5"
+   ],
+   "at": "2026-08-08T00:30:33.299Z"
+  },
+  {
+   "exercised": true,
+   "plannedDecisions": 13,
+   "matchedDecisions": 1,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_b76f764a1a8e6788bb56",
+   "tier": 1,
+   "attemptId": "att_cemzjg2ne7qp",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 23094,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [
+    "fi_b76f764a1a8e6788bb56"
+   ],
+   "at": "2026-08-08T00:30:57.856Z"
+  },
+  {
+   "exercised": true,
+   "plannedDecisions": 13,
+   "matchedDecisions": 1,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_97592cbb04112585c2f6",
+   "tier": 1,
+   "attemptId": "att_4h4gczqpfpsg",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 22315,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [
+    "fi_97592cbb04112585c2f6"
+   ],
+   "at": "2026-08-08T00:31:21.665Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 13,
+   "pathId": "FLOOR-01--fi_81c300cb4dfd0d67a41d",
+   "tier": 1,
+   "attemptId": "att_x499p9e57ke5",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 13 offered no enabled control that advances the survey",
+   "steps": 14,
+   "wallMs": 24427,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 43,
+   "caseIds": [],
+   "at": "2026-08-08T00:31:47.837Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_9c8195a76539014098d4",
+   "tier": 1,
+   "attemptId": "att_x2azeh2mgfrj",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 22669,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:32:15.671Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_942d3e0ff0af3c2a7f85",
+   "tier": 1,
+   "attemptId": "att_jbepnaczm7p0",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 22360,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:32:39.358Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "FLOOR-01--fi_fcf5066c3748c7820ab4",
+   "tier": 1,
+   "attemptId": "att_sehmz06yx251",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 22081,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:33:02.900Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-001",
+   "tier": 2,
+   "attemptId": "att_q36v7b4rpxtw",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 22938,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:33:28.826Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-002",
+   "tier": 2,
+   "attemptId": "att_379v015f76mz",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 22442,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:33:52.726Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-003",
+   "tier": 2,
+   "attemptId": "att_kvnqkk1cw5em",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 23608,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:34:17.827Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-004",
+   "tier": 2,
+   "attemptId": "att_rt9j2vqbv0bk",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 23299,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:34:42.623Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 13,
+   "pathId": "EXP-005",
+   "tier": 2,
+   "attemptId": "att_9zryjtt10f8k",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 13 offered no enabled control that advances the survey",
+   "steps": 14,
+   "wallMs": 25094,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 43,
+   "caseIds": [],
+   "at": "2026-08-08T00:35:10.784Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-006",
+   "tier": 2,
+   "attemptId": "att_r7v14vej5q9n",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 22475,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:35:34.734Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 13,
+   "pathId": "EXP-007",
+   "tier": 2,
+   "attemptId": "att_qnjxhq7hk9q1",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 13 offered no enabled control that advances the survey",
+   "steps": 14,
+   "wallMs": 24441,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 43,
+   "caseIds": [],
+   "at": "2026-08-08T00:36:00.647Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 13,
+   "pathId": "EXP-008",
+   "tier": 2,
+   "attemptId": "att_27rwvm92z5bf",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 13 offered no enabled control that advances the survey",
+   "steps": 14,
+   "wallMs": 25235,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 43,
+   "caseIds": [],
+   "at": "2026-08-08T00:36:27.366Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-009",
+   "tier": 2,
+   "attemptId": "att_hkd7ncpe9aj5",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 21534,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:36:54.550Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-010",
+   "tier": 2,
+   "attemptId": "att_fa8ynw2zd8xy",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 21145,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:37:17.140Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-011",
+   "tier": 2,
+   "attemptId": "att_6tk77bm0zb9n",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 20797,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:37:39.671Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 13,
+   "pathId": "EXP-012",
+   "tier": 2,
+   "attemptId": "att_79wevj943nmw",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 13 offered no enabled control that advances the survey",
+   "steps": 14,
+   "wallMs": 22932,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 43,
+   "caseIds": [],
+   "at": "2026-08-08T00:38:04.080Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-013",
+   "tier": 2,
+   "attemptId": "att_2pxf8v6467dx",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 20716,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:38:27.582Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-014",
+   "tier": 2,
+   "attemptId": "att_sj9b07h5e63f",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 20745,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:38:49.812Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-015",
+   "tier": 2,
+   "attemptId": "att_ygymhw02fa5w",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 21028,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:39:12.273Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-016",
+   "tier": 2,
+   "attemptId": "att_vadeecvz44hr",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 21029,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:39:34.631Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 13,
+   "pathId": "EXP-017",
+   "tier": 2,
+   "attemptId": "att_z3cs9g699ykc",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 13 offered no enabled control that advances the survey",
+   "steps": 14,
+   "wallMs": 22329,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 43,
+   "caseIds": [],
+   "at": "2026-08-08T00:39:59.514Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 13,
+   "pathId": "EXP-018",
+   "tier": 2,
+   "attemptId": "att_2btd9eam8ywe",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 13 offered no enabled control that advances the survey",
+   "steps": 14,
+   "wallMs": 23308,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 43,
+   "caseIds": [],
+   "at": "2026-08-08T00:40:24.348Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-019",
+   "tier": 2,
+   "attemptId": "att_4378rkxn42nh",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 21108,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:40:46.894Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-020",
+   "tier": 2,
+   "attemptId": "att_ddfkqsqv2pyv",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 21085,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:41:09.401Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-021",
+   "tier": 2,
+   "attemptId": "att_jsnwk4pn4d7n",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 21276,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:41:33.313Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-022",
+   "tier": 2,
+   "attemptId": "att_1hz54kpdnwdr",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 20845,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:41:55.659Z"
+  },
+  {
+   "exercised": false,
+   "plannedDecisions": 13,
+   "matchedDecisions": 0,
+   "screensAdvanced": 12,
+   "pathId": "EXP-023",
+   "tier": 2,
+   "attemptId": "att_50q2ky0svwac",
+   "outcome": "no-advance-control",
+   "outcomeDetail": "screen 12 offered no enabled control that advances the survey",
+   "steps": 13,
+   "wallMs": 21015,
+   "shimmed": true,
+   "loadCrash": false,
+   "evidenceCount": 40,
+   "caseIds": [],
+   "at": "2026-08-08T00:42:18.051Z"
+  }
+ ],
+ "decisionsByPath": {
+  "FLOOR-01": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_8e1bf66783d8308bf028": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [
+     "I never drink coffee at home"
+    ],
+    "source": "typed-case:fi_8e1bf66783d8308bf028",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_8e1bf66783d8308bf028",
+     "targetQuestionId": "S2",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "6",
+      "label": "I never drink coffee at home"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_d69730e220aeffd7565f": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "typed-case:fi_d69730e220aeffd7565f",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_d69730e220aeffd7565f",
+     "targetQuestionId": "S2",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "1",
+      "label": null
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_c0cf124cc2a72f439ac1": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "typed-case:fi_c0cf124cc2a72f439ac1",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_c0cf124cc2a72f439ac1",
+     "targetQuestionId": "S2",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "2",
+      "label": null
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_731d9c3f4099ae534bb0": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "typed-case:fi_731d9c3f4099ae534bb0",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_731d9c3f4099ae534bb0",
+     "targetQuestionId": "S2",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "3",
+      "label": null
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_669a7305f04d7d6cb68a": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "typed-case:fi_669a7305f04d7d6cb68a",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_669a7305f04d7d6cb68a",
+     "targetQuestionId": "S2",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "4",
+      "label": null
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_40e18174555745b9710c": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [
+     "Less often than once a week"
+    ],
+    "source": "typed-case:fi_40e18174555745b9710c",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_40e18174555745b9710c",
+     "targetQuestionId": "S2",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "5",
+      "label": "Less often than once a week"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_0a7b1763978f04fc14a7": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [
+     "Code 2 at Q1"
+    ],
+    "source": "typed-case:fi_0a7b1763978f04fc14a7",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_0a7b1763978f04fc14a7",
+     "targetQuestionId": "Q2",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "2",
+      "label": "Code 2 at Q1"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_410e606955adaff5cb9f": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [
+     "Any other code at Q1 except 2"
+    ],
+    "source": "typed-case:fi_410e606955adaff5cb9f",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_410e606955adaff5cb9f",
+     "targetQuestionId": "Q2",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "any_other",
+      "label": "Any other code at Q1 except 2"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_c67c781fa24e517d0688": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "typed-case:fi_c67c781fa24e517d0688",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_c67c781fa24e517d0688",
+     "targetQuestionId": "Q3",
+     "kind": "boundary",
+     "routeAnswer": null,
+     "boundaryInput": {
+      "bound": "max",
+      "expectedOutcome": "unspecified",
+      "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     }
+    },
+    "text_entry": {
+     "required": true,
+     "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "note": "typed: max boundary"
+    }
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_cba411f93b970c06168c": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "typed-case:fi_cba411f93b970c06168c",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_cba411f93b970c06168c",
+     "targetQuestionId": "Q3",
+     "kind": "boundary",
+     "routeAnswer": null,
+     "boundaryInput": {
+      "bound": "above-max",
+      "expectedOutcome": "rejected",
+      "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     }
+    },
+    "text_entry": {
+     "required": true,
+     "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "note": "typed: above-max boundary"
+    }
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_ee202c235ba9d6c0beaa": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [
+     "Yes"
+    ],
+    "source": "typed-case:fi_ee202c235ba9d6c0beaa",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_ee202c235ba9d6c0beaa",
+     "targetQuestionId": "Q7",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "1",
+      "label": "Yes"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_568d5ff6cc9d8b6ef159": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [
+     "No"
+    ],
+    "source": "typed-case:fi_568d5ff6cc9d8b6ef159",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_568d5ff6cc9d8b6ef159",
+     "targetQuestionId": "Q7",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "2",
+      "label": "No"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_d2db2a271da3fc008605": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [
+     "Can't remember"
+    ],
+    "source": "typed-case:fi_d2db2a271da3fc008605",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_d2db2a271da3fc008605",
+     "targetQuestionId": "Q7",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "3",
+      "label": "Can't remember"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_8e0f48c84b17932ee9f4": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [
+     "Yes"
+    ],
+    "source": "typed-case:fi_8e0f48c84b17932ee9f4",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_8e0f48c84b17932ee9f4",
+     "targetQuestionId": "Q7",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "1",
+      "label": "Yes"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_dca735737abf504274e5": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [
+     "No"
+    ],
+    "source": "typed-case:fi_dca735737abf504274e5",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_dca735737abf504274e5",
+     "targetQuestionId": "Q7",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "2",
+      "label": "No"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_b76f764a1a8e6788bb56": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [
+     "Can't remember"
+    ],
+    "source": "typed-case:fi_b76f764a1a8e6788bb56",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_b76f764a1a8e6788bb56",
+     "targetQuestionId": "Q7",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "3",
+      "label": "Can't remember"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_97592cbb04112585c2f6": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [
+     "Yes"
+    ],
+    "source": "typed-case:fi_97592cbb04112585c2f6",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    },
+    "case_action": {
+     "facetInstanceId": "fi_97592cbb04112585c2f6",
+     "targetQuestionId": "Q8",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "1",
+      "label": "Yes"
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_81c300cb4dfd0d67a41d": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "typed-case:fi_81c300cb4dfd0d67a41d",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_81c300cb4dfd0d67a41d",
+     "targetQuestionId": "Q8",
+     "kind": "boundary",
+     "routeAnswer": null,
+     "boundaryInput": {
+      "bound": "max",
+      "expectedOutcome": "unspecified",
+      "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     }
+    },
+    "text_entry": {
+     "required": true,
+     "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "note": "typed: max boundary"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_9c8195a76539014098d4": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "typed-case:fi_9c8195a76539014098d4",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_9c8195a76539014098d4",
+     "targetQuestionId": "Q8",
+     "kind": "boundary",
+     "routeAnswer": null,
+     "boundaryInput": {
+      "bound": "above-max",
+      "expectedOutcome": "rejected",
+      "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     }
+    },
+    "text_entry": {
+     "required": true,
+     "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "note": "typed: above-max boundary"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_942d3e0ff0af3c2a7f85": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "typed-case:fi_942d3e0ff0af3c2a7f85",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_942d3e0ff0af3c2a7f85",
+     "targetQuestionId": "Q7",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "2",
+      "label": null
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "FLOOR-01--fi_fcf5066c3748c7820ab4": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "typed-case:fi_fcf5066c3748c7820ab4",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "case_action": {
+     "facetInstanceId": "fi_fcf5066c3748c7820ab4",
+     "targetQuestionId": "Q7",
+     "kind": "route",
+     "routeAnswer": {
+      "code": "3",
+      "label": null
+     },
+     "boundaryInput": null
+    }
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-001": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "length": 500,
+     "value": "<exactly 500 characters>",
+     "note": "type exactly 500 characters — the point of this walk is the length, so the navigator must count, not approximate"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-002": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "length": 501,
+     "value": "<exactly 501 characters>",
+     "note": "type exactly 501 characters — the point of this walk is the length, so the navigator must count, not approximate"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-003": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "length": 499,
+     "value": "<exactly 499 characters>",
+     "note": "type exactly 499 characters — the point of this walk is the length, so the navigator must count, not approximate"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-004": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-005": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-006": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-007": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "length": 100,
+     "value": "<exactly 100 characters>",
+     "note": "type exactly 100 characters — the point of this walk is the length, so the navigator must count, not approximate"
+    }
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-008": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "length": 101,
+     "value": "<exactly 101 characters>",
+     "note": "type exactly 101 characters — the point of this walk is the length, so the navigator must count, not approximate"
+    }
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-009": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "length": 99,
+     "value": "<exactly 99 characters>",
+     "note": "type exactly 99 characters — the point of this walk is the length, so the navigator must count, not approximate"
+    }
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-010": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-011": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-012": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-013": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-014": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-015": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-016": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-017": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-018": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "PROBE: perform this action instead of answering normally, observe the response, then recover by answering validly",
+    "action": "submit-without-answering"
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-019": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "PROBE: perform this action instead of answering normally, observe the response, then recover by answering validly",
+    "action": "submit-without-answering"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-020": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "PROBE: perform this action instead of answering normally, observe the response, then recover by answering validly",
+    "action": "submit-without-answering"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-021": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "PROBE: perform this action instead of answering normally, observe the response, then recover by answering validly",
+    "action": "submit-without-answering"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-022": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "PROBE: perform this action instead of answering normally, observe the response, then recover by answering validly",
+    "action": "submit-without-answering"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ],
+  "EXP-023": [
+   {
+    "question": "Q1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q3",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q4",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q5",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "grid:answer-every-row-with-the-first-scale-point",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q6",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q7",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "Q8",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "text:enter-short-valid-text",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one",
+    "text_entry": {
+     "required": true,
+     "value": "QA-PROBE",
+     "note": "the [SPECIFY]/open-text field attached to this answer must be filled"
+    }
+   },
+   {
+    "question": "Q9",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "S2",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "C10",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   },
+   {
+    "question": "D1",
+    "select": [],
+    "source": "default:navigator-discretion",
+    "strategy": "navigator:choose-the-first-valid-answer",
+    "note": "the contract never enumerates this question's answers, so the planner cannot name one"
+   }
+  ]
+ }
+}

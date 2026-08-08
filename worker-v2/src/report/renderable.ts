@@ -85,6 +85,13 @@ export interface RenderableItemResult {
   reason: { code: string; summary: string } | null;
   evidenceRefs: string[];
   attemptRefs: string[];
+  /**
+   * The per-case results, carried through from the v2 record. This is the ONLY exact link
+   * between a requirement the aggregator settled as failing and the observation that failed
+   * it, and the report needs it to say what the survey actually did rather than only how
+   * many requirements failed. Optional because the legacy harness shape has no cases.
+   */
+  facetResults?: Array<{ facetInstanceId?: string; routeId?: string; status?: string; observationIds?: string[] }>;
   pathConsistency?: string;
   divergenceSet?: string[];
   derivedBy?: string;

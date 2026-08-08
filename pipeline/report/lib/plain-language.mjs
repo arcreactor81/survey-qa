@@ -18,6 +18,28 @@
 // found · Needs your decision · Could not test in the browser · Not completed ·
 // Evidence · Report ready · Survey ready/not ready.
 
+// THE SEVEN COVERAGE BUCKETS ARE IMPORTED, NEVER RESTATED. They are declared once in
+// `worker-v2/src/types/contracts.ts` (`COVERAGE_BUCKETS`) and mirrored once here in
+// view-model.mjs; a third spelling in this file would be a fourth thing to keep in step
+// with a set that must sum to the denominator. This module only NAMES them for a reader.
+import { COVERAGE_ORDER, COVERAGE_LABEL } from "./view-model.mjs";
+
+/**
+ * The seven buckets in survey language. One phrase per bucket, no bucket collapsed into
+ * another: "we did not reach it", "we were stopped", and "we ran out of time" are three
+ * different facts about a requirement that was not checked, and a reader deciding whether
+ * to field a survey needs to know which one happened.
+ */
+const COVERAGE_PLAIN = {
+  exercised: "were tried on the live survey",
+  "not-reached": "were never reached",
+  "proven-unreachable": "were shown to be impossible to reach",
+  blocked: "were stopped before we could check them",
+  "budget-exhausted": "were still waiting when the run hit its spending limit",
+  "time-exhausted": "were still waiting when the run ran out of time",
+  pending: "were never started",
+};
+
 /* ------------------------------------------------------------------ *
  * The six plain states                                                *
  * ------------------------------------------------------------------ */
@@ -338,18 +360,67 @@ export function buildDecisionSummary(view) {
           unbacked: [...unbackedRows.map((r) => r.itemId), ...unbackedFindings.map((f) => f.findingId)],
         };
 
-  /* ---- report ready vs survey ready ---- */
+  /* ---- WHAT THE RUN RECORDED, WHICH DOES NOT WAIT FOR A TRUSTED COLUMN ---------
+   *
+   * THE FAILURE THIS BLOCK EXISTS TO DELETE. Every number and every lane above is
+   * computed from `currentColumnId`, and that column exists only once an independent
+   * stage has re-derived the verdicts. On a real run — 227 requirements, two of them
+   * recorded as failing, one of those a skip that lands on the wrong question — no such
+   * stage had run, so this page said "We cannot tell you yet whether this survey is
+   * ready … there is nothing on this page you should act on", showed six em dashes, and
+   * reported "Programming problems: none found". A researcher would have fielded it.
+   *
+   * `view.coverage` is derived from the record's OWN item results, not from the trusted
+   * column, so it is available on every run. Reading it here does NOT make anything
+   * current: nothing below touches `currentColumnId`, `hasCurrentResults` or any count
+   * the register publishes, and the copy says in words that these are what the run saw
+   * and not a settled answer. "We have not confirmed it" and "we will not mention it"
+   * are different sentences, and only the first one is honest.
+   */
+  const asRun = view.coverage ?? {};
+  const asRunCounts = asRun.verdictCounts ?? {};
+  const recordedFails = Number(asRunCounts.fail ?? 0);
+  // Divergences the RUN recorded that no trusted column is reporting. When a column is
+  // trusted, `counts.problem` is the number and this is not consulted at all.
+  const recordedDivergences = countsKnown ? 0 : Math.max(problems.length, recordedFails);
+  // A defect the run recorded that no card on this page describes. Never silently
+  // shorter than the record: see the sentence built from it below.
+  const undescribedDivergences = countsKnown ? 0 : Math.max(0, recordedFails - problems.length);
+  const buckets = asRun.counts ?? {};
+  const bucketTotal = COVERAGE_ORDER.reduce((n, b) => n + Number(buckets[b] ?? 0), 0);
+  const everExercised = Number(asRun.exercised ?? buckets.exercised ?? 0);
+  const neverExercised = Math.max(0, (asRun.total ?? total ?? 0) - everExercised);
+
+  /* ---- report ready vs survey ready ----
+   * Unchanged: `countsKnown` is already the first conjunct, so a run with no trusted column
+   * has never claimed "Survey ready". Left alone deliberately — the eyebrow was correct and
+   * the defect was everything below it.
+   */
   const surveyReady =
     countsKnown && launchBlockers.length === 0 && counts.problem === 0 && counts.decision === 0 && counts.partial === 0;
   const reportReady = view.completion.report.complete && !view.integrity.failClosed;
 
-  /* ---- the headline, computed ---- */
+  /* ---- the headline, computed ----
+   * ORDER IS THE WHOLE POINT. `!countsKnown` used to be tested FIRST, so it won over
+   * every other fact about the run — including a recorded divergence — and the page
+   * opened by telling a reader there was nothing here to act on directly above a lane
+   * listing the things to act on.
+   */
   let headline;
   let lede;
-  if (!countsKnown) {
+  if (!countsKnown && recordedDivergences > 0) {
+    headline = "This survey does not do what the questionnaire says";
+    lede =
+      `The run recorded ${pluralise(recordedDivergences, "place", "places")} where the survey behaved ` +
+      `differently from the questionnaire. Nothing has re-checked ${recordedDivergences === 1 ? "it" : "them"} ` +
+      `independently yet, so read ${recordedDivergences === 1 ? "it" : "them"} as what this run saw rather than ` +
+      `as a settled answer — and check ${recordedDivergences === 1 ? "it" : "them"} before you field the survey.`;
+  } else if (!countsKnown) {
     headline = "We cannot tell you yet whether this survey is ready";
     lede =
-      "No result on this run has cleared our own evidence check, so there is nothing on this page you should act on as a finding about your survey.";
+      "No result on this run has cleared our own evidence check, so there is nothing on this page you should act " +
+      "on as a finding about your survey. This is not the same as a clean survey: " +
+      `${neverExercised} of the ${asRun.total ?? total} requirements were never tried at all on this run.`;
   } else if (launchBlockers.length) {
     headline = "Do not launch this survey yet";
     lede =
@@ -441,6 +512,51 @@ export function buildDecisionSummary(view) {
       )})`
     : `Full check: ${total} requirements · no settled result yet`;
 
+  /* ---- HOW MUCH OF THE QUESTIONNAIRE WAS ACTUALLY TRIED -----------------------
+   *
+   * "A run that finds nothing must not read as a clean bill of health when it was
+   * mostly incomplete." Without a trusted column the six plain pills were six em
+   * dashes and the line above stopped at "no settled result yet" — a page that had
+   * tried 2 of 227 requirements and a page that had tried all 227 and found nothing
+   * printed the same thing.
+   *
+   * These counts come from the record's own coverage ledger, which exists on every run
+   * and sums to the denominator by construction (contracts.ts asserts it at the write
+   * boundary). Every bucket with a count is named, including the ones a reader would
+   * rather not see; a bucket at zero is omitted from the sentence because the pills
+   * below print all seven with their zeros, so nothing is hidden by leaving it out.
+   */
+  const coverageBuckets = COVERAGE_ORDER.map((id) => ({
+    id,
+    label: COVERAGE_LABEL[id] ?? id,
+    plain: COVERAGE_PLAIN[id] ?? id,
+    count: Number(buckets[id] ?? 0),
+  }));
+  const coverageAccounted = coverageBuckets.reduce((n, b) => n + b.count, 0);
+  const attemptLine = !coverageAccounted
+    ? "This run recorded nothing about how much of the questionnaire it managed to try."
+    : `Of the ${coverageAccounted} requirements, ${joinList(
+        coverageBuckets.filter((b) => b.count > 0).map((b) => `${b.count} ${b.plain}`),
+      )}.`;
+  // Said whether or not anything settled, because "we did not confirm it" and "we never
+  // looked" are the two facts a reader has to be able to tell apart.
+  const untestedLine =
+    neverExercised > 0
+      ? `${neverExercised} of the ${asRun.total ?? total} requirements were never tried on the live survey, so ` +
+        `nothing on this page — including the absence of a problem — says anything about ${
+          neverExercised === 1 ? "it" : "them"
+        }.`
+      : "Every requirement in the questionnaire was tried at least once on the live survey.";
+  // NEVER SILENTLY SHORTER THAN THE RECORD.
+  const undescribedLine =
+    undescribedDivergences > 0
+      ? `${pluralise(undescribedDivergences, "requirement", "requirements")} the run recorded as failing ${
+          undescribedDivergences === 1 ? "is" : "are"
+        } not described anywhere on this page. Open the full check and the audit trail for ${
+          undescribedDivergences === 1 ? "it" : "them"
+        }.`
+      : null;
+
   /* ---- the decision lane, ranked and reconciled -----------------------
    * 19 questions, 11 requirements. Both numbers are true and they count
    * different things, so the page states the relationship instead of leaving
@@ -481,6 +597,16 @@ export function buildDecisionSummary(view) {
     shapeNote,
     evidenceLine,
     coverageLine,
+    // Trust-independent. Present on every run, whether or not a column is current.
+    coverageBuckets,
+    coverageAccounted,
+    attemptLine,
+    untestedLine,
+    undescribedLine,
+    recordedDivergences,
+    everExercised,
+    neverExercised,
+    bucketTotal,
     unresolved,
     decisionsChangingLaunch,
     decisionRankCounts,

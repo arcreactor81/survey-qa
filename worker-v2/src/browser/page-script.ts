@@ -33,6 +33,18 @@
 export const CONTROL_SELECTOR = "input, select, textarea, button, a[role=button], [role=radio], [role=checkbox]";
 
 /**
+ * The ACTUATION selector, and its own order contract.
+ *
+ * A control that is drawn at `opacity: 0; width: 1px` is not clickable at its own
+ * coordinates, but the `<label>` wrapping it is — that label IS the control as far as a
+ * respondent is concerned. So the reader records WHICH label activates such a control, as
+ * an index into this selector's document order, and the driver resolves the same selector
+ * to element handles. `labelIndex` and `page.$$(LABEL_SELECTOR)[labelIndex]` are the same
+ * element for the same reason `controls[i]` and `handles[i]` are. Change one, change both.
+ */
+export const LABEL_SELECTOR = "label";
+
+/**
  * THE ERROR COLLECTOR — installed before the site's own scripts run.
  *
  * A site that dies at load is the most consequential thing a QA run can find, so the
@@ -76,6 +88,7 @@ export const ERROR_COLLECTOR = `
 const READ_SCREEN_BODY = `
 (() => {
   const SEL = ${JSON.stringify(CONTROL_SELECTOR)};
+  const LABEL_SEL = ${JSON.stringify(LABEL_SELECTOR)};
   const vis = (el) => {
     if (!el || !el.getClientRects) return false;
     const cs = window.getComputedStyle(el);
@@ -85,6 +98,85 @@ const READ_SCREEN_BODY = `
   };
   const txt = (el) => (el && el.textContent ? el.textContent.replace(/\\s+/g, ' ').trim() : '');
   const attr = (el, n) => (el && el.getAttribute ? el.getAttribute(n) : null);
+  const nrm = (s) => String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+  // THINGS THIS READ COULD NOT DO PROPERLY, NAMED AND COUNTED.
+  //
+  // The rule this exists to enforce (CLAUDE.md, "no silent reliance on a convention"): where
+  // the DOM does not hold the shape this reader assumes, it must degrade to a REPORTED
+  // limitation, never to a wrong answer. The grid column parse used to do the opposite — it
+  // shifted every cell label by one and said nothing — and that produced confidently wrong
+  // answers on a screen where nothing looked broken. Anything added here is a fact about
+  // THIS READ, never a verdict about the survey.
+  const limitations = [];
+  const limit = (kind, detail, count) => {
+    limitations.push({ kind: kind, detail: String(detail).slice(0, 400), count: count });
+  };
+
+  // The <label> ELEMENT that activates a control (not its text): an explicit label[for],
+  // else the nearest ancestor <label>. Same precedence as labelFor below, deliberately.
+  const labelElementFor = (el) => {
+    if (el.id) {
+      const l = document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) + '"]');
+      if (l) return l;
+    }
+    let p = el.parentElement;
+    for (let i = 0; i < 3 && p; i++, p = p.parentElement) {
+      if (p.tagName === 'LABEL') return p;
+    }
+    return null;
+  };
+
+  const allLabels = Array.prototype.slice.call(document.querySelectorAll(LABEL_SEL));
+
+  // Is the centre of this box the thing a click there would land on? Used only to reject a
+  // COVERED target. Outside the viewport the question is unanswerable and must not be read
+  // as "covered": the driver scrolls before it clicks, so below-the-fold is still operable.
+  const centreIsReachable = (n) => {
+    const r = n.getBoundingClientRect();
+    if (!(r.width > 0 && r.height > 0)) return { ok: false, why: 'zero-size', hitTag: null };
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    const vw = window.innerWidth || (document.documentElement && document.documentElement.clientWidth) || 0;
+    const vh = window.innerHeight || (document.documentElement && document.documentElement.clientHeight) || 0;
+    if (x < 0 || y < 0 || x > vw || y > vh) return { ok: true, why: 'outside-viewport-not-hit-tested', hitTag: null };
+    const hit = document.elementFromPoint(x, y);
+    const ok = !!(hit && (hit === n || n.contains(hit)));
+    return { ok: ok, why: ok ? null : 'covered', hitTag: hit ? hit.tagName.toLowerCase() : null };
+  };
+
+  // CAN A RESPONDENT ACTUATE THIS CONTROL? — a different question from \`visible\`, and the
+  // one the driver actually needs.
+  //
+  // MEASURED: an eleven-point NPS scale rendered as \`position:absolute; opacity:0; width:1px\`
+  // radios inside their own <label>s reads \`visible: false\` on every one of the 0-10 options,
+  // while the twelfth ("Don't know") is drawn normally. A driver filtering on \`visible\` could
+  // therefore only ever record "Don't know" — not unlikely, IMPOSSIBLE — while a respondent
+  // answers the question by clicking a label, and a coverage report says the screen was
+  // answered. So operability is recorded separately, and it is deliberately NARROW:
+  //
+  //   via 'self'   the control is itself drawn, so it can be clicked where it is;
+  //   via 'label'  the control is not drawn, but a <label> that ACTIVATES it is drawn, is
+  //                not covered, and is therefore what the respondent clicks;
+  //   'none'       nothing a respondent can reach — an \`input[type=hidden]\`, a control in a
+  //                \`display:none\` alternate layout whose label is hidden with it, a honeypot
+  //                field with no label at all, or a label that something else is drawn over.
+  //
+  // \`visible\` keeps its exact old meaning and its old value; nothing that reads it moves.
+  const actuationOf = (el, type) => {
+    if (type === 'hidden') return { operable: false, via: 'none', note: 'input[type=hidden] — never operable', labelIndex: null };
+    if (vis(el)) return { operable: true, via: 'self', note: null, labelIndex: null };
+    const lab = labelElementFor(el);
+    if (!lab) return { operable: false, via: 'none', note: 'not drawn, and no <label> activates it', labelIndex: null };
+    if (!vis(lab)) return { operable: false, via: 'none', note: 'not drawn, and its <label> is not drawn either', labelIndex: null };
+    const h = centreIsReachable(lab);
+    if (!h.ok) {
+      return { operable: false, via: 'none', note: 'its <label> is drawn but ' + h.why + (h.hitTag ? ' by <' + h.hitTag + '>' : ''), labelIndex: null };
+    }
+    const li = allLabels.indexOf(lab);
+    if (li < 0) return { operable: false, via: 'none', note: 'its <label> is not addressable by the label selector', labelIndex: null };
+    return { operable: true, via: 'label', note: 'not drawn; actuated through its <label>' + (h.why ? ' (' + h.why + ')' : ''), labelIndex: li };
+  };
 
   // The rendered label of a control, by the same precedence a respondent perceives:
   // an explicit <label for>, a wrapping <label>, aria-label, then the nearest text.
@@ -115,6 +207,7 @@ const READ_SCREEN_BODY = `
   const controls = nodes.map((el, idx) => {
     const tag = el.tagName.toLowerCase();
     const type = tag === 'input' ? String(el.type || 'text').toLowerCase() : tag;
+    const act = actuationOf(el, type);
     const c = {
       idx: idx,
       tag: tag,
@@ -129,6 +222,11 @@ const READ_SCREEN_BODY = `
       disabled: !!el.disabled || attr(el, 'aria-disabled') === 'true',
       required: !!el.required || attr(el, 'aria-required') === 'true',
       visible: vis(el),
+      // CAN A RESPONDENT REACH IT — see actuationOf. Not a synonym for \`visible\`.
+      operable: act.operable,
+      actuatedVia: act.via,
+      actuationNote: act.note,
+      labelIndex: act.labelIndex,
       placeholder: attr(el, 'placeholder'),
       maxlength: attr(el, 'maxlength'),
       readOnly: !!el.readOnly,
@@ -151,31 +249,193 @@ const READ_SCREEN_BODY = `
     groups[key].options.push({
       order: groups[key].options.length, idx: c.idx, code: c.code, label: c.label,
       checked: c.checked, disabled: c.disabled, visible: c.visible,
+      operable: c.operable, actuatedVia: c.actuatedVia, labelIndex: c.labelIndex,
     });
   });
 
   // A grid/matrix screen: a table whose rows each carry one input group.
+  //
+  // A COLUMN HEADER IS NOT "ANY <th> IN THE TABLE". The previous selector,
+  // \`thead th, tr:first-child th\`, also matched the first BODY row's \`<th scope="row">\` —
+  // a ROW LABEL — because that row is \`:first-child\` of its own \`<tbody>\`. MEASURED on a
+  // five-point agree/disagree grid: SIX columns collected for FIVE inputs, and the
+  // length-mismatch branch then labelled every cell one column to the RIGHT. The cell whose
+  // submitted value was 1, "Strongly agree", was reported as "Somewhat agree"; the driver
+  // picks a grid cell by matching that label, so a documented "Somewhat agree" clicked
+  // Strongly agree, with no error raised and no fallback taken — while a documented
+  // "Strongly agree" matched nothing, fell through to cells[0] and was accidentally RIGHT.
+  // Right and wrong answers from one bug on one screen.
+  //
+  // Two things changed, and the second matters as much as the first:
+  //   1. columns come from the table's HEADER ROW — a row that carries <th> and no inputs —
+  //      and a \`scope="row"\` header is never one, by its own declaration;
+  //   2. a count that still does not line up is a NAMED, COUNTED LIMITATION and the cells go
+  //      UNLABELLED. Silently shifting is how the defect stayed invisible for the life of
+  //      this file, so the one thing this may never do again is quietly pick an offset.
   let grid = null;
   const table = document.querySelector('table');
   if (table) {
-    const headerCells = Array.prototype.slice.call(table.querySelectorAll('thead th, tr:first-child th'));
-    const columns = headerCells.map(txt).filter(Boolean);
-    const rows = Array.prototype.slice.call(table.querySelectorAll('tbody tr, tr')).map((tr) => {
-      const inputs = Array.prototype.slice.call(tr.querySelectorAll('input, select'));
+    const allRows = Array.prototype.slice.call(table.querySelectorAll('tr'));
+    const inputsIn = (tr) => Array.prototype.slice.call(tr.querySelectorAll('input, select'));
+    // The header row: <th>s and NO inputs. A row carrying inputs is a DATA row wherever it
+    // sits, and its <th> is that row's label.
+    let headerRow = null;
+    for (let i = 0; i < allRows.length && !headerRow; i++) {
+      if (allRows[i].querySelectorAll('th').length > 0 && inputsIn(allRows[i]).length === 0) headerRow = allRows[i];
+    }
+    const headerCells = headerRow ? Array.prototype.slice.call(headerRow.cells || []) : [];
+    const isRowScoped = (c) => String(attr(c, 'scope') || '').toLowerCase() === 'row';
+    const columns = headerCells.filter((c) => !isRowScoped(c)).map(txt).filter(Boolean);
+
+    // Where each header label sits ALONG the row, colspans expanded — so a cell can be
+    // matched to the header drawn above it rather than to a count. Used only as the second
+    // resort, and only when it resolves every input unambiguously.
+    const headerAt = {};
+    let headerWidth = 0;
+    headerCells.forEach((c) => {
+      const span = Math.max(1, Number(c.colSpan || 1));
+      const label = isRowScoped(c) ? '' : txt(c);
+      for (let k = 0; k < span; k++) headerAt[headerWidth + k] = label;
+      headerWidth += span;
+    });
+
+    let unlabelledCells = 0;
+    let geometryRows = 0;
+    let mismatchNote = null;
+
+    const rows = allRows.map((tr) => {
+      const inputs = inputsIn(tr);
       if (!inputs.length) return null;
       const head = tr.querySelector('th, td');
+
+      // This row's own geometry, colspans expanded.
+      const rowCells = Array.prototype.slice.call(tr.cells || []);
+      const posOf = new Map();
+      let rowWidth = 0;
+      rowCells.forEach((c) => {
+        posOf.set(c, rowWidth);
+        rowWidth += Math.max(1, Number(c.colSpan || 1));
+      });
+
+      // Resort 1 — the counts line up, so column i belongs to input i. This is the ordinary
+      // case and it is byte-for-byte what this file did before, for grids it read correctly.
+      const byCount = columns.length === inputs.length;
+
+      // Resort 2 — the counts do not line up, but the header row and this row are the same
+      // width and every input lands under a distinct, non-empty header. Then the TABLE says
+      // which column each input is in and no offset is being guessed. (A header row that
+      // omits the corner cell over a row-label column is genuinely ambiguous markup: the
+      // table itself puts the first scale point above the row labels, and that is what gets
+      // reported — with the disagreement named below rather than hidden.)
+      let byGeometry = null;
+      if (!byCount && headerRow && headerWidth > 0 && headerWidth === rowWidth) {
+        const at = [];
+        const used = {};
+        let ok = true;
+        for (let i = 0; i < inputs.length && ok; i++) {
+          const own = inputs[i].closest ? inputs[i].closest('td, th') : null;
+          const p = own && posOf.has(own) ? posOf.get(own) : null;
+          const lab = p === null ? '' : (headerAt[p] || '');
+          if (p === null || !lab || used[p]) ok = false;
+          else { used[p] = true; at.push(lab); }
+        }
+        if (ok) byGeometry = at;
+      }
+      if (byGeometry) geometryRows++;
+      if (!byCount && !byGeometry && !mismatchNote) {
+        mismatchNote =
+          'the header row offers ' + columns.length + ' column label(s) but this row carries ' +
+          inputs.length + ' input(s), and the table geometry does not resolve them either';
+      }
+
       return {
         label: txt(head).slice(0, 200),
         name: inputs[0].name || null,
-        cells: inputs.map((el, i) => ({
-          column: columns[i + (columns.length === inputs.length ? 0 : 1)] || null,
-          code: String(el.value || ''),
-          checked: !!el.checked,
-          idx: nodes.indexOf(el),
-        })),
+        cells: inputs.map((el, i) => {
+          const column = byGeometry ? (byGeometry[i] || null) : byCount ? (columns[i] || null) : null;
+          if (column === null) unlabelledCells++;
+          return {
+            column: column,
+            code: String(el.value || ''),
+            checked: !!el.checked,
+            idx: nodes.indexOf(el),
+          };
+        }),
       };
     }).filter(Boolean);
-    if (rows.length) grid = { columns: columns, rows: rows };
+
+    if (rows.length) {
+      grid = { columns: columns, rows: rows };
+      if (geometryRows > 0) {
+        limit(
+          'grid-columns-resolved-by-table-geometry',
+          'the grid header offers a different number of labels than the rows carry inputs, so ' +
+          geometryRows + ' row(s) were labelled from the table geometry (each input under the ' +
+          'header cell drawn above it) rather than by position. Column labels on those rows are ' +
+          'as reliable as the table markup, not as a counted match',
+          geometryRows,
+        );
+      }
+      if (unlabelledCells > 0) {
+        limit(
+          'grid-column-labels-unresolved',
+          'THE GRID COLUMNS COULD NOT BE MATCHED TO THE INPUTS, so ' + unlabelledCells +
+          ' cell(s) are reported with no column label rather than with a guessed one' +
+          (mismatchNote ? ' — ' + mismatchNote : '') +
+          '. A caller choosing a cell by column label cannot answer this grid as documented',
+          unlabelledCells,
+        );
+      }
+    }
+  }
+
+  // ONE SCREEN, TWO DESCRIPTIONS — they may not disagree.
+  //
+  // A grid cell is described twice in this payload: once by its column header (GRID) and
+  // once by the input's own accessible label (OPTION GROUPS, e.g. "<row> - Strongly agree").
+  // When the shifted parse above was live, those two disagreed on every cell of every grid
+  // screen, and NOTHING NOTICED — an agent reading the payload happened to use the correct
+  // one 45 times out of 45, which is redundancy, not detection. For a product whose whole
+  // job is finding places where two descriptions of one thing disagree, its own reader
+  // emitting a contradiction is exactly the event that must be reported.
+  //
+  // The test is deliberately tight, so it fires on CONTRADICTION and not on mere difference:
+  // the option's own label must name a DIFFERENT column of this same grid. Wording that is
+  // merely shorter, longer or absent is not a contradiction and is not counted. (It follows
+  // that a scale whose labels contain one another — "Agree" inside "Strongly agree" — can
+  // hide a contradiction here; this under-reports, and never over-reports.)
+  if (grid) {
+    const labelByIdx = {};
+    controls.forEach((c) => { labelByIdx[c.idx] = c.label; });
+    const says = (hay, needle) => !!needle && nrm(hay).indexOf(nrm(needle)) >= 0;
+    let contradictions = 0;
+    const examples = [];
+    grid.rows.forEach((r) => {
+      r.cells.forEach((cell) => {
+        const own = labelByIdx[cell.idx];
+        if (!cell.column || !own) return;
+        if (says(own, cell.column)) return;
+        let other = null;
+        for (let i = 0; i < grid.columns.length && !other; i++) {
+          if (grid.columns[i] !== cell.column && says(own, grid.columns[i])) other = grid.columns[i];
+        }
+        if (!other) return;
+        contradictions++;
+        if (examples.length < 3) {
+          examples.push('cell code "' + cell.code + '" is reported in column "' + cell.column +
+            '" but its own label says "' + other + '"');
+        }
+      });
+    });
+    if (contradictions > 0) {
+      limit(
+        'grid-cell-label-contradiction',
+        'THIS READ DESCRIBES THE SAME CELLS TWO WAYS AND THE TWO DISAGREE on ' + contradictions +
+        ' cell(s): ' + examples.join('; ') + '. One of the two descriptions in this payload is ' +
+        'wrong and a caller cannot tell which, so a column-matched answer on this grid is not trustworthy',
+        contradictions,
+      );
+    }
   }
 
   const buttons = controls
@@ -239,6 +499,10 @@ const READ_SCREEN_BODY = `
     controls: controls,
     optionGroups: Object.keys(groups).map((k) => groups[k]),
     grid: grid,
+    // What this read could NOT do properly, named and counted. An EMPTY ARRAY is a claim
+    // ("we looked and found none"); the field being ABSENT is an older reader that never
+    // looked. Never read absence as none.
+    readerLimitations: limitations,
     buttons: buttons,
     progress: progress,
     validationMessages: errEls,
@@ -247,6 +511,13 @@ const READ_SCREEN_BODY = `
       optionGroups: Object.keys(groups).length,
       options: Object.keys(groups).reduce((n, k) => n + groups[k].options.length, 0),
       textInputs: controls.filter((c) => c.type === 'text' || c.type === 'textarea').length,
+      // Options no respondent could reach at this viewport — a hidden control with a hidden
+      // label, a honeypot, an alternate layout the media query switched off. Counted so that
+      // "the screen had 12 options" and "11 of them were answerable" stay distinguishable.
+      optionsNotOperable: Object.keys(groups).reduce(
+        (n, k) => n + groups[k].options.filter((o) => !o.operable).length, 0,
+      ),
+      readerLimitations: limitations.length,
     },
     // Cheap stable identity for "did the screen change?" — question text plus the exact
     // option inventory. Deliberately NOT the URL: single-page surveys never change it.

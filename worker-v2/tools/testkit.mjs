@@ -41,9 +41,23 @@ const STUBS = {
       constructor(ctx, env) { this.ctx = ctx; this.env = env; }
     }
   `,
+  // THE DEFAULT IS STILL "NOT WIRED", AND THAT MATTERS. Almost every test here must never
+  // reach a browser, and a stub that quietly returned something plausible would let a test
+  // believe it had driven a survey when it had not — the shape of green this repo keeps
+  // shipping. So the throw is preserved exactly, and a test that genuinely needs to drive
+  // `executeBatch` end-to-end opts IN by installing `globalThis.__V2_TEST_BROWSER__`.
+  //
+  // It is opt-in per test rather than a second bundle because the alternative — no test at
+  // all that runs the executor's live path — means a mutation of a CALL SITE (the exercised
+  // gate, the stop-reason decision) has nothing to make red, and a mutant nothing can kill
+  // is a guard nobody has proved exists.
   "@cloudflare/puppeteer": `
     const notWired = () => { throw new Error("test stub: puppeteer is not available under node"); };
-    export default { connect: notWired, launch: notWired };
+    const hook = () => (typeof globalThis !== "undefined" ? globalThis.__V2_TEST_BROWSER__ : null) ?? null;
+    export default {
+      async connect(...a) { const h = hook(); return h && h.connect ? h.connect(...a) : notWired(); },
+      async launch(...a) { const h = hook(); return h && h.launch ? h.launch(...a) : notWired(); },
+    };
   `,
 };
 
@@ -68,6 +82,22 @@ const stubPlugin = {
  * It REFUSES a `find` that is absent or ambiguous. A mutation harness whose patch silently
  * applied to nothing reports "every mutant killed" over an unmutated build — the exact
  * shape of gate this repo has shipped before.
+ *
+ * ================== THE SAME DISEASE, ONE LEVEL UP (found 8 Aug) ==================
+ *
+ * This hook filtered `/\.ts$/`. `src/**` is not all TypeScript: `assemble-record.mjs` is the
+ * deterministic AGGREGATOR — `DECISION_TO_STATUS`, `verdictFor`, `rejectModelDerivedVerdicts`,
+ * the claim projection — shared verbatim with the offline pipeline, and it is the single most
+ * safety-critical module in the tree. esbuild never handed a `.mjs` to this plugin, so a mutant
+ * naming one was never applied, the "matched 0 times" refusal never fired, and the runner
+ * scored it SURVIVED: a real-looking result meaning "your test does not cover this", produced
+ * over a build in which the mutation had simply not happened. Seven mutants against that file
+ * all "survived" a suite that in fact kills six of them.
+ *
+ * So the filter now covers the extensions `src/**` actually contains, the loader follows the
+ * extension, and — the part that matters — A MUTANT WHOSE TARGET IS NEVER LOADED NOW SAYS SO,
+ * in the same words `mutate-runner.mjs` already recognises as BROKEN-ANCHOR ("this is NOT a
+ * kill"). Silence was the bug; being unable to apply a mutation must be reported, never scored.
  */
 const mutantPlugin = () => {
   const rel = process.env.MUTANT_FILE;
@@ -77,7 +107,8 @@ const mutantPlugin = () => {
   return {
     name: "worker-v2-mutant",
     setup(build) {
-      build.onLoad({ filter: /\.ts$/ }, (args) => {
+      let applied = false;
+      build.onLoad({ filter: /\.(ts|mjs|js)$/ }, (args) => {
         if (args.path.replace(/\\/g, "/") !== target) return null;
         const source = readFileSync(args.path, "utf8");
         const hits = source.split(find).length - 1;
@@ -87,7 +118,24 @@ const mutantPlugin = () => {
               `one place) proves nothing. Anchor: ${JSON.stringify(find)}`,
           );
         }
-        return { contents: source.replace(find, process.env.MUTANT_REPLACE ?? ""), loader: "ts" };
+        applied = true;
+        return {
+          contents: source.replace(find, process.env.MUTANT_REPLACE ?? ""),
+          loader: args.path.endsWith(".ts") ? "ts" : "js",
+        };
+      });
+      // The build finished and the file this mutant names was never loaded — it is outside the
+      // bundle's import graph, or the path is wrong. Either way the suite that follows would be
+      // scoring an UNMUTATED build, so this is raised as an anchor failure rather than left to
+      // read as evidence about a test.
+      build.onEnd(() => {
+        if (!applied) {
+          throw new Error(
+            `mutant patch matched 0 time(s) in ${rel}: the bundle never loaded that file, so the mutation ` +
+              `did not run and nothing below could be scored against it. Check the path and that some ` +
+              `module in tools/testkit.mjs's entry list imports it.`,
+          );
+        }
       });
     },
   };
@@ -129,6 +177,10 @@ export async function loadWorker() {
       `export * as apiRuns from ${p("src/api/runs.ts")};`,
       `export * as router from ${p("src/api/router.ts")};`,
       `export * as expand from ${p("src/extract/expand.ts")};`,
+      // D27 needs the REAL identity mint: the collision it reproduces is minted in the
+      // merge and only OBSERVED in the expander, so a fixture requirement row would test
+      // the wrong half of the pipeline.
+      `export * as merge from ${p("src/extract/merge.ts")};`,
       `export * as passA from ${p("src/extract/pass-a.ts")};`,
       `export * as passB from ${p("src/extract/pass-b.ts")};`,
       `export * as extractStage from ${p("src/workflow/stages/extract.ts")};`,
@@ -139,6 +191,18 @@ export async function loadWorker() {
       `export * as verifyObservations from ${p("src/workflow/stages/verify-observations.ts")};`,
       `export * as runInputs from ${p("src/workflow/stages/run-inputs.ts")};`,
       `export * as deriveVerdicts from ${p("src/workflow/stages/derive-verdicts.ts")};`,
+      // D25 needs the REAL assemble+capture stages, so the v2 evidence the judge reads is
+      // written by the code that writes it in production rather than by a fixture.
+      `export * as assembleRecord from ${p("src/workflow/stages/assemble-record.ts")};`,
+      `export * as capture from ${p("src/browser/capture.ts")};`,
+      // D29 needs the REAL walker. `walkPath` decides what "blocked" means for every downstream
+      // stage, and until D29 nothing executed a line of it — its `PageLike` is a structural
+      // interface, so a fake page drives the real code with no browser anywhere.
+      `export * as driver from ${p("src/browser/driver.ts")};`,
+      // D31 needs the REAL executor. Its exercised gate and its stop-reason decision are the
+      // two things that turn a walk into a published coverage number and a published
+      // accusation, and until D31 the module was not even importable by a test.
+      `export * as executeBatch from ${p("src/workflow/stages/execute-batch.ts")};`,
       `export * as sweeper from ${p("src/sweeper.ts")};`,
       `export * as structure from ${p("src/structure/index.ts")};`,
       `export * as env from ${p("src/types/env.ts")};`,
@@ -289,9 +353,22 @@ export function memoryR2() {
  */
 export function fakeStep(opts = {}) {
   const calls = [];
+  const sleeps = [];
   const cache = new Map();
   const step = {
     calls,
+    // SLEEPS ARE RECORDED, AND THEY ARE NOT `calls`.
+    //
+    // A sleep is an invocation BOUNDARY, not a step: the engine does not count it towards
+    // the step limit and no test that counts `extract-pass-*-wave-N` steps should suddenly
+    // see one. Keeping them in their own list lets a test assert the boundary exists and
+    // where it sits WITHOUT changing what every existing `step.calls` assertion means.
+    //
+    // They are recorded at all because an unrecorded no-op is the exact shape of the test
+    // double that shipped a crash: `sleep` used to be `async sleep() {}`, so a run-workflow
+    // that never called it and a run-workflow that called it with the wrong arity were
+    // indistinguishable to the suite. Now the arguments are captured and can be asserted.
+    sleeps,
     async do(name, a, b) {
       const body = typeof a === "function" ? a : b;
       calls.push(name);
@@ -301,8 +378,12 @@ export function fakeStep(opts = {}) {
       cache.set(name, result);
       return result;
     },
-    async sleep() {},
-    async sleepUntil() {},
+    async sleep(name, duration) {
+      sleeps.push({ name, duration, kind: "sleep" });
+    },
+    async sleepUntil(name, timestamp) {
+      sleeps.push({ name, timestamp, kind: "sleepUntil" });
+    },
   };
   return step;
 }

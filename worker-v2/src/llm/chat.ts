@@ -87,7 +87,23 @@ export interface ChatOutcome {
  * attached, so a failed call still costs what it cost on the ledger) after the attempt cap.
  */
 export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions): Promise<ChatOutcome> {
+  // FAIL CLOSED ON MISSING GATEWAY CONFIG. This used to fall back to `spec.directBaseUrl`
+  // (`https://api.deepseek.com`, `https://api.x.ai/v1`), so a missing or mistyped
+  // CF_AIG_* var silently routed every paid call AROUND the gateway — no spend limit, no
+  // per-request log, no cost ledger, and nothing anywhere said so. A spend ceiling that a
+  // typo can bypass is not a ceiling. Refusing is correct: extraction is the dominant cost
+  // line, and a run that cannot be metered should not start.
+  //
+  // `ALLOW_DIRECT_LLM_BASE_URL` is the deliberate escape hatch (local dev against a stub,
+  // or a gateway outage) and must be set explicitly — never a default, never a fallback.
   const usingGateway = Boolean(env.CF_AIG_ACCOUNT_ID && env.CF_AIG_GATEWAY_ID);
+  if (!usingGateway && env.ALLOW_DIRECT_LLM_BASE_URL !== "true") {
+    throw new Error(
+      `refusing to call ${spec.provider} directly: CF_AIG_ACCOUNT_ID and CF_AIG_GATEWAY_ID must ` +
+        `both be set so spend is metered and capped by the AI Gateway. Set ` +
+        `ALLOW_DIRECT_LLM_BASE_URL="true" only to bypass this deliberately.`,
+    );
+  }
   const baseUrl = usingGateway
     ? `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_ID}/${spec.provider}${spec.gatewaySuffix}`
     : spec.directBaseUrl;

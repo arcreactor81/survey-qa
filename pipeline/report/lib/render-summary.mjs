@@ -504,6 +504,77 @@ function decisionCard(f, view, rowsById) {
   </article>`;
 }
 
+/* --------------------- what the plan could not do --------------------- *
+ *
+ * The planner names its own shortfalls with closed codes and emits EVERY code on EVERY
+ * plan, including at zero, so that "we looked and found none" cannot be confused with
+ * "nobody looked" (worker-v2 stages/plan.ts). That distinction only survives if it is
+ * rendered, so this block prints the zeros too.
+ *
+ * TWO ZONES, ON PURPOSE. A reader gets a counted sentence in survey language; the plan's
+ * own wording — which is written in stage vocabulary, because that is who it was written
+ * for — is kept inside `Technical details`, the disclosure Amendment B reserves for exactly
+ * that and which the vocabulary gate reports separately rather than failing on. Translating
+ * the plan's sentence in prose here would either lose the fact or leak the vocabulary; this
+ * loses neither.
+ */
+const LIMITATION_PLAIN = {
+  "cases-not-assigned-to-any-walk": "checks that no run through the survey ever covered",
+  "decisions-without-document-wording":
+    "answers the run had to pick without the questionnaire's own wording to recognise them by",
+  "route-labels-that-are-routing-conditions":
+    "routing rules written as a condition rather than as an answer a respondent can choose",
+  "route-answers-that-name-only-a-code":
+    "routing rules that name only an answer code, with no wording anywhere to click",
+  "cases-without-a-target-question": "checks that name no question to carry them out on",
+  "cases-without-a-stimulus": "checks that name a question but no answer to give it",
+  "cases-whose-target-is-not-on-their-walk":
+    "checks whose question is not answered exactly once by the run they were attached to",
+  "cases-without-a-witness-walk": "checks belonging to a requirement no run through the survey covers",
+  "plan-predates-limitation-reporting":
+    "this run's plan was made before we started counting what a plan could not do, so its shortfalls were never counted",
+};
+
+function planLimitationsBlock(view) {
+  const block = view?.planLimitations ?? null;
+  if (!block) {
+    return `<p class="muted">We have no record of what this run's plan could not do. That is not a statement that it could do everything.</p>`;
+  }
+  const entries = Array.isArray(block.entries) ? block.entries : [];
+  if (block.state !== "read" || entries.length === 0) {
+    return `<p class="muted">We could not read what this run's plan was unable to do, so that is unknown. It is not a statement that it was able to do everything.</p>`;
+  }
+  const withCount = entries.filter((e) => Number(e?.count ?? 0) > 0);
+  const lead = withCount.length
+    ? `The plan for this run also reported ${withCount.length === 1 ? "one thing" : `${withCount.length} things`} it could not do:`
+    : `The plan for this run reported ${entries.length} kinds of shortfall it checks for, and found none of them.`;
+  return `
+    <p>${esc(lead)}</p>
+    ${
+      withCount.length
+        ? `<ul class="plain-list">${withCount
+            .map(
+              (e) =>
+                `<li><strong>${Number(e.count)}</strong> ${esc(
+                  LIMITATION_PLAIN[e.code] ?? "shortfalls of a kind this page has no plain description for",
+                )} <code>${esc(String(e.code ?? "unnamed"))}</code></li>`,
+            )
+            .join("")}</ul>`
+        : ""
+    }
+    <details class="tech">
+      <summary>Technical details — every shortfall the plan checks for, including the ones at zero</summary>
+      <ul class="plain-list">${entries
+        .map(
+          (e) =>
+            `<li><code>${esc(String(e.code ?? "unnamed"))}</code> — <strong>${Number(e.count ?? 0)}</strong> — ${esc(
+              String(e.what ?? ""),
+            )}</li>`,
+        )
+        .join("")}</ul>
+    </details>`;
+}
+
 /* ----------------------------- the view ----------------------------- */
 
 export function renderSummaryView(view, summary) {
@@ -530,9 +601,21 @@ export function renderSummaryView(view, summary) {
     }</span>`;
   };
 
+  /* A standing statement about the SERVICE, above the verdict because it changes how
+     the verdict should be read. Absent by default — see `serviceNote` in view-model.mjs
+     for why this is not `fixtureNote`. Rendered inside the Summary view on purpose, so
+     the customer-copy gates scan it like every other sentence a reader meets. */
+  const serviceNote =
+    view.serviceNote && view.serviceNote.body
+      ? `<p class="service-note" role="note">${
+          view.serviceNote.flag ? `<strong>${esc(view.serviceNote.flag)}</strong> ` : ""
+        }${esc(view.serviceNote.body)}</p>`
+      : "";
+
   return `
 <section class="hero" aria-labelledby="verdict">
   <p class="eyebrow">${esc(s.readinessLine)}</p>
+  ${serviceNote}
   <h2 id="verdict" class="verdict">${esc(s.headline)}</h2>
   <p class="lede">${esc(s.lede)}</p>
   ${s.follow || s.passedSentence ? `<p class="follow">${s.follow} ${s.passedSentence}</p>` : ""}
@@ -543,6 +626,12 @@ export function renderSummaryView(view, summary) {
     <span><strong>${esc(s.evidenceLine.headline)}</strong> ${esc(s.evidenceLine.detail)}</span>
   </p>
   ${s.shapeNote ? `<p class="shape-note">${esc(s.shapeNote)}</p>` : ""}
+  ${
+    /* NEVER SILENTLY SHORTER THAN THE RECORD. If the run derived more failing
+       requirements than this page has cards for, the difference is stated here rather
+       than left for a reader to find by comparing two totals in the audit trail. */
+    s.undescribedLine ? `<p class="shape-note">${esc(s.undescribedLine)}</p>` : ""
+  }
 </section>
 
 ${
@@ -554,7 +643,17 @@ ${
       </section>`
     : `<section class="lane lane--quiet" id="lane-blocker">
         <h2 class="lane-title">Launch blocker</h2>
-        <p class="lane-lede">None. The survey opened in a standard browser in this run.</p>
+        <p class="lane-lede">${
+          /* "The survey opened in a standard browser in this run" is a POSITIVE claim
+             about what happened, and it was printed whenever no launch blocker was
+             recorded — including on a run whose first load threw and rendered nothing.
+             The honest empty state says what the record does and does not contain. */
+          esc(
+            s.everExercised > 0
+              ? "None recorded. The run reached and drove the survey in a standard browser."
+              : "None recorded. This run did not reach the survey in a standard browser either, so that is a statement about the record and not about the survey.",
+          )
+        }</p>
       </section>`
 }
 
@@ -563,11 +662,35 @@ ${
     ? `<section class="lane lane--problems" id="lane-problems" aria-labelledby="lane-problems-h">
         <h2 id="lane-problems-h" class="lane-title">${s.problems.length} programming problem${s.problems.length === 1 ? "" : "s"}</h2>
         <p class="lane-lede">The survey does something different from what the questionnaire says. Each one states what a respondent experiences and what to change.</p>
+        ${
+          /* WHERE THESE SENTENCES CAME FROM. When the run wrote its own descriptions the
+             page shows those and says nothing extra. When it recorded failing requirements
+             and no descriptions, the words below are the checking step's own, read back
+             off the artifacts — a reader is owed that distinction before acting on them. */
+          view.findings?.source === "verifier-observations"
+            ? `<p class="lane-lede lane-lede--rank">${esc(
+                view.findings.derivedFromObservations === s.problems.length
+                  ? "This run recorded which requirements failed but wrote no description of them. The wording below is taken from the checks that read the saved screens, and no one has reviewed it."
+                  : `${view.findings.derivedFromObservations} of the problems below have no description in this run's own record. Their wording is taken from the checks that read the saved screens, and no one has reviewed it.`,
+              )}</p>`
+            : ""
+        }
         ${s.problems.map((f) => findingCard(f, view, rowsById, { lane: "problem" })).join("\n")}
       </section>`
     : `<section class="lane lane--quiet" id="lane-problems">
         <h2 class="lane-title">Programming problems</h2>
-        <p class="lane-lede">None found on the checks that reached a result.</p>
+        <p class="lane-lede">${
+          /* "None found" IS A CLAIM, and it is only true of what was checked. On a run
+             that tried 2 of 227 requirements it read as a clean survey. The empty lane
+             now carries the same denominator the panel below does. */
+          esc(
+            s.countsKnown
+              ? "None found on the checks that reached a result."
+              : s.neverExercised > 0
+                ? `None described on this page. ${s.neverExercised} of the ${s.total} requirements were never tried on the live survey, so this is not a statement that the survey has no problems.`
+                : "None described on this page. No result on this run has been re-checked independently, so this is not a statement that the survey has no problems.",
+          )
+        }</p>
       </section>`
 }
 
@@ -625,10 +748,33 @@ ${
       ? "These matched the questionnaire and their evidence was re-checked. Nothing here needs your attention."
       : "Nothing on this run cleared our evidence check, so no requirement is being reported as passed."
   }</p>
-  <details class="group-fold">
+  <details class="group-fold" ${s.countsKnown ? "" : "open"}>
     <summary>What was checked, and what is still unresolved</summary>
-    <div class="mini-counts">${["passed", "problem", "decision", "partial", "no-browser", "not-completed"].map(pill).join("")}</div>
-    <p class="muted">${esc(s.coverageLine)}. <a href="#full-check" data-goto="full">Open the full check</a> to see every requirement, including the ones with no result.</p>
+    ${
+      /* WHEN NOTHING SETTLED, SHOW WHAT WAS TRIED — NOT SIX EM DASHES.
+       *
+       * The six plain pills are read off the current column, so without one they were
+       * "Passed —, Problem found —, …" and a reader could not tell a run that tried two
+       * of 227 requirements from a run that tried all of them and found nothing. The
+       * seven coverage buckets are derived from the record itself and are available on
+       * every run, so that is what is shown instead, in the vocabulary the buckets are
+       * declared in. The panel is also OPEN in this case: a reader who has just been
+       * told nothing settled must not have to go looking for how much was attempted. */
+      s.countsKnown
+        ? `<div class="mini-counts">${["passed", "problem", "decision", "partial", "no-browser", "not-completed"]
+            .map(pill)
+            .join("")}</div>
+    <p class="muted">${esc(s.coverageLine)}. <a href="#full-check" data-goto="full">Open the full check</a> to see every requirement, including the ones with no result.</p>`
+        : `<div class="mini-counts">${s.coverageBuckets
+            .map(
+              (b) =>
+                `<span class="mini-count"><span class="pstate pstate--neutral">${esc(b.label)}</span> ${b.count}</span>`,
+            )
+            .join("")}</div>
+    <p>${esc(s.attemptLine)}</p>
+    <p class="muted">${esc(s.untestedLine)} <a href="#full-check" data-goto="full">Open the full check</a> to see every requirement, including the ones with no result.</p>`
+    }
+    ${planLimitationsBlock(view)}
   </details>
 </section>
 `;

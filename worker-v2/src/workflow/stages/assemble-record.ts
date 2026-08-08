@@ -20,6 +20,9 @@ import { loadRunInputs } from "./run-inputs";
 import { signingKeys } from "./run-inputs";
 import { stageNotEvaluated, type StageResult } from "../gates";
 import type { ItemResult } from "../../types/record";
+// The execution ledger's key and shape, imported rather than re-spelled: a second copy of a
+// storage key is how two readers come to disagree about where the run's own state lives.
+import { execProgressKey, type ExecProgress, type WalkRecord } from "./execute-batch";
 
 // @ts-ignore -- untyped ESM, shared with the offline pipeline
 import { assembleRunRecordV2, rejectModelDerivedVerdicts, ASSEMBLER_ID } from "./assemble-record.mjs";
@@ -33,6 +36,33 @@ export interface AssembledRecord {
   observations: number;
   evidence: number;
   testComplete: boolean;
+  /** Surfaced on the stage result so a run's findings are countable without re-reading R2. */
+  claims: number;
+  blockers: number;
+}
+
+/**
+ * The run's own execution ledger, or NULL — never an empty ledger standing in for a missing
+ * one.
+ *
+ * `execute-batch.ts#loadProgress` deliberately returns an EMPTY progress for a missing or
+ * unparseable object, because the executor's next action is the same either way: start from
+ * nothing. The assembler's need is the opposite one. "No walk crashed" and "we cannot say
+ * whether a walk crashed" are different sentences for a reader of a signed record, and
+ * collapsing them is how a run that never wrote a ledger would read as a run whose target
+ * loaded fine. So this reads the same durable key and keeps the distinction.
+ */
+async function executionWalks(env: Env, runId: string): Promise<WalkRecord[] | null> {
+  const obj = await env.EVIDENCE.get(execProgressKey(runId));
+  if (!obj) return null;
+  try {
+    const progress = (await obj.json()) as ExecProgress;
+    return progress?.kind === "v2-execution-progress/1.0.0" && Array.isArray(progress.walks)
+      ? progress.walks
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function assembleRecord(
@@ -56,6 +86,9 @@ export async function assembleRecord(
   if (violation) return stageNotEvaluated<AssembledRecord>("MODEL_DERIVED_VERDICT", violation);
 
   const startedAt = inputs.envelope?.createdAt ?? new Date().toISOString();
+  // ONE extra R2 GET, not a LIST. `run-inputs.ts` explains why the catalogue is the expensive
+  // load; this is a single keyed read and the only source of the run's load-crash facts.
+  const walks = await executionWalks(env, runId);
   const unsigned = assembleRunRecordV2({
     runId,
     envelope: inputs.envelope,
@@ -65,7 +98,10 @@ export async function assembleRecord(
     evidence: inputs.evidence,
     itemResults,
     attempts: [],
-    claims: [],
+    // CLAIMS AND BLOCKERS ARE NOT PASSED. The assembler derives both from the itemResults,
+    // observations, evidence and walks above — see `deriveClaims` / `deriveBlockers`. This
+    // call site used to hand it `claims: []` and that is precisely what got signed.
+    walks,
     checkpoint: inputs.checkpoint,
     planHash: inputs.checkpoint?.execution?.planRevisionId ?? null,
     startedAt,
@@ -96,6 +132,8 @@ export async function assembleRecord(
       observations: inputs.observations.length,
       evidence: inputs.evidence.length,
       testComplete: !!(record.exploration as { testComplete?: boolean })?.testComplete,
+      claims: (record.claims as unknown[] | undefined)?.length ?? 0,
+      blockers: (record.blockers as unknown[] | undefined)?.length ?? 0,
     },
     proof: {
       evaluatorId: ASSEMBLER_ID,

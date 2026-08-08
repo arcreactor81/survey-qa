@@ -64,6 +64,41 @@
   // helper into v2 is a compile error rather than a silent cross-namespace write.
   "r2_buckets": [{ "binding": "EVIDENCE", "bucket_name": "survey-qa-artifacts" }],
 
+  // THE SUBREQUEST BUDGET. This is the limit run v2r_01kzfb6py8pbxznqv022p2qkhb died on.
+  //
+  // A subrequest is ANY call to a Cloudflare service — every R2 get/put/head/list counts, not
+  // just `fetch()` to the internet. The budget is PER WORKER INVOCATION, and a Workflow
+  // instance does not get a fresh invocation per step: the engine runs consecutive steps
+  // inside one invocation, so every step shares one budget. On Workers Paid the default is
+  // 10,000; this account has no `limits` block, so 10,000 is what that run had.
+  //
+  // WHERE THAT RUN'S ~10,000 WENT (counted from the code, and from the 1,707 catalogue
+  // entries the run actually wrote to R2 — `v2/runs/<id>/evidence/`):
+  //
+  //   execution      ~4,400   1,707 x putEvidence, each a head + a conditional put + a
+  //                           catalogue put. NOT the browser: puppeteer drives the session
+  //                           over a WebSocket, so only connect/launch is a subrequest.
+  //   extraction       ~300   model calls + one R2 put per window/chunk
+  //   project-obs    ~1,710   listCatalog = 1 list + one GET PER CATALOGUE ENTRY
+  //   verify-obs     ~1,710   the SAME fan-out again, one step later  <-- died here, 1m19s
+  //                           in, which is 1,707 sequential R2 GETs at ~46ms
+  //   derive + mint  ~3,400   loadRunInputs (another listCatalog) + loadArtifactBytes, which
+  //                           fetches the bytes of every entry
+  //   report         ~1,710   report/build.ts re-verifies each catalogue entry
+  //
+  // ~13,000 for a 46-walk run, and it scales with SCREENS CAPTURED, so a longer survey is
+  // strictly worse. verify-observations now looks artifacts up by key instead of listing the
+  // catalogue (-1,700), but the stages after it still fan out and they are owned elsewhere.
+  //
+  // 100,000 is deliberate, not the 10,000,000 maximum: it is ~7x the appetite measured above,
+  // which covers a much larger survey, while still terminating a runaway loop long before it
+  // can bill a fortune. Raise it only against arithmetic like the above, never as a reflex.
+  //
+  // Requires the Standard Usage Model — `workers/scripts/survey-qa-v2/settings` reports
+  // `usage_model: "standard"`, so `limits` is honoured. It is enforced only when deployed;
+  // `wrangler dev` ignores it, which is why no local test can exercise this.
+  "limits": { "subrequests": 100000 },
+
   // Distinct Workflow NAME, BINDING and CLASS. A v1 sweeper holding RUN_WORKFLOW can
   // never probe, restart or recreate a v2 instance, and vice versa.
   "workflows": [
@@ -205,8 +240,11 @@
     "GROK_OUTPUT_USD_PER_MTOK": "2.50",
     "DEEPSEEK_MODEL": "deepseek-v4-pro",
     "DEEPSEEK_REASONING_EFFORT": "medium",
-    "DEEPSEEK_INPUT_USD_PER_MTOK": "0.28",
-    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.42",
+    // OFFICIAL RATES, corrected 8 Aug. These read 0.28 / 0.42 and the cost ledger
+    // under-reported every DeepSeek call accordingly — a live gateway audit measured
+    // ~1.74x understatement, inside the band these ratios predict.
+    "DEEPSEEK_INPUT_USD_PER_MTOK": "0.435",
+    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.87",
 
     // ---- extraction shape (a document that needs smaller chunks must not need code) ----
     // MEASURED, not guessed. A 45-block chunk of the t1 questionnaire cost 150 s and 13.6 k

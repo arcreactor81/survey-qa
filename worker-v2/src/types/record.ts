@@ -381,6 +381,52 @@ export interface Observation {
   attestation: { producedBy: string; producerVersion: string; payloadHash: string };
 }
 
+/**
+ * WHAT QUALIFIES EVERY RESULT IN THE RECORD — not a finding about a requirement.
+ *
+ * A `DefectClaim` is a pointer at ONE requirement, carrying its evidence through the
+ * observation it names. Some of the most serious things a run learns fit neither half: the
+ * target crashed on load and rendered nothing (no case closed, so no observation exists to
+ * point at, and its evidence witnesses every requirement at once); the run only continued by
+ * injecting a shim, so nothing observed afterwards describes the survey as served; the
+ * execution ledger could not be read at all. Those are facts a reader must hold while reading
+ * ANY verdict here, and this is where they live.
+ *
+ * Distinct from `run-workflow.ts#testAxisBlockers`, which is bookkeeping about whether the
+ * run's test axis may close and which takes the assembled record as an input — so it could
+ * not be a field of the record even in principle.
+ *
+ * NO SEVERITY AND NO CONFIDENCE FIELD, for the same reason `findingFromClaim` emits
+ * `severity: null`: neither is derivable from the evidence, so a slot for one is an invitation
+ * to invent one.
+ */
+export type RunBlockerKind =
+  /** A walk recorded `loadCrash` — the page threw and rendered no question. */
+  | "TARGET_FAILED_TO_LOAD"
+  /** At least one walk ran against a page this harness patched. */
+  | "OBSERVATIONS_MADE_AGAINST_SHIMMED_TARGET"
+  /** No execution ledger, so nothing above can be said either way. */
+  | "EXECUTION_LEDGER_UNAVAILABLE"
+  /** A failing case cites an observation this record does not carry. */
+  | "UNRESOLVED_FAIL_OBSERVATION";
+
+export interface RunBlocker {
+  blockerId: string;
+  kind: RunBlockerKind;
+  pathId: string | null;
+  attemptId: string | null;
+  /** The executor's own closed outcome word, e.g. `load-crash`. Never a verdict. */
+  outcome: string | null;
+  shimmed: boolean | null;
+  at: string | null;
+  /** Verbatim from the producer — the page's own error text, never a paraphrase. */
+  detail: string;
+  /** Ids that must exist in this record's own `evidence[]` catalogue. */
+  evidenceIds: string[];
+  observationRefs: string[];
+  derivedBy: string;
+}
+
 /** Pointer-only claim (merged-contract §2). The typed payload lives in observations[]. */
 export interface DefectClaim {
   claimId: string;
@@ -502,10 +548,15 @@ export interface RunRecordV2 {
    */
   attempts: AttemptRecordV2[];
   observations: Observation[];
+  /**
+   * DERIVED BY THE ASSEMBLER FROM `itemResults` + `observations`, never supplied. It was a
+   * parameter, and a run with two real `contradicted` verdicts signed `claims: []` because
+   * the caller passed one. See `assemble-record.mjs#deriveClaims`.
+   */
   claims: DefectClaim[];
   ambiguities: unknown[];
   taxonomyGaps: unknown[];
-  blockers: unknown[];
+  blockers: RunBlocker[];
   itemResults: ItemResult[];
   /** Plan hash + per-kind counts. Exploration may ADD findings, never change the denominator. */
   exploration: { planHash: string | null; perKindCounts: Record<string, number>; testComplete: boolean };

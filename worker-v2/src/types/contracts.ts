@@ -295,6 +295,125 @@ export class OwnershipLost extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// WHY A RUN ENDED BADLY — the diagnosis, structured, on its way to a reader
+// ---------------------------------------------------------------------------
+
+/**
+ * THE FIELD THAT DID NOT EXIST WHEN THE FIRST REAL RUN DIED.
+ *
+ * `v2r_01kzf7ehb2sayx2y2xz4ecm1ed` ended `workflow-error` with nothing else to say. The
+ * cause was on file the whole time — Cloudflare's own Workflow API returned
+ * `planning refused duplicate sealed facetInstanceId fi_b74430a941910fc9a6f9` instantly —
+ * but that sentence lived only in the engine's step record, which no product surface reads
+ * and no user can reach. Everything the run itself published had been flattened to one
+ * generic word by the time it crossed the durable step boundary.
+ *
+ * So the cause is now written down where the cause still exists (inside the step closure,
+ * in the same isolate as the error object) and carried out through both read surfaces, in
+ * FOUR SEPARATE FACTS rather than one blob:
+ *
+ *   step       — WHICH stage refused. Recoverable from nothing else; the outer catch does
+ *                not know, and `plan-1` was only ever obtainable from the engine.
+ *   reasonCode — the machine field, same vocabulary as `completion.reasonCode`. A client
+ *                branches on THIS and never on the prose.
+ *   kind       — the error's class name when the thrower set one. Distinguishes a guard
+ *                that refused from a crash that happened to say something similar.
+ *   message    — the human sentence, SANITISED (see `sanitiseErrorText`). The only part
+ *                of a thrown error that is ever allowed to reach a browser.
+ */
+export interface RunFailure {
+  /** Workflow step that threw, by the name this code gives it (`plan`, `execute-batch-3`). */
+  step: string;
+  /** Stable machine code. Shares the `completion.reasonCode` vocabulary deliberately. */
+  reasonCode: string;
+  /** `err.name` when the thrower set one; `"unknown"` for a non-Error throw. */
+  kind: string;
+  /** Sanitised, bounded, renderable. NEVER the raw thrown value. */
+  message: string;
+  at: string;
+}
+
+/** The structured diagnosis is short by contract. A status line is not a log sink. */
+export const FAILURE_MESSAGE_MAX = 300;
+/** The legacy prose field keeps the checkpoint's own bound; it carries real explanations. */
+export const ERROR_TEXT_MAX = 2000;
+
+/**
+ * AN ERROR MESSAGE IS USER-VISIBLE TEXT, so it is treated as untrusted output rather than
+ * as a debugging aid. Everything here is removed on the way to a reader:
+ *
+ *  - STACK FRAMES. `at Object.planStage (/worker/src/workflow/stages/plan.ts:413:13)` names
+ *    the deploy's filesystem layout and nothing a reader can act on. Frame lines are
+ *    dropped whole, so a multi-line explanation survives and its stack does not.
+ *  - URLs of every scheme, entire. The host is the sensitive half (an internal service, a
+ *    bucket endpoint, an AI-gateway route) and the path is where tokens hide, so the whole
+ *    thing goes rather than a hostname being kept for readability.
+ *  - FILESYSTEM PATHS, Windows and POSIX.
+ *  - CREDENTIALS: `Authorization:` / `api_key=` / `token=`-shaped assignments (the KEY NAME
+ *    is kept so a reader can see WHAT was withheld), bearer tokens, and the common
+ *    provider key prefixes this worker actually handles.
+ *
+ * WHAT IT DELIBERATELY DOES NOT TOUCH: the diagnosis. `fi_b74430a941910fc9a6f9`, contract
+ * revision ids, sha-256 hashes and bucket-free R2 key fragments are the answer to "why did
+ * my run fail" and a sanitiser that eats them has failed at the job it exists for.
+ */
+export function sanitiseErrorText(raw: unknown, max: number = FAILURE_MESSAGE_MAX): string {
+  const text =
+    typeof raw === "string"
+      ? raw
+      : raw instanceof Error
+        ? `${raw.name}: ${raw.message}`
+        : raw === null || raw === undefined
+          ? ""
+          : String(raw);
+
+  let out = text
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*at\s+\S/.test(line))
+    .join(" ");
+
+  // Credentials first: a token inside a URL must be redacted as a credential before the
+  // URL rule swallows the evidence that there was one.
+  //
+  // BEARER BEFORE THE ASSIGNMENT RULE, AND THE ORDER IS THE WHOLE POINT. `Authorization:
+  // Bearer eyJhbGci…` matches the assignment rule too, and that rule's value class stops
+  // at the first space — so running it first consumes the literal word "Bearer" as if it
+  // were the secret and leaves the JWT standing in the clear. A key-prefixed token
+  // (`sk-ant-…`) happens to be caught by the prefix rule below; a JWT and a Cloudflare
+  // Access token are not, and would have walked straight out.
+  out = out.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]");
+  out = out.replace(
+    /\b(authorization|api[-_]?key|access[-_]?key|secret[-_]?key|client[-_]?secret|secret|token|password|passwd|pwd|cookie|signature)\b(\s*[:=]\s*|\s+)(?:"|')?[^\s"'&,;]+/gi,
+    "$1=[redacted]",
+  );
+  out = out.replace(/\b(sk|pk|rk|xai|ghp|gho|ghs|glpat|AIza)[-_][A-Za-z0-9._-]{8,}/g, "$1-[redacted]");
+
+  out = out.replace(/\b[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s"'<>)]+/g, "[url]");
+  out = out.replace(/\b[A-Za-z]:\\[^\s"'<>)]*/g, "[path]");
+  out = out.replace(
+    /(^|[\s"'(=[])\/(?:home|root|usr|var|etc|opt|tmp|bin|sbin|proc|sys|mnt|media|srv|Users|Applications|Library|workspace|worker|app|build|dist|node_modules)\b[^\s"'<>)\]]*/g,
+    "$1[path]",
+  );
+
+  return out.replace(/\s+/g, " ").trim().slice(0, Math.max(0, max));
+}
+
+/** Read-side re-sanitisation. A checkpoint written before this existed is not trusted. */
+export function projectFailure(failure: RunFailure | null | undefined): RunFailure | null {
+  if (!failure || typeof failure !== "object") return null;
+  const message = sanitiseErrorText(failure.message, FAILURE_MESSAGE_MAX);
+  const reasonCode = typeof failure.reasonCode === "string" ? failure.reasonCode.slice(0, 80) : "workflow-error";
+  if (!message && !reasonCode) return null;
+  return {
+    step: sanitiseErrorText(failure.step, 120),
+    reasonCode,
+    kind: sanitiseErrorText(failure.kind, 80) || "unknown",
+    message,
+    at: typeof failure.at === "string" ? failure.at : "",
+  };
+}
+
 export interface RunCheckpoint {
   schemaVersion: typeof CHECKPOINT_SCHEMA;
   kind: typeof CHECKPOINT_KIND;
@@ -324,6 +443,13 @@ export interface RunCheckpoint {
   /** Set by the sweeper; surfaced as the recovery sub-line (§3.3). */
   recovery: { active: boolean; attempt: number; reason: string | null } | null;
   error: string | null;
+  /**
+   * The structured cause, when there is one. OPTIONAL because `loadCheckpoint` is a bare
+   * cast over stored bytes: every checkpoint written before this field existed has no
+   * `failure` key at all, and declaring it required would make the type lie about the
+   * objects actually in the bucket.
+   */
+  failure?: RunFailure | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,13 +466,42 @@ export interface RunStatusV2 {
   completion: Completion;
   /** Proof the process checked in. A heartbeat is not progress. */
   heartbeatAt: string | null;
+  /**
+   * The heartbeat's OWN WORDS for what the run is doing right now — the thing the long
+   * quiet stages have to say for themselves. Server-authored machine text (`extract pass A
+   * wave 3 (whole-document / global rules)`), not prose: the client renders it as a machine
+   * string rather than translating it, and NOTHING derives a duration, a percentage or an
+   * estimate from it. A note says what IS happening, never how long is left.
+   *
+   * OMITTED, not null, when the run has not written one. A run with no note therefore
+   * serializes byte-for-byte as it did before this field existed, so no client can start
+   * rendering an empty flash where there was previously nothing at all.
+   */
+  heartbeatNote?: string;
   lastProgressAt: string;
   /** Tells the client a newer coverage snapshot exists. */
   progressRevision: number;
   reportAvailable: boolean;
   /** Carried for the recovery sub-line only; not a phase. */
   recoveryMode: boolean;
+  /**
+   * The human sentence, SANITISED at the projection rather than at each of the eight
+   * places that write it. Sanitising here is what makes the guarantee checkable: every
+   * writer, including the ones in other modules that interpolate a browser binding's
+   * exception or a Cloudflare API error body, passes through this one function on its way
+   * to a client, so no future writer can open the hole again by forgetting.
+   */
   error: string | null;
+  /**
+   * WHY, structured — `{ step, reasonCode, kind, message }`. A client branches on
+   * `failure.reasonCode` and renders `failure.message`; it never parses `error`.
+   *
+   * OMITTED, not null, when the run has no recorded failure — the same rule `heartbeatNote`
+   * follows and for the same reason: a healthy run must serialize byte-for-byte as it did
+   * before the field existed, so no client starts rendering an empty error row on runs that
+   * are fine.
+   */
+  failure?: RunFailure;
 }
 
 /**
@@ -356,7 +511,20 @@ export interface RunStatusV2 {
  * this endpoint, so there is no client to migrate — and re-emitting `stage` would
  * recreate the 0/1/2 lighting the redesign exists to delete.
  */
-export function projectStatus(cp: RunCheckpoint, heartbeatAt: string | null): RunStatusV2 {
+export function projectStatus(
+  cp: RunCheckpoint,
+  heartbeatAt: string | null,
+  heartbeatNote: string | null = null,
+): RunStatusV2 {
+  // A note only travels if it actually says something. An empty or whitespace-only note
+  // would render as a blank line implying the run is doing nothing, which is a worse lie
+  // than the quiet stage copy it would have replaced. Bounded for the same reason the
+  // producer bounds its own interpolations: a status line is not a log sink.
+  const note = typeof heartbeatNote === "string" ? heartbeatNote.trim().slice(0, 200) : "";
+  // The cause travels beside the prose, never instead of it. `error` is what a person
+  // reads; `failure` is what a client switches on.
+  const failure = projectFailure(cp.failure);
+  const error = cp.error === null || cp.error === undefined ? null : sanitiseErrorText(cp.error, ERROR_TEXT_MAX);
   return {
     schemaVersion: RUN_STATUS_SCHEMA,
     runId: cp.runId,
@@ -364,11 +532,13 @@ export function projectStatus(cp: RunCheckpoint, heartbeatAt: string | null): Ru
     phases: cp.phases,
     completion: cp.completion,
     heartbeatAt,
+    ...(note ? { heartbeatNote: note } : {}),
     lastProgressAt: cp.lastProgressAt,
     progressRevision: cp.revision,
     reportAvailable: cp.reportAvailable,
     recoveryMode: cp.recovery?.active ?? false,
-    error: cp.error,
+    error,
+    ...(failure ? { failure } : {}),
   };
 }
 

@@ -166,6 +166,11 @@ function sliceEnv(overrides = {}) {
   return {
     EVIDENCE: memoryR2(),
     DEEPSEEK_API_KEY: "test-deepseek-key",
+    // Gateway config is part of the production posture: llm/chat.ts refuses a direct,
+    // unmetered provider call without it. Tests stub globalThis.fetch, so they exercise
+    // the same gateway URL production builds.
+    CF_AIG_ACCOUNT_ID: "fixture-account",
+    CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key",
     EXTRACT_CHUNK_MAX_BLOCKS: "1",
     EXTRACT_CHUNK_CHARS: "10",

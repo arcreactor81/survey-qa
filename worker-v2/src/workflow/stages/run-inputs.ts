@@ -36,7 +36,33 @@ export interface RunInputs {
 /** A reason the stage cannot proceed, phrased as the sentence the report will print. */
 export type InputProblem = string;
 
-export async function loadRunInputs(env: Env, runId: string): Promise<RunInputs> {
+/**
+ * WHETHER TO PAY FOR THE CATALOGUE.
+ *
+ * `listCatalog` is the most expensive thing this loader does by an order of magnitude: one
+ * R2 LIST plus one R2 GET **per catalogue entry**, and a real run catalogues one entry per
+ * screen read and per screenshot of every walk (1,707 for
+ * v2r_01kzfb6py8pbxznqv022p2qkhb). A Worker invocation has a bounded subrequest budget and
+ * Workflow steps SHARE it, so a stage that loads the catalogue it does not need is not
+ * merely slow — it spends budget the stages after it still need.
+ *
+ * `catalog: false` therefore exists for the stages that only ever look artifacts up BY ID
+ * (`getBoundCatalogEntry` is the keyed read, and it runs the same binding assertion
+ * `listCatalog` runs). Stages that genuinely need the whole set — the assembler's signed
+ * manifest, the judge's evidence mount — must keep the default and pay for it.
+ *
+ * It defaults to TRUE so that adding this option changed no existing caller's behaviour.
+ */
+export interface LoadRunInputsOptions {
+  /** Load the full evidence catalogue. Default true; false yields `evidence: []`. */
+  catalog?: boolean;
+}
+
+export async function loadRunInputs(
+  env: Env,
+  runId: string,
+  opts: LoadRunInputsOptions = {},
+): Promise<RunInputs> {
   const loaded = await loadCheckpoint(env, runId);
   const checkpoint = loaded?.checkpoint ?? null;
   const envelope = await getEnvelope(env, runId).catch(() => null);
@@ -54,7 +80,10 @@ export async function loadRunInputs(env: Env, runId: string): Promise<RunInputs>
     revision,
     contractHash,
     observations: await readObservations(env, runId),
-    evidence: await listCatalog(env, runId),
+    // EMPTY BECAUSE IT WAS NOT ASKED FOR — NOT BECAUSE THE RUN HAS NO EVIDENCE. Any caller
+    // that reads `evidence` must therefore not pass `catalog: false`; the two callers that
+    // do read it (`derive-verdicts`, `assemble-record`) use the default.
+    evidence: opts.catalog === false ? [] : await listCatalog(env, runId),
   };
 }
 
@@ -84,11 +113,55 @@ async function readObservations(env: Env, runId: string): Promise<Observation[]>
   return Array.isArray(inner) ? (inner as Observation[]) : [];
 }
 
-/** Fetch every catalogued artifact's bytes, keyed by the basename the record cites. */
+/**
+ * Fetch every catalogued artifact's bytes, keyed by the basename the record cites.
+ *
+ * THE BASENAME IS THE IDENTITY, SO TWO ARTIFACTS MAY NOT SHARE ONE.
+ *
+ * `pipeline/judge/lib/authority.mjs` builds the signed allowlist with the same
+ * `basename(artifactRef)` rule, so a colliding pair is not merely a mount problem — it
+ * raises MANIFEST_DUPLICATE_ARTIFACT, clears `manifestComplete`, and leaves the authority
+ * unverified, which means the run mints no judgement and the report shows no current
+ * results. This loop used to hand the collision downstream in silence and let the mount
+ * overwrite one walk's evidence with another's.
+ *
+ * `capture.ts` now emits unique basenames, so this is a guard against regression rather
+ * than the primary fix. It is a REFUSAL and not a rename: renaming here would desynchronise
+ * the mount from the signed catalogue, which names artifacts by the ref the record carries.
+ */
+export class ArtifactNameCollision extends Error {
+  readonly collisions: Array<{ name: string; refs: string[] }>;
+  constructor(collisions: Array<{ name: string; refs: string[] }>) {
+    super(
+      `the evidence catalogue names ${collisions.length} artifact(s) ambiguously: ` +
+        collisions
+          .map((c) => `${c.name} <- ${c.refs.join(", ")}`)
+          .join(" | ") +
+        `. A basename is the judge's whole identity for an artifact, so this would both ` +
+        `overwrite evidence on the mount and duplicate entries in the signed manifest.`,
+    );
+    this.name = "ArtifactNameCollision";
+    this.collisions = collisions;
+  }
+}
+
 export async function loadArtifactBytes(
   env: Env,
   evidence: EvidenceCatalogEntry[],
 ): Promise<Array<{ name: string; bytes: Uint8Array }>> {
+  const byName = new Map<string, string[]>();
+  for (const entry of evidence) {
+    const ref = String(entry.artifactRef ?? entry.sourceEvidenceId ?? entry.evidenceId);
+    const name = ref.split("/").pop() ?? entry.evidenceId;
+    const refs = byName.get(name);
+    if (refs) refs.push(ref);
+    else byName.set(name, [ref]);
+  }
+  const collisions = [...byName.entries()]
+    .filter(([, refs]) => refs.length > 1)
+    .map(([name, refs]) => ({ name, refs }));
+  if (collisions.length > 0) throw new ArtifactNameCollision(collisions);
+
   const out: Array<{ name: string; bytes: Uint8Array }> = [];
   for (const entry of evidence) {
     const ref = entry.artifactRef ?? entry.sourceEvidenceId ?? entry.evidenceId;

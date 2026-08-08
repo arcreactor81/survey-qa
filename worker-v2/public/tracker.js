@@ -223,6 +223,104 @@
   function transportState(view) { return (view.transport && view.transport.state) || "ok"; }
   function integrityState(view) { return (view.integrity && view.integrity.state) || "unknown"; }
 
+  // ---------------------------------------------------------------- the recorded cause
+  //
+  // `status.failure` is `{ step, reasonCode, kind, message, at }` — four separate facts,
+  // not one blob. It is the field this page BRANCHES ON. `status.error` is the long prose
+  // sentence for a person to read; it is rendered verbatim and NEVER parsed, because a page
+  // that reads meaning out of an error string starts making decisions on wording the server
+  // is free to change.
+  //
+  // Absent field = no recorded cause. It is never inferred from `completion.reasonCode`,
+  // which answers a different question: `completion.reasonCode` is the run's own verdict on
+  // itself, and `failure` is the thing that stopped it. They frequently agree; when they do
+  // not, both are shown rather than one being chosen.
+  function failureOf(view) {
+    var f = view.status && view.status.failure;
+    if (!f || typeof f !== "object") return null;
+    var code = typeof f.reasonCode === "string" && f.reasonCode ? f.reasonCode : null;
+    var message = typeof f.message === "string" && f.message ? f.message : null;
+    if (!code && !message) return null; // an empty object is not a cause
+    return {
+      step: typeof f.step === "string" ? f.step : "",
+      reasonCode: code,
+      kind: typeof f.kind === "string" && f.kind ? f.kind : null,
+      message: message,
+      at: typeof f.at === "string" && f.at ? f.at : null
+    };
+  }
+
+  // WHERE THE CAUSE CAME FROM — and the difference is not cosmetic.
+  //
+  // A `step` the run wrote itself is the name of the exact piece of work that threw. A step
+  // beginning `phase:` is NOT a step name at all: it means the run died without managing to
+  // record anything, and the reason was recovered afterwards from the engine that was
+  // running it. That reconstruction can only name the STAGE that was underway, and it was
+  // written minutes later by a different process.
+  //
+  // Rendering the two identically would present a second-hand answer as first-hand
+  // testimony. So the origin is read here and labelled on the page. The `phase:` prefix is
+  // the server's own marker for this — the only place it is produced is the engine-recovery
+  // path — so it is a fact being read, not a heuristic.
+  function causeOrigin(f) {
+    var step = f && f.step ? String(f.step) : "";
+    if (step.indexOf("phase:") !== 0) return { recovered: false, phaseLabel: null };
+    var name = step.slice(6);
+    var label = null;
+    // Rule 10: the internal stage name is never printed. It is translated, or it is dropped.
+    PHASES.forEach(function (d) { if (d.name === name) label = d.label; });
+    return { recovered: true, phaseLabel: label };
+  }
+
+  // PLAIN WORDS FOR A REASON CODE. Keyed by the machine code exactly, so a code this page
+  // has never seen falls through to a branch that says so instead of inventing a diagnosis.
+  // The raw code is shown either way, so nothing is lost by not recognising it.
+  var CAUSE_WORDS = {
+    // ACTIONABLE, NOT A MYSTERY. This one has a specific, ordinary meaning and a specific
+    // remedy, and a reader who is told "an error occurred" would go looking for a fault in
+    // their survey that is not there.
+    "subrequest-limit-exceeded": {
+      head: "This run used up the number of requests it is allowed to make.",
+      body: "A single run may only make so many requests out to other services, and this one reached " +
+        "that ceiling partway through. That is a ceiling being hit, not a fault found in your survey — " +
+        "and it is not a verdict on anything that had already been checked. The same questionnaire can " +
+        "be run again, and the ceiling can be raised for it."
+    },
+    "workflow-create-failed": {
+      head: "The run was accepted but never actually started.",
+      body: "Everything needed to start it was saved, and then the request to begin the work did not " +
+        "go through. Nothing about your survey was looked at, so nothing here is a result. Starting a " +
+        "new run is the whole fix."
+    },
+    "walks-blocked-by-site": {
+      head: "The survey site stopped the run from going any further.",
+      body: "Something on the site prevented the paths from being walked. What was recorded before that " +
+        "point is real; everything past it is unknown, and unknown is not a pass."
+    },
+    "workflow-error": {
+      head: "The run stopped on an error and did not finish.",
+      body: "The sentence below is the error itself, as the run or the engine recorded it. It has not " +
+        "been rewritten. What was saved before the run stopped is still real; nothing after it was checked."
+    }
+  };
+
+  // hasOwnProperty, not a bare lookup: the key is a SERVER-SUPPLIED string, and a bare
+  // lookup of `constructor` or `toString` would hand back something off Object.prototype and
+  // render it as if it were copy this product had written.
+  function has(map, key) {
+    return typeof key === "string" && Object.prototype.hasOwnProperty.call(map, key);
+  }
+
+  function causeWords(code) {
+    if (has(CAUSE_WORDS, code)) return CAUSE_WORDS[code];
+    return {
+      head: "The run stopped for a reason this page has no plain words for.",
+      body: "The reason is shown below exactly as it was recorded, rather than translated into a guess. " +
+        "It is a code support can look up. What was saved before the run stopped is still real; " +
+        "everything after it is unknown, and unknown is not a pass."
+    };
+  }
+
   // Human review is a TERMINAL WAITING state: nothing is running and nothing will run
   // until a person answers. Absent field = no review pending; we never infer one.
   function humanReview(view) {
@@ -492,12 +590,31 @@
         srOnly(def.label + ": " + s.sr)
       ]);
     }));
+    // WHY THE LONG STAGE DOES NOT LOOK HUNG.
+    //
+    // Reading the questionnaire is the longest step and it is the one with nothing to
+    // count: the number of requirements does not exist until it finishes, so a counter
+    // here would either be invented or would move against a total that is still changing.
+    // Both are refused elsewhere in this file and are refused here too. What a reader
+    // needs instead is to be told that the silence is the design and where the liveness
+    // signal is — otherwise a legitimate ten-minute step reads as a stuck page, and the
+    // honest answer to "is it stuck" is a sentence, not a spinner.
+    //
+    // No duration is stated. The server promises none, and a number this page invented
+    // would be the same class of guess as an invented progress figure.
+    var quiet = reported.extracting && reported.extracting.state === "active"
+      ? "Reading your questionnaire is the longest step, and it is the one step with nothing to " +
+        "count — the number of requirements does not exist until it finishes. No figure is shown " +
+        "here rather than a made-up one. The check-in line below is how you can tell it is still working."
+      : null;
+
     return frag([
       list,
       el("p", {
         cls: "phase-rail-note",
         text: "A tick means that step finished. It does not mean your survey passed."
-      })
+      }),
+      quiet ? el("p", { cls: "phase-rail-note phase-rail-note--quiet", text: quiet }) : null
     ]);
   }
 
@@ -543,26 +660,126 @@
     return el("p", { cls: "run-meta" }, items);
   }
 
+  // WHAT THE RUN SAYS IT IS DOING.
+  //
+  // The check-in above proves the process is alive but says nothing about what it is busy
+  // with, which is why a legitimate ten-minute extraction reads as a hung page. The server
+  // now sends the heartbeat's own note beside the timestamp, and this line is it.
+  //
+  // It is MACHINE TEXT, not prose. The run wrote it for itself ("extract pass A wave 3
+  // (whole-document / global rules)") and it contains the internal stage names rule 10
+  // forbids printing as product language, so it goes through machine() into <code> exactly
+  // like every other server-authored identifier here — visibly not a sentence this product
+  // authored, and skipped by the vocabulary gate for that reason. Translating ~20 engine
+  // strings into plain English would be a different and much larger change.
+  //
+  // NO DURATION IS DERIVED FROM IT. It says what is happening, never how long is left.
+  // Absent note → nothing is rendered at all, so a run that sends none looks exactly as it
+  // did before this line existed rather than flashing an empty row.
+  function renderBeatNote(status) {
+    var n = status.heartbeatNote;
+    if (typeof n !== "string" || !n) return null;
+    return el("p", { cls: "run-beat run-beat--note" }, [
+      el("span", { text: "Right now: " }),
+      machine(n)
+    ]);
+  }
+
   // The heartbeat is its OWN line, never merged into activity: a check-in is not progress.
   function renderHeartbeat(view) {
     var status = view.status;
     if (!status || humanReview(view) || isTerminal(view)) return null;
+    // Shown in every branch, including the stale one: if the run has gone quiet, the last
+    // thing it said it was doing is the most useful fact on the page.
+    var what = renderBeatNote(status);
     var hb = ms(status.heartbeatAt);
     if (hb == null) {
-      return el("p", { cls: "run-beat", text: "The run has not checked in yet." });
+      return frag([el("p", { cls: "run-beat", text: "The run has not checked in yet." }), what]);
     }
     var now = ms(view.now) || Date.now();
     var age = now - hb;
     if (age >= STALE_MS) {
-      return note("warn",
+      return frag([note("warn",
         "The run has not checked in for " + ageWords(age).replace(" ago", "") + ".",
-        "Automatic recovery is watching this run. Nothing has failed, and no countdown is running.");
+        "Automatic recovery is watching this run. Nothing has failed, and no countdown is running."), what]);
     }
-    return el("p", { cls: "run-beat" }, [
+    return frag([el("p", { cls: "run-beat" }, [
       el("span", { text: "The run last checked in " }),
       el("span", { cls: "num", text: ageWords(age), attrs: { "data-age-of": "heartbeat" } }),
       el("span", { text: ". A check-in means the process is alive; it is not the same as progress." })
+    ]), what]);
+  }
+
+  // ---------------------------------------------------------------- the cause, rendered
+  //
+  // WHO IS SPEAKING. Two lines, one flag word, and the flag is the point: a reader has to be
+  // able to tell "the run told us" from "we had to go and ask" at a glance, because the
+  // second one is a reconstruction and carries less. Both branches are STATIC — no motion
+  // distinguishes them, deliberately: this machine reports reduced motion, and a difference
+  // that only exists in an animation does not exist.
+  function renderProvenance(origin) {
+    if (origin.recovered) {
+      return el("div", { cls: "provenance provenance--recovered", attrs: { "data-cause-origin": "recovered" } }, [
+        el("p", { cls: "provenance__flag", text: "We had to go and ask" }),
+        el("p", {
+          cls: "provenance__text",
+          text: "The run stopped without leaving a reason of its own, so this one was fetched afterwards " +
+            "from the service that was running it. It is second-hand: it was written after the fact by " +
+            "something watching from outside, and it can only name the step that was underway" +
+            (origin.phaseLabel ? " — " + origin.phaseLabel + " — " : " ") +
+            "rather than the exact piece of work that failed."
+        })
+      ]);
+    }
+    return el("div", { cls: "provenance provenance--firsthand", attrs: { "data-cause-origin": "first-hand" } }, [
+      el("p", { cls: "provenance__flag", text: "The run recorded this itself" }),
+      el("p", {
+        cls: "provenance__text",
+        text: "The run wrote this reason down as it stopped, so it is first-hand and it names the exact " +
+          "piece of work that failed."
+      })
     ]);
+  }
+
+  // The cause block that sits in the card. `failure.message` is the headline sentence
+  // because it is the bounded one the server guarantees is short; `error` is the long field
+  // and stays where long things go, under Run details.
+  //
+  // `message` is MACHINE TEXT — the engine's own sentence, sanitised, not language this
+  // product authored — so it goes through machine() into <code> like every other
+  // server-produced string on this page.
+  function renderCause(view) {
+    var f = failureOf(view);
+    if (!f) return null;
+    var w = causeWords(f.reasonCode);
+    var origin = causeOrigin(f);
+
+    var kids = [
+      el("p", { cls: "cause__head", text: w.head }),
+      el("p", { cls: "cause__body", text: w.body })
+    ];
+    if (f.message) {
+      kids.push(el("p", { cls: "cause__said" }, [
+        el("span", { cls: "cause__said-label", text: "Recorded word for word: " }),
+        machine(f.message)
+      ]));
+    }
+    kids.push(renderProvenance(origin));
+    var refs = el("p", { cls: "cause__refs" }, [
+      el("span", { text: "Reason code " }),
+      machine(f.reasonCode || "(none recorded)"),
+      el("span", { text: " · step " }),
+      machine(f.step || "(none recorded)")
+    ]);
+    kids.push(refs);
+
+    return el("div", {
+      cls: "cause cause--" + (origin.recovered ? "recovered" : "firsthand"),
+      attrs: {
+        "data-cause-origin": origin.recovered ? "recovered" : "first-hand",
+        "data-reason-code": f.reasonCode || null
+      }
+    }, kids);
   }
 
   // ---------------------------------------------------------------- outcome lines
@@ -575,6 +792,11 @@
     var test = testState(view);
     var report = reportState(view);
     var tot = checkedTotals(view);
+    // Built once and placed once. Where there IS a structured cause it replaces the bare
+    // error line, because the bare line was the same sentence with none of the four facts
+    // around it; where there is not, the old line is exactly what still renders.
+    var cause = renderCause(view);
+    var causeShown = false;
 
     if (STOP_REASON[test]) {
       var tail = tot
@@ -599,7 +821,8 @@
           "What was recorded is real and saved, but the run did not finish. Everything not checked is " +
           "unknown — unknown is not a pass, and this page is not a report."));
       }
-      if (status.error) out.push(el("p", { cls: "run-error" }, [machine(status.error)]));
+      if (cause) { out.push(cause); causeShown = true; }
+      else if (status.error) out.push(el("p", { cls: "run-error" }, [machine(status.error)]));
     }
 
     if (report === "failed" && test !== "failed") {
@@ -608,8 +831,15 @@
           : "The report could not be built.",
         "This page is the last confirmed status for the run, not a report. Nothing has been scored, " +
         "and nothing will be scored in your browser. The saved records are still available."));
-      if (status.error) out.push(el("p", { cls: "run-error" }, [machine(status.error)]));
+      if (cause) { out.push(cause); causeShown = true; }
+      else if (status.error) out.push(el("p", { cls: "run-error" }, [machine(status.error)]));
     }
+
+    // A CAUSE IS NEVER SWALLOWED BY THE HEADLINE NOT MATCHING IT. A run can carry a recorded
+    // failure while its two outcome words say something less final — a stop at a limit, or a
+    // report that was built anyway. The two branches above are about the OUTCOME; this is
+    // about the CAUSE, and a cause that exists is shown whatever the outcome says.
+    if (cause && !causeShown) { out.push(cause); causeShown = true; }
 
     if (status.recoveryMode) {
       out.push(note("info",
@@ -650,6 +880,45 @@
 
   function detailBlock(title, kids) {
     return el("section", { cls: "detail-block" }, [el("h3", { text: title })].concat(kids));
+  }
+
+  // THE SEVEN STATES, AS ONE BAR. Drawn from the SAME counts as the rows above it and the
+  // SAME fixed total as the sum line below it, in the same order, so it cannot disagree
+  // with either. Three rules it keeps:
+  //
+  //  - It describes the INDIVIDUAL CHECKS only. The other total on this panel counts
+  //    requirements from the questionnaire; the two are never added, and this bar never
+  //    mixes them.
+  //  - A state with a count of zero draws NOTHING. A hairline for "none of these" is a
+  //    mark where there is no data, and a reader would read it as a small amount.
+  //  - Widths are exact shares of the fixed total, never normalized to fill the bar. If
+  //    the counts do not add up, the bar visibly falls short — and the warning that
+  //    already sits under it says so in words.
+  function proportionBar(counts, total) {
+    if (typeof total !== "number" || !isFinite(total) || total <= 0) return null;
+    var segs = [];
+    var spoken = [];
+    CHECK_STATES.forEach(function (b) {
+      var n = counts[b[0]] || 0;
+      if (n <= 0) return;
+      var seg = el("span", {
+        cls: "propbar__seg",
+        attrs: { "data-check-state": b[0], title: b[2] + " — " + n + " of " + total }
+      });
+      seg.style.width = ((n / total) * 100).toFixed(4) + "%";
+      segs.push(seg);
+      spoken.push(n + " " + b[2].toLowerCase());
+    });
+    if (!segs.length) return null;
+    // One image with one name, rather than seven unexplained blocks to a screen reader.
+    return el("div", {
+      cls: "propbar",
+      attrs: {
+        role: "img",
+        "aria-label": "The " + total + " individual checks, as recorded at this update: " +
+          spoken.join(", ") + "."
+      }
+    }, segs);
   }
 
   function detailChecks(view) {
@@ -710,7 +979,12 @@
 
     var counts = cov.counts || {};
     kids.push(el("div", { cls: "buckets" }, CHECK_STATES.map(function (b) {
-      return el("div", { cls: "bucket-row" + (b[0] === "exercised" ? " is-exercised" : "") }, [
+      return el("div", {
+        cls: "bucket-row" + (b[0] === "exercised" ? " is-exercised" : ""),
+        // The state's own name, so the row's glyph and the bar below can be coloured from
+        // one source. It is the server's word, not a rank or a judgement.
+        attrs: { "data-check-state": b[0] }
+      }, [
         el("span", { cls: "bucket-glyph", text: b[1], attrs: { "aria-hidden": "true" } }),
         el("span", { cls: "bucket-name" }, [
           document.createTextNode(b[2]),
@@ -719,6 +993,7 @@
         el("span", { cls: "bucket-count num", text: String(counts[b[0]] || 0) })
       ]);
     })));
+    kids.push(proportionBar(counts, tot.total));
     kids.push(el("div", { cls: "bucket-total" }, [
       el("span", { text: "These seven add up to" }),
       el("strong", { cls: "num", text: tot.sum + " / " + tot.total })
@@ -733,6 +1008,115 @@
       text: "Update number " + intOr(cov.revision) + " · taken at " + (clockTime(cov.observedAt) || "—")
     }));
     return detailBlock("What was checked", kids);
+  }
+
+  // ---------------------------------------------------------------- what the plan could not do
+  //
+  // WHAT THIS BLOCK IS FOR. When the checks are being worked out, the planner counts the
+  // things it could NOT do — questionnaire cases no walk was assigned to, decisions the
+  // document never gave wording for, route answers that are really routing conditions — and
+  // it counts EVERY one of them on EVERY run, including when the count is zero. That is the
+  // whole point of the count existing: "we looked and found none" has to be distinguishable
+  // from "nobody looked", and a list that only shows non-zero rows cannot express it.
+  //
+  // WHAT IS ACTUALLY ON THE WIRE TODAY: nothing. Verified 8 August against both terminal
+  // runs and against the two feeds this page reads — the named limitations are written onto
+  // the plan artifact and are not carried onto the checkpoint, so neither the status feed
+  // nor the progress feed contains them. THAT ABSENCE IS ITSELF THE THIRD STATE, and it is
+  // the one this page is in: not "none", not a number, but never told. Rendering nothing at
+  // all would have read as "no shortfalls", which is precisely the confusion the zero counts
+  // exist to prevent — so the absence is named instead, and nothing is invented to fill it.
+  //
+  // The row renderer below is real and is exercised by the same code path the moment the
+  // field appears, under either `status.planLimitations` or `status.limitations`. It does
+  // not fabricate a value in the meantime — and if the server wires the field under some
+  // third name, this block keeps saying it was not told, which remains true of this page.
+  //
+  // THE ONE THING THIS BLOCK ADDS TO A HEALTHY RUN. Every other change here is invisible on
+  // a run that is fine. This one is not, and deliberately: a page that renders nothing at
+  // all here is a page that reads as "nothing was missed", on every run, forever.
+  var LIMITATION_WORDS = {
+    "cases-not-assigned-to-any-walk":
+      "Questionnaire cases that no planned path was set to go through",
+    "decisions-without-document-wording":
+      "Decision points your document never gave wording for, so they cannot be recognised on screen",
+    "route-labels-that-are-routing-conditions":
+      "Route answers that are really routing rules, so no option on screen can ever match them",
+    "plan-predates-limitation-reporting":
+      "This plan was made before these shortfalls were counted at all"
+  };
+  // The one code that means "never counted" rather than "counted, and it was zero". Its own
+  // count is zero, and reading that zero as "none found" would be exactly the false reading
+  // this whole block exists to prevent.
+  var LIMITATION_NEVER_COUNTED = "plan-predates-limitation-reporting";
+
+  function planLimitations(view) {
+    var s = view.status;
+    if (!s) return null;
+    var list = Array.isArray(s.planLimitations) ? s.planLimitations
+      : Array.isArray(s.limitations) ? s.limitations : null;
+    return list;
+  }
+
+  function detailLimitations(view) {
+    var list = planLimitations(view);
+    if (!list) {
+      return detailBlock("What the checks could not cover", [el("div", { cls: "empty-state" }, [
+        el("strong", { text: "This page has not been told what the checks could not cover." }),
+        el("p", {
+          text: "When the checks are worked out, anything that could not be covered is named and counted — " +
+            "and counted even when the answer is none, so that “we looked and found none” can be told apart " +
+            "from “nobody looked”. Those counts are not sent to this page, so it cannot tell you which of " +
+            "the two you are looking at. It is not reporting none, because it has not been told none."
+        })
+      ])]);
+    }
+    if (!list.length) {
+      return detailBlock("What the checks could not cover", [el("div", { cls: "empty-state" }, [
+        el("strong", { text: "An empty list arrived, which is not the same as a clean run." }),
+        el("p", {
+          text: "Every shortfall is meant to be listed on every run, including with a count of none. An " +
+            "empty list means none of them were listed at all, so nothing here can be read as “nothing " +
+            "was missed”."
+        })
+      ])]);
+    }
+
+    var rows = el("div", { cls: "shortfall-list" }, list.map(function (l) {
+      var code = l && typeof l.code === "string" ? l.code : "";
+      var count = l && typeof l.count === "number" && isFinite(l.count) ? l.count : null;
+      var neverCounted = code === LIMITATION_NEVER_COUNTED;
+      // THREE DIFFERENT ANSWERS, THREE DIFFERENT WORDS. A number, an explicit none that was
+      // looked for, and a "this was never counted" — never the same styling for two of them.
+      var state = neverCounted ? "never-counted" : count === 0 ? "none-found" : count == null ? "not-reported" : "found";
+      var value = neverCounted ? "Never counted"
+        : count === 0 ? "None found"
+        : count == null ? "No count given"
+        : String(count);
+      return el("div", { cls: "shortfall-row", attrs: { "data-limitation-state": state } }, [
+        el("div", { cls: "shortfall-row__head" }, [
+          el("span", { cls: "shortfall-row__name", text: has(LIMITATION_WORDS, code) ? LIMITATION_WORDS[code] : "A shortfall this page has no plain name for" }),
+          el("span", { cls: "shortfall-row__count num", text: value })
+        ]),
+        // The plan's own sentence about it, when it sent one.
+        l && typeof l.what === "string" && l.what
+          ? el("p", { cls: "shortfall-row__what", text: l.what })
+          : null,
+        el("p", { cls: "shortfall-row__sub", text: neverCounted
+          ? "A count of zero here does not mean zero. It means this was never looked for on this run."
+          : count === 0 ? "This was looked for on this run and none were found."
+          : count == null ? "The shortfall was named but no number came with it, so how much is unknown."
+          : "These were found and named. They are not failures of your survey; they are parts of it the " +
+            "checks did not manage to cover." }),
+        code ? machineRow("Reference:", code) : null
+      ]);
+    }));
+
+    return detailBlock("What the checks could not cover", [rows, el("p", {
+      cls: "detail-note",
+      text: "Every one of these is listed on every run, including when the answer is none, so that a run " +
+        "where nothing was missed reads differently from a run where nobody looked."
+    })]);
   }
 
   function meter(name, valueNode, used, max, sub) {
@@ -875,17 +1259,24 @@
     var c = status.completion;
     var t = TEST_WORDS[c.test] || ["Testing state: " + c.test, "Unrecognised value — shown exactly as sent, not normalized."];
     var r = REPORT_WORDS[c.report] || ["Report state: " + c.report, "Unrecognised value — shown exactly as sent, not normalized."];
+    // WHICH OF THE TWO IS HAPPENING RIGHT NOW. The attribute carries the state exactly as
+    // the server recorded it — no derived "active" flag, no inference from the other
+    // outcome, no guess when the value is missing or unrecognised. The stylesheet lights
+    // up the two words that genuinely mean work in progress ("running", "building") and
+    // leaves every other value, known or not, looking as it always has.
+    function axis(name, state, words) {
+      return el("div", {
+        cls: "completion-axis",
+        attrs: { "data-outcome-state": typeof state === "string" && state ? state : null }
+      }, [
+        el("div", { cls: "axis-name", text: name }),
+        el("div", { cls: "axis-state", text: words[0] }),
+        el("div", { cls: "axis-why", text: words[1] })
+      ]);
+    }
     var kids = [el("div", { cls: "completion" }, [
-      el("div", { cls: "completion-axis" }, [
-        el("div", { cls: "axis-name", text: "Testing" }),
-        el("div", { cls: "axis-state", text: t[0] }),
-        el("div", { cls: "axis-why", text: t[1] })
-      ]),
-      el("div", { cls: "completion-axis" }, [
-        el("div", { cls: "axis-name", text: "Report" }),
-        el("div", { cls: "axis-state", text: r[0] }),
-        el("div", { cls: "axis-why", text: r[1] })
-      ])
+      axis("Testing", c.test, t),
+      axis("Report", c.report, r)
     ])];
     kids.push(el("p", {
       cls: "detail-note",
@@ -893,12 +1284,72 @@
         "outcomes. A finished report is allowed to describe testing that stopped early."
     }));
     if (c.reasonCode) kids.push(machineRow("Reason recorded:", c.reasonCode));
+
+    // THE CAUSE, BESIDE THE VERDICT, IN ITS FOUR PARTS.
+    //
+    // "Reason recorded" above is the run's verdict on itself. This is what stopped it, and
+    // the two are kept apart on purpose: they can disagree, and when they do the reader
+    // should see both rather than a page that quietly picked one. The per-step reason codes
+    // in the block BELOW this one are a third thing again — facts belonging to a single
+    // step, such as the site blocking the walks — and they stay there.
+    var f = failureOf(view);
+    if (f) {
+      var origin = causeOrigin(f);
+      kids.push(el("p", {
+        cls: "detail-note",
+        text: origin.recovered
+          ? "The run did not record why it stopped. What follows was recovered afterwards from the " +
+            "service that was running it, and names the step that was underway" +
+            (origin.phaseLabel ? " (" + origin.phaseLabel + ")" : "") + " rather than the exact piece of work."
+          : "The run recorded this itself as it stopped, so the step below is the exact piece of work that failed."
+      }));
+      var dl = el("dl", { cls: "detail-grid" });
+      dl.appendChild(el("dt", { text: "Where it stopped" }));
+      dl.appendChild(el("dd", {}, [machine(f.step || "(none recorded)")]));
+      dl.appendChild(el("dt", { text: "Cause code" }));
+      dl.appendChild(el("dd", {}, [machine(f.reasonCode || "(none recorded)")]));
+      if (f.kind) {
+        dl.appendChild(el("dt", { text: "Kind of failure" }));
+        dl.appendChild(el("dd", {}, [machine(f.kind)]));
+      }
+      if (f.message) {
+        dl.appendChild(el("dt", { text: "What it said" }));
+        dl.appendChild(el("dd", {}, [machine(f.message)]));
+      }
+      dl.appendChild(el("dt", { text: "Written down at" }));
+      dl.appendChild(el("dd", { text: f.at ? (clockTime(f.at) || f.at) : "not recorded" }));
+      kids.push(dl);
+      kids.push(el("p", {
+        cls: "detail-note",
+        text: "The reason code is the field to quote. It means the same thing whether the run named it " +
+          "or the service that was running it did."
+      }));
+    }
+    // NOTHING IS ADDED WHEN THERE IS NO CAUSE. A run that is fine renders this block exactly
+    // as it did before any of this existed — not even a line saying no cause was recorded,
+    // because a healthy run should not gain a sentence about failure.
     return detailBlock("Outcome, in full", kids);
   }
 
   function detailStages(view) {
     var status = view.status;
-    if (!status || !Array.isArray(status.phases)) return null;
+    // Returning null here left a titled section's worth of nothing: the block simply did
+    // not appear, and a reader who had seen it on another run could only conclude the page
+    // was broken. Every other block on this panel answers "why is this empty"; this one
+    // now does too.
+    if (!status || !Array.isArray(status.phases)) {
+      return detailBlock("The six steps, as the server recorded them", [el("div", { cls: "empty-state" }, [
+        el("strong", {
+          text: status
+            ? "The server did not report the six steps for this run."
+            : "No status update has been received, so the six steps cannot be shown."
+        }),
+        el("p", {
+          text: "These states are written by the server from saved checkpoints. None have arrived, and " +
+            "a step this page filled in for itself would not be a record of anything."
+        })
+      ])]);
+    }
     var dl = el("dl", { cls: "detail-grid" });
     PHASES.forEach(function (def) {
       var p = null;
@@ -938,13 +1389,60 @@
     if (c && c.contractRevisionId) dlRow(dl, "Requirement list version", c.contractRevisionId);
     if (c && c.contractHash) dlRow(dl, "Requirement list fingerprint", c.contractHash);
 
-    var links = el("div", { cls: "run-actions" }, [
-      el("a", {
-        cls: "btn btn-ghost", text: "Technical record (JSON)",
-        attrs: { href: "/api/v2/runs/" + encodeURIComponent(view.runId || "") + "/record" }
-      })
-    ]);
-    return detailBlock("This run", [dl, links]);
+    return detailBlock("This run", [dl, recordAffordance(view)]);
+  }
+
+  // THE TECHNICAL RECORD: A LINK, OR THE REASON THERE ISN'T ONE.
+  //
+  // This used to be an unconditional link. On a run that stopped before writing a record
+  // it opened a bare 404 body — a page with nothing on it and no explanation, which is
+  // indistinguishable from the product being broken. A missing record is a legitimate
+  // outcome and it has a knowable cause, so the cause is what goes here.
+  //
+  // `view.record.state` is the SERVER'S answer to "is there one" (watch.js asks the
+  // record endpoint once the run is terminal), never an inference from completion state.
+  // Completion state is used only to word WHY an absent record is absent.
+  function recordAffordance(view) {
+    var rec = (view && view.record) || { state: "unknown" };
+    if (rec.state === "available") {
+      return el("div", { cls: "run-actions", attrs: { "data-record-state": "available" } }, [
+        el("a", {
+          cls: "btn btn-ghost", text: "Technical record (JSON)",
+          attrs: { href: "/api/v2/runs/" + encodeURIComponent(view.runId || "") + "/record" }
+        })
+      ]);
+    }
+
+    var test = testState(view), report = reportState(view);
+    var head, body;
+    if (rec.state === "invalid") {
+      head = "This run's technical record did not verify, so it is not served.";
+      body = "A record exists but it does not match its own fingerprint. Serving it would be " +
+        "presenting a document as authoritative when it cannot be shown to be.";
+    } else if (rec.state === "unreachable") {
+      head = "We could not check whether a technical record exists.";
+      body = "The request for it did not complete. That is a failed check, not a statement that " +
+        "no record exists — it may well be there.";
+    } else if (rec.state === "absent" && (test === "failed" || report === "failed")) {
+      head = "This run failed before it produced a technical record.";
+      body = "The record is written from a finished run. This one stopped first, so there is " +
+        "nothing to open. What the run did record before it stopped is above, and the reason it " +
+        "stopped is under “Outcome, in full”.";
+    } else if (rec.state === "absent") {
+      head = "No technical record is stored for this run.";
+      body = "The server was asked for it and answered that it has none.";
+    } else {
+      head = "The technical record is written when the run finishes.";
+      body = "This run has not reached that stage yet, so there is nothing to open. This line will " +
+        "become a link if a record is written.";
+    }
+
+    var kids = [el("strong", { text: head }), el("p", { text: body })];
+    if (rec.code) kids.push(machineRow("Reference code for support:", rec.code));
+    return el("div", {
+      cls: "empty-state",
+      attrs: { "data-record-state": rec.state }
+    }, kids);
   }
 
   function renderDetails(view) {
@@ -955,6 +1453,7 @@
     ]));
     var body = el("div", { cls: "run-details__body" }, [
       detailChecks(view),
+      detailLimitations(view),
       detailOutcome(view),
       detailStages(view),
       detailLimits(view),

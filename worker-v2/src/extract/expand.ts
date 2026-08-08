@@ -92,7 +92,18 @@ import type { MergedRow } from "./merge";
 
 export const EXPANDER_VERSION = "v2-floor-expander/1.1.0";
 
-const FACET_TO_CASE_KIND: Record<string, FacetCase["kind"]> = {
+/**
+ * The producer's own classification of a requirement facet. It decides which requirements
+ * get a `route` execution case SEALED into the revision at all.
+ *
+ * EXPORTED because the judge has to agree with it. `pipeline/judge/lib/facet-vocab.mjs`
+ * carries the same route equivalence class on the judging side (the judge cannot import TS),
+ * and `tools/tests/d26-routing-facet.test.mjs` asserts the two are set-EQUAL. Widening the
+ * route class here — `navigation` and `order` are in the pass-A prompt vocabulary and are
+ * deliberately absent below — turns that test red, which is the point: the judge must never
+ * compile a route expectation for a facet whose sealed case is not a route.
+ */
+export const FACET_TO_CASE_KIND: Record<string, FacetCase["kind"]> = {
   "skip-rule": "route",
   "branch-outcome": "route",
   routing: "route",
@@ -304,6 +315,33 @@ export async function expandFloor(
   const preview: ExpansionPreviewEntry[] = [];
   const unpreviewed: string[] = [];
   const vocabulary = questionVocabulary(rows);
+
+  // THE PRECONDITION THIS EXPANDER HAS ALWAYS RELIED ON, NOW STATED.
+  //
+  // `facetInstanceId` is a hash of `requirementVersionId | index | certificate`, and the
+  // certificate is itself a hash of the version id, the case and the gap. So the id is
+  // unique across rows IF AND ONLY IF the version id is. On the first real run
+  // (v2r_01kzf7ehb2sayx2y2xz4ecm1ed) it was not — a rating grid stated one mandate once per
+  // row and two distinct requirements shared an identity — and this module minted two
+  // byte-identical facet instances without noticing. Planning caught it at the far end of
+  // the pipeline, which is the right place to REFUSE and the wrong place to first learn.
+  //
+  // Failing here instead names the defect where it can be acted on: the identity mint in
+  // `merge.ts`, not the expansion. This is a precondition on the caller, not a fallback —
+  // it does not deduplicate, because two rows sharing a version id is exactly the condition
+  // under which we cannot tell whether they are one requirement or two.
+  const seenVersionIds = new Set<string>();
+  for (const row of rows) {
+    const id = row.requirement.requirementVersionId;
+    if (seenVersionIds.has(id)) {
+      throw new Error(
+        `expansion refused duplicate requirementVersionId ${id}: two merged rows carry one identity, so every ` +
+          `facet instance minted from them would collide. The defect is in the identity mint (extract/merge.ts), ` +
+          `not here`,
+      );
+    }
+    seenVersionIds.add(id);
+  }
 
   for (const row of rows) {
     const r: ScopedRequirement = row.requirement;
