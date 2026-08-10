@@ -1,0 +1,5 @@
+# These public evaluation artifacts are raw-SHA-bound by manifest.json.
+# Preserve their checked bytes identically on Windows and Unix checkouts.
+*.html -text
+*.json -text
+*.png -text

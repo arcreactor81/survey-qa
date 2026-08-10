@@ -1,0 +1,10 @@
+[b0001] (heading) SECTION P — SYMBOLS AND FIELDS
+[b0002] Tick this box if the respondent consented to recontact.
+[b0003] Q48. Rate the value for money  7 out of 10 counts as a PASS.
+[b0004] Q49. Do you consider yourself a multinational customer? Ref code T14 applies.
+[b0005] See Table 1 for the quota grid.
+[b0006] Fieldwork closes on  — no interviews after that date.
+[b0007] Q50. Price band £20–£40 per month (inclusive) — single code.
+[b0008] Q51. If the respondent hesitates,
+[b0009] prompt once and then accept the first answer given.
+[b0010] Median LOI	14 minutes

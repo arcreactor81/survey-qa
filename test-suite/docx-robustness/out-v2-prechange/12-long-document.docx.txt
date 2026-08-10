@@ -1,0 +1,396 @@
+[b0001] (heading) MASTER QUESTIONNAIRE — PROJECT 41-2287 (LONG FORM)
+[b0002] This instrument has 64 numbered questions across 8 modules.
+[b0003] (heading) MODULE 1 — ENERGY USE
+[b0004] Q1. Thinking specifically about energy use, how much do you agree with statement 1? SINGLE CODE.
+[b0005] 1. Strongly agree
+[b0006] 2. Tend to agree
+[b0007] 3. Neither agree nor disagree
+[b0008] 4. Tend to disagree
+[b0009] 5. Strongly disagree
+[b0010] Q2. Thinking specifically about energy use, how much do you agree with statement 2? SINGLE CODE.
+[b0011] 1. Strongly agree
+[b0012] 2. Tend to agree
+[b0013] 3. Neither agree nor disagree
+[b0014] 4. Tend to disagree
+[b0015] 5. Strongly disagree
+[b0016] Q3. Thinking specifically about energy use, how much do you agree with statement 3? SINGLE CODE.
+[b0017] 1. Strongly agree
+[b0018] 2. Tend to agree
+[b0019] 3. Neither agree nor disagree
+[b0020] 4. Tend to disagree
+[b0021] 5. Strongly disagree
+[b0022] Q4. Thinking specifically about energy use, how much do you agree with statement 4? SINGLE CODE.
+[b0023] 1. Strongly agree
+[b0024] 2. Tend to agree
+[b0025] 3. Neither agree nor disagree
+[b0026] 4. Tend to disagree
+[b0027] 5. Strongly disagree
+[b0028] Q5. Thinking specifically about energy use, how much do you agree with statement 5? SINGLE CODE.
+[b0029] 1. Strongly agree
+[b0030] 2. Tend to agree
+[b0031] 3. Neither agree nor disagree
+[b0032] 4. Tend to disagree
+[b0033] 5. Strongly disagree
+[b0034] Q6. Thinking specifically about energy use, how much do you agree with statement 6? SINGLE CODE.
+[b0035] 1. Strongly agree
+[b0036] 2. Tend to agree
+[b0037] 3. Neither agree nor disagree
+[b0038] 4. Tend to disagree
+[b0039] 5. Strongly disagree
+[b0040] Q7. Thinking specifically about energy use, how much do you agree with statement 7? SINGLE CODE.
+[b0041] 1. Strongly agree
+[b0042] 2. Tend to agree
+[b0043] 3. Neither agree nor disagree
+[b0044] 4. Tend to disagree
+[b0045] 5. Strongly disagree
+[b0046] Q8. Thinking specifically about energy use, how much do you agree with statement 8? SINGLE CODE.
+[b0047] 1. Strongly agree
+[b0048] 2. Tend to agree
+[b0049] 3. Neither agree nor disagree
+[b0050] 4. Tend to disagree
+[b0051] 5. Strongly disagree
+[b0052] (heading) MODULE 2 — TARIFF AWARENESS
+[b0053] Q9. Thinking specifically about tariff awareness, how much do you agree with statement 1? SINGLE CODE.
+[b0054] 1. Strongly agree
+[b0055] 2. Tend to agree
+[b0056] 3. Neither agree nor disagree
+[b0057] 4. Tend to disagree
+[b0058] 5. Strongly disagree
+[b0059] Q10. Thinking specifically about tariff awareness, how much do you agree with statement 2? SINGLE CODE.
+[b0060] 1. Strongly agree
+[b0061] 2. Tend to agree
+[b0062] 3. Neither agree nor disagree
+[b0063] 4. Tend to disagree
+[b0064] 5. Strongly disagree
+[b0065] Q11. Thinking specifically about tariff awareness, how much do you agree with statement 3? SINGLE CODE.
+[b0066] 1. Strongly agree
+[b0067] 2. Tend to agree
+[b0068] 3. Neither agree nor disagree
+[b0069] 4. Tend to disagree
+[b0070] 5. Strongly disagree
+[b0071] Q12. Thinking specifically about tariff awareness, how much do you agree with statement 4? SINGLE CODE.
+[b0072] 1. Strongly agree
+[b0073] 2. Tend to agree
+[b0074] 3. Neither agree nor disagree
+[b0075] 4. Tend to disagree
+[b0076] 5. Strongly disagree
+[b0077] Q13. Thinking specifically about tariff awareness, how much do you agree with statement 5? SINGLE CODE.
+[b0078] 1. Strongly agree
+[b0079] 2. Tend to agree
+[b0080] 3. Neither agree nor disagree
+[b0081] 4. Tend to disagree
+[b0082] 5. Strongly disagree
+[b0083] Q14. Thinking specifically about tariff awareness, how much do you agree with statement 6? SINGLE CODE.
+[b0084] 1. Strongly agree
+[b0085] 2. Tend to agree
+[b0086] 3. Neither agree nor disagree
+[b0087] 4. Tend to disagree
+[b0088] 5. Strongly disagree
+[b0089] Q15. Thinking specifically about tariff awareness, how much do you agree with statement 7? SINGLE CODE.
+[b0090] 1. Strongly agree
+[b0091] 2. Tend to agree
+[b0092] 3. Neither agree nor disagree
+[b0093] 4. Tend to disagree
+[b0094] 5. Strongly disagree
+[b0095] Q16. Thinking specifically about tariff awareness, how much do you agree with statement 8? SINGLE CODE.
+[b0096] 1. Strongly agree
+[b0097] 2. Tend to agree
+[b0098] 3. Neither agree nor disagree
+[b0099] 4. Tend to disagree
+[b0100] 5. Strongly disagree
+[b0101] (heading) MODULE 3 — SWITCHING BEHAVIOUR
+[b0102] Q17. Thinking specifically about switching behaviour, how much do you agree with statement 1? SINGLE CODE.
+[b0103] 1. Strongly agree
+[b0104] 2. Tend to agree
+[b0105] 3. Neither agree nor disagree
+[b0106] 4. Tend to disagree
+[b0107] 5. Strongly disagree
+[b0108] Q18. Thinking specifically about switching behaviour, how much do you agree with statement 2? SINGLE CODE.
+[b0109] 1. Strongly agree
+[b0110] 2. Tend to agree
+[b0111] 3. Neither agree nor disagree
+[b0112] 4. Tend to disagree
+[b0113] 5. Strongly disagree
+[b0114] Q19. Thinking specifically about switching behaviour, how much do you agree with statement 3? SINGLE CODE.
+[b0115] 1. Strongly agree
+[b0116] 2. Tend to agree
+[b0117] 3. Neither agree nor disagree
+[b0118] 4. Tend to disagree
+[b0119] 5. Strongly disagree
+[b0120] Q20. Thinking specifically about switching behaviour, how much do you agree with statement 4? SINGLE CODE.
+[b0121] 1. Strongly agree
+[b0122] 2. Tend to agree
+[b0123] 3. Neither agree nor disagree
+[b0124] 4. Tend to disagree
+[b0125] 5. Strongly disagree
+[b0126] Q21. Thinking specifically about switching behaviour, how much do you agree with statement 5? SINGLE CODE.
+[b0127] 1. Strongly agree
+[b0128] 2. Tend to agree
+[b0129] 3. Neither agree nor disagree
+[b0130] 4. Tend to disagree
+[b0131] 5. Strongly disagree
+[b0132] Q22. Thinking specifically about switching behaviour, how much do you agree with statement 6? SINGLE CODE.
+[b0133] 1. Strongly agree
+[b0134] 2. Tend to agree
+[b0135] 3. Neither agree nor disagree
+[b0136] 4. Tend to disagree
+[b0137] 5. Strongly disagree
+[b0138] Q23. Thinking specifically about switching behaviour, how much do you agree with statement 7? SINGLE CODE.
+[b0139] 1. Strongly agree
+[b0140] 2. Tend to agree
+[b0141] 3. Neither agree nor disagree
+[b0142] 4. Tend to disagree
+[b0143] 5. Strongly disagree
+[b0144] Q24. Thinking specifically about switching behaviour, how much do you agree with statement 8? SINGLE CODE.
+[b0145] 1. Strongly agree
+[b0146] 2. Tend to agree
+[b0147] 3. Neither agree nor disagree
+[b0148] 4. Tend to disagree
+[b0149] 5. Strongly disagree
+[b0150] (heading) MODULE 4 — SMART METERS
+[b0151] Q25. Thinking specifically about smart meters, how much do you agree with statement 1? SINGLE CODE.
+[b0152] 1. Strongly agree
+[b0153] 2. Tend to agree
+[b0154] 3. Neither agree nor disagree
+[b0155] 4. Tend to disagree
+[b0156] 5. Strongly disagree
+[b0157] Q26. Thinking specifically about smart meters, how much do you agree with statement 2? SINGLE CODE.
+[b0158] 1. Strongly agree
+[b0159] 2. Tend to agree
+[b0160] 3. Neither agree nor disagree
+[b0161] 4. Tend to disagree
+[b0162] 5. Strongly disagree
+[b0163] Q27. Thinking specifically about smart meters, how much do you agree with statement 3? SINGLE CODE.
+[b0164] 1. Strongly agree
+[b0165] 2. Tend to agree
+[b0166] 3. Neither agree nor disagree
+[b0167] 4. Tend to disagree
+[b0168] 5. Strongly disagree
+[b0169] Q28. Thinking specifically about smart meters, how much do you agree with statement 4? SINGLE CODE.
+[b0170] 1. Strongly agree
+[b0171] 2. Tend to agree
+[b0172] 3. Neither agree nor disagree
+[b0173] 4. Tend to disagree
+[b0174] 5. Strongly disagree
+[b0175] Q29. Thinking specifically about smart meters, how much do you agree with statement 5? SINGLE CODE.
+[b0176] 1. Strongly agree
+[b0177] 2. Tend to agree
+[b0178] 3. Neither agree nor disagree
+[b0179] 4. Tend to disagree
+[b0180] 5. Strongly disagree
+[b0181] Q30. Thinking specifically about smart meters, how much do you agree with statement 6? SINGLE CODE.
+[b0182] 1. Strongly agree
+[b0183] 2. Tend to agree
+[b0184] 3. Neither agree nor disagree
+[b0185] 4. Tend to disagree
+[b0186] 5. Strongly disagree
+[b0187] Q31. Thinking specifically about smart meters, how much do you agree with statement 7? SINGLE CODE.
+[b0188] 1. Strongly agree
+[b0189] 2. Tend to agree
+[b0190] 3. Neither agree nor disagree
+[b0191] 4. Tend to disagree
+[b0192] 5. Strongly disagree
+[b0193] Q32. Thinking specifically about smart meters, how much do you agree with statement 8? SINGLE CODE.
+[b0194] 1. Strongly agree
+[b0195] 2. Tend to agree
+[b0196] 3. Neither agree nor disagree
+[b0197] 4. Tend to disagree
+[b0198] 5. Strongly disagree
+[b0199] (heading) MODULE 5 — BILLING
+[b0200] Q33. Thinking specifically about billing, how much do you agree with statement 1? SINGLE CODE.
+[b0201] 1. Strongly agree
+[b0202] 2. Tend to agree
+[b0203] 3. Neither agree nor disagree
+[b0204] 4. Tend to disagree
+[b0205] 5. Strongly disagree
+[b0206] Q34. Thinking specifically about billing, how much do you agree with statement 2? SINGLE CODE.
+[b0207] 1. Strongly agree
+[b0208] 2. Tend to agree
+[b0209] 3. Neither agree nor disagree
+[b0210] 4. Tend to disagree
+[b0211] 5. Strongly disagree
+[b0212] Q35. Thinking specifically about billing, how much do you agree with statement 3? SINGLE CODE.
+[b0213] 1. Strongly agree
+[b0214] 2. Tend to agree
+[b0215] 3. Neither agree nor disagree
+[b0216] 4. Tend to disagree
+[b0217] 5. Strongly disagree
+[b0218] Q36. Thinking specifically about billing, how much do you agree with statement 4? SINGLE CODE.
+[b0219] 1. Strongly agree
+[b0220] 2. Tend to agree
+[b0221] 3. Neither agree nor disagree
+[b0222] 4. Tend to disagree
+[b0223] 5. Strongly disagree
+[b0224] Q37. Thinking specifically about billing, how much do you agree with statement 5? SINGLE CODE.
+[b0225] 1. Strongly agree
+[b0226] 2. Tend to agree
+[b0227] 3. Neither agree nor disagree
+[b0228] 4. Tend to disagree
+[b0229] 5. Strongly disagree
+[b0230] Q38. Thinking specifically about billing, how much do you agree with statement 6? SINGLE CODE.
+[b0231] 1. Strongly agree
+[b0232] 2. Tend to agree
+[b0233] 3. Neither agree nor disagree
+[b0234] 4. Tend to disagree
+[b0235] 5. Strongly disagree
+[b0236] Q39. Thinking specifically about billing, how much do you agree with statement 7? SINGLE CODE.
+[b0237] 1. Strongly agree
+[b0238] 2. Tend to agree
+[b0239] 3. Neither agree nor disagree
+[b0240] 4. Tend to disagree
+[b0241] 5. Strongly disagree
+[b0242] Q40. Thinking specifically about billing, how much do you agree with statement 8? SINGLE CODE.
+[b0243] 1. Strongly agree
+[b0244] 2. Tend to agree
+[b0245] 3. Neither agree nor disagree
+[b0246] 4. Tend to disagree
+[b0247] 5. Strongly disagree
+[b0248] (heading) MODULE 6 — CUSTOMER SERVICE
+[b0249] Q41. Thinking specifically about customer service, how much do you agree with statement 1? SINGLE CODE.
+[b0250] 1. Strongly agree
+[b0251] 2. Tend to agree
+[b0252] 3. Neither agree nor disagree
+[b0253] 4. Tend to disagree
+[b0254] 5. Strongly disagree
+[b0255] Q42. Thinking specifically about customer service, how much do you agree with statement 2? SINGLE CODE.
+[b0256] 1. Strongly agree
+[b0257] 2. Tend to agree
+[b0258] 3. Neither agree nor disagree
+[b0259] 4. Tend to disagree
+[b0260] 5. Strongly disagree
+[b0261] Q43. Thinking specifically about customer service, how much do you agree with statement 3? SINGLE CODE.
+[b0262] 1. Strongly agree
+[b0263] 2. Tend to agree
+[b0264] 3. Neither agree nor disagree
+[b0265] 4. Tend to disagree
+[b0266] 5. Strongly disagree
+[b0267] Q44. Thinking specifically about customer service, how much do you agree with statement 4? SINGLE CODE.
+[b0268] 1. Strongly agree
+[b0269] 2. Tend to agree
+[b0270] 3. Neither agree nor disagree
+[b0271] 4. Tend to disagree
+[b0272] 5. Strongly disagree
+[b0273] Q45. Thinking specifically about customer service, how much do you agree with statement 5? SINGLE CODE.
+[b0274] 1. Strongly agree
+[b0275] 2. Tend to agree
+[b0276] 3. Neither agree nor disagree
+[b0277] 4. Tend to disagree
+[b0278] 5. Strongly disagree
+[b0279] Q46. Thinking specifically about customer service, how much do you agree with statement 6? SINGLE CODE.
+[b0280] 1. Strongly agree
+[b0281] 2. Tend to agree
+[b0282] 3. Neither agree nor disagree
+[b0283] 4. Tend to disagree
+[b0284] 5. Strongly disagree
+[b0285] Q47. Thinking specifically about customer service, how much do you agree with statement 7? SINGLE CODE.
+[b0286] 1. Strongly agree
+[b0287] 2. Tend to agree
+[b0288] 3. Neither agree nor disagree
+[b0289] 4. Tend to disagree
+[b0290] 5. Strongly disagree
+[b0291] SCRIPTER: Q47 is the ONLY question in the instrument with a randomised statement order. Do not randomise elsewhere.
+[b0292] Q48. Thinking specifically about customer service, how much do you agree with statement 8? SINGLE CODE.
+[b0293] 1. Strongly agree
+[b0294] 2. Tend to agree
+[b0295] 3. Neither agree nor disagree
+[b0296] 4. Tend to disagree
+[b0297] 5. Strongly disagree
+[b0298] (heading) MODULE 7 — SUSTAINABILITY
+[b0299] Q49. Thinking specifically about sustainability, how much do you agree with statement 1? SINGLE CODE.
+[b0300] 1. Strongly agree
+[b0301] 2. Tend to agree
+[b0302] 3. Neither agree nor disagree
+[b0303] 4. Tend to disagree
+[b0304] 5. Strongly disagree
+[b0305] Q50. Thinking specifically about sustainability, how much do you agree with statement 2? SINGLE CODE.
+[b0306] 1. Strongly agree
+[b0307] 2. Tend to agree
+[b0308] 3. Neither agree nor disagree
+[b0309] 4. Tend to disagree
+[b0310] 5. Strongly disagree
+[b0311] Q51. Thinking specifically about sustainability, how much do you agree with statement 3? SINGLE CODE.
+[b0312] 1. Strongly agree
+[b0313] 2. Tend to agree
+[b0314] 3. Neither agree nor disagree
+[b0315] 4. Tend to disagree
+[b0316] 5. Strongly disagree
+[b0317] Q52. Thinking specifically about sustainability, how much do you agree with statement 4? SINGLE CODE.
+[b0318] 1. Strongly agree
+[b0319] 2. Tend to agree
+[b0320] 3. Neither agree nor disagree
+[b0321] 4. Tend to disagree
+[b0322] 5. Strongly disagree
+[b0323] Q53. Thinking specifically about sustainability, how much do you agree with statement 5? SINGLE CODE.
+[b0324] 1. Strongly agree
+[b0325] 2. Tend to agree
+[b0326] 3. Neither agree nor disagree
+[b0327] 4. Tend to disagree
+[b0328] 5. Strongly disagree
+[b0329] Q54. Thinking specifically about sustainability, how much do you agree with statement 6? SINGLE CODE.
+[b0330] 1. Strongly agree
+[b0331] 2. Tend to agree
+[b0332] 3. Neither agree nor disagree
+[b0333] 4. Tend to disagree
+[b0334] 5. Strongly disagree
+[b0335] Q55. Thinking specifically about sustainability, how much do you agree with statement 7? SINGLE CODE.
+[b0336] 1. Strongly agree
+[b0337] 2. Tend to agree
+[b0338] 3. Neither agree nor disagree
+[b0339] 4. Tend to disagree
+[b0340] 5. Strongly disagree
+[b0341] Q56. Thinking specifically about sustainability, how much do you agree with statement 8? SINGLE CODE.
+[b0342] 1. Strongly agree
+[b0343] 2. Tend to agree
+[b0344] 3. Neither agree nor disagree
+[b0345] 4. Tend to disagree
+[b0346] 5. Strongly disagree
+[b0347] (heading) MODULE 8 — FUTURE INTENTIONS
+[b0348] Q57. Thinking specifically about future intentions, how much do you agree with statement 1? SINGLE CODE.
+[b0349] 1. Strongly agree
+[b0350] 2. Tend to agree
+[b0351] 3. Neither agree nor disagree
+[b0352] 4. Tend to disagree
+[b0353] 5. Strongly disagree
+[b0354] Q58. Thinking specifically about future intentions, how much do you agree with statement 2? SINGLE CODE.
+[b0355] 1. Strongly agree
+[b0356] 2. Tend to agree
+[b0357] 3. Neither agree nor disagree
+[b0358] 4. Tend to disagree
+[b0359] 5. Strongly disagree
+[b0360] Q59. Thinking specifically about future intentions, how much do you agree with statement 3? SINGLE CODE.
+[b0361] 1. Strongly agree
+[b0362] 2. Tend to agree
+[b0363] 3. Neither agree nor disagree
+[b0364] 4. Tend to disagree
+[b0365] 5. Strongly disagree
+[b0366] Q60. Thinking specifically about future intentions, how much do you agree with statement 4? SINGLE CODE.
+[b0367] 1. Strongly agree
+[b0368] 2. Tend to agree
+[b0369] 3. Neither agree nor disagree
+[b0370] 4. Tend to disagree
+[b0371] 5. Strongly disagree
+[b0372] Q61. Thinking specifically about future intentions, how much do you agree with statement 5? SINGLE CODE.
+[b0373] 1. Strongly agree
+[b0374] 2. Tend to agree
+[b0375] 3. Neither agree nor disagree
+[b0376] 4. Tend to disagree
+[b0377] 5. Strongly disagree
+[b0378] Q62. Thinking specifically about future intentions, how much do you agree with statement 6? SINGLE CODE.
+[b0379] 1. Strongly agree
+[b0380] 2. Tend to agree
+[b0381] 3. Neither agree nor disagree
+[b0382] 4. Tend to disagree
+[b0383] 5. Strongly disagree
+[b0384] Q63. Thinking specifically about future intentions, how much do you agree with statement 7? SINGLE CODE.
+[b0385] 1. Strongly agree
+[b0386] 2. Tend to agree
+[b0387] 3. Neither agree nor disagree
+[b0388] 4. Tend to disagree
+[b0389] 5. Strongly disagree
+[b0390] Q64. Thinking specifically about future intentions, how much do you agree with statement 8? SINGLE CODE.
+[b0391] 1. Strongly agree
+[b0392] 2. Tend to agree
+[b0393] 3. Neither agree nor disagree
+[b0394] 4. Tend to disagree
+[b0395] 5. Strongly disagree
+[b0396] END OF QUESTIONNAIRE — thank and close (code C1). Median length target: 14 minutes.

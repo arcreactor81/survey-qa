@@ -45,6 +45,244 @@ export const CONTROL_SELECTOR = "input, select, textarea, button, a[role=button]
 export const LABEL_SELECTOR = "label";
 
 /**
+ * WHAT COUNTS AS A FREE-TEXT ANSWER — ONE list, shared by the reader and the driver.
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE, measured on the live medical fleet. `counts.textInputs`
+ * counted `text` and `textarea`; `driver.ts#applyDecision` filled `text`, `textarea`, `number`
+ * and `email`. Screen 1 of the oncology instrument is one radio question plus
+ * `<input type="number">`, so the SAME payload reported `textInputs: 0` while its own control
+ * inventory carried a text-entry control the driver then typed into. Two of the reader's own
+ * numbers describing one screen, disagreeing, with nothing anywhere noticing.
+ *
+ * It is not a cosmetic disagreement. `walkPath` decides whether a survey RENDERED by asking
+ * `counts.options > 0 || counts.textInputs > 0 || questionText || grid` — so a screen whose only
+ * question is a number field scored zero on the text half, and a page error alongside it would
+ * have been written up as "the survey threw during load and rendered no interactive control"
+ * about a page that rendered perfectly.
+ *
+ * The repair is a single list rather than a corrected copy: two definitions of the same idea in
+ * two files is precisely how this arose. `page-script.ts` interpolates it into the page string;
+ * `driver.ts` imports the predicate. There is nowhere left for them to drift apart.
+ *
+ * WHY IT NOW CARRIES `tel`, `url` AND `search`, AND WHY IT STILL DOES NOT CARRY `password`.
+ *
+ * This list was deliberately kept NARROW while the driver filled only four types: a count that
+ * described controls the walker never touched would have been a different lie in the same
+ * family. `pipeline/judge/lib/v2-observation.mjs#textInputs` has always used the WIDER set
+ * (`text|textarea|email|number|tel|url|search|password`), and the two disagreeing was the
+ * tension that kept this one narrow.
+ *
+ * THE WALKER NOW FILLS `tel`, `url` AND `search` (see `driver.ts#navigatorValueFor`), so the
+ * reason for the narrowness is gone and the two lists converge — except for `password`, which is
+ * excluded ON PURPOSE and not by oversight. A field asking for a password is not a survey answer
+ * and this harness must never type into one; a walk that meets a required password field STOPS
+ * and NAMES it (`driver.ts`, `fillRefusalFor`) rather than inventing a credential. So the
+ * remaining difference from the judge's set is one deliberate exclusion, stated here.
+ */
+export const TEXT_ENTRY_TYPES: readonly string[] = [
+  "text",
+  "textarea",
+  "number",
+  "email",
+  "tel",
+  "url",
+  "search",
+];
+
+/** Is this control's type one a respondent types a free-text answer into? */
+export function isTextEntry(type: string | null | undefined): boolean {
+  return TEXT_ENTRY_TYPES.includes(String(type ?? "").toLowerCase());
+}
+
+/**
+ * CONTROLS A RESPONDENT SUPPLIES A VALUE TO WITHOUT CLICKING AN OPTION — the SUPERSET, and why
+ * it is a second list rather than a wider first one.
+ *
+ * A slider, a date picker and a colour well are answers, but nobody TYPES them: measured in
+ * Chrome, assigning the harness's `"QA-PROBE"` to `range`, `date`, `time` or `color` is silently
+ * discarded by the value-sanitisation algorithm and the control keeps its default (`range` stays
+ * at its midpoint, `color` at `#000000`, the rest stay empty). Calling them "text inputs" would
+ * therefore put a colour well into a count named for free text, and `textInputs` is consumed by
+ * `pipeline/judge` under exactly that meaning.
+ *
+ * So `textInputs` keeps meaning FREE TEXT and this is the set the DRIVER sets a value on. The
+ * count that matters to `walkPath`'s "did this survey render?" test is the wide one: a screen
+ * whose only question is a slider renders perfectly and has zero text inputs, which is the same
+ * shape of defect the single-list repair above was built to close, one type family over.
+ */
+export const VALUE_ENTRY_TYPES: readonly string[] = [
+  ...TEXT_ENTRY_TYPES,
+  "range",
+  "date",
+  "time",
+  "month",
+  "week",
+  "datetime-local",
+  "color",
+];
+
+/** Is this control's type one a respondent supplies a value to (typed OR set)? */
+export function isValueEntry(type: string | null | undefined): boolean {
+  return VALUE_ENTRY_TYPES.includes(String(type ?? "").toLowerCase());
+}
+
+/**
+ * A CONTROL A RESPONDENT ANSWERS THAT THIS HARNESS WILL NOT OR CANNOT ANSWER — named here, once,
+ * so the refusal is a stated policy rather than an absence nobody notices.
+ *
+ * THE RULE THIS ENFORCES (CLAUDE.md): degrade to a NAMED, REPORTED limitation, never to a wrong
+ * answer and never to a silent skip. Both entries are permanent by design, not backlog:
+ *
+ *   `password`  a survey asking for a password is not a survey we should be typing into. There
+ *               is no value that is both safe and honest, so there is no value.
+ *   `file`      a file input cannot be satisfied from a page script at all — `value` is
+ *               read-only for security and the harness has no file to offer.
+ *
+ * Returns the reason a walk should print, or null when the type is one we do fill. A type that
+ * is neither fillable nor listed here is UNKNOWN, and the caller reports it as unknown — the one
+ * thing it must not do is treat "we have no rule" as "there was nothing to answer".
+ */
+export function fillRefusalFor(type: string | null | undefined): string | null {
+  const t = String(type ?? "").toLowerCase();
+  if (t === "password") {
+    return (
+      "this harness refuses to type into a password field: a survey asking for a credential is " +
+      "not a survey we should be answering, and there is no filler that is both safe and honest"
+    );
+  }
+  if (t === "file") {
+    return (
+      "a file input cannot be answered from a page script — its value is read-only to script " +
+      "for security, and this harness has no file to upload"
+    );
+  }
+  return null;
+}
+
+/**
+ * WHICH BUTTON MOVES THE SURVEY — AND WHY LABEL TEXT ALONE COULD NOT ANSWER IT.
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE, and it is the day's cleanest cannot-fail metric. The
+ * classifier read `(c.text || c.label || '')`. SurveyJS renders navigation as
+ * `<input type="button" title="Next" value="Next">`: an `<input>` has NO `textContent`, and
+ * `labelFor` finds no `<label>` for it either, so BOTH inputs to the old rule were the empty
+ * string on every SurveyJS screen ever read. Every navigation control classified `other`.
+ *
+ * `nextButton` then survived screen 1 BY ACCIDENT — the first page offers only Next, and its
+ * "exactly one non-back candidate" fallback picked it. From screen 2 onward Previous appears
+ * beside Next, two candidates tie, and the walker reports `no-advance-control`. MEASURED on
+ * four live medical instruments: 142/142 observations stalled, 38 of them recorded of THE SAME
+ * SCREEN, and that 38 was read upward as progress.
+ *
+ * SO THE RULE CONSULTS THE CONTROL'S OWN IDENTITY, IN A DELIBERATE ORDER, and returns which
+ * field decided:
+ *
+ *   1. `text`   — the element's own rendered text. `<button>Next</button>`. Unambiguous.
+ *   2. `code`   — the `value` attribute, which is what an `<input type=button>` DRAWS and what
+ *                 the form would submit. This is the field the SurveyJS fleet needed.
+ *   3. `title` / `aria-label` — the control's own accessible name.
+ *   4. `label`  — LAST, and it is last on purpose. `labelFor` falls back to the text of the
+ *                 nearest ancestor `label/li/td/div`, which for a navigation button is the
+ *                 whole navigation bar: a container reading "Previous Next" would classify the
+ *                 NEXT button as `back` — a worse failure than not classifying it at all. It is
+ *                 consulted only when nothing the control itself carries decided.
+ *
+ * GENERALITY, STATED (CLAUDE.md, the north star). The lexicon is an assumption about the words
+ * survey platforms print on navigation, and it is wrong somewhere: a site that advances on an
+ * icon-only control, on keypress, or in a language not listed here classifies `other`. THAT IS
+ * THE DESIGNED DEGRADATION — `nextButton` then falls back to "exactly one forward-looking
+ * candidate" and NAMES that it did so, and if even that is ambiguous the walk records
+ * `no-advance-control` rather than pressing something arbitrary. Nothing here guesses.
+ *
+ * Held as a STRING, evaluated in the page, for the reason this whole file is: what runs in the
+ * browser must be the exact text shipped, not a bundler's rendering of a compiled function. The
+ * node suite exercises this same text with `(0, eval)(CLASSIFY_CONTROL_ROLE_SRC)`, so the thing
+ * under test and the thing in production are one artifact.
+ */
+export const CLASSIFY_CONTROL_ROLE_SRC = `
+(function classifyControlRole(c) {
+  var FORWARD = /^(next|continue|start|begin|submit|finish|finished|done|complete|completed|proceed|go on|siguiente|continuar|enviar|terminar|weiter|absenden|fertig|suivant|continuer|envoyer|terminer|avanti|invia)\\b/;
+  var BACK = /^(back|previous|prev|return|go back|atr[a\\u00e1]s|anterior|zur[u\\u00fc]ck|pr[e\\u00e9]c[e\\u00e9]dent|indietro)\\b/;
+  // CJK prints no word boundaries, so those are substring tests, not \\b-anchored ones.
+  var FORWARD_CJK = ['\\u6b21\\u3078', '\\u9032\\u3080', '\\u5b8c\\u4e86', '\\u9001\\u4fe1', '\\u958b\\u59cb', '\\u4e0b\\u4e00\\u6b65', '\\u4e0b\\u4e00\\u9801', '\\u4e0b\\u4e00\\u9875', '\\u7e7c\\u7e8c', '\\u7ee7\\u7eed', '\\u63d0\\u4ea4', '\\u5b8c\\u6210', '\\u5f00\\u59cb', '\\ub2e4\\uc74c', '\\uc81c\\ucd9c'];
+  var BACK_CJK = ['\\u623b\\u308b', '\\u524d\\u3078', '\\u4e0a\\u4e00\\u6b65', '\\u4e0a\\u4e00\\u9801', '\\u4e0a\\u4e00\\u9875', '\\u8fd4\\u56de', '\\uc774\\uc804'];
+  var norm = function (s) { return String(s == null ? '' : s).replace(/\\s+/g, ' ').trim(); };
+  var read = function (v) {
+    var t = norm(v);
+    if (!t) return null;
+    var low = t.toLowerCase();
+    if (FORWARD.test(low)) return 'next';
+    if (BACK.test(low)) return 'back';
+    for (var i = 0; i < FORWARD_CJK.length; i++) if (t.indexOf(FORWARD_CJK[i]) >= 0) return 'next';
+    for (var j = 0; j < BACK_CJK.length; j++) if (t.indexOf(BACK_CJK[j]) >= 0) return 'back';
+    return null;
+  };
+  // The order IS the policy — see this constant's comment. The control's own fields first,
+  // the inherited-ancestor-text fallback dead last.
+  var sources = [
+    ['text', c && c.text],
+    ['code', c && c.code],
+    ['title', c && c.title],
+    ['aria-label', c && c.ariaLabel],
+    ['label', c && c.label],
+  ];
+  for (var k = 0; k < sources.length; k++) {
+    var role = read(sources[k][1]);
+    if (role) return { role: role, via: sources[k][0] + ':' + norm(sources[k][1]).slice(0, 40) };
+  }
+  // NOT "no button": "no field this reader consults named a direction". A caller must treat it
+  // as unknown, never as evidence that the survey offers no way forward.
+  return { role: 'other', via: null };
+})
+`;
+
+/**
+ * THE READER'S OWN NUMBERS, CHECKED AGAINST THE INVENTORY THEY SUMMARISE.
+ *
+ * `counts` is a summary of `controls` and `optionGroups` that sits in the same payload as the
+ * things it summarises, so the two can disagree — and on the medical fleet they did, silently,
+ * on every screen carrying a number field. For a product whose entire job is finding places
+ * where two descriptions of one thing disagree, its own reader shipping a contradiction is
+ * exactly the event that has to be REPORTED, and `readerLimitations` is where that goes.
+ *
+ * It re-counts each field from the inventory rather than trusting the summariser, and reports
+ * every disagreement with both numbers. A caller reading `counts.textInputs` while another
+ * reads `controls` cannot otherwise tell which of them is looking at the truth.
+ */
+export const CHECK_COUNTS_SRC = `
+(function checkCountsAgainstInventory(counts, controls, groups, textEntryTypes, valueEntryTypes) {
+  var isText = function (t) { return textEntryTypes.indexOf(String(t == null ? '' : t).toLowerCase()) >= 0; };
+  // DELIBERATELY UNCONDITIONAL. Making the fifth number optional — "recount it only if the
+  // caller passed the wide list" — is how a check stops being able to fail: a caller that
+  // forgets the argument would silently lose the very disagreement this exists to surface.
+  // Every caller passes both lists; a caller that does not gets a loud recount of 0 against
+  // whatever it claimed, which is the correct direction for this to break in.
+  var isValue = function (t) { return (valueEntryTypes || []).indexOf(String(t == null ? '' : t).toLowerCase()) >= 0; };
+  var recount = {
+    controls: controls.length,
+    optionGroups: groups.length,
+    options: groups.reduce(function (n, g) { return n + g.options.length; }, 0),
+    textInputs: controls.filter(function (c) { return isText(c.type); }).length,
+    // Everything the DRIVER will set a value on — the number \`walkPath\`'s "did this survey
+    // render?" test needs, because a screen whose only question is a slider has no text inputs.
+    valueInputs: controls.filter(function (c) { return isValue(c.type); }).length,
+    optionsNotOperable: groups.reduce(function (n, g) {
+      return n + g.options.filter(function (o) { return !o.operable; }).length;
+    }, 0),
+  };
+  var out = [];
+  var keys = Object.keys(recount);
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    if (counts[k] !== recount[k]) {
+      out.push('counts.' + k + ' says ' + counts[k] + ' but this screen\\'s own inventory holds ' + recount[k]);
+    }
+  }
+  return out;
+})
+`;
+
+/**
  * THE ERROR COLLECTOR — installed before the site's own scripts run.
  *
  * A site that dies at load is the most consequential thing a QA run can find, so the
@@ -89,6 +327,10 @@ const READ_SCREEN_BODY = `
 (() => {
   const SEL = ${JSON.stringify(CONTROL_SELECTOR)};
   const LABEL_SEL = ${JSON.stringify(LABEL_SELECTOR)};
+  const TEXT_ENTRY_TYPES = ${JSON.stringify(TEXT_ENTRY_TYPES)};
+  const VALUE_ENTRY_TYPES = ${JSON.stringify(VALUE_ENTRY_TYPES)};
+  const classifyControlRole = ${CLASSIFY_CONTROL_ROLE_SRC.trim()};
+  const checkCountsAgainstInventory = ${CHECK_COUNTS_SRC.trim()};
   const vis = (el) => {
     if (!el || !el.getClientRects) return false;
     const cs = window.getComputedStyle(el);
@@ -218,7 +460,19 @@ const READ_SCREEN_BODY = `
       label: labelFor(el).slice(0, 300),
       text: txt(el).slice(0, 200),
       checked: type === 'radio' || type === 'checkbox' ? !!el.checked : null,
-      value: type === 'text' || type === 'textarea' || type === 'number' || type === 'email' ? String(el.value || '') : null,
+      // EVERY control a value can be supplied to, not only the four that used to be typed into.
+      // NOTE WHAT THIS VALUE DOES AND DOES NOT MEAN for the wider types: a \`range\` reports its
+      // midpoint and a \`color\` reports \`#000000\` when NOBODY HAS TOUCHED THEM, so a non-empty
+      // value here is evidence of an answer only for the types whose empty state is the empty
+      // string. \`valueIsUserSupplied\` below is the field that keeps those two apart, and the
+      // driver's "skip a control that is already filled" rule reads THAT, never this.
+      value: VALUE_ENTRY_TYPES.indexOf(type) >= 0 ? String(el.value == null ? '' : el.value) : null,
+      // Does a non-empty \`value\` on THIS control witness an answer? False for the types the
+      // browser gives a default to (\`range\`, \`color\`): there, "has a value" is the initial
+      // state of an untouched control and reading it as an answer would skip the question.
+      valueIsUserSupplied: VALUE_ENTRY_TYPES.indexOf(type) >= 0 && type !== 'range' && type !== 'color'
+        ? String(el.value == null ? '' : el.value).length > 0
+        : false,
       disabled: !!el.disabled || attr(el, 'aria-disabled') === 'true',
       required: !!el.required || attr(el, 'aria-required') === 'true',
       visible: vis(el),
@@ -229,7 +483,24 @@ const READ_SCREEN_BODY = `
       labelIndex: act.labelIndex,
       placeholder: attr(el, 'placeholder'),
       maxlength: attr(el, 'maxlength'),
+      // The BOUNDS THE SITE ITSELF DECLARES. Captured because a walk that types a value the
+      // control cannot hold gets "Invalid input" back and records \`blocked\` — which downstream
+      // reads as the survey rejecting an answer rather than as the harness offering a bad one.
+      // MEASURED: the driver's default probe text "QA-PROBE" into the oncology instrument's
+      // \`<input type=number min=0 max=50>\` stopped the walk dead on screen 1.
+      min: attr(el, 'min'),
+      max: attr(el, 'max'),
+      // The GRANULARITY the site declares, and the FORM it declares. Captured for the same
+      // reason \`min\`/\`max\` are: a filler that lands between the site's own step points, or
+      // outside its own pattern, gets the site's validation back and is recorded \`blocked\` —
+      // the harness's mistake reported as the survey rejecting an answer.
+      step: attr(el, 'step'),
+      pattern: attr(el, 'pattern'),
       readOnly: !!el.readOnly,
+      // The control's own accessible name, kept SEPARATE from \`label\` because \`labelFor\`
+      // falls back to ancestor text and these do not. See CLASSIFY_CONTROL_ROLE_SRC.
+      title: attr(el, 'title'),
+      ariaLabel: attr(el, 'aria-label'),
     };
     if (tag === 'select') {
       c.options = Array.prototype.slice.call(el.options || []).map((o, i) => ({
@@ -438,15 +709,29 @@ const READ_SCREEN_BODY = `
     }
   }
 
+  // WHICH CONTROLS MOVE THE SURVEY. The classification rule and the reason it consults more
+  // than the label live on CLASSIFY_CONTROL_ROLE_SRC; this only feeds it and records the answer.
   const buttons = controls
     .filter((c) => c.tag === 'button' || c.type === 'submit' || c.type === 'button' || c.tag === 'a')
     .map((c) => {
-      const label = (c.text || c.label || '').trim();
-      const l = label.toLowerCase();
-      let role = 'other';
-      if (/^(next|continue|start|begin|submit|finish|done|proceed|siguiente|weiter)\\b/.test(l)) role = 'next';
-      else if (/^(back|previous|prev|return)\\b/.test(l)) role = 'back';
-      return { idx: c.idx, label: label, role: role, disabled: c.disabled, visible: c.visible };
+      const verdict = classifyControlRole(c);
+      // The button's DISPLAYED NAME, by the same precedence: an <input type=button> draws its
+      // \`value\`, so a record saying label "" for a button a respondent reads as "Next" is a
+      // capture that cannot be checked against a document. \`labelSource\` says which it was.
+      const named = [
+        ['text', c.text], ['code', c.code], ['title', c.title], ['aria-label', c.ariaLabel], ['label', c.label],
+      ].find((p) => p[1] && String(p[1]).trim().length > 0);
+      return {
+        idx: c.idx,
+        label: named ? String(named[1]).trim() : '',
+        labelSource: named ? named[0] : null,
+        role: verdict.role,
+        // WHICH FIELD DECIDED, verbatim. Null when nothing the control carries named a
+        // direction — "this reader could not tell", never "there is no way forward".
+        roleVia: verdict.via,
+        disabled: c.disabled,
+        visible: c.visible,
+      };
     });
 
   // Progress indicator: a real <progress>, an ARIA progressbar, or a percent-width bar.
@@ -475,11 +760,91 @@ const READ_SCREEN_BODY = `
 
   // Question / instruction split: the first heading-ish block is the question; a
   // subsequent italic/small/instruction-classed block is the instruction.
-  const qEl = document.querySelector('h1, h2, h3, legend, .question, [class*=question] , [data-question]');
+  //
+  // "HEADING-ISH BLOCK" HAD NO TEST FOR IT, AND A CONTAINER IS NOT ONE. \`querySelector\` returns
+  // the FIRST element in document order matching ANY of these selectors, and on a SurveyJS
+  // instrument that is the question's outer wrapper — \`<div class="sd-question sd-row__question">\`
+  // matches \`[class*=question]\` — whose textContent is the title FOLLOWED BY EVERY OPTION LABEL.
+  // MEASURED on the live oncology instrument, screen 1:
+  //     "S1. Which of the following best describes your primary clinical role?Medical
+  //      oncologistHematologist-oncolgistNurse practitionerPhysician assistant"
+  // and on screen 2, where SurveyJS adds a visually-hidden <legend> repeating the title inside
+  // that same wrapper for screen readers, the title comes out TWICE before the options:
+  //     "Q1. Which ... are you aware of?Q1. Which ... are you aware of?KEYTRUDAOPDIVO..."
+  // One cause, two symptoms. \`questionWordingScore\` in driver.ts takes PRECISION against this
+  // string, so every option label in it dilutes the score of the question that really is on the
+  // screen — the identity signal the binder depends on, degraded by the reader's own parse.
+  //
+  // THE RULE, STATED: a question's TITLE never contains the question's inputs; its CONTAINER
+  // does. So the first match that contains none of this screen's controls is the title, and a
+  // duplicate hidden inside the container but outside the title is excluded by construction.
+  // WHERE NO MATCH IS CONTROL-FREE this keeps the old element and says so as a counted
+  // limitation — degrading to a named shortfall, never to a silently wrong question.
+  let qEl = null;
+  let qElHeldControls = 0;
+  {
+    const qCandidates = Array.prototype.slice.call(
+      document.querySelectorAll('h1, h2, h3, legend, .question, [class*=question] , [data-question]'),
+    );
+    for (let i = 0; i < qCandidates.length && !qEl; i++) {
+      const holds = nodes.some((n) => qCandidates[i] !== n && qCandidates[i].contains(n));
+      if (!holds) qEl = qCandidates[i];
+    }
+    if (!qEl && qCandidates.length > 0) {
+      qEl = qCandidates[0];
+      qElHeldControls = nodes.filter((n) => qEl !== n && qEl.contains(n)).length;
+      limit(
+        'question-text-includes-controls',
+        'no heading-ish element on this screen is free of form controls, so \`questionText\` was taken from an ' +
+        'element that CONTAINS ' + qElHeldControls + ' of them and therefore carries their labels (and any ' +
+        'hidden accessibility copy of the title) as well as the question. A caller comparing this string to a ' +
+        'document\\'s question wording is comparing more than the question',
+        qElHeldControls,
+      );
+    }
+  }
   const iEl = document.querySelector('.instruction, [class*=instruction], em, i, small');
   const errEls = Array.prototype.slice.call(
     document.querySelectorAll('.error, [class*=error], [role=alert], [aria-live], .validation, [class*=invalid]')
   ).filter(vis).map((e) => txt(e)).filter(Boolean).slice(0, 20);
+
+  // THE SUMMARY, AND THE CHECK THAT IT SUMMARISES WHAT IS ACTUALLY IN THIS PAYLOAD.
+  //
+  // \`textInputs\` counted 'text' and 'textarea' while the driver filled 'text', 'textarea',
+  // 'number' and 'email' — so a screen whose only free-text question is \`<input type=number>\`
+  // reported ZERO text inputs beside a control inventory containing one, and \`walkPath\`'s
+  // "did this survey render?" test reads that count. One list now (TEXT_ENTRY_TYPES), and the
+  // numbers are re-counted from the inventory below so a future drift is REPORTED rather than
+  // shipped. See CHECK_COUNTS_SRC.
+  const groupList = Object.keys(groups).map((k) => groups[k]);
+  const counts = {
+    controls: controls.length,
+    optionGroups: groupList.length,
+    options: groupList.reduce((n, g) => n + g.options.length, 0),
+    textInputs: controls.filter((c) => TEXT_ENTRY_TYPES.indexOf(c.type) >= 0).length,
+    // EVERY control the driver will supply a value to — a superset of textInputs that also
+    // holds sliders, date pickers and colour wells. \`walkPath\`'s "did this survey render?"
+    // test reads THIS, because a screen whose only question is a slider renders perfectly and
+    // has zero text inputs; reading the narrow number there is the same defect one family over.
+    valueInputs: controls.filter((c) => VALUE_ENTRY_TYPES.indexOf(c.type) >= 0).length,
+    // Options no respondent could reach at this viewport — a hidden control with a hidden
+    // label, a honeypot, an alternate layout the media query switched off. Counted so that
+    // "the screen had 12 options" and "11 of them were answerable" stay distinguishable.
+    optionsNotOperable: groupList.reduce((n, g) => n + g.options.filter((o) => !o.operable).length, 0),
+    readerLimitations: 0,
+  };
+  const countDisagreements = checkCountsAgainstInventory(counts, controls, groupList, TEXT_ENTRY_TYPES, VALUE_ENTRY_TYPES);
+  if (countDisagreements.length > 0) {
+    limit(
+      'counts-contradict-inventory',
+      'THIS READ DESCRIBES ONE SCREEN TWO WAYS AND THE TWO DISAGREE: ' + countDisagreements.join('; ') +
+      '. A caller reading the summary and a caller reading the inventory are looking at different screens, ' +
+      'and nothing in this payload says which is right',
+      countDisagreements.length,
+    );
+  }
+  // Counted LAST so the number includes every limitation raised above it, this one included.
+  counts.readerLimitations = limitations.length;
 
   const optionSig = Object.keys(groups).sort().map((k) =>
     k + ':' + groups[k].options.map((o) => (o.code || '') + '=' + o.label).join('|')
@@ -497,7 +862,7 @@ const READ_SCREEN_BODY = `
     visibleTextTruncated: bodyText.length > 8000,
     bracketedInstructionsVisible: bracketed,
     controls: controls,
-    optionGroups: Object.keys(groups).map((k) => groups[k]),
+    optionGroups: groupList,
     grid: grid,
     // What this read could NOT do properly, named and counted. An EMPTY ARRAY is a claim
     // ("we looked and found none"); the field being ABSENT is an older reader that never
@@ -506,19 +871,7 @@ const READ_SCREEN_BODY = `
     buttons: buttons,
     progress: progress,
     validationMessages: errEls,
-    counts: {
-      controls: controls.length,
-      optionGroups: Object.keys(groups).length,
-      options: Object.keys(groups).reduce((n, k) => n + groups[k].options.length, 0),
-      textInputs: controls.filter((c) => c.type === 'text' || c.type === 'textarea').length,
-      // Options no respondent could reach at this viewport — a hidden control with a hidden
-      // label, a honeypot, an alternate layout the media query switched off. Counted so that
-      // "the screen had 12 options" and "11 of them were answerable" stay distinguishable.
-      optionsNotOperable: Object.keys(groups).reduce(
-        (n, k) => n + groups[k].options.filter((o) => !o.operable).length, 0,
-      ),
-      readerLimitations: limitations.length,
-    },
+    counts: counts,
     // Cheap stable identity for "did the screen change?" — question text plus the exact
     // option inventory. Deliberately NOT the URL: single-page surveys never change it.
     screenSignature: (qEl ? txt(qEl) : bodyText.slice(0, 200)) + '#' + optionSig,
@@ -556,6 +909,44 @@ export const HISTORY_SHIM = `
   } catch (e) {
     return { applied: false, error: String(e) };
   }
+})()
+`;
+
+/**
+ * SET the value of a control that CANNOT BE TYPED INTO, and tell the page it changed.
+ *
+ * MEASURED IN CHROME, which is why this exists as a second route rather than a wider `typeIdx`:
+ * assigning the harness's `"QA-PROBE"` to `range`, `date`, `time` or `color` is discarded
+ * outright by the HTML value-sanitisation algorithm — the slider stays at its midpoint, the
+ * colour well stays `#000000`, the date stays empty — and KEYSTROKES fare no better. A range
+ * ignores `Input.insertText` entirely (it answers to arrow keys and pointer drags), and a date
+ * input consumes keystrokes into locale-ordered segments, so the same three digits mean
+ * different dates in different locales. Both would leave the question unanswered while the
+ * record said it was filled: a confident wrong answer produced by the harness.
+ *
+ * So the value is ASSIGNED, and then `input` and `change` are dispatched — because assigning
+ * `value` from script fires neither, and a site that tracks whether its slider was touched (or
+ * that mirrors the value into a label) would otherwise never learn an answer had been given.
+ * That is the whole difference between setting a slider and moving one.
+ *
+ * The returned report says what the control held AFTER the assignment, so a value the page
+ * rejected is visible to the caller instead of being assumed to have taken.
+ */
+export const setValueScript = (idx: number, value: string): string => `
+(() => {
+  const SEL = ${JSON.stringify(CONTROL_SELECTOR)};
+  const el = document.querySelectorAll(SEL)[${idx}];
+  if (!el) return { ok: false, reason: 'no-control-at-index', got: null };
+  if (!('value' in el)) return { ok: false, reason: 'control-has-no-value-property', got: null };
+  try { el.focus(); } catch (_) { /* focus is a courtesy, not the mechanism */ }
+  el.value = ${JSON.stringify(value)};
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  const got = String(el.value == null ? '' : el.value);
+  // THE PAGE'S ANSWER, NOT OURS. A value the control sanitised away comes back as \`ok: false\`
+  // with what it actually holds, so "we set it" can never be recorded for a control that
+  // refused the value.
+  return { ok: got === ${JSON.stringify(value)}, reason: got === ${JSON.stringify(value)} ? null : 'value-rejected-by-control', got: got };
 })()
 `;
 

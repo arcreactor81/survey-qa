@@ -172,6 +172,7 @@ function stubProvider({ failUnit = () => false, emitRules = true, emitCrossRefs 
 function sliceEnv(overrides = {}) {
   return {
     EVIDENCE: memoryR2(),
+    V2_PREFIX: "v2/",
     // Gateway config is part of the production posture: llm/chat.ts refuses a direct,
     // unmetered provider call without it. Tests stub globalThis.fetch, so they exercise
     // the same gateway URL production builds.
@@ -633,6 +634,10 @@ test("(a) pass A occupies MULTIPLE distinct workflow steps, and exhausting them 
     assertEq(waveSteps.length, 3, `pass A must occupy one step per wave, got ${JSON.stringify(step.calls)}`);
     assertEq(new Set(waveSteps).size, 3, "each wave is its OWN checkpointed step, not a retry of one step");
     assert(
+      step.calls.includes("stop-extract-pass-a-waves-exhausted"),
+      "the exhaustion checkpoint mutation must itself be a durable Workflow step",
+    );
+    assert(
       !step.calls.includes("extract-pass-a-global"),
       "the single all-or-nothing extraction step is gone, not merely renamed alongside",
     );
@@ -741,6 +746,145 @@ test("an UNCAUGHT step failure still produces a report — the failure path used
   assert(reporting && reporting.state !== "not-started", "the reporting phase was actually entered");
   assertEq(cp.completion.test, "failed", "the run is failed");
   assertEq(cp.completion.reasonCode, "workflow-error", "and it keeps the uncaught-failure reason code");
+});
+
+});
+
+// ===========================================================================
+// D51 — parser/prompt-versioned resume artifacts. Kept here so the existing D22
+// registration exercises it without adding another test-loader seam.
+// ===========================================================================
+
+suite("D51 — pass A artifact versions", () => {
+
+const d51WindowKey = (m, runId) =>
+  m.keys.k("runs", runId, "extraction", "pass-a", "window-01.json");
+
+async function d51Put(env, key, value) {
+  await env.EVIDENCE.put(key, JSON.stringify(value), { httpMetadata: { contentType: "application/json" } });
+}
+
+async function d51Read(env, key) {
+  const obj = await env.EVIDENCE.get(key);
+  assert(obj !== null, `expected D51 artifact at ${key}`);
+  return JSON.parse(await obj.text());
+}
+
+function d51AssertVersions(m, value, promptVersion, label) {
+  assertEq(value.parserVersion, m.docxBlocks.DOCX_BLOCKS_VERSION, `${label} parser version`);
+  assertEq(value.promptVersion, promptVersion, `${label} prompt version`);
+}
+
+test("D51-a pass A rejects stale window success and terminal failure artifacts", async () => {
+  const m = await mod();
+  const document = docFor(1);
+
+  // A stale SUCCESS must be bought again, not accepted because its old answer happens to
+  // have the current JSON shape.
+  {
+    const env = sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "999999", EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2" });
+    const runId = "run_d51_a_success";
+    await d51Put(env, d51WindowKey(m, runId), {
+      windowId: "A",
+      windowNumber: 1,
+      blockIds: ["b0001"],
+      parserVersion: "stale-parser/0",
+      promptVersion: m.passA.PASS_A_VERSION,
+      globalRules: [{ id: "A-STALE" }],
+      crossRefs: [],
+      ambiguities: [],
+      unverifiable: [],
+      usage: null,
+    });
+    const provider = stubProvider();
+    try {
+      const result = await m.passA.runPassA(env, runId, document, "synthetic.docx");
+      assertEq(provider.requests.length, 1, "stale pass-A success is re-issued");
+      assert(result.requirements.some((row) => row.id === "A-G1"), "the current prompt's result replaces stale output");
+      d51AssertVersions(m, await d51Read(env, d51WindowKey(m, runId)), m.passA.PASS_A_VERSION, "fresh window success");
+    } finally {
+      provider.restore();
+    }
+  }
+
+  // A terminal failure belongs to the parser+prompt pair that produced it. A new prompt
+  // starts at attempt one; inheriting 99 would suppress the first current-version call.
+  {
+    const env = sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "999999", EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2" });
+    const runId = "run_d51_a_failure";
+    await d51Put(env, d51WindowKey(m, runId), {
+      windowId: "A",
+      windowNumber: 1,
+      blockIds: ["b0001"],
+      parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
+      promptVersion: "stale-prompt/0",
+      status: "failed",
+      attempts: 99,
+      detail: "the old prompt exhausted its budget",
+    });
+    const provider = stubProvider({ failUnit: () => true });
+    try {
+      await m.passA.runPassA(env, runId, document, "synthetic.docx");
+      const fresh = await d51Read(env, d51WindowKey(m, runId));
+      assertEq(provider.requests.length, 1, "stale terminal failure cannot suppress the current prompt's first call");
+      assertEq(fresh.attempts, 1, "the current pass-A version restarts attempts at one");
+      d51AssertVersions(m, fresh, m.passA.PASS_A_VERSION, "fresh window failure");
+    } finally {
+      provider.restore();
+    }
+  }
+});
+
+test("D51-d whole-pass A stale payload cannot take early reuse", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "999999" });
+  const runId = m.ids.mintRunId();
+  await m.checkpoint.createCheckpoint(env, m.checkpoint.initialCheckpoint(env, runId, "standard", false));
+  const fence = await m.checkpoint.claimOwnership(env, runId, runId, 0);
+
+  const { readFileSync } = await import("node:fs");
+  const path = await import("node:path");
+  const { REPO_ROOT } = await import("../testkit.mjs");
+  const documentKey = m.keys.inputDocumentKey(runId);
+  await env.EVIDENCE.put(documentKey, readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx")));
+  await d51Put(env, m.keys.extractionPassKey(runId, "a"), {
+    parserVersion: "stale-parser/0",
+    promptVersion: m.passA.PASS_A_VERSION,
+    pass: "A",
+    provider: "grok",
+    model: "stale-model",
+    requirements: [],
+    ambiguities: [],
+    unverifiable: [],
+    dispositions: [],
+    constructs: [],
+    failedUnits: [],
+    calls: [],
+    crossRefs: [],
+  });
+
+  const provider = stubProvider();
+  try {
+    const outcome = await m.extractStage.stagePassASlice(
+      env,
+      runId,
+      documentKey,
+      "questionnaire.docx",
+      fence,
+      async () => {},
+      {},
+    );
+    assertEq(outcome.result.state, "evaluated", "the current whole pass completes");
+    assert(provider.requests.length > 0, "the stale whole-pass payload does not suppress current model work");
+    d51AssertVersions(
+      m,
+      await d51Read(env, m.keys.extractionPassKey(runId, "a")),
+      m.passA.PASS_A_VERSION,
+      "fresh whole pass A",
+    );
+  } finally {
+    provider.restore();
+  }
 });
 
 });

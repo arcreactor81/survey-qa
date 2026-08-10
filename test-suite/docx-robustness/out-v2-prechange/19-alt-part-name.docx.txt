@@ -1,0 +1,4 @@
+[b0001] (heading) SECTION R — CONVERTER OUTPUT
+[b0002] Q60. Which of these have you contacted in the last 12 months? SELECT ALL THAT APPLY.
+[b0003] ROUTING: if Q60 = 99 (none) then SKIP TO Q65 and set contact_none = 1.
+[b0004] TERMINATE anyone who selects both 99 and any other code (T13) — data integrity check.

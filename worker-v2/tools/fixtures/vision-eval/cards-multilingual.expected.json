@@ -1,0 +1,202 @@
+{
+  "schemaVersion": "survey-visual-fixture/3.0.0",
+  "fixtureId": "cards-multilingual",
+  "source": "cards-multilingual.html",
+  "screenshot": {
+    "file": "cards-multilingual.png",
+    "sha256": "0e294c55ad93c91c904e2ac876beabeaeb6b07ffa8b44a4d02d01c33c4768409",
+    "pixelWidth": 840,
+    "pixelHeight": 640
+  },
+  "viewport": {
+    "width": 840,
+    "height": 640,
+    "deviceScaleFactor": 1
+  },
+  "strata": {
+    "languageComposition": "mixed-hindi-english",
+    "layout": "two-column-cards",
+    "controlStyle": "custom-visual-controls"
+  },
+  "expectedInventory": {
+    "schemaVersion": "survey-qa-visual-inventory-response/1.0.0",
+    "questionRegions": [
+      {
+        "localId": "truth-question-amenities",
+        "text": {
+          "quote": "कौन-सी सुविधाएँ चाहिए?",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0666667, "y": 0.19375, "width": 0.3404762, "height": 0.0390625 }
+        }
+      },
+      {
+        "localId": "truth-question-arrival",
+        "text": {
+          "quote": "Arrival window",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.5428571, "y": 0.19375, "width": 0.2142857, "height": 0.0390625 }
+        }
+      }
+    ],
+    "optionGroups": [
+      {
+        "localId": "truth-group-amenities",
+        "questionRegionId": "truth-question-amenities",
+        "selectionAppearance": "appears-multiple",
+        "bounds": { "x": 0.052381, "y": 0.24375, "width": 0.4238095, "height": 0.278125 },
+        "options": [
+          {
+            "localId": "truth-option-wifi",
+            "text": {
+              "quote": "वाई-फ़ाई",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.0666667, "y": 0.2609375, "width": 0.3904762, "height": 0.071875 }
+            },
+            "markAppearance": "appears-selected"
+          },
+          {
+            "localId": "truth-option-quiet",
+            "text": {
+              "quote": "शांत कमरा",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.0666667, "y": 0.3515625, "width": 0.3904762, "height": 0.071875 }
+            },
+            "markAppearance": "appears-unselected"
+          },
+          {
+            "localId": "truth-option-breakfast",
+            "text": {
+              "quote": "नाश्ता",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.0666667, "y": 0.4421875, "width": 0.3904762, "height": 0.071875 }
+            },
+            "markAppearance": "appears-unselected"
+          }
+        ]
+      },
+      {
+        "localId": "truth-group-arrival",
+        "questionRegionId": "truth-question-arrival",
+        "selectionAppearance": "appears-single",
+        "bounds": { "x": 0.5285714, "y": 0.24375, "width": 0.4238095, "height": 0.278125 },
+        "options": [
+          {
+            "localId": "truth-option-before",
+            "text": {
+              "quote": "Before 14:00",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.5428571, "y": 0.2609375, "width": 0.3904762, "height": 0.071875 }
+            },
+            "markAppearance": "appears-unselected"
+          },
+          {
+            "localId": "truth-option-middle",
+            "text": {
+              "quote": "14:00–18:00",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.5428571, "y": 0.3515625, "width": 0.3904762, "height": 0.071875 }
+            },
+            "markAppearance": "appears-selected"
+          },
+          {
+            "localId": "truth-option-after",
+            "text": {
+              "quote": "After 18:00",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.5428571, "y": 0.4421875, "width": 0.3904762, "height": 0.071875 }
+            },
+            "markAppearance": "appears-unselected"
+          }
+        ]
+      }
+    ],
+    "controls": [
+      {
+        "localId": "truth-control-previous",
+        "kind": "button",
+        "text": {
+          "quote": "पिछला",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0428571, "y": 0.875, "width": 0.1380952, "height": 0.071875 }
+        },
+        "availabilityAppearance": "appears-enabled",
+        "selectionAppearance": "not-applicable",
+        "bounds": { "x": 0.0428571, "y": 0.875, "width": 0.1380952, "height": 0.071875 }
+      },
+      {
+        "localId": "truth-control-continue",
+        "kind": "button",
+        "text": {
+          "quote": "Continue",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.8, "y": 0.875, "width": 0.1571429, "height": 0.071875 }
+        },
+        "availabilityAppearance": "appears-enabled",
+        "selectionAppearance": "not-applicable",
+        "bounds": { "x": 0.8, "y": 0.875, "width": 0.1571429, "height": 0.071875 }
+      }
+    ],
+    "messages": [
+      {
+        "localId": "truth-message-title",
+        "kind": "other",
+        "text": {
+          "quote": "यात्रा योजना",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0428571, "y": 0.034375, "width": 0.2261905, "height": 0.053125 }
+        }
+      },
+      {
+        "localId": "truth-message-instruction",
+        "kind": "instruction",
+        "text": {
+          "quote": "Choose every amenity you need.",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0428571, "y": 0.096875, "width": 0.297619, "height": 0.03125 }
+        }
+      },
+      {
+        "localId": "truth-message-damage-caption",
+        "kind": "other",
+        "text": {
+          "quote": "Damaged code:",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.5428571, "y": 0.54375, "width": 0.1333333, "height": 0.03125 }
+        }
+      }
+    ],
+    "visualLimitations": [
+      {
+        "kind": "blurred",
+        "count": 1,
+        "bounds": { "x": 0.5428571, "y": 0.590625, "width": 0.1571429, "height": 0.06875 }
+      }
+    ]
+  }
+}

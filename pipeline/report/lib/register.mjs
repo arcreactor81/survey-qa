@@ -624,14 +624,22 @@ function witnessRows(judged, resolve) {
  * from what the run happened to observe.
  */
 export function buildCaseLedger(record) {
-  const raw = arr(record?.contract?.facetInstances).length
-    ? arr(record.contract.facetInstances)
-    : arr(record?.contract?.floorCases);
+  const facetInstancesDeclared = Array.isArray(record?.contract?.facetInstances);
+  const floorCasesDeclared = Array.isArray(record?.contract?.floorCases);
+  const facetInstances = arr(record?.contract?.facetInstances);
+  const raw = facetInstances.length ? facetInstances : arr(record?.contract?.floorCases);
 
-  if (!raw.length) {
+  if (!facetInstancesDeclared && !floorCasesDeclared) {
     return {
       present: false,
       byItem: new Map(),
+      // `null`, not `[]`: there is no sealed identity ledger to attest. Standalone
+      // rendering may still explain that limitation, while the Worker publication gate
+      // can distinguish it from a deliberately sealed zero-case ledger.
+      caseIdentities: null,
+      total: null,
+      boundTotal: 0,
+      problems: [],
       source: "absent",
       note:
         "This record carries no sealed floor-case ledger (contract.facetInstances[] / contract.floorCases[], merged contract §5). " +
@@ -641,12 +649,45 @@ export function buildCaseLedger(record) {
     };
   }
   const byItem = new Map();
+  const caseIds = new Set();
+  // Preserve the raw ledger's identity projection independently of whether a row can be
+  // attached to a report requirement. Publication compares this exact list with the
+  // content-addressed ContractRevision; `total === total` cannot detect drop-A/duplicate-B.
+  // Invalid fields stay visible as null rather than disappearing from this list.
+  const caseIdentities = [];
+  const problems = [];
   for (const c of raw) {
-    const owner = c?.itemId ?? c?.requirementId ?? c?.obligationId ?? null;
-    if (!owner) continue;
+    const rawOwner = c?.itemId ?? c?.requirementId ?? c?.obligationId ?? null;
+    const rawCaseId = c?.caseId ?? c?.floorCaseId ?? c?.facetInstanceId ?? null;
+    const owner = typeof rawOwner === "string" && rawOwner.length > 0 ? rawOwner : null;
+    const caseId = typeof rawCaseId === "string" && rawCaseId.length > 0 ? rawCaseId : null;
+    caseIdentities.push({ caseId, requirementId: owner });
+    if (owner === null) {
+      problems.push({
+        code: "CASE_LEDGER_UNBOUND_CASE",
+        ref: caseId,
+        message: `A sealed execution case (${caseId ?? "unnamed"}) names no requirement owner. It remains in the sealed denominator and cannot be materialized under a report row.`,
+      });
+      continue;
+    }
+    if (caseId === null) {
+      problems.push({
+        code: "CASE_LEDGER_MISSING_CASE_ID",
+        ref: owner,
+        message: `A sealed execution case owned by ${owner} has no valid case id. It remains in the sealed denominator and is shown under a synthetic display id, but that display id is never treated as sealed identity.`,
+      });
+    }
+    if (caseId !== null && caseIds.has(caseId)) {
+      problems.push({
+        code: "CASE_LEDGER_DUPLICATE_CASE_ID",
+        ref: caseId,
+        message: `The sealed execution-case ledger repeats case id ${caseId}. Both entries remain in the sealed denominator; the report may not merge them silently.`,
+      });
+    }
+    if (caseId !== null) caseIds.add(caseId);
     if (!byItem.has(owner)) byItem.set(owner, []);
     byItem.get(owner).push({
-      caseId: c.caseId ?? c.floorCaseId ?? c.facetInstanceId ?? `${owner}#case-${byItem.get(owner).length + 1}`,
+      caseId: caseId ?? `${owner}#case-${byItem.get(owner).length + 1}`,
       label: c.label ?? c.description ?? null,
       screen: c.screen ?? null,
       answerCode: c.answerCode ?? null,
@@ -656,6 +697,13 @@ export function buildCaseLedger(record) {
   return {
     present: true,
     byItem,
+    caseIdentities,
+    // `total` is the sealed denominator, not the number this projection happened to bind.
+    // Keeping both numbers makes an unreadable owner or duplicate identity visible instead
+    // of silently shortening the report to the rows it could understand.
+    total: raw.length,
+    boundTotal: [...byItem.values()].reduce((n, cases) => n + cases.length, 0),
+    problems,
     source: "sealed floor-case ledger carried by the contract",
     note: `Mandatory cases are materialized from the sealed ledger (${raw.length} case(s) across ${byItem.size} requirement(s)). Execution never changes this count.`,
   };
@@ -778,12 +826,14 @@ function expandScreenScopeCases(judged, routeTable, ledger) {
   const violations = judged?.predicateDetail?.violations ?? judged?.predicateDetail?.matches ?? null;
 
   if (sealed && sealed.length) {
-    const screens = sealed.map((c) => c.screen ?? c.label ?? c.caseId);
+    const caseSpecs = sealed.map((c) => ({ caseId: c.caseId, screen: c.screen ?? c.label ?? c.caseId }));
+    const screens = caseSpecs.map((c) => c.screen);
     const complete = violations === 0;
     return {
       rule: "screen-scope expansion",
       established: true,
       source: "sealed floor-case ledger",
+      caseSpecs,
       screens,
       screensListed: true,
       complete,
@@ -839,6 +889,86 @@ const COVERAGE_TO_CELL = {
 };
 
 const VERDICT_TO_CELL = { pass: "PASS", fail: "FAIL", inconclusive: "NOT_ASSESSED", "not-assessed": "NOT_ASSESSED" };
+
+const FACET_STATUS_TO_CELL = {
+  pass: "PASS",
+  fail: "FAIL",
+  "judgment-withheld-ambiguous": "AMBIGUOUS",
+  pending: "PENDING",
+  "not-reached": "NOT_REACHED",
+  "proven-unreachable": "PROVEN_UNREACHABLE",
+  blocked: "BLOCKED",
+  "budget-exhausted": "BUDGET_EXHAUSTED",
+  "time-exhausted": "TIME_EXHAUSTED",
+};
+
+function citedEvidenceRows(ids, evidenceById, resolve) {
+  return [...new Set(arr(ids))].map((id) => {
+    const e = evidenceById.get(id) ?? null;
+    return {
+      role: "cited",
+      artifact: e ? String(e.artifactRef || id).split("/").pop() : id,
+      sha256: e ? String(e.contentHash || "").replace(/^sha256:/, "") : null,
+      session: null,
+      seq: null,
+      locator: e?.capture?.captureStep ?? null,
+      note: e ? `${e.type} · ${e.mediaType}` : "this evidence id is not in the signed catalogue",
+      value: [],
+      judgeReverified: "not-attested",
+      judgeReverifyReason: null,
+      chain: e ? resolve({ artifact: e.artifactRef, sha256: e.contentHash }) : resolve({ artifact: id }),
+    };
+  });
+}
+
+/**
+ * Project one exact v2 facet result onto its sealed execution case.
+ *
+ * This is deliberately identity-based: a requirement aggregate may not be copied onto two
+ * or more cases, and a missing/unknown facet status becomes a named NOT_ASSESSED cell. The
+ * document's sealed case id supplies the denominator; execution supplies only the outcome.
+ */
+function cellFromFacetResult({ facet, itemId, caseId, observationById, evidenceById, resolve, warnings }) {
+  if (!facet) {
+    return cell("NOT_ASSESSED", {
+      reasonCode: "sealed-case-result-absent",
+      reasonText: `The sealed execution case ${caseId} has no exact facet result in the run record. It remains in the denominator and is not inferred from the requirement aggregate.`,
+    });
+  }
+  const status = facet.status ?? null;
+  const state = FACET_STATUS_TO_CELL[status] ?? "NOT_ASSESSED";
+  if (!(status in FACET_STATUS_TO_CELL)) {
+    warn(
+      warnings,
+      "UNKNOWN_FACET_RESULT_STATUS",
+      `${itemId} case ${caseId} carries unknown facet status ${JSON.stringify(status)}. It remains in the denominator as NOT_ASSESSED.`,
+      caseId
+    );
+  }
+  const evidenceIds = arr(facet.observationIds).flatMap((observationId) =>
+    arr(observationById.get(observationId)?.evidenceIds)
+  );
+  const cited = citedEvidenceRows(evidenceIds, evidenceById, resolve);
+  const coverage = ["pass", "fail", "judgment-withheld-ambiguous"].includes(status) ? "exercised" : status;
+  if (state === "PASS" && cited.length === 0) {
+    return cell("UNSUPPORTED", {
+      coverage,
+      claimedVerdict: "pass",
+      reasonCode: "facet-pass-without-cited-evidence",
+      reasonText: `The run recorded sealed case ${caseId} as passing but its cited observation ids resolve to no evidence in the signed catalogue.`,
+      evidence: cited,
+      evidenceTotals: { supporting: cited.length, counter: 0, shown: cited.length },
+    });
+  }
+  return cell(state, {
+    coverage,
+    claimedVerdict: status === "pass" || status === "fail" ? status : null,
+    reasonCode: `facet/${status ?? "unknown"}`,
+    reasonText: `The run recorded sealed execution case ${caseId} as ${status ?? "unknown"}.`,
+    evidence: cited,
+    evidenceTotals: { supporting: cited.length, counter: 0, shown: cited.length },
+  });
+}
 
 /* ------------------------------------------------------------------ *
  * D13 — HANDOFF TO THE WORKER TRACK (renderable.ts:202 / v2-record.mjs)  *
@@ -955,22 +1085,7 @@ function cellFromRecordResult({ res, judged, nbo, blockerRefs, evidenceById, res
       coverage: null,
     });
   }
-  const cited = arr(res.evidenceRefs).map((id) => {
-    const e = evidenceById.get(id) ?? null;
-    return {
-      role: "cited",
-      artifact: e ? String(e.artifactRef || id).split("/").pop() : id,
-      sha256: e ? String(e.contentHash || "").replace(/^sha256:/, "") : null,
-      session: null,
-      seq: null,
-      locator: e?.capture?.captureStep ?? null,
-      note: e ? `${e.type} · ${e.mediaType}` : "this evidence id is not in the signed catalogue",
-      value: [],
-      judgeReverified: "not-attested",
-      judgeReverifyReason: null,
-      chain: e ? resolve({ artifact: e.artifactRef, sha256: e.contentHash }) : resolve({ artifact: id }),
-    };
-  });
+  const cited = citedEvidenceRows(res.evidenceRefs, evidenceById, resolve);
   const base = {
     coverage: res.coverageStatus ?? null,
     reasonCode: res.reason?.code ?? null,
@@ -1523,7 +1638,21 @@ export function buildRegister({
   const results = new Map(arr(record?.itemResults).map((r) => [r.itemId, r]));
   const resolve = buildEvidenceResolver({ record, evidenceAudit });
   const evidenceById = new Map(arr(record?.evidence).map((e) => [e.evidenceId, e]));
+  const observationById = new Map(arr(record?.observations).map((o) => [o.observationId, o]));
   const ledger = buildCaseLedger(record);
+  for (const problem of ledger.problems) {
+    warn(warnings, problem.code, problem.message, problem.ref);
+  }
+  const contractItemIds = new Set(items.map((item) => item.itemId));
+  for (const [owner, cases] of ledger.byItem) {
+    if (contractItemIds.has(owner)) continue;
+    warn(
+      warnings,
+      "CASE_LEDGER_UNKNOWN_REQUIREMENT",
+      `The sealed execution-case ledger assigns ${cases.length} case(s) to unknown requirement ${owner}. They remain in the sealed denominator and cannot be attached to a report row.`,
+      owner
+    );
+  }
 
   // The judgement payload the register may project. A TRUSTED JudgementRecord
   // yields a current column; anything else yields a DIAGNOSTIC column that can
@@ -1759,8 +1888,37 @@ export function buildRegister({
     }
 
     /* -- case expansion -- */
-    const routeExp = expandRouteCases(judged, routeTable, ledger);
-    const screenExp = routeExp ? null : expandScreenScopeCases(judged, routeTable, ledger);
+    const sealedCases = ledger.present ? (ledger.byItem.get(item.itemId) ?? []) : null;
+    const facetResultsById = new Map();
+    for (const facet of arr(res?.facetResults)) {
+      const facetId = facet?.facetInstanceId ?? null;
+      if (!facetId) {
+        warn(
+          warnings,
+          "FACET_RESULT_WITHOUT_CASE_ID",
+          `${item.itemId} carries a facet result with no facetInstanceId. It cannot settle any sealed execution case.`,
+          item.itemId
+        );
+        continue;
+      }
+      if (facetResultsById.has(facetId)) {
+        warn(
+          warnings,
+          "DUPLICATE_FACET_RESULT",
+          `${item.itemId} carries more than one result for sealed execution case ${facetId}. Neither result is merged; the case is reported as unassessed.`,
+          facetId
+        );
+        facetResultsById.set(facetId, null);
+        continue;
+      }
+      facetResultsById.set(facetId, facet);
+    }
+    // Once a sealed ledger is declared, even an explicit zero-case assignment is
+    // authoritative. Do not replace that zero with cases inferred from a trigger or from
+    // screens the run happened to observe.
+    const sealedAssignmentIsEmpty = ledger.present && sealedCases.length === 0;
+    const routeExp = sealedAssignmentIsEmpty ? null : expandRouteCases(judged, routeTable, ledger);
+    const screenExp = routeExp || sealedAssignmentIsEmpty ? null : expandScreenScopeCases(judged, routeTable, ledger);
     let expansion;
     let cases = [];
 
@@ -1803,13 +1961,25 @@ export function buildRegister({
         enumerated: true,
       };
       cases = routeExp.specs.map((s, i) => {
-        const caseId = `${item.itemId}#case-${i + 1}`;
+        const caseId = s.sealedCaseId ?? `${item.itemId}#case-${i + 1}`;
         const label = s.label ? `${s.label}${s.code ? ` (code ${s.code})` : ""}` : `code ${s.code}`;
-        const asRun = cell("NOT_ASSESSED", {
-          reasonCode: "aggregate-only-record",
-          reasonText:
-            "The as-run record reports this requirement at aggregate scope only. It recorded no per-case result, so there is nothing to show in this column.",
-        });
+        const exactFacet = s.sealedCaseId ? facetResultsById.get(s.sealedCaseId) : null;
+        const asRun = exactFacet
+          ? cellFromFacetResult({
+              facet: exactFacet,
+              itemId: item.itemId,
+              caseId,
+              observationById,
+              evidenceById,
+              resolve,
+              warnings,
+            })
+          : cell("NOT_ASSESSED", {
+              reasonCode: s.sealedCaseId ? "sealed-case-result-absent" : "aggregate-only-record",
+              reasonText: s.sealedCaseId
+                ? `The sealed route case ${caseId} has no exact facet result in the run record. It remains in the denominator.`
+                : "The as-run record reports this requirement at aggregate scope only. It recorded no per-case result, so there is nothing to show in this column.",
+            });
         let derived;
         if (!s.matchRow) {
           derived = cell("NOT_REACHED", {
@@ -1882,12 +2052,28 @@ export function buildRegister({
         enumerated: screenExp.screensListed,
       };
       const parent = cellsByColumn["re-derived"];
-      cases = screenExp.screens.map((screen, i) => {
-        const asRun = cell("NOT_ASSESSED", {
-          reasonCode: "aggregate-only-record",
-          reasonText:
-            "The as-run record reports this global rule once, at rule scope. It recorded no per-screen result.",
-        });
+      const screenSpecs = screenExp.caseSpecs ?? screenExp.screens.map((screen, i) => ({
+        caseId: `${item.itemId}#screen-${screen}`,
+        screen,
+      }));
+      cases = screenSpecs.map(({ caseId, screen }) => {
+        const exactFacet = facetResultsById.get(caseId);
+        const asRun = exactFacet
+          ? cellFromFacetResult({
+              facet: exactFacet,
+              itemId: item.itemId,
+              caseId,
+              observationById,
+              evidenceById,
+              resolve,
+              warnings,
+            })
+          : cell("NOT_ASSESSED", {
+              reasonCode: screenExp.caseSpecs ? "sealed-case-result-absent" : "aggregate-only-record",
+              reasonText: screenExp.caseSpecs
+                ? `The sealed screen case ${caseId} has no exact facet result in the run record. It remains in the denominator.`
+                : "The as-run record reports this global rule once, at rule scope. It recorded no per-screen result.",
+            });
         let derived;
         if (parent?.state === "AMBIGUOUS") {
           derived = cell("AMBIGUOUS", {
@@ -1910,13 +2096,100 @@ export function buildRegister({
           });
         }
         return {
-          caseId: `${item.itemId}#screen-${screen}`,
+          caseId,
           label: `screen ${screen}`,
           screen,
           basis: "materialized by the deterministic screen-scope expander",
           observations: null,
           routeRow: null,
           cellsByColumn: verdicts ? { "as-run": asRun, "re-derived": derived } : { "as-run": asRun },
+        };
+      });
+    } else if (ledger.present) {
+      // A present sealed ledger is the contract's execution-case denominator even when
+      // there is no usable judgement from which to infer a route/screen expansion. The
+      // former fallback invented one leaf per requirement here, turning a 33-case sealed
+      // contract into 30 report cases whenever the judgement was absent or rejected.
+      // Materialize the exact sealed identities instead; execution may classify them, but
+      // it may neither create nor delete them.
+      expansion = {
+        kind: "sealed-ledger",
+        rule: "sealed execution-case ledger",
+        basis:
+          "The sealed contract enumerates these execution cases by identity. This projection does not infer their count from a judgement, a route table, or what the run happened to observe.",
+        established: true,
+        source: ledger.source,
+        reconciled: true,
+        note:
+          sealedCases.length > 0
+            ? null
+            : "The sealed execution-case ledger assigns zero cases to this requirement. No fallback case is invented.",
+        mandatoryCases: sealedCases.length,
+        enumerated: true,
+      };
+      cases = sealedCases.map((sealedCase) => {
+        const hasFacetBinding = facetResultsById.has(sealedCase.caseId);
+        const exactFacet = facetResultsById.get(sealedCase.caseId);
+        const singleton = sealedCases.length === 1;
+        const asRun = exactFacet
+          ? cellFromFacetResult({
+              facet: exactFacet,
+              itemId: item.itemId,
+              caseId: sealedCase.caseId,
+              observationById,
+              evidenceById,
+              resolve,
+              warnings,
+            })
+          : hasFacetBinding
+            ? cellFromFacetResult({
+                facet: null,
+                itemId: item.itemId,
+                caseId: sealedCase.caseId,
+                observationById,
+                evidenceById,
+                resolve,
+                warnings,
+              })
+          : singleton
+            ? {
+                ...cellsByColumn["as-run"],
+                caseSummary:
+                  "the sole sealed execution case for this requirement — identical to its requirement aggregate by construction",
+              }
+            : cellFromFacetResult({
+                facet: null,
+                itemId: item.itemId,
+                caseId: sealedCase.caseId,
+                observationById,
+                evidenceById,
+                resolve,
+                warnings,
+              });
+        const caseCells = { "as-run": asRun };
+        if (verdicts) {
+          caseCells["re-derived"] = singleton
+            ? {
+                ...cellsByColumn["re-derived"],
+                caseSummary:
+                  "the sole sealed execution case for this requirement — identical to its requirement aggregate by construction",
+              }
+            : cell("NOT_ASSESSED", {
+                reasonCode: "derived-case-result-unavailable",
+                reasonText:
+                  `The judgement supplies no case-level result bound to sealed case ${sealedCase.caseId}. ` +
+                  "Its requirement aggregate is not copied across multiple mandatory cases.",
+              });
+        }
+        return {
+          caseId: sealedCase.caseId,
+          label: sealedCase.label ?? sealedCase.caseId,
+          screen: sealedCase.screen,
+          basis: "materialized by exact identity from the sealed execution-case ledger",
+          leaf: singleton,
+          observations: exactFacet ? arr(exactFacet.observationIds).length : 0,
+          routeRow: null,
+          cellsByColumn: caseCells,
         };
       });
     } else {
@@ -2056,22 +2329,53 @@ export function buildRegister({
   // are never folded into the total as "1" and never quietly dropped.
   const establishedRows = activeRows.filter((r) => r.expansion?.established !== false);
   const unestablishedRows = activeRows.filter((r) => r.expansion?.established === false);
+  const materializedCaseTotal = establishedRows.reduce((n, r) => n + (r.expansion?.mandatoryCases ?? 0), 0);
   const executionCases = {
     name: "Mandatory execution cases",
     definition:
       "One entry per case a requirement must be exercised on. Scoped rules expand from the sealed floor-case ledger or from an enumeration the document itself makes; single-locus rules materialize exactly one case. This total may never be added to the document-requirement total.",
-    total: establishedRows.reduce((n, r) => n + (r.expansion?.mandatoryCases ?? 0), 0),
+    // When the contract carries a sealed ledger, that ledger is the denominator. The
+    // report's ability to classify/materialize rows is checked against it below; it may
+    // never replace it with a smaller number. Without a sealed ledger, retain the D10
+    // document-enumeration fallback.
+    total: ledger.present ? ledger.total : materializedCaseTotal,
     enumerated: establishedRows.reduce((n, r) => n + r.cases.length, 0),
-    fromExpansion: establishedRows.filter((r) => r.expansion?.kind !== "leaf").length,
+    fromExpansion: establishedRows.filter(
+      (r) => r.expansion?.kind !== "leaf" && (r.expansion?.mandatoryCases ?? 0) > 0
+    ).length,
     notEstablished: {
       rows: unestablishedRows.length,
       rowIds: unestablishedRows.map((r) => r.itemId),
       why:
         "These requirements are scoped over a set the record does not enumerate (a survey-wide rule with no sealed screen ledger, or a routing exclusion with no option list). Their mandatory-case counts are NOT in the total above, because the only other way to get a number would be to count what the run happened to observe — and a denominator that shrinks when execution is missing hides the missing execution.",
     },
-    ledger: { present: ledger.present, source: ledger.source, note: ledger.note },
+    ledger: {
+      present: ledger.present,
+      source: ledger.source,
+      note: ledger.note,
+      total: ledger.total,
+      boundTotal: ledger.boundTotal,
+      problems: ledger.problems.length,
+    },
     byColumn: {},
   };
+
+  if (ledger.present && materializedCaseTotal !== ledger.total) {
+    warn(
+      warnings,
+      "CASE_LEDGER_DENOMINATOR_MISMATCH",
+      `The sealed execution-case ledger contains ${ledger.total} case(s), but report rows materialized ${materializedCaseTotal}. The report retains the sealed ${ledger.total}-case denominator and exposes the mismatch; it is never shortened to what the projection could read.`,
+      "execution-cases"
+    );
+  }
+  if (executionCases.enumerated !== executionCases.total) {
+    warn(
+      warnings,
+      "CASE_ENUMERATION_RECONCILIATION",
+      `${executionCases.total} mandatory execution case(s) are declared but ${executionCases.enumerated} case row(s) were materialized. Every sealed case must remain visible.`,
+      "execution-cases"
+    );
+  }
 
   for (const col of columns) {
     const rowCounts = Object.fromEntries(CELL_STATE_ORDER.map((k) => [k, 0]));

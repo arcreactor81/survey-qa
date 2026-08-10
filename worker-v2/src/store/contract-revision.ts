@@ -19,7 +19,6 @@ import type { Env } from "../types/env";
 import { CONTRACT_REVISION_KIND, type ContractRevision } from "../types/record";
 import { contractRevisionKey } from "../keys";
 import { canonicalHash, canonicalJson } from "./hash";
-import { unmetGates } from "../workflow/gates";
 // THE IDENTITY DEFINITION IS SHARED, NOT LOCAL. The judge re-binds a stored revision the
 // same way this module seals it; two spellings of "which bytes is this revision" is the
 // defect class D4 found (see shared/v2-record.mjs).
@@ -27,12 +26,14 @@ import { unmetGates } from "../workflow/gates";
 import {
   contractHashFromDigest as contractHashFromDigestUntyped,
   contractRevisionIdFromDigest as contractRevisionIdFromDigestUntyped,
+  contractApprovalFailures as contractApprovalFailuresUntyped,
   semanticContractBody as semanticContractBodyUntyped,
 } from "../../shared/v2-record.mjs";
 
 const semanticBody = semanticContractBodyUntyped as (body: unknown) => unknown;
 const revisionIdFromDigest = contractRevisionIdFromDigestUntyped as (hex: string) => string;
 const hashFromDigest = contractHashFromDigestUntyped as (hex: string) => string;
+const approvalFailures = contractApprovalFailuresUntyped as (revision: unknown) => string[];
 
 export class ContractGateFailure extends Error {
   constructor(failed: string[]) {
@@ -105,7 +106,7 @@ export async function sealContract(
   // Every gate must be `pass` AND carry a proof. `not-evaluated` — the state a stub
   // returns — is refused here, so a pipeline stage that has not been written cannot seal
   // a denominator on behalf of one that has.
-  const failed = unmetGates(body.extraction.gates);
+  const failed = approvalFailures(body);
   if (failed.length > 0) throw new ContractGateFailure(failed);
 
   // The hash the checkpoint carries names the SEMANTIC content, matching the id, so
@@ -210,7 +211,7 @@ export async function getContractRevision(
   }
   // A revision whose gates no longer pass could never have been sealed. If it is on disk
   // in that state, it was not written by `sealContract`.
-  const failed = unmetGates(parsed.extraction?.gates ?? ({} as never));
+  const failed = approvalFailures(parsed);
   if (failed.length > 0) {
     throw new ContractRevisionTampered(
       contractRevisionId,

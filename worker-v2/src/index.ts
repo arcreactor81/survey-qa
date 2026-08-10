@@ -17,8 +17,10 @@
 import type { Env } from "./types/env";
 import { route } from "./api/router";
 import { sweep } from "./sweeper";
+import { scopeEvidenceEnv } from "./store/evidence-keyspace";
 
 export { SurveyRunWorkflowV2 } from "./workflow/run-workflow";
+export { SurveyVisualShadowWorkflowV1 } from "./workflow/visual-shadow-workflow";
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -83,7 +85,7 @@ export default {
     ctx.waitUntil(
       (async () => {
         try {
-          const result = await sweep(env, new Date());
+          const result = await sweep(scopeEvidenceEnv(env), new Date());
           console.log("v2 sweep:", JSON.stringify(result));
         } catch (err) {
           console.error("v2 sweep failed:", err);

@@ -17,8 +17,8 @@
 
 import { CONSTRUCT_CLASSES } from "./types";
 
-export const PROMPT_VERSION_A = "v2-extract-pass-a/1.0.0";
-export const PROMPT_VERSION_B = "v2-extract-pass-b/1.0.0";
+export const PROMPT_VERSION_A = "v2-extract-pass-a/1.1.0";
+export const PROMPT_VERSION_B = "v2-extract-pass-b/1.1.0";
 
 const SHARED_GROUND_RULES = `BINDING GROUND RULE
 The questionnaire document is the SOLE source of truth. You have never seen the implemented
@@ -49,6 +49,15 @@ Origins change what a block can oblige:
   parser could not recover it. Do NOT invent the number; refer to the item by its text.
 - "[image: …]" is alt text; "[image with no alt text]" means the content is unreadable and
   anything it mandates is unknown — say so rather than guessing.
+- "[combo-box suggestion — OPEN, NOT EXHAUSTIVE: …]" preserves a suggestion from a Word
+  combo box, whose accepted value may also be free text. It is visible source material but
+  never evidence that the answer vocabulary is closed.
+- "[ruby-reading; …]" preserves a visible phonetic guide separately from its base text. It
+  may support a copy/rendering observation, but is not another answer option.
+- Table-cell annotations carry structural row/column coordinates only. WordprocessingML does
+  not declare semantic row/column header scope, so never infer it from the first row, first
+  column, a repeat-on-page flag, or visual convention. Surface the ambiguity when meaning
+  depends on a header relationship the document does not state independently.
 
 SCOPE AND QUANTIFIER (this is what makes a requirement testable)
 - "scope": "survey" for a rule that applies to the whole interview; "section:<name>" for a

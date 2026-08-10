@@ -15,6 +15,7 @@ node_modules/
 .idea/
 .reasonix/
 node-compile-cache/
+.test-tmp/
 
 # local sweeper queue markers (the empty files/dirs the v2 cron sweeper touches
 # when it is exercised locally — "v2/active" is a dir in one place and a file in
@@ -157,3 +158,32 @@ targets/
 # The PUBLIC stand-in run is deliberately NOT excluded — the five suites above
 # depend on it and it contains nothing derived from the blind corpus.
 !pipeline/runs/synthetic-demo/
+
+# Newer mixed source/generated roots are quarantined for this sprint. They are not required
+# by the accepted experiment and cannot be safely bulk-staged while captures and source are
+# intermingled. Split and boundary-review any source before publishing it.
+/bakeoff/
+/bakeoff-extract/
+
+# Generated spike and document-robustness evidence.
+/graph-spike/out/
+/graph-spike/arm/out/
+/test-suite/docx-robustness/out/
+/test-suite/docx-robustness/corpus/_probes-*.json
+
+# Private sprint inputs/results publish only at the explicit staggered release trigger.
+/sprint/private/
+/sprint/runs/
+/sprint/04-CORPUS.md
+
+# Known contaminated working note and local IDE/session material.
+/docs/ITERATION-LOOP.md
+/.claude/
+/.local-private/
+
+# Test-run litter that escaped to the repo root (judge tmpdir resolution + suite
+# scratch dirs). Never source; never stage.
+/runsum-*/
+/worker-v2-test-*/
+/.tmp/
+/.test-tmp-*/

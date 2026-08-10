@@ -59,6 +59,17 @@ export type TestCompletion =
   | "partial-blocked"
   | "failed";
 
+export const PARTIAL_TEST_COMPLETIONS = [
+  "partial-budget",
+  "partial-time",
+  "partial-blocked",
+] as const satisfies readonly TestCompletion[];
+export type PartialTestCompletion = (typeof PARTIAL_TEST_COMPLETIONS)[number];
+
+/** Runtime guard for persisted/untyped status data; prefix-shaped unknown states are not valid. */
+export const isPartialTestCompletion = (value: unknown): value is PartialTestCompletion =>
+  typeof value === "string" && (PARTIAL_TEST_COMPLETIONS as readonly string[]).includes(value);
+
 export type ReportCompletion = "not-started" | "building" | "complete" | "failed";
 
 export interface Completion {
@@ -69,7 +80,7 @@ export interface Completion {
 
 /** A partial run is a reportable outcome: `Executing: stopped` + `Reporting: complete`. */
 export const isTerminalTest = (t: TestCompletion): boolean =>
-  t === "complete" || t === "failed" || t.startsWith("partial-");
+  t === "complete" || t === "failed" || isPartialTestCompletion(t);
 
 // ---------------------------------------------------------------------------
 // Coverage buckets (ui-report-redesign §3.2) — EXACTLY seven, and they must sum.
@@ -203,23 +214,85 @@ export const unavailableContract = (): CheckpointContract => ({
 // Usage — each limit keeps its own name and denominator (§3.2). NEVER averaged.
 // ---------------------------------------------------------------------------
 
-export interface UsageEvent {
-  kind: "model-call" | "browser-session";
-  model?: string;
-  inputTokens?: number;
-  outputTokens?: number;
-  costUsd?: number;
+/** Exact calculated model-call telemetry; the strict core ledger meters it conservatively. */
+export interface ModelCallUsageEvent {
+  kind: "model-call";
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  at: string;
+}
+
+/** Legacy/best-effort browser usage. */
+export interface BrowserSessionUsageEvent {
+  kind: "browser-session";
   browserSessions?: number;
   at: string;
 }
 
+export type BestEffortUsageEvent = ModelCallUsageEvent | BrowserSessionUsageEvent;
+
+/**
+ * Cost is a state, not a falsy number. In particular, `unknown` may never be serialized as
+ * `usd: 0`: doing so would silently convert an unbounded future charge into budget headroom.
+ */
+export type VisualUsageCost =
+  | {
+      state: "known";
+      usd: number;
+      source: "provider-reported" | "gateway-reported" | "configured-rate";
+    }
+  | {
+      state: "unknown";
+      reason: "provider-not-reported" | "transport-no-cost-telemetry" | "attempt-outcome-uncertain";
+    };
+
+/** Provider boundary outcome. Kept in the ledger so failed paid attempts remain auditable. */
+export type VisualUsageResultState = "observed" | "malformed" | "timeout" | "unavailable";
+
+/**
+ * One durable charge event per paid screenshot inference. `eventId` is derived from the raw
+ * inference cache key, while `callId` is required to carry the same digest suffix. This keeps
+ * retries/replays idempotent without assuming anything about a survey or its platform.
+ */
+export interface VisualModelCallUsageEvent {
+  kind: "visual-model-call";
+  eventId: string;
+  callId: string;
+  inferenceCacheKey: string;
+  provider: string;
+  model: string;
+  resultState: VisualUsageResultState;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cost: VisualUsageCost;
+  at: string;
+}
+
+export type UsageEvent = BestEffortUsageEvent | VisualModelCallUsageEvent;
+
 export interface Usage {
-  cost: { usedUsd: number; maxUsd: number; verificationReserveUsd: number; reportReserveUsd: number };
+  cost: {
+    /** Conservative cap-accounted USD; exact calculated call costs remain in `events`. */
+    usedUsd: number;
+    maxUsd: number;
+    verificationReserveUsd: number;
+    reportReserveUsd: number;
+  };
   modelCalls: { used: number; max: number };
   toolCalls: { used: number; max: number };
   wallClock: { usedMilliseconds: number; maxMilliseconds: number; startedAtMs: number };
   events: UsageEvent[];
   browserSessions: { used: number };
+  /**
+   * Optional only for compatibility with checkpoints written before paid visual admission
+   * existed. Its absence makes the shared model allowance unverifiable and therefore cannot
+   * authorize a new visual purchase.
+   */
+  paidModelAccounting?: {
+    mode: "fail-loud-v1" | "fail-loud-v2-micro-ceiling";
+  };
 }
 
 export interface CurrentAttempt {

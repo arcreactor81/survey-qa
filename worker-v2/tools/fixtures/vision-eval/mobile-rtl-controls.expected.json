@@ -1,0 +1,203 @@
+{
+  "schemaVersion": "survey-visual-fixture/3.0.0",
+  "fixtureId": "mobile-rtl-controls",
+  "source": "mobile-rtl-controls.html",
+  "screenshot": {
+    "file": "mobile-rtl-controls.png",
+    "sha256": "ce478421fe10c5f837ea80c04dc7a7ba46b9ead2da30c0ed79240dd6a51a131e",
+    "pixelWidth": 390,
+    "pixelHeight": 720
+  },
+  "viewport": {
+    "width": 390,
+    "height": 720,
+    "deviceScaleFactor": 1
+  },
+  "strata": {
+    "languageComposition": "arabic-rtl",
+    "layout": "mobile-single-column-rtl",
+    "controlStyle": "mixed-custom-and-native"
+  },
+  "expectedInventory": {
+    "schemaVersion": "survey-qa-visual-inventory-response/1.0.0",
+    "questionRegions": [
+      {
+        "localId": "truth-question-parking",
+        "text": {
+          "quote": "هل تحتاج إلى موقف سيارة؟",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0769231, "y": 0.1444444, "width": 0.8461538, "height": 0.0333333 }
+        }
+      },
+      {
+        "localId": "truth-question-reminder",
+        "text": {
+          "quote": "هل تريد رسالة تذكير؟",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0769231, "y": 0.3472222, "width": 0.8461538, "height": 0.0333333 }
+        }
+      },
+      {
+        "localId": "truth-question-city",
+        "text": {
+          "quote": "ما المدينة؟",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0769231, "y": 0.55, "width": 0.8461538, "height": 0.0333333 }
+        }
+      }
+    ],
+    "optionGroups": [
+      {
+        "localId": "truth-group-parking",
+        "questionRegionId": "truth-question-parking",
+        "selectionAppearance": "appears-single",
+        "bounds": { "x": 0.0769231, "y": 0.1888889, "width": 0.8461538, "height": 0.1444444 },
+        "options": [
+          {
+            "localId": "truth-option-parking-yes",
+            "text": {
+              "quote": "نعم",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.0769231, "y": 0.1888889, "width": 0.8461538, "height": 0.0666667 }
+            },
+            "markAppearance": "appears-selected"
+          },
+          {
+            "localId": "truth-option-parking-no",
+            "text": {
+              "quote": "لا",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.0769231, "y": 0.2666667, "width": 0.8461538, "height": 0.0666667 }
+            },
+            "markAppearance": "appears-unselected"
+          }
+        ]
+      },
+      {
+        "localId": "truth-group-reminder",
+        "questionRegionId": "truth-question-reminder",
+        "selectionAppearance": "appears-single",
+        "bounds": { "x": 0.0769231, "y": 0.3916667, "width": 0.8461538, "height": 0.1444444 },
+        "options": [
+          {
+            "localId": "truth-option-reminder-yes",
+            "text": {
+              "quote": "نعم",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.0769231, "y": 0.3916667, "width": 0.8461538, "height": 0.0666667 }
+            },
+            "markAppearance": "appears-unselected"
+          },
+          {
+            "localId": "truth-option-reminder-no",
+            "text": {
+              "quote": "لا",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.0769231, "y": 0.4694444, "width": 0.8461538, "height": 0.0666667 }
+            },
+            "markAppearance": "appears-selected"
+          }
+        ]
+      }
+    ],
+    "controls": [
+      {
+        "localId": "truth-control-city-entry",
+        "kind": "text-entry",
+        "text": {
+          "quote": "اكتب المدينة",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0769231, "y": 0.5944444, "width": 0.8461538, "height": 0.0666667 }
+        },
+        "availabilityAppearance": "appears-enabled",
+        "selectionAppearance": "not-applicable",
+        "bounds": { "x": 0.0769231, "y": 0.5944444, "width": 0.8461538, "height": 0.0666667 }
+      },
+      {
+        "localId": "truth-control-icon-back",
+        "kind": "button",
+        "text": null,
+        "availabilityAppearance": "appears-enabled",
+        "selectionAppearance": "not-applicable",
+        "bounds": { "x": 0.0769231, "y": 0.8944444, "width": 0.1230769, "height": 0.0638889 }
+      },
+      {
+        "localId": "truth-control-continue",
+        "kind": "button",
+        "text": {
+          "quote": "متابعة",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.6358974, "y": 0.8944444, "width": 0.2871795, "height": 0.0638889 }
+        },
+        "availabilityAppearance": "appears-enabled",
+        "selectionAppearance": "not-applicable",
+        "bounds": { "x": 0.6358974, "y": 0.8944444, "width": 0.2871795, "height": 0.0638889 }
+      }
+    ],
+    "messages": [
+      {
+        "localId": "truth-message-title",
+        "kind": "other",
+        "text": {
+          "quote": "تفاصيل الرحلة",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0769231, "y": 0.0388889, "width": 0.8461538, "height": 0.0416667 }
+        }
+      },
+      {
+        "localId": "truth-message-instruction",
+        "kind": "instruction",
+        "text": {
+          "quote": "اختر الإجابة الظاهرة لكل سؤال.",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0769231, "y": 0.0888889, "width": 0.8461538, "height": 0.0277778 }
+        }
+      },
+      {
+        "localId": "truth-message-progress",
+        "kind": "progress",
+        "text": {
+          "quote": "الخطوة ٢ من ٣",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0769231, "y": 0.6861111, "width": 0.8461538, "height": 0.0277778 }
+        }
+      },
+      {
+        "localId": "truth-message-validation",
+        "kind": "validation",
+        "text": {
+          "quote": "يرجى إدخال مدينة قبل المتابعة.",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0769231, "y": 0.7333333, "width": 0.8461538, "height": 0.0277778 }
+        }
+      }
+    ],
+    "visualLimitations": []
+  }
+}

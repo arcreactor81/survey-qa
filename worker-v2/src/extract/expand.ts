@@ -21,8 +21,9 @@
  * `stages/verify-observations.ts` promotes an observation to `verified` through ONE route:
  * a closed predicate compares a TYPED EXPECTATION sealed in the revision against artifact
  * bytes it re-read. Its registry is keyed on `FacetCase.kind` and its predicates read
- * `routeAnswer` + `expectedDestination` (route) and `boundaryInput` (boundary). Everything
- * else it can only call `insufficient`.
+ * `routeAnswer` + `expectedDestination` (route), `boundaryInput` (boundary) and — since
+ * 1.2.0 — `optionSet` (option-set, see `mintOptionSet` below). Everything else it can only
+ * call `insufficient`.
  *
  * So this module has exactly one job beyond counting: for each case, either produce a
  * payload one of those predicates can decide, or SAY WHY NOT with a closed
@@ -80,17 +81,59 @@
 
 import { sha256Hex } from "../store/hash";
 import {
+  constrainsMatching,
   EXPECTATION_GAP,
+  type DocumentedOption,
   type ExpectationGap,
   type ExpectationGapCode,
   type ExpectedDestinationPayload,
   type FacetCase,
   type FacetInstance,
+  type OptionSetPayload,
   type ScopedRequirement,
 } from "../types/record";
-import type { MergedRow } from "./merge";
+import type { RawExpansion, RawRequirement } from "./types";
+import { isNonAnswerOptionSourceRole } from "./source-role";
 
-export const EXPANDER_VERSION = "v2-floor-expander/1.1.0";
+/**
+ * The expander consumes a sealed-shape requirement plus document-stated expansion hints.
+ * Extraction and human authorship are producers of that input; neither producer's private
+ * pass bookkeeping belongs at this seam.
+ */
+export interface ExpandableRequirementRow {
+  requirement: ScopedRequirement;
+  expansion: RawExpansion | null;
+}
+
+/** Backwards-compatible producer shape used by merge-focused tests and older callers. */
+type ExpansionInputRow =
+  | ExpandableRequirementRow
+  | { requirement: ScopedRequirement; raw: RawRequirement[] };
+
+const expansionOf = (row: ExpansionInputRow): RawExpansion | null =>
+  "expansion" in row ? row.expansion : row.raw.find((raw) => raw.expansion !== null)?.expansion ?? null;
+
+/**
+ * 1.3.0 — assertion status became load-bearing at expansion: `document-silent`, `ambiguous`,
+ * and `disputed` rows remain previewed requirements but mint zero pass/fail cases. A revision
+ * expanded before this change is not safely reusable because it may carry verdict cases for a
+ * proposition the document did not settle.
+ */
+
+/**
+ * 1.2.0 — `option-set` rows mint a sealed OPTION MEMBERSHIP payload (see `mintOptionSet`), so
+ * the option-set kind is decidable for the first time. THE CASE COUNT IS UNCHANGED: an option
+ * row expanded to exactly one case before and expands to exactly one case now, minted or
+ * refused. What moved is whether that case carries an expectation, which is exactly what the
+ * version in the CONTRACT REUSE KEY exists to invalidate — a revision sealed by 1.1.0 carries
+ * `optionSet: null` on every case and would go silently undecided under this build.
+ */
+/**
+ * 1.4.0 makes parser-origin roles load-bearing: open combo-box suggestions and ruby
+ * readings remain counted source material but can no longer mint option-set payloads or
+ * corroborate another option through the sibling inventory.
+ */
+export const EXPANDER_VERSION = "v2-floor-expander/1.4.0";
 
 /**
  * The producer's own classification of a requirement facet. It decides which requirements
@@ -121,7 +164,16 @@ export const FACET_TO_CASE_KIND: Record<string, FacetCase["kind"]> = {
  * decide at all. A kind absent from here can never be typed, however good the payload —
  * which is a STRUCTURAL gap, not an extraction one, and is reported as such.
  */
-const KINDS_WITH_A_PREDICATE = new Set<FacetCase["kind"]>(["route", "boundary"]);
+const KINDS_WITH_A_PREDICATE = new Set<FacetCase["kind"]>(["route", "boundary", "option-set"]);
+
+/**
+ * EXPORTED SO THE REGISTRY AND THIS SET CAN BE PROVED EQUAL. The comment above says these two
+ * can come to disagree after someone adds a predicate; `tools/tests/d45-option-set.test.mjs`
+ * asserts set-EQUALITY against `verify-observations.ts#PREDICATE_FOR_KIND`, so "someone adds a
+ * predicate and forgets this" turns the suite red instead of reporting cases as typed that no
+ * predicate can reach (or as gapped when one can).
+ */
+export const kindsWithAPredicate = (): string[] => [...KINDS_WITH_A_PREDICATE].sort();
 
 const emptyCase = (kind: FacetCase["kind"]): FacetCase => ({
   kind,
@@ -129,6 +181,7 @@ const emptyCase = (kind: FacetCase["kind"]): FacetCase => ({
   boundaryInput: null,
   configuration: null,
   expectedDestination: null,
+  optionSet: null,
 });
 
 const gap = (code: ExpectationGapCode, detail: string): ExpectationGap => ({ code, detail });
@@ -171,7 +224,7 @@ function terminalOf(dest: string): ExpectedDestinationPayload["terminal"] {
  * `targetQuestionId`s, which is what makes "bound here" and "recognised there" the same
  * predicate over the same vocabulary.
  */
-function questionVocabulary(rows: MergedRow[]): Map<string, string> {
+function questionVocabulary(rows: ExpansionInputRow[]): Map<string, string> {
   const byNorm = new Map<string, string>();
   for (const row of rows) {
     const q = questionOf(row.requirement);
@@ -263,6 +316,237 @@ export function bindDestination(raw: string | null, vocabulary: Map<string, stri
 }
 
 // ---------------------------------------------------------------------------
+// Option sets — the document's answer options, read from the document's own quote
+// ---------------------------------------------------------------------------
+
+/**
+ * ============ HOW AN OPTION EXPECTATION IS MINTED, AND WHAT IT REFUSES ============
+ *
+ * THE SHAPE OF THE INPUT, MEASURED ON THREE REAL SEALED REVISIONS rather than assumed. An
+ * option requirement is a sentence plus a verbatim document span:
+ *
+ *   S: "Q3 offers 'NURTEC' as an answer option."                    Q: "[#] NURTEC"
+ *   S: "S3 includes the response option 'Advertising or public
+ *       relations' with code 3."                                    Q: "3) Advertising or public relations"
+ *   S: "Q2 includes option 1: 'Yes, a daily oral preventive'."      Q: "(list) 1) Yes, a daily oral preventive"
+ *   S: "Q3 offers exactly the following five answer options, and
+ *       no others: KEYTRUDA, OPDIVO, TECENTRIQ, IMFINZI, LIBTAYO."  Q: "KEYTRUDA\nOPDIVO\n…"
+ *
+ * A5' — THE LABEL BYTES COME FROM THE QUOTE, NOT FROM THE SENTENCE. The sentence is a model's
+ * prose about the document; the quote is the document. Parsing the sentence would seal
+ * whatever the model wrote, and a paraphrased label ("25-34" for "25 to 34") compared against
+ * a screen is a fabricated defect with a document-shaped justification in front of it. So the
+ * options are read from `displayQuote` and the sentence is used only to CORROBORATE them.
+ *
+ * A6' — CORROBORATION IS TWO-WAY AND IT REFUSES, NEVER REPAIRS. A label the quote carries must
+ * also appear in the statement (normalized containment). When the two readings of one row
+ * disagree, nothing is minted: `OPTION_LABEL_NOT_CORROBORATED_BY_THE_STATEMENT`.
+ *
+ * A7' — SCOPE IS THE ONLY BINDER. `scope: "question:<id>"` says which question the options
+ * belong to. A row scoped to the SURVEY is refused outright
+ * (`OPTION_SET_NOT_BOUND_TO_A_QUESTION`) — see that code's entry for the measurement — and a
+ * row whose sentence names a DIFFERENT question the document knows is refused as ambiguous.
+ * There is no proximity rule, no carry-forward from the previous row, and no "last question
+ * mentioned" fallback. `plan-core.js#mineOptions` HAS one of those (`lastQ`), which is fine
+ * for choosing what to click and is not fine for minting a verdict.
+ *
+ * A8' — ORDER IS NEVER SEALED, AND THAT IS A DECISION ABOUT SURVEYS, NOT A SHORTCUT. Documents
+ * routinely permit or require rotation ("Present options in the exact order listed above. Do
+ * not randomize." is itself an option row in one of these revisions, and `s1-skip`'s and
+ * `s4-nested-rotation`'s manifests carry rotation semantics), and the capture's `order` is DOM
+ * order, which a stylesheet is free to disagree with. A site that randomises where the
+ * document permits it must not be accused, so no order claim is minted and the order rows
+ * refuse like any other row whose quote yields no options.
+ */
+
+/** Bracketed programmer markers a document prints beside an option, and the list bullets. */
+const OPTION_LINE_NOISE = /^(?:\[b\d+\]\s*)?(?:\(list\)\s*)?(?:\[#\]\s*)?/i;
+const TRAILING_MARKER = /\s*\[[A-Z][A-Z0-9 ,;:'\/-]{1,}\]\s*$/;
+
+/** `3) Label`, `3. Label`, `3 - Label`, `3: Label` — the code the DOCUMENT printed. */
+const CODED_OPTION = /^(\d{1,3})\s*[).:\-]\s+(.+)$/;
+
+const NUMBER_WORD: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+};
+
+/**
+ * SPLIT A DOCUMENT QUOTE INTO THE OPTION LINES IT CARRIES.
+ *
+ * Newlines first (the common multi-option quote), then the `(list)` marker and `;` which the
+ * block joiner uses when it flattens several source blocks into one quote. A quote with none
+ * of those is one line, which is the common single-option quote.
+ */
+function optionLinesOf(quote: string): string[] {
+  const flattened = quote.replace(/\s*\[b\d+\]\s*/gi, "\n").replace(/\s*\(list\)\s*/gi, "\n");
+  return flattened
+    .split(/[\n;]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * READ THE OPTIONS OUT OF A DOCUMENT QUOTE. Never a guess: a line this cannot read is DROPPED
+ * and the caller refuses when nothing is left, rather than inventing a label from the prose.
+ */
+export function parseDocumentedOptions(quote: string): DocumentedOption[] {
+  const out: DocumentedOption[] = [];
+  const seen = new Set<string>();
+  for (const raw of optionLinesOf(String(quote ?? ""))) {
+    const line = raw.replace(OPTION_LINE_NOISE, "").replace(TRAILING_MARKER, "").trim();
+    // A bracketed line is a programmer instruction, a scale header or a range — never a label.
+    if (!line || /^\[.*\]$/.test(line)) continue;
+    // AN ANSWER OPTION IS A PHRASE, NOT PROSE, and this is the guard that keeps a sentence out
+    // of the seal. A quote like "PROGRAMMER NOTE: Present options in the exact order listed
+    // above. Do not randomize." is one line with letters in it, and without this it becomes a
+    // sealed "option label" the predicate then hunts for on a screen — where it is of course
+    // absent, which is a FABRICATED missing-option claim with a document quote in front of it.
+    // Two shapes, both structural rather than lexical: more than one sentence, or a header
+    // ending in a colon.
+    if (/[.!?]\s+\S/.test(line) || /:$/.test(line)) continue;
+    const coded = CODED_OPTION.exec(line);
+    const code = coded ? coded[1]! : null;
+    const label = (coded ? coded[2]! : line).replace(TRAILING_MARKER, "").trim();
+    // A label with no letter or digit is punctuation; one this long is a paragraph, not an
+    // answer option, and comparing it to a rendered option would never match anything.
+    if (!label || label.length > 160 || !/[a-z0-9]/i.test(label)) continue;
+    const key = norm(label);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ code, label });
+  }
+  return out;
+}
+
+/** Does the requirement's own sentence carry this label? Normalized containment, both ways round. */
+const statementCorroborates = (statement: string, label: string): boolean =>
+  norm(statement).includes(norm(label));
+
+/**
+ * DOES THE REQUIREMENT CLOSE THE SET IN ITS OWN WORDS, AND DOES THE QUOTE BEAR THAT OUT?
+ *
+ * Both halves are required. "exactly the following four response options: …" whose quote
+ * yields ONE line is a requirement that states a set and a quote that captured a fragment of
+ * it, and treating that as closed would accuse a site of offering three options the document
+ * lists. So a stated count must EQUAL the number of options read, and a closure phrase with no
+ * count needs at least two.
+ */
+function statesAClosedSet(statement: string, parsed: number): boolean {
+  const s = norm(statement);
+  const closed = /\b(?:exactly|and no others?|no other (?:answer |response )?options?|only the following)\b/.test(s);
+  if (!closed || parsed < 2) return false;
+  const stated = /\b(?:exactly|following)\s+(?:the\s+following\s+)?(\d{1,2}|[a-z]+)\s+(?:answer|response|scale)?\s*options?\b/.exec(s);
+  if (!stated) return true;
+  const token = stated[1]!;
+  const n = /^\d+$/.test(token) ? Number(token) : NUMBER_WORD[token];
+  return n === undefined ? true : n === parsed;
+}
+
+export interface OptionSetBinding {
+  optionSet: OptionSetPayload | null;
+  expectationGap: ExpectationGap | null;
+}
+
+const nonAnswerOptionSourceRoles = (r: ScopedRequirement): string[] =>
+  [...new Set((r.sourceAtoms ?? []).map((atom) => atom.role).filter(isNonAnswerOptionSourceRole))].sort();
+
+/**
+ * MINT THE SEALED OPTION EXPECTATION FOR ONE ROW, OR SAY WHY NOT.
+ *
+ * `siblings` are the options OTHER rows state for the SAME question, already parsed and
+ * corroborated by this same function's rules. They carry no claim of their own; a predicate
+ * uses them to establish that the site's answer CODES are commensurable with the document's
+ * before it compares anything keyed on a code.
+ */
+export function mintOptionSet(
+  r: ScopedRequirement,
+  vocabulary: Map<string, string>,
+  siblingsFor: (questionId: string, exclude: ScopedRequirement) => DocumentedOption[],
+): OptionSetBinding {
+  const refusedRoles = nonAnswerOptionSourceRoles(r);
+  if (refusedRoles.length > 0) {
+    return {
+      optionSet: null,
+      expectationGap: gap(
+        EXPECTATION_GAP.OPTION_SET_SOURCE_NOT_AN_ANSWER_LIST,
+        `the requirement cites parser-labelled source role(s) ${refusedRoles.map((role) => JSON.stringify(role)).join(", ")}. ` +
+          `An open combo-box suggestion does not close the accepted answer vocabulary, and a ruby reading is a ` +
+          `visible phonetic annotation rather than an answer. The source remains in the denominator, but the ` +
+          `answer-option predicate may not reinterpret it`,
+      ),
+    };
+  }
+
+  const questionId = questionOf(r);
+  if (!questionId) {
+    return {
+      optionSet: null,
+      expectationGap: gap(
+        EXPECTATION_GAP.OPTION_SET_NOT_BOUND_TO_A_QUESTION,
+        `the requirement states answer options under scope ${JSON.stringify(r.scope)}, which names no question. ` +
+          `Attaching them to the nearest question in document order is how an option list for one question comes ` +
+          `to be checked against another's screen, and the answer would look exactly as confident either way`,
+      ),
+    };
+  }
+
+  // The statement names ANOTHER question this document knows. Which question's options these
+  // are has two readings, and no predicate may pick one.
+  const named = [...vocabulary.entries()]
+    .filter(([key, id]) => id.length > 1 && id !== questionId && mentions(r.normativeStatement, key))
+    .map(([, id]) => id);
+  if (named.length > 0) {
+    return {
+      optionSet: null,
+      expectationGap: gap(
+        EXPECTATION_GAP.OPTION_SET_QUESTION_AMBIGUOUS,
+        `the requirement is scoped to ${questionId} but its statement also names ${[...new Set(named)].join(", ")}; ` +
+          `an option set compared against the wrong question's screen accuses a survey that is behaving as documented`,
+      ),
+    };
+  }
+
+  const parsed = parseDocumentedOptions(r.displayQuote ?? "");
+  if (parsed.length === 0) {
+    return {
+      optionSet: null,
+      expectationGap: gap(
+        EXPECTATION_GAP.OPTION_SET_NOT_READ_FROM_THE_DOCUMENT_QUOTE,
+        `no answer option could be read from this requirement's document quote ` +
+          `(${JSON.stringify((r.displayQuote ?? "").slice(0, 120))}). The labels exist only inside the model's own ` +
+          `sentence, and sealing prose as though it were the document is how a paraphrased option becomes a defect claim`,
+      ),
+    };
+  }
+
+  const asserted = parsed.filter((o) => statementCorroborates(r.normativeStatement, o.label));
+  if (asserted.length === 0) {
+    return {
+      optionSet: null,
+      expectationGap: gap(
+        EXPECTATION_GAP.OPTION_LABEL_NOT_CORROBORATED_BY_THE_STATEMENT,
+        `the document quote yields ${parsed.length} option label(s) ` +
+          `(${parsed.map((o) => JSON.stringify(o.label)).join(", ")}) and the requirement's own statement contains ` +
+          `none of them, so the two readings of this row disagree about what the document says`,
+      ),
+    };
+  }
+
+  return {
+    optionSet: {
+      asserted,
+      siblings: siblingsFor(questionId, r),
+      // The closure claim is taken over what was PARSED, not over what survived corroboration:
+      // a set is closed by the document's words, and dropping an uncorroborated line must not
+      // make the remainder look complete.
+      exhaustive: asserted.length === parsed.length && statesAClosedSet(r.normativeStatement, parsed.length),
+    },
+    expectationGap: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Coverage — the ceiling, computed
 // ---------------------------------------------------------------------------
 
@@ -308,13 +592,45 @@ export interface ExpansionOutput {
 }
 
 export async function expandFloor(
-  rows: MergedRow[],
+  rows: ExpansionInputRow[],
   configuration: { locale: string; viewport: string | null },
 ): Promise<ExpansionOutput> {
   const facetInstances: FacetInstance[] = [];
   const preview: ExpansionPreviewEntry[] = [];
   const unpreviewed: string[] = [];
   const vocabulary = questionVocabulary(rows);
+
+  // THE DOCUMENT'S OWN OPTION LINES, PER QUESTION, BUILT ONCE. Corroboration material for the
+  // option predicate and nothing else — see `OptionSetPayload.siblings`. It is derived by the
+  // SAME parse+corroborate rules a minted assertion goes through, so a sibling can never be
+  // something this expander would have refused to seal as an assertion.
+  const optionsByQuestion = new Map<string, Array<{ from: string; option: DocumentedOption }>>();
+  for (const row of rows) {
+    const r = row.requirement;
+    if (FACET_TO_CASE_KIND[r.facet] !== "option-set") continue;
+    // A source unsafe as an assertion is equally unsafe as sibling corroboration, where it
+    // could otherwise license a code-keyed label accusation in a different requirement.
+    if (nonAnswerOptionSourceRoles(r).length > 0) continue;
+    const q = questionOf(r);
+    if (!q) continue;
+    const held = optionsByQuestion.get(q) ?? [];
+    for (const o of parseDocumentedOptions(r.displayQuote ?? "")) {
+      if (statementCorroborates(r.normativeStatement, o.label)) held.push({ from: r.requirementVersionId, option: o });
+    }
+    optionsByQuestion.set(q, held);
+  }
+  const siblingsFor = (questionId: string, exclude: ScopedRequirement): DocumentedOption[] => {
+    const seen = new Set<string>();
+    const out: DocumentedOption[] = [];
+    for (const { from, option } of optionsByQuestion.get(questionId) ?? []) {
+      if (from === exclude.requirementVersionId) continue;
+      const key = norm(option.label);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(option);
+    }
+    return out;
+  };
 
   // THE PRECONDITION THIS EXPANDER HAS ALWAYS RELIED ON, NOW STATED.
   //
@@ -345,11 +661,19 @@ export async function expandFloor(
 
   for (const row of rows) {
     const r: ScopedRequirement = row.requirement;
-    const expansion = row.raw.find((x) => x.expansion !== null)?.expansion ?? null;
+    const expansion = expansionOf(row);
     const drafts: DraftCase[] = [];
     let basis: string;
 
-    if (expansion && expansion.kind === "route" && expansion.routeAnswers.length > 0) {
+    if (!constrainsMatching(r.assertionStatus)) {
+      // Assertion status is part of the authority boundary, not report decoration.
+      // `document-silent`, `ambiguous`, and `disputed` rows are useful facts for a
+      // reviewer, but none states a proposition the site can pass or fail. Keeping the
+      // row in the preview preserves computed coverage while minting no denominator case.
+      basis =
+        `non-constraining assertion status ${JSON.stringify(r.assertionStatus)}: ` +
+        "recorded and surfaced for review, expanded to zero pass/fail cases";
+    } else if (expansion && expansion.kind === "route" && expansion.routeAnswers.length > 0) {
       for (const a of expansion.routeAnswers) {
         const bound = bindDestination(a.destination, vocabulary);
         drafts.push({
@@ -436,6 +760,25 @@ export async function expandFloor(
     } else if (expansion && expansion.kind === "route" && expansion.routeAnswers.length === 0) {
       basis =
         "a routing rule the document states by exclusion enumerates no case set; the count is NOT ESTABLISHED rather than inferred from a run";
+    } else if (FACET_TO_CASE_KIND[r.facet] === "option-set") {
+      // ONE CASE, EXACTLY AS BEFORE. This branch changes what the case CARRIES, never how many
+      // there are: an option requirement expanded to one case under 1.1.0 and expands to one
+      // case here, minted or refused. The denominator is pinned per document (D10) and a new
+      // predicate is not allowed to move it.
+      const bound = mintOptionSet(r, vocabulary, siblingsFor);
+      drafts.push({
+        case: {
+          ...emptyCase("option-set"),
+          configuration: { locale: configuration.locale, viewport: configuration.viewport, profileId: null },
+          optionSet: bound.optionSet,
+        },
+        expectationGap: bound.expectationGap,
+      });
+      basis = bound.optionSet
+        ? `one option-set case: the document states ${bound.optionSet.asserted.length} answer option(s) for this ` +
+          `question, read from its own quote and corroborated by the requirement's statement` +
+          (bound.optionSet.exhaustive ? ", and closes the set" : "")
+        : `one option-set case, carrying no expectation: ${bound.expectationGap?.code}`;
     } else {
       const kind = FACET_TO_CASE_KIND[r.facet] ?? "rendered-state";
       drafts.push({
@@ -540,6 +883,18 @@ function fallbackGap(kind: FacetCase["kind"], facet: string): ExpectationGap | n
         `so there is no input to enter and no outcome to expect`,
     );
   }
+  if (kind === "option-set") {
+    // REACHED ONLY BY A ROW THIS FUNCTION'S CALLER DID NOT SEND THROUGH `mintOptionSet` — a
+    // facet that maps to `option-set` through some future edit to `FACET_TO_CASE_KIND` without
+    // a matching arm in the loop. Since 1.2.0 `option-set` is a kind WITH a predicate, so a
+    // `null` here would report such a case as decidable while its payload is empty, which is
+    // the exact "looks typed, is not" shape this module exists to refuse.
+    return gap(
+      EXPECTATION_GAP.OPTION_SET_NOT_READ_FROM_THE_DOCUMENT_QUOTE,
+      `the requirement is a "${facet}" rule that reached the generic arm, so no answer option was read from its ` +
+        `document quote and there is nothing to compare a rendered screen against`,
+    );
+  }
   return null;
 }
 
@@ -592,6 +947,11 @@ function labelFor(r: ScopedRequirement, c: FacetCase, g: ExpectationGap | null):
   if (c.boundaryInput) {
     const outcome = g ? `${c.boundaryInput.expectedOutcome}, ${g.code}` : c.boundaryInput.expectedOutcome;
     return `boundary: ${c.boundaryInput.bound} (${outcome})`;
+  }
+  if (c.kind === "option-set") {
+    if (!c.optionSet) return `option-set: not minted (${g?.code ?? "?"})`;
+    const labels = c.optionSet.asserted.map((o) => (o.code === null ? o.label : `${o.code}=${o.label}`)).join(", ");
+    return `option-set${c.optionSet.exhaustive ? " (closed)" : ""}: ${labels.slice(0, 120)}`;
   }
   return `${c.kind}: ${r.normativeStatement.slice(0, 80)}`;
 }

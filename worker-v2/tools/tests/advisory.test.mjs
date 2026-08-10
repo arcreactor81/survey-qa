@@ -1,6 +1,6 @@
 /**
  * The advisory hardening list from the review: coverage-bucket domain validation,
- * submission limits and DOCX typing, viewport/locale cardinality, the outbound-URL
+ * submission limits and DOCX typing, viewport truthfulness and locale cardinality, the outbound-URL
  * policy, and transactional handling of a Workflow-create failure.
  */
 
@@ -100,6 +100,56 @@ suite("advisory — the outbound-URL policy", () => {
 });
 
 suite("advisory — submission limits", () => {
+  test("an oversized declared body is refused before parsing", async () => {
+    const mod = await worker();
+    const env = testEnv({ MAX_SUBMISSION_BYTES: "32" });
+    const req = new Request("https://x/api/v2/runs", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": "33",
+      },
+      // Invalid JSON makes the ordering observable: parsing first would return INVALID_BODY.
+      body: "not-json",
+    });
+    const res = await mod.apiRuns.submitRun(req, env);
+    assertEq(res.status, 413);
+    assertEq((await res.json()).error.code, "SUBMISSION_TOO_LARGE");
+    assertEq(env.EVIDENCE._store.size, 0, "the preflight must not write submission artifacts");
+  });
+
+  test("a malformed declared length is refused rather than trusted", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const req = new Request("https://x/api/v2/runs", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": "12x",
+      },
+      body: "not-json",
+    });
+    const res = await mod.apiRuns.submitRun(req, env);
+    assertEq(res.status, 400);
+    assertEq((await res.json()).error.code, "INVALID_CONTENT_LENGTH");
+  });
+
+  test("invalid byte-limit configuration fails loudly before parsing", async () => {
+    const mod = await worker();
+    for (const configured of ["-1", "1.5", "9007199254740992", "not-a-number"]) {
+      const res = await mod.apiRuns.submitRun(
+        new Request("https://x/api/v2/runs", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "not-json",
+        }),
+        testEnv({ MAX_SUBMISSION_BYTES: configured }),
+      );
+      assertEq(res.status, 503, configured);
+      assertEq((await res.json()).error.code, "INVALID_SUBMISSION_LIMIT_CONFIGURATION", configured);
+    }
+  });
+
   test("a document that is not a .docx is refused", async () => {
     const mod = await worker();
     const env = testEnv();
@@ -122,18 +172,39 @@ suite("advisory — submission limits", () => {
     assertEq(env.EVIDENCE._store.size, 0, "nothing may be written for a refused submission");
   });
 
-  test("viewport and locale cardinality are bounded", async () => {
+  test("mobile and multi-viewport requests are refused before Workflow creation", async () => {
+    const mod = await worker();
+    let createCalls = 0;
+    const env = testEnv({
+      V2_RUN_WORKFLOW: {
+        async create() {
+          createCalls += 1;
+        },
+      },
+    });
+
+    for (const viewports of [["mobile"], ["desktop", "mobile"]]) {
+      const res = await mod.apiRuns.submitRun(
+        submit({
+          surveyUrl: "https://survey.example.com/x",
+          documentBase64: b64(docxBytes()),
+          viewports,
+        }),
+        env,
+      );
+      assertEq(res.status, 400);
+      const error = (await res.json()).error;
+      assertEq(error.code, "UNSUPPORTED_VIEWPORT_CONFIGURATION");
+      assert(error.message.includes("1280x900"), "the response should name the fixed executor viewport");
+      assert(error.message.includes("only the first"), "the response should explain the executor limitation");
+    }
+
+    assertEq(createCalls, 0, "unsupported viewport requests must fail before Workflow creation");
+  });
+
+  test("locale cardinality is bounded", async () => {
     const mod = await worker();
     const env = testEnv();
-    const tooMany = await mod.apiRuns.submitRun(
-      submit({
-        surveyUrl: "https://survey.example.com/x",
-        documentBase64: b64(docxBytes()),
-        viewports: Array.from({ length: 40 }, (_, i) => `v${i}`),
-      }),
-      env,
-    );
-    assertEq((await tooMany.json()).error.code, "INVALID_VIEWPORTS");
 
     const badLocale = await mod.apiRuns.submitRun(
       submit({ surveyUrl: "https://survey.example.com/x", documentBase64: b64(docxBytes()), locale: "e".repeat(400) }),
@@ -142,14 +213,24 @@ suite("advisory — submission limits", () => {
     assertEq((await badLocale.json()).error.code, "INVALID_LOCALE");
   });
 
-  test("a well-formed submission is accepted", async () => {
+  test("an omitted viewport defaults to exactly desktop in the Workflow submission", async () => {
     const mod = await worker();
-    const env = testEnv();
+    let workflowSubmission;
+    const env = testEnv({
+      V2_RUN_WORKFLOW: {
+        async create(input) {
+          workflowSubmission = input;
+        },
+      },
+    });
     const res = await mod.apiRuns.submitRun(
       submit({ surveyUrl: "https://survey.example.com/x", documentBase64: b64(docxBytes()) }),
       env,
     );
     assertEq(res.status, 202);
+    assert(workflowSubmission, "a valid submission should create a Workflow instance");
+    assertEq(workflowSubmission.params.viewports.length, 1);
+    assertEq(workflowSubmission.params.viewports[0], "desktop");
   });
 });
 

@@ -1,0 +1,25 @@
+// LOCAL-ONLY visual provider bake-off endpoint.
+//
+// This config has no route, workers.dev hostname, preview URL, assets, storage,
+// secrets, schedules, or workflow bindings. It is intended only for:
+//   wrangler dev --config wrangler.vision-bakeoff.jsonc
+//     --env-file tools/vision-eval/live-worker.empty.env
+// The AI binding is remote because Workers AI has no local simulator; starting
+// the dev server can therefore incur model charges when /invoke is called.
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "survey-qa-vision-bakeoff-local",
+  "main": "tools/vision-eval/live-worker.ts",
+  // Match the main Worker and Wrangler 4.106's supported workerd runtime. The
+  // bake-off uses no runtime feature that needs a newer compatibility date.
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "ai": { "binding": "AI", "remote": true },
+  "vars": {
+    "BAKEOFF_LOCAL_ONLY": "true",
+    "BAKEOFF_GATEWAY_ID": "firstgateway"
+  },
+  "observability": { "enabled": false }
+}

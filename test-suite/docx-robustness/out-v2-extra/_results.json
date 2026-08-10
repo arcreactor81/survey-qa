@@ -1,0 +1,303 @@
+[
+  {
+    "file": "21-gridspan-header-vmerge.docx",
+    "hazard": "w:gridSpan in the HEADER row of a 5-column grid, plus a w:vMerge row group. The frozen corpus's only gridSpan is on a trailing full-width row, so the case that shifts every column label is untested there.",
+    "ms": 2,
+    "error": null,
+    "blocks": 24,
+    "problems": [],
+    "passed": 0,
+    "total": 7,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "col=\"Awareness\") aware-no",
+        "why": "the header's Awareness cell spans grid columns 2 AND 3, so the second answer under it is still Awareness",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "col=\"Usage\") weekly",
+        "why": "Usage is grid column 4, not array position 3",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "col=\"Price\") 42 GBP",
+        "why": "the LAST column is the one a position-indexed header drops entirely — absent, with no sign it existed",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "absent",
+        "text": "col=\"Usage\") aware-no",
+        "why": "this is the DEPLOYED parser's output for that cell: an awareness answer labelled as a usage answer. A confidently WRONG annotation is worse than none, and this is the probe that must stay red for the wrong reader",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "absent",
+        "text": "col=\"Price\") weekly",
+        "why": "the same shift, one column further along",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "row=\"METRO\" col=\"City\") Manchester",
+        "why": "a vMerge CONTINUE stub is structurally empty; the group label is the RESTART cell above it and is unrecoverable without reading w:vMerge",
+        "severity": "requirement",
+        "ok": false
+      },
+      {
+        "kind": "absent",
+        "text": "(cell r3c2 col=\"City\") Manchester",
+        "why": "the deployed parser's output: the continuation row has no group at all, so a quota row loses which quota it is in",
+        "severity": "requirement",
+        "ok": false
+      }
+    ]
+  },
+  {
+    "file": "22-gridbefore-ragged-row.docx",
+    "hazard": "w:gridBefore — a row that starts part-way across the grid. Absent from the frozen corpus entirely; the one table case where docling beats both mammoth and the deployed parser.",
+    "ms": 1,
+    "error": null,
+    "blocks": 9,
+    "problems": [],
+    "passed": 0,
+    "total": 4,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "col=\"Aware\") no",
+        "why": "the row declares one skipped column, so its first cell is grid column 2",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "col=\"Use\") monthly",
+        "why": "and its second is grid column 3",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "absent",
+        "text": "col=\"Brand\") no",
+        "why": "reading the row as if it began at column 1 files an awareness answer under the brand-name column",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "absent",
+        "text": "col=\"Aware\") monthly",
+        "why": "the same shift on the next cell — mammoth gets this one wrong too",
+        "severity": "meaning",
+        "ok": false
+      }
+    ]
+  },
+  {
+    "file": "23-ruby-furigana.docx",
+    "hazard": "w:ruby — the phonetic reading (w:rt) and the word (w:rubyBase) are BOTH w:t runs, so a flat run scan interleaves them.",
+    "ms": 0,
+    "error": null,
+    "blocks": 2,
+    "problems": [],
+    "passed": 0,
+    "total": 3,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q17. 電気の契約について。",
+        "why": "the sentence a reader sees, byte-exact",
+        "severity": "requirement",
+        "ok": false
+      },
+      {
+        "kind": "absent",
+        "text": "でんき",
+        "why": "the deployed parser emitted でんき電気 — plausible Japanese that no reader ever saw. CORRUPTION, not loss: no comparison against a live screen can ever match it, and unlike a gap it does not look like a gap",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "absent",
+        "text": "けいやく",
+        "why": "the same on the second ruby run",
+        "severity": "meaning",
+        "ok": false
+      }
+    ]
+  },
+  {
+    "file": "24-dropdown-value-shapes.docx",
+    "hazard": "w:listItem shapes the frozen corpus hides: Word's DEFAULT w:value == w:displayText, an item with NO w:displayText, and numeric values (the shape that makes a value-as-code rule look correct).",
+    "ms": 0,
+    "error": null,
+    "blocks": 3,
+    "problems": [],
+    "passed": 4,
+    "total": 7,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "(list) Yes, definitely",
+        "why": "one (list) line per listItem is the shape extract/expand.ts#parseDocumentedOptions reads correctly; a single joined blob is not",
+        "severity": "requirement",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "(list) Prefer not to say",
+        "why": "w:displayText is optional; an item without one displays its w:value, and dropping such an item is a silent loss of a real answer option",
+        "severity": "requirement",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "(list) Under 20 GBP",
+        "why": "the label is the display text, never the value",
+        "severity": "requirement",
+        "ok": false
+      },
+      {
+        "kind": "absent",
+        "text": "Yes, definitely) Yes, definitely",
+        "why": "what a value-as-code rule emits on Word's DEFAULT document. CODED_OPTION would not match it, so the doubled string seals AS THE LABEL — a label the document never printed, hunted for on a live screen where it can never appear",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "absent",
+        "text": "1) Under 20 GBP",
+        "why": "w:value is a stored value, never a rendered one. Minting it as the answer CODE is the same defect this parser already refuses for Word auto-numbering, where it prints [#] instead",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Q20. Would you recommend it?",
+        "why": "the host paragraph before the inline control is untouched — the options are ADDED, never substituted",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "SINGLE CODE.",
+        "why": "and the text after it, the classic truncation victim",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "25-dropdown-block-level.docx",
+    "hazard": "a dropdown content control at BLOCK level: its w:sdtPr sits outside every w:p, where the per-paragraph option scan cannot reach it.",
+    "ms": 0,
+    "error": null,
+    "blocks": 3,
+    "problems": [],
+    "passed": 2,
+    "total": 2,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q30. Which zone are you in?",
+        "why": "the paragraph before a block-level control must survive it",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Choose an item.",
+        "why": "the control's own sdtContent is a normal paragraph and is read normally",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "26-tblheader-not-row-0.docx",
+    "hazard": "the row the document DECLARES as its header (w:trPr/w:tblHeader) is row 2, under a full-width title row. Nothing else in the tree exercises that branch — every other table's declared header is also row 0, so honouring the flag and guessing row 0 agree.",
+    "ms": 1,
+    "error": null,
+    "blocks": 8,
+    "problems": [],
+    "passed": 2,
+    "total": 4,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "col=\"Aware\") 62%",
+        "why": "w:tblHeader is the author saying which row repeats, i.e. which row is the header",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "col=\"Use\") 41%",
+        "why": "the same for the next column",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "absent",
+        "text": "col=\"Table 4",
+        "why": "guess row 0 and every answer in the table is labelled with the TABLE'S TITLE as its column header — a fact about the cell that is not true of it",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "(cell r1c1) Table 4 — Awareness by region",
+        "why": "a full-width title row belongs to no single column and carries no row label",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "27-gridspan-bomb.docx",
+    "hazard": "886 bytes declaring w:gridSpan w:val=\"99999999\". Column headers are mapped ONE GRID COLUMN AT A TIME, so an unbounded span is a CPU/memory kill inside a Worker from a document small enough to arrive by email.",
+    "ms": 1,
+    "error": null,
+    "blocks": 7,
+    "problems": [],
+    "passed": 4,
+    "total": 4,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q40. Ordinary question above a hostile table.",
+        "why": "a hostile table must not take the rest of the document down with it",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "(cell r1c1) A",
+        "why": "the spanning cell is still read",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "noregex",
+        "text": "c[0-9]{5,}",
+        "why": "the span is clamped (MAX_GRID_COLUMNS), so no cell claims a five-digit grid column. Same class of guard as MAX_TAG_SCANS, and the same reason: an 18.5-second scan of a 98 KB upload is a kill, not a slow parse",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "(cell r2c1 col=\"A\") x",
+        "why": "the body row is still paired with its (clamped) header rather than being dropped",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  }
+]

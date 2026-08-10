@@ -1,0 +1,10 @@
+[b0001] (heading) SECTION A — SCREENER
+[b0002] Q4. Are you solely or jointly responsible for the energy bills in your household?
+[b0003] 1. Solely responsible
+[b0004] 2. Jointly responsible
+[b0005] 3. Not responsible — TERMINATE (T5)
+[b0006] Q5. What is the first part of your postcode?
+[b0007] Q6. Reporting of this study follows the weighting convention below.
+[b0008] (footnote 1) During SOFT LAUNCH only, a respondent who fails Q4 is NOT terminated: set qc_flag = 1 and allow the interview to continue. At FULL LAUNCH the same failure terminates immediately at T5.
+[b0009] (footnote 2) Outcodes beginning BT route to the Northern Ireland cell. IM, JE and GY outcodes are out of scope and must route to T7 on the first attempt.
+[b0010] (endnote 1) Weighting note: the achieved sample is weighted to ONS mid-2025 estimates by region, age and tenure. Unweighted bases must be shown on every chart.

@@ -82,10 +82,31 @@ export const activeMarkerKey = (runId: string) => k("active", runId);
 
 export const inputDocumentKey = (runId: string) => k("runs", runId, "input", "document.docx");
 export const inputManifestKey = (runId: string) => k("runs", runId, "input", "manifest.json");
+/** Written only after the isolated canary's Workflow instance was created successfully. */
+export const liveCanaryAcceptanceKey = (runId: string) =>
+  k("runs", runId, "input", "canary-acceptance.json");
+/** Raw, user-supplied requirements for the explicitly human-authored contract path. */
+export const inputHumanRequirementsKey = (runId: string) =>
+  k("runs", runId, "input", "human-requirements.json");
+/** Validated/normalized human input. It is still pre-seal and never an authority by itself. */
+export const humanRequirementsNormalizedKey = (runId: string) =>
+  k("runs", runId, "contract", "human-requirements-normalized.json");
+/** Mechanical validation report, including every named limitation found before expansion. */
+export const humanRequirementsValidationKey = (runId: string) =>
+  k("runs", runId, "contract", "human-validation.json");
+/** Complete floor-expansion preview cited by the human approval gate. */
+export const humanExpansionPreviewKey = (runId: string) =>
+  k("runs", runId, "contract", "human-expansion-preview.json");
+/** Requirements plus cases produced by the real floor expander, ready for the shared sealer. */
+export const humanContractPreparedKey = (runId: string) =>
+  k("runs", runId, "contract", "human-prepared.json");
 
 // Extraction (merged-contract §0: TWO independent passes + a source-first ledger)
 export const extractionPassKey = (runId: string, pass: "a" | "b") =>
   k("runs", runId, "extraction", `pass-${pass}.json`);
+/** Planner-native extraction sidecar; informative only, never an alternative denominator. */
+export const plannerSidecarKey = (runId: string) =>
+  k("runs", runId, "extraction", "checklist.json");
 export const sourceLedgerKey = (runId: string) => k("runs", runId, "extraction", "source-ledger.json");
 export const extractionDiffKey = (runId: string) => k("runs", runId, "extraction", "diff.json");
 
@@ -102,7 +123,84 @@ export const attemptKey = (runId: string, attemptId: string) =>
 export const attemptPrefix = (runId: string) => k("runs", runId, "execution", "attempts") + "/";
 
 export const observationsKey = (runId: string) => k("runs", runId, "observations.json");
+
+// Visual-perception work is split into a screenshot-only paid inference identity and an
+// epoch-specific grounded identity. Never pass the slash-bearing cache key itself to `k()`:
+// `k()` treats each argument as a segment, while the cache key is a typed external identity.
+const VISUAL_INFERENCE_CACHE_KEY = /^visual-inference\/sha256\/([0-9a-f]{64})$/;
+const VISUAL_OBSERVATION_CACHE_KEY = /^visual-observation\/sha256\/([0-9a-f]{64})$/;
+
+function visualCacheDigest(cacheKey: string, pattern: RegExp, label: string): string {
+  const match = pattern.exec(cacheKey);
+  if (!match) throw new Error(`${label}: malformed cache key`);
+  return match[1]!;
+}
+
+export const visualInferenceDigest = (cacheKey: string): string =>
+  visualCacheDigest(cacheKey, VISUAL_INFERENCE_CACHE_KEY, "visualInferenceDigest");
+
+export const visualObservationDigest = (cacheKey: string): string =>
+  visualCacheDigest(cacheKey, VISUAL_OBSERVATION_CACHE_KEY, "visualObservationDigest");
+
+/** Resolution of one execution walk to exactly one immutable PathObservation artifact. */
+export const walkArtifactIndexKey = (runId: string) =>
+  k("runs", runId, "visual", "walk-artifact-index.json");
+
+/** Fixed, counted visual work denominator prepared before any paid inference is issued. */
+export const visualManifestKey = (runId: string) => k("runs", runId, "visual", "manifest.json");
+
+/** Mutable CAS authority for post-run visual reservations and exact paid-attempt settlement. */
+export const visualUsageLedgerKey = (runId: string) =>
+  k("runs", runId, "visual", "usage.json");
+
+/** Append-only launch receipts keep child-dispatch uncertainty visible without blocking a child. */
+export const visualLaunchMarkerKey = (
+  runId: string,
+  workflowInstanceId: string,
+  marker: "intent" | "accepted" | "started" | "unresolved",
+) => k("runs", runId, "visual", "launches", workflowInstanceId, `${marker}.json`);
+
+export const visualInferenceClaimKey = (runId: string, cacheKey: string) =>
+  k("runs", runId, "visual", "inference", visualInferenceDigest(cacheKey), "claim.json");
+
+export const visualInferenceOutcomeKey = (runId: string, cacheKey: string) =>
+  k("runs", runId, "visual", "inference", visualInferenceDigest(cacheKey), "outcome.json");
+
+export const visualEpochObservationKey = (runId: string, cacheKey: string) =>
+  k("runs", runId, "visual", "epochs", visualObservationDigest(cacheKey), "observation.json");
+
+export const visualEpochReconciliationKey = (runId: string, cacheKey: string) =>
+  k("runs", runId, "visual", "epochs", visualObservationDigest(cacheKey), "reconciliation.json");
+
+/** Closed observation + deterministic reconciliation, re-readable as one immutable epoch result. */
+export const visualGroundedEpochKey = (runId: string, cacheKey: string) =>
+  k("runs", runId, "visual", "epochs", visualObservationDigest(cacheKey), "grounded.json");
+
+/** Final pointer/index; its rows cite immutable evidence rather than embedding trusted facts. */
+export const visualIndexKey = (runId: string) => k("runs", runId, "visual", "index.json");
+
+/**
+ * THE RUN'S CURRENT RECORD — a HEAD POINTER, not the sealed artifact.
+ *
+ * A run signs more than one record, and it must: the judge binds its JudgementRecord to the
+ * record's payload hash, so revision 1 has to be signed BEFORE the judgement runs and can
+ * never contain the judgement's outcome. Everything learned after that lands in a superseding
+ * revision (`assemble-record.mjs#supersedeRunRecord`), and this key names whichever revision is
+ * current.
+ *
+ * SUPERSEDE, NEVER MUTATE: every revision is also written, byte for byte, to its own
+ * content-addressed key below, so the record a judgement bound to stays readable and stays
+ * signature-valid after this pointer has moved on.
+ */
 export const recordKey = (runId: string) => k("runs", runId, "record.json");
+
+/**
+ * THE IMMUTABLE ARCHIVE OF ONE RECORD REVISION, addressed by the hash it was signed over
+ * (`attestation.payloadHash`, or the canonical payload hash when the run had no signing key).
+ * Content-addressed, so a write is idempotent and an overwrite is impossible by construction.
+ */
+export const recordArchiveKey = (runId: string, recordHash: string) =>
+  k("runs", runId, "records", `${recordHash.replace(/^sha256:/, "")}.json`);
 
 /**
  * THE DERIVED-VERDICT BUNDLE — `{ verdicts, routeTable, delta, summary }` from the
@@ -178,3 +276,11 @@ export const evidenceCatalogPrefix = (runId: string) => k("runs", runId, "eviden
 
 export const sweeperCursorKey = () => k("sweeper", "audit-cursor.json");
 export const retentionReportKey = (isoDay: string) => k("sweeper", "retention", `${isoDay}.json`);
+
+/**
+ * WHEN THE SWEEPER LAST RAN. Cron silence is invisible from inside a cron job — every tick
+ * looks like the first one — and on 8 Aug a 140-minute outage was discovered only by its
+ * consequences, because nothing recorded that ticks had been missed. One small object makes
+ * the gap a fact the next tick can read and bound itself against (see sweeper.ts).
+ */
+export const sweeperTickKey = () => k("sweeper", "tick.json");

@@ -1,0 +1,6 @@
+[b0001] (heading) SECTION L — GRID
+[b0002] Q18. Please rate each brand on the scale shown below.
+[b0003] SCRIPTER: build the grid exactly as shown in the screenshot.
+[b0004] (image-alt ) [image with no alt text — content unreadable]
+[b0005] Q19. And overall, which brand would you choose?
+[b0006] (image-alt ) [image: Client logo. SCRIPTER: show the client logo on the intro screen only, never on question screens.]

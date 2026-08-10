@@ -56,7 +56,10 @@
  */
 
 import type { EvidenceCatalogEntry } from "../types/record";
+import type { Env } from "../types/env";
 import { sha256Hex } from "./hash";
+import { getEnvelope, updateEnvelope } from "./envelope";
+import { listCatalog } from "./evidence";
 
 /** The scheme prefix. `site-` names what it is derived from; nothing here claims a release. */
 export const OBSERVED_SITE_BUILD_ID_PREFIX = "site-sha256:";
@@ -183,3 +186,150 @@ export async function resolveTargetIdentity(input: {
 
 const nonEmpty = (v: string | null | undefined): string | null =>
   typeof v === "string" && v.trim().length > 0 ? v : null;
+
+// ---------------------------------------------------------------------------
+// RECORDING THE IDENTITY, SO THE SIGNED RECORD CAN STATE WHAT WAS TESTED
+// ---------------------------------------------------------------------------
+
+/**
+ * WHY RESOLVING AT REPORT TIME WAS NOT ENOUGH, AND WHY THIS FUNCTION EXISTS.
+ *
+ * `resolveTargetIdentity` above runs in `report/build.ts` — at the very END of a run, on the
+ * READ side. Everything that binds to the target identity happens BEFORE that, and read
+ * through a completely different path:
+ *
+ *     envelope.input.targetBuildId
+ *       -> assemble-record.mjs:502          (`envelope?.input?.targetBuildId ?? null`)
+ *       -> record.run.targetBuildId
+ *       -> shared/v2-record.mjs:370         (`run.target.buildId`)
+ *       -> pipeline/judge/lib/authority.mjs:396
+ *       -> judgement.binding.targetBuildId
+ *
+ * With `DEFAULT_TARGET_BUILD_ID` unset — the deployed posture — every link of that chain
+ * carried `null`, so EVERY SIGNED RECORD SAID NOTHING ABOUT WHAT IT HAD TESTED. And the
+ * derived-id feature could not rescue it: the report resolved a derived
+ * `site-sha256:<hex>` while the judgement it was checking had been minted with `null`, so
+ * `judgement.ts`'s `target-build` check compared a derived id against null and FAILED —
+ * demoting the judgement to `unusable` for a reason that reads like a mismatch. The feature
+ * passed its tests only because those tests hand-mint the judgement with the derived id.
+ *
+ * So the identity must be RECORDED ON THE ENVELOPE, once, before the record is assembled.
+ * Then all four consumers read one value and the report's precedence rule 1 ("recorded")
+ * resolves the same string the judge bound to.
+ *
+ * THREE PROPERTIES, EACH LOAD-BEARING:
+ *
+ *   FIRST WRITE WINS. If anything already recorded an identity — the owner's
+ *   `DEFAULT_TARGET_BUILD_ID` stamped at submission, or an earlier call on a resumed or
+ *   recovered instance — it is returned untouched. A run's identity may not change under a
+ *   judgement that already bound to it, and a recovery re-run must not silently re-point the
+ *   record at a second observation. The re-check happens INSIDE the compare-and-set, so two
+ *   concurrent callers cannot both write.
+ *
+ *   NULL IS NEVER WRITTEN. A run that captured no screen keeps `targetBuildId: null` and
+ *   stays UNBINDABLE with the named reason `store/judgement.ts` already gives it. Writing a
+ *   derived-from-nothing id would certify a run that never reached the survey.
+ *
+ *   IT NEVER THROWS INTO THE RUN. Failure to record an identity degrades to "unbindable",
+ *   which the report already states out loud. It is not a reason to kill a run that has
+ *   real observations — so the caller is handed an outcome, not an exception.
+ *
+ * WHAT THIS DOES NOT FIX — SAY IT PLAINLY. The derived id is stable WITHIN a run and under
+ * re-derivation, and is NOT stable across runs, because `RenderedScreen.at` (browser/types.ts)
+ * is a wall-clock capture timestamp and `browser/capture.ts` stringifies the whole screen into
+ * the `dom-excerpt` blob whose sha-256 IS the content hash. Two runs over a byte-identical
+ * site therefore derive two different ids today. `d39` proves that hazard rather than
+ * asserting it away. Closing it is a CAPTURE-side change (hoist `at` out of the hashed
+ * projection, or catalogue a normalised screen hash alongside the raw one); it cannot be
+ * faked here by reaching inside blobs this module did not write.
+ */
+export type RecordedIdentityOutcome =
+  | "already-recorded"
+  | "recorded"
+  | "no-capture"
+  | "no-envelope"
+  | "unavailable";
+
+export interface RecordedIdentity {
+  outcome: RecordedIdentityOutcome;
+  /** What the envelope carries after this call. `null` means the run stays unbindable. */
+  targetBuildId: string | null;
+  /** One sentence for the run's heartbeat and the operational diagnostics. */
+  note: string;
+}
+
+export async function ensureRecordedTargetIdentity(
+  env: Env,
+  runId: string,
+  /** This run's catalogue when the caller already holds it; listed here otherwise. */
+  catalog?: readonly EvidenceCatalogEntry[],
+): Promise<RecordedIdentity> {
+  try {
+    const envelope = await getEnvelope(env, runId);
+    if (!envelope) {
+      return {
+        outcome: "no-envelope",
+        targetBuildId: null,
+        note: "This run has no envelope, so there is nothing to record a target identity on.",
+      };
+    }
+
+    const existing = nonEmpty(envelope.input.targetBuildId);
+    if (existing) {
+      return {
+        outcome: "already-recorded",
+        targetBuildId: existing,
+        note: "The target identity was already recorded on this run and is left exactly as it was.",
+      };
+    }
+
+    const entries = catalog ?? (await listCatalog(env, runId));
+    const derived = await deriveObservedSiteBuildId(entries);
+    if (!derived) {
+      return {
+        outcome: "no-capture",
+        targetBuildId: null,
+        note:
+          "This run captured no screen that could identify the thing under test, so no identity was recorded " +
+          "and its results stay unbindable.",
+      };
+    }
+
+    // The guard is repeated INSIDE the compare-and-set: between the read above and this
+    // write another caller (a resumed instance, a concurrent stage) may have recorded one,
+    // and first-write-wins has to hold against that too, not merely against a re-call.
+    let won = true;
+    const written = await updateEnvelope(env, runId, (e) => {
+      const already = nonEmpty(e.input.targetBuildId);
+      if (already) {
+        won = false;
+        return false;
+      }
+      e.input.targetBuildId = derived;
+    });
+    if (!written) {
+      return {
+        outcome: "no-envelope",
+        targetBuildId: null,
+        note: "The envelope disappeared while the target identity was being recorded; nothing was written.",
+      };
+    }
+    const landed = nonEmpty(written.input.targetBuildId);
+    return {
+      outcome: won ? "recorded" : "already-recorded",
+      targetBuildId: landed,
+      note: won
+        ? "The target identity was derived from the content of the screens this run captured and recorded on the " +
+          "run, so the signed record, the judgement and the report all name the same observation."
+        : "Another writer recorded the target identity first; a run's identity may not change under it.",
+    };
+  } catch (err) {
+    // Recording an identity is not worth killing a run that has real observations over. The
+    // consequence of failing here is already stated by the report: unbindable, with a reason.
+    return {
+      outcome: "unavailable",
+      targetBuildId: null,
+      note: `The target identity could not be recorded: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}

@@ -11,7 +11,12 @@ import type { Env } from "../types/env";
 import { effectivePolicy, num } from "../types/env";
 import { fail, json, readJson, snapshot } from "./http";
 import { assertV2RunId, isV2RunId, mintRunId } from "../ids";
-import { inputDocumentKey, inputManifestKey } from "../keys";
+import {
+  inputDocumentKey,
+  inputHumanRequirementsKey,
+  inputManifestKey,
+  liveCanaryAcceptanceKey,
+} from "../keys";
 import { createCheckpoint, initialCheckpoint, loadCheckpoint, readHeartbeat, updateCheckpoint } from "../store/checkpoint";
 import { clearActive, markActive, putEnvelope, updateEnvelope } from "../store/envelope";
 import {
@@ -28,8 +33,16 @@ import {
 // run itself uses, so `subrequest-limit-exceeded` cannot come to mean two different things
 // depending on which surface managed to write it down.
 import { classifyFailure } from "../workflow/run-workflow";
-import { ENVELOPE_KIND, ENVELOPE_SCHEMA, type RunEnvelopeV2 } from "../types/record";
+import { ENVELOPE_KIND, ENVELOPE_SCHEMA, type ContractSourceInput, type RunEnvelopeV2 } from "../types/record";
 import { sha256Hex } from "../store/hash";
+import { HumanRequirementsError, parseHumanRequirementsInput } from "../contract/human-authored";
+import { isVisualStatusCorruption, projectVisualStatus } from "./visual-status-projection";
+import {
+  LIVE_CANARY_ACCEPTANCE_SCHEMA,
+  LIVE_CANARY_PLANNED_RUN_ID_HEADER,
+} from "./canary-internal";
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 interface SubmitBody {
   surveyUrl?: string;
@@ -39,6 +52,10 @@ interface SubmitBody {
   profile?: "standard" | "deep";
   locale?: string;
   viewports?: string[];
+  /** Explicit denominator source. Omitted means the backwards-compatible extract path. */
+  contractSource?: "extract" | "human-authored";
+  /** base64 UTF-8 JSON, required when contractSource is human-authored. */
+  humanRequirementsBase64?: string;
 }
 
 /**
@@ -54,7 +71,8 @@ interface SubmitBody {
  * Field names match the form: `surveyUrl`, `docx` (the file), `profile`, `locale`.
  */
 async function readSubmission(req: Request): Promise<
-  { ok: true; body: SubmitBody; bytes: Uint8Array | null } | { ok: false; code: string; message: string }
+  { ok: true; body: SubmitBody; bytes: Uint8Array | null; humanBytes: Uint8Array | null }
+  | { ok: false; code: string; message: string }
 > {
   const contentType = req.headers.get("content-type") ?? "";
 
@@ -77,8 +95,13 @@ async function readSubmission(req: Request): Promise<
     // caller reaching for curl will reach for one of those, and refusing a correct upload
     // over a field name is a support ticket, not a safety property.
     const file = (form.get("docx") ?? form.get("document") ?? form.get("file")) as File | null;
+    const humanFile = (form.get("humanRequirements") ?? form.get("requirements")) as File | null;
     const profile = str("profile");
     const viewportsRaw = str("viewports");
+    const contractSource = str("contractSource");
+    if (contractSource !== undefined && contractSource !== "extract" && contractSource !== "human-authored") {
+      return { ok: false, code: "INVALID_CONTRACT_SOURCE", message: "contractSource must be extract or human-authored" };
+    }
     return {
       ok: true,
       body: {
@@ -87,24 +110,86 @@ async function readSubmission(req: Request): Promise<
         profile: profile === "deep" ? "deep" : profile === "standard" ? "standard" : undefined,
         locale: str("locale"),
         viewports: viewportsRaw ? viewportsRaw.split(",").map((v) => v.trim()).filter(Boolean) : undefined,
+        contractSource:
+          contractSource === "extract" || contractSource === "human-authored" ? contractSource : undefined,
       },
       bytes: file && typeof file.arrayBuffer === "function" ? new Uint8Array(await file.arrayBuffer()) : null,
+      humanBytes:
+        humanFile && typeof humanFile.arrayBuffer === "function"
+          ? new Uint8Array(await humanFile.arrayBuffer())
+          : null,
     };
   }
 
   const body = await readJson<SubmitBody>(req);
   if (!body) return { ok: false, code: "INVALID_BODY", message: "expected a JSON body or a multipart form" };
-  if (body.documentBase64 === undefined) return { ok: true, body, bytes: null };
-  const bytes = base64ToBytes(body.documentBase64);
-  if (bytes === null) return { ok: false, code: "INVALID_DOCUMENT", message: "documentBase64 is not valid base64" };
-  return { ok: true, body, bytes };
+  const bytes = body.documentBase64 === undefined ? null : base64ToBytes(body.documentBase64);
+  if (body.documentBase64 !== undefined && bytes === null) {
+    return { ok: false, code: "INVALID_DOCUMENT", message: "documentBase64 is not valid base64" };
+  }
+  const humanBytes =
+    body.humanRequirementsBase64 === undefined ? null : base64ToBytes(body.humanRequirementsBase64);
+  if (body.humanRequirementsBase64 !== undefined && humanBytes === null) {
+    return {
+      ok: false,
+      code: "INVALID_HUMAN_REQUIREMENTS",
+      message: "humanRequirementsBase64 is not valid base64",
+    };
+  }
+  return { ok: true, body, bytes, humanBytes };
 }
 
 /** POST /api/v2/runs — submit a run. Accepts multipart/form-data or JSON+base64. */
 export async function submitRun(req: Request, env: Env): Promise<Response> {
+  let maxDocumentBytes: number;
+  let maxHumanRequirementsBytes: number;
+  let maxSubmissionBytes: number;
+  try {
+    maxDocumentBytes = positiveSafeByteLimit("MAX_DOCUMENT_BYTES", env.MAX_DOCUMENT_BYTES, 25 * 1024 * 1024);
+    maxHumanRequirementsBytes = positiveSafeByteLimit(
+      "MAX_HUMAN_REQUIREMENTS_BYTES",
+      env.MAX_HUMAN_REQUIREMENTS_BYTES,
+      1024 * 1024,
+    );
+    // JSON/base64 is the largest accepted spelling: base64 is 4*ceil(n/3), then the
+    // envelope still needs room for field names, URL, locale and future bounded metadata.
+    // Multipart normally stays below this derived ceiling. The guard is deliberately
+    // advisory: an absent Content-Length is reported as an ingestion limitation, not
+    // silently treated as proof that the body was bounded before parsing.
+    const derivedSubmissionLimit =
+      4 * Math.ceil(maxDocumentBytes / 3)
+      + 4 * Math.ceil(maxHumanRequirementsBytes / 3)
+      + 1024 * 1024;
+    maxSubmissionBytes = positiveSafeByteLimit(
+      "MAX_SUBMISSION_BYTES",
+      env.MAX_SUBMISSION_BYTES,
+      derivedSubmissionLimit,
+    );
+  } catch (err) {
+    return fail(
+      503,
+      "INVALID_SUBMISSION_LIMIT_CONFIGURATION",
+      err instanceof Error ? err.message : "submission byte limits are invalid",
+    );
+  }
+  const declaredLength = req.headers.get("content-length");
+  if (declaredLength !== null) {
+    if (!/^\d+$/.test(declaredLength)) {
+      return fail(400, "INVALID_CONTENT_LENGTH", "Content-Length must be an unsigned decimal byte count");
+    }
+    const declaredBytes = Number(declaredLength);
+    if (!Number.isSafeInteger(declaredBytes) || declaredBytes > maxSubmissionBytes) {
+      return fail(
+        413,
+        "SUBMISSION_TOO_LARGE",
+        `the declared request body is ${declaredLength} bytes; the limit is ${maxSubmissionBytes}`,
+      );
+    }
+  }
+
   const read = await readSubmission(req);
   if (!read.ok) return fail(400, read.code, read.message);
-  const { body, bytes } = read;
+  const { body, bytes, humanBytes } = read;
 
   if (!body.surveyUrl) return fail(400, "MISSING_SURVEY_URL", "surveyUrl is required");
   if (bytes === null || bytes.byteLength === 0) {
@@ -126,12 +211,11 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
   // "whatever bytes arrived" as a .docx means the extractor's first act is to fail on
   // something that was never a document. Both are cheap to refuse here and expensive to
   // diagnose later.
-  const maxBytes = num(env.MAX_DOCUMENT_BYTES, 25 * 1024 * 1024);
-  if (bytes.byteLength > maxBytes) {
+  if (bytes.byteLength > maxDocumentBytes) {
     return fail(
       413,
       "DOCUMENT_TOO_LARGE",
-      `the submitted document is ${bytes.byteLength} bytes; the limit is ${maxBytes}`,
+      `the submitted document is ${bytes.byteLength} bytes; the limit is ${maxDocumentBytes}`,
     );
   }
   if (!looksLikeDocx(bytes)) {
@@ -142,17 +226,37 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
     );
   }
 
-  const viewports = body.viewports ?? ["desktop", "mobile"];
-  const maxViewports = num(env.MAX_VIEWPORTS, 6);
-  if (!Array.isArray(viewports) || viewports.length === 0 || viewports.length > maxViewports) {
+  const contractSourceMode = body.contractSource ?? "extract";
+  if (body.contractSource !== undefined && body.contractSource !== "extract" && body.contractSource !== "human-authored") {
+    return fail(400, "INVALID_CONTRACT_SOURCE", "contractSource must be extract or human-authored");
+  }
+  if (contractSourceMode === "extract" && humanBytes !== null) {
     return fail(
       400,
-      "INVALID_VIEWPORTS",
-      `viewports must be a non-empty array of at most ${maxViewports} entries (each one multiplies the browser work a run must do)`,
+      "UNEXPECTED_HUMAN_REQUIREMENTS",
+      "human requirements were supplied while contractSource is extract; the source mode is never inferred from file presence",
     );
   }
-  if (viewports.some((v) => typeof v !== "string" || v.length === 0 || v.length > 32)) {
-    return fail(400, "INVALID_VIEWPORTS", "each viewport must be a non-empty string of at most 32 characters");
+  if (contractSourceMode === "human-authored" && (humanBytes === null || humanBytes.byteLength === 0)) {
+    return fail(400, "MISSING_HUMAN_REQUIREMENTS", "contractSource human-authored requires a UTF-8 JSON requirements file");
+  }
+  if (humanBytes !== null) {
+    if (humanBytes.byteLength > maxHumanRequirementsBytes) {
+      return fail(
+        413,
+        "HUMAN_REQUIREMENTS_TOO_LARGE",
+        `the submitted human requirements file is ${humanBytes.byteLength} bytes; the limit is ${maxHumanRequirementsBytes}`,
+      );
+    }
+  }
+
+  const viewports = body.viewports ?? ["desktop"];
+  if (!Array.isArray(viewports) || viewports.length !== 1 || viewports[0] !== "desktop") {
+    return fail(
+      400,
+      "UNSUPPORTED_VIEWPORT_CONFIGURATION",
+      'viewports must be exactly ["desktop"]. The current browser executor is fixed at 1280x900 and consumes only the first configured viewport; accepting mobile or multiple viewports would falsely claim coverage that was never exercised.',
+    );
   }
   const locale = body.locale ?? "en";
   const maxLocale = num(env.MAX_LOCALE_LENGTH, 35);
@@ -161,8 +265,41 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
   }
 
   const documentSha256 = await sha256Hex(bytes);
+  let humanRequirementsSha256: string | null = null;
+  if (humanBytes !== null) {
+    try {
+      const parsed = parseHumanRequirementsInput(humanBytes);
+      if (parsed.documentSha256 !== documentSha256) {
+        return fail(
+          400,
+          "HUMAN_REQUIREMENTS_DOCUMENT_MISMATCH",
+          "the human requirements file names a different documentSha256 than the submitted DOCX bytes",
+        );
+      }
+    } catch (err) {
+      const detail = err instanceof HumanRequirementsError ? err.message : `human requirements validation failed: ${String(err)}`;
+      return fail(400, "INVALID_HUMAN_REQUIREMENTS", detail.slice(0, 2_000));
+    }
+    humanRequirementsSha256 = await sha256Hex(humanBytes);
+  }
 
-  const runId = mintRunId();
+  // The isolated canary wrapper reserves a run id in the same conditional R2 claim that
+  // serializes its single submission. That lets an identical retry recover the accepted id
+  // even if the first HTTP response vanished after the durable run was written. A normal
+  // deployment has no CANARY_AUTH_SHA256 and therefore cannot be induced by a caller to pick
+  // an id. The wrapper also strips any caller-supplied spelling before injecting its own.
+  const plannedCanaryRunId = req.headers.get(LIVE_CANARY_PLANNED_RUN_ID_HEADER);
+  if (
+    plannedCanaryRunId !== null &&
+    (!SHA256_HEX.test(env.CANARY_AUTH_SHA256 ?? "") || !isV2RunId(plannedCanaryRunId))
+  ) {
+    return fail(
+      400,
+      "INVALID_INTERNAL_CANARY_RUN_ID",
+      "the private canary run-id header is unavailable or malformed",
+    );
+  }
+  const runId = plannedCanaryRunId ?? mintRunId();
   // deepAuthorized is a SERVER decision (§4.2: the UI renders server policy, never the
   // client's request). Wired to false until the owner defines eligibility.
   const policy = effectivePolicy(env, body.profile === "deep" ? "deep" : "standard", false);
@@ -172,6 +309,20 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
       contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     },
   });
+  if (humanBytes !== null) {
+    await env.EVIDENCE.put(inputHumanRequirementsKey(runId), humanBytes, {
+      httpMetadata: { contentType: "application/json; charset=utf-8" },
+    });
+  }
+
+  const contractSource: ContractSourceInput =
+    contractSourceMode === "human-authored"
+      ? {
+          mode: "human-authored",
+          humanRequirementsKey: inputHumanRequirementsKey(runId),
+          humanRequirementsSha256: humanRequirementsSha256!,
+        }
+      : { mode: "extract" };
 
   const envelope: RunEnvelopeV2 = {
     schemaVersion: ENVELOPE_SCHEMA,
@@ -186,12 +337,23 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
       documentName: body.documentName ?? "questionnaire.docx",
       // Coherent target identity (§0): mixed-build runs are INVALID, and a run with no
       // target identity at all can never carry publishable current results — the
-      // JudgementRecord binding refuses to resolve without one. Configurable so an
-      // operator can name the build under test; null remains legal and simply means this
-      // run's results stay diagnostic.
-      targetBuildId: env.DEFAULT_TARGET_BUILD_ID ?? null,
+      // JudgementRecord binding refuses to resolve without one.
+      //
+      // AT SUBMISSION ONLY THE OWNER'S TAG IS KNOWABLE. The self-sufficient identity is
+      // derived from the content of the screens the run captures, which do not exist yet;
+      // the workflow's `record-target-identity` step records that onto this same field once
+      // they do, and it is FIRST-WRITE-WINS, so a tag set here is never overwritten.
+      //
+      // BLANK CONFIGURATION IS NOT CONFIGURATION, and it is collapsed HERE rather than at
+      // every reader. `assemble-record.mjs` stamps this field verbatim into the signed
+      // record and the judge binds to whatever it finds, while `store/target-build.ts`
+      // treats a whitespace string as unset — so an empty or whitespace variable would have
+      // produced a judgement bound to "   " beside a report that resolved something else,
+      // and the mismatch would read as "a judgement of a different build".
+      targetBuildId: (env.DEFAULT_TARGET_BUILD_ID ?? "").trim() || null,
       locale,
       viewports,
+      contractSource,
     },
     profile: policy.profile,
     contractRevisionId: null,
@@ -227,6 +389,7 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
         profile: policy.profile,
         locale: envelope.input.locale,
         viewports: envelope.input.viewports,
+        contractSource,
       },
     });
   } catch (err) {
@@ -258,6 +421,40 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
     return fail(503, "WORKFLOW_CREATE_FAILED", `the run could not be started: ${detail}`);
   }
 
+  // This is the canary recovery commit record. The input manifest is deliberately NOT
+  // enough: it is written before Workflow creation and can therefore describe a partial
+  // run that never started. A lost HTTP response can be recovered only from this receipt,
+  // which is written after create() succeeds and is immutable on first write.
+  if (plannedCanaryRunId !== null) {
+    try {
+      const receipt = await env.EVIDENCE.put(
+        liveCanaryAcceptanceKey(runId),
+        JSON.stringify({
+          schemaVersion: LIVE_CANARY_ACCEPTANCE_SCHEMA,
+          runId,
+          acceptedAt: new Date().toISOString(),
+        }),
+        {
+          onlyIf: { etagDoesNotMatch: "*" },
+          httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "no-store" },
+        },
+      );
+      if (receipt === null) {
+        return fail(
+          503,
+          "CANARY_ACCEPTANCE_RECEIPT_CONFLICT",
+          "the canary run started but its immutable acceptance receipt already existed",
+        );
+      }
+    } catch {
+      return fail(
+        503,
+        "CANARY_ACCEPTANCE_RECEIPT_FAILED",
+        "the canary run started but its acceptance receipt could not be made durable",
+      );
+    }
+  }
+
   // THE WATCH URL IS PART OF THE ANSWER, not something the caller has to know how to build.
   // A submission that returns only an id makes every client re-implement the URL shape, and
   // the shareable link is the whole point of `/runs/<id>` existing as a route.
@@ -268,9 +465,18 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
       statusUrl: `/api/v2/runs/${runId}/status`,
       watchUrl: `/runs/${runId}`,
       reportUrl: `/api/v2/runs/${runId}/report`,
+      contractSource: contractSource.mode,
     },
     { status: 202, headers: { location: `/runs/${runId}` } },
   );
+}
+
+function positiveSafeByteLimit(name: string, configured: string | undefined, fallback: number): number {
+  const value = configured === undefined ? fallback : Number(configured);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive safe-integer byte count`);
+  }
+  return value;
 }
 
 /** OOXML is a ZIP container: `PK\x03\x04`. An empty archive (`PK\x05\x06`) is not a document. */
@@ -518,6 +724,35 @@ export async function getCoverage(req: Request, env: Env, runId: string): Promis
     // The ledger did not reconcile. Serving it would make the progress UI lie about a
     // denominator, which is the one thing the coverage contract exists to prevent.
     return fail(500, "COVERAGE_LEDGER_INCONSISTENT", err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * GET /api/v2/runs/:id/visual-status — observation-only visual-status/1.0.0.
+ *
+ * This reads the isolated visual child channel after loading the run checkpoint that supplies
+ * its current ownership identity. It does not update a checkpoint, record, verifier, judgement,
+ * or report. Missing and uninspected artifacts are explicit projection states; corrupt durable
+ * artifacts make the request fail rather than quietly looking absent.
+ */
+export async function getVisualStatus(_req: Request, env: Env, runId: string): Promise<Response> {
+  if (!isV2RunId(runId)) return notV2(runId);
+  const loaded = await loadCheckpoint(env, runId);
+  if (!loaded) return fail(404, "RUN_NOT_FOUND", `no v2 run ${runId}`);
+  try {
+    const body = await projectVisualStatus(env, loaded.checkpoint);
+    return json(body, { headers: { "cache-control": "no-store" } });
+  } catch (error) {
+    if (isVisualStatusCorruption(error)) {
+      const detail = error instanceof Error ? error.message.slice(0, 1_000) : "visual durable state is corrupt";
+      return fail(500, "VISUAL_STATUS_CORRUPT", detail);
+    }
+    console.error(`visual status read failed for ${runId}`);
+    return fail(
+      503,
+      "VISUAL_STATUS_READ_FAILED",
+      "the visual status surfaces could not be completely inspected; no partial projection was returned",
+    );
   }
 }
 

@@ -1,0 +1,5 @@
+[b0001] (heading) SECTION S — REORDERED MODULE
+[b0002] Q70. How often do you check your energy usage online?
+[b0003] Q71. ROUTING: if Q70 = 5 (never) then SKIP TO Q80 and set engaged = 0.
+[b0004] Q72. And how often do you contact your supplier?
+[b0005] Q73. Would you use a usage-alert service?

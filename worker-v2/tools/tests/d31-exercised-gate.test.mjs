@@ -443,7 +443,7 @@ suite("D31 — `walks-blocked-by-site` requires EVIDENCE of blocking", () => {
     );
   });
 
-  test("the executor's stop-reason vocabulary is CLOSED and both codes are in it", async () => {
+  test("the executor's stop-reason vocabulary is CLOSED and every non-cap reason is in it", async () => {
     const mod = await worker();
     const eb = mod.executeBatch;
     assertEq(JSON.stringify([...eb.EXEC_STOP_REASONS].sort()), JSON.stringify([
@@ -451,6 +451,7 @@ suite("D31 — `walks-blocked-by-site` requires EVIDENCE of blocking", () => {
       "coverage-shortfall-unexercised",
       "executor-error",
       "plan-missing",
+      "required-probe-capability-unsupported",
       "walks-blocked-by-site",
     ]));
     // Neither may end in `-cap`: `run-workflow.ts#stopBucket`/`stopCompletion` key off that

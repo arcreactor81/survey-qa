@@ -46,12 +46,15 @@ export const V2_CONTRACT_REVISION_KIND = "survey-qa-v2-contract-revision";
 /**
  * Bumped whenever the projected shape changes in a way a consumer can observe.
  *
+ * 1.3.0 — human authorship no longer implies independent review, and sealed human
+ * limitations/provenance are projected explicitly for the report boundary.
+ *
  * 1.2.0 — `contract.items[].requirement` and `sourceAnchor.quote` stopped being the same
  * string. `requirement` is the normative statement, `sourceAnchor.quote` is the document's
  * own copy. A consumer that judged against 1.1.0 was compiling expectations from the wrong
  * one of the two, so this is a value change every downstream reader must be able to see.
  */
-export const V2_PROJECTION_VERSION = "v2-record-projection/1.2.0";
+export const V2_PROJECTION_VERSION = "v2-record-projection/1.3.0";
 
 const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const arr = (v) => (Array.isArray(v) ? v : []);
@@ -84,23 +87,43 @@ export const withSha256Prefix = (hex) =>
  */
 export function semanticContractBody(body) {
   if (!isObj(body)) throw new TypeError("semanticContractBody: not an object");
-  const { sealedAt: _sealedAt, contractRevisionId: _id, extraction, ...rest } = body;
+  const { sealedAt: _sealedAt, contractRevisionId: _id, extraction, approval, requirementsProvenance, ...rest } = body;
   if (!isObj(extraction)) throw new TypeError("semanticContractBody: extraction block missing");
-  const gates = Object.fromEntries(
-    Object.entries(extraction.gates ?? {}).map(([name, g]) => [
-      name,
-      g && g.state === "not-evaluated"
-        ? { state: g.state, reason: g.reason }
-        : {
-            state: g?.state ?? null,
-            evaluatorId: g?.proof?.evaluatorId ?? null,
-            evaluatorVersion: g?.proof?.evaluatorVersion ?? null,
-            inputHash: g?.proof?.inputHash ?? null,
-          },
-    ]),
-  );
   const { reviewedAt: _reviewedAt, ...extractionRest } = extraction;
-  return { ...rest, extraction: { ...extractionRest, gates } };
+  const extractionSemantic = { ...extractionRest, gates: semanticGates(extraction.gates) };
+
+  // 1.0.0 identity is byte-for-byte historical. New fields are absent on those revisions,
+  // so returning exactly the old shape preserves every already-sealed id.
+  if (body.schemaVersion === "v2-contract-revision/1.0.0") {
+    if (approval !== undefined || requirementsProvenance !== undefined) {
+      throw new TypeError("semanticContractBody: 1.0.0 revisions may not carry human approval or provenance fields");
+    }
+    if (extraction.method !== undefined && extraction.method !== "dual-model-extraction") {
+      throw new TypeError("semanticContractBody: 1.0.0 extraction method must be dual-model-extraction when present");
+    }
+    return { ...rest, extraction: extractionSemantic };
+  }
+  if (body.schemaVersion !== "v2-contract-revision/1.1.0") {
+    throw new TypeError(`semanticContractBody: unsupported schema ${String(body.schemaVersion)}`);
+  }
+  if (!isObj(approval) || approval.kind !== "human-authored") {
+    throw new TypeError("semanticContractBody: 1.1.0 human approval block missing");
+  }
+  if (!isObj(requirementsProvenance) || requirementsProvenance.method !== "human-authored") {
+    throw new TypeError("semanticContractBody: 1.1.0 human provenance block missing");
+  }
+  if (extraction.method !== "human-authored" || extraction.reuseInputsHash !== null) {
+    throw new TypeError("semanticContractBody: 1.1.0 extraction must be human-authored and ineligible for reuse");
+  }
+  // Authorship and gate observation clocks are audit facts, not contract semantics. The
+  // author, validator, exact normalized input, rows, cases, and every proof input remain.
+  const { authoredAt: _authoredAt, ...provenanceSemantic } = requirementsProvenance;
+  return {
+    ...rest,
+    requirementsProvenance: provenanceSemantic,
+    approval: { ...approval, gates: semanticGates(approval.gates) },
+    extraction: extractionSemantic,
+  };
 }
 
 /** `cr_` + the first 40 hex chars of the semantic digest. The id IS the content. */
@@ -114,6 +137,28 @@ export const REQUIRED_CONTRACT_GATES = Object.freeze([
   "allConstructClassesDispositioned",
   "allScopedExpansionsPreviewed",
 ]);
+export const REQUIRED_HUMAN_CONTRACT_GATES = Object.freeze([
+  "inputSchemaValid",
+  "documentHashBound",
+  "allSourceSpansBound",
+  "identitiesUnique",
+  "allScopedExpansionsPreviewed",
+]);
+
+const semanticGates = (source) =>
+  Object.fromEntries(
+    Object.entries(source ?? {}).map(([name, g]) => [
+      name,
+      g && g.state === "not-evaluated"
+        ? { state: g.state, reason: g.reason }
+        : {
+            state: g?.state ?? null,
+            evaluatorId: g?.proof?.evaluatorId ?? null,
+            evaluatorVersion: g?.proof?.evaluatorVersion ?? null,
+            inputHash: g?.proof?.inputHash ?? null,
+          },
+    ]),
+  );
 
 /**
  * The §0 approval-gate rule, stated ONCE. `worker-v2/src/workflow/gates.ts` owns the
@@ -121,11 +166,11 @@ export const REQUIRED_CONTRACT_GATES = Object.freeze([
  * denominator". A gate in state `not-evaluated` is NOT a passing gate, and a `pass` with
  * no proof is a fabricated one.
  */
-export function contractGateFailures(gates) {
+function gateFailures(gates, required) {
   const source = isObj(gates) ? gates : {};
   const names = [
-    ...REQUIRED_CONTRACT_GATES,
-    ...Object.keys(source).filter((name) => !REQUIRED_CONTRACT_GATES.includes(name)),
+    ...required,
+    ...Object.keys(source).filter((name) => !required.includes(name)),
   ];
 
   return names.flatMap((name) => {
@@ -147,6 +192,62 @@ export function contractGateFailures(gates) {
       p.observedAt.length > 0;
     return passes ? [] : [`${name}:pass`];
   });
+}
+
+export function contractGateFailures(gates) {
+  return gateFailures(gates, REQUIRED_CONTRACT_GATES);
+}
+
+/** Schema-dispatched seal validation shared by the Worker reader and the independent judge. */
+export function contractApprovalFailures(revision) {
+  if (!isObj(revision)) return ["revision:malformed"];
+  if (revision.schemaVersion === "v2-contract-revision/1.1.0") {
+    const provenance = revision.requirementsProvenance;
+    if (
+      provenance?.method !== "human-authored" ||
+      revision.extraction?.method !== "human-authored" ||
+      revision.extraction?.reuseInputsHash !== null
+    ) {
+      return ["human-schema-method:invalid"];
+    }
+    if (
+      provenance.authoringSchema !== "v2-human-requirements/1.0.0" ||
+      !/^sha256:[0-9a-f]{64}$/.test(provenance.normalizedInputHash ?? "") ||
+      typeof provenance.validatorVersion !== "string" ||
+      provenance.validatorVersion.length === 0 ||
+      typeof provenance.expanderVersion !== "string" ||
+      provenance.expanderVersion.length === 0 ||
+      typeof provenance.authoredBy !== "string" ||
+      provenance.authoredBy.trim().length === 0 ||
+      typeof provenance.authoredAt !== "string" ||
+      provenance.authoredAt.length === 0 ||
+      provenance.authorshipAssurance !== "self-asserted" ||
+      provenance.coverageClaim !== "authored-requirements-only" ||
+      !isObj(provenance.documentCoverage) ||
+      !Array.isArray(provenance.documentCoverage.partsRead) ||
+      !Array.isArray(provenance.documentCoverage.partsSkipped) ||
+      !Array.isArray(provenance.documentCoverage.problems) ||
+      !Array.isArray(provenance.limitations) ||
+      provenance.limitations.length === 0 ||
+      provenance.limitations.some((value) => typeof value !== "string" || value.trim().length === 0) ||
+      provenance.transcriptionAssumption !==
+        "authored-statements-and-expansion-hints-are-trusted-transcriptions-not-mechanically-proven-entailments"
+    ) {
+      return ["human-provenance:invalid"];
+    }
+    if (!isObj(revision.approval) || revision.approval.kind !== "human-authored") return ["approval:missing"];
+    return gateFailures(revision.approval.gates, REQUIRED_HUMAN_CONTRACT_GATES);
+  }
+  if (revision.schemaVersion === "v2-contract-revision/1.0.0") {
+    if (revision.approval !== undefined || revision.requirementsProvenance !== undefined) {
+      return ["legacy-human-fields:forbidden"];
+    }
+    if (revision.extraction?.method !== undefined && revision.extraction.method !== "dual-model-extraction") {
+      return ["legacy-extraction-method:invalid"];
+    }
+    return contractGateFailures(revision.extraction?.gates);
+  }
+  return ["schema:unsupported"];
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +312,9 @@ export function contractItemFromRequirement(r) {
           locator,
           quote: r.displayQuote,
           aliases: [`scope:${r.scope}`, `quantifier:${r.quantifier}`, `testability:${r.testability}`],
+          // A multi-span display quote is not any one source atom. Bind its stitched bytes
+          // explicitly; `quoteHashes` remains the legacy/per-atom fallback.
+          quoteHash: typeof r.displayQuoteHash === "string" && r.displayQuoteHash.length ? r.displayQuoteHash : null,
           quoteHashes: quoteHashes.length ? quoteHashes : null,
         }
       : null,
@@ -358,6 +462,15 @@ export function projectV2ToLegacy(record, revision) {
   for (const o of arr(record.observations)) observationToEvidence.set(o.observationId, arr(o.evidenceIds));
 
   const live = liveRequirements(revision);
+  const humanAuthored =
+    revision.schemaVersion === "v2-contract-revision/1.1.0" &&
+    revision.requirementsProvenance?.method === "human-authored" &&
+    revision.extraction?.method === "human-authored" &&
+    revision.approval?.kind === "human-authored";
+  // A human-authored input is not automatically a human-reviewed extraction. The current
+  // seam records the author label as self-asserted and deliberately leaves reviewedAt null;
+  // conflating the two would turn attribution supplied inside a JSON file into an
+  // independent-review claim.
   const humanReviewed = Boolean(revision.extraction?.reviewedAt);
 
   return {
@@ -381,6 +494,11 @@ export function projectV2ToLegacy(record, revision) {
         reviewed: humanReviewed,
         sealedAt: revision.sealedAt ?? null,
         sealedBy: revision.extraction?.reviewedBy ?? null,
+        authoredBy: humanAuthored ? revision.requirementsProvenance?.authoredBy ?? null : null,
+        authorshipAssurance: humanAuthored
+          ? revision.requirementsProvenance?.authorshipAssurance ?? "unknown"
+          : null,
+        limitations: humanAuthored ? arr(revision.requirementsProvenance?.limitations) : [],
       },
       configuration: {
         profileId: null,
@@ -405,6 +523,8 @@ export function projectV2ToLegacy(record, revision) {
       // stringified into one.
       assumptions: arr(revision.contractSupplements).filter((s) => typeof s === "string"),
       extraction: revision.extraction,
+      requirementsProvenance: revision.requirementsProvenance ?? null,
+      limitations: humanAuthored ? arr(revision.requirementsProvenance?.limitations) : [],
       contractRevisionId: revision.contractRevisionId,
     },
     attempts: arr(record.attempts).map((a) => ({ ...a })),

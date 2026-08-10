@@ -26,7 +26,10 @@ export interface SourceBlock {
   origin: string;
   /** Nearest preceding heading, or null before the first one. */
   section: string | null;
-  /** Table coordinates WITH inherited headers. Non-null only for table-cell. */
+  /**
+   * Structural table start coordinates. WordprocessingML has no semantic th/scope
+   * equivalent, so its parser leaves rowHeader/colHeader null.
+   */
   coords: { row: number; col: number; rowHeader: string | null; colHeader: string | null } | null;
   tableId: string | null;
 }

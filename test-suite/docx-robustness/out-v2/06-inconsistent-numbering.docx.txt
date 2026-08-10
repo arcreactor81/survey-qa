@@ -1,0 +1,22 @@
+[b0001] (heading) SECTION F — USAGE DETAIL
+[b0002] Q6. How many people live in your household?
+[b0003] Q7a. Do you have a smart meter installed?
+[b0004] Q7b. IF Q7a = 1: In what year was it installed?
+[b0005] Q7b_i. IF year is before 2019: has it been replaced since?
+[b0006] Q8. Which room do you heat most?
+[b0007] Q10. Do you use any of the following in winter? (NOTE: there is no Q9 — it was cut in v4)
+[b0008] Q11. How would you rate your home's insulation?
+[b0009] (heading) SECTION G — NEW MODULE (numbering restarts)
+[b0010] This module was written by a different author and restarts at 1.
+[b0011] 1. Which of these have you done in the last year?
+[b0012] 2. And which do you plan to do next year?
+[b0013] 3. Why have you not done the others?
+[b0014] (heading) SECTION H — AUTO-NUMBERED (Word list numbering)
+[b0015] The question numbers below are Word auto-numbers, not typed text.
+[b0016] (list) [#] Which supplier do you use for gas?
+[b0017] (list) [#] Which supplier do you use for electricity?
+[b0018] (list) [#] Are these the same supplier?
+[b0019] Codes for the question above (auto-lettered):
+[b0020] (list) [#] Yes, same supplier
+[b0021] (list) [#] No, different suppliers
+[b0022] (list) [#] Don't know — DO NOT READ

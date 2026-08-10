@@ -78,6 +78,253 @@ export type BuildReportResult =
     }
   | { ok: false; reasonCode: string; detail: string };
 
+export type ReportExecutionCaseIntegrity =
+  | { ok: true; total: number }
+  | {
+      ok: false;
+      reasonCode:
+        | "report-execution-case-denominator-mismatch"
+        | "report-execution-case-identity-mismatch";
+      detail: string;
+    };
+
+export interface CanonicalExecutionCaseIdentity {
+  caseId: string;
+  requirementId: string;
+}
+
+const recordObject = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const safeCount = (value: unknown): number | null =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+const safeIdentityField = (value: unknown): string | null =>
+  typeof value === "string" && value.length > 0 ? value : null;
+
+interface ParsedCaseIdentities {
+  identities: CanonicalExecutionCaseIdentity[];
+  rawCount: number | null;
+}
+
+function parseCaseIdentityArray(
+  value: unknown,
+  field: string,
+  problems: string[],
+): ParsedCaseIdentities {
+  if (!Array.isArray(value)) {
+    problems.push(`${field} is missing or not an array`);
+    return { identities: [], rawCount: null };
+  }
+  const identities: CanonicalExecutionCaseIdentity[] = [];
+  for (const [index, raw] of value.entries()) {
+    const row = recordObject(raw);
+    const caseId = safeIdentityField(row?.caseId);
+    const requirementId = safeIdentityField(row?.requirementId);
+    if (caseId === null || requirementId === null) {
+      problems.push(`${field}[${index}] has a missing or invalid caseId/requirementId`);
+      continue;
+    }
+    identities.push({ caseId, requirementId });
+  }
+  return { identities, rawCount: value.length };
+}
+
+function parseMaterializedCaseIdentities(
+  register: Record<string, unknown> | null,
+  problems: string[],
+): ParsedCaseIdentities {
+  const rawRows = register?.rows;
+  if (!Array.isArray(rawRows)) {
+    problems.push("report register.rows is missing or not an array");
+    return { identities: [], rawCount: null };
+  }
+  const identities: CanonicalExecutionCaseIdentity[] = [];
+  let rawCount = 0;
+  for (const [rowIndex, rawRow] of rawRows.entries()) {
+    const row = recordObject(rawRow);
+    const requirementId = safeIdentityField(row?.itemId);
+    const rawCases = row?.cases;
+    if (requirementId === null) {
+      problems.push(`report register.rows[${rowIndex}] has no valid itemId`);
+    }
+    if (!Array.isArray(rawCases)) {
+      problems.push(`report register.rows[${rowIndex}].cases is missing or not an array`);
+      continue;
+    }
+    for (const [caseIndex, rawCase] of rawCases.entries()) {
+      rawCount += 1;
+      const caseId = safeIdentityField(recordObject(rawCase)?.caseId);
+      if (caseId === null || requirementId === null) {
+        problems.push(`report register.rows[${rowIndex}].cases[${caseIndex}] has no valid sealed identity`);
+        continue;
+      }
+      identities.push({ caseId, requirementId });
+    }
+  }
+  return { identities, rawCount };
+}
+
+function describeIds(ids: string[]): string {
+  const shown = ids.slice(0, 5).map((id) => JSON.stringify(id.slice(0, 160))).join(", ");
+  return `${shown}${ids.length > 5 ? `, and ${ids.length - 5} more` : ""}`;
+}
+
+function compareCaseIdentityProjection(
+  label: string,
+  canonical: CanonicalExecutionCaseIdentity[],
+  projected: CanonicalExecutionCaseIdentity[],
+  problems: string[],
+): void {
+  const canonicalById = new Map<string, string>();
+  for (const identity of canonical) {
+    if (!canonicalById.has(identity.caseId)) canonicalById.set(identity.caseId, identity.requirementId);
+  }
+
+  const projectedById = new Map<string, string>();
+  const projectedDuplicates = new Set<string>();
+  for (const identity of projected) {
+    if (projectedById.has(identity.caseId)) projectedDuplicates.add(identity.caseId);
+    else projectedById.set(identity.caseId, identity.requirementId);
+  }
+  if (projectedDuplicates.size > 0) {
+    problems.push(`${label} repeats case id(s) ${describeIds([...projectedDuplicates])}`);
+  }
+
+  const missing = [...canonicalById.keys()].filter((caseId) => !projectedById.has(caseId));
+  if (missing.length > 0) problems.push(`${label} is missing sealed case id(s) ${describeIds(missing)}`);
+  const unexpected = [...projectedById.keys()].filter((caseId) => !canonicalById.has(caseId));
+  if (unexpected.length > 0) problems.push(`${label} substitutes unknown case id(s) ${describeIds(unexpected)}`);
+  const rebound = [...projectedById.entries()]
+    .filter(([caseId, requirementId]) => {
+      const canonicalRequirement = canonicalById.get(caseId);
+      return canonicalRequirement !== undefined && canonicalRequirement !== requirementId;
+    })
+    .map(([caseId]) => caseId);
+  if (rebound.length > 0) {
+    problems.push(`${label} attaches sealed case id(s) to the wrong requirement ${describeIds(rebound)}`);
+  }
+}
+
+/**
+ * Cross-artifact denominator gate run immediately before report publication.
+ *
+ * The sealed ContractRevision is authoritative. The checkpoint (and therefore `/export`),
+ * rendered summary, report-data register, sealed-ledger projection and every column bucket
+ * must all name that exact execution-case count AND the ledger/materialized rows must carry
+ * exactly the sealed case identities under the sealed requirement owners. Cardinality alone
+ * cannot detect a same-size drop-A/duplicate-B substitution.
+ *
+ * The shared standalone renderer still emits a report with named ledger warnings when it has
+ * no sealed authority. This is the stricter Worker publication boundary: a view may explain an
+ * identity limitation, but it may not be published as the report for a sealed v2 run.
+ */
+export function checkReportExecutionCaseIntegrity(input: {
+  runId: string;
+  canonicalCases: readonly CanonicalExecutionCaseIdentity[];
+  checkpointTotal: number | null;
+  renderedSummaryTotal: number | null;
+  reportView: unknown;
+}): ReportExecutionCaseIntegrity {
+  const view = recordObject(input.reportView);
+  const register = recordObject(view?.register);
+  const denominators = recordObject(register?.denominators);
+  const executionCases = recordObject(denominators?.executionCases);
+  const caseLedger = recordObject(register?.caseLedger);
+  const byColumn = recordObject(executionCases?.byColumn);
+  const columns = Array.isArray(register?.columns) ? register.columns : null;
+  const identityProblems: string[] = [];
+  const canonical = parseCaseIdentityArray(input.canonicalCases, "sealed revision cases", identityProblems);
+  const ledger = parseCaseIdentityArray(caseLedger?.caseIdentities, "report caseLedger.caseIdentities", identityProblems);
+  const materialized = parseMaterializedCaseIdentities(register, identityProblems);
+  const expected = safeCount(canonical.rawCount);
+  const canonicalSeen = new Set<string>();
+  const canonicalDuplicates = new Set<string>();
+  for (const identity of canonical.identities) {
+    if (canonicalSeen.has(identity.caseId)) canonicalDuplicates.add(identity.caseId);
+    canonicalSeen.add(identity.caseId);
+  }
+  if (canonicalDuplicates.size > 0) {
+    identityProblems.push(`sealed revision repeats case id(s) ${describeIds([...canonicalDuplicates])}`);
+  }
+  const structuralProblems: string[] = [];
+  const measured: Array<{ field: string; value: number | null }> = [
+    { field: "sealed revision", value: expected },
+    { field: "checkpoint/export", value: safeCount(input.checkpointTotal) },
+    { field: "render summary", value: safeCount(input.renderedSummaryTotal) },
+    { field: "report executionCases.total", value: safeCount(executionCases?.total) },
+    { field: "report executionCases.enumerated", value: safeCount(executionCases?.enumerated) },
+    { field: "report caseLedger.total", value: safeCount(caseLedger?.total) },
+    { field: "report caseLedger.boundTotal", value: safeCount(caseLedger?.boundTotal) },
+    { field: "report caseLedger.caseIdentities", value: safeCount(ledger.rawCount) },
+    { field: "report materialized case identities", value: safeCount(materialized.rawCount) },
+  ];
+
+  if (caseLedger?.present !== true) structuralProblems.push("report caseLedger.present is not true");
+  if (!Array.isArray(caseLedger?.problems)) {
+    identityProblems.push("report caseLedger.problems is missing or not an array");
+  } else if (caseLedger.problems.length > 0) {
+    identityProblems.push(`report caseLedger names ${caseLedger.problems.length} identity problem(s)`);
+  }
+
+  compareCaseIdentityProjection("report case ledger", canonical.identities, ledger.identities, identityProblems);
+  compareCaseIdentityProjection("report materialized rows", canonical.identities, materialized.identities, identityProblems);
+
+  const declaredColumnIds = columns
+    ?.map((rawColumn) => recordObject(rawColumn)?.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0) ?? [];
+  if (columns === null || declaredColumnIds.length !== columns.length || declaredColumnIds.length === 0) {
+    structuralProblems.push("report columns are missing, empty, or carry an invalid id");
+  }
+  if (new Set(declaredColumnIds).size !== declaredColumnIds.length) {
+    structuralProblems.push("report columns repeat an id");
+  }
+
+  if (byColumn === null) {
+    measured.push({ field: "report executionCases.byColumn", value: null });
+  } else {
+    const bucketColumnIds = Object.keys(byColumn);
+    for (const columnId of declaredColumnIds) {
+      const rawColumn = byColumn[columnId];
+      const column = recordObject(rawColumn);
+      const states = recordObject(column?.states);
+      const stateValues = states === null ? [] : Object.values(states).map(safeCount);
+      const statesTotal =
+        states !== null && stateValues.length > 0 && stateValues.every((value) => value !== null)
+          ? (stateValues as number[]).reduce((sum, value) => sum + value, 0)
+          : null;
+      measured.push({ field: `report column ${columnId} bucketed`, value: safeCount(column?.bucketed) });
+      measured.push({ field: `report column ${columnId} state sum`, value: statesTotal });
+    }
+    for (const columnId of bucketColumnIds) {
+      if (!declaredColumnIds.includes(columnId)) {
+        structuralProblems.push(`report outcome buckets exist for undeclared column ${columnId}`);
+      }
+    }
+  }
+
+  const disagreements = measured.filter(({ value }) => expected === null || value !== expected);
+  if (disagreements.length > 0 || structuralProblems.length > 0 || identityProblems.length > 0) {
+    const denominatorMismatch = disagreements.length > 0 || structuralProblems.length > 0;
+    return {
+      ok: false,
+      reasonCode: denominatorMismatch
+        ? "report-execution-case-denominator-mismatch"
+        : "report-execution-case-identity-mismatch",
+      detail:
+        `run ${input.runId} cannot publish: execution-case ${denominatorMismatch ? "denominator" : "identity"} disagreement; expected sealed total ` +
+        `${expected ?? "invalid"}, got ${disagreements
+          .map(({ field, value }) => `${field}=${value ?? "missing/invalid"}`)
+          .join(", ")}${structuralProblems.length ? `${disagreements.length ? "; " : ""}${structuralProblems.join(", ")}` : ""}` +
+        `${identityProblems.length ? `${disagreements.length || structuralProblems.length ? "; " : ""}${identityProblems.join("; ")}` : ""}. ` +
+        "No report denominator was adjusted.",
+    };
+  }
+  return { ok: true, total: expected! };
+}
+
 export async function buildAndStoreReport(env: Env, runId: string): Promise<BuildReportResult> {
   const obj = await env.EVIDENCE.get(recordKey(runId));
   if (!obj) {
@@ -369,6 +616,20 @@ export async function buildAndStoreReport(env: Env, runId: string): Promise<Buil
       reasonCode: "render-failed",
       detail: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
     };
+  }
+
+  if (revision !== null) {
+    const denominatorIntegrity = checkReportExecutionCaseIntegrity({
+      runId,
+      canonicalCases: revision.facetInstances.map((facet) => ({
+        caseId: facet.facetInstanceId,
+        requirementId: facet.requirementLineageId,
+      })),
+      checkpointTotal: cp?.contract.total ?? null,
+      renderedSummaryTotal: rendered.summary.executionCases,
+      reportView: rendered.view,
+    });
+    if (!denominatorIntegrity.ok) return denominatorIntegrity;
   }
 
   // Said out loud because it is the difference between the artifact the CLI produces and

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "survey-visual-fixture-manifest/2.0.0",
+  "fixtures": [
+    {
+      "annotation": "semantic-radio.expected.json",
+      "annotationSha256": "4cbc9873cf6f8dfd721541745a876625b515f463429c4ca469cb70e173831264",
+      "source": "semantic-radio.html",
+      "sourceSha256": "0d08c6e681bdf13406d8adbf4c38c952da0dfc79b1678d413ff5d1b174f4cb66",
+      "screenshot": "semantic-radio.png",
+      "screenshotSha256": "5fa79fff535f8f8de1214ffbfe3cf31e80bdc06b36437f5d7ee2d841534b72e7",
+      "pixelWidth": 720,
+      "pixelHeight": 520
+    },
+    {
+      "annotation": "cards-multilingual.expected.json",
+      "annotationSha256": "893f950e80c3fabbbaf38aedc7cf41e9b34d57df618b9ee3703b4bd925276900",
+      "source": "cards-multilingual.html",
+      "sourceSha256": "0e87be2f7a0c5751a907340733ef7b6d1a7f54ad3c922f5e7b23bf6b94e9c2dd",
+      "screenshot": "cards-multilingual.png",
+      "screenshotSha256": "0e294c55ad93c91c904e2ac876beabeaeb6b07ffa8b44a4d02d01c33c4768409",
+      "pixelWidth": 840,
+      "pixelHeight": 640
+    },
+    {
+      "annotation": "mobile-rtl-controls.expected.json",
+      "annotationSha256": "fb1e38e217971cd8a0946e6cdf946bd8bb66a31fd2aca7d0db801285f64406d4",
+      "source": "mobile-rtl-controls.html",
+      "sourceSha256": "ffc44f485ff63c66d0c564303b1e065af139fdaceb48c34ca1e9175015b1ca12",
+      "screenshot": "mobile-rtl-controls.png",
+      "screenshotSha256": "ce478421fe10c5f837ea80c04dc7a7ba46b9ead2da30c0ed79240dd6a51a131e",
+      "pixelWidth": 390,
+      "pixelHeight": 720
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "THE BASELINE MANIFEST — what resolves when env.ARM_MANIFEST is absent.",
+    "",
+    "It is byte-for-byte today's worker-v2 behaviour. This is what makes the seam REVERSIBLE:",
+    "survey-qa-v2 carries no ARM_MANIFEST, resolves to this, and does not change.",
+    "",
+    "It is NOT an arm. verify.mjs refuses to treat it as one (armId is not in ARMS), so it",
+    "can never be scored, compared, or counted as a condition."
+  ],
+  "manifestVersion": "survey-qa-arm-manifest/1.0.0",
+  "armId": "BASELINE",
+  "label": "worker-v2 as deployed — not an experimental condition",
+  "workerName": "survey-qa-v2",
+  "components": {
+    "ingest": "v2-two-pass",
+    "structure": "none",
+    "plan": "v2-two-tier",
+    "traverse": "v2-execute-batch",
+    "judge": "v2-deterministic"
+  },
+  "sharedIngestRevision": null,
+  "declaredAttribution": []
+}

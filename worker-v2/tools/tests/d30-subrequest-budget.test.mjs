@@ -503,36 +503,66 @@ suite("D30 — the cheaper read path still refuses evidence it cannot bind", () 
 // ===========================================================================
 suite("D30 — the invocation boundary before judging", () => {
   /**
-   * WHY THIS IS A SOURCE ASSERTION AND NOT A BEHAVIOURAL ONE, stated plainly rather than
-   * dressed up: nothing in this process can observe a Worker invocation. A test double's
-   * `sleep` is a no-op whether or not the platform would have yielded, so no local test can
-   * show that `step.sleep` produces a fresh subrequest budget. Only a live run shows that.
+   * THIS ASSERTION USED TO SAY THE OPPOSITE, AND THE REVERSAL IS THE POINT.
    *
-   * What IS worth guarding is that the boundary exists and sits on the right seam — after
-   * execution has spent its thousands of `putEvidence` calls and before the judging tail that
-   * has to survive on what is left. Deleting the sleep, or moving it after
-   * `project-observations`, is a silent regression to the shape that died.
+   * It required `step.sleep("yield-before-judging", "30 seconds")` to sit on the
+   * execution/judging seam, on the theory that a sleep makes the Workflow yield and a new
+   * Worker invocation carries a fresh subrequest budget. The theory was never verifiable from
+   * here — the test's own docblock said so — and it has since been MEASURED FALSE on a real
+   * run: the Worker invocation id is THE SAME on both sides of the sleep, so it reset nothing.
+   * The in-tree precedent already pointed the same way: the four `record-failure` retries
+   * (5 s / 10 s / 20 s) each failed instantly with the identical ceiling error.
+   *
+   * So the sleep was 30 seconds of dead wall clock on every run, and it is deleted. What the
+   * suite guards now is that it does not come back by habit, and that the two layers which do
+   * carry the load are still named where the sleep used to be — `limits.subrequests` and
+   * verify-observations' keyed reads (the tests above this one). A comment that merely
+   * MENTIONS the removed sleep is fine and expected; a live `step.sleep` call is not.
    */
-  test("run-workflow yields between execution and judging", async () => {
+  test("run-workflow does NOT burn wall clock on a sleep that resets no budget", async () => {
     const { readFileSync } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
     const src = readFileSync(fileURLToPath(new URL("../../src/workflow/run-workflow.ts", import.meta.url)), "utf8");
 
-    const sleepAt = src.indexOf('step.sleep("yield-before-judging"');
     assert(
-      sleepAt !== -1,
-      'run-workflow no longer yields before judging. Execution spends thousands of subrequests ' +
-        'on putEvidence and Workflow steps share one invocation budget, so the judging tail ' +
-        'inherits whatever execution left — which was nothing on v2r_01kzfb6py8pbxznqv022p2qkhb.',
+      src.indexOf('step.sleep("yield-before-judging"') === -1,
+      "the yield-before-judging sleep is back. It was measured NOT to start a new Worker invocation " +
+        "(same invocation id on both sides), so it resets no subrequest budget and costs 30 s of every run.",
     );
 
+    // The seam it used to sit on must still exist, or this test is asserting the absence of a
+    // sleep from a workflow that no longer has the shape the sleep was about.
     const closeAt = src.indexOf('step.do("phase-executing-close"');
     const projectAt = src.indexOf('step.do("project-observations"');
-    assert(closeAt !== -1 && projectAt !== -1, "the steps this boundary sits between were renamed");
+    assert(closeAt !== -1 && projectAt !== -1, "the steps this boundary sat between were renamed");
+    assert(closeAt < projectAt, "execution must still close before the judging tail begins");
+
+    // AND THE REASONING MUST SURVIVE THE DELETION. Removing the sleep without leaving the
+    // subrequest problem written down is how the next agent re-adds it.
+    const seam = src.slice(closeAt, projectAt);
     assert(
-      closeAt < sleepAt && sleepAt < projectAt,
-      `the yield must sit on the execution/judging seam (after phase-executing-close at ${closeAt}, ` +
-        `before project-observations at ${projectAt}); it is at ${sleepAt}`,
+      seam.includes("limits.subrequests"),
+      "the seam must still name what actually bounds the subrequest budget, or the deletion reads as " +
+        "'the problem was imaginary'",
+    );
+  });
+
+  /**
+   * NO `step.sleep` SURVIVES ON THE HAPPY PATH AT ALL. The only remaining sleep in the file is
+   * `failure-recording-cooldown`, which sits in the catch block and is explicitly documented as
+   * "cheap, guarded, and load-bearing for nothing". Asserting the count keeps a second
+   * speculative yield from appearing somewhere else in the tail.
+   */
+  test("the only sleep left in the workflow is the failure-path cooldown", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(fileURLToPath(new URL("../../src/workflow/run-workflow.ts", import.meta.url)), "utf8");
+
+    const sleeps = [...src.matchAll(/step\.sleep\(\s*"([^"]+)"/g)].map((m) => m[1]);
+    assertEq(
+      JSON.stringify(sleeps),
+      JSON.stringify(["failure-recording-cooldown"]),
+      `the workflow's sleeps are ${JSON.stringify(sleeps)}; only the failure-path cooldown is intended`,
     );
   });
 

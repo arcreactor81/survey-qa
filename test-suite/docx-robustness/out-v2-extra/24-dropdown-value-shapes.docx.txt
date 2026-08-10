@@ -1,0 +1,3 @@
+[b0001] Q20. Would you recommend it? Choose an item. SINGLE CODE.
+[b0002] Q21. Household income band? Choose an item.
+[b0003] Q22. Monthly spend? Choose an item.

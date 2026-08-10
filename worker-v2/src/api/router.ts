@@ -7,7 +7,7 @@
 import type { Env } from "../types/env";
 import { fail, json } from "./http";
 import { effectivePolicy } from "../types/env";
-import { getCoverage, getRunSummary, getStatus, submitRun } from "./runs";
+import { getCoverage, getRunSummary, getStatus, getVisualStatus, submitRun } from "./runs";
 import { getExport, getRecord, getReport, getReportData } from "./report";
 import { getEvidenceContent, listEvidence } from "./evidence";
 import { devSeed } from "./devseed";
@@ -16,6 +16,7 @@ import { devDrive } from "../workflow/stages/dev-drive";
 import { devExtract, devExtractResult } from "../workflow/stages/dev-extract";
 import { NotAV2Run } from "../ids";
 import { NamespaceViolation } from "../keys";
+import { scopeEvidenceEnv } from "../store/evidence-keyspace";
 
 const RUN_PATH = /^\/api\/v2\/runs\/([^/]+)(?:\/(.*))?$/;
 
@@ -30,13 +31,21 @@ export async function route(req: Request, env: Env, ctx?: ExecutionContext): Pro
   const method = req.method.toUpperCase();
 
   try {
+    // This is the HTTP storage boundary. Arm deployments share the physical bucket with
+    // production, so every route receives a prefix-scoped binding before it can read or write.
+    env = scopeEvidenceEnv(env);
     if (path === "/api/v2/health") {
       return json({
         ok: true,
         service: "survey-qa-v2",
         // Deliberately advertises the contract versions it speaks, so a client can tell
         // v1 and v2 apart from the response alone, not just from the hostname.
-        contracts: ["run-status/2.0.0", "coverage-snapshot/1.0.0", "run-record/2.0.0"],
+        contracts: [
+          "run-status/2.0.0",
+          "coverage-snapshot/1.0.0",
+          "run-record/2.0.0",
+          "survey-qa-visual-status/1.0.0",
+        ],
       });
     }
 
@@ -75,6 +84,7 @@ export async function route(req: Request, env: Env, ctx?: ExecutionContext): Pro
       if (rest === "") return getRunSummary(req, env, runId);
       if (rest === "status") return getStatus(req, env, runId);
       if (rest === "coverage") return getCoverage(req, env, runId);
+      if (rest === "visual-status") return getVisualStatus(req, env, runId);
       if (rest === "report") return getReport(req, env, runId);
       if (rest === "report-data") return getReportData(req, env, runId);
       if (rest === "record") return getRecord(req, env, runId);

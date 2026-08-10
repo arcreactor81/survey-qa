@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "EXCLUDED CORPUS ITEMS (PRE-REGISTRATION.md §10.4).",
+    "",
+    "An excluded item is removed from BOTH numerator and denominator, listed by ID with its",
+    "reason, and counted as a headline number. Exclusions exist because the corpus builder",
+    "was told to flag anything it was unsure was genuinely defective versus arguably",
+    "compliant, and a bad test item scored either way is worse than no test item.",
+    "",
+    "TWO HARD RULES:",
+    "  1. An exclusion filed AFTER the first scored run requires a dated written",
+    "     justification, which is printed in the report. Filing exclusions while looking at",
+    "     results is how a corpus becomes whatever the arms happened to find.",
+    "  2. If exclusions reach 20% of planted defects the experiment is INCONCLUSIVE (§6.8):",
+    "     too much of the corpus has been removed for the remainder to represent it.",
+    "",
+    "This file is hashed into FREEZE.json."
+  ],
+  "exclusions": []
+}

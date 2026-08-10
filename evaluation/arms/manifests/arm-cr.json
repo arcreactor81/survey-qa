@@ -1,0 +1,37 @@
+{
+  "_comment": [
+    "ARM C-R — HYBRID WITH RANDOMISED TRAVERSAL. The control that could embarrass us.",
+    "",
+    "IDENTICAL TO ARM C IN EVERY SLOT BUT `plan`. Diff this file against arm-c.json: one line",
+    "differs. That is the whole design of H4, and it is enforced structurally rather than",
+    "promised -- verify.mjs asserts C and C-R differ in exactly the `plan` slot and nothing",
+    "else (CR_OVER_DIFFERS), because a control that quietly drifts on a second component stops",
+    "being a control and becomes an implementation comparison answering a different question.",
+    "",
+    "PRE-REGISTRATION.md §1.2, written before any result existed:",
+    "  'If C does not beat C-R by more than the margin in §6.4, the graph's central claim --",
+    "   that principled, computed traversal is better than covering the same amount of ground",
+    "   arbitrarily -- is DECORATIVE. We will write that sentence in the report.'",
+    "",
+    "Construction is pinned in §5.6: uniform draw over VALID EXECUTABLE traversals, matched to",
+    "C on DISTINCT NODE-VISITS within +/-10%, seed pinned per (surveyId, repeat), R = 3 seeds,",
+    "scored as the mean with the min-max range always printed.",
+    "",
+    "Three seeds make C-R 3 of the 5 judgement-billing runs per survey -- the single largest",
+    "line item in the cost projection (ARCHITECTURE.md §10.2)."
+  ],
+  "manifestVersion": "survey-qa-arm-manifest/1.0.0",
+  "armId": "C-R",
+  "label": "hybrid, randomised traversal",
+  "workerName": "survey-qa-arm-cr",
+  "components": {
+    "ingest": "shared-sealed",
+    "structure": "routing-graph",
+    "plan": "random-equal-size",
+    "traverse": "harness-walk",
+    "judge": "model-attribute"
+  },
+  "sharedIngestRevision": null,
+  "seeds": [0, 1, 2],
+  "declaredAttribution": ["graph", "model", "graph-located-model-judged", "unattributed"]
+}

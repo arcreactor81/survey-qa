@@ -1,0 +1,9 @@
+[b0001] Q12. Awareness by region.
+--- table t1 ---
+[b0002] (cell r1c1) Table 4 — Awareness by region
+[b0003] (cell r2c1) Region
+[b0004] (cell r2c2 row="Region") Aware
+[b0005] (cell r2c3 row="Region") Use
+[b0006] (cell r3c1) North
+[b0007] (cell r3c2 row="North") 62%
+[b0008] (cell r3c3 row="North") 41%

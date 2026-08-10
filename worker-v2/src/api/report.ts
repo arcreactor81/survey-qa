@@ -14,7 +14,7 @@
 import type { Env } from "../types/env";
 import { fail, json } from "./http";
 import { isV2RunId } from "../ids";
-import { exportManifestKey, flagLanesKey, judgementKey, recordKey, reportPointerKey } from "../keys";
+import { flagLanesKey, judgementKey, recordKey, reportPointerKey } from "../keys";
 import { loadCheckpoint } from "../store/checkpoint";
 import { listCatalog } from "../store/evidence";
 import { getContractRevision } from "../store/contract-revision";
@@ -173,6 +173,11 @@ export async function getRecord(_req: Request, env: Env, runId: string): Promise
  * GET /api/v2/runs/:id/export — the export manifest: everything needed to reproduce the
  * verdicts offline, listed with its hashes. Built on demand from durable state so an
  * export can never claim an artifact the bucket does not actually hold.
+ *
+ * This handler is deliberately read-only. Persisting an on-demand manifest from GET made
+ * authenticated collection mutate the run and meant the canary's supposed read channel was
+ * not a read channel at all. Every durable input named below already exists independently;
+ * callers retain the returned bytes if they need a point-in-time export.
  */
 export async function getExport(_req: Request, env: Env, runId: string): Promise<Response> {
   if (!isV2RunId(runId)) return fail(404, "NOT_A_V2_RUN", `${runId} is not a survey-qa-v2 run id`);
@@ -226,8 +231,5 @@ export async function getExport(_req: Request, env: Env, runId: string): Promise
       type: e.type,
     })),
   };
-  await env.EVIDENCE.put(exportManifestKey(runId), JSON.stringify(manifest, null, 2), {
-    httpMetadata: { contentType: "application/json" },
-  });
   return json(manifest);
 }

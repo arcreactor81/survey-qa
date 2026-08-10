@@ -1,0 +1,5 @@
+[b0001] (heading) SECTION N — LEGACY EXPORT
+[b0002] This part was written by an in-house tool that emits UTF-16 XML.
+[b0003] Q35. Do you have a water meter? SINGLE CODE.
+[b0004] ROUTING: if Q35 = 2 then SKIP TO Q40 and set flag no_meter = 1.
+[b0005] Q36. £ values in this module are shown to two decimal places — €/$ never.

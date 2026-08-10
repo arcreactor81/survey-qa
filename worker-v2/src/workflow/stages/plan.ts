@@ -29,17 +29,17 @@
 
 import type { Env } from "../../types/env";
 import { num } from "../../types/env";
-import { planKey } from "../../keys";
+import { planKey, plannerSidecarKey } from "../../keys";
 import { getContractRevision } from "../../store/contract-revision";
 import type { ContractRevision, FacetInstance, ScopedRequirement } from "../../types/record";
-import { planFromContract, pathSignature } from "./planner/plan-core.js";
+import { hashContract, planFromContract, pathSignature } from "./planner/plan-core.js";
 /**
  * Re-exported so a test reaches the planner THROUGH THIS MODULE. `tools/mutate-runner.mjs`
  * mutates sources inside esbuild's load step, so a test that imports `plan-core.js` directly
  * runs unmutated code and its guard can never be shown to fail — the exact "check that cannot
- * fail" shape CLAUDE.md warns about. Nothing in `src/**` calls these two from outside.
+ * fail" shape CLAUDE.md warns about. Nothing in `src/**` calls these three from outside.
  */
-export { pathSignature, planFromContract };
+export { hashContract, pathSignature, planFromContract };
 import type {
   CoveragePlan,
   PlannedCaseAction,
@@ -82,6 +82,14 @@ export interface PlanLimitation {
   caseIds?: string[];
   /** Question ids this shortfall is about, when it is about questions. */
   questionIds?: string[];
+  /** Planned path ids this shortfall is about, when it is about executable work. */
+  pathIds?: string[];
+  /**
+   * The exact subset whose absence prevents the test axis closing. An empty array means the
+   * limitation qualifies optional exploration only; absence means this older limitation did
+   * not make a closure claim.
+   */
+  blockingPathIds?: string[];
 }
 
 export const PLAN_LIMITATION_CODES = {
@@ -108,7 +116,140 @@ export const PLAN_LIMITATION_CODES = {
   caseWithoutStimulus: "cases-with-no-stimulus-payload",
   caseTargetNotOnWitnessPath: "cases-whose-target-question-is-not-on-their-witness-path",
   caseWithoutWitnessPath: "cases-whose-requirement-has-no-witness-path",
+  /** Planned browser actions the current forward-only driver has no action or receipt for. */
+  backNavigationUnsupported: "planned-back-navigation-not-executable",
+  /** Multi-session evidence the current one-walk-per-path executor cannot produce. */
+  repeatedSessionsUnsupported: "planned-independent-session-repeats-not-executable",
 } as const;
+
+type ProbeCarrier = Partial<PlannedPath> & {
+  mandatory?: unknown;
+  observation_role?: unknown;
+  covers_floor_gap?: unknown;
+  requires_back_navigation?: unknown;
+  repeats?: unknown;
+  needs_repeats?: unknown;
+};
+
+export interface ProbeExecutionRequirements {
+  backNavigation: boolean;
+  repeatedSessions: boolean;
+  unsupported: boolean;
+}
+
+/**
+ * WHAT THE CURRENT BROWSER DRIVER CAN ACTUALLY CONSUME.
+ *
+ * `browser/driver.ts#walkPath` consumes `path.decisions` once. It has no consumer for the
+ * planner's sibling `back_navigation` instruction, no session-index loop for `repeats`, and
+ * no receipt shape that could prove either happened. Keeping that assumption here makes it a
+ * checked capability boundary rather than a convention hidden in the executor.
+ *
+ * Unknown non-empty shapes degrade strict. A future planner spelling either instruction in a
+ * new shape is unsupported until an adapter can execute it and emit verifiable receipts; it
+ * must never fall through to an ordinary forward walk.
+ */
+export function probeExecutionRequirements(path: ProbeCarrier | null | undefined): ProbeExecutionRequirements {
+  const p = path && typeof path === "object" ? path : {};
+  const back = p.back_navigation;
+  const backNavigation =
+    p.requires_back_navigation === true ||
+    (Array.isArray(back) ? back.length > 0 : back !== undefined && back !== null && back !== false);
+
+  const repeats = p.repeats;
+  const repeatedSessions =
+    repeats !== undefined &&
+    !(typeof repeats === "number" && Number.isFinite(repeats) && Number.isInteger(repeats) && repeats === 1);
+
+  return { backNavigation, repeatedSessions, unsupported: backNavigation || repeatedSessions };
+}
+
+/** The current executor may only select paths whose complete action vocabulary it consumes. */
+export function isExecutableProbePath(path: ProbeCarrier | null | undefined): boolean {
+  return !probeExecutionRequirements(path).unsupported;
+}
+
+const requiredExploration = (path: ProbeCarrier): boolean =>
+  path.mandatory === true ||
+  path.observation_role === "required-additional" ||
+  (typeof path.covers_floor_gap === "string" && path.covers_floor_gap.length > 0);
+
+const exactIds = (values: unknown[]): string[] =>
+  [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))].sort();
+
+/**
+ * Count every planned probe the current execution adapter cannot prove it performed.
+ *
+ * Both rows are emitted even at zero. `pathIds` is the full limitation; `blockingPathIds` is
+ * the exact subset that represents floor work or explicitly required additional evidence.
+ * Optional risk exploration remains visible without falsely moving the sealed denominator.
+ */
+export function probeCapabilityLimitations(plan: CoveragePlan): PlanLimitation[] {
+  const floor = (plan?.floor?.paths ?? []) as ProbeCarrier[];
+  const exploration = (plan?.exploration?.queue ?? []) as ProbeCarrier[];
+  const carriers = [
+    ...floor.map((path) => ({ path, tier: 1 as const })),
+    ...exploration.map((path) => ({ path, tier: 2 as const })),
+  ];
+
+  const back = carriers.filter(({ path }) => probeExecutionRequirements(path).backNavigation);
+  const blockingBack = back.filter(({ path, tier }) => tier === 1 || requiredExploration(path));
+
+  // `needs_repeats` is the floor's own statement that one observation is insufficient. It is
+  // included even if the repeated exploration entry was later dropped by a queue cap; a cap
+  // must not turn known-insufficient evidence into a complete test. Those floor paths still run
+  // once for their other obligations, so only direct `repeats` requests are filtered by the
+  // executor below.
+  const repeated = carriers.filter(({ path }) => {
+    const needs = Array.isArray(path.needs_repeats) ? path.needs_repeats.length > 0 : false;
+    return probeExecutionRequirements(path).repeatedSessions || needs;
+  });
+
+  const backIds = exactIds(back.map(({ path }) => path.id));
+  const blockingBackIds = exactIds(blockingBack.map(({ path }) => path.id));
+  const repeatedIds = exactIds(repeated.map(({ path }) => path.id));
+
+  return [
+    {
+      code: PLAN_LIMITATION_CODES.backNavigationUnsupported,
+      what:
+        `${backIds.length} planned path(s) request back-navigation, but the current browser executor consumes only ` +
+        `the forward decisions list and records no back-navigation receipt. ${blockingBackIds.length} of these are ` +
+        `floor or explicitly mandatory work; they are excluded from executable work and prevent test completion.`,
+      count: backIds.length,
+      pathIds: backIds,
+      blockingPathIds: blockingBackIds,
+    },
+    {
+      code: PLAN_LIMITATION_CODES.repeatedSessionsUnsupported,
+      what:
+        `${repeatedIds.length} planned path(s) require evidence from more than one independent session, but the ` +
+        `current executor invokes each path once and records no session-index receipt. These paths remain named ` +
+        `insufficient evidence and prevent test completion; one forward walk is never certified as the experiment.`,
+      count: repeatedIds.length,
+      pathIds: repeatedIds,
+      blockingPathIds: repeatedIds,
+    },
+  ];
+}
+
+/** Only capability gaps that make a complete test claim impossible. */
+export function requiredProbeCapabilityLimitations(
+  limitations: readonly PlanLimitation[] | null | undefined,
+): PlanLimitation[] {
+  if (!Array.isArray(limitations)) return [];
+  const codes = new Set<string>([
+    PLAN_LIMITATION_CODES.backNavigationUnsupported,
+    PLAN_LIMITATION_CODES.repeatedSessionsUnsupported,
+  ]);
+  return limitations.filter(
+    (limitation) =>
+      codes.has(limitation.code) &&
+      limitation.count > 0 &&
+      Array.isArray(limitation.blockingPathIds) &&
+      limitation.blockingPathIds.length > 0,
+  );
+}
 
 /** One planned walk, with cases it is assigned to exercise. Assignment is not closure. */
 export interface PathAssignment {
@@ -497,7 +638,7 @@ export async function loadPlannerSidecar(
   env: Env,
   runId: string,
 ): Promise<{ contract: PlannerContract; source: string } | null> {
-  const key = `v2/runs/${runId}/extraction/checklist.json`;
+  const key = plannerSidecarKey(runId);
   const obj = await env.EVIDENCE.get(key);
   if (!obj) return null;
   try {
@@ -695,6 +836,9 @@ export async function planStage(
         caseIds: rows.map((r) => r.facetInstanceId),
       };
     }),
+    // Capability accounting is computed from the exact paths this artifact will hand to the
+    // executor. These rows are present at zero too, so absence can never mean "supported".
+    ...probeCapabilityLimitations(plan),
   ];
 
   const program: ExecutionProgram = {

@@ -22,7 +22,7 @@
 
 import type { Env } from "../../types/env";
 import { mintRunId } from "../../ids";
-import { inputDocumentKey, inputManifestKey } from "../../keys";
+import { inputDocumentKey, inputManifestKey, plannerSidecarKey } from "../../keys";
 import { effectivePolicy } from "../../types/env";
 import { createCheckpoint, initialCheckpoint } from "../../store/checkpoint";
 import { markActive, putEnvelope } from "../../store/envelope";
@@ -114,6 +114,7 @@ export async function devDrive(req: Request, env: Env): Promise<Response> {
         boundaryInput: null,
         configuration: null,
         expectedDestination: null,
+        optionSet: null,
       },
       // A checklist obligation carries no typed answer set and no input bound, so this
       // harness cannot mint a case any model-free predicate can decide. Saying so is the
@@ -198,7 +199,7 @@ export async function devDrive(req: Request, env: Env): Promise<Response> {
 
   // The planner-native sidecar the plan stage prefers: richer than ScopedRequirement
   // (it carries the document's `stimulus` lines), and reconciled against the seal.
-  await env.EVIDENCE.put(`v2/runs/${runId}/extraction/checklist.json`, JSON.stringify(body.checklist), {
+  await env.EVIDENCE.put(plannerSidecarKey(runId), JSON.stringify(body.checklist), {
     httpMetadata: { contentType: "application/json" },
   });
 

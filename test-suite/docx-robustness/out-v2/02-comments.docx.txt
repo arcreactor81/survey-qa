@@ -1,0 +1,10 @@
+[b0001] (heading) SECTION C — ATTITUDES
+[b0002] Q11. Which of these features matter most when choosing a tariff? SELECT ALL THAT APPLY.
+[b0003] 1. Price per kWh
+[b0004] 2. Fixed-term certainty
+[b0005] 3. Green generation mix
+[b0006] 9. None of these
+[b0007] Q12. What is your age?
+[b0008] (comment by M. Devlin (Client) (MD) — PROPOSAL, resolution unknown ) Please cap this at 3 selections — legal will not sign off on unlimited multi-select here.
+[b0009] (comment by R. Aiyar (Research) (RA) — PROPOSAL, resolution unknown ) AGREED — cap at 3. Also randomise codes 1-8, anchor code 9 (None of these) at the bottom.
+[b0010] (comment by M. Devlin (Client) (MD) — PROPOSAL, resolution unknown ) Quota check: we need minimum 120 completes in the 18-24 cell.

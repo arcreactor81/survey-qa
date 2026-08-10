@@ -65,12 +65,19 @@
       "name": "survey-qa-arm-a-run",
       "binding": "V2_RUN_WORKFLOW",
       "class_name": "SurveyRunWorkflowV2"
+    },
+    {
+      "name": "survey-qa-arm-a-visual-shadow",
+      "binding": "V2_VISUAL_WORKFLOW",
+      "class_name": "SurveyVisualShadowWorkflowV1"
     }
   ],
 
   "secrets_store_secrets": [
     { "binding": "ANTHROPIC_API_KEY", "store_id": "55e6ce4174d645cfa68a6c27eef7847f", "secret_name": "ANTHROPIC_API_KEY" },
     { "binding": "DEEPSEEK_API_KEY", "store_id": "55e6ce4174d645cfa68a6c27eef7847f", "secret_name": "DEEPSEEK_API_KEY" },
+    { "binding": "GEMINI_API_KEY", "store_id": "55e6ce4174d645cfa68a6c27eef7847f", "secret_name": "GEMINI_API_KEY" },
+    { "binding": "MISTRAL_API_KEY", "store_id": "55e6ce4174d645cfa68a6c27eef7847f", "secret_name": "MISTRAL_API_KEY" },
     { "binding": "XAI_API_KEY", "store_id": "55e6ce4174d645cfa68a6c27eef7847f", "secret_name": "XAI_API_KEY" }
   ],
 
@@ -151,8 +158,8 @@
 
     "GROK_MODEL": "grok-4.5",
     "GROK_REASONING_EFFORT": "high",
-    "GROK_INPUT_USD_PER_MTOK": "1.25",
-    "GROK_OUTPUT_USD_PER_MTOK": "2.50",
+    "GROK_INPUT_USD_PER_MTOK": "2.00",
+    "GROK_OUTPUT_USD_PER_MTOK": "6.00",
     "DEEPSEEK_MODEL": "deepseek-v4-pro",
     "DEEPSEEK_REASONING_EFFORT": "medium",
     "DEEPSEEK_INPUT_USD_PER_MTOK": "0.28",
@@ -170,6 +177,10 @@
     "JUDGE_MODEL": "claude-sonnet-4-6",
     "WORKERSAI_VALIDATOR_MODEL": "@cf/openai/gpt-oss-120b",
     "WORKERSAI_ENABLED": "false",
+
+    // Visual perception is shadow-only and cannot buy inference until a reviewed deploy
+    // explicitly replaces this exact false with a complete provider + budget configuration.
+    "VISUAL_SHADOW_ENABLED": "false",
 
     "AGGREGATOR_VERSION": "v2-aggregator/1.0.0",
     "RESULT_POLICY_VERSION": "v2-result-policy/1.0.0"

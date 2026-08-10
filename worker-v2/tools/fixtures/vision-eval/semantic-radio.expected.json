@@ -1,0 +1,145 @@
+{
+  "schemaVersion": "survey-visual-fixture/3.0.0",
+  "fixtureId": "semantic-radio",
+  "source": "semantic-radio.html",
+  "screenshot": {
+    "file": "semantic-radio.png",
+    "sha256": "5fa79fff535f8f8de1214ffbfe3cf31e80bdc06b36437f5d7ee2d841534b72e7",
+    "pixelWidth": 720,
+    "pixelHeight": 520
+  },
+  "viewport": {
+    "width": 720,
+    "height": 520,
+    "deviceScaleFactor": 1
+  },
+  "strata": {
+    "languageComposition": "english-only",
+    "layout": "single-column",
+    "controlStyle": "native-controls"
+  },
+  "expectedInventory": {
+    "schemaVersion": "survey-qa-visual-inventory-response/1.0.0",
+    "questionRegions": [
+      {
+        "localId": "truth-question-travel",
+        "text": {
+          "quote": "How do you usually travel?",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0777778, "y": 0.2115385, "width": 0.375, "height": 0.05 }
+        }
+      }
+    ],
+    "optionGroups": [
+      {
+        "localId": "truth-group-travel",
+        "questionRegionId": "truth-question-travel",
+        "selectionAppearance": "appears-single",
+        "bounds": { "x": 0.0722222, "y": 0.2807692, "width": 0.4166667, "height": 0.2692308 },
+        "options": [
+          {
+            "localId": "truth-option-train",
+            "text": {
+              "quote": "Train",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.0944444, "y": 0.3038462, "width": 0.3611111, "height": 0.0615385 }
+            },
+            "markAppearance": "appears-unselected"
+          },
+          {
+            "localId": "truth-option-bus",
+            "text": {
+              "quote": "Bus",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.0944444, "y": 0.3884615, "width": 0.3611111, "height": 0.0615385 }
+            },
+            "markAppearance": "appears-selected"
+          },
+          {
+            "localId": "truth-option-walk",
+            "text": {
+              "quote": "Walk",
+              "alternatives": [],
+              "readability": "read",
+              "modelConfidence": 1,
+              "bounds": { "x": 0.0944444, "y": 0.4730769, "width": 0.3611111, "height": 0.0615385 }
+            },
+            "markAppearance": "appears-unselected"
+          }
+        ]
+      }
+    ],
+    "controls": [
+      {
+        "localId": "truth-control-back",
+        "kind": "button",
+        "text": {
+          "quote": "Back",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.6388889, "y": 0.8384615, "width": 0.1222222, "height": 0.0846154 }
+        },
+        "availabilityAppearance": "appears-disabled",
+        "selectionAppearance": "not-applicable",
+        "bounds": { "x": 0.6388889, "y": 0.8384615, "width": 0.1222222, "height": 0.0846154 }
+      },
+      {
+        "localId": "truth-control-continue",
+        "kind": "button",
+        "text": {
+          "quote": "Continue",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.7777778, "y": 0.8384615, "width": 0.15, "height": 0.0846154 }
+        },
+        "availabilityAppearance": "appears-enabled",
+        "selectionAppearance": "not-applicable",
+        "bounds": { "x": 0.7777778, "y": 0.8384615, "width": 0.15, "height": 0.0846154 }
+      }
+    ],
+    "messages": [
+      {
+        "localId": "truth-message-title",
+        "kind": "other",
+        "text": {
+          "quote": "Travel preferences",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0777778, "y": 0.0807692, "width": 0.3277778, "height": 0.0576923 }
+        }
+      },
+      {
+        "localId": "truth-message-instruction",
+        "kind": "instruction",
+        "text": {
+          "quote": "Choose one answer before continuing.",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0777778, "y": 0.1596154, "width": 0.4305556, "height": 0.0384615 }
+        }
+      },
+      {
+        "localId": "truth-message-later",
+        "kind": "other",
+        "text": {
+          "quote": "Answers can be changed later.",
+          "alternatives": [],
+          "readability": "read",
+          "modelConfidence": 1,
+          "bounds": { "x": 0.0777778, "y": 0.7173077, "width": 0.3055556, "height": 0.0384615 }
+        }
+      }
+    ],
+    "visualLimitations": []
+  }
+}

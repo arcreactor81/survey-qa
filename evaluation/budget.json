@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "IDENTICAL BUDGET CEILING FOR EVERY CONDITION (PRE-REGISTRATION.md §8.3).",
+    "",
+    "Every cap is null on purpose. These are OWNER RATIFICATIONS, not my numbers, and a",
+    "harness that shipped with plausible-looking defaults would have quietly chosen them.",
+    "run-arm.mjs REFUSES to start a scored run while any cap is null; --pilot runs without",
+    "them and its output cannot produce a headline (§9.4).",
+    "",
+    "Ratify before the first scored run, then freeze: this file is hashed into FREEZE.json,",
+    "so changing a cap mid-experiment requires --amend with a written reason that appears in",
+    "the final report.",
+    "",
+    "Note on C-R: three seeds per survey multiply its TOTAL spend, not its per-survey cap.",
+    "The cap is per run, and every condition faces the same one."
+  ],
+
+  "caps": {
+    "maxUsdPerSurvey": null,
+    "maxWallClockSecondsPerSurvey": null,
+    "maxModelCalls": null,
+    "maxBrowserActions": null,
+    "maxNodeVisits": null
+  },
+
+  "_pricing_comment": [
+    "Pinned price table. A model absent from this table makes cost UNKNOWN (usd: null) —",
+    "never estimated. docs/p0-adversarial-audit.md Finding 14: the existing scorer verified",
+    "~70% of a reported cost against a price table and the gate did not distinguish."
+  ],
+  "pricing": {},
+
+  "pricingVersion": null
+}

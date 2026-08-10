@@ -38,10 +38,17 @@ import {
   sessionExpired,
   type SessionHandle,
 } from "../browser-session";
-import { loadProgram, type ExecutionProgram, type PathAssignment } from "./plan";
+import {
+  isExecutableProbePath,
+  loadProgram,
+  probeCapabilityLimitations,
+  requiredProbeCapabilityLimitations,
+  type ExecutionProgram,
+  type PathAssignment,
+} from "./plan";
 import { walkPath, type PageLike } from "../../browser/driver";
 import type { CaptureContext } from "../../browser/capture";
-import type { PathObservation, StepObservation } from "../../browser/types";
+import type { PathObservation, StepObservation, WalkEnding } from "../../browser/types";
 import type { PlannedPath, PlannedDecision } from "./planner/plan-core.js";
 
 export const execProgressKey = (runId: string) => k("runs", runId, "execution", "progress.json");
@@ -84,6 +91,8 @@ export const EXEC_STOP_WALKS_BLOCKED_BY_SITE = "walks-blocked-by-site";
  * is an internal coverage gap and it says so, instead of blaming the site for it.
  */
 export const EXEC_STOP_COVERAGE_SHORTFALL = "coverage-shortfall-unexercised";
+/** Required planned work uses an action vocabulary this executor cannot perform or prove. */
+export const EXEC_STOP_REQUIRED_PROBE_UNSUPPORTED = "required-probe-capability-unsupported";
 
 /** The complete set. A code not in here is a bug, not a new feature. */
 export const EXEC_STOP_REASONS = [
@@ -92,6 +101,7 @@ export const EXEC_STOP_REASONS = [
   EXEC_STOP_EXECUTOR_ERROR,
   EXEC_STOP_WALKS_BLOCKED_BY_SITE,
   EXEC_STOP_COVERAGE_SHORTFALL,
+  EXEC_STOP_REQUIRED_PROBE_UNSUPPORTED,
 ] as const;
 
 export interface WalkRecord {
@@ -130,6 +140,42 @@ export interface WalkRecord {
    * evidence" — never to an accusation. See `blockedStepCount`.
    */
   blockedSteps?: number;
+  /**
+   * ==================== WHAT THE WALKER TYPED, CARRIED VERBATIM ====================
+   *
+   * THE GAP THIS CLOSES. `browser/driver.ts` computes all of these on EVERY walk and writes
+   * them into the `PathObservation` artifact; this function threw them away. The artifact is
+   * one R2 object per walk, so anyone reading the run's own ledger — `progress.json`, and
+   * through `assemble-record.ts#executionWalks` the derived blockers and attempts, and
+   * through `project-observations.ts` the signed record's observation payloads — could see
+   * `outcome` and nothing else. On run `v2r_01kzggtye653abaa36sxeg23yd` that meant 41
+   * observations reporting `no-advance-control`, a value that covers BOTH "the survey ended"
+   * and "we never got in", with the disambiguating field sitting unread in the artifact.
+   *
+   * THEY ARE COPIES, NOT FINDINGS. Nothing here re-derives, re-classifies or summarises: each
+   * field is the walker's own value under the walker's own name, so a drift between the
+   * producer and this ledger is impossible rather than merely unlikely. A consumer that has to
+   * DECIDE something still re-reads the artifact bytes and re-hashes them
+   * (`verify-observations.ts#decideObservation` takes only the artifact POINTER from a
+   * projected payload); these exist so the ledger can be READ without that fan-out.
+   *
+   * EVERY ONE IS OPTIONAL AND STAYS OPTIONAL. A `progress.json` written before these existed
+   * re-reads without them, and absence must degrade to "this walk did not say", never to a
+   * value — the same contract `blockedSteps` argues for above. In particular an absent
+   * `ending` is NOT a completion, and `unclassified` is NOT a completion either: it is the
+   * walker's counted residual for "the final screen said nothing about which ending this was",
+   * and collapsing it here would hand every downstream reader a confident wrong answer with
+   * the producer's name on it.
+   */
+  ending?: WalkEnding;
+  /** Planned decisions no screen was ever identified as — the walk's account of what it did NOT do. */
+  unboundDecisions?: PathObservation["unboundDecisions"];
+  /** How many times a screen was refused a binding. The walker's name for it, kept. */
+  bindingRefusalCount?: number;
+  /** Every limitation the reader named on any screen of this walk, with the step it came from. */
+  readerLimitations?: PathObservation["readerLimitations"];
+  /** Total occurrences summed over screens. Counted by the walker, not recomputed here. */
+  readerLimitationCount?: number;
   at: string;
 }
 
@@ -266,22 +312,49 @@ interface WorkItem {
   assignment: PathAssignment | null;
 }
 
+/**
+ * A single closed reason for the run-level outcome; exact path/code counts remain in the plan
+ * limitations and signed record blockers. Exported so the stop decision is directly testable
+ * without acquiring a browser merely to discover that no browser action is possible.
+ */
+export function requiredProbeCapabilityStopReason(program: ExecutionProgram): string | null {
+  return requiredProbeCapabilityLimitations(probeCapabilityLimitations(program.plan)).length > 0
+    ? EXEC_STOP_REQUIRED_PROBE_UNSUPPORTED
+    : null;
+}
+
 /** What is still owed: floor paths first, then as much exploration as the caps allow. */
 export function selectWork(program: ExecutionProgram, progress: ExecProgress, maxExploration: number): WorkItem[] {
   const out: WorkItem[] = [];
   const floorDone = new Set(progress.floorDone);
+  let pendingFloor = 0;
   for (const a of program.floor) {
-    if (floorDone.has(a.pathId)) continue;
     const p = program.plan.floor.paths.find((x) => x.id === a.pathId);
-    if (p) out.push({ path: p, tier: 1, assignment: a });
+    if (!p) continue;
+    // A legacy executor may already have written one of these ids to `floorDone` without
+    // consuming its sibling probe action. No action receipt exists, so that marker is not
+    // evidence and cannot grandfather the path into completion.
+    const executable = isExecutableProbePath(p);
+    if (floorDone.has(a.pathId) && executable) continue;
+    pendingFloor += 1;
+    if (!executable) continue;
+    out.push({ path: p, tier: 1, assignment: a });
   }
-  if (out.length > 0) return out; // FLOOR FIRST, ALWAYS. It is the contractual set.
+  // FLOOR FIRST, ALWAYS. An unsupported floor path is still pending contractual work; do not
+  // run optional exploration past it and make the run look further along than it is.
+  if (pendingFloor > 0) return out;
 
   const expDone = new Set(progress.explorationDone);
-  const budget = Math.max(0, maxExploration - expDone.size);
+  // Old `explorationDone` rows for unsupported instructions prove only that one forward walk
+  // ran. They consume no executable-work budget and never suppress the named limitation.
+  const completedExecutable = program.plan.exploration.queue.filter(
+    (entry) => expDone.has(entry.id) && isExecutableProbePath(entry),
+  ).length;
+  const budget = Math.max(0, maxExploration - completedExecutable);
   if (budget === 0) return out;
   for (const e of program.plan.exploration.queue) {
     if (expDone.has(e.id)) continue;
+    if (!isExecutableProbePath(e)) continue;
     out.push({ path: e as unknown as PlannedPath, tier: 2, assignment: null });
     if (out.length >= budget) break;
   }
@@ -301,12 +374,19 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
 
   const maxExploration = num((env as unknown as { EXEC_MAX_EXPLORATION?: string }).EXEC_MAX_EXPLORATION, 0);
   const work = selectWork(program, progress, maxExploration);
+  const requiredProbeStop = requiredProbeCapabilityStopReason(program);
   console.log(
     `v2 exec batch ${args.batch}: work=${work.length} floorDone=${progress.floorDone.length}/${program.floor.length} ` +
       `expDone=${progress.explorationDone.length} expBudget=${maxExploration} queue=${program.plan.exploration.queue.length}`,
   );
   if (work.length === 0) {
-    return { done: true, stopReason: null, pathsWalked: 0, casesClosed: 0, steps: 0 };
+    return {
+      done: true,
+      stopReason: requiredProbeStop,
+      pathsWalked: 0,
+      casesClosed: 0,
+      steps: 0,
+    };
   }
 
   const batchDeadline = Date.now() + num(env.EXEC_BATCH_MAX_MS, 120_000);
@@ -560,6 +640,9 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
   }
 
   const remaining = selectWork(program, progress, maxExploration).length;
+  if (stopReason === null && remaining === 0 && requiredProbeStop !== null) {
+    stopReason = requiredProbeStop;
+  }
   const done = remaining === 0 || stopReason !== null;
 
   // DISCONNECT BETWEEN BATCHES, CLOSE WHEN THE WORK IS DONE.
@@ -815,7 +898,12 @@ const NOT_ASSESSED: ExercisedAssessment = {
   matchedConstraining: 0,
 };
 
-function walkRecord(obs: PathObservation, caseIds: string[], audit: ExercisedAssessment = NOT_ASSESSED): WalkRecord {
+/**
+ * THE WALK, REDUCED TO A LEDGER ROW. Exported so the carry above can be tested directly:
+ * driving a whole batch to prove that one field survives one function needs a browser, and a
+ * property that can only be checked in a browser is a property this suite does not check.
+ */
+export function walkRecord(obs: PathObservation, caseIds: string[], audit: ExercisedAssessment = NOT_ASSESSED): WalkRecord {
   return {
     ...audit,
     screensAdvanced: obs.steps.filter((s) => s.advanced).length,
@@ -823,6 +911,16 @@ function walkRecord(obs: PathObservation, caseIds: string[], audit: ExercisedAss
     // load-crash record pushed before the shimmed retry, which is written by a different
     // call and would otherwise be a silent hole in the run-level evidence.
     blockedSteps: blockedStepCount(obs),
+    // CARRIED ONLY WHEN THE PRODUCER SET IT, and then byte-for-byte. The conditional spread is
+    // the point: `ending: obs.ending` would put the KEY on every record with the value
+    // `undefined`, and a reader testing `"ending" in walk` would then see a walk that predates
+    // the field as one that HAS an ending. There is no `??` on any line below, deliberately —
+    // a default here is the whole defect, one hop earlier than where it was found.
+    ...(obs.ending !== undefined ? { ending: obs.ending } : {}),
+    ...(obs.unboundDecisions !== undefined ? { unboundDecisions: obs.unboundDecisions } : {}),
+    ...(obs.bindingRefusalCount !== undefined ? { bindingRefusalCount: obs.bindingRefusalCount } : {}),
+    ...(obs.readerLimitations !== undefined ? { readerLimitations: obs.readerLimitations } : {}),
+    ...(obs.readerLimitationCount !== undefined ? { readerLimitationCount: obs.readerLimitationCount } : {}),
     pathId: obs.pathId,
     tier: obs.tier,
     attemptId: obs.attemptId,

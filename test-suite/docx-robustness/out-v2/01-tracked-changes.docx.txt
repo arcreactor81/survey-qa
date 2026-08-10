@@ -1,0 +1,5 @@
+[b0001] (heading) SECTION B — BRAND USAGE
+[b0002] Q4. In the last twelve (12) months, which of the following energy suppliers have you used? SELECT ALL THAT APPLY.
+[b0003] INTERVIEWER: if the respondent names a supplier not on the list, record it verbatim at Q4_OTHER and do not terminate.
+[b0004] Q5. How satisfied are you with your current supplier? SINGLE CODE.
+[b0005] ROUTING: if Q5 = 1 or 2, ask Q6 then skip to Q10.

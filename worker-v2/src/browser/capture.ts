@@ -13,7 +13,13 @@
 
 import type { Env } from "../types/env";
 import { putEvidence } from "../store/evidence";
-import type { PathObservation, RenderedScreen } from "./types";
+import type { EvidenceCatalogEntry } from "../types/record";
+import type {
+  AccessibilitySnapshotArtifact,
+  PathObservation,
+  RenderedScreen,
+  ScreenArtifactRef,
+} from "./types";
 
 export interface CaptureContext {
   env: Env;
@@ -56,13 +62,33 @@ export function artifactSlug(pathId: string): string {
 const observationRef = (pathId: string, leaf: string): string =>
   `observations/${pathId}/${artifactSlug(pathId)}-${leaf}`;
 
-export async function captureScreenJson(
+function typedRef<K extends ScreenArtifactRef["kind"]>(
+  entry: EvidenceCatalogEntry,
+  kind: K,
+  artifactRef: string,
+  sourceEvidenceId: string,
+  mediaType: ScreenArtifactRef["mediaType"],
+): ScreenArtifactRef & { kind: K } {
+  return {
+    kind,
+    evidenceId: entry.evidenceId,
+    artifactRef,
+    sourceEvidenceId,
+    contentHash: entry.contentHash,
+    mediaType,
+    size: entry.size,
+  };
+}
+
+/** The typed form used by paired screen epochs. The legacy string-returning API stays below. */
+export async function captureScreenJsonRef(
   ctx: CaptureContext,
   screen: RenderedScreen,
   slot: string,
   stepIndex: number,
-): Promise<string> {
+): Promise<ScreenArtifactRef & { kind: "screen-json" }> {
   const ref = observationRef(ctx.pathId, `step-${String(stepIndex).padStart(3, "0")}-${slot}.json`);
+  const sourceEvidenceId = `EV-${ctx.pathId}-${stepIndex}-${slot}`;
   const entry = await putEvidence(ctx.env, {
     runId: ctx.runId,
     bytes: enc.encode(JSON.stringify(screen)),
@@ -71,19 +97,30 @@ export async function captureScreenJson(
     attemptId: ctx.attemptId,
     routeId: ctx.pathId,
     witnesses: ctx.witnesses,
-    sourceEvidenceId: `EV-${ctx.pathId}-${stepIndex}-${slot}`,
+    sourceEvidenceId,
     artifactRef: ref,
   });
-  return entry.evidenceId;
+  return typedRef(entry, "screen-json", ref, sourceEvidenceId, "application/json");
 }
 
-export async function captureScreenshot(
+export async function captureScreenJson(
+  ctx: CaptureContext,
+  screen: RenderedScreen,
+  slot: string,
+  stepIndex: number,
+): Promise<string> {
+  return (await captureScreenJsonRef(ctx, screen, slot, stepIndex)).evidenceId;
+}
+
+/** The typed form used by paired screen epochs. The legacy string-returning API stays below. */
+export async function captureScreenshotRef(
   ctx: CaptureContext,
   png: Uint8Array,
   slot: string,
   stepIndex: number,
-): Promise<string> {
+): Promise<ScreenArtifactRef & { kind: "screenshot" }> {
   const ref = observationRef(ctx.pathId, `step-${String(stepIndex).padStart(3, "0")}-${slot}.png`);
+  const sourceEvidenceId = `EV-${ctx.pathId}-${stepIndex}-${slot}-png`;
   const entry = await putEvidence(ctx.env, {
     runId: ctx.runId,
     bytes: png,
@@ -92,10 +129,48 @@ export async function captureScreenshot(
     attemptId: ctx.attemptId,
     routeId: ctx.pathId,
     witnesses: ctx.witnesses,
-    sourceEvidenceId: `EV-${ctx.pathId}-${stepIndex}-${slot}-png`,
+    sourceEvidenceId,
     artifactRef: ref,
   });
-  return entry.evidenceId;
+  return typedRef(entry, "screenshot", ref, sourceEvidenceId, "image/png");
+}
+
+export async function captureScreenshot(
+  ctx: CaptureContext,
+  png: Uint8Array,
+  slot: string,
+  stepIndex: number,
+): Promise<string> {
+  return (await captureScreenshotRef(ctx, png, slot, stepIndex)).evidenceId;
+}
+
+/**
+ * Chrome's sanitised accessibility tree plus the pairing metadata for its exact screen epoch.
+ * The payload is already a closed plain-data shape; no ElementHandle can cross this boundary.
+ */
+export async function captureAccessibilitySnapshot(
+  ctx: CaptureContext,
+  payload: AccessibilitySnapshotArtifact,
+  slot: string,
+  stepIndex: number,
+): Promise<ScreenArtifactRef & { kind: "accessibility" }> {
+  const ref = observationRef(
+    ctx.pathId,
+    `step-${String(stepIndex).padStart(3, "0")}-${slot}.accessibility.json`,
+  );
+  const sourceEvidenceId = `EV-${ctx.pathId}-${stepIndex}-${slot}-ax`;
+  const entry = await putEvidence(ctx.env, {
+    runId: ctx.runId,
+    bytes: enc.encode(JSON.stringify(payload)),
+    mediaType: "application/json",
+    type: "state",
+    attemptId: ctx.attemptId,
+    routeId: ctx.pathId,
+    witnesses: ctx.witnesses,
+    sourceEvidenceId,
+    artifactRef: ref,
+  });
+  return typedRef(entry, "accessibility", ref, sourceEvidenceId, "application/json");
 }
 
 /** A page-level failure (load crash, unhandled error). Captured BEFORE any workaround. */

@@ -675,10 +675,10 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 /* ---- honesty banner ----
    Originally: four of the six steps were placeholders and this banner stopped the page's
    description from reading as a claim. Those steps are built now and submission is on, so the
-   banner carries the caveats that ARE still true — reports are non-final until a target build
-   identity is configured, and no real survey has been walked end to end yet. It is not
-   decorative, and it must not be quietened ahead of the facts it describes. The class name is
-   kept as `dev-banner` only because renaming it buys nothing; it is not a dev-only element. */
+   banner carries the caveat that IS still true: finality and publication are computed from the
+   sealed run and must not be promised by the landing page. It is not decorative, and it must not
+   be quietened ahead of the facts it describes. The class name is kept as `dev-banner` only
+   because renaming it buys nothing; it is not a dev-only element. */
 .dev-banner {
   max-width: 760px; margin: 26px 0 0; padding: 16px 18px;
   background: var(--wait-bg); border: 1px solid var(--lane-amb-border);

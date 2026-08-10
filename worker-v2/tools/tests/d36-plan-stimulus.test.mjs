@@ -34,6 +34,7 @@
 
 import { assert, assertEq, suite, test } from "../testkit.mjs";
 import { worker } from "./_helpers.mjs";
+import { hashContract as pipelineHashContract } from "../../../pipeline/planner/lib/contract.mjs";
 
 // ===========================================================================
 // 1. THE BOUNDARY PAYLOAD IS THE PAYLOAD, NOT A DESCRIPTION OF ONE
@@ -481,5 +482,96 @@ suite("D36 — the new limitation codes are emitted at COUNT ZERO", () => {
       assert(typeof codes[key] === "string" && codes[key].length > 0, `limitation code ${key} is missing`);
     }
     assertEq(new Set(Object.values(codes)).size, Object.values(codes).length, "two limitation codes share a string");
+  });
+});
+
+// ===========================================================================
+// 6. CONTRACT IDENTITY INCLUDES THE SEMANTICS, NOT JUST THE ROW IDS
+// ===========================================================================
+
+const semanticHashContract = () => ({
+  obligations: [
+    {
+      id: "OBL-HASH-1",
+      category: "validation",
+      statement: "Q1 requires at least one answer.",
+      stimulus: ["Q1: submit without answering"],
+      expected_observable: "Q1 remains visible and reports a validation message.",
+      detail: { severity: "blocking", browser: { observable: true, mode: "interaction" } },
+    },
+  ],
+  ambiguities: [
+    { id: "AMB-HASH-1", question: "Whether the rule applies after returning with Back.", status: "unresolved" },
+  ],
+  unverifiable_from_browser: [
+    { id: "UNV-HASH-1", statement: "The response is retained for thirty days.", reason: "server-side retention" },
+  ],
+  provenance: { source: "volatile/path/one.json", loadedAt: "2026-08-09T01:02:03.000Z" },
+  contractHash: "sha256:self-reference-is-not-semantic",
+});
+
+suite("Planner contract identity: semantic rows, not ids alone", () => {
+  test("THE PRODUCTION DEFECT: keeping an obligation id but changing its statement changes the hash", async () => {
+    const mod = await worker();
+    const before = semanticHashContract();
+    const after = structuredClone(before);
+    after.obligations[0].statement = "Q1 permits an unanswered submission.";
+
+    assert(
+      mod.plan.hashContract(before) !== mod.plan.hashContract(after),
+      "an obligation payload changed behind the same id but the Worker planner hash did not",
+    );
+  });
+
+  test("ambiguity and unverifiable payloads independently participate in the denominator hash", async () => {
+    const mod = await worker();
+    const base = semanticHashContract();
+    const changedAmbiguity = structuredClone(base);
+    changedAmbiguity.ambiguities[0].status = "resolved";
+    const changedUnverifiable = structuredClone(base);
+    changedUnverifiable.unverifiable_from_browser[0].reason = "requires a database audit";
+
+    const hash = mod.plan.hashContract(base);
+    assert(hash !== mod.plan.hashContract(changedAmbiguity), "an ambiguity payload change was invisible to the hash");
+    assert(hash !== mod.plan.hashContract(changedUnverifiable), "an unverifiable payload change was invisible to the hash");
+  });
+
+  test("object key order, denominator row order and volatile provenance do not change semantic identity", async () => {
+    const mod = await worker();
+    const left = semanticHashContract();
+    left.obligations.push({ id: "OBL-HASH-2", statement: "Q2 is optional.", category: "question" });
+
+    const right = {
+      contractHash: "sha256:a-different-self-hash",
+      provenance: { loadedAt: "2030-01-01T00:00:00.000Z", source: "somewhere/else.json" },
+      unverifiable_from_browser: left.unverifiable_from_browser.map((row) => ({
+        reason: row.reason,
+        statement: row.statement,
+        id: row.id,
+      })),
+      ambiguities: left.ambiguities.map((row) => ({ status: row.status, question: row.question, id: row.id })),
+      obligations: [...left.obligations].reverse().map((row) => {
+        if (row.id === "OBL-HASH-2") return { category: row.category, statement: row.statement, id: row.id };
+        return {
+          stimulus: row.stimulus,
+          statement: row.statement,
+          id: row.id,
+          expected_observable: row.expected_observable,
+          detail: { browser: { mode: "interaction", observable: true }, severity: "blocking" },
+          category: row.category,
+        };
+      }),
+    };
+
+    assertEq(mod.plan.hashContract(left), mod.plan.hashContract(right));
+  });
+
+  test("the pipeline and Worker ports produce the same semantic hash", async () => {
+    const mod = await worker();
+    const contract = semanticHashContract();
+    assertEq(mod.plan.hashContract(contract), pipelineHashContract(contract));
+
+    contract.obligations[0].expected_observable = "Q1 advances without a validation message.";
+    assertEq(mod.plan.hashContract(contract), pipelineHashContract(contract));
   });
 });

@@ -1,0 +1,237 @@
+[
+  {
+    "file": "21-gridspan-header-vmerge.docx",
+    "hazard": "w:gridSpan in the HEADER row of a 5-column grid, plus a w:vMerge row group. The frozen corpus's only gridSpan is on a trailing full-width row, so the case that shifts every column label is untested there.",
+    "truth": "cell start coordinates reflect gridSpan/vMerge structure exactly; WordprocessingML supplies no semantic row/column-header relation, so none is invented.",
+    "probes": [
+      {
+        "kind": "present",
+        "text": "(cell r2c3) aware-no",
+        "why": "the spanned first row advances the answer to exact grid column 3 without inventing a semantic header",
+        "severity": "meaning"
+      },
+      {
+        "kind": "present",
+        "text": "(cell r2c4) weekly",
+        "why": "the following answer is grid column 4, not physical cell-array position 3",
+        "severity": "meaning"
+      },
+      {
+        "kind": "present",
+        "text": "(cell r2c5) 42 GBP",
+        "why": "the last grid column is retained rather than dropped",
+        "severity": "meaning"
+      },
+      {
+        "kind": "absent",
+        "text": "col=\"Usage\"",
+        "why": "WordprocessingML has no th/scope equivalent; a confident semantic label would be an unsupported fact",
+        "severity": "meaning"
+      },
+      {
+        "kind": "absent",
+        "text": "row=\"METRO\"",
+        "why": "adjacency to a vertically merged cell does not establish semantic row-header scope",
+        "severity": "meaning"
+      },
+      {
+        "kind": "present",
+        "text": "(cell r2c1) METRO",
+        "why": "the explicit restart-cell text remains addressable at its own coordinate",
+        "severity": "requirement"
+      },
+      {
+        "kind": "present",
+        "text": "(cell r3c2) Manchester",
+        "why": "the continuation row's explicit cell text remains at its structural coordinate",
+        "severity": "requirement"
+      }
+    ]
+  },
+  {
+    "file": "22-gridbefore-ragged-row.docx",
+    "hazard": "w:gridBefore — a row that starts part-way across the grid. Absent from the frozen corpus entirely; the one table case where docling beats both mammoth and the deployed parser.",
+    "truth": "row 3 skips grid column 1, so its cells begin at grid columns 2 and 3; no semantic header is inferred.",
+    "probes": [
+      {
+        "kind": "present",
+        "text": "(cell r3c2) no",
+        "why": "the row declares one skipped column, so its first cell is grid column 2",
+        "severity": "meaning"
+      },
+      {
+        "kind": "present",
+        "text": "(cell r3c3) monthly",
+        "why": "and its second is grid column 3",
+        "severity": "meaning"
+      },
+      {
+        "kind": "absent",
+        "text": "(cell r3c1) no",
+        "why": "reading the row as if it began at column 1 files an awareness answer under the brand-name column",
+        "severity": "meaning"
+      },
+      {
+        "kind": "absent",
+        "text": "row=\"no\"",
+        "why": "the same shift on the next cell — mammoth gets this one wrong too",
+        "severity": "meaning"
+      }
+    ]
+  },
+  {
+    "file": "23-ruby-furigana.docx",
+    "hazard": "w:ruby — the phonetic reading (w:rt) and the word (w:rubyBase) are BOTH w:t runs, so a flat run scan interleaves them.",
+    "truth": "Q17. 電気の契約について。",
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q17. 電気の契約について。",
+        "why": "the sentence a reader sees, byte-exact",
+        "severity": "requirement"
+      },
+      {
+        "kind": "present",
+        "text": "ruby-reading; base=\"電気\"",
+        "why": "the visible phonetic annotation is retained as a separate, non-inline source block",
+        "severity": "meaning"
+      },
+      {
+        "kind": "present",
+        "text": "ruby-reading; base=\"契約\"",
+        "why": "the second reading is independently addressable without corrupting the base sentence",
+        "severity": "meaning"
+      }
+    ]
+  },
+  {
+    "file": "24-dropdown-value-shapes.docx",
+    "hazard": "w:listItem shapes the frozen corpus hides: Word's DEFAULT w:value == w:displayText, an item with NO w:displayText, and numeric values (the shape that makes a value-as-code rule look correct).",
+    "truth": "the options are exactly the displayed strings, and the document prints no code for any of them.",
+    "probes": [
+      {
+        "kind": "present",
+        "text": "(list) Yes, definitely",
+        "why": "one (list) line per listItem is the shape extract/expand.ts#parseDocumentedOptions reads correctly; a single joined blob is not",
+        "severity": "requirement"
+      },
+      {
+        "kind": "present",
+        "text": "(list) Prefer not to say",
+        "why": "w:displayText is optional; an item without one displays its w:value, and dropping such an item is a silent loss of a real answer option",
+        "severity": "requirement"
+      },
+      {
+        "kind": "present",
+        "text": "(list) Under 20 GBP",
+        "why": "the label is the display text, never the value",
+        "severity": "requirement"
+      },
+      {
+        "kind": "absent",
+        "text": "Yes, definitely) Yes, definitely",
+        "why": "what a value-as-code rule emits on Word's DEFAULT document. CODED_OPTION would not match it, so the doubled string seals AS THE LABEL — a label the document never printed, hunted for on a live screen where it can never appear",
+        "severity": "meaning"
+      },
+      {
+        "kind": "absent",
+        "text": "1) Under 20 GBP",
+        "why": "w:value is a stored value, never a rendered one. Minting it as the answer CODE is the same defect this parser already refuses for Word auto-numbering, where it prints [#] instead",
+        "severity": "meaning"
+      },
+      {
+        "kind": "present",
+        "text": "Q20. Would you recommend it?",
+        "why": "the host paragraph before the inline control is untouched — the options are ADDED, never substituted",
+        "severity": "requirement"
+      },
+      {
+        "kind": "present",
+        "text": "SINGLE CODE.",
+        "why": "and the text after it, the classic truncation victim",
+        "severity": "requirement"
+      }
+    ]
+  },
+  {
+    "file": "25-dropdown-block-level.docx",
+    "hazard": "a dropdown content control at BLOCK level: its w:sdtPr sits outside every w:p, where the per-paragraph option scan cannot reach it.",
+    "truth": "the control's own content is extracted; its OPTIONS are not, and the parser must say so in coverage.problems rather than go quiet. The named coverage problem is asserted in worker-v2/tools/tests/docx-robustness.test.mjs, which can see the coverage object; a text probe cannot.",
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q30. Which zone are you in?",
+        "why": "the paragraph before a block-level control must survive it",
+        "severity": "requirement"
+      },
+      {
+        "kind": "present",
+        "text": "Choose an item.",
+        "why": "the control's own sdtContent is a normal paragraph and is read normally",
+        "severity": "requirement"
+      }
+    ]
+  },
+  {
+    "file": "26-tblheader-not-row-0.docx",
+    "hazard": "a non-leading w:tblHeader flag is invalid repeat-on-page metadata, not a semantic header declaration. Treating it as th/scope invents relations WordprocessingML never encoded.",
+    "truth": "all cells retain structural coordinates; rowHeader/colHeader stay null and the late repeat flag is reported.",
+    "probes": [
+      {
+        "kind": "absent",
+        "text": "col=\"Aware\") 62%",
+        "why": "repeat-on-page does not establish semantic scope",
+        "severity": "meaning"
+      },
+      {
+        "kind": "absent",
+        "text": "col=\"Use\") 41%",
+        "why": "the next cell likewise carries no invented semantic label",
+        "severity": "meaning"
+      },
+      {
+        "kind": "absent",
+        "text": "col=\"Table 4",
+        "why": "guess row 0 and every answer in the table is labelled with the TABLE'S TITLE as its column header — a fact about the cell that is not true of it",
+        "severity": "meaning"
+      },
+      {
+        "kind": "present",
+        "text": "(cell r1c1) Table 4 — Awareness by region",
+        "why": "a full-width title row belongs to no single column and carries no row label",
+        "severity": "requirement"
+      }
+    ]
+  },
+  {
+    "file": "27-gridspan-bomb.docx",
+    "hazard": "886 bytes declaring w:gridSpan w:val=\"99999999\". Column headers are mapped ONE GRID COLUMN AT A TIME, so an unbounded span is a CPU/memory kill inside a Worker from a document small enough to arrive by email.",
+    "truth": "the document is read, and no coordinate runs away.",
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q40. Ordinary question above a hostile table.",
+        "why": "a hostile table must not take the rest of the document down with it",
+        "severity": "requirement"
+      },
+      {
+        "kind": "present",
+        "text": "(cell r1c1) A",
+        "why": "the spanning cell is still read",
+        "severity": "requirement"
+      },
+      {
+        "kind": "noregex",
+        "text": "c[0-9]{5,}",
+        "why": "the span is clamped (MAX_GRID_COLUMNS), so no cell claims a five-digit grid column. Same class of guard as MAX_TAG_SCANS, and the same reason: an 18.5-second scan of a 98 KB upload is a kill, not a slow parse",
+        "severity": "meaning"
+      },
+      {
+        "kind": "present",
+        "text": "(cell r2c1) x",
+        "why": "the body row survives at its exact start coordinate without an invented header relation",
+        "severity": "requirement"
+      }
+    ]
+  }
+]

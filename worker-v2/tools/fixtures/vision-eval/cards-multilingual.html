@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="hi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Public visual fixture: custom multilingual cards</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 840px; height: 640px; margin: 0; overflow: hidden; }
+      body { background: #fffaf2; color: #201a17; font-family: Arial, "Noto Sans Devanagari", sans-serif; }
+      h1 { position: absolute; left: 36px; top: 22px; margin: 0; font-size: 27px; line-height: 34px; }
+      .instruction { position: absolute; left: 36px; top: 62px; margin: 0; font-size: 15px; line-height: 20px; }
+      .grid { position: absolute; left: 36px; top: 104px; display: grid; grid-template-columns: 368px 368px; gap: 32px; }
+      .card { position: relative; width: 368px; height: 350px; border: 2px solid #5f4b42; border-radius: 18px; background: white; padding: 20px; }
+      .prompt { margin: 0 0 18px; font-size: 18px; font-weight: 700; line-height: 25px; }
+      .choice { position: relative; display: flex; align-items: center; width: 328px; height: 46px; margin: 0 0 12px; padding-left: 48px; border: 1px solid #b9a89e; border-radius: 12px; font-size: 16px; }
+      .mark { position: absolute; left: 14px; width: 21px; height: 21px; border: 2px solid #6f5b51; background: white; }
+      .mark.round { border-radius: 50%; }
+      [aria-checked="true"] .mark, [data-picked="yes"] .mark { box-shadow: inset 0 0 0 5px white; background: #8a3ffc; border-color: #8a3ffc; }
+      [aria-disabled="true"] { color: #81756f; background: #eee9e6; }
+      .caption { position: absolute; left: 20px; top: 244px; margin: 0; font-size: 14px; line-height: 20px; }
+      .damage { position: absolute; left: 20px; top: 274px; width: 132px; height: 44px; border: 1px solid #3b302b; background: repeating-conic-gradient(#271f1c 0 9deg, #f5ece6 9deg 19deg); filter: blur(1.4px); }
+      nav { position: absolute; left: 36px; right: 36px; bottom: 34px; display: flex; justify-content: space-between; }
+      .nav { display: inline-flex; align-items: center; justify-content: center; width: 116px; height: 46px; border: 2px solid #5f4b42; border-radius: 23px; background: white; color: #201a17; font-size: 16px; text-decoration: none; }
+      .nav.next { width: 132px; background: #201a17; color: white; }
+    </style>
+  </head>
+  <body>
+    <h1 data-eval-id="title">यात्रा योजना</h1>
+    <p class="instruction" data-eval-id="instruction">Choose every amenity you need.</p>
+    <div class="grid">
+      <section class="card" aria-labelledby="amenity-prompt">
+        <h2 class="prompt" id="amenity-prompt" data-eval-id="question-amenity">कौन-सी सुविधाएँ चाहिए?</h2>
+        <div class="choice" role="checkbox" aria-checked="true" data-eval-id="wifi"><span class="mark"></span>वाई-फ़ाई</div>
+        <div class="choice" role="checkbox" aria-checked="false" data-eval-id="quiet"><span class="mark"></span>शांत कमरा</div>
+        <div class="choice" role="checkbox" aria-checked="false" aria-disabled="true" data-eval-id="breakfast"><span class="mark"></span>नाश्ता</div>
+      </section>
+      <section class="card">
+        <div class="prompt" data-eval-id="question-arrival">Arrival window</div>
+        <div class="choice" data-picked="no" data-eval-id="before"><span class="mark round"></span>Before 14:00</div>
+        <div class="choice" data-picked="yes" data-eval-id="middle"><span class="mark round"></span>14:00–18:00</div>
+        <div class="choice" data-picked="no" data-eval-id="after"><span class="mark round"></span>After 18:00</div>
+        <p class="caption" data-eval-id="damage-caption">Damaged code:</p>
+        <div class="damage" data-eval-id="unreadable-code" aria-label="Intentionally unreadable visual region"></div>
+      </section>
+    </div>
+    <nav aria-label="Navigation">
+      <a class="nav" role="button" href="#previous" data-eval-id="previous">पिछला</a>
+      <button class="nav next" type="button" data-eval-id="continue">Continue</button>
+    </nav>
+  </body>
+</html>

@@ -26,7 +26,8 @@ import { loadSessions } from '../lib/sessions.mjs';
 import { ambiguityToken, bindObligations, COMPILED_FROM, assertProjectionShape } from '../lib/contract-binding.mjs';
 import { CONSUMED_FIELDS } from '../lib/ambiguity.mjs';
 import { certify } from '../lib/certification.mjs';
-import { loadEvidenceAuthority, evidenceManifestRoot } from '../lib/authority.mjs';
+import { loadEvidenceAuthority, evidenceManifestRoot, bindChecklist, sha256Of } from '../lib/authority.mjs';
+import { contractItemFromRequirement } from '../../../worker-v2/shared/v2-record.mjs';
 import { EvidenceStore, EvidenceIntegrityError } from '../lib/evidence-store.mjs';
 import { PREDICATES, runPredicate } from '../lib/predicates.mjs';
 import { OUTCOME, REASON, VERDICT, COVERAGE, DISPOSITION, PROOF_KIND, EVIDENCE_CLASS, CERT_FACET } from '../lib/vocab.mjs';
@@ -143,6 +144,43 @@ test('D1: a checklist that does not reproduce the signed contract cannot bind', 
   const auth = loadEvidenceAuthority({ runDir: V2, checklist, keyRegistryPath: REGISTRY });
   assert.equal(auth.verified, false);
   assert.ok(auth.findings.some((f) => f.code === 'OBLIGATION_TEXT_DRIFT'));
+});
+
+test('D1: a stitched multi-span quote binds by its own digest, not by pretending it is one atom', () => {
+  const first = 'Respondents selecting code 2';
+  const second = 'must continue to the follow-up screen.';
+  const stitched = `${first} ${second}`;
+  const requirement = {
+    requirementLineageId: 'req_multispan_public_fixture',
+    requirementVersionId: 'reqv_multispan_public_fixture',
+    semanticFingerprint: 'sf_multispan_public_fixture',
+    scope: 'question:Q1',
+    quantifier: 'specific',
+    selector: null,
+    exceptions: [],
+    facet: 'routing',
+    assertionStatus: 'entailed',
+    testability: 'browser-observable',
+    sourceAtoms: [
+      { blockId: 'b1', kind: 'paragraph', coords: null, role: 'routing', atomTextHash: sha256Of(Buffer.from(first)) },
+      { blockId: 'b2', kind: 'paragraph', coords: null, role: 'routing', atomTextHash: sha256Of(Buffer.from(second)) },
+    ],
+    normativeStatement: 'Code 2 routes to the follow-up screen.',
+    displayQuote: stitched,
+    displayQuoteHash: sha256Of(Buffer.from(stitched)),
+    retiredAt: null,
+  };
+  const contract = { items: [contractItemFromRequirement(requirement)] };
+  const checklist = {
+    obligations: [{
+      id: requirement.requirementLineageId,
+      statement: requirement.normativeStatement,
+      doc_quote: stitched,
+    }],
+  };
+  assert.deepEqual(bindChecklist(checklist, contract).findings, []);
+  checklist.obligations[0].doc_quote = `${first} ${second} changed`;
+  assert.ok(bindChecklist(checklist, contract).findings.some((finding) => finding.code === 'OBLIGATION_QUOTE_DRIFT'));
 });
 
 test('D1: without a pinned key registry nothing is publishable', () => {

@@ -17,6 +17,7 @@
  */
 
 import type { GateOutcome } from "../workflow/gates";
+import type { DocumentCoverage } from "../extract/types";
 
 // ---------------------------------------------------------------------------
 // Run envelope — v2's answer to prod's RunEnvelope (src/store.ts)
@@ -24,6 +25,19 @@ import type { GateOutcome } from "../workflow/gates";
 
 export const ENVELOPE_KIND = "survey-qa-v2-envelope" as const;
 export const ENVELOPE_SCHEMA = "v2-run-envelope/1.0.0" as const;
+
+/**
+ * The denominator source is explicit and durable. It is never inferred from which files
+ * happen to exist: that would let recovery restart the same run through a different reader.
+ * Optional only for envelopes written before this discriminator existed; those mean extract.
+ */
+export type ContractSourceInput =
+  | { mode: "extract" }
+  | {
+      mode: "human-authored";
+      humanRequirementsKey: string;
+      humanRequirementsSha256: string;
+    };
 
 /**
  * COLLISION NOTE. Prod's envelope is
@@ -50,6 +64,7 @@ export interface RunEnvelopeV2 {
     targetBuildId: string | null;
     locale: string;
     viewports: string[];
+    contractSource?: ContractSourceInput;
   };
   profile: "standard" | "deep";
   /** Bound at seal time; a run may never regenerate its own denominator. */
@@ -87,7 +102,7 @@ export const constrainsMatching = (s: AssertionStatus): boolean =>
 export interface SourceAtom {
   blockId: string;
   kind: "paragraph" | "table-cell" | "footnote" | "cross-reference" | "heading" | "list-item";
-  /** Table coordinates with inherited headers, when kind === "table-cell". */
+  /** Structural table start coordinates, when kind === "table-cell". */
   coords: { row: number; col: number; rowHeader: string | null; colHeader: string | null } | null;
   role: string;
   atomTextHash: string;
@@ -133,6 +148,8 @@ export interface ScopedRequirement {
    * `atomTextHash`, and what the compiler searches captures for.
    */
   displayQuote: string;
+  /** Digest of the complete stitched display quote; distinct from each source atom digest. */
+  displayQuoteHash?: string;
   retiredAt: string | null;
 }
 
@@ -181,12 +198,74 @@ export interface ExpectedDestinationPayload {
   terminal: "complete" | "screenout" | "quota" | null;
 }
 
+/**
+ * ONE ANSWER OPTION THE DOCUMENT STATES, READ OUT OF THE DOCUMENT'S OWN QUOTE.
+ *
+ * `label` is the respondent-visible text and is the only field an accusation may rest on.
+ * `code` is the document's answer code where the quote carried one — a MATCH KEY and never
+ * an accusation in its own right, because a site is free to number its inputs however it
+ * likes (`value="0"`-based, a GUID, a position). See `OptionSetPayload`.
+ */
+export interface DocumentedOption {
+  code: string | null;
+  label: string;
+}
+
+/**
+ * WHAT THE DOCUMENT SAYS A QUESTION MUST OFFER — a MEMBERSHIP claim, not a set.
+ *
+ * ==================== WHY MEMBERSHIP AND NOT A SET ====================
+ *
+ * Extraction states option lists ONE ROW PER OPTION far more often than it states them as a
+ * set — measured on three real sealed revisions: `"Q3 offers 'NURTEC' as an answer option."`,
+ * `"S3 includes the response option 'Advertising or public relations' with code 3."`,
+ * `"Q2 includes option 1: 'Yes, a daily oral preventive'."`. A row like that entails exactly
+ * one thing: THIS option must be offered. It does NOT entail that the question offers no
+ * others, and a payload that quietly upgraded it to a set would accuse every survey that
+ * carries an "Other" or a "Prefer not to say" the document lists elsewhere.
+ *
+ * So `asserted` is what this requirement CLAIMS, `siblings` is context, and `exhaustive` is
+ * the one flag that licenses an absence claim about the SITE'S extra options — set only when
+ * the requirement's own words close the set (`"exactly the following five … and no others"`)
+ * AND the document quote yields that many options.
+ *
+ * ==================== WHERE THE BYTES COME FROM ====================
+ *
+ * `label` and `code` are parsed from the requirement's `displayQuote` — the VERBATIM span of
+ * the source document — and then required to be corroborated by the model's own
+ * `normativeStatement`. A model that paraphrased an option ("25-34" for "25 to 34") fails the
+ * corroboration and the row refuses. That is what keeps a model out of the verdict path here:
+ * the model chose WHICH SPAN to point at; the document supplied the bytes that are compared.
+ */
+export interface OptionSetPayload {
+  /** The option(s) THIS requirement says the question must offer. Never empty when sealed. */
+  asserted: DocumentedOption[];
+  /**
+   * Options the document states for the SAME question in OTHER requirements. CORROBORATION
+   * ONLY — never an accusation, and never an exhaustiveness claim. Its single job is to let a
+   * predicate establish that the site's answer CODES mean the same thing the document's do
+   * before any comparison keyed on a code is allowed to fire.
+   */
+  siblings: DocumentedOption[];
+  /**
+   * The requirement CLOSES the set in its own words and the quote yields the count it states.
+   * Only an exhaustive payload can support "the site offers an option the document does not".
+   */
+  exhaustive: boolean;
+}
+
 export interface FacetCase {
   kind: "route" | "boundary" | "configuration" | "rendered-state" | "copy" | "option-set";
   routeAnswer: RouteAnswerPayload | null;
   boundaryInput: BoundaryInputPayload | null;
   configuration: CaseConfigurationPayload | null;
   expectedDestination: ExpectedDestinationPayload | null;
+  /**
+   * REQUIRED-NULLABLE like the four above, and for the reason stated there: an OPTIONAL field
+   * lets a producer mint a case that looks decidable by omitting it. `null` on every kind but
+   * `option-set`, and on an `option-set` case the expander could not read.
+   */
+  optionSet: OptionSetPayload | null;
 }
 
 /**
@@ -256,6 +335,41 @@ export const EXPECTATION_GAP = Object.freeze({
    * no predicate for one, so the honest output is a counted gap.
    */
   SELECTION_BOUND_IS_NOT_A_TEXT_INPUT: "SELECTION_BOUND_IS_NOT_A_TEXT_INPUT",
+  /**
+   * AN OPTION LIST THE DOCUMENT DOES NOT ATTACH TO A QUESTION. Measured on the real sealed
+   * revisions: a fifth of option rows sit under `scope: "survey"` and describe DIFFERENT
+   * questions while all claiming code 1 — "18 to 24", "Every day", "Male". Binding one of
+   * those to a question by document PROXIMITY is a one-in-three chance of telling a driver
+   * that "Male" answers a coffee-frequency question, and attaching it to the wrong question
+   * in the VERIFIER accuses a survey that is behaving perfectly. There is no arm that guesses.
+   */
+  OPTION_SET_NOT_BOUND_TO_A_QUESTION: "OPTION_SET_NOT_BOUND_TO_A_QUESTION",
+  /**
+   * The requirement is an option rule whose `displayQuote` yields no option line this expander
+   * can read — a scale header (`"[SCALE — COLUMNS, IN THIS ORDER:]"`), a rating range
+   * (`"[RATING SCALE 0–10]"`), a programmer note about ORDER. The labels exist only inside the
+   * model's prose there, and prose is not the document.
+   */
+  OPTION_SET_NOT_READ_FROM_THE_DOCUMENT_QUOTE: "OPTION_SET_NOT_READ_FROM_THE_DOCUMENT_QUOTE",
+  /**
+   * The cited source block is visible document material, but its parser-origin role says it
+   * is not an answer-list member: currently an open combo-box suggestion or a ruby phonetic
+   * reading. Parsing its short text as an option could mint a missing/extra-option accusation
+   * against the wrong kind of UI, so the case remains counted and explicitly untyped.
+   */
+  OPTION_SET_SOURCE_NOT_AN_ANSWER_LIST: "OPTION_SET_SOURCE_NOT_AN_ANSWER_LIST",
+  /**
+   * Every option line the quote yielded was contradicted by the requirement's own statement:
+   * the statement does not contain the label the quote carries. One of the two readings of
+   * this requirement is wrong and nothing here can say which, so no expectation is minted.
+   */
+  OPTION_LABEL_NOT_CORROBORATED_BY_THE_STATEMENT: "OPTION_LABEL_NOT_CORROBORATED_BY_THE_STATEMENT",
+  /**
+   * The requirement is scoped to one question and its statement names a DIFFERENT question the
+   * document knows. Two readings of which question the options belong to, and an option set
+   * compared against the wrong screen is the failure this whole module is arranged to avoid.
+   */
+  OPTION_SET_QUESTION_AMBIGUOUS: "OPTION_SET_QUESTION_AMBIGUOUS",
 } as const);
 
 export type ExpectationGapCode = (typeof EXPECTATION_GAP)[keyof typeof EXPECTATION_GAP];
@@ -300,8 +414,45 @@ export interface FacetInstance {
 
 export const CONTRACT_REVISION_KIND = "survey-qa-v2-contract-revision" as const;
 
+export interface HumanContractApproval {
+  kind: "human-authored";
+  gates: {
+    inputSchemaValid: GateOutcome;
+    documentHashBound: GateOutcome;
+    allSourceSpansBound: GateOutcome;
+    identitiesUnique: GateOutcome;
+    allScopedExpansionsPreviewed: GateOutcome;
+  };
+}
+
+export type RequirementsProvenance =
+  | {
+      method: "dual-model-extraction";
+      expanderVersion: string;
+    }
+  | {
+      method: "human-authored";
+      authoringSchema: "v2-human-requirements/1.0.0";
+      normalizedInputHash: string;
+      validatorVersion: string;
+      expanderVersion: string;
+      authoredBy: string;
+      authoredAt: string;
+      /** The file supplies this label; the current seam does not bind it to an Access principal. */
+      authorshipAssurance: "self-asserted";
+      /** Honest limit: this path validates submitted rows; it does not rediscover omissions. */
+      coverageClaim: "authored-requirements-only";
+      /** Computed parser coverage, including unread and deliberately skipped archive parts. */
+      documentCoverage: DocumentCoverage;
+      /** Named, sealed limits that the final report must surface rather than silently omit. */
+      limitations: string[];
+      /** Exact-span provenance does not prove that the author's paraphrase entails the quote. */
+      transcriptionAssumption:
+        "authored-statements-and-expansion-hints-are-trusted-transcriptions-not-mechanically-proven-entailments";
+    };
+
 export interface ContractRevision {
-  schemaVersion: "v2-contract-revision/1.0.0";
+  schemaVersion: "v2-contract-revision/1.0.0" | "v2-contract-revision/1.1.0";
   kind: typeof CONTRACT_REVISION_KIND;
   /** IS the sha-256 of the canonical bytes. Immutable by construction. */
   contractRevisionId: string;
@@ -312,12 +463,23 @@ export interface ContractRevision {
   facetInstances: FacetInstance[];
   /** Non-denominator (merged-contract §5). */
   contractSupplements: unknown[];
+  /** Present on 1.1 revisions; legacy 1.0 revisions retain their historical identity. */
+  requirementsProvenance?: RequirementsProvenance;
+  /** Human-authored revisions use method-specific gates instead of pretending two model passes ran. */
+  approval?: HumanContractApproval;
   extraction: {
-    passAHash: string;
-    passBHash: string;
+    method?: "dual-model-extraction" | "human-authored";
+    /**
+     * Content hash of every extraction input/policy that made this model denominator reusable.
+     * Absent on historical 1.0 revisions; null on human-authored revisions, which never use the
+     * model-extraction reuse index.
+     */
+    reuseInputsHash?: string | null;
+    passAHash: string | null;
+    passBHash: string | null;
     sourceLedgerHash: string;
-    diffHash: string;
-    reviewMode: "always" | "high-risk-only";
+    diffHash: string | null;
+    reviewMode: "always" | "high-risk-only" | "human-authored";
     reviewedBy: string | null;
     reviewedAt: string | null;
     /**
@@ -408,7 +570,9 @@ export type RunBlockerKind =
   /** No execution ledger, so nothing above can be said either way. */
   | "EXECUTION_LEDGER_UNAVAILABLE"
   /** A failing case cites an observation this record does not carry. */
-  | "UNRESOLVED_FAIL_OBSERVATION";
+  | "UNRESOLVED_FAIL_OBSERVATION"
+  /** The plan requests a probe action for which the current executor can emit no receipt. */
+  | "PLANNED_PROBE_NOT_EXECUTED";
 
 export interface RunBlocker {
   blockerId: string;
@@ -424,6 +588,79 @@ export interface RunBlocker {
   /** Ids that must exist in this record's own `evidence[]` catalogue. */
   evidenceIds: string[];
   observationRefs: string[];
+  /** Count and exact identities copied from the planner's capability limitation. */
+  count?: number | null;
+  pathIds?: string[];
+  /** The subset whose absence prevents the test axis closing. */
+  blockingPathIds?: string[];
+  derivedBy: string;
+}
+
+/**
+ * A GENUINE DOCUMENT AMBIGUITY, CARRIED IN THE RECORD RATHER THAN DROPPED.
+ *
+ * CLAUDE.md: "Genuine document ambiguity is SURFACED AS A QUESTION, never guessed." The
+ * extraction finds these, the seal keeps them (as `assertionStatus` on the requirement, and
+ * as readings in the run's own checklist), and the record used to declare `ambiguities: []`
+ * unconditionally — the same disconnected wire as `claims`, one field over. A reader of that
+ * record sees a document nobody had a question about.
+ *
+ * `readings` is the pair the extraction wrote, VERBATIM, or an EMPTY array with
+ * `readingsAvailable: false`. The two are different facts: an ambiguity sealed as a token
+ * carries no recoverable readings (see `checklist-projection.mjs`), and reporting that as
+ * "an ambiguity with nothing to say" would be the quietly-shorter-list failure again.
+ */
+export interface AmbiguityRecord {
+  ambiguityId: string;
+  /**
+   * `ambiguous` / `disputed` — the SEALED requirement's own assertion status.
+   * `extraction-declared` — an ambiguity the extraction wrote down that binds to no sealed
+   * requirement by the one exact rule below. It is reported UNBOUND rather than attached to
+   * a requirement by guesswork.
+   */
+  status: Extract<AssertionStatus, "ambiguous" | "disputed"> | "extraction-declared";
+  /**
+   * null ONLY for `extraction-declared`. THE BINDING RULE, STATED (CLAUDE.md: no silent
+   * reliance on a convention): a checklist ambiguity binds to a requirement when its
+   * `doc_quote` is EXACTLY the requirement's `displayQuote` after trimming. Nothing fuzzy,
+   * nothing positional. When it does not match, the ambiguity is emitted unbound and says so.
+   */
+  normativeRef: { requirementLineageId: string; requirementVersionId: string } | null;
+  /** The requirement's own sentence, verbatim. "" when unbound. */
+  statement: string;
+  /** The document's own copy, verbatim. */
+  documentQuote: string;
+  /** The competing readings, verbatim from the extraction, or []. */
+  readings: string[];
+  /** FALSE when only a sealed token survives, so [] cannot read as "no readings exist". */
+  readingsAvailable: boolean;
+  /** The extraction's own "why", verbatim. null when only the seal survives. */
+  whyAmbiguous: string | null;
+  /** What the extraction said this touches, verbatim. */
+  affects: string[];
+  derivedBy: string;
+}
+
+/**
+ * A CASE THE SYSTEM MATERIALIZED AND HAS NO WAY TO CHECK.
+ *
+ * `FacetInstance.expectationGap` is REQUIRED on every sealed case and states, in a closed
+ * code, why no model-free predicate can decide it. Every one of them is a limit of THIS
+ * SYSTEM'S taxonomy, not a finding about the customer's survey — which is precisely why it
+ * belongs in a counted list rather than nowhere: a run reporting 227 requirements and no
+ * taxonomy gaps claims a coverage it does not have.
+ *
+ * It is NOT a `DefectClaim`. A claim points at an observation; a gap is the absence of one.
+ */
+export interface TaxonomyGapRecord {
+  gapId: string;
+  /** The closed `EXPECTATION_GAP` code the expander sealed. */
+  code: ExpectationGapCode | string;
+  /** The expander's own words, verbatim, including the unbindable text it quoted. */
+  detail: string;
+  facetInstanceId: string;
+  caseKind: string;
+  normativeRef: { requirementLineageId: string; requirementVersionId: string };
   derivedBy: string;
 }
 
@@ -496,11 +733,25 @@ export interface AttemptRecordV2 {
   retryReason: string | null;
   /** Execution cases this attempt was routed to exercise. */
   targetCaseIds: string[];
-  startedAt: string;
+  /**
+   * NULLABLE, because the execution ledger records when a walk ENDED (`at`) and how long it
+   * ran (`wallMs`); the start is the subtraction of the two and is unavailable when either is.
+   * A fabricated start time would make a duration in the report unfalsifiable.
+   */
+  startedAt: string | null;
   endedAt: string | null;
   ok: boolean;
   stopReason: string | null;
+  /** Catalogue entries stamped with this walk's route AND attempt. */
   evidenceIds: string[];
+  /**
+   * TRUE when another walk row carries the same path AND attempt — the executor retries a
+   * crashed path under the SAME attempt id, and the catalogue has no walk-level key, so the
+   * ids above cannot be split between the two rows. Stated rather than silently over-counted.
+   */
+  evidenceSharedWithSiblingWalks: boolean;
+  /** The projection that derived this row. Never a model, and never a caller. */
+  derivedBy: string;
 }
 
 /** Per-call model telemetry. DEBRIEF fix #6: zeroed token counts make cost unfalsifiable. */
@@ -524,10 +775,110 @@ export interface ToolVersionRecord {
   note?: string | null;
 }
 
+/**
+ * WHERE THIS REVISION SITS IN THE RUN'S CHAIN OF SIGNED ACCOUNTS.
+ *
+ * ================== WHY A RUN NEEDS MORE THAN ONE SIGNED RECORD ==================
+ *
+ * The record is the judge's INPUT: `mintJudgement` reads it, re-derives every verdict from
+ * the artifact bytes, and binds its JudgementRecord to this record's `attestation.payloadHash`.
+ * A record that contained the judgement's own outcome would therefore have to contain a hash
+ * of itself. So revision 1 MUST be signed before the judgement runs, and no reordering of
+ * stages can change that.
+ *
+ * What was wrong is not the order — it is that NOTHING WAS SIGNED AFTERWARDS. Run 4 was
+ * signed at 02:28:03; `mint-judgement` then failed with EVIDENCE_NAME_COLLISION at 02:29:57,
+ * and that failure existed only in stdout. A customer verifying the signature got
+ * cryptographic confidence in a document that could not say the judgement never happened.
+ *
+ * SUPERSEDE, NEVER MUTATE. Revision 1's bytes are preserved, unchanged and still
+ * signature-valid, at their own content-addressed key; the judgement's binding to them still
+ * resolves. Revision 2 is a NEW signed document that names revision 1's payload hash and adds
+ * what only closure could know. Nothing is edited in place, ever.
+ */
+export interface RecordRevisionRef {
+  /** The superseded revision's `attestation.payloadHash` (or its canonical payload hash when unsigned). */
+  recordHash: string;
+  revision: number;
+  signedAt: string | null;
+  /** Why a further revision exists at all — a sentence, not a code. */
+  reason: string;
+}
+
+export interface RecordRevisionInfo {
+  /** 1 for the record the judge binds to; 2+ for each superseding revision. */
+  revision: number;
+  /** null on revision 1. */
+  supersedes: RecordRevisionRef | null;
+  /**
+   * THE PAYLOAD HASH OF REVISION 1 — the one a JudgementRecord binds to — carried forward
+   * through every later revision. `null` on revision 1 itself, which cannot contain its own
+   * hash without changing it.
+   *
+   * `store/judgement.ts#checkJudgementBinding` recomputes the payload hash of whatever record is
+   * currently stored and requires the judgement to name it. Without this field, superseding
+   * would silently demote every re-derived column to `unusable`. `supersedes.recordHash` alone
+   * is insufficient: it names only the immediately preceding revision, so a third revision would
+   * orphan a judgement bound to the first.
+   */
+  originalRecordHash: string | null;
+}
+
+/**
+ * WHAT HAPPENED AFTER REVISION 1 WAS SIGNED — the only thing a superseding revision adds.
+ *
+ * `judgement.boundRecordHash` is the hash the judge actually bound to, so a reader can check
+ * that the judgement in hand belongs to the prior revision of THIS chain rather than to some
+ * other document.
+ */
+export interface RunClosure {
+  judgement: {
+    minted: boolean;
+    /** The judge's own status word when it ran; null when it did not. */
+    status: string | null;
+    /** The closed reason code when it did NOT run, e.g. `EVIDENCE_NAME_COLLISION`. */
+    reasonCode: string | null;
+    detail: string | null;
+    boundRecordHash: string | null;
+  };
+  testAxis: {
+    closed: boolean;
+    /** The checkpoint's `completion.test` after the gate ran. */
+    completion: string;
+    reasonCode: string | null;
+    /** Verbatim sentences from `testAxisBlockers`; empty when the axis closed. */
+    blockers: string[];
+  };
+  closedAt: string;
+  derivedBy: string;
+}
+
+/**
+ * THE IDENTITY OF THE THING THAT WAS TESTED, stated by the record itself.
+ *
+ * `run.targetBuildId` is the RECORDED id and stays exactly that — the report's precedence
+ * treats a recorded id as owner-declared and binds judgements to it, so writing a derived
+ * value there would relabel a fallback as a declaration. This sibling carries the resolved
+ * identity WITH ITS PROVENANCE, so a record whose `targetBuildId` is null can still answer
+ * "what was tested" instead of being unable to say.
+ */
+export interface RecordTargetIdentity {
+  targetBuildId: string | null;
+  source: "recorded" | "override" | "derived" | "none";
+  note: string;
+}
+
 export interface RunRecordV2 {
   schemaVersion: "run-record/2.0.0";
   kind: typeof RUN_RECORD_KIND;
   runId: string;
+  /**
+   * Present from revision 1. A record with no `recordRevision` predates this chain and must
+   * be read as revision 1 with an unknown successor — never as "the final word".
+   */
+  recordRevision: RecordRevisionInfo;
+  /** null on revision 1, by construction: nothing had closed when it was signed. */
+  closure: RunClosure | null;
   /** ONE immutable revision. The run may not regenerate its own denominator. */
   contract: { contractRevisionId: string; contractHash: string };
   run: {
@@ -537,6 +888,12 @@ export interface RunRecordV2 {
     documentSha256: string;
     /** Coherent target identity. Mixed-build runs are INVALID (merged-contract §0). */
     targetBuildId: string | null;
+    /**
+     * The RESOLVED identity and where it came from. Derived by the assembler from this run's
+     * own evidence catalogue when nothing was recorded or configured, so `targetBuildId: null`
+     * stops meaning "this record cannot say what was tested".
+     */
+    targetIdentity: RecordTargetIdentity;
     locale: string;
     viewports: string[];
   };
@@ -546,6 +903,12 @@ export interface RunRecordV2 {
    * RunRecord" — which is exactly what D12 found. See report/renderable.ts for the single
    * validated interface both this type and the harness v1 shape are checked against.
    */
+  /**
+   * DERIVED BY THE ASSEMBLER FROM THE EXECUTION LEDGER, never supplied. It WAS a parameter,
+   * and the one caller passed `attempts: []` — the identical disconnected wire that made
+   * `claims` empty, one field over, and it was re-introduced in the very commit that fixed
+   * claims. A ledger a caller may omit is a ledger that will be omitted.
+   */
   attempts: AttemptRecordV2[];
   observations: Observation[];
   /**
@@ -554,8 +917,14 @@ export interface RunRecordV2 {
    * the caller passed one. See `assemble-record.mjs#deriveClaims`.
    */
   claims: DefectClaim[];
-  ambiguities: unknown[];
-  taxonomyGaps: unknown[];
+  /**
+   * The document's own open questions. DERIVED, never supplied — see `AmbiguityRecord`. An
+   * empty array now means the sealed revision flagged nothing ambiguous, which is a claim
+   * about the document rather than about the wiring.
+   */
+  ambiguities: AmbiguityRecord[];
+  /** Cases this system materialized and has no predicate for. DERIVED — see `TaxonomyGapRecord`. */
+  taxonomyGaps: TaxonomyGapRecord[];
   blockers: RunBlocker[];
   itemResults: ItemResult[];
   /** Plan hash + per-kind counts. Exploration may ADD findings, never change the denominator. */
@@ -574,6 +943,14 @@ export interface RunRecordV2 {
   resources: {
     modelCalls: ModelCallRecord[];
     toolVersions: ToolVersionRecord[];
+    /**
+     * WHETHER `modelCalls` ABOVE IS THE WHOLE STORY. `checkpoint.modelCallLedger` does not
+     * exist on `RunCheckpoint` and never has, so `modelCalls` has always been `[]` — and `[]`
+     * beside `totals.modelCalls: 47` is indistinguishable from a run that made no calls at all.
+     * `unrecorded` says the cost in `totals` cannot be checked against per-call rows from this
+     * record; `no-calls` says the empty list is the complete truth.
+     */
+    perCallTelemetry: "recorded" | "unrecorded" | "no-calls";
     totals: {
       costUsd: number;
       modelCalls: number;

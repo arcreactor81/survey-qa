@@ -57,6 +57,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import type { Env } from "../types/env";
 import { num } from "../types/env";
+import { scopeEvidenceEnv } from "../store/evidence-keyspace";
 import {
   beat,
   claimOwnership,
@@ -66,8 +67,9 @@ import {
   type Fence,
 } from "../store/checkpoint";
 import { clearActive, updateEnvelope } from "../store/envelope";
+import { ensureRecordedTargetIdentity } from "../store/target-build";
 import { tickWallClock } from "../store/usage";
-import { denominators, sealContract } from "../store/contract-revision";
+import { denominators, getContractRevision, sealContract } from "../store/contract-revision";
 import { edgeCoverageKey, structureModelKey } from "../keys";
 // `planStage` is no longer imported here: the arm registry binds it as the BASELINE `plan`
 // component (arms/registry.ts). Reverting the seam means restoring this import and calling
@@ -75,16 +77,23 @@ import { edgeCoverageKey, structureModelKey } from "../keys";
 import { resolveArm } from "../arms/resolve";
 import { executeBatch, loadProgress } from "./stages/execute-batch";
 import {
+  loadProgram,
+  probeCapabilityLimitations,
+  requiredProbeCapabilityLimitations,
+  type PlanLimitation,
+} from "./stages/plan";
+import {
   ERROR_TEXT_MAX,
   FAILURE_MESSAGE_MAX,
   OwnershipLost,
+  isPartialTestCompletion,
   sanitiseErrorText,
   type RunCheckpoint,
   type RunFailure,
   type TestCompletion,
 } from "../types/contracts";
 import { mintPlanRevisionId, recoveryInstanceId } from "../ids";
-import type { ContractRevision } from "../types/record";
+import type { ContractRevision, ContractSourceInput, RunClosure } from "../types/record";
 import { buildAndStoreReport } from "../report/build";
 import {
   describeGates,
@@ -108,11 +117,32 @@ import {
 import { passAStepTimeoutMs, passAWaveBudgetMs, type PassASlice } from "../extract/pass-a";
 import { passBStepTimeoutMs, passBWaveBudgetMs, type PassBSlice } from "../extract/pass-b";
 import { projectObservations } from "./stages/project-observations";
+import { launchVisualShadowWorkflow } from "./visual-shadow-workflow";
 import { verifyObservations } from "./stages/verify-observations";
 import { deriveItemResults, mintJudgement } from "./stages/derive-verdicts";
-import { assembleRecord } from "./stages/assemble-record";
+import { assembleRecord, supersedeRecord } from "./stages/assemble-record";
 import { computeEdgeCoverage } from "../structure/index";
 import type { StructureModel } from "../structure/index";
+import {
+  extractionInputsDigest,
+  extractionPolicyFingerprint,
+  lookupReusableContract,
+  recordReusableContract,
+  type ExtractionInputs,
+} from "../store/contract-reuse";
+import { PROMPT_VERSION_A, PROMPT_VERSION_B } from "../extract/prompts";
+import { DOCX_BLOCKS_VERSION } from "../extract/docx-blocks";
+import { EXPANDER_VERSION } from "../extract/expand";
+import { MERGE_VERSION } from "../extract/merge";
+import {
+  HUMAN_REQUIREMENTS_SCHEMA,
+  HUMAN_TRANSCRIPTION_ASSUMPTION,
+  HUMAN_REQUIREMENTS_VALIDATOR_VERSION,
+  HumanRequirementsError,
+  loadPreparedHumanContract,
+  stageExpandHumanRequirements,
+  stageValidateHumanRequirements,
+} from "../contract/human-authored";
 
 export interface RunParamsV2 {
   runId: string;
@@ -122,8 +152,48 @@ export interface RunParamsV2 {
   profile: "standard" | "deep";
   locale: string;
   viewports: string[];
+  /** Optional only for pre-discriminator runs. Absence means the historical extract path. */
+  contractSource?: ContractSourceInput;
   /** Set by the sweeper on a recreate so the new instance knows it is a continuation. */
   recoveryAttempt?: number;
+}
+
+/**
+ * The small, durable hand-off returned only after report bytes, checkpoint finalization,
+ * active-marker removal, and the run envelope have all committed. Visual launch eligibility
+ * must be derived from this result rather than from an earlier in-memory stage outcome.
+ */
+export interface CoreFinalizationResult {
+  completion: Pick<RunCheckpoint["completion"], "test" | "report">;
+  reportAvailable: boolean;
+}
+
+type VisualShadowLaunchInput = Parameters<typeof launchVisualShadowWorkflow>[0];
+type VisualShadowLaunchResult = Awaited<ReturnType<typeof launchVisualShadowWorkflow>>;
+type VisualShadowLauncher = (input: VisualShadowLaunchInput) => Promise<VisualShadowLaunchResult>;
+
+/** A partial test axis is reportable; failed axes and non-durable reports are not launchable. */
+export function coreFinalizationAllowsVisualShadow(finalization: CoreFinalizationResult): boolean {
+  const test = finalization.completion.test;
+  return (
+    (test === "complete" || isPartialTestCompletion(test)) &&
+    finalization.completion.report === "complete" &&
+    finalization.reportAvailable === true
+  );
+}
+
+/**
+ * Launch exactly once from an eligible durable final. No catch belongs here: ownership loss and
+ * unexpected dispatcher failures retain their existing semantics instead of being mistaken for
+ * an ineligible core result.
+ */
+export async function launchVisualShadowAfterCoreFinalization(
+  input: VisualShadowLaunchInput & { finalization: CoreFinalizationResult },
+  launcher: VisualShadowLauncher = launchVisualShadowWorkflow,
+): Promise<VisualShadowLaunchResult | null> {
+  const { finalization, ...launchInput } = input;
+  if (!coreFinalizationAllowsVisualShadow(finalization)) return null;
+  return launcher(launchInput);
 }
 
 /** Step policies. Extraction and reporting are retried; execution batches are not blindly
@@ -292,6 +362,9 @@ const FAILURE_RECORDING_COOLDOWN = "20 seconds";
  */
 export function classifyFailure(err: unknown): string | null {
   const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err ?? "");
+  if (message.includes("WORKFLOW_INPUT_INVALID[")) return "workflow-input-invalid";
+  if (message.includes("HUMAN_REQUIREMENTS_INVALID[")) return "human-requirements-invalid";
+  if (message.includes("MERGED_ARTIFACT_HASH_MISMATCH")) return "merged-extraction-hash-mismatch";
   if (PLANNING_REFUSAL_PHRASES.some((phrase) => message.includes(phrase))) return PLANNING_REFUSED;
   const lowered = message.toLowerCase();
   if (SUBREQUEST_LIMIT_PHRASES.some((phrase) => lowered.includes(phrase))) return SUBREQUEST_LIMIT_EXCEEDED;
@@ -320,6 +393,12 @@ function describeFailure(step: string, err: unknown): RunFailure {
 }
 
 export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
+  constructor(ctx: ExecutionContext, env: Env) {
+    // Workflow instances do not pass through the HTTP router. Scope their binding here so
+    // every durable step, retry and recovery instance observes the same arm boundary.
+    super(ctx, scopeEvidenceEnv(env));
+  }
+
   /**
    * Steps this INSTANCE has written a cause for. Purely an optimisation: it lets a retry
    * that succeeds withdraw its own predecessor's cause without every successful step in
@@ -401,6 +480,15 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         const loaded = await loadCheckpoint(this.env, runId);
         const cp = loaded?.checkpoint ?? null;
         const sealedId = cp?.contract.state === "sealed" ? cp.contract.contractRevisionId : null;
+        const extractionFraction = num(this.env.EXTRACT_BUDGET_FRACTION, 0.5);
+        const extractionUsage = cp?.usage
+          ? {
+              usedUsd: cp.usage.cost.usedUsd,
+              maxUsd: cp.usage.cost.maxUsd,
+              fraction: extractionFraction,
+              exceeded: extractionBudgetExceeded(this.env, cp.usage.cost.usedUsd, cp.usage.cost.maxUsd),
+            }
+          : null;
         return {
           contractRevisionId: sealedId,
           contractHash: cp?.contract.contractHash ?? null,
@@ -408,6 +496,8 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           planRevisionId: cp?.execution?.planRevisionId ?? null,
           batchIndex: cp?.execution?.batchIndex ?? 0,
           isContinuation: attempt > 0,
+          reviewMode: cp?.policy.humanReviewMode ?? "high-risk-only",
+          extractionUsage,
         };
       });
 
@@ -423,24 +513,25 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // never `partial-budget` over zero work.
       // ---------------------------------------------------------------------
       {
-        const loaded0 = await loadCheckpoint(this.env, runId);
-        const usage0 = loaded0?.checkpoint.usage ?? null;
-        if (usage0 && extractionBudgetExceeded(this.env, usage0.cost.usedUsd, usage0.cost.maxUsd)) {
-          await updateCheckpoint(
-            this.env,
-            runId,
-            (d) => {
-              setPhase(d, "extracting", "stopped", "extraction-budget-exceeded");
-              d.contract.state = "unavailable";
-              d.completion.test = "failed";
-              d.completion.reasonCode = "extraction-budget-exceeded";
-              d.error =
-                `extraction spent $${usage0.cost.usedUsd} of a $${usage0.cost.maxUsd} budget, ` +
-                `exceeding the extraction fraction (${num(this.env.EXTRACT_BUDGET_FRACTION, 0.5)}). ` +
-                "Nothing was exercised, so this is a failure, not a partial run.";
-            },
-            { progressed: true, fence },
-          );
+        const usage0 = resumed.extractionUsage;
+        if (usage0?.exceeded) {
+          await step.do("stop-resume-extraction-budget-exceeded", async () => {
+            await updateCheckpoint(
+              this.env,
+              runId,
+              (d) => {
+                setPhase(d, "extracting", "stopped", "extraction-budget-exceeded");
+                d.contract.state = "unavailable";
+                d.completion.test = "failed";
+                d.completion.reasonCode = "extraction-budget-exceeded";
+                d.error =
+                  `extraction spent $${usage0.usedUsd} of a $${usage0.maxUsd} budget, ` +
+                  `exceeding the extraction fraction (${usage0.fraction}). ` +
+                  "Nothing was exercised, so this is a failure, not a partial run.";
+              },
+              { progressed: true, fence },
+            );
+          });
           await this.reportAndFinalize(step, runId, fence);
           return;
         }
@@ -452,6 +543,77 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       //  see a row that was never proposed")
       // ---------------------------------------------------------------------
       let sealed: { contractRevisionId: string; contractHash: string; executionCases: number } | null = null;
+      const suppliedContractSource = p.contractSource as unknown;
+      if (
+        suppliedContractSource !== undefined &&
+        (!suppliedContractSource || typeof suppliedContractSource !== "object" || Array.isArray(suppliedContractSource))
+      ) {
+        throw new Error(
+          "WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: contractSource must be an object with an explicit supported mode",
+        );
+      }
+      const sourceObject = suppliedContractSource as Record<string, unknown> | undefined;
+      if (sourceObject !== undefined && sourceObject.mode !== "extract" && sourceObject.mode !== "human-authored") {
+        throw new Error(
+          `WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: unsupported contract source mode ${JSON.stringify(sourceObject.mode)}`,
+        );
+      }
+      if (sourceObject !== undefined) {
+        const allowed = sourceObject.mode === "human-authored"
+          ? ["humanRequirementsKey", "humanRequirementsSha256", "mode"]
+          : ["mode"];
+        const extras = Object.keys(sourceObject).filter((key) => !allowed.includes(key));
+        if (extras.length > 0) {
+          throw new Error(
+            `WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: unsupported field(s) [${extras.sort().join(", ")}]`,
+          );
+        }
+      }
+      if (
+        sourceObject?.mode === "human-authored" &&
+        (typeof sourceObject.humanRequirementsKey !== "string" ||
+          sourceObject.humanRequirementsKey.trim().length === 0 ||
+          typeof sourceObject.humanRequirementsSha256 !== "string" ||
+          !/^(?:sha256:)?[0-9a-f]{64}$/.test(sourceObject.humanRequirementsSha256))
+      ) {
+        throw new Error(
+          "WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: human-authored mode requires a non-empty artifact key and SHA-256 digest",
+        );
+      }
+      const contractSource: ContractSourceInput =
+        sourceObject === undefined ? { mode: "extract" } : (sourceObject as ContractSourceInput);
+
+      // THE EXTRACTION INPUTS, IN ONE PLACE. Every field that could change what a
+      // re-extraction of these bytes would produce — see `store/contract-reuse.ts` for why each
+      // one is in the digest, and for what that means about what invalidates a reuse.
+      const reuseSnapshot = await step.do("snapshot-contract-reuse-inputs", async () => {
+        if (contractSource.mode !== "extract") return null;
+        const inputs: ExtractionInputs = {
+          documentSha256: p.documentSha256,
+          docxParserVersion: DOCX_BLOCKS_VERSION,
+          promptVersionA: PROMPT_VERSION_A,
+          promptVersionB: PROMPT_VERSION_B,
+          modelA: this.env.GROK_MODEL ?? "grok-4.3",
+          modelB: this.env.DEEPSEEK_MODEL ?? "deepseek-v4-pro",
+          mergeVersion: MERGE_VERSION,
+          expanderVersion: EXPANDER_VERSION,
+          locale: p.locale,
+          viewports: p.viewports,
+          reviewMode: resumed.reviewMode,
+          policyFingerprint: await extractionPolicyFingerprint(this.env),
+        };
+        return { inputs, digest: await extractionInputsDigest(inputs) };
+      });
+      const extractionInputs = reuseSnapshot?.inputs ?? null;
+      // The extraction reuse index is intentionally unreachable from the human-authored
+      // path in both directions. Content-addressed sealing still converges identical human
+      // bodies; a model extraction can never be substituted for one.
+      const reuseDigest = reuseSnapshot?.digest ?? null;
+      // ONE lookup, before the branch, so the step runs at most once per run. A resumed run does
+      // not look at all: it already has a denominator and §0 forbids minting a second.
+      const reuse = resumed.contractRevisionId || reuseDigest === null
+        ? { adopted: false as const }
+        : await this.adoptReusableContract(step, runId, reuseDigest, fence);
 
       if (resumed.contractRevisionId && resumed.executionCases !== null) {
         // Already sealed by the instance we are replacing. Adopt it by id; re-sealing
@@ -464,6 +626,190 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         await step.do("resume-sealed-contract", async () => {
           await beat(this.env, runId, `resuming sealed contract ${sealed!.contractRevisionId}`, "resume-seal");
         });
+      } else if (reuse.adopted) {
+        // ADOPTED A REVISION ALREADY SEALED OVER THESE EXACT INPUTS.
+        //
+        // Four runs re-extracted identical document bytes for about $1.06 and bought four
+        // INCOMPATIBLE denominators — 189 / 194 / 195 / 227 requirements from one document, the
+        // option-set case count alone swinging 48 → 92. The money did not buy agreement, it
+        // bought four different answers, and no two of those runs could be compared. Reuse buys
+        // BOTH: the extraction is not paid for twice, and two runs of the same document finally
+        // share a denominator.
+        //
+        // The adoption is re-read and re-hashed through `getContractRevision`, so the index can
+        // only ever point at a revision — it can never BE one. A miss, a stale id or bytes that
+        // do not re-hash all fall through to a full extraction.
+        sealed = {
+          contractRevisionId: reuse.contractRevisionId!,
+          contractHash: reuse.contractHash!,
+          executionCases: reuse.executionCases!,
+        };
+      } else if (contractSource.mode === "human-authored") {
+        await step.do("phase-extracting", async () => {
+          await updateCheckpoint(
+            this.env,
+            runId,
+            (d) => {
+              setPhase(d, "extracting", "active");
+              d.completion.test = "running";
+              d.contract.state = "extracting";
+            },
+            { progressed: true, fence },
+          );
+          await beat(this.env, runId, "validating human-authored requirements against document bytes", "human-contract");
+        });
+
+        const humanValidation = await step.do("validate-human-requirements", EXTRACT_POLICY, async () => {
+          await beat(this.env, runId, "binding every human-authored source span to the submitted DOCX", "human-validate");
+          return await stageValidateHumanRequirements(
+            this.env,
+            runId,
+            p.documentKey,
+            p.documentSha256,
+            contractSource.humanRequirementsKey,
+            contractSource.humanRequirementsSha256,
+          );
+        });
+
+        const humanExpansion = await step.do("expand-human-requirements", EXTRACT_POLICY, async () => {
+          await beat(this.env, runId, "materializing human-authored rows with the production floor expander", "human-expand");
+          return await stageExpandHumanRequirements(
+            this.env,
+            runId,
+            p.documentSha256,
+            p.locale,
+            p.viewports,
+            humanValidation.validationHash,
+            humanValidation.normalizedArtifactHash,
+          );
+        });
+
+        const sealOutcome = await step.do("seal-contract-revision", async () => {
+          const prepared = await loadPreparedHumanContract(this.env, runId, humanExpansion.preparedHash);
+          if (!prepared) {
+            throw new HumanRequirementsError(
+              "PREPARED_CONTRACT_MISSING",
+              "validation and expansion completed but the prepared contract artifact is absent",
+            );
+          }
+          if (prepared.documentSha256 !== p.documentSha256.replace(/^sha256:/, "")) {
+            throw new HumanRequirementsError(
+              "PREPARED_DOCUMENT_HASH_MISMATCH",
+              "the prepared human contract is bound to different document bytes",
+            );
+          }
+          if (
+            prepared.requirements.length !== humanExpansion.requirementCount ||
+            prepared.facetInstances.length !== humanExpansion.executionCaseCount
+          ) {
+            throw new HumanRequirementsError(
+              "PREPARED_SUMMARY_MISMATCH",
+              "the prepared contract counts do not match the durable expansion step result",
+            );
+          }
+
+          const modelExtractionNotRun = {
+            zeroUnexplainedNormativeBlocks: notEvaluated(
+              "HUMAN_AUTHORED_SOURCE",
+              "dual-model extraction did not run; human-specific approval gates are authoritative for this 1.1 revision",
+            ),
+            noUnresolvedHighRiskDisagreement: notEvaluated(
+              "HUMAN_AUTHORED_SOURCE",
+              "there were no independent model passes to diff; human-specific approval gates are used instead",
+            ),
+            allConstructClassesDispositioned: notEvaluated(
+              "HUMAN_AUTHORED_SOURCE",
+              "the validator checks authored rows and does not claim a model construct sweep",
+            ),
+            allScopedExpansionsPreviewed: notEvaluated(
+              "HUMAN_AUTHORED_SOURCE",
+              "the real preview ran and is recorded under the human-specific approval block",
+            ),
+          };
+          const body: Omit<ContractRevision, "contractRevisionId"> = {
+            schemaVersion: "v2-contract-revision/1.1.0",
+            kind: "survey-qa-v2-contract-revision",
+            documentRevisionId: p.documentSha256,
+            documentSha256: p.documentSha256,
+            sealedAt: new Date().toISOString(),
+            requirements: prepared.requirements,
+            facetInstances: prepared.facetInstances,
+            // Sealed and projected into the report's contract-risk section. These are not
+            // denominator cases, but they must remain visible beside every result derived
+            // from this revision.
+            contractSupplements: prepared.limitations.map(
+              (limitation) => `HUMAN_CONTRACT_LIMITATION: ${limitation}`,
+            ),
+            requirementsProvenance: {
+              method: "human-authored",
+              authoringSchema: HUMAN_REQUIREMENTS_SCHEMA,
+              normalizedInputHash: prepared.normalizedInputHash,
+              validatorVersion: HUMAN_REQUIREMENTS_VALIDATOR_VERSION,
+              expanderVersion: EXPANDER_VERSION,
+              authoredBy: prepared.authoredBy,
+              authoredAt: prepared.authoredAt,
+              authorshipAssurance: "self-asserted",
+              coverageClaim: "authored-requirements-only",
+              documentCoverage: prepared.documentCoverage,
+              limitations: prepared.limitations,
+              transcriptionAssumption: HUMAN_TRANSCRIPTION_ASSUMPTION,
+            },
+            approval: prepared.approval,
+            extraction: {
+              method: "human-authored",
+              reuseInputsHash: null,
+              passAHash: null,
+              passBHash: null,
+              sourceLedgerHash: prepared.validationHash,
+              diffHash: null,
+              reviewMode: "human-authored",
+              // Authorship is not independent review, and the supplied author label is not
+              // yet bound to a Cloudflare Access identity. Do not turn it into one here.
+              reviewedBy: null,
+              reviewedAt: null,
+              gates: modelExtractionNotRun,
+            },
+          };
+          const { contractRevisionId, contractHash, revision } = await sealContract(this.env, body);
+          const d10 = denominators(revision);
+          await updateEnvelope(this.env, runId, (envelope) => {
+            envelope.contractRevisionId = contractRevisionId;
+          });
+          await updateCheckpoint(
+            this.env,
+            runId,
+            (d) => {
+              d.contract = {
+                state: "sealed",
+                contractRevisionId,
+                contractHash,
+                total: d10.executionCases,
+                requirements: {
+                  total: d10.requirements,
+                  ambiguous: d10.ambiguous,
+                  disputed: d10.disputed,
+                  notBrowserObservable: d10.notBrowserObservable,
+                },
+              };
+              d.counts = { ...d.counts, pending: d10.executionCases };
+              if (d10.executionCases === 0) {
+                setPhase(d, "extracting", "stopped", "empty-contract");
+                d.completion.test = "failed";
+                d.completion.reasonCode = "empty-contract";
+                d.error = "the human-authored contract sealed with zero execution cases — nothing was testable";
+              } else {
+                setPhase(d, "extracting", "complete");
+              }
+            },
+            { progressed: true, fence },
+          );
+          return { sealed: true as const, contractRevisionId, contractHash, executionCases: d10.executionCases };
+        });
+        sealed = sealOutcome;
+        if (sealOutcome.executionCases === 0) {
+          await this.reportAndFinalize(step, runId, fence);
+          return;
+        }
       } else {
         await step.do("phase-extracting", async () => {
           await updateCheckpoint(
@@ -542,24 +888,26 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           // a document that was only partly read cannot support a denominator. `partial-*`
           // would describe a test that was cut short; nothing was exercised at all.
           const u = passAUnfinished;
-          await updateCheckpoint(
-            this.env,
-            runId,
-            (d) => {
-              setPhase(d, "extracting", "stopped", EXTRACTION_PASS_A_WAVES_EXHAUSTED);
-              d.contract.state = "unavailable";
-              d.completion.test = "failed";
-              d.completion.reasonCode = EXTRACTION_PASS_A_WAVES_EXHAUSTED;
-              d.error =
-                `extraction pass A used all ${maxPassAWaves} of its wave step(s) (EXTRACT_PASS_A_MAX_WAVES) and ` +
-                `still owes ${u.windowsRemaining} of ${u.windowsTotal} window(s). ${u.windowsLanded} window(s) ` +
-                `landed. Nothing was sealed, because a contract over a half-read document would claim a ` +
-                `denominator the document never approved — and pass A's whole purpose is the survey-scoped rule ` +
-                `that only an unread window may state. Raise EXTRACT_PASS_A_MAX_WAVES or ` +
-                `EXTRACT_PASS_A_WAVE_BUDGET_MS for a document this size.`;
-            },
-            { progressed: true, fence },
-          );
+          await step.do("stop-extract-pass-a-waves-exhausted", async () => {
+            await updateCheckpoint(
+              this.env,
+              runId,
+              (d) => {
+                setPhase(d, "extracting", "stopped", EXTRACTION_PASS_A_WAVES_EXHAUSTED);
+                d.contract.state = "unavailable";
+                d.completion.test = "failed";
+                d.completion.reasonCode = EXTRACTION_PASS_A_WAVES_EXHAUSTED;
+                d.error =
+                  `extraction pass A used all ${maxPassAWaves} of its wave step(s) (EXTRACT_PASS_A_MAX_WAVES) and ` +
+                  `still owes ${u.windowsRemaining} of ${u.windowsTotal} window(s). ${u.windowsLanded} window(s) ` +
+                  `landed. Nothing was sealed, because a contract over a half-read document would claim a ` +
+                  `denominator the document never approved — and pass A's whole purpose is the survey-scoped rule ` +
+                  `that only an unread window may state. Raise EXTRACT_PASS_A_MAX_WAVES or ` +
+                  `EXTRACT_PASS_A_WAVE_BUDGET_MS for a document this size.`;
+              },
+              { progressed: true, fence },
+            );
+          });
           await this.reportAndFinalize(step, runId, fence);
           return;
         }
@@ -630,23 +978,25 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           // that was cut short rather than a read that never finished. `failed`, with the
           // arithmetic in the message, is the only true statement available.
           const u = passBUnfinished;
-          await updateCheckpoint(
-            this.env,
-            runId,
-            (d) => {
-              setPhase(d, "extracting", "stopped", EXTRACTION_WAVES_EXHAUSTED);
-              d.contract.state = "unavailable";
-              d.completion.test = "failed";
-              d.completion.reasonCode = EXTRACTION_WAVES_EXHAUSTED;
-              d.error =
-                `extraction pass B used all ${maxWaves} of its wave step(s) (EXTRACT_PASS_B_MAX_WAVES) and still ` +
-                `owes ${u.chunksRemaining} of ${u.chunksTotal} chunk(s) and ${u.sweepRemaining} ledger-sweep ` +
-                `call(s). ${u.chunksLanded} chunk(s) landed. Nothing was sealed, because a contract over a ` +
-                `half-read document would claim a denominator the document never approved. Raise ` +
-                `EXTRACT_PASS_B_MAX_WAVES or EXTRACT_WAVE_BUDGET_MS for a document this size.`;
-            },
-            { progressed: true, fence },
-          );
+          await step.do("stop-extract-pass-b-waves-exhausted", async () => {
+            await updateCheckpoint(
+              this.env,
+              runId,
+              (d) => {
+                setPhase(d, "extracting", "stopped", EXTRACTION_WAVES_EXHAUSTED);
+                d.contract.state = "unavailable";
+                d.completion.test = "failed";
+                d.completion.reasonCode = EXTRACTION_WAVES_EXHAUSTED;
+                d.error =
+                  `extraction pass B used all ${maxWaves} of its wave step(s) (EXTRACT_PASS_B_MAX_WAVES) and still ` +
+                  `owes ${u.chunksRemaining} of ${u.chunksTotal} chunk(s) and ${u.sweepRemaining} ledger-sweep ` +
+                  `call(s). ${u.chunksLanded} chunk(s) landed. Nothing was sealed, because a contract over a ` +
+                  `half-read document would claim a denominator the document never approved. Raise ` +
+                  `EXTRACT_PASS_B_MAX_WAVES or EXTRACT_WAVE_BUDGET_MS for a document this size.`;
+              },
+              { progressed: true, fence },
+            );
+          });
           await this.reportAndFinalize(step, runId, fence);
           return;
         }
@@ -761,7 +1111,12 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           // payload is the one artifact the diff, the ledger and the expansion preview were
           // all computed over, so sealing anything else would seal a denominator nothing
           // approved.
-          const merged = await loadMerged(this.env, runId);
+          if (consolidated.state !== "evaluated") {
+            throw new Error(
+              "MERGED_ARTIFACT_HASH_MISMATCH: extraction gates passed without an evaluated consolidation result",
+            );
+          }
+          const merged = await loadMerged(this.env, runId, consolidated.value.mergedHash);
           if (!merged) {
             await updateCheckpoint(
               this.env,
@@ -792,6 +1147,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             facetInstances: merged.facetInstances,
             contractSupplements: [],
             extraction: {
+              reuseInputsHash: `sha256:${reuseDigest!}`,
               passAHash: passA.state === "evaluated" ? passA.value.hash : "",
               passBHash: passB.state === "evaluated" ? passB.value.hash : "",
               sourceLedgerHash: ledger.state === "evaluated" ? ledger.value.hash : "",
@@ -843,6 +1199,33 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             },
             { progressed: true, fence },
           );
+
+          // PUBLISH THE REUSE INDEX ENTRY. It is written AFTER the seal and after the
+          // checkpoint, so nothing can be adopted that this run did not itself finish sealing.
+          //
+          // Its failure is not the run's failure: the index is a cost optimisation and a
+          // comparability aid, and a run that sealed a contract has done the thing that matters.
+          // Losing the entry means the next run pays for its own extraction, which is exactly
+          // where the system was before.
+          try {
+            const outcome = await recordReusableContract(this.env, reuseDigest!, {
+              contractRevisionId,
+              contractHash,
+              inputs: extractionInputs!,
+              sealedByRunId: runId,
+              sealedAt: new Date().toISOString(),
+            });
+            if (outcome === "already-recorded") {
+              // A concurrent run of the same document sealed first. Both revisions are valid;
+              // the first writer owns the key, because repointing it would hand every FUTURE run
+              // a second denominator for the same bytes — the drift the index exists to end.
+              console.log(
+                `v2 ${runId}: a contract for these extraction inputs was already indexed; keeping the first`,
+              );
+            }
+          } catch (err) {
+            console.warn(`v2 ${runId}: could not index this contract for reuse: ${String(err).slice(0, 300)}`);
+          }
 
           return { sealed: true as const, contractRevisionId, contractHash, executionCases: d10.executionCases };
         });
@@ -1068,33 +1451,70 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       });
 
       // ---------------------------------------------------------------------
-      // YIELD THE INVOCATION BEFORE JUDGING.
+      // NAME THE THING THAT WAS TESTED, BEFORE ANY VERDICT DEPENDS ON IT.
       //
-      // Execution is the expensive half of a run in SUBREQUESTS, not just in time: every
-      // screen read and every screenshot is a `putEvidence` (a head, a conditional put and a
-      // catalogue put), and v2r_01kzfb6py8pbxznqv022p2qkhb wrote 1,707 of them across 14
-      // `execute-batch` steps. Those steps share ONE Worker invocation with everything after
-      // them, and the invocation has a bounded subrequest budget — so by the time the
-      // judging tail ran, the budget was nearly gone and `verify-observations` died on it,
-      // three attempts deep, with `Too many API requests by single Worker invocation`.
+      // A signed RunRecord binds to a target identity, and `assemble-record.mjs` stamps that
+      // field from `envelope.input.targetBuildId` and from nowhere else. With
+      // `DEFAULT_TARGET_BUILD_ID` unset — the deployed posture — the envelope carried null,
+      // so every record this service signed was silent about WHAT IT HAD TESTED, the judge
+      // minted `binding.targetBuildId: null`, and the report's `target-build` check could
+      // never resolve. Two runs on the same document and the same survey produced different
+      // verdicts and nothing in either record could say whether the target had changed.
       //
-      // A sleep is the documented way to make a Workflow yield: the instance goes to
-      // `waiting` and is scheduled again when it wakes, and a fresh invocation starts with a
-      // fresh budget. This sleep sits exactly on the execution/judging seam because the tail
-      // behind it — project, verify, derive, assemble, mint, report — is a fixed, bounded
-      // amount of work that has no business inheriting a budget spent on 46 walks. It also
-      // covers the stages this file cannot make cheaper: `derive-verdicts` and `report`
-      // still fetch and re-hash EVERY catalogued artifact.
+      // THIS IS THE EARLIEST HONEST MOMENT. The identity is derived from the content of the
+      // screens this run captured, so it cannot exist at submission — at submission only an
+      // owner-configured tag is knowable, and `api/runs.ts` already records that. Here the
+      // captures are complete and NOTHING HAS BEEN JUDGED YET: project, verify, derive,
+      // assemble, mint and report are all downstream, so every one of them reads the same
+      // recorded string.
       //
-      // HONEST LIMIT OF THE CLAIM: Cloudflare's docs say the running→waiting transition "may
-      // not occur if the wait duration is very short" and publish no threshold, so 30 seconds
-      // is a judgement, not a proof, and nothing local can verify it. Treat this as one of
-      // three layers, not the fix: the load-bearing ones are `limits.subrequests` in
-      // wrangler.jsonc and verify-observations no longer listing the whole catalogue.
+      // FIRST WRITE WINS, and null is never written — see store/target-build.ts. A run that
+      // captured no screen keeps `null` and stays unbindable with the reason it already has;
+      // a failure to record is reported as a note and never fails the run.
+      // ---------------------------------------------------------------------
+      await step.do("record-target-identity", async () => {
+        const identity = await ensureRecordedTargetIdentity(this.env, runId);
+        await beat(
+          this.env,
+          runId,
+          identity.targetBuildId
+            ? `target identity ${identity.outcome}: ${identity.targetBuildId}`
+            : `no target identity recorded: ${identity.note}`,
+          "target-identity",
+        );
+        return identity;
+      });
+
+      // ---------------------------------------------------------------------
+      // THE `yield-before-judging` SLEEP USED TO SIT HERE, AND IT IS GONE.
       //
-      // It costs 30 seconds of wall time on a run that takes many minutes, and `step.sleep`
-      // does not count against the Workflow's step limit.
-      await step.sleep("yield-before-judging", "30 seconds");
+      // WHAT IT WAS FOR. Execution is the expensive half of a run in SUBREQUESTS, not just in
+      // time: every screen read and every screenshot is a `putEvidence` (a head, a conditional
+      // put and a catalogue put), and v2r_01kzfb6py8pbxznqv022p2qkhb wrote 1,707 of them
+      // across 14 `execute-batch` steps. Those steps share ONE Worker invocation with
+      // everything after them, and the invocation has a bounded subrequest budget — so the
+      // judging tail inherited a budget execution had already spent, and `verify-observations`
+      // died three attempts deep on `Too many API requests by single Worker invocation`. The
+      // sleep was meant to make the Workflow yield so the tail would start on a fresh budget.
+      //
+      // WHY IT IS REMOVED — three independent lines, none of which is a green test:
+      //
+      //   1. MEASURED ON A REAL RUN: the Worker invocation id is THE SAME on both sides of the
+      //      sleep. Whatever the instance did during those 30 seconds, it did not start a new
+      //      invocation, so it did not reset the thing the sleep exists to reset.
+      //   2. IN-TREE PRECEDENT, from the incident that motivated the sleep: the four
+      //      `record-failure` retries (5 s, 10 s, 20 s backoff) each failed INSTANTLY with the
+      //      same ceiling error. The catch path below still says so in its own comment. Short
+      //      waits demonstrably did not restore the budget there either.
+      //   3. THE ORIGINAL COMMENT CONCEDED IT: "30 seconds is a judgement, not a proof, and
+      //      nothing local can verify it." A layer that cannot be verified and has now been
+      //      measured not to work is dead wall clock on every single run.
+      //
+      // WHAT ACTUALLY CARRIES THE LOAD, unchanged by this deletion and named here so the
+      // removal cannot be mistaken for a decision that the problem was imaginary:
+      // `limits.subrequests` in wrangler.jsonc, and `verify-observations` no longer listing
+      // the whole evidence catalogue (D30). Those two are the fix; this was never one.
+      // ---------------------------------------------------------------------
 
       // ---------------------------------------------------------------------
       // COMMIT THE OBSERVATION LEDGER.
@@ -1289,7 +1709,6 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         }
         return out;
       });
-      void judgement;
 
       // ---------------------------------------------------------------------
       // THE ONLY GATE THAT MAY CLOSE THE TEST AXIS.
@@ -1300,9 +1719,23 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // testing had completed. Closing the test axis is a claim about COVERAGE AND
       // ADJUDICATION, and it is made here, from proof, or not at all.
       // ---------------------------------------------------------------------
-      await step.do("close-test-axis", async () => {
+      //
+      // IT RETURNS ITS OUTCOME, and that is not bookkeeping. The signed record is assembled
+      // BEFORE this gate and before the judgement — it has to be, because the judge binds to
+      // the record's own payload hash — so neither result can be inside it. `supersede-record`
+      // below signs a second revision that carries both, and it can only carry what this step
+      // hands back.
+      // ---------------------------------------------------------------------
+      const closed = await step.do("close-test-axis", async () => {
         const loaded = await loadCheckpoint(this.env, runId);
-        if (!loaded) return;
+        if (!loaded) {
+          return {
+            closed: false,
+            completion: "unknown",
+            reasonCode: null as string | null,
+            blockers: ["the run's checkpoint could not be read, so the test axis was never evaluated"],
+          };
+        }
 
         // Routing-graph edge coverage — informational, does not block the test axis.
         try {
@@ -1336,7 +1769,19 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           );
         }
 
-        const blockers = testAxisBlockers(loaded.checkpoint, adjudication, assembled);
+        // Re-read the exact program the executor drove. A plan may name actions outside the
+        // current adapter's vocabulary (back-navigation or independent-session repeats); those
+        // paths have no executable receipt and may not disappear merely because the sealed case
+        // ledger happens to be settled by other walks.
+        let probeLimitations: PlanLimitation[] | null = null;
+        try {
+          const program = await loadProgram(this.env, runId, plan.planRevisionId);
+          if (program) probeLimitations = probeCapabilityLimitations(program.plan);
+        } catch (err) {
+          console.warn(`v2 ${runId}: probe capability assessment unavailable: ${String(err).slice(0, 500)}`);
+        }
+
+        const blockers = testAxisBlockers(loaded.checkpoint, adjudication, assembled, probeLimitations);
         if (blockers.length === 0) {
           await updateCheckpoint(
             this.env,
@@ -1362,9 +1807,112 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           await beat(this.env, runId, `test axis NOT closed: ${blockers.join("; ")}`, "close-blocked");
           console.log(`v2 ${runId}: test axis not closed — ${blockers.join("; ")}`);
         }
+
+        // Re-read rather than reuse `loaded`: the write above is the thing being reported, and
+        // a closure block that quoted the pre-write state would describe a run that never was.
+        const after = await loadCheckpoint(this.env, runId);
+        return {
+          closed: blockers.length === 0,
+          completion: String(after?.checkpoint.completion.test ?? loaded.checkpoint.completion.test),
+          reasonCode: after?.checkpoint.completion.reasonCode ?? null,
+          blockers,
+        };
       });
 
-      await this.reportAndFinalize(step, runId, fence);
+      // ---------------------------------------------------------------------
+      // THE SECOND SIGNED REVISION — the one that knows how the run ended.
+      //
+      // THE DEFECT THIS CLOSES. `assemble-record` signs, then `mint-judgement` runs, then the
+      // axis closes. On v2r_01kzfk... the record was signed at 02:28:03 and the judgement then
+      // failed with EVIDENCE_NAME_COLLISION at 02:29:57 — a fact that lived ONLY in stdout. A
+      // customer who verified that signature got cryptographic confidence in a document that
+      // could not say the independent second opinion had never been obtained.
+      //
+      // WHY THE FIRST RECORD IS NOT SIGNED LATER INSTEAD. `mintJudgement` READS the record and
+      // binds its JudgementRecord to the record's `attestation.payloadHash`. A record carrying
+      // the judgement's outcome would have to contain a hash of itself. Reordering does not
+      // remove that circularity — it only breaks the binding. So revision 1 is signed before
+      // the judge, correctly, and revision 2 supersedes it afterwards.
+      //
+      // SUPERSEDE, NEVER MUTATE. Revision 1's bytes are untouched and still addressable at
+      // their own content-addressed key, so the judgement's binding still resolves; revision 2
+      // names revision 1's hash and adds `closure` and nothing else.
+      //
+      // ITS FAILURE IS NOT THE RUN'S FAILURE, for the same reason the judgement's is not: the
+      // run already has a valid signed record, and refusing to publish a report because the
+      // SECOND revision could not be written would lose the findings entirely.
+      // ---------------------------------------------------------------------
+      await step.do("supersede-record", DERIVE_POLICY, async () => {
+        if (assembled.state !== "evaluated") {
+          console.log(`v2 ${runId}: no record was assembled, so there is none to supersede`);
+          return;
+        }
+        const closure: RunClosure = {
+          judgement:
+            judgement.state === "evaluated"
+              ? {
+                  minted: true,
+                  status: judgement.value.status,
+                  reasonCode: null,
+                  detail: null,
+                  boundRecordHash: assembled.value.recordHash,
+                }
+              : {
+                  minted: false,
+                  status: null,
+                  reasonCode: judgement.reason,
+                  detail: judgement.detail,
+                  boundRecordHash: assembled.value.recordHash,
+                },
+          testAxis: {
+            closed: closed.closed,
+            completion: closed.completion,
+            reasonCode: closed.reasonCode,
+            blockers: closed.blockers,
+          },
+          closedAt: new Date().toISOString(),
+          derivedBy: "v2-run-closure/1.0.0",
+        };
+        const out = await supersedeRecord(
+          this.env,
+          runId,
+          closure,
+          "the judgement and the test-axis gate both run AFTER the first record is signed, because the judgement " +
+            "binds to that record's payload hash; this revision states their outcomes",
+        );
+        if (out.state === "evaluated") {
+          await beat(
+            this.env,
+            runId,
+            `record revision ${out.value.revision} supersedes revision ${out.value.revision - 1}: ` +
+              `judgement ${closure.judgement.minted ? closure.judgement.status : `NOT MINTED (${closure.judgement.reasonCode})`}` +
+              `, test axis ${closed.closed ? "closed" : "NOT closed"}`,
+            "supersede",
+          );
+        } else {
+          console.log(`v2 ${runId}: record not superseded — ${out.reason}: ${out.detail}`);
+        }
+      });
+
+      const coreFinalization = await this.reportAndFinalize(step, runId, fence);
+
+      // Launch the observation-only visual channel in its OWN Workflow envelope only AFTER the
+      // core report, final checkpoint, active-marker removal, and envelope are durable. The child
+      // settles reservations and exact usage through its own visual ledger. The finalized core
+      // usage becomes a sealed shared-allowance baseline; child CAS writes cannot revise its
+      // revision, signed record, judgement, report, or resource totals. Visual spend is a
+      // separately reported post-run channel, never a verdict input.
+      // Deliberately ignore the launch result and never await its waves.
+      await launchVisualShadowAfterCoreFinalization({
+        env: this.env,
+        // The launch helper contains non-ownership binding failures. Keeping even this small
+        // child-dispatch step outside instrumentation prevents it becoming the core first cause.
+        step: rawStep,
+        runId,
+        planRevisionId: plan.planRevisionId,
+        fence,
+        finalization: coreFinalization,
+      });
     } catch (err) {
       if (err instanceof OwnershipLost) {
         // Not a failure of the run — a failure of THIS instance's claim on it. The owner
@@ -1476,6 +2024,122 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
    * discarded, because a contention on the way to explaining an error must never become
    * the error the run reports.
    */
+  /**
+   * ADOPT A CONTRACT REVISION ALREADY SEALED OVER THESE EXACT EXTRACTION INPUTS, OR SAY NO.
+   *
+   * Everything about this is fail-open TOWARDS EXTRACTION, which is the expensive but always
+   * correct answer: a missing index entry, an id that no longer resolves, bytes that do not
+   * re-hash, or a revision with zero execution cases all return `adopted: false` and the run
+   * extracts. `getContractRevision` re-hashes the stored bytes against the recorded hash, so the
+   * index can point at a revision but can never BE one — a poisoned entry costs a wasted lookup,
+   * never a denominator nobody sealed.
+   *
+   * WHAT IT DELIBERATELY DOES NOT COPY: the extraction's ambiguity readings. Production
+   * extraction writes no run checklist today (`writeRunChecklist` has one caller, and it is dev
+   * seeding), so there is nothing to carry across — and a reused revision keeps its ambiguities
+   * as sealed tokens exactly as a freshly-extracted one does. The record says
+   * `readingsAvailable: false` in both cases, which is the same true sentence.
+   */
+  private async adoptReusableContract(
+    step: WorkflowStep,
+    runId: string,
+    digest: string,
+    fence: Fence,
+  ): Promise<{
+    adopted: boolean;
+    contractRevisionId?: string;
+    contractHash?: string;
+    executionCases?: number;
+  }> {
+    return await step.do("adopt-reusable-contract", async () => {
+      const entry = await lookupReusableContract(this.env, digest);
+      if (!entry) {
+        await beat(this.env, runId, "no prior extraction of these exact inputs; extracting", "reuse-miss");
+        return { adopted: false };
+      }
+
+      const revision = await getContractRevision(this.env, entry.contractRevisionId, {
+        contractHash: entry.contractHash,
+      }).catch(() => null);
+      if (!revision) {
+        // The entry named a revision that no longer re-reads or no longer re-hashes. Extracting
+        // is the honest answer; adopting a revision that failed its own integrity check is not.
+        console.log(
+          `v2 ${runId}: contract reuse entry ${digest} names ${entry.contractRevisionId}, which did not re-read; extracting`,
+        );
+        await beat(this.env, runId, "a prior extraction was indexed but did not verify; extracting", "reuse-stale");
+        return { adopted: false };
+      }
+
+      const expectedReuseHash = `sha256:${digest}`;
+      if (
+        revision.schemaVersion !== "v2-contract-revision/1.0.0" ||
+        revision.documentSha256.replace(/^sha256:/, "") !== entry.inputs.documentSha256.replace(/^sha256:/, "") ||
+        revision.extraction?.reuseInputsHash !== expectedReuseHash
+      ) {
+        await beat(
+          this.env,
+          runId,
+          "the indexed revision is valid but is not sealed to these extraction inputs; extracting",
+          "reuse-unbound",
+        );
+        return { adopted: false };
+      }
+
+      const d10 = denominators(revision);
+      if (d10.executionCases === 0) {
+        // Never adopt an empty denominator. A run over one lands on `test: complete` with
+        // nothing exercised, which reads as a clean pass — the exact shape the seal path names
+        // `empty-contract` rather than accepting.
+        await beat(this.env, runId, "the indexed contract has zero execution cases; extracting", "reuse-empty");
+        return { adopted: false };
+      }
+
+      await updateEnvelope(this.env, runId, (env) => {
+        env.contractRevisionId = entry.contractRevisionId;
+      });
+      await updateCheckpoint(
+        this.env,
+        runId,
+        (d) => {
+          d.contract = {
+            state: "sealed",
+            contractRevisionId: entry.contractRevisionId,
+            contractHash: entry.contractHash,
+            total: d10.executionCases,
+            requirements: {
+              total: d10.requirements,
+              ambiguous: d10.ambiguous,
+              disputed: d10.disputed,
+              notBrowserObservable: d10.notBrowserObservable,
+            },
+          };
+          d.counts = { ...d.counts, pending: d10.executionCases };
+          setPhase(d, "extracting", "complete");
+        },
+        { progressed: true, fence },
+      );
+
+      // SAID OUT LOUD, because the alternative is a run whose model-call ledger is empty for a
+      // reason nobody can reconstruct. "Zero extraction calls" must be explicable from the run's
+      // own trail, not inferred.
+      await beat(
+        this.env,
+        runId,
+        `adopted contract ${entry.contractRevisionId} (${d10.requirements} requirement(s), ` +
+          `${d10.executionCases} execution case(s)) sealed by ${entry.sealedByRunId} over identical document bytes, ` +
+          `prompts, models, expander, locale, viewports and review mode — no extraction model calls were made`,
+        "reuse-hit",
+      );
+      return {
+        adopted: true,
+        contractRevisionId: entry.contractRevisionId,
+        contractHash: entry.contractHash,
+        executionCases: d10.executionCases,
+      };
+    });
+  }
+
   private instrumentSteps(step: WorkflowStep, runId: string): WorkflowStep {
     // NEVER `.bind`, `.call` or `.apply` ANYTHING ON `step`, AND NEVER READ A METHOD OFF IT
     // TO HOLD ONTO. In production `step` is a JSRPC stub: property access is intercepted and
@@ -1703,7 +2367,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
    * PHASE: reporting, then finalize. Runs even for a partial, stopped or unsealed test —
    * and CANNOT change the test axis, in either direction, on either branch.
    */
-  private async reportAndFinalize(step: WorkflowStep, runId: string, fence: Fence): Promise<void> {
+  private async reportAndFinalize(step: WorkflowStep, runId: string, fence: Fence): Promise<CoreFinalizationResult> {
     await step.do("report", REPORT_POLICY, async () => {
       await updateCheckpoint(
         this.env,
@@ -1748,7 +2412,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       else console.log(`v2 report built for ${runId}:`, JSON.stringify(built.summary));
     });
 
-    await step.do("finalize", async () => {
+    return step.do("finalize", async (): Promise<CoreFinalizationResult> => {
       // The envelope records what the checkpoint ACTUALLY says, not a hardcoded
       // success. A run that ended `partial-budget` / `report: failed` must be
       // recoverable as such from the envelope alone.
@@ -1775,6 +2439,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
 
       const after = await loadCheckpoint(this.env, runId);
       const completion = after?.checkpoint.completion ?? { test: "failed" as const, report: "failed" as const };
+      const finalization: CoreFinalizationResult = {
+        completion: { test: completion.test, report: completion.report },
+        reportAvailable: after?.checkpoint.reportAvailable === true,
+      };
 
       // RECOVERY STATE IS CLEARED ON A CLEAN FINISH. It used to be left set, so a run that
       // was successfully recovered kept reporting "recovery mode" forever and the sweeper
@@ -1810,6 +2478,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           };
         }
       });
+      return finalization;
     });
   }
 }
@@ -1944,6 +2613,7 @@ export function testAxisBlockers(
   cp: RunCheckpoint,
   adjudication: StageResult<unknown>,
   assembled: StageResult<unknown>,
+  probeLimitations?: readonly PlanLimitation[] | null,
 ): string[] {
   const blockers: string[] = [];
   if (cp.contract.state !== "sealed" || cp.contract.total === null) {
@@ -1977,6 +2647,18 @@ export function testAxisBlockers(
   }
   if (assembled.state !== "evaluated") {
     blockers.push("no RunRecord was assembled, so there is nothing to be complete about");
+  }
+  // `undefined` preserves the pure helper's historical three-argument use in older callers.
+  // Production passes either an exact assessment or NULL. Null is unknown, never zero.
+  if (probeLimitations === null) {
+    blockers.push("the execution plan could not be assessed for unsupported required probe actions");
+  } else if (probeLimitations !== undefined) {
+    for (const limitation of requiredProbeCapabilityLimitations(probeLimitations)) {
+      blockers.push(
+        `${limitation.blockingPathIds!.length} required planned probe path(s) have no executable receipt ` +
+          `(${limitation.code}: ${limitation.blockingPathIds!.join(", ")})`,
+      );
+    }
   }
   const adjudicating = cp.phases.find((ph) => ph.name === "adjudicating");
   if (adjudicating && adjudicating.state !== "complete") {

@@ -70,7 +70,7 @@ import { grokJson } from "../llm/grok";
 import { ModelCallError } from "../llm/chat";
 import { PROMPT_VERSION_A, SYSTEM_A, userMessageA } from "./prompts";
 import type { CallUsage, ParsedDocument, PassResult, RawRequirement, SourceBlock } from "./types";
-import { annotate } from "./docx-blocks";
+import { annotate, DOCX_BLOCKS_VERSION } from "./docx-blocks";
 import { asArray, coerceRequirement, coerceAmbiguities, coerceUnverifiable } from "./coerce";
 import { k } from "../keys";
 
@@ -334,7 +334,14 @@ export async function runPassA(
       await env.EVIDENCE.put(
         windowKey(runId, n),
         JSON.stringify(
-          { windowId: origin, windowNumber: n, blockIds, promptVersion: PROMPT_VERSION_A, ...landedWindow },
+          {
+            windowId: origin,
+            windowNumber: n,
+            blockIds,
+            parserVersion: DOCX_BLOCKS_VERSION,
+            promptVersion: PROMPT_VERSION_A,
+            ...landedWindow,
+          },
           null,
           2,
         ),
@@ -359,7 +366,20 @@ export async function runPassA(
       // successful one's are cached rather than being re-bought once per wave.
       await env.EVIDENCE.put(
         windowKey(runId, n),
-        JSON.stringify({ windowId: origin, windowNumber: n, blockIds, status: "failed", attempts, detail }, null, 2),
+        JSON.stringify(
+          {
+            windowId: origin,
+            windowNumber: n,
+            blockIds,
+            parserVersion: DOCX_BLOCKS_VERSION,
+            promptVersion: PROMPT_VERSION_A,
+            status: "failed",
+            attempts,
+            detail,
+          },
+          null,
+          2,
+        ),
         { httpMetadata: { contentType: "application/json" } },
       );
       if (attempts < maxIssues) remaining += 1;
@@ -430,6 +450,9 @@ async function readWindow(
   if (!obj) return null;
   try {
     const parsed = JSON.parse(await obj.text()) as Record<string, unknown>;
+    if (parsed["parserVersion"] !== DOCX_BLOCKS_VERSION || parsed["promptVersion"] !== PROMPT_VERSION_A) {
+      return null;
+    }
     const blockIds = Array.isArray(parsed["blockIds"]) ? (parsed["blockIds"] as string[]) : [];
     if (blockIds.length !== allowed.size || blockIds.some((id) => !allowed.has(id))) return null;
     if (parsed["status"] === "failed") {

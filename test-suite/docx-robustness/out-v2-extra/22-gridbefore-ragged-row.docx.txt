@@ -1,0 +1,10 @@
+[b0001] Q11. Brand usage.
+--- table t1 ---
+[b0002] (cell r1c1) Brand
+[b0003] (cell r1c2 row="Brand") Aware
+[b0004] (cell r1c3 row="Brand") Use
+[b0005] (cell r2c1 col="Brand") Kestrel
+[b0006] (cell r2c2 row="Kestrel" col="Aware") yes
+[b0007] (cell r2c3 row="Kestrel" col="Use") weekly
+[b0008] (cell r3c1 col="Brand") no
+[b0009] (cell r3c2 row="no" col="Aware") monthly

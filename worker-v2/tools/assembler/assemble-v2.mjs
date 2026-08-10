@@ -203,6 +203,11 @@ const emptyCase = (kind) => ({
   boundaryInput: null,
   configuration: null,
   expectedDestination: null,
+  // Shape parity with `types/record.ts#FacetCase`. This assembler is the v1-compiler path and
+  // does not mint option expectations (`extract/expand.ts#mintOptionSet` does), but a case it
+  // produces must still be the same SHAPE as one the expander produces, or a consumer reading
+  // `case.optionSet` sees `undefined` here and `null` there for the same "no payload".
+  optionSet: null,
 });
 
 function destinationOf(exp) {

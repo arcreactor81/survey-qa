@@ -1,0 +1,8 @@
+[b0001] (heading) SECTION J — TYPOGRAPHY TRAPS
+[b0002] Q22. Thinking about your “main” supplier — the one you’d name first — how likely are you to switch in the next 6–12 months?
+[b0003] Q23. Do you pay more than £100 per month?
+[b0004] Q24. Rate each statement from 1 – 5 (1 = strongly disagree, 5 = strongly agree)…
+[b0005] Q25. Have you used the Northwind app in the last 30 days?
+[b0006] SCRIPTER: the label below contains a soft hyphen and a zero-width space: multi­national​suppliers.
+[b0007] Q26. ½ of respondents will see version A; ⅓ of those will see the © disclaimer.
+[b0008] Q27. Temperature comfort ≥ 18°C — agree or disagree?

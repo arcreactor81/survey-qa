@@ -45,6 +45,8 @@
 
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { createPrivateKey, createPublicKey } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { loadEvidenceAuthority } from "../../../../pipeline/judge/lib/authority.mjs";
 import { judgeRun } from "../../../../pipeline/judge/lib/engine.mjs";
@@ -53,10 +55,12 @@ import { signRecord } from "../../../../scorer/src/lib/attest.mjs";
 /**
  * Where a run is materialized. Per-invocation so two concurrent judgements cannot mix.
  *
- * It MUST live under `/tmp`: workerd's virtual filesystem mounts the root read-only, and
- * `mkdirSync("/v2-judge")` fails with EPERM. `/tmp` is the writable mount.
+ * It MUST live under the runtime's declared temporary directory: workerd's virtual filesystem
+ * mounts the root read-only and reports `/tmp` here, while Node reports its OS-specific writable
+ * scratch root. Hard-coding the POSIX spelling made Windows interpret it as `<drive>:\tmp`, which
+ * is unrelated to Node's configured temp root and can be unwritable even when `tmpdir()` is not.
  */
-const MOUNT_ROOT = "/tmp/v2-judge";
+const MOUNT_ROOT = join(tmpdir(), "v2-judge");
 
 let mountSeq = 0;
 
@@ -86,18 +90,18 @@ export function judgeRunInIsolate({
   signer = null,
   priorObservations = null,
 }) {
-  const runDir = `${MOUNT_ROOT}/${runId}-${mountSeq++}`;
-  const artifactsDir = `${runDir}/artifacts`;
-  const recordPath = `${runDir}/run-record.v2.json`;
-  const revisionPath = `${runDir}/contract-revision.json`;
-  const registryPath = `${runDir}/key-registry.json`;
+  const runDir = join(MOUNT_ROOT, `${runId}-${mountSeq++}`);
+  const artifactsDir = join(runDir, "artifacts");
+  const recordPath = join(runDir, "run-record.v2.json");
+  const revisionPath = join(runDir, "contract-revision.json");
+  const registryPath = join(runDir, "key-registry.json");
 
   try {
     mkdirSync(artifactsDir, { recursive: true });
     // `checklist.json` is what the judge's CLI contract calls the obligation set, and
     // `loadEvidenceAuthority` is handed the parsed object as well — both are written so
     // the directory is self-describing if it is ever dumped for a human.
-    writeFileSync(`${runDir}/checklist.json`, JSON.stringify(checklist), "utf8");
+    writeFileSync(join(runDir, "checklist.json"), JSON.stringify(checklist), "utf8");
     writeFileSync(recordPath, JSON.stringify(record), "utf8");
     writeFileSync(revisionPath, JSON.stringify(revision), "utf8");
     if (keyRegistry) writeFileSync(registryPath, JSON.stringify(keyRegistry), "utf8");
@@ -120,7 +124,7 @@ export function judgeRunInIsolate({
         );
       }
       written.add(base);
-      writeFileSync(`${artifactsDir}/${base}`, Buffer.from(a.bytes));
+      writeFileSync(join(artifactsDir, base), Buffer.from(a.bytes));
     }
 
     const authority = loadEvidenceAuthority({
@@ -183,4 +187,4 @@ export function usablePrivateKey(pem) {
   }
 }
 
-export const judgeMountExists = (runId) => existsSync(`${MOUNT_ROOT}/${runId}`);
+export const judgeMountExists = (runId) => existsSync(join(MOUNT_ROOT, runId));

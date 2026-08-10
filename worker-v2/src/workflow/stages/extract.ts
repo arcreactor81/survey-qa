@@ -30,8 +30,8 @@ import { num } from "../../types/env";
 import { extractionDiffKey, extractionPassKey, k, sourceLedgerKey } from "../../keys";
 import { sha256Hex } from "../../store/hash";
 import { type Fence } from "../../store/checkpoint";
-import { pushUsage, modelUsage } from "../../store/usage";
-import { parseDocxBlocks } from "../../extract/docx-blocks";
+import { pushModelUsageStrict, modelUsage } from "../../store/usage";
+import { DOCX_BLOCKS_VERSION, parseDocxBlocks } from "../../extract/docx-blocks";
 import { keyFor, MissingCredential } from "../../llm/chat";
 import {
   runPassA,
@@ -48,8 +48,8 @@ import { CONSTRUCT_CLASSES, type CallUsage, type ParsedDocument, type PassResult
 import type { FacetInstance, ScopedRequirement } from "../../types/record";
 import { stageEvaluated, stageNotEvaluated, type GateProof, type StageResult } from "../gates";
 
-const mergedKey = (runId: string) => k("runs", runId, "extraction", "merged.json");
-const previewKey = (runId: string) => k("runs", runId, "extraction", "expansion-preview.json");
+export const mergedKey = (runId: string) => k("runs", runId, "extraction", "merged.json");
+export const previewKey = (runId: string) => k("runs", runId, "extraction", "expansion-preview.json");
 
 export interface PassSummary {
   hash: string;
@@ -88,7 +88,7 @@ export interface ConsolidationSummary {
 }
 
 export interface MergedPayload {
-  schemaVersion: "v2-extraction-merged/1.0.0";
+  schemaVersion: "v2-extraction-merged/1.0.0" | "v2-extraction-merged/1.1.0";
   documentSha256: string;
   requirements: ScopedRequirement[];
   facetInstances: FacetInstance[];
@@ -96,7 +96,7 @@ export interface MergedPayload {
   diff: ExtractionDiff;
   ledger: SourceLedger;
   constructs: { dispositioned: string[]; undispositioned: string[] };
-  versions: { passA: string; passB: string; merge: string; expander: string };
+  versions: { parser?: string; passA: string; passB: string; merge: string; expander: string };
 }
 
 const proof = (evaluatorId: string, evaluatorVersion: string, inputHash: string): GateProof => ({
@@ -131,7 +131,7 @@ export async function loadDocument(env: Env, documentKey: string): Promise<Parse
  */
 async function chargeUsage(env: Env, runId: string, calls: CallUsage[], fence: Fence): Promise<void> {
   if (calls.length === 0) return;
-  await pushUsage(
+  await pushModelUsageStrict(
     env,
     runId,
     fence,
@@ -245,7 +245,7 @@ export async function stagePassASlice(
     };
   }
 
-  const payload = { promptVersion: PASS_A_VERSION, ...result };
+  const payload = { parserVersion: DOCX_BLOCKS_VERSION, promptVersion: PASS_A_VERSION, ...result };
   const body = JSON.stringify(payload, null, 2);
   await env.EVIDENCE.put(extractionPassKey(runId, "a"), body, {
     httpMetadata: { contentType: "application/json" },
@@ -360,7 +360,7 @@ export async function stagePassBSlice(
     };
   }
 
-  const payload = { promptVersion: PASS_B_VERSION, ...result };
+  const payload = { parserVersion: DOCX_BLOCKS_VERSION, promptVersion: PASS_B_VERSION, ...result };
   const body = JSON.stringify(payload, null, 2);
   await env.EVIDENCE.put(extractionPassKey(runId, "b"), body, {
     httpMetadata: { contentType: "application/json" },
@@ -407,16 +407,22 @@ export async function stageConsolidate(
   const crossRefs = (passA.crossRefs ?? []) as CrossRef[];
 
   const { rows, requirements, diff, ledger } = await mergePasses(passA, passB, doc, crossRefs);
-  const { facetInstances, preview, unpreviewed, coverage } = await expandFloor(rows, {
+  const { facetInstances, preview, unpreviewed, coverage } = await expandFloor(
+    rows.map((row) => ({
+      requirement: row.requirement,
+      expansion: row.raw.find((raw) => raw.expansion !== null)?.expansion ?? null,
+    })),
+    {
     locale,
     viewport: viewports[0] ?? null,
-  });
+    },
+  );
 
   const dispositioned = [...new Set(passB.constructs.map((c) => c.construct))];
   const undispositioned = CONSTRUCT_CLASSES.filter((c) => !dispositioned.includes(c));
 
   const merged: MergedPayload = {
-    schemaVersion: "v2-extraction-merged/1.0.0",
+    schemaVersion: "v2-extraction-merged/1.1.0",
     documentSha256,
     requirements,
     facetInstances,
@@ -424,7 +430,13 @@ export async function stageConsolidate(
     diff,
     ledger,
     constructs: { dispositioned, undispositioned: [...undispositioned] },
-    versions: { passA: PASS_A_VERSION, passB: PASS_B_VERSION, merge: MERGE_VERSION, expander: EXPANDER_VERSION },
+    versions: {
+      parser: DOCX_BLOCKS_VERSION,
+      passA: PASS_A_VERSION,
+      passB: PASS_B_VERSION,
+      merge: MERGE_VERSION,
+      expander: EXPANDER_VERSION,
+    },
   };
 
   const mergedBody = JSON.stringify(merged, null, 2);
@@ -454,11 +466,47 @@ export async function stageConsolidate(
   return stageEvaluated(summary, proof("extract-consolidate", MERGE_VERSION, summary.mergedHash));
 }
 
-/** The sealed contract's inputs, read back by the seal step. */
-export async function loadMerged(env: Env, runId: string): Promise<MergedPayload | null> {
+/**
+ * The consolidated artifact no longer matches the bytes whose hash the durable
+ * `source-ledger` step returned.
+ *
+ * This is deliberately distinct from "missing": a missing artifact means the step did
+ * not leave its output behind, while a hash mismatch means something replaced that output
+ * between approval and sealing. Treating both as null would hide the integrity failure as
+ * an ordinary availability problem.
+ */
+export class MergedArtifactIntegrityFailure extends Error {
+  constructor(readonly expectedHash: string, readonly actualHash: string) {
+    super(
+      `MERGED_ARTIFACT_HASH_MISMATCH: the merged extraction artifact changed after the durable ` +
+        `source-ledger step approved it (expected ${expectedHash}, got ${actualHash}). Refusing to seal ` +
+        `requirements or cases that the recorded ledger, diff and expansion preview did not evaluate.`,
+    );
+    this.name = "MergedArtifactIntegrityFailure";
+  }
+}
+
+/**
+ * The sealed contract's inputs, read back by the seal step.
+ *
+ * Production sealing supplies `expectedMergedHash`, which is the result of the completed
+ * `source-ledger` Workflow step. The optional form remains for the developer inspection
+ * endpoint, which reads the artifact but does not use this helper as an approval proof.
+ */
+export async function loadMerged(
+  env: Env,
+  runId: string,
+  expectedMergedHash?: string,
+): Promise<MergedPayload | null> {
   const obj = await env.EVIDENCE.get(mergedKey(runId));
   if (!obj) return null;
-  return JSON.parse(await obj.text()) as MergedPayload;
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  if (expectedMergedHash !== undefined) {
+    const expected = `sha256:${expectedMergedHash.replace(/^sha256:/, "")}`;
+    const actual = `sha256:${await sha256Hex(bytes)}`;
+    if (actual !== expected) throw new MergedArtifactIntegrityFailure(expected, actual);
+  }
+  return JSON.parse(new TextDecoder().decode(bytes)) as MergedPayload;
 }
 
 /** A completed pass already in storage, re-summarized without a model call. */
@@ -467,7 +515,9 @@ async function readPassPayload(env: Env, runId: string, pass: "a" | "b"): Promis
   if (!obj) return null;
   const body = await obj.text();
   try {
-    const parsed = JSON.parse(body) as PassResult;
+    const parsed = JSON.parse(body) as PassResult & { parserVersion?: unknown; promptVersion?: unknown };
+    const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;
+    if (parsed.parserVersion !== DOCX_BLOCKS_VERSION || parsed.promptVersion !== expectedPrompt) return null;
     if (!Array.isArray(parsed.requirements)) return null;
     const hash = `sha256:${await sha256Hex(body)}`;
     // costUsd is zeroed deliberately: this attempt did not spend it, and charging a run
@@ -488,7 +538,19 @@ async function readPass(
 ): Promise<(PassResult & { crossRefs?: CrossRef[] }) | null> {
   const obj = await env.EVIDENCE.get(extractionPassKey(runId, pass));
   if (!obj) return null;
-  return JSON.parse(await obj.text()) as PassResult & { crossRefs?: CrossRef[] };
+  try {
+    const parsed = JSON.parse(await obj.text()) as PassResult & {
+      crossRefs?: CrossRef[];
+      parserVersion?: unknown;
+      promptVersion?: unknown;
+    };
+    const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;
+    if (parsed.parserVersion !== DOCX_BLOCKS_VERSION || parsed.promptVersion !== expectedPrompt) return null;
+    if (!Array.isArray(parsed.requirements)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "ARM C — HYBRID. The destination (owner ruling, 2 Aug 2026) and the reference condition.",
+    "",
+    "Differs from arm B in EXACTLY ONE SLOT (`judge`), which is what makes H2 -- what does the",
+    "model add -- a single-component swap needing no further control.",
+    "Differs from arm C-R in EXACTLY ONE SLOT (`plan`), which is what makes H4 clean.",
+    "",
+    "BLOCKED TWICE: structure=routing-graph does not exist (see arm-b.json), and",
+    "judge=model-attribute is blocked BY INVARIANT rather than by missing code --",
+    "verify-observations.ts promotes to `verified` only through a closed predicate over a",
+    "typed sealed expectation, and derive-verdicts.ts forbids model calls outright. Both",
+    "invariants are the fix for nine fabricated verdicts and must NOT be relaxed to admit arm",
+    "C. The legitimate path (a typed ModelAttributeObservation that deterministic derivation",
+    "reads) needs an owner ruling. ARCHITECTURE.md §9.3."
+  ],
+  "manifestVersion": "survey-qa-arm-manifest/1.0.0",
+  "armId": "C",
+  "label": "hybrid — graph plans, model judges attributes",
+  "workerName": "survey-qa-arm-c",
+  "components": {
+    "ingest": "shared-sealed",
+    "structure": "routing-graph",
+    "plan": "graph-exhaustive",
+    "traverse": "harness-walk",
+    "judge": "model-attribute"
+  },
+  "sharedIngestRevision": null,
+  "declaredAttribution": ["graph", "model", "graph-located-model-judged", "unattributed"]
+}

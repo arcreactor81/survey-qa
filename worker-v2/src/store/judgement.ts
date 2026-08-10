@@ -283,13 +283,41 @@ export async function checkJudgementBinding(
     );
   }
   if (expectedPayload !== null) {
+    // A JUDGEMENT BINDS TO THE REVISION IT JUDGED, AND A RUN HAS MORE THAN ONE.
+    //
+    // The judge READS the record and binds to its payload hash, so revision 1 must be signed
+    // before the judgement exists and can never contain the judgement's own outcome. Whatever is
+    // learned after that — the judgement's result, the test-axis gate — lands in a SUPERSEDING
+    // revision, and `record.json` then names that one (`assemble-record.mjs#supersedeRunRecord`).
+    //
+    // Recomputing the hash of the CURRENT record and demanding the judgement name it would
+    // therefore fail every run the moment closure was recorded, and every re-derived column would
+    // demote to `unusable`. So a judgement also binds when it names the revision this one
+    // supersedes — `originalRecordHash`, which every later revision carries forward, so a chain
+    // of any depth still resolves.
+    //
+    // THIS IS NOT A WEAKENING. Both values come from the run's own signed record, whose
+    // attestation covers `recordRevision`; a supersede adds `recordRevision` and `closure` and
+    // changes nothing else (asserted by D41); and a judgement naming a hash that appears NOWHERE
+    // in this record's chain still fails, which is the case the gate exists for.
+    const ancestry = ((facts.record ?? {}) as { recordRevision?: { originalRecordHash?: unknown; supersedes?: { recordHash?: unknown } } })
+      .recordRevision;
+    const supersededHashes = [ancestry?.originalRecordHash, ancestry?.supersedes?.recordHash].filter(
+      (h): h is string => typeof h === "string" && h.length > 0,
+    );
+    const matchesCurrent = b.runRecordPayloadHash === expectedPayload;
+    const matchesSuperseded = supersededHashes.includes(b.runRecordPayloadHash as string);
     add(
       "run-payload-hash",
       "RunRecord payload hash",
-      b.runRecordPayloadHash === expectedPayload,
+      matchesCurrent || matchesSuperseded,
       expectedPayload,
       b.runRecordPayloadHash ?? null,
-      "The judgement must name the exact record it re-read. A mismatch means it judged a different record.",
+      matchesSuperseded
+        ? "The judgement names the revision this record supersedes, which is the revision the judge could bind to: " +
+          "the judgement runs before closure is recorded, so it can only ever have judged an earlier revision."
+        : "The judgement must name the exact record it re-read, or a revision the stored record supersedes. " +
+          "A mismatch means it judged a different record.",
     );
   }
 

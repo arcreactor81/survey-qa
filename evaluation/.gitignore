@@ -1,0 +1,9 @@
+# Scorer-side only. Must never be reachable by any arm (PRE-REGISTRATION.md §5.4).
+key-annotations.json
+
+# Adjudication decisions are recorded, but the blinded queue view is regenerated.
+results/adjudication-queue.blinded.json
+
+# Findings and telemetry derive from the blind corpus. Remove only when corpus and results
+# are released together under the staggered publication protocol.
+results/

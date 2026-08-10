@@ -1,0 +1,8 @@
+[b0001] (heading) SECTION Q — ALTERNATE NAMESPACE BINDING
+[b0002] Q55. How many vehicles does your household own? NUMERIC, RANGE 0-9.
+[b0003] ROUTING: if Q55 = 0 then SKIP TO Q60 (no vehicle module).
+--- table t1 ---
+[b0004] (cell r1c1) Q56 = 1
+[b0005] (cell r1c2 row="Q56 = 1") ask Q57
+[b0006] (cell r2c1) Q56 = 2
+[b0007] (cell r2c2 row="Q56 = 2") TERMINATE (T12)

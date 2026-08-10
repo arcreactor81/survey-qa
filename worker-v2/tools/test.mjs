@@ -231,6 +231,141 @@ const FILES = [
   // the driver's: operable-vs-visible in both directions, the fallback that hid the shift now
   // named, and the reader's limitations reaching the artifact.
   "./tests/d38-answerable-controls.test.mjs",
+  // D39 — A PASS IS A CLAIM TOO. 0.2 made the route `violated` arm demand a MARKUP witness
+  // because prose back-references other questions, and scoped that to the accusing arm; the
+  // `satisfied` arm went on reading the plain union, so a screen that merely printed "as you said
+  // in Q9…" minted a pass for a route that had landed somewhere else entirely. A false PASS does
+  // not just miss the defect, it CERTIFIES there is none. Plus the terminal destination, which was
+  // unverifiable by construction until the walker began typing its ending — decidable here only
+  // when that ending is bound to the screen THIS answer reached and this stage's own reading of
+  // the same bytes agrees the screen is a dead end.
+  "./tests/d39-pass-witness-and-terminal.test.mjs",
+  // D40 — TWO WAYS A RUN'S OWN RECORD LIED ABOUT ITSELF, both measured on 8 Aug. The sweeper
+  // treated an operator's deliberate TERMINATION as a recoverable fault and resurrected a run a
+  // human had just killed; it restarted and re-created instances on indirect evidence, erasing
+  // one run's forensic record and re-spending money on another; and when cron returned from a
+  // 140-minute silence it acted on every stale observation at once, because the two-strike
+  // protocol had a minimum separation and no maximum staleness. Separately, `targetBuildId` was
+  // null on every envelope, so `assemble-record.mjs` stamped null into every signed record and
+  // no record could state WHAT WAS TESTED — which is why run 4 (5 pass / 0 fail) and run 5
+  // (2 pass / 2 fail) on the same document and the same survey could not be told apart.
+  "./tests/d40-sweeper-and-target-identity.test.mjs",
+  // D41 — THE SIGNED RECORD CERTIFIED THE EMPTIEST POSSIBLE VIEW OF EVERY RUN. It is assembled
+  // and Ed25519-signed BEFORE the judgement stage; run 4 was signed at 02:28:03 and
+  // `mint-judgement` then failed with EVIDENCE_NAME_COLLISION at 02:29:57, a fact that lived
+  // only in stdout. The order is not the bug — `mintJudgement` binds to the record's own
+  // payload hash, so a record carrying the judgement's outcome would contain a hash of itself —
+  // but nothing was signed AFTERWARDS, so a verified signature certified a document that could
+  // not say the second opinion had never been obtained. A second revision now supersedes the
+  // first, and the first's bytes stay valid and addressable (supersede, never mutate). Also
+  // here: the guard that a record with fail verdicts must carry claims (refused at the write
+  // boundary), and the four lists the assembler declared empty while their sources sat in the
+  // inputs it already held — attempts, ambiguities, taxonomy gaps and the tested identity.
+  // Evidence they can fail: `tools/mutate-closure.mjs`.
+  "./tests/d41-signed-closure.test.mjs",
+  // D42 — A STALL THAT PRODUCED A LARGE NUMBER AND WAS READ AS SUCCESS. Four medical surveys
+  // reported "38 observations"; all four walks were on SCREEN 1 OF 5 and the 38 were 38 captures
+  // of the same screen. Cause: the control classifier read only `text` and `label`, and SurveyJS
+  // draws navigation as `<input type=button value=Next>` — no text, no <label>, so BOTH inputs
+  // were empty on every screen ever read and every button classified `other`. Screen 1 survived
+  // by ACCIDENT (one candidate, so the elimination fallback caught it); screen 2 adds Previous,
+  // the two tie, and the walk stops. Compounding it: `outcome: "no-advance-control"` was ALSO
+  // what a finished survey produced, so "reached the end" and "never got in" were one value; the
+  // reader's `counts.textInputs` disagreed with its own control inventory on every screen with a
+  // number field; and the walker's filler "QA-PROBE" typed into `<input type=number>` had two of
+  // the four surveys reporting `blocked` — a working survey recorded as rejecting an answer.
+  // The DOM half is proved in a real browser: `node tools/live-walk.mjs` drives the production
+  // `walkPath` against the live fleet and `tools/fixtures/endings/*.html`.
+  // Evidence they can fail: `tools/mutate-endings.mjs`.
+  "./tests/d42-advance-control-and-endings.test.mjs",
+  // D43 — D42 TYPED THE ENDING AND NOTHING CARRIED IT. Deployed `e821ecd7`, run
+  // `v2r_01kzggtye653abaa36sxeg23yd`: all 41 observations show `screensAdvanced: 5` (D42's fix
+  // working) and all 41 show `outcome: "no-advance-control"` and nothing else — the one value
+  // that covers BOTH "the survey ended" and "we never got in". The walker had classified every
+  // one of them; `execute-batch.ts#walkRecord` dropped the ending on its way into the walk
+  // ledger, and `project-observations.ts` dropped it again — along with `blockedSteps`, the
+  // exercised gate's own denominator, the reader's named limitations and what the walk never
+  // bound. Both hops now carry them verbatim, optional stays optional, and `unclassified` is
+  // never folded into `completed` at either one. The last suite is the counterweight and the
+  // load-bearing half: the payload is READABLE, not evidence, so an `ending` that contradicts
+  // its artifact must move no verdict in either direction — the verifier re-reads the bytes.
+  // Evidence they can fail: `tools/mutate-projection-carry.mjs`.
+  "./tests/d43-walk-facts-reach-the-record.test.mjs",
+  // D44 — THE WALKER'S FILLER WAS A BOUNDARY PROBE, AND HALF THE INPUT TYPES WERE NEVER FILLED.
+  // MEASURED on the six live branching targets: `defaultTextFor` answered a numeric control with
+  // the LOWEST legal value (`1`, raised to `min`), which is the one value a screener cuts at.
+  // s2-screener terminated the walk on its documented under-18 rule after TWO screens of ten
+  // ("What is your age?" -> 1), s6-kitchen-sink on "fewer than 2 years" (-> 1) after three, and
+  // the clean/flawed experiment that depended on s2 returned 0 of 3 seeded defects for that
+  // reason alone. The filler is now the midpoint of the range THE SITE declares, snapped to its
+  // own step grid — and the honest counterexample is asserted with it: s2's S4 is screened out by
+  // the midpoint too, because no constant passes every screener. Second half, measured in Chrome:
+  // `tel`/`url`/`search` were never filled; `range`/`date`/`time`/`month`/`week`/`datetime-local`/
+  // `color` were never filled AND cannot be typed into (inserted text is discarded, a range
+  // ignores keystrokes) so they are SET; `email` was filled with "QA-PROBE", which sticks in
+  // `.value` and then fails the control's own constraint validation. `<input>` with no type was
+  // never a gap — it reflects `type === "text"`. The load-bearing half is the counterweight: a
+  // password is REFUSED and a file input CANNOT be satisfied, both with `ok: false`, both named
+  // on the step and lifted to the walk, and a stall on one no longer reads as a normal ending.
+  // The DOM half is proved in a real browser: `node tools/live-walk.mjs` over the six live
+  // branching targets, plus the data:-URL fixtures in `tools/probe-input-types.mjs`.
+  // Evidence they can fail: `tools/mutate-input-coverage.mjs`.
+  "./tests/d44-input-type-coverage.test.mjs",
+  // D45 — THE OPTION-SET PREDICATE, the first new verdict-minting path in months. ~90% of
+  // checks returned `insufficient` because only `route` and `boundary` had predicates, and
+  // option-set is the largest decidable bucket. The registry opened for exactly one kind and
+  // the payload is minted from the DOCUMENT'S OWN QUOTE (`extract/expand.ts#mintOptionSet`),
+  // corroborated by the requirement's statement — so a model chose which span to point at and
+  // the document supplied the bytes that get compared. The negative half is the larger half:
+  // an option list scoped to the SURVEY refuses rather than binding by proximity (a fifth of
+  // real rows, three different questions all claiming code 1), and a site that WORDS an option
+  // differently ("18 to 24" for "18-24") is never accused of missing it. Evidence they can
+  // fail: `tools/mutate-option-set.mjs`.
+  "./tests/d45-option-set.test.mjs",
+  // D46 — THE FROZEN HUMAN CONTRACT SEAM. Strict JSON and exact DOCX spans feed the same
+  // identity mint, floor expander, content-addressed sealer, planner and predicates as model
+  // extraction, while the extraction reuse index is unreachable. The final test mutates one
+  // valid authored option and proves the real verifier changes its decision over identical
+  // captured survey bytes; a hash-only assertion would not prove the requirement was used.
+  "./tests/d46-human-contract.test.mjs",
+  // D50 â€” parser-labelled open combo-box suggestions and visible ruby readings remain
+  // addressable source, but may never be sealed as an answer list. Both model merge and the
+  // exact-span human path carry a reserved source role; expansion keeps a counted named gap
+  // and excludes those labels from sibling corroboration.
+  "./tests/d50-docx-source-roles.test.mjs",
+  // D51 — arm configs used to DECLARE isolated R2 prefixes while runtime ignored the
+  // declaration and wrote every experiment into production `v2/`. The binding boundary
+  // now translates all operations, refuses missing/unknown topology, and is installed on
+  // HTTP, core Workflow and visual child Workflow entrypoints. The list/delete half proves
+  // an arm cannot even enumerate production keys. Evidence: tools/mutate-keyspace.mjs.
+  "./tests/d51-arm-keyspace.test.mjs",
+  // D52 — planned back-navigation and repeated sessions are counted unsupported work until
+  // the browser adapter can emit receipts for them; one forward walk never means they ran.
+  "./tests/d52-probe-execution-truth.test.mjs",
+  // D47 — every screen epoch is captured as three explicitly paired modalities: the legacy
+  // screen JSON, a viewport PNG and Chrome's full accessibility tree. Exact hashes/media and
+  // viewport/scroll/DPR metadata bind them; browser handles are stripped through a closed
+  // projection; unavailable APIs and every node/depth/value/byte cap are named and counted.
+  // The negative fixture fails all three capture surfaces independently so a silent catch makes
+  // the suite red instead of turning absence into an empty tree.
+  "./tests/d47-capture-ax.test.mjs",
+  // D49 — screenshot pixels own visible option grouping, AX is the independent semantic
+  // reader, and the DOM-derived screen projection is pairing provenance only. Fragmented HTML
+  // names cannot split one visual group; duplicate visual bindings, explicit visual ambiguity,
+  // and visual/AX disagreement all suppress facts with named limitations. The output is positive
+  // visible membership only and has no inventory-closure or verdict surface.
+  "./tests/d49-vision-reconcile.test.mjs",
+  // THE .DOCX READER — the first thing in the pipeline, and until now the only stage with no
+  // test at all. `test-suite/docx-robustness/` (20 hostile documents, 99 probes) was a one-off
+  // hand-run measurement: v1 = 77, Cloudflare toMarkdown = 78, deployed v2 = 87. A number
+  // nothing recomputes stops being true in silence, so the score is a gate now — the TOTAL and
+  // the exact IDENTITY SET of the ten probes that still fail, because a total alone lets one
+  // failure swap for another. Plus the lesson that governs parser work here: the first `w:sdt`
+  // dropdown fix PASSED its extraction probe and, through the real `parseDocumentedOptions`,
+  // dropped one option and sealed a label the document never printed. A parser change is
+  // correct when the SEAL still reads it, not when the parser test passes.
+  // Evidence they can fail: `tools/mutate-docx-blocks.mjs`.
+  "./tests/docx-robustness.test.mjs",
 ];
 
 for (const f of FILES) await import(f);

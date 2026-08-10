@@ -24,7 +24,14 @@
 import type { Env } from "../../types/env";
 import { effectivePolicy } from "../../types/env";
 import { isV2RunId, mintRunId } from "../../ids";
-import { inputDocumentKey, inputManifestKey, k } from "../../keys";
+import {
+  extractionDiffKey,
+  extractionPassKey,
+  inputDocumentKey,
+  inputManifestKey,
+  k,
+  sourceLedgerKey,
+} from "../../keys";
 import { claimOwnership, createCheckpoint, initialCheckpoint, loadCheckpoint, setPhase, updateCheckpoint } from "../../store/checkpoint";
 import { markActive, putEnvelope } from "../../store/envelope";
 import { denominators, sealContract } from "../../store/contract-revision";
@@ -32,7 +39,7 @@ import { sha256Hex } from "../../store/hash";
 import { ENVELOPE_KIND, ENVELOPE_SCHEMA, type ContractRevision, type RunEnvelopeV2 } from "../../types/record";
 import { describeGates, unmetGates } from "../gates";
 import { deriveGates, projectConstructs, projectDiff, projectExpansion, projectLedger } from "../run-workflow";
-import { loadMerged, stageConsolidate, stagePassA, stagePassB } from "./extract";
+import { loadMerged, mergedKey, previewKey, stageConsolidate, stagePassA, stagePassB } from "./extract";
 
 interface ExtractBody {
   documentBase64?: string;
@@ -224,7 +231,7 @@ async function runExtraction(
         model: body.grokModel ?? env.GROK_MODEL ?? "grok-4.3",
         elapsedMs: Date.now() - startedAt,
         passA,
-        passAKey: `v2/runs/${runId}/extraction/pass-a.json`,
+        passAKey: extractionPassKey(runId, "a"),
       });
     }
 
@@ -340,12 +347,12 @@ async function runExtraction(
       diff: merged?.diff ?? null,
       coverage: merged?.diff.documentCoverage ?? null,
       artifacts: {
-        passA: `v2/runs/${runId}/extraction/pass-a.json`,
-        passB: `v2/runs/${runId}/extraction/pass-b.json`,
-        merged: `v2/runs/${runId}/extraction/merged.json`,
-        diff: `v2/runs/${runId}/extraction/diff.json`,
-        ledger: `v2/runs/${runId}/extraction/source-ledger.json`,
-        preview: `v2/runs/${runId}/extraction/expansion-preview.json`,
+        passA: extractionPassKey(runId, "a"),
+        passB: extractionPassKey(runId, "b"),
+        merged: mergedKey(runId),
+        diff: extractionDiffKey(runId),
+        ledger: sourceLedgerKey(runId),
+        preview: previewKey(runId),
       },
     });
   } catch (err) {

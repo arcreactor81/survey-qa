@@ -13,6 +13,7 @@
 import { assert, assertEq, assertThrows, suite, test } from "../testkit.mjs";
 import { seedRun, testEnv, worker } from "./_helpers.mjs";
 import { contractBody, runRecordV2 } from "../fixtures/v2-fixture.mjs";
+import { buildRegister } from "../../../pipeline/report/lib/register.mjs";
 
 suite("D12 — one validated record interface", () => {
   test("the guard type-checks rather than presence-checks", async () => {
@@ -127,6 +128,330 @@ suite("D12 — one validated record interface", () => {
     ];
     const projected = mod.renderable.projectRunRecordV2(record, { ...contractBody(), contractRevisionId: "cr_x" });
     assertEq(projected.itemResults[0].coverageStatus, "not-reached");
+  });
+
+  test("a sealed 33-case ledger remains 33 cases when only 30 requirement rows exist", () => {
+    const items = [];
+    const facetInstances = [];
+    const itemResults = [];
+    const caseCounts = [...Array(27).fill(1), 1, 3, 2];
+    for (let requirementIndex = 0; requirementIndex < caseCounts.length; requirementIndex += 1) {
+      const itemId = `req_denominator_${String(requirementIndex + 1).padStart(2, "0")}`;
+      const status = requirementIndex < 27 ? "pending" : "blocked";
+      items.push({
+        itemId,
+        type: "rendered-state",
+        requirement: `Requirement ${requirementIndex + 1}`,
+        sourceAnchor: { locator: `section-${requirementIndex + 1}`, quote: null, aliases: [] },
+        expectedObservable: null,
+        stimulus: null,
+        preconditions: [],
+        confidence: null,
+      });
+      const facetResults = [];
+      for (let caseIndex = 0; caseIndex < caseCounts[requirementIndex]; caseIndex += 1) {
+        const caseId = `fi_denominator_${requirementIndex + 1}_${caseIndex + 1}`;
+        facetInstances.push({ itemId, caseId, label: `case ${caseIndex + 1}`, screen: null });
+        facetResults.push({ facetInstanceId: caseId, routeId: "floor", status, observationIds: [] });
+      }
+      itemResults.push({
+        itemId,
+        verdict: "not-assessed",
+        coverageStatus: status,
+        reason: { code: "fixture", summary: "denominator fixture" },
+        evidenceRefs: [],
+        attemptRefs: [],
+        facetResults,
+      });
+    }
+
+    const register = buildRegister({
+      record: {
+        schemaVersion: "fixture/1.0.0",
+        run: { configuration: { parameters: {} } },
+        contract: { items, facetInstances },
+        attempts: [],
+        itemResults,
+        findings: [],
+        evidence: [],
+        observations: [],
+        resources: { modelCalls: [], toolVersions: [] },
+        attestation: null,
+      },
+      findings: [],
+      runContext: {},
+    });
+
+    const executionCases = register.denominators.executionCases;
+    assertEq(register.denominators.documentRequirements.total, 30);
+    assertEq(register.caseLedger.total, 33, "the sealed ledger is the execution-case authority");
+    assertEq(register.caseLedger.boundTotal, 33, "every sealed case binds to one requirement row");
+    assertEq(executionCases.total, 33, "the report must not fall back to one case per requirement");
+    assertEq(executionCases.enumerated, 33, "all sealed identities must be materialized");
+    assertEq(executionCases.byColumn["as-run"].bucketed, 33);
+    assertEq(executionCases.byColumn["as-run"].states.PENDING, 27);
+    assertEq(executionCases.byColumn["as-run"].states.BLOCKED, 6);
+    assert(
+      !register.warnings.some((warning) => /CASE_(LEDGER_DENOMINATOR|ENUMERATION|BUCKET)_/.test(warning.code)),
+      "a reconciled sealed ledger must not emit a denominator reconciliation warning",
+    );
+  });
+
+  test("an explicitly sealed empty case ledger stays zero instead of inventing a leaf", () => {
+    const itemId = "req_explicit_zero_cases";
+    const register = buildRegister({
+      record: {
+        schemaVersion: "fixture/1.0.0",
+        run: { configuration: { parameters: {} } },
+        contract: {
+          items: [{
+            itemId,
+            type: "rendered-state",
+            requirement: "A requirement with an explicitly empty sealed case assignment",
+            sourceAnchor: { locator: "section-zero", quote: null, aliases: [] },
+            expectedObservable: null,
+            stimulus: null,
+            preconditions: [],
+            confidence: null,
+          }],
+          facetInstances: [],
+        },
+        attempts: [],
+        itemResults: [],
+        findings: [],
+        evidence: [],
+        observations: [],
+        resources: { modelCalls: [], toolVersions: [] },
+        attestation: null,
+      },
+      findings: [],
+      runContext: {},
+    });
+
+    assertEq(register.denominators.documentRequirements.total, 1);
+    assertEq(register.caseLedger.present, true, "an explicit empty array is a declared sealed ledger");
+    assertEq(register.caseLedger.total, 0);
+    assertEq(register.denominators.executionCases.total, 0);
+    assertEq(register.denominators.executionCases.enumerated, 0);
+    assertEq(register.denominators.executionCases.byColumn["as-run"].bucketed, 0);
+  });
+
+  test("standalone rendering keeps a missing sealed case id as a named limitation", () => {
+    const itemId = "req_missing_case_identity";
+    const register = buildRegister({
+      record: {
+        schemaVersion: "fixture/1.0.0",
+        run: { configuration: { parameters: {} } },
+        contract: {
+          items: [{
+            itemId,
+            type: "rendered-state",
+            requirement: "A standalone report must explain an unreadable case identity",
+            sourceAnchor: { locator: "section-missing-id", quote: null, aliases: [] },
+            expectedObservable: null,
+            stimulus: null,
+            preconditions: [],
+            confidence: null,
+          }],
+          facetInstances: [{ itemId, label: "case whose sealed id is unreadable", screen: null }],
+        },
+        attempts: [],
+        itemResults: [],
+        findings: [],
+        evidence: [],
+        observations: [],
+        resources: { modelCalls: [], toolVersions: [] },
+        attestation: null,
+      },
+      findings: [],
+      runContext: {},
+    });
+
+    assertEq(register.caseLedger.total, 1, "the unreadable case remains in the denominator");
+    assertEq(register.caseLedger.caseIdentities[0].caseId, null, "a display fallback is not sealed identity");
+    assertEq(register.rows[0].cases.length, 1, "standalone rendering remains available for diagnosis");
+    assert(
+      register.warnings.some((warning) => warning.code === "CASE_LEDGER_MISSING_CASE_ID"),
+      "the standalone view must name why its synthetic display id cannot support publication",
+    );
+  });
+
+  test("cross-artifact gate kills a coordinated 33 to 30 denominator mutation", async () => {
+    const mod = await worker();
+    const canonicalCases = Array.from({ length: 33 }, (_, index) => ({
+      caseId: `fi_gate_${index + 1}`,
+      requirementId: "req_gate",
+    }));
+    const view = {
+      register: {
+        columns: [{ id: "as-run" }],
+        rows: [{ itemId: "req_gate", cases: canonicalCases.map(({ caseId }) => ({ caseId })) }],
+        caseLedger: {
+          present: true,
+          total: 33,
+          boundTotal: 33,
+          caseIdentities: structuredClone(canonicalCases),
+          problems: [],
+        },
+        denominators: {
+          executionCases: {
+            total: 33,
+            enumerated: 33,
+            byColumn: {
+              "as-run": { bucketed: 33, states: { PENDING: 27, BLOCKED: 6 } },
+            },
+          },
+        },
+      },
+    };
+    const baseline = mod.reportBuild.checkReportExecutionCaseIntegrity({
+      runId: "v2r_denominator_fixture",
+      canonicalCases,
+      checkpointTotal: 33,
+      renderedSummaryTotal: 33,
+      reportView: view,
+    });
+    assertEq(baseline.ok, true, "the exact sealed denominator must pass");
+
+    // Mutate every derived/report-side copy together. A gate that merely compares the
+    // report to itself would still pass; the sealed ContractRevision remains 33 and kills it.
+    const mutant = structuredClone(view);
+    mutant.register.caseLedger.total = 30;
+    mutant.register.caseLedger.boundTotal = 30;
+    mutant.register.denominators.executionCases.total = 30;
+    mutant.register.denominators.executionCases.enumerated = 30;
+    mutant.register.denominators.executionCases.byColumn["as-run"] = {
+      bucketed: 30,
+      states: { PENDING: 24, BLOCKED: 6 },
+    };
+    mutant.register.caseLedger.caseIdentities = mutant.register.caseLedger.caseIdentities.slice(0, 30);
+    mutant.register.rows[0].cases = mutant.register.rows[0].cases.slice(0, 30);
+    const killed = mod.reportBuild.checkReportExecutionCaseIntegrity({
+      runId: "v2r_denominator_fixture",
+      canonicalCases,
+      checkpointTotal: 30,
+      renderedSummaryTotal: 30,
+      reportView: mutant,
+    });
+    assertEq(killed.ok, false, "the 33→30 mutation must fail before publication");
+    assertEq(killed.reasonCode, "report-execution-case-denominator-mismatch");
+    assert(killed.detail.includes("expected sealed total 33"));
+  });
+
+  test("same-cardinality drop-A duplicate-B and substituted identities cannot publish", async () => {
+    const mod = await worker();
+    const canonicalCases = [
+      { caseId: "fi_identity_A", requirementId: "req_identity_1" },
+      { caseId: "fi_identity_B", requirementId: "req_identity_2" },
+    ];
+    const exactView = {
+      register: {
+        columns: [{ id: "as-run" }],
+        rows: [
+          { itemId: "req_identity_1", cases: [{ caseId: "fi_identity_A" }] },
+          { itemId: "req_identity_2", cases: [{ caseId: "fi_identity_B" }] },
+        ],
+        caseLedger: {
+          present: true,
+          total: 2,
+          boundTotal: 2,
+          caseIdentities: structuredClone(canonicalCases),
+          problems: [],
+        },
+        denominators: {
+          executionCases: {
+            total: 2,
+            enumerated: 2,
+            byColumn: { "as-run": { bucketed: 2, states: { PENDING: 2 } } },
+          },
+        },
+      },
+    };
+    assertEq(
+      mod.reportBuild.checkReportExecutionCaseIntegrity({
+        runId: "v2r_identity_fixture",
+        canonicalCases,
+        checkpointTotal: 2,
+        renderedSummaryTotal: 2,
+        reportView: exactView,
+      }).ok,
+      true,
+      "the exact identity set must pass even when presentation order is independent",
+    );
+
+    const mutants = [
+      {
+        label: "drop A and duplicate B",
+        mutate(view) {
+          view.register.caseLedger.caseIdentities = [canonicalCases[1], canonicalCases[1]];
+          view.register.rows = [{ itemId: "req_identity_2", cases: [{ caseId: "fi_identity_B" }, { caseId: "fi_identity_B" }] }];
+        },
+        detail: /repeats case id\(s\).*fi_identity_B.*missing sealed case id\(s\).*fi_identity_A/,
+      },
+      {
+        label: "substitute unknown C for A",
+        mutate(view) {
+          view.register.caseLedger.caseIdentities[0] = { caseId: "fi_identity_C", requirementId: "req_identity_1" };
+          view.register.rows[0].cases[0].caseId = "fi_identity_C";
+        },
+        detail: /missing sealed case id\(s\).*fi_identity_A.*substitutes unknown case id\(s\).*fi_identity_C/,
+      },
+      {
+        label: "erase a materialized case id without changing any claimed total",
+        mutate(view) {
+          delete view.register.rows[0].cases[0].caseId;
+        },
+        detail: /has no valid sealed identity/,
+      },
+    ];
+
+    for (const fixture of mutants) {
+      const mutant = structuredClone(exactView);
+      fixture.mutate(mutant);
+      const killed = mod.reportBuild.checkReportExecutionCaseIntegrity({
+        runId: "v2r_identity_fixture",
+        canonicalCases,
+        checkpointTotal: 2,
+        renderedSummaryTotal: 2,
+        reportView: mutant,
+      });
+      assertEq(killed.ok, false, fixture.label);
+      assertEq(killed.reasonCode, "report-execution-case-identity-mismatch", fixture.label);
+      assert(fixture.detail.test(killed.detail), `${fixture.label}: ${killed.detail}`);
+    }
+  });
+
+  test("END TO END: execution-case gate failure reaches buildAndStoreReport and publication is never called", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const seeded = await seedRun(mod, env);
+
+    // Corrupt a DERIVED copy without touching the content-addressed revision. This reaches
+    // the real build path with a valid record, renderable report and canonical two-case
+    // ledger, but a checkpoint/export denominator that falsely claims one. A unit test of
+    // the helper cannot prove buildAndStoreReport actually invokes it before publishReport.
+    await mod.checkpoint.updateCheckpoint(env, seeded.runId, (draft) => {
+      draft.contract.total = 1;
+      draft.counts.exercised = 1;
+    });
+    const reportPrefix = mod.keys.reportPointerKey(seeded.runId).replace(/current\.json$/, "");
+    const logStart = env.EVIDENCE._log.length;
+
+    const built = await mod.reportBuild.buildAndStoreReport(env, seeded.runId);
+    assertEq(built.ok, false);
+    assertEq(built.reasonCode, "report-execution-case-denominator-mismatch");
+    assert(
+      built.detail.includes("checkpoint/export=1"),
+      `the named mismatch must survive the full build boundary: ${built.detail}`,
+    );
+    assertEq(await mod.publish.readReportPointer(env, seeded.runId), null, "no report pointer may exist");
+    assertEq(
+      env.EVIDENCE._log
+        .slice(logStart)
+        .filter((entry) => entry.op === "put" && entry.key.startsWith(reportPrefix)).length,
+      0,
+      "publishReport writes immutable HTML/data before its pointer, so zero writes proves it was never called",
+    );
   });
 
   /**

@@ -93,6 +93,7 @@ export function initialCheckpoint(env: Env, runId: string, profile: "standard" |
       wallClock: { usedMilliseconds: 0, maxMilliseconds: policy.limits.maxWallClockMs, startedAtMs: Date.now() },
       events: [],
       browserSessions: { used: 0 },
+      paidModelAccounting: { mode: "fail-loud-v2-micro-ceiling" },
     },
     policy,
     execution: null,

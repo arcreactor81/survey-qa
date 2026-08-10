@@ -65,7 +65,7 @@ import { num } from "../types/env";
 import { deepseekJson } from "../llm/deepseek";
 import { ModelCallError } from "../llm/chat";
 import { PROMPT_VERSION_B, SYSTEM_B, userMessageB, userMessageSweep } from "./prompts";
-import { annotate } from "./docx-blocks";
+import { annotate, DOCX_BLOCKS_VERSION } from "./docx-blocks";
 import type { CallUsage, ParsedDocument, PassResult, RawRequirement, SourceBlock } from "./types";
 import { asArray, coerceConstructs, coerceDispositions, coerceRequirement, coerceAmbiguities, coerceUnverifiable } from "./coerce";
 import { k } from "../keys";
@@ -219,6 +219,7 @@ export async function runPassB(
   // exactly as accountable as a fresh one.
   // -------------------------------------------------------------------------
   const todo: Chunk[] = [];
+  const priorAttemptsByChunk = new Map<number, number>();
   let landed = 0;
   for (const chunk of chunks) {
     const blockIds = chunk.blocks.map((b) => b.blockId);
@@ -236,6 +237,7 @@ export async function runPassB(
       // than each getting a fresh one. Unbounded re-issue is how one chunk id came to be
       // billed 21–24 times during a recovery storm.
       if (existing.attempts < maxIssues) {
+        priorAttemptsByChunk.set(chunk.n, existing.attempts);
         todo.push(chunk);
         continue;
       }
@@ -295,7 +297,10 @@ export async function runPassB(
     // requirements that chunk exists to produce.
     const overlapsContext = blockIds.some((id) => contextIds.has(id));
     const context = overlapsContext || contextBlocks.length === 0 ? null : annotate(contextBlocks);
-    const priorAttempts = await countedAttempts(env, runId, chunk.n);
+    // This count came from the same strict decoder that admitted the failed artifact in
+    // phase 1. A second, weaker read used to let a stale parser/prompt failure consume the
+    // current retry budget even after `readChunk` had rejected it.
+    const priorAttempts = priorAttemptsByChunk.get(chunk.n) ?? 0;
 
     try {
       const { value, usage } = await deepseekJson(env, {
@@ -326,6 +331,7 @@ export async function runPassB(
           {
             chunkId: chunk.id,
             blockIds,
+            parserVersion: DOCX_BLOCKS_VERSION,
             promptVersion: PROMPT_VERSION_B,
             usage,
             obligations: chunkReqs,
@@ -372,7 +378,19 @@ export async function runPassB(
       unresolvedFor(blockIds, `chunk ${chunk.id} failed: ${detail}`);
       await env.EVIDENCE.put(
         chunkKey(runId, chunk.n),
-        JSON.stringify({ chunkId: chunk.id, blockIds, status: "failed", attempts, detail }, null, 2),
+        JSON.stringify(
+          {
+            chunkId: chunk.id,
+            blockIds,
+            parserVersion: DOCX_BLOCKS_VERSION,
+            promptVersion: PROMPT_VERSION_B,
+            status: "failed",
+            attempts,
+            detail,
+          },
+          null,
+          2,
+        ),
         { httpMetadata: { contentType: "application/json" } },
       );
       if (attempts < maxIssues) retriableFailures += 1;
@@ -508,6 +526,8 @@ export async function runPassB(
             {
               sweepId,
               blockIds: [...allowed],
+              parserVersion: DOCX_BLOCKS_VERSION,
+              promptVersion: PROMPT_VERSION_B,
               usage,
               obligations: sweptReqs,
               dispositions: sweptDisps,
@@ -535,7 +555,19 @@ export async function runPassB(
         // chunk's are rather than being re-bought once per wave.
         await env.EVIDENCE.put(
           sweepKey(runId, i),
-          JSON.stringify({ sweepId, blockIds: [...allowed], status: "failed", attempts, detail }, null, 2),
+          JSON.stringify(
+            {
+              sweepId,
+              blockIds: [...allowed],
+              parserVersion: DOCX_BLOCKS_VERSION,
+              promptVersion: PROMPT_VERSION_B,
+              status: "failed",
+              attempts,
+              detail,
+            },
+            null,
+            2,
+          ),
           { httpMetadata: { contentType: "application/json" } },
         );
         if (attempts < maxIssues) sweepRemaining += 1;
@@ -665,6 +697,9 @@ async function readUnit(
   if (!obj) return null;
   try {
     const parsed = JSON.parse(await obj.text()) as Record<string, unknown>;
+    if (parsed["parserVersion"] !== DOCX_BLOCKS_VERSION || parsed["promptVersion"] !== PROMPT_VERSION_B) {
+      return null;
+    }
     const blockIds = Array.isArray(parsed["blockIds"]) ? (parsed["blockIds"] as string[]) : [];
     if (blockIds.length !== allowed.size || blockIds.some((id) => !allowed.has(id))) return null;
     if (parsed["status"] === "failed") {
@@ -684,19 +719,6 @@ async function readUnit(
     };
   } catch {
     return null;
-  }
-}
-
-/** How many times this chunk has already been bought and failed, per its own artifact. */
-async function countedAttempts(env: Env, runId: string, n: number): Promise<number> {
-  const obj = await env.EVIDENCE.get(chunkKey(runId, n));
-  if (!obj) return 0;
-  try {
-    const parsed = JSON.parse(await obj.text()) as Record<string, unknown>;
-    if (parsed["status"] !== "failed") return 0;
-    return typeof parsed["attempts"] === "number" ? parsed["attempts"] : 1;
-  } catch {
-    return 0;
   }
 }
 

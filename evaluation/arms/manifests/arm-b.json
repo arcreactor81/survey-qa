@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "ARM B — GRAPH-ONLY. Ablation role: the hybrid minus the model (C - B = what the model adds).",
+    "",
+    "BLOCKED ON INPUT, not on wiring. graph-spike/compile-d.mjs#compileGraphD compiles a",
+    "routing graph from the corpus's machine-readable manifest.json -- deliberately, to",
+    "isolate the graph question from the extraction question (FINDINGS.md §2). The blind",
+    "corpus ships no manifest, and if it did, reading it would be inverting the renderer that",
+    "generated the site (CLAUDE.md hard-anchoring reference case #2).",
+    "",
+    "What arm B needs is `SealedContract -> StructureModel` -- a smaller and better-specified",
+    "job than a second extractor, precisely BECAUSE the shared-ingestion control hands it a",
+    "sealed requirement set. It does not exist. ARCHITECTURE.md §9.2."
+  ],
+  "manifestVersion": "survey-qa-arm-manifest/1.0.0",
+  "armId": "B",
+  "label": "graph-only",
+  "workerName": "survey-qa-arm-b",
+  "components": {
+    "ingest": "shared-sealed",
+    "structure": "routing-graph",
+    "plan": "graph-exhaustive",
+    "traverse": "harness-walk",
+    "judge": "deterministic-diff"
+  },
+  "sharedIngestRevision": null,
+  "declaredAttribution": ["graph", "unattributed"]
+}

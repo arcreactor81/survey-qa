@@ -21,7 +21,7 @@
 import type { Env } from "../types/env";
 import { fail, json, readJson } from "./http";
 import { assertV2RunId, isV2RunId, mintRunId } from "../ids";
-import { flagLanesKey, judgementKey, recordKey } from "../keys";
+import { flagLanesKey, inputDocumentKey, judgementKey, recordKey } from "../keys";
 import { createCheckpoint, initialCheckpoint, beat } from "../store/checkpoint";
 import { putEvidence } from "../store/evidence";
 import { markActive, putEnvelope } from "../store/envelope";
@@ -113,7 +113,7 @@ export async function devSeed(req: Request, env: Env): Promise<Response> {
     instanceId: runId,
     input: {
       surveyUrl: "https://fixture.invalid/seeded",
-      documentKey: `v2/runs/${runId}/input/document.docx`,
+      documentKey: inputDocumentKey(runId),
       documentSha256: "0".repeat(64),
       documentName: "seeded-fixture.docx",
       targetBuildId: body.targetBuildId ?? null,

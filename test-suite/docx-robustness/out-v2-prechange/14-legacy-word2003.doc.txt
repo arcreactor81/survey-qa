@@ -1,0 +1,3 @@
+[b0001] PROJECT 41-2287 — LEGACY SCREENER (Word 2003 format)
+[b0002] S1. Do you or does anyone in your household work in market research? IF YES, TERMINATE (T1).
+[b0003] S2. Which of these age bands are you in? SINGLE CODE. TERMINATE if under 18 (T2).

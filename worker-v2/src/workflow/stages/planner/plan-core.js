@@ -26,13 +26,58 @@ const sha256hex = (s) => createHash("sha256").update(s).digest("hex");
 
 export const CONTRACT_KIND = "coverage-contract/extractor-v1";
 
-/** Stable content hash so the plan can be pinned to the exact contract it planned against. */
+/**
+ * Canonicalise a JSON value without depending on object insertion order.
+ *
+ * Contracts cross an R2/Workflow boundary as JSON, so values outside the JSON data model are
+ * refused rather than silently stringified into a different value. Array order is retained:
+ * order within a stimulus or other row field can change what the planner does.
+ */
+function canonicalJsonValue(value, path = "$") {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError(`contract hash: ${path} is not a finite JSON number`);
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((item, index) => canonicalJsonValue(item, `${path}[${index}]`));
+  if (typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value).sort()) {
+      const child = value[key];
+      if (child === undefined) throw new TypeError(`contract hash: ${path}.${key} is undefined, not JSON`);
+      out[key] = canonicalJsonValue(child, `${path}.${key}`);
+    }
+    return out;
+  }
+  throw new TypeError(`contract hash: ${path} contains non-JSON ${typeof value}`);
+}
+
+/** A denominator collection is a set of rows; row order is not contract semantics. */
+function canonicalRows(rows, path) {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row, index) => {
+      const value = canonicalJsonValue(row, `${path}[${index}]`);
+      return { value, key: JSON.stringify(value) };
+    })
+    .sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0))
+    .map(({ value }) => value);
+}
+
+/**
+ * Stable semantic hash so the plan is pinned to the exact denominator it planned against.
+ *
+ * `contractHash` itself and acquisition provenance are deliberately absent. Every field of
+ * every obligation, ambiguity and browser-unverifiable row is retained. In particular, two
+ * contracts that reuse an id but change its statement, stimulus or expected observation are
+ * different contracts and must trigger a re-plan.
+ */
 export function hashContract(c) {
-  const canon = JSON.stringify({
-    o: (c.obligations || []).map((x) => x.id).sort(),
-    a: (c.ambiguities || []).map((x) => x.id).sort(),
-    u: (c.unverifiable_from_browser || []).map((x) => x.id).sort(),
-  });
+  const canon = JSON.stringify(canonicalJsonValue({
+    obligations: canonicalRows(c?.obligations, "$.obligations"),
+    ambiguities: canonicalRows(c?.ambiguities, "$.ambiguities"),
+    unverifiable_from_browser: canonicalRows(c?.unverifiable_from_browser, "$.unverifiable_from_browser"),
+  }));
   return "sha256:" + sha256hex(canon);
 }
 

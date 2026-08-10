@@ -56,12 +56,18 @@
  */
 
 import type { Env } from "../../types/env";
-import { observationsKey } from "../../keys";
+import { observationsKey, walkArtifactIndexKey } from "../../keys";
 import { sha256Hex, canonicalHash } from "../../store/hash";
 import { loadCheckpoint } from "../../store/checkpoint";
 import { listCatalog } from "../../store/evidence";
+import {
+  buildWalkArtifactIndex,
+  putWalkArtifactIndex,
+  resolveWalkArtifactCandidate,
+} from "../../store/walk-artifact-index";
 import { stageNotEvaluated, type StageResult } from "../gates";
 import type { EvidenceCatalogEntry, Observation } from "../../types/record";
+import type { WalkEnding } from "../../browser/types";
 import { loadProgram, type ExecutionProgram } from "./plan";
 import { loadProgress, type ExecProgress, type WalkRecord } from "./execute-batch";
 
@@ -74,19 +80,82 @@ export const PROJECTION_VERSION = "v2-observation-projection/1.0.0";
  */
 export const WALK_PAYLOAD_KIND = "v2-walk-projection/1.0.0";
 
-/** The citation every predicate re-reads. Pointer only; the bytes live in the catalogue. */
+/**
+ * The citation every predicate re-reads. Pointer only; the bytes live in the catalogue.
+ *
+ * ================== WHAT THE EXTRA FIELDS ARE, AND WHAT THEY ARE NOT ==================
+ *
+ * Everything below `observationEvidenceId` is the EXECUTOR'S OWN ACCOUNT OF ITS WALK, copied
+ * verbatim under the producer's own names. It is here so the run's signed record can be READ —
+ * "this walk was screened out", "the reader hit 3 limitations it could not resolve" — without
+ * fetching and re-hashing one R2 artifact per walk, which is how the record is actually
+ * audited in practice.
+ *
+ * NONE OF IT IS EVIDENCE AND NO VERDICT MAY REST ON IT. `verify-observations.ts` takes
+ * `observationEvidenceId` from this payload and NOTHING ELSE, then re-reads and re-hashes the
+ * artifact bytes and reads the walk's ending off THOSE ("the payload supplies the POINTER and
+ * nothing else"). That separation is the reason `structuralDecision` refuses to let a
+ * producer-authored payload key mint a defect claim, and adding readable fields here must not
+ * become a second route around it. If a future consumer wants to DECIDE on an ending, it reads
+ * the artifact, exactly as the verifier does.
+ *
+ * ABSENCE IS PRESERVED AT BOTH HOPS. Each optional field is copied only when the walk ledger
+ * carries it, so a run whose `progress.json` predates the field projects a payload without it —
+ * and a reader must take that as "this walk did not say", never as a value. There is no `??`
+ * on any of them.
+ */
 export interface WalkProjectionPayload {
   pathId: string;
   attemptId: string;
   /** The catalogue id of the PathObservation artifact. THE VERIFIER RE-READS THESE BYTES. */
   observationEvidenceId: string | null;
-  /** How the walk ended, verbatim from the executor. Not a verdict. */
+  /** Why the STEP LOOP exited, verbatim from the executor. Not a verdict, and not an ending. */
   outcome: string;
   outcomeDetail: string | null;
+  /**
+   * HOW THE WALK ENDED — `browser/types.ts#WalkEnding`, carried whole (kind AND the evidence
+   * the walker quoted for it).
+   *
+   * THIS IS THE FIELD THE RECORD WAS MISSING. `outcome: "no-advance-control"` is the value a
+   * finished survey AND a walk that never got in both produce; run
+   * `v2r_01kzggtye653abaa36sxeg23yd` published 41 observations carrying exactly that and
+   * nothing else. The four-state ending (`completed` / `screened-out` / `stalled` /
+   * `unclassified`) is what separates them.
+   *
+   * `unclassified` IS A REAL ANSWER AND IS NEVER FOLDED INTO `completed` — not here, not at the
+   * walk-record hop, not anywhere on the producing side. It means the walker reached a screen
+   * with nothing left to press and nothing on it said WHICH kind of ending it was; a screen-out
+   * page thanks you too. And ABSENT is a fifth, different state: an artifact or ledger row that
+   * predates typed endings. A reader that defaults either one to a completion has rebuilt the
+   * defect this field exists to remove.
+   */
+  ending?: WalkEnding;
   screensAdvanced: number;
   steps: number;
   /** Whether the executor judged the walk to have exercised the survey. */
   exercised: boolean;
+  /**
+   * THE EXERCISED GATE'S OWN DENOMINATOR AND NUMERATOR. `exercised` above is a boolean with no
+   * arithmetic attached; these are the two numbers it was computed from, and the only reason
+   * run `v2r_01kzfb6py8pbxznqv022p2qkhb` could be re-adjudicated at all was that they were on
+   * disk (`execute-batch.ts#WalkRecord`). They travel together: a numerator published without
+   * its denominator is the shape this repo keeps mistaking for a result.
+   */
+  constrainingDecisions?: number;
+  matchedConstraining?: number;
+  /** Steps carrying POSITIVE evidence the site refused to advance. Absent ≠ zero. */
+  blockedSteps?: number;
+  /** Planned decisions no screen was ever identified as — what the walk did NOT do. */
+  unboundDecisions?: Array<{ question: string; wanted: string[]; reason: string }>;
+  /** How many times a screen was refused a binding on this walk. Counted, not implied. */
+  bindingRefusalCount?: number;
+  /**
+   * EVERY LIMITATION THE READER NAMED, carried rather than counted away. "There are 4 footnotes
+   * I could not read" is the required behaviour; a payload holding only the total would be the
+   * quietly shorter list that rule forbids.
+   */
+  readerLimitations?: Array<{ stepIndex: number; kind: string; detail: string; count: number }>;
+  readerLimitationCount?: number;
   observedAt: string;
 }
 
@@ -110,15 +179,7 @@ export function findWalkArtifact(
   catalog: EvidenceCatalogEntry[],
   walk: WalkRecord,
 ): EvidenceCatalogEntry | null {
-  const wanted = `EV-${walk.pathId}-observation`;
-  return (
-    catalog.find((e) => e.sourceEvidenceId === wanted && e.attemptId === walk.attemptId) ??
-    // A walk recorded before attempt stamping, or a catalogue whose entry lost its attempt:
-    // fall back to the path match ONLY when it is unambiguous.
-    (catalog.filter((e) => e.sourceEvidenceId === wanted).length === 1
-      ? catalog.find((e) => e.sourceEvidenceId === wanted) ?? null
-      : null)
-  );
+  return resolveWalkArtifactCandidate(catalog, walk).selected;
 }
 
 /** Every catalogue entry this attempt produced — the walk's own evidence, by attempt. */
@@ -158,6 +219,16 @@ export async function projectObservations(env: Env, runId: string): Promise<Stag
 
   const progress = await loadProgress(env, runId, planRevisionId);
   const catalog = await listCatalog(env, runId);
+  // THE EXECUTION LEDGER IS THE DENOMINATOR. Index every walk before projecting the subset
+  // that closed cases. The same in-memory catalogue list drives both operations; no second
+  // R2 fan-out is introduced here.
+  const walkIndex = buildWalkArtifactIndex({
+    runId,
+    planRevisionId,
+    walks: progress.walks,
+    catalog,
+  });
+  await putWalkArtifactIndex(env.EVIDENCE, walkArtifactIndexKey(runId), walkIndex);
   const observations = await observationsFromWalks(runId, program, progress, catalog);
 
   await env.EVIDENCE.put(observationsKey(runId), JSON.stringify({ observations: observations.rows }), {
@@ -203,12 +274,21 @@ export async function observationsFromWalks(
     if (caseIds.length === 0) continue; // a walk that closed nothing observed nothing it may claim
     contributingWalks += 1;
 
-    const artifact = findWalkArtifact(catalog, walk);
+    const artifactResolution = resolveWalkArtifactCandidate(catalog, walk);
+    const artifact = artifactResolution.selected;
     if (!artifact) withoutArtifact += caseIds.length;
+
+    // A PathObservation candidate is a semantic artifact citation, not generic attempt
+    // context. When resolution is ambiguous, NONE of the candidates may leak back into the
+    // observation through the broad `evidenceForAttempt` list; doing so would still let a
+    // downstream reader pick one by array order after this resolver correctly refused.
+    const pathObservationCandidateIds = new Set(artifactResolution.candidates.map((entry) => entry.evidenceId));
 
     const evidenceIds = [
       ...(artifact ? [artifact.evidenceId] : []),
-      ...evidenceForAttempt(catalog, walk.attemptId).filter((id) => id !== artifact?.evidenceId),
+      ...evidenceForAttempt(catalog, walk.attemptId).filter(
+        (id) => id !== artifact?.evidenceId && !pathObservationCandidateIds.has(id),
+      ),
     ];
 
     for (const facetInstanceId of caseIds) {
@@ -221,6 +301,21 @@ export async function observationsFromWalks(
         screensAdvanced: walk.screensAdvanced,
         steps: walk.steps,
         exercised: walk.exercised === true,
+        // COPIED ONLY WHEN THE LEDGER CARRIES IT, and then unchanged. Conditional spreads, not
+        // `walk.x ?? default`: a ledger row written before a field existed must project a
+        // payload WITHOUT that field, so "the walk did not say" stays distinguishable from
+        // "the walk said zero" / "the walk completed". `constrainingDecisions` and
+        // `matchedConstraining` are non-optional on `WalkRecord` but `loadProgress` re-reads
+        // old JSON with a cast, so at runtime they can genuinely be absent — the guard is
+        // load-bearing, not defensive decoration.
+        ...(walk.ending !== undefined ? { ending: walk.ending } : {}),
+        ...(walk.constrainingDecisions !== undefined ? { constrainingDecisions: walk.constrainingDecisions } : {}),
+        ...(walk.matchedConstraining !== undefined ? { matchedConstraining: walk.matchedConstraining } : {}),
+        ...(walk.blockedSteps !== undefined ? { blockedSteps: walk.blockedSteps } : {}),
+        ...(walk.unboundDecisions !== undefined ? { unboundDecisions: walk.unboundDecisions } : {}),
+        ...(walk.bindingRefusalCount !== undefined ? { bindingRefusalCount: walk.bindingRefusalCount } : {}),
+        ...(walk.readerLimitations !== undefined ? { readerLimitations: walk.readerLimitations } : {}),
+        ...(walk.readerLimitationCount !== undefined ? { readerLimitationCount: walk.readerLimitationCount } : {}),
         observedAt: walk.at,
       };
 

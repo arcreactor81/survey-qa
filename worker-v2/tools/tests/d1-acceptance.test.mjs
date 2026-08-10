@@ -275,7 +275,7 @@ async function assembleOnce() {
       state: "sealed",
       contractRevisionId: sealed.contractRevisionId,
       contractHash: sealed.contractHash,
-      total: denominators.requirements,
+      total: denominators.executionCases,
       requirements: {
         total: denominators.requirements,
         ambiguous: denominators.ambiguous,
@@ -286,13 +286,19 @@ async function assembleOnce() {
     // The coverage ledger is derived from the ASSEMBLED record's own case statuses, so
     // the checkpoint reconciles against the sealed total for the reason a real run's does
     // — not because the test picked numbers that add up.
+    const statusByFacetInstanceId = new Map();
     for (const r of record.itemResults) {
-      const worst = r.facetResults.map((f) => f.status);
-      const bucket = worst.some((s) => s === "pending")
+      for (const facet of r.facetResults) {
+        if (facet.facetInstanceId) statusByFacetInstanceId.set(facet.facetInstanceId, facet.status);
+      }
+    }
+    for (const facet of sealed.revision.facetInstances) {
+      const status = statusByFacetInstanceId.get(facet.facetInstanceId) ?? "pending";
+      const bucket = status === "pending"
         ? "pending"
-        : worst.some((s) => s === "blocked")
+        : status === "blocked"
           ? "blocked"
-          : worst.some((s) => s === "not-reached")
+          : status === "not-reached"
             ? "not-reached"
             : "exercised";
       d.counts[bucket] = (d.counts[bucket] ?? 0) + 1;
@@ -744,13 +750,19 @@ async function assembleOverHttpOnce() {
   // --- (3) record + judgement + a reconciling ledger, over HTTP, then build -
   const denominators = mod.contractRevision.denominators(revision);
   const counts = { exercised: 0, "not-reached": 0, "proven-unreachable": 0, blocked: 0, "budget-exhausted": 0, "time-exhausted": 0, pending: 0 };
+  const statusByFacetInstanceId = new Map();
   for (const r of record.itemResults) {
-    const s = r.facetResults.map((f) => f.status);
-    const bucket = s.some((x) => x === "pending")
+    for (const facet of r.facetResults) {
+      if (facet.facetInstanceId) statusByFacetInstanceId.set(facet.facetInstanceId, facet.status);
+    }
+  }
+  for (const facet of revision.facetInstances) {
+    const status = statusByFacetInstanceId.get(facet.facetInstanceId) ?? "pending";
+    const bucket = status === "pending"
       ? "pending"
-      : s.some((x) => x === "blocked")
+      : status === "blocked"
         ? "blocked"
-        : s.some((x) => x === "not-reached")
+        : status === "not-reached"
           ? "not-reached"
           : "exercised";
     counts[bucket] += 1;
@@ -767,7 +779,7 @@ async function assembleOverHttpOnce() {
           state: "sealed",
           contractRevisionId: sealed.contractRevisionId,
           contractHash: sealed.contractHash,
-          total: denominators.requirements,
+          total: denominators.executionCases,
           requirements: {
             total: denominators.requirements,
             ambiguous: denominators.ambiguous,

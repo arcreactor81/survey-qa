@@ -159,6 +159,7 @@ export async function loadWorker() {
     [
       `export * as hash from ${p("src/store/hash.ts")};`,
       `export * as keys from ${p("src/keys.ts")};`,
+      `export * as evidenceKeyspace from ${p("src/store/evidence-keyspace.ts")};`,
       `export * as ids from ${p("src/ids.ts")};`,
       `export * as contracts from ${p("src/types/contracts.ts")};`,
       `export * as checkpoint from ${p("src/store/checkpoint.ts")};`,
@@ -177,16 +178,25 @@ export async function loadWorker() {
       `export * as apiRuns from ${p("src/api/runs.ts")};`,
       `export * as router from ${p("src/api/router.ts")};`,
       `export * as expand from ${p("src/extract/expand.ts")};`,
+      // THE .DOCX READER ITSELF. It was already inside the bundle's import graph (pass-a and
+      // pass-b both import `annotate`), so a mutant could always be applied to it — but no
+      // test could call `parseDocxBlocks` on real bytes, so there was nothing for a mutant to
+      // kill. `tests/docx-robustness.test.mjs` scores the 20-file hostile corpus through THIS
+      // export, which is why the gate can never read a stale build artifact.
+      `export * as docxBlocks from ${p("src/extract/docx-blocks.ts")};`,
       // D27 needs the REAL identity mint: the collision it reproduces is minted in the
       // merge and only OBSERVED in the expander, so a fixture requirement row would test
       // the wrong half of the pipeline.
       `export * as merge from ${p("src/extract/merge.ts")};`,
       `export * as passA from ${p("src/extract/pass-a.ts")};`,
       `export * as passB from ${p("src/extract/pass-b.ts")};`,
+      `export * as chat from ${p("src/llm/chat.ts")};`,
       `export * as extractStage from ${p("src/workflow/stages/extract.ts")};`,
       `export * as gates from ${p("src/workflow/gates.ts")};`,
       `export * as plan from ${p("src/workflow/stages/plan.ts")};`,
       `export * as workflow from ${p("src/workflow/run-workflow.ts")};`,
+      `export * as visualShadowWorkflow from ${p("src/workflow/visual-shadow-workflow.ts")};`,
+      `export * as visualWorkflow from ${p("src/workflow/visual-shadow-workflow.ts")};`,
       `export * as projectObservations from ${p("src/workflow/stages/project-observations.ts")};`,
       `export * as verifyObservations from ${p("src/workflow/stages/verify-observations.ts")};`,
       `export * as runInputs from ${p("src/workflow/stages/run-inputs.ts")};`,
@@ -199,12 +209,28 @@ export async function loadWorker() {
       // stage, and until D29 nothing executed a line of it — its `PageLike` is a structural
       // interface, so a fake page drives the real code with no browser anywhere.
       `export * as driver from ${p("src/browser/driver.ts")};`,
+      // D42 needs the READER. Most of `page-script.ts` is a string this suite cannot execute —
+      // it needs a DOM — but the two DECISIONS inside it that are pure (which control advances
+      // the survey; do the reader's own counts match its own inventory) are held as their own
+      // source strings precisely so node can eval and mutate the SAME TEXT the page runs.
+      `export * as pageScript from ${p("src/browser/page-script.ts")};`,
       // D31 needs the REAL executor. Its exercised gate and its stop-reason decision are the
       // two things that turn a walk into a published coverage number and a published
       // accusation, and until D31 the module was not even importable by a test.
       `export * as executeBatch from ${p("src/workflow/stages/execute-batch.ts")};`,
       `export * as sweeper from ${p("src/sweeper.ts")};`,
+      // D40 needs the WRITE side of the target identity. `report/build.ts` re-exports only the
+      // two pure derivations, and the defect this closes is that nothing PERSISTED one — so a
+      // test reaching it through the report module could not tell a computed id from a
+      // recorded one.
+      `export * as targetBuild from ${p("src/store/target-build.ts")};`,
+      // D41 needs the reuse index itself. The digest is the whole safety property — every input
+      // that could change what a re-extraction produces has to be in it — and a test reaching it
+      // only through the workflow could not tell "the key is complete" from "the lookup missed".
+      `export * as contractReuse from ${p("src/store/contract-reuse.ts")};`,
+      `export * as humanContract from ${p("src/contract/human-authored.ts")};`,
       `export * as structure from ${p("src/structure/index.ts")};`,
+      `export * as visionReconcile from ${p("src/vision/reconcile.ts")};`,
       `export * as env from ${p("src/types/env.ts")};`,
     ].join("\n"),
     "utf8",
@@ -391,6 +417,7 @@ export function fakeStep(opts = {}) {
 export function baseEnv(overrides = {}) {
   return {
     EVIDENCE: memoryR2(),
+    V2_PREFIX: "v2/",
     V2_RUN_WORKFLOW: {
       async get() {
         throw new Error("instance.not_found");

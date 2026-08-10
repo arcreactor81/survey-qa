@@ -1,0 +1,8 @@
+[b0001] Q40. Ordinary question above a hostile table.
+--- table t1 ---
+[b0002] (cell r1c1) A
+[b0003] (cell r1c2 row="A") B
+[b0004] (cell r1c3 row="A") C
+[b0005] (cell r2c1 col="A") x
+[b0006] (cell r2c2 row="x" col="B") y
+[b0007] (cell r2c3 row="x" col="C") z

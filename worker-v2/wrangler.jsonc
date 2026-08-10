@@ -106,6 +106,11 @@
       "name": "survey-qa-v2-run",
       "binding": "V2_RUN_WORKFLOW",
       "class_name": "SurveyRunWorkflowV2"
+    },
+    {
+      "name": "survey-qa-v2-visual-shadow",
+      "binding": "V2_VISUAL_WORKFLOW",
+      "class_name": "SurveyVisualShadowWorkflowV1"
     }
   ],
 
@@ -120,6 +125,16 @@
       "binding": "DEEPSEEK_API_KEY",
       "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
       "secret_name": "DEEPSEEK_API_KEY"
+    },
+    {
+      "binding": "GEMINI_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "GEMINI_API_KEY"
+    },
+    {
+      "binding": "MISTRAL_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "MISTRAL_API_KEY"
     },
     {
       // Grok. The owner's binding ruling: extraction runs TWO independent passes,
@@ -219,6 +234,8 @@
 
     // ---- submission limits (each keeps its own name and denominator) ----
     "MAX_DOCUMENT_BYTES": "26214400", // 25 MiB of .docx
+    "MAX_HUMAN_REQUIREMENTS_BYTES": "1048576", // 1 MiB; validated JSON, not a second document channel
+    "MAX_SUBMISSION_BYTES": "37748736", // 36 MiB; early Content-Length guard incl. JSON/base64 overhead
     "MAX_VIEWPORTS": "6",
     "MAX_LOCALE_LENGTH": "35", // BCP-47 maximum practical tag length
     "OUTBOUND_URL_POLICY": "block-private", // "block-private" | "allow-private"
@@ -229,15 +246,17 @@
     //      wrong price here makes the cost line wrong, not the run. ----
     // MEASURED on t1-easy, same document, same prompt, one call each:
     //   grok-4.3 → 12-18 survey-scoped rules (three runs), 2 cross-references resolved, $0.019
-    //   grok-4.5 → 23 rules, 15 cross-references resolved, 3 ambiguities named, $0.030
+    //   grok-4.5 → 23 rules, 15 cross-references resolved, 3 ambiguities named
     // 4.5 caught rules 4.3 did not state at all ("code numbers must never be displayed",
     // "Q8 is the only question a respondent may leave blank"). Pass A exists to find exactly
     // the class of rule a block-by-block read cannot produce, so a miss here is not recovered
     // downstream — the extra cent is the cheapest part of this pipeline.
     "GROK_MODEL": "grok-4.5",
     "GROK_REASONING_EFFORT": "high",
-    "GROK_INPUT_USD_PER_MTOK": "1.25",
-    "GROK_OUTPUT_USD_PER_MTOK": "2.50",
+    // Official xAI short-context rates verified 9 Aug 2026. Keep these paired with
+    // GROK_MODEL: changing a model without changing its ledger rates is a release failure.
+    "GROK_INPUT_USD_PER_MTOK": "2.00",
+    "GROK_OUTPUT_USD_PER_MTOK": "6.00",
     "DEEPSEEK_MODEL": "deepseek-v4-pro",
     "DEEPSEEK_REASONING_EFFORT": "medium",
     // OFFICIAL RATES, corrected 8 Aug. These read 0.28 / 0.42 and the cost ledger
@@ -315,6 +334,10 @@
     "JUDGE_MODEL": "claude-sonnet-4-6",
     "WORKERSAI_VALIDATOR_MODEL": "@cf/openai/gpt-oss-120b",
     "WORKERSAI_ENABLED": "false", // free neurons exhausted; validators degrade, never block
+
+    // Visual perception is shadow-only and cannot buy inference until a reviewed deploy
+    // explicitly replaces this exact false with a complete provider + budget configuration.
+    "VISUAL_SHADOW_ENABLED": "false",
 
     "AGGREGATOR_VERSION": "v2-aggregator/1.0.0",
     "RESULT_POLICY_VERSION": "v2-result-policy/1.0.0"

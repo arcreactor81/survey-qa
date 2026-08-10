@@ -376,8 +376,13 @@ test("YIELD: a survey that prints NO ids and names NO controls now reaches a ver
   assertEq(row.verifier.decision, "verified", JSON.stringify(row.verifier));
   assertEq(row.verifier.reason, "ROUTE_DESTINATION_REACHED");
   assert(
-    String(row.verifier.verifierVersion).startsWith("v2-structural-verifier/1.4.0"),
-    `the version must move with the behaviour: ${row.verifier.verifierVersion}`,
+    // THE STAMP MUST BE THE VERSION THIS BUILD ACTUALLY IS. A literal here ("…/1.5.0") pinned
+    // the wrong property: it reddened on every deliberate version bump — 1.6.0 opened the
+    // registry for `option-set` and did not touch this arm at all — while proving nothing about
+    // the stamp, which is what a reader of two records compares. The yield this test measures is
+    // the assertions above; this one is that the record says which predicate produced them.
+    String(row.verifier.verifierVersion) === `${mod.verifyObservations.VERIFIER_VERSION}+no-model`,
+    `the record must be stamped with this build's verifier version: ${row.verifier.verifierVersion}`,
   );
 });
 

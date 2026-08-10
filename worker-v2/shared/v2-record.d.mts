@@ -13,6 +13,7 @@ export const V2_CONTRACT_REVISION_KIND: "survey-qa-v2-contract-revision";
 export const V2_PROJECTION_VERSION: string;
 export const CONTRACT_REVISION_ID_RE: RegExp;
 export const REQUIRED_CONTRACT_GATES: readonly string[];
+export const REQUIRED_HUMAN_CONTRACT_GATES: readonly string[];
 
 export function isRunRecordV2(record: unknown): record is RunRecordV2;
 export function isContractRevisionV2(revision: unknown): revision is ContractRevision;
@@ -22,6 +23,7 @@ export function semanticContractBody(body: unknown): unknown;
 export function contractRevisionIdFromDigest(hex: string): string;
 export function contractHashFromDigest(hex: string): string;
 export function contractGateFailures(gates: unknown): string[];
+export function contractApprovalFailures(revision: unknown): string[];
 
 export function contractItemFromRequirement(requirement: unknown): Record<string, unknown>;
 export function liveRequirements(revision: unknown): unknown[];

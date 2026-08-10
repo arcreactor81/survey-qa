@@ -15,16 +15,22 @@ export interface Env {
   ASSETS: Fetcher;
   /** Browser Rendering. Sessions are launched/reconnected per call; see workflow/browser-session.ts */
   BROWSER: Fetcher;
-  /** SHARED bucket survey-qa-artifacts, but every key is forced under `v2/` by store/keys. */
+  /** SHARED bucket; store/evidence-keyspace scopes every operation to V2_PREFIX. */
   EVIDENCE: R2Bucket;
   /** Workflow binding — distinct name AND class from prod's RUN_WORKFLOW/RunWorkflow. */
   V2_RUN_WORKFLOW: Workflow;
+  /** Independent visual shadow Workflow; paid waves do not share the core run envelope. */
+  V2_VISUAL_WORKFLOW: Workflow;
   /** Workers AI. Optional at runtime: free neurons are exhausted, validators must degrade. */
   AI?: Ai;
 
   // --- secrets (Secrets Store bindings resolve via .get()) ---
   ANTHROPIC_API_KEY?: string | SecretBinding;
   DEEPSEEK_API_KEY?: string | SecretBinding;
+  /** Gemini visual reader credential. Prefer the gateway/AI binding when Unified Billing is available. */
+  GEMINI_API_KEY?: string | SecretBinding;
+  /** Mistral visual/OCR credential. Resolved lazily only by the explicitly selected adapter. */
+  MISTRAL_API_KEY?: string | SecretBinding;
   /**
    * The second extraction leg's credential. The owner's ruling is TWO independent passes,
    * Grok + DeepSeek, from day one — so this is not optional in spirit even though the type
@@ -47,8 +53,24 @@ export interface Env {
   /** Only for a gateway with authentication enabled; `firstgateway` needs none. */
   CF_AIG_TOKEN?: string;
 
-  // --- namespace guard ---
-  V2_PREFIX?: string;
+  // --- visual shadow rollout (fail closed; no setting has an implicit paid default) ---
+  /** Exact "true" enables paid visual shadow work. Unset or "false" issues zero visual calls. */
+  VISUAL_SHADOW_ENABLED?: string;
+  /** Explicit adapter selector. Required when the shadow reader is enabled; there is no fallback. */
+  VISUAL_PROVIDER?: string;
+  /** Hard per-run visual purchase count. Required when enabled. */
+  VISUAL_MAX_CALLS?: string;
+  /** Hard per-run visual dollar ceiling. Required when enabled. */
+  VISUAL_MAX_USD?: string;
+  /** Time after which one provider attempt becomes a named timeout. Required when enabled. */
+  VISUAL_TIMEOUT_MS?: string;
+  /** Wall clock during which one Workflow wave may start new serial purchases. */
+  VISUAL_WAVE_BUDGET_MS?: string;
+  /** Hard number of visual Workflow waves before remaining work is reported uncovered. */
+  VISUAL_MAX_WAVES?: string;
+
+  // --- namespace guard (required; absence is a deployment defect, never an implicit prod default) ---
+  V2_PREFIX: string;
 
   // --- retention posture (CONFIGURATION, never hardcoded) ---
   RETENTION_RAW_EVIDENCE_DAYS?: string;
@@ -119,6 +141,20 @@ export interface Env {
 
   // --- submission limits (advisory hardening; each keeps its own name) ---
   MAX_DOCUMENT_BYTES?: string;
+  /** Maximum raw JSON bytes accepted for the explicitly human-authored contract path. */
+  MAX_HUMAN_REQUIREMENTS_BYTES?: string;
+  /**
+   * Maximum declared HTTP request-body bytes. This is an early rejection guard, not a
+   * streaming parser: requests without a trustworthy Content-Length are still bounded by
+   * the platform request limit and by the post-parse document/requirements limits.
+   */
+  MAX_SUBMISSION_BYTES?: string;
+  /**
+   * Non-secret SHA-256 of the isolated canary bearer. Absent from every normal deployment.
+   * Its presence authorizes only the wrapper-injected planned-run-id seam; the bearer itself
+   * is never stored in Worker vars or R2.
+   */
+  CANARY_AUTH_SHA256?: string;
   MAX_VIEWPORTS?: string;
   MAX_LOCALE_LENGTH?: string;
   /** "block-private" (default) | "allow-private" — outbound survey-URL target policy. */

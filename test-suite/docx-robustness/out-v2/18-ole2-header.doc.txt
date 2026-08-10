@@ -1,0 +1,1 @@
+<<THREW>> parseDocxBlocks: this is a legacy Word 97-2003 document (OLE2 compound file), not a .docx. Re-save it as .docx — the binary format carries none of the part structure this parser reads.

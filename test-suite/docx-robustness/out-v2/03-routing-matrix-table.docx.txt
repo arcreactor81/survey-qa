@@ -1,0 +1,40 @@
+[b0001] (heading) SECTION D — ROUTING
+[b0002] Q9 routing is defined by Table 1. Do not route from the question text alone.
+[b0003] Table 1 — Q9 routing by tenure and age band
+--- table t1 ---
+[b0004] (cell r1c2) Q8 = 1 (Owns)
+[b0005] (cell r1c3) Q8 = 2 (Rents)
+[b0006] (cell r1c4) Q8 = 3 (Other)
+[b0007] (cell r2c1) Age 18-34
+[b0008] (cell r2c2 row="Age 18-34" col="Q8 = 1 (Owns)") Ask Q9a
+[b0009] (cell r2c3 row="Age 18-34" col="Q8 = 2 (Rents)") Ask Q9b
+[b0010] (cell r2c4 row="Age 18-34" col="Q8 = 3 (Other)") TERMINATE (T3)
+[b0011] (cell r3c1) Age 35-54
+[b0012] (cell r3c2 row="Age 35-54" col="Q8 = 1 (Owns)") Ask Q9a
+[b0013] (cell r3c3 row="Age 35-54" col="Q8 = 2 (Rents)") Ask Q9b
+[b0014] (cell r3c4 row="Age 35-54" col="Q8 = 3 (Other)") Ask Q9c
+[b0015] (cell r4c1) Age 55+
+[b0016] (cell r4c2 row="Age 55+" col="Q8 = 1 (Owns)") Ask Q9c
+[b0017] (cell r4c3 row="Age 55+" col="Q8 = 2 (Rents)") Ask Q9c
+[b0018] (cell r4c4 row="Age 55+" col="Q8 = 3 (Other)") TERMINATE (T3)
+[b0019] Table 2 — Regional quota cells
+--- table t2 ---
+[b0020] (cell r1c1) Cell
+[b0021] (cell r1c2 row="Cell") Sub-quota
+[b0022] (cell r1c3 row="Cell") Target n
+[b0023] (cell r1c4 row="Cell") Hard stop?
+[b0024] (cell r2c1 col="Cell") METRO
+[b0025] (cell r2c2 row="METRO" col="Sub-quota") London
+[b0026] (cell r2c3 row="METRO" col="Target n") 200
+[b0027] (cell r2c4 row="METRO" col="Hard stop?") Yes — close at 200
+[b0028] (cell r3c2 col="Sub-quota") Manchester
+[b0029] (cell r3c3 col="Target n") 120
+[b0030] (cell r3c4 col="Hard stop?") Yes — close at 120
+[b0031] (cell r4c1 col="Cell") RURAL
+[b0032] (cell r4c2 row="RURAL" col="Sub-quota") Highlands
+[b0033] (cell r4c3 row="RURAL" col="Target n") 60
+[b0034] (cell r4c4 row="RURAL" col="Hard stop?") No — soft quota
+[b0035] (cell r5c2 col="Sub-quota") Mid-Wales
+[b0036] (cell r5c3 col="Target n") 60
+[b0037] (cell r5c4 col="Hard stop?") No — soft quota
+[b0038] (cell r6c1 col="Cell") ALL CELLS — screener applies before quota check

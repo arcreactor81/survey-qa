@@ -10,7 +10,8 @@
  *   - every paragraph, table cell, footnote, header/footer line and comment is its own
  *     block with a stable id and an ORIGIN LABEL, so the merge and the human reviewer can
  *     weigh a footnote differently from body copy and a comment differently from either;
- *   - a table cell carries (row, col) AND the row/column headers it inherits;
+ *   - a table cell carries exact structural (row, grid-column) coordinates; WordprocessingML
+ *     has no semantic `th`/`scope` equivalent, so row/column headers are never guessed;
  *   - the parse REPORTS COVERAGE: which archive parts it read, which it skipped and why,
  *     how many images and field codes it could not resolve.
  *
@@ -39,6 +40,12 @@
 import { unzipSync, type UnzipFileInfo } from "fflate";
 import type { DocumentCoverage, ParsedDocument, SourceBlock } from "./types";
 
+/**
+ * Load-bearing parser semantics. Persisted model work records this value and must not be
+ * reused after it changes, even when the document's block ids happen to remain identical.
+ */
+export const DOCX_BLOCKS_VERSION = "v2-docx-blocks/1.1.0" as const;
+
 const PACKAGE_RELS = "_rels/.rels";
 /** What `partsRead` calls a flat Word 2003 XML document, which has no parts at all. */
 const FLAT_WORDML_PART = "(flat WordprocessingML)";
@@ -53,6 +60,11 @@ const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_PART_BYTES = 50 * 1024 * 1024;
 /** Depth scans are linear, but a pathological document should still not run unbounded. */
 const MAX_TAG_SCANS = 200_000;
+/**
+ * OOXML spans are author-controlled integers. Keep grid expansion bounded: a declared
+ * 99,999,999-column span in a tiny document must not become a Worker memory/CPU kill.
+ */
+const MAX_GRID_COLUMNS = 4_096;
 
 const WML_MAIN_NAMESPACES = [
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
@@ -80,7 +92,8 @@ function buildSyntax(prefix: string): Syntax {
     paragraphSrc: `<${p}p(?=[\\s/>])[^>]*\\/>|<${p}p(?=[\\s>])[^>]*>([\\s\\S]*?)<\\/${p}p>`,
     runTokenSrc:
       `<${p}t(?=[\\s/>])[^>]*\\/>|<${p}t(?=[\\s>])[^>]*>([\\s\\S]*?)<\\/${p}t>|` +
-      `<${p}tab(?=[\\s/>])[^>]*\\/>|<${p}(?:br|cr)(?=[\\s/>])[^>]*\\/>`,
+      `<${p}tab(?=[\\s/>])[^>]*\\/>|<${p}(?:br|cr)(?=[\\s/>])[^>]*\\/>|` +
+      `<${p}noBreakHyphen(?=[\\s/>])[^>]*\\/?>|<${p}softHyphen(?=[\\s/>])[^>]*\\/?>`,
   };
 }
 
@@ -137,6 +150,66 @@ function decodePart(bytes: Uint8Array): string {
 
 const stripFallback = (xml: string) => xml.replace(/<mc:Fallback(?=[\s>])[\s\S]*?<\/mc:Fallback>/g, "");
 
+/**
+ * Word's accepted view includes insertions/move destinations and excludes deletions/move
+ * sources. Metadata inside a rejected change is rejected too: otherwise a deleted dropdown
+ * can manufacture live answer choices even though its displayed text correctly disappears.
+ */
+function acceptedViewXml(xml: string, s: Syntax, origin: string, coverage: DocumentCoverage): string {
+  let accepted = xml;
+  let rejectedContainers = 0;
+  let oldPropertySnapshots = 0;
+  // *PrChange/tblGridChange hold the superseded property snapshot, not the accepted one.
+  for (const name of [
+    "del",
+    "moveFrom",
+    "pPrChange",
+    "rPrChange",
+    "tblPrChange",
+    "trPrChange",
+    "tcPrChange",
+    "sectPrChange",
+    "sdtPrChange",
+    "tblGridChange",
+  ] as const) {
+    const spans = topLevelSpans(accepted, s.prefix, name);
+    if (spans === null) {
+      throw new Error(
+        `parseDocxBlocks: ${origin} has unbalanced <${s.prefix}${name}> tracked-change markup; ` +
+          `the accepted document view cannot be established without guessing.`,
+      );
+    }
+    if (spans.length === 0) continue;
+    if (name === "del" || name === "moveFrom") rejectedContainers += spans.length;
+    else oldPropertySnapshots += spans.length;
+    let rebuilt = "";
+    let cursor = 0;
+    for (const span of spans) {
+      rebuilt += accepted.slice(cursor, span.start);
+      cursor = span.end;
+    }
+    accepted = rebuilt + accepted.slice(cursor);
+  }
+  if (rejectedContainers > 0 || oldPropertySnapshots > 0) {
+    coverage.problems.push(
+      `ACCEPTED_VIEW_FILTER_APPLIED: ${origin} excluded ${rejectedContainers} deleted/moved-from content ` +
+        `container(s) and ${oldPropertySnapshots} superseded property snapshot(s); inserted/moved-to content was retained.`,
+    );
+  }
+  const p = escapeRegExp(s.prefix);
+  const leafRevisions =
+    accepted.match(
+      new RegExp(`<${p}(?:cellIns|cellDel|cellMerge|numberingChange|del|moveFrom)(?=[\\s/>])[^>]*\\/>`, "g"),
+    )?.length ?? 0;
+  if (leafRevisions > 0) {
+    coverage.problems.push(
+      `ACCEPTED_VIEW_LEAF_REVISIONS_UNINTERPRETED: ${origin} contains ${leafRevisions} row/cell/paragraph-mark ` +
+        `revision marker(s). Their surrounding accepted text is retained, but leaf-level revision semantics were not inferred.`,
+    );
+  }
+  return accepted;
+}
+
 /** Text boxes are the one place WordprocessingML nests paragraphs; neutralize them. */
 function neutralizeTextBoxes(xml: string, s: Syntax): string {
   const p = escapeRegExp(s.prefix);
@@ -147,18 +220,41 @@ function neutralizeTextBoxes(xml: string, s: Syntax): string {
   return xml.replace(txbxRe, (block) => block.replace(openRe, `<${sentinel}`).replace(closeRe, `</${sentinel}>`));
 }
 
+/**
+ * `w:ruby` contains both the visible base run and its phonetic `w:rt` annotation. A flat
+ * `w:t` scan interleaves them into a plausible-looking word no reader actually saw.
+ */
+function stripRubyReadings(body: string, s: Syntax): string {
+  const p = escapeRegExp(s.prefix);
+  const rtRe = new RegExp(`<${p}rt(?=[\\s>])[^>]*>[\\s\\S]*?<\\/${p}rt>`, "g");
+  return body.replace(rtRe, "");
+}
+
+function rubyReadingCount(body: string, s: Syntax): number {
+  const p = escapeRegExp(s.prefix);
+  return body.match(new RegExp(`<${p}ruby(?=[\\s>])`, "g"))?.length ?? 0;
+}
+
 function paragraphText(body: string, s: Syntax): string {
   const parts: string[] = [];
   const tokenRe = new RegExp(s.runTokenSrc, "g");
   const tabTag = `<${s.prefix}tab`;
   const brTag = `<${s.prefix}br`;
   const crTag = `<${s.prefix}cr`;
+  const noBreakHyphenTag = `<${s.prefix}noBreakHyphen`;
+  const softHyphenTag = `<${s.prefix}softHyphen`;
   let token: RegExpExecArray | null;
-  while ((token = tokenRe.exec(body)) !== null) {
+  const visibleBody = stripRubyReadings(body, s);
+  while ((token = tokenRe.exec(visibleBody)) !== null) {
     const raw = token[0];
     const captured: string | undefined = token[1];
     if (raw.startsWith(tabTag)) parts.push("\t");
     else if (raw.startsWith(brTag) || raw.startsWith(crTag)) parts.push("\n");
+    // U+2011 is the character w:noBreakHyphen specifies. ASCII "-" would improve one
+    // corpus probe but would discard the author's no-break distinction. A soft hyphen is
+    // a rendering opportunity, not a character that is necessarily visible.
+    else if (raw.startsWith(noBreakHyphenTag)) parts.push("\u2011");
+    else if (raw.startsWith(softHyphenTag)) continue;
     else if (captured !== undefined) parts.push(decodeXmlEntities(captured));
   }
   return parts.join("");
@@ -188,7 +284,7 @@ const ALREADY_NUMBERED = /^\s*(?:\(?\d+[.)]|\(?[a-z][.)]|\(?[ivxlc]+[.)]|[-–�
 const SECTION_TEXT_RE =
   /^(?:section\s+[a-z0-9]+\b|part\s+[a-z0-9]+\b|appendix\b|module\s+[a-z0-9]+\b|screen(?:er|ing)?\s*:|classification\b)/i;
 
-const clean = (t: string) => t.replace(/ /g, " ").replace(/[ \t]+\n/g, "\n").trim();
+const clean = (t: string) => t.replace(/[ \t]+\n/g, "\n").trim();
 
 // ---------------------------------------------------------------------------
 // Depth-aware element scanning — the fix for nested and unclosed tables
@@ -511,7 +607,14 @@ export function annotate(blocks: SourceBlock[]): string {
     } else if (b.kind !== "table-cell") {
       lastTable = null;
     }
-    out.push(`[${b.blockId}] ${describe(b)}${b.text.replace(/\n/g, " ⏎ ")}`);
+    const inlineText = b.text.replace(/\n/g, " ⏎ ");
+    if (b.origin === "combo-box-suggestion") {
+      out.push(`[${b.blockId}] [combo-box suggestion — OPEN, NOT EXHAUSTIVE: ${inlineText}]`);
+    } else if (b.origin.startsWith("ruby-reading")) {
+      out.push(`[${b.blockId}] [${b.origin}: ${inlineText}]`);
+    } else {
+      out.push(`[${b.blockId}] ${describe(b)}${inlineText}`);
+    }
   }
   return out.join("\n");
 }
@@ -534,8 +637,172 @@ export function describe(b: SourceBlock): string {
 // Body scanning
 // ---------------------------------------------------------------------------
 
+function countContentControls(xml: string, s: Syntax, name: "dropDownList" | "comboBox"): number {
+  const p = escapeRegExp(s.prefix);
+  return xml.match(new RegExp(`<${p}${name}(?=[\\s/>])`, "g"))?.length ?? 0;
+}
+
+
+const countDropdownControls = (xml: string, s: Syntax) => countContentControls(xml, s, "dropDownList");
+const countComboBoxControls = (xml: string, s: Syntax) => countContentControls(xml, s, "comboBox");
+
+interface ControlItemStats {
+  declared: number;
+  labels: string[];
+  unreadable: number;
+}
+
+function controlItemStats(xml: string, s: Syntax, name: "dropDownList" | "comboBox"): ControlItemStats {
+  const p = escapeRegExp(s.prefix);
+  const controlRe = new RegExp(
+    `<${p}${name}(?=[\\s>])[^>]*>([\\s\\S]*?)<\\/${p}${name}>`,
+    "g",
+  );
+  const itemRe = new RegExp(`<${p}listItem(?=[\\s/>])[^>]*\\/?>`, "g");
+  const labels: string[] = [];
+  let declared = 0;
+  let unreadable = 0;
+  let control: RegExpExecArray | null;
+  while ((control = controlRe.exec(xml)) !== null) {
+    for (const tag of (control[1] ?? "").match(itemRe) ?? []) {
+      declared += 1;
+      const display = xmlAttribute(tag, "displayText");
+      const value = xmlAttribute(tag, "value");
+      const label = decodeXmlEntities(display ?? value ?? "").trim();
+      if (label.length > 0) labels.push(label);
+      else unreadable += 1;
+    }
+  }
+  return { declared, labels, unreadable };
+}
+
+function controlItemStatsInsideParagraphs(
+  xml: string,
+  s: Syntax,
+  name: "dropDownList" | "comboBox",
+): ControlItemStats {
+  const combined: ControlItemStats = { declared: 0, labels: [], unreadable: 0 };
+  const paraRe = new RegExp(s.paragraphSrc, "g");
+  let match: RegExpExecArray | null;
+  while ((match = paraRe.exec(xml)) !== null) {
+    if (match[1] === undefined) continue;
+    const held = controlItemStats(match[1], s, name);
+    combined.declared += held.declared;
+    combined.labels.push(...held.labels);
+    combined.unreadable += held.unreadable;
+  }
+  return combined;
+}
+
+/**
+ * Options in an inline content control live in the host paragraph's `w:sdtPr` and are
+ * reachable by `paragraphDrafts`. A block-level `w:sdt` places those properties outside
+ * every paragraph. Count that difference so an unread option set is never silently short.
+ */
+function dropdownsOutsideParagraphs(xml: string, s: Syntax): number {
+  const total = countDropdownControls(xml, s);
+  if (total === 0) return 0;
+  let reached = 0;
+  const paraRe = new RegExp(s.paragraphSrc, "g");
+  let match: RegExpExecArray | null;
+  while ((match = paraRe.exec(xml)) !== null) {
+    if (match[1] !== undefined) reached += countDropdownControls(match[1], s);
+  }
+  return Math.max(0, total - reached);
+}
+
+function xmlAttribute(tag: string, localName: string): string | undefined {
+  const name = escapeRegExp(localName);
+  const match = new RegExp(
+    `(?:^|\\s)(?:[A-Za-z_][\\w.-]*:)?${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`,
+  ).exec(tag);
+  return match?.[1] ?? match?.[2];
+}
+
+/**
+ * The list item's value is storage metadata, not rendered text and therefore never a
+ * document answer code. Word permits displayText to be absent; in that shape it displays
+ * value, so value is used only as the label fallback.
+ */
+function controlItems(body: string, s: Syntax, name: "dropDownList" | "comboBox"): string[] {
+  return controlItemStats(body, s, name).labels;
+}
+
+const dropdownItems = (body: string, s: Syntax) => controlItems(body, s, "dropDownList");
+
+function dropdownDrafts(body: string, s: Syntax, origin: string): Draft[] {
+  return dropdownItems(body, s).map((label) => ({
+    kind: "list-item",
+    text: label,
+    section: null,
+    coords: null,
+    tableId: null,
+    origin,
+  }));
+}
+
+function comboBoxDrafts(body: string, s: Syntax): Draft[] {
+  return controlItems(body, s, "comboBox").map((label) => ({
+    kind: "paragraph",
+    text: label,
+    section: null,
+    coords: null,
+    tableId: null,
+    origin: "combo-box-suggestion",
+  }));
+}
+
+function elementInner(xml: string, s: Syntax, name: string): string | null {
+  const p = escapeRegExp(s.prefix);
+  const n = escapeRegExp(name);
+  return new RegExp(`<${p}${n}(?=[\\s>])[^>]*>([\\s\\S]*?)<\\/${p}${n}>`).exec(xml)?.[1] ?? null;
+}
+
+function rubyDrafts(body: string, s: Syntax, origin: string): Draft[] {
+  const p = escapeRegExp(s.prefix);
+  const rubyRe = new RegExp(`<${p}ruby(?=[\\s>])[^>]*>([\\s\\S]*?)<\\/${p}ruby>`, "g");
+  const drafts: Draft[] = [];
+  let ruby: RegExpExecArray | null;
+  while ((ruby = rubyRe.exec(body)) !== null) {
+    const rubyBody = ruby[1] ?? "";
+    const readingXml = elementInner(rubyBody, s, "rt");
+    const baseXml = elementInner(rubyBody, s, "rubyBase");
+    const reading = readingXml === null ? "" : paragraphText(readingXml, s);
+    const base = baseXml === null ? "" : paragraphText(baseXml, s);
+    drafts.push({
+      kind: "paragraph",
+      text: reading.length > 0 ? reading : "[ruby reading unreadable]",
+      section: null,
+      coords: null,
+      tableId: null,
+      origin: `ruby-reading; base=${JSON.stringify(base)}; source=${JSON.stringify(origin)}`,
+    });
+  }
+  return drafts;
+}
+
 function scanBody(xmlRaw: string, s: Syntax, coverage: DocumentCoverage, origin: string): Draft[] {
-  const xml = neutralizeTextBoxes(stripFallback(xmlRaw), s);
+  const xml = neutralizeTextBoxes(acceptedViewXml(stripFallback(xmlRaw), s, origin, coverage), s);
+  const unreached = dropdownsOutsideParagraphs(xml, s);
+  if (unreached > 0) {
+    coverage.problems.push(
+      `${origin}: ${unreached} dropdown-list content control(s) sit outside every paragraph. ` +
+        `Their declared options were NOT extracted; the rendered control text is still read where present.`,
+    );
+  }
+  const comboBoxes = countComboBoxControls(xml, s);
+  if (comboBoxes > 0) {
+    const all = controlItemStats(xml, s, "comboBox");
+    const emitted = controlItemStatsInsideParagraphs(xml, s, "comboBox");
+    const omittedReadable = all.labels.length - emitted.labels.length;
+    coverage.problems.push(
+      `${origin}: ${comboBoxes} combo-box content control(s) declare ${all.declared} open suggestion item(s): ` +
+        `${all.labels.length} non-empty label(s) recovered (${emitted.labels.length} emitted as open-suggestion paragraph ` +
+        `blocks; ${omittedReadable} readable block-level label(s) not emitted), and ${all.unreadable} unreadable/empty ` +
+        `item(s). Reconciliation: ${all.labels.length} recovered + ${all.unreadable} unreadable = ${all.declared} ` +
+        `declared. Suggestions are NOT exhaustive answer options; current rendered values are retained.`,
+    );
+  }
   const tableSpans = topLevelSpans(xml, s.prefix, "tbl");
   if (tableSpans === null) {
     coverage.problems.push(
@@ -575,6 +842,18 @@ function paragraphDrafts(body: string, s: Syntax, coverage: DocumentCoverage, or
   const out: Draft[] = [];
   countInlineArtifacts(body, s, coverage);
 
+  const rubyReadings = rubyReadingCount(body, s);
+  const rubyAnnotations = rubyDrafts(body, s, origin);
+  if (rubyReadings > 0) {
+    const recovered = rubyAnnotations.filter((draft) => draft.text !== "[ruby reading unreadable]").length;
+    const unreadable = rubyReadings - recovered;
+    coverage.problems.push(
+      `${origin}: ${rubyReadings} ruby annotation(s) found: ${recovered} reading(s) recovered and emitted as ` +
+        `separate ruby-reading paragraph block(s), ${unreadable} unreadable. Readings were NOT interleaved inline; ` +
+        `visible base text is preserved exactly.`,
+    );
+  }
+
   let text = paragraphText(body, s);
   const numbered = hasNumbering(body, s);
   if (numbered && clean(text).length > 0 && !ALREADY_NUMBERED.test(text)) {
@@ -594,6 +873,13 @@ function paragraphDrafts(body: string, s: Syntax, coverage: DocumentCoverage, or
           : "paragraph";
     out.push({ kind, text, section: null, coords: null, tableId: null, origin });
   }
+
+  // One block per option is an interface contract with parseDocumentedOptions: a joined
+  // prose blob can be mis-sealed as one invented label. Keep the control's rendered text
+  // above and add, rather than substitute, the author-declared options.
+  out.push(...dropdownDrafts(body, s, origin));
+  out.push(...comboBoxDrafts(body, s));
+  out.push(...rubyAnnotations);
 
   for (const alt of imageAlts(body)) {
     coverage.images += 1;
@@ -634,9 +920,85 @@ function imageAlts(body: string): Array<string | null> {
   return out;
 }
 
+type VerticalMerge = "restart" | "continue" | null;
+
+interface TableCell {
+  text: string;
+  /** One-based OOXML table-grid column, not the cell's array position. */
+  gridCol: number;
+  span: number;
+  vMerge: VerticalMerge;
+}
+
+interface TableRow {
+  cells: TableCell[];
+  repeatHeader: boolean;
+}
+
+function propertyElement(xml: string, s: Syntax, name: string): string {
+  const p = escapeRegExp(s.prefix);
+  const n = escapeRegExp(name);
+  return (
+    new RegExp(`<${p}${n}(?=[\\s>])[^>]*>[\\s\\S]*?<\\/${p}${n}>|<${p}${n}(?=[\\s/>])[^>]*\\/>`).exec(xml)?.[0] ??
+    ""
+  );
+}
+
+function onOffProperty(tag: string): boolean {
+  if (tag.length === 0) return false;
+  const value = xmlAttribute(tag, "val")?.toLowerCase();
+  return value === undefined || !["0", "false", "off", "no"].includes(value);
+}
+
+function tableGridInteger(
+  props: string,
+  s: Syntax,
+  name: "gridSpan" | "gridBefore",
+  fallback: number,
+  minimum: number,
+  tableId: string,
+  coverage: DocumentCoverage,
+): number {
+  const tag = propertyElement(props, s, name);
+  if (tag.length === 0) return fallback;
+  const raw = xmlAttribute(tag, "val");
+  if (raw === undefined) {
+    coverage.problems.push(
+      `${tableId}: <${s.prefix}${name}> is present without a val attribute; ${fallback} was used and the ` +
+        `declared table coordinate is not exact.`,
+    );
+    return fallback;
+  }
+  const normalized = raw.trim();
+  if (!/^[+-]?\d+$/.test(normalized)) {
+    coverage.problems.push(
+      `${tableId}: <${s.prefix}${name}> has invalid integer value ${JSON.stringify(raw)}; ${fallback} was used ` +
+        `rather than guessing.`,
+    );
+    return fallback;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum) {
+    coverage.problems.push(
+      `${tableId}: <${s.prefix}${name}> value ${JSON.stringify(raw)} is outside the valid range; ${fallback} ` +
+        `was used rather than manufacturing a coordinate.`,
+    );
+    return fallback;
+  }
+  if (parsed > MAX_GRID_COLUMNS) {
+    coverage.problems.push(
+      `${tableId}: <${s.prefix}${name}> value ${parsed} exceeds the ${MAX_GRID_COLUMNS}-column safety bound and ` +
+        `was clamped; cell text is retained but coordinates beyond the bound are not exact.`,
+    );
+    return MAX_GRID_COLUMNS;
+  }
+  return parsed;
+}
+
 /**
- * ONE BLOCK PER CELL, WITH THE HEADERS IT INHERITS — and nested tables handled rather
- * than silently scrambling the parent's row pairing.
+ * ONE BLOCK PER CELL, with exact structural coordinates and nested tables handled rather
+ * than silently scrambling the parent's row pairing. WordprocessingML has no semantic
+ * equivalent of HTML th/scope, so rowHeader/colHeader remain null instead of guessing.
  */
 function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: DocumentCoverage, origin: string): Draft[] {
   const nested = topLevelSpans(tableXml, s.prefix, "tbl");
@@ -665,40 +1027,112 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
     );
   }
 
-  const rows: string[][] = [];
+  const rows: TableRow[] = [];
+  const p = escapeRegExp(s.prefix);
+  const vMergeRe = new RegExp(`<${p}vMerge(?=[\\s/>])[^>]*\\/?>`);
+  const tblHeaderRe = new RegExp(`<${p}tblHeader(?=[\\s/>])[^>]*\\/?>`);
   const rowRe = new RegExp(s.rowSrc, "g");
   let rowMatch: RegExpExecArray | null;
   while ((rowMatch = rowRe.exec(body)) !== null) {
-    const cells: string[] = [];
+    const rowXml = rowMatch[1] ?? "";
+    const trPr = propertyElement(rowXml, s, "trPr");
+    let gridCol = 1 + tableGridInteger(trPr, s, "gridBefore", 0, 0, tableId, coverage);
+    const cells: TableCell[] = [];
     const cellRe = new RegExp(s.cellSrc, "g");
     let cellMatch: RegExpExecArray | null;
-    while ((cellMatch = cellRe.exec(rowMatch[1] ?? "")) !== null) {
+    while ((cellMatch = cellRe.exec(rowXml)) !== null) {
+      const cellXml = cellMatch[1] ?? "";
+      const props = propertyElement(cellXml, s, "tcPr");
+      const span = tableGridInteger(props, s, "gridSpan", 1, 1, tableId, coverage);
+      const vMergeTag = vMergeRe.exec(props)?.[0] ?? "";
+      const vMergeValue = xmlAttribute(vMergeTag, "val")?.toLowerCase();
+      let vMerge: VerticalMerge = null;
+      if (vMergeTag.length > 0) {
+        if (vMergeValue === undefined || vMergeValue === "continue") vMerge = "continue";
+        else if (vMergeValue === "restart") vMerge = "restart";
+        else {
+          coverage.problems.push(
+            `${tableId}: a vertical merge declares unsupported value ${JSON.stringify(vMergeValue)}; ` +
+              `that cell is not treated as a continuation rather than guessing its row group.`,
+          );
+        }
+      }
+
       const parts: string[] = [];
       const paraRe = new RegExp(s.paragraphSrc, "g");
       let paraMatch: RegExpExecArray | null;
-      while ((paraMatch = paraRe.exec(cellMatch[1] ?? "")) !== null) {
+      while ((paraMatch = paraRe.exec(cellXml)) !== null) {
         if (paraMatch[1] === undefined) continue;
         for (const d of paragraphDrafts(paraMatch[1], s, coverage, origin)) {
           if (d.origin === "image-alt") parts.push(d.text);
           else if (clean(d.text).length > 0) parts.push(clean(d.text));
         }
       }
-      cells.push(parts.join("\n"));
+      cells.push({ text: parts.join("\n"), gridCol, span, vMerge });
+      gridCol = Math.min(MAX_GRID_COLUMNS + 1, gridCol + span);
     }
-    rows.push(cells);
+    rows.push({ cells, repeatHeader: onOffProperty(tblHeaderRe.exec(trPr)?.[0] ?? "") });
   }
 
-  const headerRow = rows[0] ?? [];
-  // A two-column table is a KEY/VALUE list, not a matrix: labelling every cell with
-  // "col=<the first row's value>" is noise that reads as a fact about the cell. Column
-  // headers are inferred only where there is actually a grid to have them.
-  const hasColHeaders = headerRow.filter((c) => c.trim().length > 0).length > 2;
+  let repeatPrefix = 0;
+  while (repeatPrefix < rows.length && rows[repeatPrefix]!.repeatHeader) repeatPrefix += 1;
+  const lateRepeatRows = rows
+    .map((row, index) => (row.repeatHeader && index >= repeatPrefix ? index + 1 : null))
+    .filter((row): row is number => row !== null);
+  if (lateRepeatRows.length > 0) {
+    coverage.problems.push(
+      `TABLE_REPEAT_FLAG_IGNORED: ${tableId} marks non-leading row(s) ${lateRepeatRows.join(", ")} with ` +
+        `<${s.prefix}tblHeader>. OOXML defines that flag only as repeat-on-page metadata and ignores it after ` +
+        `the first non-repeating row; it was not used as semantic column-header evidence.`,
+    );
+  }
+  if (repeatPrefix > 1) {
+    coverage.problems.push(
+      `TABLE_MULTI_ROW_REPEAT_HEADER: ${tableId} has ${repeatPrefix} contiguous leading rows marked to repeat on ` +
+        `each page. Their cells and spans are retained, but no multi-level semantic header hierarchy was invented.`,
+    );
+  }
+  const nonEmptyCells = rows.reduce(
+    (count, row) => count + row.cells.filter((cell) => clean(cell.text).length > 0).length,
+    0,
+  );
+  coverage.problems.push(
+    `TABLE_HEADER_SEMANTICS_AMBIGUOUS: ${tableId} contains ${nonEmptyCells} non-empty cell(s). ` +
+      `WordprocessingML supplies row/column positions, spans, and repeat-on-page flags but no semantic header/scope ` +
+      `relationship, so rowHeader and colHeader are null for every cell.`,
+  );
+
+  const spannedCells = rows.flatMap((row, rowIndex) =>
+    row.cells
+      .filter((cell) => cell.span > 1)
+      .map((cell) => `r${rowIndex + 1}c${cell.gridCol}=span${cell.span}`),
+  );
+  if (spannedCells.length > 0) {
+    const shown = spannedCells.slice(0, 32);
+    const omitted = spannedCells.length - shown.length;
+    coverage.problems.push(
+      `TABLE_GRID_SPANS_PRESENT: ${tableId} contains ${spannedCells.length} horizontally spanned cell(s): ` +
+        `${shown.join(", ")}${omitted > 0 ? `; ${omitted} additional span(s) are counted but omitted from this bounded diagnostic` : ""}. ` +
+        `Start coordinates are retained; the current SourceBlock contract has no colSpan field.`,
+    );
+  }
+
+  const verticalMergeCount = rows.reduce(
+    (count, row) => count + row.cells.filter((cell) => cell.vMerge !== null).length,
+    0,
+  );
+  if (verticalMergeCount > 0) {
+    coverage.problems.push(
+      `TABLE_VERTICAL_MERGE_PRESENT: ${tableId} contains ${verticalMergeCount} vertical-merge marker(s). ` +
+        `Cell text and structural coordinates are retained, but no row-header relationship is inferred from adjacency.`,
+    );
+  }
+
   const out: Draft[] = [];
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r]!;
-    const rowHeader = row[0]?.trim() ? row[0]!.trim() : null;
-    for (let c = 0; c < row.length; c++) {
-      const text = row[c]!;
+    for (const c of row.cells) {
+      const text = c.text;
       if (clean(text).length === 0) continue;
       out.push({
         kind: "table-cell",
@@ -708,9 +1142,9 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
         origin,
         coords: {
           row: r + 1,
-          col: c + 1,
-          rowHeader: c === 0 ? null : rowHeader,
-          colHeader: hasColHeaders && r > 0 ? headerRow[c]?.trim() || null : null,
+          col: c.gridCol,
+          rowHeader: null,
+          colHeader: null,
         },
       });
     }

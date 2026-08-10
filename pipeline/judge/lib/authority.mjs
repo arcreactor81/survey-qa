@@ -60,7 +60,7 @@ import { bindAmbiguities } from './contract-binding.mjs';
 // imports) and is the SAME module `worker-v2/src/report/renderable.ts`
 // projects with. One mapping, two consumers.
 import {
-  contractGateFailures,
+  contractApprovalFailures,
   contractHashFromDigest,
   contractRevisionIdFromDigest,
   isRunRecordV2,
@@ -507,7 +507,7 @@ function bindV2Contract({ runDir, record, contractRevisionPath, findings }) {
   // A revision whose §0 approval gates do not pass could never have been sealed;
   // if it is on disk in that state it did not come from the sealer. `not-evaluated`
   // is not a passing gate and a `pass` with no proof is a fabricated one.
-  const gateFailures = contractGateFailures(revisionDoc.extraction && revisionDoc.extraction.gates);
+  const gateFailures = contractApprovalFailures(revisionDoc);
   if (gateFailures.length) {
     findings.push({
       code: 'CONTRACT_REVISION_UNSEALED',
@@ -567,15 +567,20 @@ function bindChecklist(checklist, contract) {
     // checklist to the exact source atom the sealed revision names, and it
     // cannot be satisfied by a quote that merely renders the same.
     const anchor = it.sourceAnchor;
+    const quoteHash = anchor && typeof anchor.quoteHash === 'string' && anchor.quoteHash.length
+      ? anchor.quoteHash
+      : null;
     const quoteHashes = anchor && Array.isArray(anchor.quoteHashes)
       ? anchor.quoteHashes.filter((h) => typeof h === 'string' && h.length > 0)
       : [];
-    if (quoteHashes.length) {
+    if (quoteHash || quoteHashes.length) {
       const localDigest = sha256Of(Buffer.from(String(o.doc_quote ?? ''), 'utf8'));
-      if (!quoteHashes.includes(localDigest)) {
+      if (quoteHash ? localDigest !== quoteHash : !quoteHashes.includes(localDigest)) {
         findings.push({
           code: 'OBLIGATION_QUOTE_DRIFT',
-          detail: `${o.id} doc_quote digests to ${localDigest}, which is not among the sealed source atoms [${quoteHashes.join(', ')}]`,
+          detail: quoteHash
+            ? `${o.id} doc_quote digests to ${localDigest}, not the sealed stitched-quote digest ${quoteHash}`
+            : `${o.id} doc_quote digests to ${localDigest}, which is not among the sealed source atoms [${quoteHashes.join(', ')}]`,
         });
       }
     } else {
@@ -593,4 +598,4 @@ function bindChecklist(checklist, contract) {
   return { bound: findings.length === 0, items, findings };
 }
 
-export { sha256Of };
+export { sha256Of, bindChecklist };

@@ -1,0 +1,957 @@
+[
+  {
+    "file": "01-tracked-changes.docx",
+    "hazard": "tracked changes (w:ins / w:del) still present, revisions not accepted",
+    "ms": 33,
+    "error": null,
+    "blocks": 5,
+    "problems": [],
+    "passed": 6,
+    "total": 6,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "twelve (12) months",
+        "why": "the ACCEPTED recall window; w:ins text is the live requirement",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "absent",
+        "text": "six (6) months",
+        "why": "superseded recall window; w:del text must not resurface as a live rule",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "record it verbatim at Q4_OTHER",
+        "why": "inserted whole-paragraph instruction is a live rule",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "absent",
+        "text": "hard-terminate anyone who selects only Other",
+        "why": "deleted whole-paragraph rule must not resurface",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "ask Q6 then skip to Q10",
+        "why": "inserted routing overrides the deleted routing",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "absent",
+        "text": "skip to Q9",
+        "why": "deleted routing must not survive",
+        "severity": "meaning",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "02-comments.docx",
+    "hazard": "Word comments (word/comments.xml) carrying live, unresolved instructions",
+    "ms": 4,
+    "error": null,
+    "blocks": 10,
+    "problems": [
+      "3 Word comment(s) are present. A comment is a PROPOSAL, not the specification: they are labelled \"comment\" and the block pass may not turn one into an obligation on its own."
+    ],
+    "passed": 4,
+    "total": 4,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "cap this at 3 selections",
+        "why": "a hard scripting constraint that exists ONLY in a comment",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "randomise codes 1-8, anchor code 9",
+        "why": "randomisation rule that exists ONLY in a comment",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "minimum 120 completes in the 18-24 cell",
+        "why": "quota rule that exists ONLY in a comment",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Q11. Which of these features matter most",
+        "why": "body text around the comment anchors must be intact",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "03-routing-matrix-table.docx",
+    "hazard": "routing matrix in a w:tbl — meaning lives in the row stub and the column header, plus vMerge/gridSpan",
+    "ms": 7,
+    "error": null,
+    "blocks": 38,
+    "problems": [],
+    "passed": 5,
+    "total": 7,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q8 = 2 (Rents)",
+        "why": "column header carries half the routing condition",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Age 55+",
+        "why": "row stub carries the other half",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "TERMINATE (T3)",
+        "why": "the terminate outcome itself",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "regex",
+        "text": "Age 55\\+\\tAsk Q9c\\tAsk Q9c\\tTERMINATE \\(T3\\)",
+        "why": "the row must stay on ONE line with its stub, or the cell/condition pairing is lost",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "Manchester",
+        "why": "vMerge continuation row content",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "regex",
+        "text": "METRO\\tLondon",
+        "why": "the merged stub label must be attached to its first row",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "ALL CELLS — screener applies before quota check",
+        "why": "gridSpan footer row rule",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "04-footnote-endnote-rule.docx",
+    "hazard": "a live rule stated ONLY in a footnote (word/footnotes.xml) or endnote (word/endnotes.xml)",
+    "ms": 4,
+    "error": null,
+    "blocks": 10,
+    "problems": [
+      "2 footnote(s) were read from word/footnotes.xml and are labelled as such — questionnaires park conditional exceptions there, so weigh them as requirements, not decoration.",
+      "1 endnote(s) were read from word/endnotes.xml and are labelled as such — questionnaires park conditional exceptions there, so weigh them as requirements, not decoration."
+    ],
+    "passed": 5,
+    "total": 5,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "set qc_flag = 1",
+        "why": "soft-launch exception exists only in footnote 1",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "terminates immediately at T5",
+        "why": "full-launch behaviour exists only in footnote 1",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "out of scope and must route to T7",
+        "why": "postcode scope rule exists only in footnote 2",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Unweighted bases must be shown",
+        "why": "reporting rule exists only in endnote 1",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Q4. Are you solely or jointly responsible",
+        "why": "body text must be intact",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "05-appendix-option-list.docx",
+    "hazard": "option list defined in an appendix and referenced by name (SHOW LIST A) from the body",
+    "ms": 3,
+    "error": null,
+    "blocks": 23,
+    "problems": [],
+    "passed": 5,
+    "total": 5,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "SHOW LIST A",
+        "why": "the reference in the body",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Marchmont Gas & Power",
+        "why": "an option that only exists in the appendix (and contains an & entity)",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "99. None of these — EXCLUSIVE",
+        "why": "exclusivity rule attached to the appendix option",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "do NOT randomise; keep in order shown",
+        "why": "list-level rule attached to LIST B",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "order",
+        "text": [
+          "SHOW LIST A",
+          "LIST A — Energy suppliers"
+        ],
+        "why": "the reference must precede the definition; document order matters for resolution",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "06-inconsistent-numbering.docx",
+    "hazard": "inconsistent numbering: Q7a/Q7b/Q7b_i, a section restarting at 1, a manual Q10 that is the 11th question, and Word AUTO-numbered questions/options",
+    "ms": 5,
+    "error": null,
+    "blocks": 22,
+    "problems": [
+      "6 paragraph(s) are numbered by Word itself. The number is generated from numbering.xml at render time and is NOT text anywhere in the document, so each one carries a \"[#]\" placeholder rather than the identifier a reader would see."
+    ],
+    "passed": 4,
+    "total": 6,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q7b_i.",
+        "why": "sub-sub numbering must survive verbatim",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "there is no Q9 — it was cut in v4",
+        "why": "the numbering-gap note",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Which supplier do you use for gas?",
+        "why": "auto-numbered question text",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "regex",
+        "text": "Q1\\.\\s*Which supplier do you use for gas\\?",
+        "why": "the AUTO-generated question number Q1 lives in numbering.xml, not in the run text",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "regex",
+        "text": "a\\)\\s*Yes, same supplier",
+        "why": "the AUTO-generated option letter a) lives in numbering.xml, not in the run text",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "1. Which of these have you done in the last year?",
+        "why": "the manually typed restart-at-1 numbering",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "07-header-footer-watermark.docx",
+    "hazard": "client name + DRAFT marker in the header (word/header1.xml) and a rule in the footer (word/footer1.xml)",
+    "ms": 5,
+    "error": null,
+    "blocks": 8,
+    "problems": [
+      "2 line(s) came from word/header1.xml: a document stamped \"DRAFT — NOT FOR FIELD\" in its header is a different document from the one it looks like.",
+      "1 line(s) came from word/footer1.xml: a document stamped \"DRAFT — NOT FOR FIELD\" in its header is a different document from the one it looks like.",
+      "1 image(s) carry no alt text; whatever they mandate is unreadable to this parser and to any browser-driving tester."
+    ],
+    "passed": 5,
+    "total": 5,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "DRAFT — NOT FOR FIELD",
+        "why": "the draft status of the whole document",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "prepared for Northwind Utilities plc",
+        "why": "the client identity — provenance, appears on every page",
+        "severity": "context",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "rounded to the nearest £1. Do not show pence",
+        "why": "a live currency-display rule that lives only in the footer",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Do not script until the client has signed off",
+        "why": "text-box note in the body",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Q20. What do you currently pay per month",
+        "why": "body text must be intact",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "08-unicode-punctuation.docx",
+    "hazard": "smart quotes, en/em dashes, non-breaking and narrow-no-break spaces, soft hyphen, ZWSP, fractions and symbols",
+    "ms": 3,
+    "error": null,
+    "blocks": 8,
+    "problems": [],
+    "passed": 7,
+    "total": 8,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "“main”",
+        "why": "curly double quotes must survive as typed",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "you’d",
+        "why": "curly apostrophe must survive",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "6–12 months",
+        "why": "en dash inside a range — a naive ASCII fold changes the meaning of the range",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "— the one you",
+        "why": "em dash as an aside marker",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "£100 per month",
+        "why": "NBSP must survive; collapsing it to a normal space silently changes the string a comparator sees",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "≥ 18°C",
+        "why": "maths and degree symbols",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "…",
+        "why": "ellipsis character, not three dots",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "½ of respondents",
+        "why": "vulgar fraction",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "09-split-runs.docx",
+    "hazard": "question text split across many w:r runs by mid-word formatting, hyperlinks and fields",
+    "ms": 4,
+    "error": null,
+    "blocks": 7,
+    "problems": [],
+    "passed": 6,
+    "total": 6,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "How satisfied are you with the speed",
+        "why": "mid-word bold must not fracture the word",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Would you recommend Northwind to a friend?",
+        "why": "word-per-run paragraph must reassemble exactly",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "TERMINATE (T9)",
+        "why": "a routing token split by formatting must reassemble or the rule is unfindable",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "anyone under 18 years of age",
+        "why": "a numeric threshold split across runs must reassemble",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "northwind.example/privacy",
+        "why": "hyperlink display text",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "noregex",
+        "text": "sat\\s+is\\s+fied",
+        "why": "runs must not be joined with inserted whitespace",
+        "severity": "meaning",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "10-image-instructions.docx",
+    "hazard": "an embedded PNG screenshot carrying the grid definition (content a text parser CANNOT see) plus one image whose instruction lives in wp:docPr/@descr alt text",
+    "ms": 9,
+    "error": null,
+    "blocks": 6,
+    "problems": [
+      "1 image(s) carry no alt text; whatever they mandate is unreadable to this parser and to any browser-driving tester."
+    ],
+    "passed": 3,
+    "total": 4,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q18. Please rate each brand",
+        "why": "surrounding body text",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "build the grid exactly as shown in the screenshot",
+        "why": "the pointer to the image",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "show the client logo on the intro screen only",
+        "why": "an instruction that IS recoverable from XML: it sits in the image's alt-text description",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "TERMINATE IF ALL ROWS = 1",
+        "why": "rendered into the PNG pixels only — unrecoverable without OCR; this probe is EXPECTED to fail and exists to prove the blind spot",
+        "severity": "requirement",
+        "ok": false
+      }
+    ]
+  },
+  {
+    "file": "11-textbox-content-control.docx",
+    "hazard": "text boxes (w:txbxContent via mc:AlternateContent and legacy VML w:pict) and content controls (w:sdt) holding live instructions; inline dropdown options live only in w:listItem/@w:displayText",
+    "ms": 1,
+    "error": null,
+    "blocks": 8,
+    "problems": [
+      "1 image(s) carry no alt text; whatever they mandate is unreadable to this parser and to any browser-driving tester."
+    ],
+    "passed": 8,
+    "total": 9,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q17. Which statement is closest to your view?",
+        "why": "host paragraph text BEFORE the text box",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "SELECT ONE ONLY — do not accept multiples",
+        "why": "host paragraph text AFTER the text box — the classic truncation victim",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "must be asked BEFORE Q16 for respondents in the pilot cell",
+        "why": "the rule inside the DrawingML text box",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "noregex",
+        "text": "pilot cell[\\s\\S]*pilot cell",
+        "why": "the mc:Fallback copy must not be emitted a second time",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "quota cell PILOT closes at n=50",
+        "why": "the rule inside the legacy VML-only text box",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "FIELDWORK WINDOW: 14 April 2026 to 28 April 2026",
+        "why": "block-level content control content",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Q13. Which tariff are you on?",
+        "why": "text before the inline content control",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "SINGLE CODE.",
+        "why": "text after the inline content control",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Time-of-use / Economy 7",
+        "why": "an option that exists ONLY as a w:listItem/@w:displayText attribute",
+        "severity": "requirement",
+        "ok": false
+      }
+    ]
+  },
+  {
+    "file": "12-long-document.docx",
+    "hazard": "long instrument (64 questions, ~450 paragraphs) — chunking / truncation limits",
+    "ms": 19,
+    "error": null,
+    "blocks": 396,
+    "problems": [],
+    "passed": 4,
+    "total": 4,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q1. Thinking specifically about energy use",
+        "why": "first question",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Q47 is the ONLY question in the instrument with a randomised statement order",
+        "why": "a unique rule buried in the middle",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Q64. Thinking specifically about future intentions",
+        "why": "last question",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Median length target: 14 minutes",
+        "why": "final line — proves no tail truncation",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "13-utf16-encoded.docx",
+    "hazard": "word/document.xml serialised as UTF-16LE with a BOM (unusual but legal encoding)",
+    "ms": 3,
+    "error": null,
+    "blocks": 5,
+    "problems": [],
+    "passed": 4,
+    "total": 4,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q35. Do you have a water meter?",
+        "why": "basic text must survive the UTF-16 decode",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "SKIP TO Q40 and set flag no_meter = 1",
+        "why": "a routing rule in the UTF-16 part",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "£ values in this module",
+        "why": "non-ASCII must decode correctly, not mojibake",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "noregex",
+        "text": "\\u0000",
+        "why": "no NUL bytes may leak into the extracted text (a UTF-8 decode of UTF-16 would)",
+        "severity": "meaning",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "14-legacy-word2003.doc",
+    "hazard": "a .doc-era file: genuine Word 2003 WordprocessingML flat XML (NOT a zip), delivered with a .doc extension",
+    "ms": 0,
+    "error": null,
+    "blocks": 3,
+    "problems": [],
+    "passed": 2,
+    "total": 2,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "S1. Do you or does anyone in your household work in market research?",
+        "why": "the screener still contains real rules; the question is whether the failure is loud",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "TERMINATE if under 18 (T2)",
+        "why": "a real termination rule",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "15-nested-table.docx",
+    "hazard": "a nested w:tbl inside a table cell (a routing sub-grid drawn inside a module map)",
+    "ms": 1,
+    "error": null,
+    "blocks": 15,
+    "problems": [
+      "t1 contains 1 nested table(s); each is reported as its own table (t1.1 …) so the parent's rows still pair correctly."
+    ],
+    "passed": 4,
+    "total": 6,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "SKIP TO Q45 and set dk_meter = 1",
+        "why": "a rule inside the NESTED table",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "TERMINATE if Q46 = 9 (T11). No exceptions.",
+        "why": "a rule in the OUTER table, AFTER the nested one",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Ask all. Randomise Q50-Q54.",
+        "why": "the last outer row, after the nested table",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "End of routing map.",
+        "why": "content after the whole table",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "regex",
+        "text": "M4 — Billing\\tTERMINATE if Q46 = 9",
+        "why": "the outer row must keep its stub attached to its detail cell",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "regex",
+        "text": "Q40 = 2 \\(no smart meter\\)\\tSKIP TO Q45",
+        "why": "the nested row must keep its condition attached to its action",
+        "severity": "meaning",
+        "ok": false
+      }
+    ]
+  },
+  {
+    "file": "16-fields-symbols-bom.docx",
+    "hazard": "UTF-8 BOM before the XML declaration, w:sym glyphs in attributes, w:softHyphen/w:noBreakHyphen elements, complex fields with and without cached results, numeric character references, and a deleted paragraph mark",
+    "ms": 6,
+    "error": null,
+    "blocks": 10,
+    "problems": [
+      "2 Word field code(s) (cross-references, sequence numbers) were left unresolved; their displayed value may differ from the text captured here."
+    ],
+    "passed": 8,
+    "total": 9,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Tick this box if the respondent consented to recontact",
+        "why": "text next to a w:sym must survive the BOM and the symbol",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Q48. Rate the value for money",
+        "why": "the ≥ glyph is a w:sym attribute; without it the sentence reads 'value for money 7 out of 10' and the threshold direction is LOST",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Ref code T-14 applies",
+        "why": "w:noBreakHyphen must render as a hyphen or the reference code is corrupted",
+        "severity": "meaning",
+        "ok": false
+      },
+      {
+        "kind": "present",
+        "text": "See Table 1 for the quota grid",
+        "why": "a complex field WITH a cached result",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "regex",
+        "text": "Fieldwork closes on\\s+—",
+        "why": "a field with NO cached result leaves a hole; the sentence must not silently read as complete",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "noregex",
+        "text": "DOCPROPERTY",
+        "why": "field instruction codes must not leak into the extracted prose",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Price band £20–£40 per month",
+        "why": "numeric character references must decode",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "Median LOI\t14 minutes",
+        "why": "the tab that pairs label with value",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "noregex",
+        "text": "^\\uFEFF",
+        "why": "the UTF-8 BOM must not survive into the first line of extracted text",
+        "severity": "meaning",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "17-default-namespace.docx",
+    "hazard": "WordprocessingML bound to the default XML namespace (no w: prefix) — validates the parser's prefix-detection fallback",
+    "ms": 3,
+    "error": null,
+    "blocks": 7,
+    "problems": [],
+    "passed": 2,
+    "total": 3,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q55. How many vehicles does your household own?",
+        "why": "body text under an unprefixed binding",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "SKIP TO Q60 (no vehicle module)",
+        "why": "a routing rule under an unprefixed binding",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "regex",
+        "text": "Q56 = 2\\tTERMINATE \\(T12\\)",
+        "why": "tables must still keep their row shape under an unprefixed binding",
+        "severity": "requirement",
+        "ok": false
+      }
+    ]
+  },
+  {
+    "file": "18-ole2-header.doc",
+    "hazard": "binary Word 97-2003 container (OLE2/CFB) — the classic 'someone emailed me a .doc' upload",
+    "ms": 1,
+    "error": "parseDocxBlocks: this is a legacy Word 97-2003 document (OLE2 compound file), not a .docx. Re-save it as .docx — the binary format carries none of the part structure this parser reads.",
+    "blocks": 0,
+    "problems": [],
+    "passed": 0,
+    "total": 1,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "WordDocument",
+        "why": "nothing here is extractable as text; the probe exists only to force the failure path",
+        "severity": "requirement",
+        "ok": false
+      }
+    ]
+  },
+  {
+    "file": "19-alt-part-name.docx",
+    "hazard": "the main document part lives at word/document2.xml and is declared through _rels/.rels — the hardcoded path assumption",
+    "ms": 1,
+    "error": null,
+    "blocks": 4,
+    "problems": [],
+    "passed": 2,
+    "total": 2,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "Q60. Which of these have you contacted",
+        "why": "the questionnaire body",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "present",
+        "text": "TERMINATE anyone who selects both 99 and any other code (T13)",
+        "why": "a data-integrity termination rule",
+        "severity": "requirement",
+        "ok": true
+      }
+    ]
+  },
+  {
+    "file": "20-moved-text.docx",
+    "hazard": "a block moved with track changes on: w:moveTo (destination, w:t runs) and w:moveFrom (source, w:delText runs) both still in the file",
+    "ms": 1,
+    "error": null,
+    "blocks": 5,
+    "problems": [],
+    "passed": 3,
+    "total": 3,
+    "probes": [
+      {
+        "kind": "present",
+        "text": "SKIP TO Q80 and set engaged = 0",
+        "why": "the moved routing rule must appear at its NEW position",
+        "severity": "requirement",
+        "ok": true
+      },
+      {
+        "kind": "noregex",
+        "text": "SKIP TO Q80[\\s\\S]*SKIP TO Q80",
+        "why": "the rule must appear exactly ONCE — emitting both moveTo and moveFrom duplicates it",
+        "severity": "meaning",
+        "ok": true
+      },
+      {
+        "kind": "regex",
+        "text": "Q71\\. ROUTING[\\s\\S]*Q72\\.",
+        "why": "the moved rule must sit before Q72 (its destination), not after it (its source)",
+        "severity": "meaning",
+        "ok": true
+      }
+    ]
+  }
+]

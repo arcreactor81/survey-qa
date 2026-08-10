@@ -11,6 +11,7 @@ export async function worker() {
 export function testEnv(overrides = {}) {
   return {
     EVIDENCE: memoryR2(),
+    V2_PREFIX: "v2/",
     JUDGEMENT_KEY_REGISTRY: FIXTURE_REGISTRY,
     // The fixture key is `trust: "fixture"`, honoured only when dev seeding is on. Tests
     // that need the production posture clear this explicitly.

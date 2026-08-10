@@ -1,0 +1,21 @@
+{
+  "suite": "corpus",
+  "passed": 87,
+  "total": 99,
+  "failing": [
+    "03-routing-matrix-table.docx Age 55\\+\\tAsk Q9c\\tAsk Q9c\\tTERMINATE \\(T3\\)",
+    "03-routing-matrix-table.docx METRO\\tLondon",
+    "08-unicode-punctuation.docx £100 per month",
+    "10-image-instructions.docx TERMINATE IF ALL ROWS = 1",
+    "11-textbox-content-control.docx Time-of-use / Economy 7",
+    "15-nested-table.docx M4 — Billing\\tTERMINATE if Q46 = 9",
+    "15-nested-table.docx Q40 = 2 \\(no smart meter\\)\\tSKIP TO Q45",
+    "16-fields-symbols-bom.docx Ref code T-14 applies",
+    "17-default-namespace.docx Q56 = 2\\tTERMINATE \\(T12\\)",
+    "18-ole2-header.doc WordDocument"
+  ],
+  "policyFailing": [
+    "06-inconsistent-numbering.docx Q1\\.\\s*Which supplier do you use for gas\\?",
+    "06-inconsistent-numbering.docx a\\)\\s*Yes, same supplier"
+  ]
+}

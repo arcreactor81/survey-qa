@@ -1,0 +1,17 @@
+[b0001] (heading) SECTION O — MODULE ROUTING MAP
+--- table t1 ---
+[b0002] (cell r1c1) Module
+[b0003] (cell r1c2 row="Module") Routing detail
+[b0004] (cell r2c1) M3 — Smart meters
+[b0005] (cell r3c1) M4 — Billing
+[b0006] (cell r3c2 row="M4 — Billing") TERMINATE if Q46 = 9 (T11). No exceptions.
+[b0007] (cell r4c1) M5 — Service
+[b0008] (cell r4c2 row="M5 — Service") Ask all. Randomise Q50-Q54.
+--- table t1.1 ---
+[b0009] (cell r1c1) Q40 = 1 (has smart meter)
+[b0010] (cell r1c2 row="Q40 = 1 (has smart meter)") ask Q41 then Q42
+[b0011] (cell r2c1) Q40 = 2 (no smart meter)
+[b0012] (cell r2c2 row="Q40 = 2 (no smart meter)") SKIP TO Q45
+[b0013] (cell r3c1) Q40 = 9 (don't know)
+[b0014] (cell r3c2 row="Q40 = 9 (don't know)") SKIP TO Q45 and set dk_meter = 1
+[b0015] End of routing map. Any module not listed above is asked of all respondents.

@@ -1,0 +1,26 @@
+[b0001] Q9. Rate each brand.
+--- table t1 ---
+[b0002] (cell r1c1) Brand
+[b0003] (cell r1c2 row="Brand") Awareness
+[b0004] (cell r1c3 row="Brand") Usage
+[b0005] (cell r1c4 row="Brand") Price
+[b0006] (cell r2c1 col="Brand") Kestrel
+[b0007] (cell r2c2 row="Kestrel" col="Awareness") aware-yes
+[b0008] (cell r2c3 row="Kestrel" col="Usage") aware-no
+[b0009] (cell r2c4 row="Kestrel" col="Price") weekly
+[b0010] (cell r2c5 row="Kestrel") 42 GBP
+[b0011] (cell r3c1 col="Brand") Sable
+[b0012] (cell r3c2 row="Sable" col="Awareness") aware-yes
+[b0013] (cell r3c3 row="Sable" col="Usage") aware-no
+[b0014] (cell r3c4 row="Sable" col="Price") monthly
+[b0015] (cell r3c5 row="Sable") 61 GBP
+[b0016] Q10. Regional quota.
+--- table t2 ---
+[b0017] (cell r1c1) Region
+[b0018] (cell r1c2 row="Region") City
+[b0019] (cell r1c3 row="Region") Target
+[b0020] (cell r2c1 col="Region") METRO
+[b0021] (cell r2c2 row="METRO" col="City") London
+[b0022] (cell r2c3 row="METRO" col="Target") 300
+[b0023] (cell r3c2 col="City") Manchester
+[b0024] (cell r3c3 col="Target") 120

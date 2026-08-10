@@ -53,13 +53,12 @@
          placeholders. They are not placeholders any more: extraction, planning, browser execution
          and verdict derivation are all implemented, and a full run completed on the deployed
          Worker (DEPLOYED.md §3, §10, §11). Submission was re-enabled 2026-08-08.
-         This banner is REPLACED, NOT DELETED. Two real caveats remain — reports stay non-final
-         until a target build identity is configured, and no real survey has been walked end to end
-         from inside the service — and a silent page would be the same overclaim in the opposite
-         direction from the one this banner originally existed to stop. -->
+         This banner is REPLACED, NOT DELETED. Finality and publication are computed from the
+         sealed run rather than promised by the landing page, and a silent page would be the same
+         overclaim in the opposite direction from the one this banner originally existed to stop. -->
     <div class="dev-banner" role="status">
-      <p class="dev-banner__flag">Runs are real &middot; they spend real money &middot; results are not final</p>
-      <p class="dev-banner__head">You can test a survey with this build. What comes back is evidence, not a certification.</p>
+      <p class="dev-banner__flag">Runs are real &middot; they spend real money &middot; coverage is computed</p>
+      <p class="dev-banner__head">You can test a survey with this build. The report states what the run actually established.</p>
       <p class="dev-banner__body">
         <strong>What works today:</strong> all six steps below run for real. Your questionnaire is
         read by two independent passes, the requirement list is fixed and fingerprinted before any
@@ -69,14 +68,13 @@
         below.
       </p>
       <p class="dev-banner__body">
-        <strong>What is not settled yet:</strong> a result has to name <em>which build of the
-        survey</em> it is about, and no such name is configured here, so every report is marked
-        <strong>&ldquo;no current results&rdquo;</strong> and should be read as evidence rather than
-        as a pass. Separately, <strong>no real survey has yet been walked end to end from inside
-        this service</strong> &mdash; the one completed live run was pointed at a placeholder URL
-        and stopped, correctly, with a named reason. A run can also stop early because the
-        requirement list refused to freeze, or because a limit was reached; a run that stopped early
-        still produces a report that says so.
+        <strong>What this does not assume:</strong> capturing a URL does not identify a vendor
+        release. The service derives a content identity from the distinct screens this run
+        captured; a run that captured nothing remains unbindable, and the report says so. Finality
+        and publication also require a sealed contract, completed accounting, and a trusted signed
+        judgement. A run can stop early because the requirement list refused to freeze, the survey
+        could not be walked, or a limit was reached; a run that stopped early still produces a
+        report that states what was and was not established.
       </p>
     </div>
 
@@ -152,9 +150,9 @@
         <p class="dev-banner__head">This form submits a real run.</p>
         <p class="dev-banner__body">Pressing the button uploads your questionnaire, starts the
         pipeline, calls real models and drives a real browser, and bills against the cap below
-        &mdash; which the server decides, not this page. The report it produces is marked
-        <strong>not final</strong>, because no target build identity is configured for this
-        deployment; read it as evidence rather than as a certification.</p>
+        &mdash; which the server decides, not this page. The report does not presume finality: it
+        derives identity from captured screen content and says <strong>no current results</strong>
+        whenever the run cannot satisfy its binding and publication gates.</p>
       </div>
 
       <!-- SERVER-AUTHORED POLICY. Rendered from GET /api/v2/policy BEFORE submission.
@@ -290,7 +288,7 @@
         <ul style="font-family:var(--mono);font-size:12px;line-height:1.8;margin-top:10px">
           <li>GET&nbsp; /api/v2/health &mdash; advertises the contract versions it speaks</li>
           <li>GET&nbsp; /api/v2/policy &mdash; server-authored effective run policy</li>
-          <li>POST /api/v2/runs &mdash; submit (surveyUrl + base64 .docx, both required)</li>
+          <li>POST /api/v2/runs &mdash; submit (surveyUrl + multipart .docx, both required)</li>
           <li>GET&nbsp; /api/v2/runs/:id &middot; /status &middot; /coverage</li>
           <li>GET&nbsp; /api/v2/runs/:id/report &middot; /report-data &middot; /record &middot; /export</li>
           <li>GET&nbsp; /api/v2/runs/:id/evidence &middot; /evidence/:evidenceId/content</li>

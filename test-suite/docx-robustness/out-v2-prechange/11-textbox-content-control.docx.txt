@@ -1,0 +1,8 @@
+[b0001] (heading) SECTION M — CALLOUTS AND CONTENT CONTROLS
+[b0002] Q17. Which statement is closest to your view? SCRIPTER CALLOUT: Q17 must be asked BEFORE Q16 for respondents in the pilot cell. Ignore the printed order. SELECT ONE ONLY — do not accept multiples.
+[b0003] (image-alt ) [image: Text Box 7]
+[b0004] LEGACY CALLOUT (VML only): quota cell PILOT closes at n=50; after that route everyone to the main cell.
+[b0005] (image-alt ) [image with no alt text — content unreadable]
+[b0006] FIELDWORK WINDOW: 14 April 2026 to 28 April 2026 inclusive. Do not launch before 09:00 UK time.
+[b0007] Q13. Which tariff are you on? Choose an item. SINGLE CODE.
+[b0008] Q14. And how long have you been on that tariff?

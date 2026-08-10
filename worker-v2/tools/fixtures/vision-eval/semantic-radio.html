@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Public visual fixture: semantic radio group</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 720px; height: 520px; margin: 0; overflow: hidden; }
+      body { background: #eef2f7; color: #172033; font-family: Arial, sans-serif; }
+      main { position: absolute; inset: 24px 32px; border: 1px solid #c8d1df; border-radius: 14px; background: white; }
+      h1 { position: absolute; left: 24px; top: 18px; margin: 0; font-size: 25px; line-height: 30px; }
+      .instruction { position: absolute; left: 24px; top: 59px; margin: 0; font-size: 15px; line-height: 20px; }
+      fieldset { position: absolute; left: 20px; top: 91px; width: 616px; height: 242px; padding: 42px 16px 12px; border: 1px solid #aeb9ca; border-radius: 10px; }
+      legend { padding: 0 4px; font-size: 18px; font-weight: 700; line-height: 24px; }
+      label { display: flex; align-items: center; width: 260px; height: 32px; margin-bottom: 12px; gap: 10px; font-size: 16px; }
+      input { width: 18px; height: 18px; margin: 0; }
+      .later { position: absolute; left: 24px; top: 349px; margin: 0; color: #4c5870; font-size: 14px; line-height: 20px; }
+      nav { position: absolute; right: 20px; bottom: 16px; display: flex; gap: 12px; }
+      button { width: 88px; height: 44px; border: 1px solid #63728a; border-radius: 8px; background: white; font-size: 15px; }
+      button.primary { width: 108px; border-color: #155eef; background: #155eef; color: white; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 data-eval-id="title">Travel preferences</h1>
+      <p class="instruction" data-eval-id="instruction">Choose one answer before continuing.</p>
+      <form>
+        <fieldset>
+          <legend data-eval-id="question">How do you usually travel?</legend>
+          <label data-eval-id="option-train"><input type="radio" name="transport" value="train" />Train</label>
+          <label data-eval-id="option-bus"><input type="radio" name="transport" value="bus" checked />Bus</label>
+          <label data-eval-id="option-walk"><input type="radio" name="transport" value="walk" disabled />Walk</label>
+        </fieldset>
+        <p class="later" data-eval-id="later">Answers can be changed later.</p>
+        <nav aria-label="Survey navigation">
+          <button type="button" data-eval-id="back" disabled>Back</button>
+          <button type="button" class="primary" data-eval-id="continue">Continue</button>
+        </nav>
+      </form>
+    </main>
+  </body>
+</html>

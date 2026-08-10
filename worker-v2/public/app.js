@@ -23,11 +23,10 @@
    * itself a false statement about the system — the same failure mode in the opposite direction.
    *
    * WHAT IS STILL TRUE, and why the banners in index.html were REPLACED rather than deleted:
-   *   - `DEFAULT_TARGET_BUILD_ID` is unset, so a judgement cannot bind to a target identity and
-   *     every report is correctly marked non-final ("no current results"). Owner decision, not a
-   *     code fix — DEPLOY.md §2c.
-   *   - No real survey has been walked end to end from inside the service; the one completed run
-   *     targeted a placeholder URL and stopped `walks-blocked-by-site`.
+   *   - a URL is not a build id. The service derives a content identity only from screens this
+   *     run captured; a run that captured nothing remains unbindable.
+   *   - finality and publication remain computed gates. The page never promises either before a
+   *     sealed contract, complete accounting and a trusted signed judgement exist.
    *
    * THIS KILL-SWITCH STAYS. Flip to false to shut submission off again — the page will fall back
    * to OFF_REASON, which must then be rewritten to say what is actually wrong at that time.
@@ -252,19 +251,6 @@
   modeCustom.addEventListener("click", function () { selectMode("custom"); });
   modeSample.addEventListener("click", function () { selectMode("sample"); });
 
-  function fileToBase64(file) {
-    return new Promise(function (resolve, reject) {
-      var r = new FileReader();
-      r.onerror = function () { reject(new Error("could not read the file")); };
-      r.onload = function () {
-        var s = String(r.result || "");
-        var i = s.indexOf(",");
-        resolve(i >= 0 ? s.slice(i + 1) : s);
-      };
-      r.readAsDataURL(file);
-    });
-  }
-
   form.addEventListener("submit", async function (e) {
     e.preventDefault();
     clearError();
@@ -290,16 +276,19 @@
     runHint.textContent = "Uploading the questionnaire and creating the run.";
 
     try {
-      var b64 = await fileToBase64(chosenFile);
+      // Let the browser stream its native multipart spelling. Base64 first inflated the
+      // file by a third and held the File, data URL, JSON string and decoded bytes around
+      // the same submission. The server accepts both spellings for API compatibility, but
+      // the owner-facing form takes the lower-amplification path.
+      var submission = new FormData();
+      submission.set("surveyUrl", url);
+      submission.set("docx", chosenFile, chosenFile.name);
+      submission.set("profile", profileSel.value === "deep" ? "deep" : "standard");
+      submission.set("contractSource", "extract");
       var res = await fetch("/api/v2/runs", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          surveyUrl: url,
-          documentBase64: b64,
-          documentName: chosenFile.name,
-          profile: profileSel.value === "deep" ? "deep" : "standard"
-        })
+        // Do not set Content-Type: fetch adds the multipart boundary itself.
+        body: submission
       });
       var body = await res.json().catch(function () { return null; });
       if (!res.ok) {

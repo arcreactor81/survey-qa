@@ -15,10 +15,8 @@
  * the REAL `submitRun` and the REAL policy handler under the test bundle, with a
  * body assembled the way the browser assembles it, and asserts on the responses:
  *
- *   · the JSON + base64 spelling app.js actually sends;
- *   · the multipart spelling (`docx`) the server documents for a browser form,
- *     because the JSON path reads the whole file into a string in the isolate and
- *     a future app.js will want the cheaper one;
+ *   · the multipart spelling (`docx`) app.js actually sends;
+ *   · the JSON + base64 spelling retained for machine-to-machine compatibility;
  *   · every field of `GET /api/v2/policy` that app.js reads, since a policy that
  *     does not load leaves submission permanently disabled by design;
  *   · every element id app.js calls getElementById on, against index.html — one
@@ -107,32 +105,37 @@ async function main() {
   // reported", so a missing cap would ship a button reading "up to not reported".
   check(typeof lim.maxUsd === "number" && isFinite(lim.maxUsd), "the cap the button quotes is a real number", `$${lim.maxUsd}`);
 
-  // ------------------------------------------------------------------ JSON + base64
-  say(`\nPOST /api/v2/runs — the body app.js actually sends\n${"-".repeat(74)}`);
+  // ------------------------------------------------------------------ multipart
+  say(`\nPOST /api/v2/runs — the multipart body app.js actually sends\n${"-".repeat(74)}`);
   const docx = fakeDocx();
-  // Transcribed from the fetch() in app.js's submit handler. If that object changes,
-  // this must be changed with it — which is the point.
-  const appJsBody = {
-    surveyUrl: "https://survey.example.com/s/abc123",
-    documentBase64: toBase64(docx),
-    documentName: "questionnaire.docx",
-    profile: "standard",
+  const makeForm = (surveyUrl) => {
+    const form = new FormData();
+    form.set("surveyUrl", surveyUrl);
+    form.set("docx", new File([docx], "questionnaire.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }));
+    form.set("profile", "standard");
+    form.set("contractSource", "extract");
+    return form;
   };
-  const posted = Object.keys(appJsBody);
-  for (const field of ["surveyUrl", "documentBase64", "documentName", "profile"]) {
+  for (const field of ["surveyUrl", "docx", "profile", "contractSource"]) {
     check(
-      APP_JS.includes(`${field}:`),
+      APP_JS.includes(`submission.set("${field}"`),
       `app.js still sends \`${field}\``,
       "read out of public/app.js so this check cannot pass over a renamed field",
     );
   }
+  check(
+    APP_JS.includes("new FormData()") && !APP_JS.includes("fileToBase64"),
+    "app.js uses native multipart without base64 amplification",
+    "fetch supplies the multipart boundary and can upload the File directly",
+  );
 
   const env2 = testEnv();
   const res = await mod.apiRuns.submitRun(
     new Request("https://x/api/v2/runs", {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(appJsBody),
+      body: makeForm("https://survey.example.com/s/abc123"),
     }),
     env2,
   );
@@ -165,25 +168,32 @@ async function main() {
   );
   check(
     storedBytes !== null && storedBytes[0] === 0x50 && storedBytes[1] === 0x4b,
-    "…and base64 round-tripped it byte-exactly (the ZIP signature survived)",
+    "…and multipart round-tripped it byte-exactly (the ZIP signature survived)",
     storedBytes ? `first bytes ${[...storedBytes.slice(0, 4)].join(",")}` : "nothing stored",
   );
 
-  // ------------------------------------------------------------------ multipart
-  say(`\nPOST /api/v2/runs — the multipart spelling the server documents\n${"-".repeat(74)}`);
-  const form = new FormData();
-  form.set("surveyUrl", "https://survey.example.com/s/abc123");
-  form.set("docx", new File([docx], "questionnaire.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }));
-  form.set("profile", "standard");
+  // ------------------------------------------------------------------ JSON + base64 compatibility
+  say(`\nPOST /api/v2/runs — the JSON/base64 API compatibility spelling\n${"-".repeat(74)}`);
+  const jsonBody = {
+    surveyUrl: "https://survey.example.com/s/abc123",
+    documentBase64: toBase64(docx),
+    documentName: "questionnaire.docx",
+    profile: "standard",
+    contractSource: "extract",
+  };
   const env3 = testEnv();
-  const mRes = await mod.apiRuns.submitRun(new Request("https://x/api/v2/runs", { method: "POST", body: form }), env3);
+  const mRes = await mod.apiRuns.submitRun(new Request("https://x/api/v2/runs", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(jsonBody),
+  }), env3);
   const mBody = await mRes.json();
-  check(mRes.status === 202, "multipart with the field name `docx` is accepted", `HTTP ${mRes.status} ${JSON.stringify(mBody).slice(0, 160)}`);
+  check(mRes.status === 202, "JSON/base64 remains accepted for API clients", `HTTP ${mRes.status} ${JSON.stringify(mBody).slice(0, 160)}`);
   check(typeof mBody.runId === "string", "…and mints a run id too", mBody.runId);
   const mStored = await env3.EVIDENCE.get(mod.keys.inputDocumentKey(mBody.runId));
   check(
     mStored !== null && (await mStored.arrayBuffer()).byteLength === docx.byteLength,
-    "…and stores the same bytes as the JSON path",
+    "…and stores the same bytes as the multipart form",
     "both spellings converge on one code path",
   );
 
@@ -216,7 +226,7 @@ async function main() {
     new Request("https://x/api/v2/runs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...appJsBody, surveyUrl: "http://169.254.169.254/latest/meta-data/" }),
+      body: JSON.stringify({ ...jsonBody, surveyUrl: "http://169.254.169.254/latest/meta-data/" }),
     }),
     testEnv(),
   );

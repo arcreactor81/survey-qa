@@ -356,7 +356,13 @@ suite("D23 — the legitimate producer path is unchanged", () => {
     assertEq(row.verifier.decision, "verified");
     assertEq(row.verifier.reason, "ROUTE_DESTINATION_REACHED");
     assertEq(row.verifier.predicate, "route-destination/1.0.0");
-    assertEq(row.verifier.detail, "selecting the documented answer advanced to a screen presenting Q9");
+    // 1.5.0 names WHICH witness carried the pass, so the detail gained a provenance clause. This
+    // fixture's destination screen states its id in its own heading — see D39 for why that is
+    // admissible and a body back-reference is not.
+    assertEq(
+      row.verifier.detail,
+      "selecting the documented answer advanced to a screen presenting Q9 in its own heading",
+    );
     assertEq(routing.verdict, "pass", JSON.stringify(routing));
   });
 

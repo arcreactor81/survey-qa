@@ -44,18 +44,43 @@
  *    validly so the rest of the walk still happens.
  */
 
-import { CONTROL_SELECTOR, ERROR_COLLECTOR, HISTORY_SHIM, LABEL_SELECTOR, READ_SCREEN, clearValueScript } from "./page-script";
+import {
+  CONTROL_SELECTOR,
+  ERROR_COLLECTOR,
+  HISTORY_SHIM,
+  LABEL_SELECTOR,
+  READ_SCREEN,
+  clearValueScript,
+  fillRefusalFor,
+  isTextEntry,
+  isValueEntry,
+  setValueScript,
+} from "./page-script";
 import type {
+  AccessibilitySnapshotArtifact,
+  AccessibilitySnapshotNode,
   BindingRefusal,
   BlockedReason,
   PathObservation,
   PerformedAction,
   RenderedScreen,
+  ScreenCaptureEpoch,
+  ScreenCaptureFailure,
+  ScreenCaptureGeometry,
   StepObservation,
+  UnfillableControl,
+  WalkEnding,
 } from "./types";
 import type { CaptureContext } from "./capture";
-import { capturePathObservation, captureFailure, captureScreenJson, captureScreenshot } from "./capture";
+import {
+  captureAccessibilitySnapshot,
+  captureFailure,
+  capturePathObservation,
+  captureScreenJsonRef,
+  captureScreenshotRef,
+} from "./capture";
 import type { PlannedDecision, PlannedPath } from "../workflow/stages/planner/plan-core.js";
+import { sha256Hex } from "../store/hash";
 
 // ---------------------------------------------------------------------------
 // Structural types over the puppeteer surface we use. Declared here (as
@@ -76,6 +101,8 @@ export interface PageLike {
   evaluateOnNewDocument(script: string): Promise<unknown>;
   $$(selector: string): Promise<ElementHandleLike[]>;
   screenshot(opts?: unknown): Promise<Uint8Array | ArrayBuffer | string>;
+  /** Optional only so pre-pivot test doubles and old adapters fail visibly rather than crash. */
+  accessibility?: { snapshot(opts?: { interestingOnly?: boolean }): Promise<unknown | null> };
   setViewport(vp: { width: number; height: number; deviceScaleFactor?: number }): Promise<void>;
   on(event: string, handler: (arg: unknown) => void): void;
   close(): Promise<void>;
@@ -414,21 +441,663 @@ async function read(page: PageLike): Promise<RenderedScreen> {
   return (await page.evaluate(READ_SCREEN)) as RenderedScreen;
 }
 
-async function shoot(page: PageLike): Promise<Uint8Array | null> {
+const READ_CAPTURE_GEOMETRY = String.raw`(() => {
+  const root = document.documentElement;
+  const body = document.body;
+  const width = Math.max(root ? root.scrollWidth : 0, body ? body.scrollWidth : 0, window.innerWidth || 0);
+  const height = Math.max(root ? root.scrollHeight : 0, body ? body.scrollHeight : 0, window.innerHeight || 0);
+  return {
+    width: window.innerWidth,
+    height: window.innerHeight,
+    deviceScaleFactor: window.devicePixelRatio,
+    scrollX: window.scrollX,
+    scrollY: window.scrollY,
+    documentWidth: width,
+    documentHeight: height,
+  };
+})()`;
+
+export const ACCESSIBILITY_CAPTURE_LIMITS: Readonly<{
+  maxNodes: number;
+  maxDepth: number;
+  maxValueChars: number;
+  maxSerializedBytes: number;
+}> = Object.freeze({
+  maxNodes: 5_000,
+  maxDepth: 64,
+  maxValueChars: 16_384,
+  maxSerializedBytes: 1_500_000,
+});
+
+type AccessibilityLimitKind = Extract<
+  ScreenCaptureFailure["kind"],
+  | "accessibility-snapshot-invalid-node"
+  | "accessibility-snapshot-node-limit"
+  | "accessibility-snapshot-depth-limit"
+  | "accessibility-snapshot-value-limit"
+  | "accessibility-snapshot-size-limit"
+>;
+
+interface AccessibilitySanitizeLimitation {
+  kind: AccessibilityLimitKind;
+  count: number;
+  detail: string;
+}
+
+export interface SanitizedAccessibilitySnapshot {
+  tree: AccessibilitySnapshotNode | null;
+  nodeCount: number;
+  maxDepthObserved: number;
+  limitations: AccessibilitySanitizeLimitation[];
+  error: string | null;
+}
+
+const plainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+/**
+ * Convert Puppeteer's live AX objects into a closed JSON-only tree.
+ *
+ * `elementHandle()` is intentionally not even consulted. Unknown properties are dropped and
+ * only the documented scalar state above is copied. The limits are fail-loud: every pruned
+ * branch or value is counted in `limitations`; a consumer must never mistake the resulting
+ * partial tree for a complete Chrome snapshot.
+ */
+export function sanitizeAccessibilitySnapshot(
+  raw: unknown,
+  requested: Partial<typeof ACCESSIBILITY_CAPTURE_LIMITS> = {},
+): SanitizedAccessibilitySnapshot {
+  const limits = {
+    maxNodes: Math.max(1, Math.floor(requested.maxNodes ?? ACCESSIBILITY_CAPTURE_LIMITS.maxNodes)),
+    maxDepth: Math.max(0, Math.floor(requested.maxDepth ?? ACCESSIBILITY_CAPTURE_LIMITS.maxDepth)),
+    maxValueChars: Math.max(1, Math.floor(requested.maxValueChars ?? ACCESSIBILITY_CAPTURE_LIMITS.maxValueChars)),
+  };
+  let nodeCount = 0;
+  let maxDepthObserved = 0;
+  let nodeCuts = 0;
+  let depthCuts = 0;
+  let valueCuts = 0;
+  let invalidNodes = 0;
+
+  const boundedString = (value: string): string => {
+    if (value.length <= limits.maxValueChars) return value;
+    valueCuts += 1;
+    return value.slice(0, limits.maxValueChars);
+  };
+
+  const visit = (value: unknown, depth: number, root = false): AccessibilitySnapshotNode | null => {
+    if (!plainObject(value)) {
+      invalidNodes += 1;
+      return null;
+    }
+    if (depth > limits.maxDepth) {
+      depthCuts += 1;
+      return null;
+    }
+    if (nodeCount >= limits.maxNodes) {
+      nodeCuts += 1;
+      return null;
+    }
+    if (typeof value.role !== "string" || value.role.length === 0) {
+      invalidNodes += 1;
+      return null;
+    }
+
+    nodeCount += 1;
+    maxDepthObserved = Math.max(maxDepthObserved, depth);
+    const node: AccessibilitySnapshotNode = { role: boundedString(value.role), children: [] };
+
+    const putString = (key: string, set: (v: string) => void): void => {
+      const candidate = value[key];
+      if (candidate === undefined) return;
+      if (typeof candidate === "string") set(boundedString(candidate));
+      else invalidNodes += 1;
+    };
+    const putBoolean = (key: string, set: (v: boolean) => void): void => {
+      const candidate = value[key];
+      if (candidate === undefined) return;
+      if (typeof candidate === "boolean") set(candidate);
+      else invalidNodes += 1;
+    };
+    const putNumber = (key: string, set: (v: number) => void): void => {
+      const candidate = value[key];
+      if (candidate === undefined) return;
+      if (typeof candidate === "number" && Number.isFinite(candidate)) set(candidate);
+      else invalidNodes += 1;
+    };
+    const putMixed = (key: string, set: (v: boolean | "mixed") => void): void => {
+      const candidate = value[key];
+      if (candidate === undefined) return;
+      if (typeof candidate === "boolean" || candidate === "mixed") set(candidate);
+      else invalidNodes += 1;
+    };
+
+    putString("name", (v) => (node.name = v));
+    const axValue = value.value;
+    if (axValue !== undefined) {
+      if (typeof axValue === "string") node.value = boundedString(axValue);
+      else if (typeof axValue === "number" && Number.isFinite(axValue)) node.value = axValue;
+      else invalidNodes += 1;
+    }
+    putString("description", (v) => (node.description = v));
+    putString("keyshortcuts", (v) => (node.keyshortcuts = v));
+    putString("roledescription", (v) => (node.roledescription = v));
+    putString("valuetext", (v) => (node.valuetext = v));
+    putBoolean("disabled", (v) => (node.disabled = v));
+    putBoolean("expanded", (v) => (node.expanded = v));
+    putBoolean("focused", (v) => (node.focused = v));
+    putBoolean("modal", (v) => (node.modal = v));
+    putBoolean("multiline", (v) => (node.multiline = v));
+    putBoolean("multiselectable", (v) => (node.multiselectable = v));
+    putBoolean("readonly", (v) => (node.readonly = v));
+    putBoolean("required", (v) => (node.required = v));
+    putBoolean("selected", (v) => (node.selected = v));
+    putMixed("checked", (v) => (node.checked = v));
+    putMixed("pressed", (v) => (node.pressed = v));
+    putNumber("level", (v) => (node.level = v));
+    putNumber("valuemin", (v) => (node.valuemin = v));
+    putNumber("valuemax", (v) => (node.valuemax = v));
+    putString("autocomplete", (v) => (node.autocomplete = v));
+    putString("haspopup", (v) => (node.haspopup = v));
+    putString("invalid", (v) => (node.invalid = v));
+    putString("orientation", (v) => (node.orientation = v));
+
+    if (value.children !== undefined && !Array.isArray(value.children)) {
+      invalidNodes += 1;
+    } else {
+      for (const child of (value.children as unknown[] | undefined) ?? []) {
+        const clean = visit(child, depth + 1);
+        if (clean) node.children.push(clean);
+      }
+    }
+
+    // A malformed root cannot be represented as a different, invented role. Child nodes can be
+    // dropped with an explicit limitation, but the root is the identity of the whole snapshot.
+    if (root && nodeCount === 0) return null;
+    return node;
+  };
+
+  const tree = visit(raw, 0, true);
+  if (!tree) {
+    return {
+      tree: null,
+      nodeCount,
+      maxDepthObserved,
+      limitations: [],
+      error: "Chrome returned an accessibility root that was not a non-empty role-bearing object",
+    };
+  }
+
+  const limitations: AccessibilitySanitizeLimitation[] = [];
+  if (invalidNodes > 0) {
+    limitations.push({
+      kind: "accessibility-snapshot-invalid-node",
+      count: invalidNodes,
+      detail: `${invalidNodes} AX node or documented scalar value(s) had an invalid shape and were omitted`,
+    });
+  }
+  if (nodeCuts > 0) {
+    limitations.push({
+      kind: "accessibility-snapshot-node-limit",
+      count: nodeCuts,
+      detail: `${nodeCuts} AX subtree root(s) were omitted after the ${limits.maxNodes}-node capture limit was reached`,
+    });
+  }
+  if (depthCuts > 0) {
+    limitations.push({
+      kind: "accessibility-snapshot-depth-limit",
+      count: depthCuts,
+      detail: `${depthCuts} AX subtree root(s) deeper than level ${limits.maxDepth} were omitted`,
+    });
+  }
+  if (valueCuts > 0) {
+    limitations.push({
+      kind: "accessibility-snapshot-value-limit",
+      count: valueCuts,
+      detail: `${valueCuts} AX string value(s) exceeded ${limits.maxValueChars} characters and were truncated`,
+    });
+  }
+  return { tree, nodeCount, maxDepthObserved, limitations, error: null };
+}
+
+interface ScreenshotAttempt {
+  bytes: Uint8Array | null;
+  kind: "screenshot-capture-failed" | "screenshot-capture-empty" | null;
+  detail: string | null;
+}
+
+const errorText = (err: unknown): string => String(err instanceof Error ? err.message : err).slice(0, 500);
+
+async function shoot(page: PageLike): Promise<ScreenshotAttempt> {
   try {
     const out = await page.screenshot({ type: "png", fullPage: false, encoding: "binary" });
-    if (out instanceof Uint8Array) return out;
-    if (out instanceof ArrayBuffer) return new Uint8Array(out);
+    let bytes: Uint8Array | null = null;
+    if (out instanceof Uint8Array) bytes = out;
+    else if (out instanceof ArrayBuffer) bytes = new Uint8Array(out);
     if (typeof out === "string") {
       const bin = atob(out);
-      const bytes = new Uint8Array(bin.length);
+      bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      return bytes;
     }
-    return null;
-  } catch {
-    return null;
+    if (!bytes || bytes.byteLength === 0) {
+      return {
+        bytes: null,
+        kind: "screenshot-capture-empty",
+        detail: "Puppeteer returned no PNG bytes for the viewport screenshot",
+      };
+    }
+    return { bytes, kind: null, detail: null };
+  } catch (err) {
+    return { bytes: null, kind: "screenshot-capture-failed", detail: `Puppeteer screenshot failed: ${errorText(err)}` };
   }
+}
+
+function captureFailureRow(
+  kind: ScreenCaptureFailure["kind"],
+  detail: string,
+  stepIndex: number,
+  slot: string,
+  at = new Date().toISOString(),
+  count = 1,
+): ScreenCaptureFailure {
+  return { kind, detail, count, at, stepIndex, slot };
+}
+
+async function captureGeometry(
+  page: PageLike,
+  configured: { width: number; height: number },
+): Promise<{ geometry: ScreenCaptureGeometry; failure: ScreenCaptureFailure | null }> {
+  try {
+    const raw = await page.evaluate(READ_CAPTURE_GEOMETRY);
+    if (!plainObject(raw)) throw new Error("the page returned a non-object geometry payload");
+    const number = (key: string, positive = false): number => {
+      const value = raw[key];
+      if (typeof value !== "number" || !Number.isFinite(value) || (positive && value <= 0)) {
+        throw new Error(`${key} was not a ${positive ? "positive " : ""}finite number`);
+      }
+      return value;
+    };
+    return {
+      geometry: {
+        width: number("width", true),
+        height: number("height", true),
+        deviceScaleFactor: number("deviceScaleFactor", true),
+        scrollX: number("scrollX"),
+        scrollY: number("scrollY"),
+        documentWidth: number("documentWidth", true),
+        documentHeight: number("documentHeight", true),
+        source: "browser",
+      },
+      failure: null,
+    };
+  } catch (err) {
+    return {
+      geometry: {
+        width: configured.width,
+        height: configured.height,
+        deviceScaleFactor: null,
+        scrollX: null,
+        scrollY: null,
+        documentWidth: null,
+        documentHeight: null,
+        source: "configured-fallback",
+      },
+      // step/slot are filled by the caller, which owns the epoch identity.
+      failure: captureFailureRow("capture-metadata-failed", `viewport/scroll/DPR read failed: ${errorText(err)}`, 0, ""),
+    };
+  }
+}
+
+const captureIds = (epoch: ScreenCaptureEpoch): string[] => {
+  const ids = [epoch.screenJson.evidenceId];
+  if (epoch.screenshot.status === "captured") ids.push(epoch.screenshot.ref.evidenceId);
+  if (epoch.accessibility.status === "captured") ids.push(epoch.accessibility.ref.evidenceId);
+  return ids;
+};
+
+const screenshotIds = (epochs: ScreenCaptureEpoch[]): string[] =>
+  epochs.flatMap((epoch) => (epoch.screenshot.status === "captured" ? [epoch.screenshot.ref.evidenceId] : []));
+
+const epochFailures = (epochs: ScreenCaptureEpoch[]): ScreenCaptureFailure[] =>
+  epochs.flatMap((epoch) => epoch.captureFailures);
+
+const sumCaptureFailures = (failures: ScreenCaptureFailure[]): number =>
+  failures.reduce((sum, failure) => sum + failure.count, 0);
+
+const jsonBytes = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+
+function settleSerializedBytes(payload: AccessibilitySnapshotArtifact): number {
+  // `serializedBytes` is inside the bytes whose length it declares. Iterate until changing the
+  // number no longer changes its own digit count; three passes is more than enough for that.
+  let size = jsonBytes(payload);
+  for (let i = 0; i < 3; i++) {
+    payload.capture.serializedBytes = size;
+    const next = jsonBytes(payload);
+    if (next === size) return next;
+    size = next;
+  }
+  payload.capture.serializedBytes = size;
+  return jsonBytes(payload);
+}
+
+interface PreparedAccessibility {
+  capturedAt: string;
+  sanitized: SanitizedAccessibilitySnapshot | null;
+  failure: ScreenCaptureFailure | null;
+}
+
+async function prepareAccessibility(
+  page: PageLike,
+  stepIndex: number,
+  slot: string,
+): Promise<PreparedAccessibility> {
+  const at = new Date().toISOString();
+  if (!page.accessibility || typeof page.accessibility.snapshot !== "function") {
+    return {
+      capturedAt: at,
+      sanitized: null,
+      failure: captureFailureRow(
+        "accessibility-api-unavailable",
+        "this browser adapter exposes no Puppeteer accessibility.snapshot API; absence is not an empty AX tree",
+        stepIndex,
+        slot,
+        at,
+      ),
+    };
+  }
+
+  try {
+    // Explicitly request the WHOLE Chrome tree. The default prunes nodes it calls
+    // "uninteresting", which is useful for a screen reader and unsound for an absence claim.
+    const liveSnapshot = await page.accessibility.snapshot({ interestingOnly: false });
+    const capturedAt = new Date().toISOString();
+    if (liveSnapshot === null) {
+      return {
+        capturedAt,
+        sanitized: null,
+        failure: captureFailureRow(
+          "accessibility-snapshot-empty",
+          "Chrome returned null for the full accessibility snapshot; this is a failed capture, not a tree with zero nodes",
+          stepIndex,
+          slot,
+          capturedAt,
+        ),
+      };
+    }
+    // This call copies only the closed scalar allowlist + children. `liveSnapshot` (and its
+    // `elementHandle()` methods) never leaves this block and is never passed to JSON.stringify.
+    const sanitized = sanitizeAccessibilitySnapshot(liveSnapshot);
+    if (!sanitized.tree || sanitized.error) {
+      return {
+        capturedAt,
+        sanitized: null,
+        failure: captureFailureRow(
+          "accessibility-snapshot-failed",
+          `Chrome AX snapshot could not be sanitised: ${sanitized.error ?? "no root node remained"}`,
+          stepIndex,
+          slot,
+          capturedAt,
+        ),
+      };
+    }
+    return { capturedAt, sanitized, failure: null };
+  } catch (err) {
+    const capturedAt = new Date().toISOString();
+    return {
+      capturedAt,
+      sanitized: null,
+      failure: captureFailureRow(
+        "accessibility-snapshot-failed",
+        `Puppeteer accessibility.snapshot({ interestingOnly: false }) failed: ${errorText(err)}`,
+        stepIndex,
+        slot,
+        capturedAt,
+      ),
+    };
+  }
+}
+
+/**
+ * Capture one logical screen epoch across all three modalities.
+ *
+ * Browser protocol calls are sequential, never falsely called atomic: `startedAt`/`endedAt`
+ * bound that window. They are intentionally made before any R2 writes, so storage latency does
+ * not widen the visual/AX pairing. Screen JSON remains the exact legacy payload and all new
+ * references are additive.
+ */
+export async function captureScreenEpoch(
+  page: PageLike,
+  cap: CaptureContext,
+  screen: RenderedScreen,
+  slot: string,
+  stepIndex: number,
+  configuredViewport: { width: number; height: number },
+): Promise<ScreenCaptureEpoch> {
+  const startedAt = new Date().toISOString();
+  // Opaque but reproducible for an idempotent re-capture. Question/options and wall-clock text
+  // participate in the binding without leaking through filenames, logs or report metadata.
+  const epochDigest = await sha256Hex(
+    JSON.stringify([
+      cap.runId,
+      cap.attemptId,
+      cap.pathId,
+      stepIndex,
+      slot,
+      screen.at,
+      screen.screenSignature,
+    ]),
+  );
+  const epochId = `epoch_${epochDigest.slice(0, 24)}`;
+  const screenSignatureHash = await sha256Hex(screen.screenSignature);
+  const geometryAttempt = await captureGeometry(page, configuredViewport);
+  if (geometryAttempt.failure) {
+    geometryAttempt.failure.stepIndex = stepIndex;
+    geometryAttempt.failure.slot = slot;
+  }
+  const screenshotAttempt = await shoot(page);
+  const screenshotAttemptedAt = new Date().toISOString();
+  const accessibilityPrepared = await prepareAccessibility(page, stepIndex, slot);
+  // End the browser capture window before writing anything to evidence storage.
+  const endedAt = new Date().toISOString();
+
+  const screenJson = await captureScreenJsonRef(cap, screen, slot, stepIndex);
+
+  let screenshot: ScreenCaptureEpoch["screenshot"];
+  if (!screenshotAttempt.bytes || screenshotAttempt.kind) {
+    screenshot = {
+      status: "failed",
+      failure: captureFailureRow(
+        screenshotAttempt.kind ?? "screenshot-capture-empty",
+        screenshotAttempt.detail ?? "Puppeteer returned no usable PNG bytes",
+        stepIndex,
+        slot,
+        screenshotAttemptedAt,
+      ),
+    };
+  } else {
+    try {
+      screenshot = { status: "captured", ref: await captureScreenshotRef(cap, screenshotAttempt.bytes, slot, stepIndex) };
+    } catch (err) {
+      screenshot = {
+        status: "failed",
+        failure: captureFailureRow(
+          "screenshot-evidence-write-failed",
+          `PNG was captured but its immutable evidence write failed: ${errorText(err)}`,
+          stepIndex,
+          slot,
+          screenshotAttemptedAt,
+        ),
+      };
+    }
+  }
+
+  let accessibility: ScreenCaptureEpoch["accessibility"];
+  if (!accessibilityPrepared.sanitized?.tree || accessibilityPrepared.failure) {
+    accessibility = {
+      status: "failed",
+      failure:
+        accessibilityPrepared.failure ??
+        captureFailureRow(
+          "accessibility-snapshot-failed",
+          "the sanitised Chrome accessibility snapshot had no root",
+          stepIndex,
+          slot,
+          accessibilityPrepared.capturedAt,
+        ),
+    };
+  } else {
+    const original = accessibilityPrepared.sanitized;
+    let effectiveMaxNodes = ACCESSIBILITY_CAPTURE_LIMITS.maxNodes;
+    let sizeLimited = false;
+    let payload: AccessibilitySnapshotArtifact;
+
+    while (true) {
+      const reLimited =
+        effectiveMaxNodes < original.nodeCount
+          ? sanitizeAccessibilitySnapshot(original.tree, {
+              maxNodes: effectiveMaxNodes,
+              maxDepth: ACCESSIBILITY_CAPTURE_LIMITS.maxDepth,
+              maxValueChars: ACCESSIBILITY_CAPTURE_LIMITS.maxValueChars,
+            })
+          : original;
+      if (!reLimited.tree) {
+        throw new Error("capture: a valid sanitised AX root disappeared while applying the serialized-byte cap");
+      }
+      const limitations: ScreenCaptureFailure[] = [
+        ...original.limitations.map((limitation) =>
+          captureFailureRow(
+            limitation.kind,
+            limitation.detail,
+            stepIndex,
+            slot,
+            accessibilityPrepared.capturedAt,
+            limitation.count,
+          ),
+        ),
+        ...(reLimited === original
+          ? []
+          : reLimited.limitations.map((limitation) =>
+              captureFailureRow(
+                limitation.kind,
+                limitation.detail,
+                stepIndex,
+                slot,
+                accessibilityPrepared.capturedAt,
+                limitation.count,
+              ),
+            )),
+      ];
+      if (sizeLimited) {
+        limitations.push(
+          captureFailureRow(
+            "accessibility-snapshot-size-limit",
+            `the sanitised full AX payload exceeded ${ACCESSIBILITY_CAPTURE_LIMITS.maxSerializedBytes} bytes; ` +
+              `the stored prefix is explicitly limited to ${effectiveMaxNodes} node(s)`,
+            stepIndex,
+            slot,
+            accessibilityPrepared.capturedAt,
+          ),
+        );
+      }
+      payload = {
+        kind: "v2-accessibility-snapshot/1.0.0",
+        epochId,
+        stepIndex,
+        slot,
+        scope: { kind: "viewport", tileIndex: null, tileCount: null },
+        capturedAt: accessibilityPrepared.capturedAt,
+        screenReadAt: screen.at,
+        screenSignatureHash,
+        geometry: geometryAttempt.geometry,
+        pairing: {
+          screenJson,
+          screenshot: screenshot.status === "captured" ? screenshot.ref : null,
+        },
+        capture: {
+          interestingOnly: false,
+          completeness: limitations.length === 0 ? "complete" : "truncated",
+          limitations,
+          nodeCount: reLimited.nodeCount,
+          maxDepthObserved: reLimited.maxDepthObserved,
+          serializedBytes: 0,
+          limits: {
+            maxNodes: effectiveMaxNodes,
+            maxDepth: ACCESSIBILITY_CAPTURE_LIMITS.maxDepth,
+            maxValueChars: ACCESSIBILITY_CAPTURE_LIMITS.maxValueChars,
+            maxSerializedBytes: ACCESSIBILITY_CAPTURE_LIMITS.maxSerializedBytes,
+          },
+        },
+        tree: reLimited.tree,
+      };
+      const bytes = settleSerializedBytes(payload);
+      if (bytes <= ACCESSIBILITY_CAPTURE_LIMITS.maxSerializedBytes || effectiveMaxNodes === 1) break;
+      sizeLimited = true;
+      effectiveMaxNodes = Math.max(1, Math.floor(Math.min(effectiveMaxNodes, reLimited.nodeCount) / 2));
+    }
+
+    // Adding the size-limit row itself can change the byte count by a few hundred bytes. Settle
+    // once more and, in the pathological one-node case, fail rather than store over the cap.
+    const finalBytes = settleSerializedBytes(payload!);
+    if (finalBytes > ACCESSIBILITY_CAPTURE_LIMITS.maxSerializedBytes) {
+      accessibility = {
+        status: "failed",
+        failure: captureFailureRow(
+          "accessibility-snapshot-size-limit",
+          `even a one-node sanitised AX payload was ${finalBytes} bytes, above the ` +
+            `${ACCESSIBILITY_CAPTURE_LIMITS.maxSerializedBytes}-byte evidence cap; no partial artifact was stored`,
+          stepIndex,
+          slot,
+          accessibilityPrepared.capturedAt,
+        ),
+      };
+    } else {
+      try {
+        const ref = await captureAccessibilitySnapshot(cap, payload!, slot, stepIndex);
+        accessibility = {
+          status: "captured",
+          ref,
+          completeness: payload!.capture.completeness,
+          limitations: payload!.capture.limitations,
+        };
+      } catch (err) {
+        accessibility = {
+          status: "failed",
+          failure: captureFailureRow(
+            "accessibility-evidence-write-failed",
+            `AX tree was captured and sanitised but its immutable evidence write failed: ${errorText(err)}`,
+            stepIndex,
+            slot,
+            accessibilityPrepared.capturedAt,
+          ),
+        };
+      }
+    }
+  }
+
+  const captureFailures: ScreenCaptureFailure[] = [
+    ...(geometryAttempt.failure ? [geometryAttempt.failure] : []),
+    ...(screenshot.status === "failed" ? [screenshot.failure] : []),
+    ...(accessibility.status === "failed" ? [accessibility.failure] : accessibility.limitations),
+  ];
+  return {
+    kind: "v2-screen-capture-epoch/1.0.0",
+    epochId,
+    stepIndex,
+    slot,
+    // Declared by this adapter because `shoot()` requested `fullPage: false`; consumers must
+    // read this field rather than inherit that implementation convention.
+    scope: { kind: "viewport", tileIndex: null, tileCount: null },
+    startedAt,
+    endedAt,
+    screenReadAt: screen.at,
+    screenSignatureHash,
+    geometry: geometryAttempt.geometry,
+    screenJson,
+    screenshot,
+    accessibility,
+    captureFailures,
+    captureFailureCount: sumCaptureFailures(captureFailures),
+  };
 }
 
 /**
@@ -514,7 +1183,21 @@ async function clickIdx(
   }
 }
 
-async function typeIdx(page: PageLike, idx: number, value: string): Promise<{ ok: boolean; detail: string }> {
+/**
+ * Type a value with real keystrokes — AND READ BACK WHAT THE CONTROL KEPT.
+ *
+ * THE READBACK IS THE POINT, not a nicety. `<input type=number>` and the date family run every
+ * assignment and every keystroke through HTML's value-sanitisation algorithm and DISCARD
+ * anything they cannot parse, silently and with no error to catch: the harness typed
+ * "QA-PROBE", the field stayed empty, and the record said the field had been filled. That is a
+ * confident wrong answer manufactured by the harness. So the value the control actually holds
+ * afterwards is observed, and `discarded` is returned rather than inferred.
+ */
+async function typeIdx(
+  page: PageLike,
+  idx: number,
+  value: string,
+): Promise<{ ok: boolean; detail: string; discarded?: boolean; got?: string }> {
   try {
     await page.evaluate(clearValueScript(idx));
     if (value.length === 0) return { ok: true, detail: "cleared" };
@@ -523,10 +1206,251 @@ async function typeIdx(page: PageLike, idx: number, value: string): Promise<{ ok
     if (!h) return { ok: false, detail: "no-control-at-index" };
     await h.click();
     await h.type(value, { delay: 8 });
-    return { ok: true, detail: "keyboard-type" };
+    const got = await readValueAt(page, idx);
+    // Only the UNAMBIGUOUS discard is reported: we asked for something and the control kept
+    // nothing. A control that trimmed, truncated or reformatted the value still took it, and
+    // calling that a rejection would flood the record with noise.
+    if (got !== null && got.length === 0) {
+      return { ok: true, detail: `keyboard-type — the control DISCARDED "${value}" and holds ""`, discarded: true, got };
+    }
+    return { ok: true, detail: "keyboard-type", discarded: false, got: got ?? undefined };
   } catch (err) {
     return { ok: false, detail: String(err).slice(0, 200) };
   }
+}
+
+/** What does control #idx hold right now? Null when it cannot be read at all. */
+async function readValueAt(page: PageLike, idx: number): Promise<string | null> {
+  try {
+    const out = await page.evaluate(
+      `(() => { const e = document.querySelectorAll(${JSON.stringify(CONTROL_SELECTOR)})[${idx}]; ` +
+        `return e && 'value' in e ? String(e.value == null ? '' : e.value) : null; })()`,
+    );
+    return typeof out === "string" ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Set a value on a control that cannot be typed into — see `page-script.ts#setValueScript` for
+ * why a slider and a date picker need this route and keystrokes will not do.
+ */
+async function setIdx(
+  page: PageLike,
+  idx: number,
+  value: string,
+): Promise<{ ok: boolean; detail: string; discarded?: boolean; got?: string }> {
+  try {
+    const out = (await page.evaluate(setValueScript(idx, value))) as
+      | { ok?: boolean; reason?: string | null; got?: string | null }
+      | null;
+    if (!out || typeof out !== "object") return { ok: false, detail: "set-value returned nothing" };
+    if (out.ok === true) return { ok: true, detail: "set-value(+input,+change)", discarded: false, got: out.got ?? undefined };
+    return {
+      ok: false,
+      detail: `set-value rejected: ${out.reason ?? "unknown"} — the control holds "${out.got ?? ""}"`,
+      discarded: true,
+      got: out.got ?? undefined,
+    };
+  } catch (err) {
+    return { ok: false, detail: String(err).slice(0, 200) };
+  }
+}
+
+/**
+ * THE FILLER THE WALKER TYPES WHEN THE PLAN ASKED FOR NOTHING — and why it is not one string.
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE, measured on two of the four live medical instruments. The
+ * default was the literal `PROBE_TEXT`, "QA-PROBE", typed into every free-text control. Screen 1
+ * of the oncology and rheumatoid-arthritis instruments carries `<input type="number" min="0"
+ * max="50">`; a number input silently refuses non-numeric text, the site answered "Invalid
+ * input", the survey would not advance, and the walk ended `outcome: "blocked"` ON SCREEN 1 —
+ * which downstream reads as THE SURVEY REJECTING AN ANSWER. A confident wrong answer about a
+ * working survey, produced entirely by the harness typing letters into a number box.
+ *
+ * So a numeric control gets a number, inside the bounds THE SITE ITSELF declares. The bounds are
+ * the site's, never the document's: this is a filler chosen to get past a screen the plan had no
+ * opinion about, and it is recorded as `navigator-default` so it can never be mistaken for a
+ * documented answer under test. A control the site gives no bounds for gets `1`, which is inside
+ * every non-negative range and is a guess about NOTHING except its own type.
+ */
+const num = (s: string | null | undefined): number | null => {
+  if (s === null || s === undefined || String(s).trim() === "") return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+};
+
+/** Kill float noise from `min + step * k` — `0.1 + 0.2 * 3` must print as `0.7`, not `0.7000000000000001`. */
+const tidy = (n: number): string => String(Number(n.toPrecision(12)));
+
+/**
+ * THE LEAST-COMMITTED VALUE IN A RANGE THE SITE ITSELF DECLARES — the midpoint, snapped to the
+ * site's own step grid.
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE, and it is the one MEASURED on the live branching fleet. The
+ * numeric filler was "the lowest legal value": `1`, raised to `min` when `min` was higher. That
+ * is not a neutral choice — IT IS A BOUNDARY PROBE, and a screener's whole job is to cut at the
+ * boundary. Two of the six live surveys screened the walk out on the harness's own filler:
+ *
+ *     s2-screener  S1 "What is your age?"  min=0 max=99, terminate if < 18  -> answered 1
+ *     s6-kitchen-sink  S2 "years treating RA"  min=0 max=50, terminate if < 2  -> answered 1
+ *
+ * s2 stopped after two screens with `ending: screened-out`, and the clean/flawed experiment that
+ * depended on it returned 0 of 3 seeded defects. Nothing was broken; the walker had volunteered
+ * that it was one year old.
+ *
+ * The midpoint is defensible without knowing anything about the question: with no information,
+ * the centre of the declared range is the value that commits to least, and an extreme should
+ * only ever be chosen ON PURPOSE by a boundary probe the plan asked for.
+ *
+ * IT IS STILL A GUESS, AND IT IS NOT TUNED TO THIS CORPUS — the honest counterexample is in the
+ * same survey: s2's S4 declares min=0 max=31 and terminates at >= 15, so the midpoint (15) is
+ * screened out too. No constant passes every screener, and a value picked because it happened to
+ * clear this corpus's thresholds would be exactly the hard-anchoring CLAUDE.md forbids. What
+ * makes that acceptable is the other half of this change: the walk NAMES how many of its answers
+ * it invented, so a screen-out reached on a filler can never be read as a fact about the survey.
+ *
+ * The step grid is the site's, not ours: HTML's default step for `number` and `range` is 1, so a
+ * midpoint of 0..99 is 50 and never 49.5 — a fraction the branching engine rejects with "Please
+ * enter a whole number." `step="any"` disables the grid, which is the one case a fraction is
+ * legal. Returns null when there is no range to take the middle of.
+ */
+function stepAlignedMidpoint(
+  c: { type: string; min?: string | null; max?: string | null; step?: string | null },
+): { value: string; how: string } | null {
+  const lo = num(c.min);
+  const hi = num(c.max);
+  // A `range` has a range even when the site declares none: HTML's defaults are 0..100 step 1.
+  const isRange = c.type === "range";
+  const effLo = lo ?? (isRange ? 0 : null);
+  const effHi = hi ?? (isRange ? 100 : null);
+  if (effLo === null || effHi === null || !(effHi > effLo)) return null;
+
+  const mid = effLo + (effHi - effLo) / 2;
+  const rawStep = String(c.step ?? "").trim().toLowerCase();
+  // `step="any"` is the site saying "no grid" — the only case a fractional midpoint is legal.
+  const stepped = rawStep === "any" ? null : (num(c.step) ?? 1);
+  if (stepped === null || !(stepped > 0)) {
+    return { value: tidy(mid), how: `midpoint of the site's declared ${effLo}..${effHi} (step="any", so no grid)` };
+  }
+  // The step BASE is `min` where the site declares one — the same anchor constraint validation
+  // uses — so a control declaring min=3 step=0.5 is offered 3, 3.5, 4… and never 3.25.
+  let v = effLo + stepped * Math.round((mid - effLo) / stepped);
+  if (v > effHi) v -= stepped;
+  if (v < effLo) v = effLo;
+  const declared = lo === null || hi === null ? `HTML's default 0..100 for a range` : `the site's declared ${effLo}..${effHi}`;
+  return { value: tidy(v), how: `midpoint of ${declared}, snapped to its own step of ${stepped}` };
+}
+
+/** ISO date helpers for the date family. Fixed, neutral, and inside every plausible range. */
+const NEUTRAL_DATE = "2000-01-15";
+
+/**
+ * THE VALUE THE WALKER SUPPLIES WHEN THE PLAN ASKED FOR NOTHING — one rule per type, and the
+ * route each type actually accepts.
+ *
+ * THE COVERAGE GAP THIS CLOSES, MEASURED in Chrome rather than assumed (the probe is in the
+ * report). The driver filled four types. Of everything else a respondent can answer:
+ *
+ *   - `tel` `url` `search`      never filled; they hold typed text perfectly well.
+ *   - `range` `date` `time`     never filled, and they CANNOT be: assigning "QA-PROBE" to any of
+ *     `month` `week`            them is discarded by value sanitisation, and a range ignores
+ *     `datetime-local` `color`  keystrokes entirely. They need the value SET — see
+ *                               `page-script.ts#setValueScript`.
+ *   - `email`                   filled, but with "QA-PROBE" — which STICKS in `.value` and then
+ *                               fails the control's own constraint validation, so a `required`
+ *                               email field blocks the submit and the survey gets the blame.
+ *   - `password` `file`         must never be silently skipped: they are REFUSED and NAMED.
+ *
+ * NOT A GAP, and worth writing down because it looks like one: `<input>` with no type, and
+ * `<input type="totally-bogus">`, both reflect `el.type === "text"` (measured), so the reader has
+ * always classified them as text and the driver has always filled them.
+ *
+ * The plan always wins — this is only the navigator-default path, and every value it produces is
+ * recorded as `navigator-default` so it can never be mistaken for a documented answer under test.
+ * Returns null when this harness has no rule for the type, which the caller reports as
+ * `no-derivation` rather than passing over in silence.
+ */
+export interface NavigatorValue {
+  value: string;
+  /** How it was derived, verbatim, for the action record. */
+  how: string;
+  /** `type` delivers keystrokes; `set` assigns and dispatches input/change. */
+  via: "type" | "set";
+}
+
+export function navigatorValueFor(c: {
+  type: string;
+  min?: string | null;
+  max?: string | null;
+  step?: string | null;
+}): NavigatorValue | null {
+  const t = String(c.type ?? "").toLowerCase();
+  switch (t) {
+    case "text":
+    case "textarea":
+    case "search":
+      return { value: PROBE_TEXT, how: "the harness's probe text", via: "type" };
+    // A SYNTACTICALLY VALID address, not the probe text. "QA-PROBE" is accepted into an
+    // `<input type=email>`'s value and then fails its constraint validation, so a required email
+    // field blocked the submit and the survey was recorded as rejecting the answer.
+    // `example.com` is reserved by RFC 2606 and cannot belong to anyone.
+    case "email":
+      return { value: "qa-probe@example.com", how: "a syntactically valid address on the RFC 2606 reserved domain", via: "type" };
+    case "url":
+      return { value: "https://example.com/qa-probe", how: "a syntactically valid URL on the RFC 2606 reserved domain", via: "type" };
+    // The NANP 555-0100..555-0199 block is reserved for fiction and reaches nobody.
+    case "tel":
+      return { value: "+15555550100", how: "a reserved fictitious number (NANP 555-01xx)", via: "type" };
+    case "number": {
+      const mid = stepAlignedMidpoint(c);
+      if (mid) return { value: mid.value, how: mid.how, via: "type" };
+      // A midpoint needs TWO ends. With one bound or none there is no middle, so this keeps the
+      // long-standing "1, raised or lowered into whatever bound exists" — a guess about nothing
+      // except the control's own type.
+      const lo = num(c.min);
+      const hi = num(c.max);
+      let v = 1;
+      if (lo !== null && v < lo) v = lo;
+      if (hi !== null && v > hi) v = lo !== null ? lo : hi;
+      return {
+        value: tidy(v),
+        how: lo === null && hi === null
+          ? "1 — the site declares no bounds, so there is no range to take the middle of"
+          : "1, moved into the single bound the site declares (a midpoint needs two ends)",
+        via: "type",
+      };
+    }
+    // SET, never typed: a range answers to arrow keys and pointer drags, not to inserted text.
+    case "range": {
+      const mid = stepAlignedMidpoint(c);
+      return mid ? { value: mid.value, how: mid.how, via: "set" } : null;
+    }
+    case "date":
+      return { value: dateMidpoint(c) ?? NEUTRAL_DATE, how: dateMidpoint(c) ? "midpoint of the site's declared date range" : "a fixed neutral date, the site declaring no range", via: "set" };
+    case "month":
+      return { value: "2000-01", how: "a fixed neutral month", via: "set" };
+    case "week":
+      return { value: "2000-W03", how: "a fixed neutral ISO week", via: "set" };
+    case "time":
+      return { value: "12:00", how: "a fixed neutral time", via: "set" };
+    case "datetime-local":
+      return { value: `${NEUTRAL_DATE}T12:00`, how: "a fixed neutral local date-time", via: "set" };
+    case "color":
+      return { value: "#808080", how: "a fixed neutral colour", via: "set" };
+    default:
+      return null;
+  }
+}
+
+/** The middle of a declared `min`..`max` on a date control, or null when it declares neither. */
+function dateMidpoint(c: { min?: string | null; max?: string | null }): string | null {
+  const lo = c.min ? Date.parse(`${c.min}T00:00:00Z`) : NaN;
+  const hi = c.max ? Date.parse(`${c.max}T00:00:00Z`) : NaN;
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || !(hi > lo)) return null;
+  const mid = new Date(lo + Math.floor((hi - lo) / 2));
+  return mid.toISOString().slice(0, 10);
 }
 
 /** Apply one decision to the screen in front of us. Returns what was actually done. */
@@ -534,9 +1458,11 @@ async function applyDecision(
   page: PageLike,
   screen: RenderedScreen,
   decision: PlannedDecision | null,
-): Promise<{ actions: PerformedAction[]; notOffered: string[] }> {
+): Promise<{ actions: PerformedAction[]; notOffered: string[]; unfillable: UnfillableControl[] }> {
   const actions: PerformedAction[] = [];
   const notOffered: string[] = [];
+  /** Controls met on this screen and NOT answered, each with the reason. See UnfillableControl. */
+  const unfillable: UnfillableControl[] = [];
   const wanted = decision && Array.isArray(decision.select) ? decision.select : [];
   const strategy = String(decision?.strategy ?? "");
   const probeAction = String(decision?.action ?? "");
@@ -641,36 +1567,140 @@ async function applyDecision(
     }
   }
 
-  // ---- free text ----
+  // ---- values: everything a respondent supplies rather than picks ----
+  //
   // DELIBERATELY STILL `visible`, not `answerable`. Label-mediated actuation is an affordance
   // of a radio or a checkbox — the label IS the control on screen. A text field drawn at zero
   // opacity offers a respondent nothing to type into, and the commonest reason a form contains
   // one is that it is a HONEYPOT waiting for an automated agent to fill it in.
-  const textControls = screen.controls.filter(
-    (c) => c.visible && !c.disabled && !c.readOnly && (c.type === "text" || c.type === "textarea" || c.type === "number" || c.type === "email"),
+  //
+  // The set is now every VALUE control plus the two we deliberately refuse, because a refusal
+  // that is never reached is never recorded. `fillRefusalFor` decides which is which.
+  const valueControls = screen.controls.filter(
+    (c) => c.visible && !c.disabled && !c.readOnly && (isValueEntry(c.type) || fillRefusalFor(c.type) !== null),
   );
   const wantsBlank = probeAction === "leave-blank-and-continue" || decision?.text_entry?.value === "";
-  for (const c of textControls) {
+  for (const c of valueControls) {
+    // ---- a control this harness will not, or cannot, answer ----
+    const refusal = fillRefusalFor(c.type);
+    if (refusal) {
+      unfillable.push({
+        idx: c.idx,
+        type: c.type,
+        label: c.label,
+        required: !!c.required,
+        reason: c.type === "password" ? "refused-by-policy" : "cannot-be-satisfied",
+        detail: refusal,
+      });
+      // `ok: false`, and that is the whole counterweight. A refusal recorded as a success would
+      // pass any "does the walk advance now?" test while quietly destroying the product.
+      actions.push({ kind: "refuse-fill", targetIdx: c.idx, targetLabel: c.label, targetCode: null, value: null, ok: false, detail: `refused: ${refusal}` });
+      continue;
+    }
+
     if (wantsBlank) {
+      // The boundary probe applies to controls that HAVE a blank state. A slider and a colour
+      // well do not — their untouched state already is "no answer given" — so leaving them
+      // alone is what "leave blank" means for them, and clearing them would only reset them
+      // to the same default while claiming an act.
+      if (!isTextEntry(c.type)) continue;
       const r = await typeIdx(page, c.idx, "");
       actions.push({ kind: "clear-text", targetIdx: c.idx, targetLabel: c.label, targetCode: null, value: "", ok: r.ok, detail: `probe:leave-blank (${r.detail})` });
       continue;
     }
-    const value = decision?.text_entry?.value ?? PROBE_TEXT;
-    if (c.value && c.value.length > 0) continue;
-    const r = await typeIdx(page, c.idx, value);
-    actions.push({ kind: "type-text", targetIdx: c.idx, targetLabel: c.label, targetCode: null, value, ok: r.ok, detail: r.detail });
+
+    // ALREADY ANSWERED? — and note which field decides. `value` alone cannot: a `range` reports
+    // its midpoint and a `color` reports `#000000` when nobody has touched them, so keying the
+    // skip off `value.length > 0` would skip every slider on every survey for ever and record
+    // the screen as answered. `valueIsUserSupplied` is the reader's answer to exactly that;
+    // where it is absent (an older reader) the old test is the honest fallback.
+    const alreadyAnswered = c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0);
+    if (alreadyAnswered) continue;
+
+    const planned = decision?.text_entry?.value;
+    const derived = navigatorValueFor(c);
+    if (planned === undefined && !derived) {
+      // NO RULE IS NOT "NOTHING TO ANSWER". The type is one the reader classes as fillable and
+      // this harness has no value for it — said out loud rather than passed over.
+      unfillable.push({
+        idx: c.idx,
+        type: c.type,
+        label: c.label,
+        required: !!c.required,
+        reason: "no-derivation",
+        detail: `this harness has no navigator-default value for an input of type "${c.type}", so the control was left unanswered`,
+      });
+      actions.push({ kind: "refuse-fill", targetIdx: c.idx, targetLabel: c.label, targetCode: null, value: null, ok: false, detail: `no navigator-default derivation for type "${c.type}"` });
+      continue;
+    }
+
+    const value = planned ?? derived!.value;
+    // A PLANNED value goes in by whichever route the CONTROL accepts — the document decides the
+    // value, never the mechanism. Typing a documented date into a date input would be discarded
+    // exactly as the harness's own filler was.
+    const via = derived ? derived.via : isTextEntry(c.type) ? "type" : "set";
+    const r = via === "set" ? await setIdx(page, c.idx, value) : await typeIdx(page, c.idx, value);
+    actions.push({
+      kind: via === "set" ? "set-value" : "type-text",
+      targetIdx: c.idx,
+      targetLabel: c.label,
+      targetCode: null,
+      value,
+      ok: r.ok,
+      // WHOSE VALUE THIS WAS, AND HOW IT WAS DERIVED. A planned answer and a filler the harness
+      // invented to get past a screen are different evidence, and a `blocked` that follows one
+      // of them means something very different from a `blocked` that follows the other.
+      detail: planned === undefined ? `navigator-default:${derived!.how} (${r.detail})` : r.detail,
+    });
+    // THE CONTROL'S OWN VERDICT ON THE VALUE. Sanitised away, or refused outright, is a fact
+    // about this walk that has to travel — otherwise the next thing that happens is a `blocked`
+    // reported as the survey rejecting an answer it never received.
+    if (r.discarded || !r.ok) {
+      unfillable.push({
+        idx: c.idx,
+        type: c.type,
+        label: c.label,
+        required: !!c.required,
+        reason: "value-rejected",
+        detail:
+          `the control did not keep the value "${value}" it was given` +
+          (r.got !== undefined ? ` — it holds "${r.got}"` : "") +
+          (c.pattern ? ` (the site declares pattern="${c.pattern}")` : "") +
+          (c.step ? ` (the site declares step="${c.step}")` : ""),
+      });
+    }
   }
 
-  return { actions, notOffered };
+  return { actions, notOffered, unfillable };
 }
 
-function nextButton(screen: RenderedScreen): { idx: number; label: string } | null {
+/**
+ * THE CONTROL THAT ADVANCES THE SURVEY — and WHICH RULE FOUND IT.
+ *
+ * The second rule is a FALLBACK, and until it was named it was also a disguise. On the live
+ * SurveyJS fleet every navigation control classified `other` (an `<input type=button>` has no
+ * text and no `<label>`, so the old classifier's two inputs were both empty — see
+ * `page-script.ts#CLASSIFY_CONTROL_ROLE_SRC`). Screen 1 offers only Next, so "exactly one
+ * forward-looking candidate" picked it and the walk looked healthy; screen 2 adds Previous,
+ * two candidates tie, and the walk died. The classifier is fixed, but the fallback stays —
+ * it is the honest degradation for a platform whose words this reader does not know — and it
+ * now says so in the record, because a press chosen by elimination and a press chosen by
+ * identity are different acts and were previously indistinguishable afterwards.
+ */
+function nextButton(screen: RenderedScreen): { idx: number; label: string; via: string } | null {
   const cands = screen.buttons.filter((b) => b.visible && !b.disabled);
   const next = cands.find((b) => b.role === "next");
-  if (next) return { idx: next.idx, label: next.label };
+  if (next) {
+    return { idx: next.idx, label: next.label, via: `role:next(${next.roleVia ?? "unrecorded"})` };
+  }
   const only = cands.filter((b) => b.role !== "back");
-  if (only.length === 1 && only[0]) return { idx: only[0].idx, label: only[0].label };
+  if (only.length === 1 && only[0]) {
+    return {
+      idx: only[0].idx,
+      label: only[0].label,
+      via: "sole-forward-candidate — no control on this screen NAMED itself as advancing, and exactly one was not a back control",
+    };
+  }
   return null;
 }
 
@@ -718,6 +1748,212 @@ function whyBlocked(
   return "advance-timeout";
 }
 
+// ---------------------------------------------------------------------------
+// HOW THE WALK ENDED — see `WalkEnding` in types.ts for why this is a separate field.
+// ---------------------------------------------------------------------------
+
+/**
+ * The words a survey prints when it STOPS a respondent short, and the words it prints when a
+ * respondent FINISHES. Two lexicons, and the screen-out one is consulted FIRST, because a
+ * disqualification page almost always says "thank you" too — "Thank you for your interest.
+ * Unfortunately, on this occasion you do not qualify" is the measured wording on the instrument
+ * where the screen-out path was actually reached (run 3 `fi_8e1bf`, run 5 `fi_7eda`), and a
+ * completion test run first would swallow it whole.
+ *
+ * THIS IS AN ASSUMPTION ABOUT WORDS, STATED (CLAUDE.md, the north star). A survey whose terminal
+ * page says none of this — a different language, a bare "Session closed", an image — matches
+ * neither, and that ending is `unclassified` and counted. It is never assumed to be a completion:
+ * the whole point of typing the ending is that "the survey ended well" and "we never got in" and
+ * "this respondent was turned away" stopped being one value, and a default would put them back.
+ */
+const SCREENOUT_MARKERS: readonly RegExp[] = [
+  /\b(do|does)\s+not\s+qualify\b/i,
+  /\b(don't|doesn't)\s+qualify\b/i,
+  /\bnot\s+eligible\b/i,
+  /\bno\s+longer\s+qualify\b/i,
+  /\bscreen(ed)?[\s-]?out\b/i,
+  /\bquota\s+(is\s+)?(full|closed)\b/i,
+  /\bwe\s+are\s+(unable|not\s+able)\s+to\s+(continue|proceed)\b/i,
+  /\bthank\s+you\s+for\s+your\s+interest\b/i,
+];
+
+const COMPLETION_MARKERS: readonly RegExp[] = [
+  /\bthank\s+you\s+for\s+(completing|taking\s+part|participating|your\s+time)\b/i,
+  /\byour\s+responses?\s+(have|has)\s+been\s+(recorded|received|submitted|saved)\b/i,
+  /\b(survey|questionnaire|interview)\s+(is\s+)?complete(d)?\b/i,
+  /\byou\s+have\s+(now\s+)?completed\b/i,
+  /\bsubmission\s+(received|complete)\b/i,
+];
+
+const firstMatch = (text: string, res: readonly RegExp[]): string | null => {
+  for (const re of res) {
+    const m = re.exec(text);
+    if (m) return m[0];
+  }
+  return null;
+};
+
+/**
+ * TYPE THE ENDING OF THIS WALK FROM WHAT THE FINAL SCREEN SHOWED.
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE. `outcome: "no-advance-control"` meant BOTH "the respondent
+ * reached the thank-you page and there is nothing left to press" AND "we never got into the
+ * survey at all". One enum value described a survey completed 38 times over and four surveys
+ * that never started, and the 38 was reported upward as progress. The discriminators below were
+ * all present in the captured evidence the whole time; nothing was reading them.
+ *
+ * IT IS AN OBSERVATION, NOT A VERDICT (types.ts, THE ONE RULE). It reports what the walker's own
+ * final screen carried, with the marker text QUOTED, and it is a fact about the WALK: `stalled`
+ * says "this walk stopped while the screen was still offering controls", never "the survey is
+ * broken"; `screened-out` says "the terminal page this walk landed on says the respondent does
+ * not qualify", never "the survey wrongly screened us out".
+ *
+ * THE ORDER IS THE POLICY, and every arm records the evidence that carried it:
+ *
+ *   1. STILL LIVE  — an enabled control that advances the survey is still on the screen, or the
+ *      walk stopped for its own reasons (a cap, an error, a submit that was refused). The walker
+ *      gave up on a screen the respondent could have gone on from: `stalled`.
+ *   2. SCREENED OUT — nothing left to press, and the page says the respondent does not qualify.
+ *   3. COMPLETED   — nothing left to press, nothing left to answer, and either the page says the
+ *      survey is finished or a progress indicator reads full.
+ *   4. UNCLASSIFIED — nothing left to press and nothing said which kind of ending it was.
+ *
+ * `progress` is a CORROBORATOR and never a requirement: MEASURED on all four live SurveyJS
+ * instruments, the completion page reports `progress.now: null`. A conjunction requiring 100%
+ * would have classified every real completion as unknown.
+ */
+export function classifyEnding(
+  final: RenderedScreen | null,
+  ctx: {
+    outcome: string;
+    unboundDecisions: number;
+    /**
+     * HOW MANY OF THIS WALK'S ANSWERS THE HARNESS INVENTED, and how many controls it could not
+     * answer at all. Optional so older callers are unaffected — but when they are present they
+     * are ATTACHED TO THE ENDING, because that is the one place the difference changes what a
+     * reader should conclude: a `screened-out` reached on fillers the navigator chose is
+     * evidence about the fillers, not about the survey, and a consumer that cannot see the
+     * difference will write up "the site screens respondents out here" about a screener
+     * behaving exactly as documented.
+     */
+    navigatorDefaults?: number;
+    unfillable?: UnfillableControl[];
+  },
+): WalkEnding {
+  if (!final) {
+    return {
+      kind: "unclassified",
+      evidence: [`this walk captured no final screen (outcome "${ctx.outcome}"), so there is nothing to read an ending from`],
+    };
+  }
+
+  const advance = nextButton(final);
+  const answerable = final.controls.filter(
+    (c) => !c.disabled && !c.readOnly && (c.operable ?? c.visible) && (isValueEntry(c.type) || c.type === "radio" || c.type === "checkbox" || c.type === "select"),
+  );
+  /**
+   * THE PROVENANCE LINE THAT TRAVELS WITH EVERY ENDING. Not decoration: the fix that widened
+   * the walker's input types also made it likelier to reach a terminal page, and the value it
+   * supplies to get there is invented. Whoever reads this ending has to be able to see that.
+   */
+  const provenance: string[] = [];
+  if (typeof ctx.navigatorDefaults === "number" && ctx.navigatorDefaults > 0) {
+    provenance.push(
+      `${ctx.navigatorDefaults} answer(s) on this walk were navigator-defaults the harness chose, not answers the ` +
+        `document asked for — so where this walk went is partly a fact about those fillers`,
+    );
+  }
+  const named = ctx.unfillable ?? [];
+  if (named.length > 0) {
+    provenance.push(
+      `${named.length} control(s) on this walk were NOT answered: ` +
+        named.map((u) => `${u.type}${u.label ? ` "${u.label.slice(0, 40)}"` : ""} (${u.reason})`).join("; "),
+    );
+  }
+  const text = `${final.questionText ?? ""}\n${final.visibleText ?? ""}`;
+  const screenout = firstMatch(text, SCREENOUT_MARKERS);
+  const completion = firstMatch(text, COMPLETION_MARKERS);
+  const progressFull =
+    final.progress.present &&
+    typeof final.progress.now === "number" &&
+    typeof final.progress.max === "number" &&
+    final.progress.max > 0 &&
+    final.progress.now >= final.progress.max;
+
+  // ---- 1. the survey was still offering a way on ----
+  if (advance) {
+    return {
+      kind: "stalled",
+      evidence: [
+        `the final screen still offered an enabled control that advances the survey (${advance.via}), so this walk ` +
+          `stopped while the survey was still going`,
+        `outcome "${ctx.outcome}"`,
+        ...(ctx.unboundDecisions > 0 ? [`${ctx.unboundDecisions} planned decision(s) were never bound to a screen`] : []),
+        ...provenance,
+      ],
+    };
+  }
+  // A walk that ended by ERROR, a CAP, or a submit the survey refused did not reach an ending —
+  // whatever the last screen happens to say. Only a walk that ran out of survey can have ended.
+  if (ctx.outcome !== "completed" && ctx.outcome !== "no-advance-control") {
+    return {
+      kind: "stalled",
+      evidence: [
+        `this walk terminated as "${ctx.outcome}" rather than by running out of survey, so its final screen is ` +
+          `where it stopped and not where the survey ends`,
+        ...(ctx.unboundDecisions > 0 ? [`${ctx.unboundDecisions} planned decision(s) were never bound to a screen`] : []),
+        ...provenance,
+      ],
+    };
+  }
+
+  // ---- 2. turned away ----
+  if (screenout) {
+    return {
+      kind: "screened-out",
+      evidence: [
+        `no enabled control advances the final screen`,
+        `the final screen says: "${screenout}"`,
+        ...(completion ? [`it also carries completion wording ("${completion}") — screen-out pages usually thank you too, which is why that is not read as a completion`] : []),
+        ...provenance,
+      ],
+    };
+  }
+
+  // ---- 3. finished ----
+  if (completion || progressFull) {
+    return {
+      kind: "completed",
+      evidence: [
+        `no enabled control advances the final screen`,
+        ...(completion ? [`the final screen says: "${completion}"`] : []),
+        ...(progressFull ? [`the progress indicator reads ${final.progress.now}/${final.progress.max}`] : []),
+        `${answerable.length} answerable control(s) remain on it`,
+        ...provenance,
+      ],
+    };
+  }
+
+  // ---- 4. an ending this reader cannot name ----
+  return {
+    kind: "unclassified",
+    evidence: [
+      `no enabled control advances the final screen, and nothing on it says which kind of ending this is: no ` +
+        `screen-out wording, no completion wording, and ${final.progress.present ? "a progress indicator this reader could not read a value from" : "no progress indicator"}`,
+      `${answerable.length} answerable control(s) remain on it`,
+      `outcome "${ctx.outcome}"`,
+      ...provenance,
+    ],
+  };
+}
+
+/** The screen the walk was looking at when it stopped — post-advance if it advanced, else the one it acted on. */
+function finalScreenOf(steps: StepObservation[]): RenderedScreen | null {
+  const last = steps.length > 0 ? steps[steps.length - 1] : undefined;
+  if (!last) return null;
+  return last.screenAfterAdvance ?? last.screenAfterAction ?? last.screenBefore ?? null;
+}
+
 /**
  * WALK ONE PLANNED PATH.
  *
@@ -737,6 +1973,34 @@ export async function walkPath(
   const consoleErrors: string[] = [];
   const evidenceIds: string[] = [];
   const steps: StepObservation[] = [];
+  const screenCaptures: ScreenCaptureEpoch[] = [];
+  const captureFailures: ScreenCaptureFailure[] = [];
+  const recordEpoch = (epoch: ScreenCaptureEpoch): ScreenCaptureEpoch => {
+    screenCaptures.push(epoch);
+    captureFailures.push(...epoch.captureFailures);
+    evidenceIds.push(...captureIds(epoch));
+    return epoch;
+  };
+  const recordCaptureFailure = (failure: ScreenCaptureFailure): ScreenCaptureFailure => {
+    captureFailures.push(failure);
+    return failure;
+  };
+  const stepEvidence = (
+    screenBefore: string | null,
+    screenAfterAdvance: string | null,
+    epochs: ScreenCaptureEpoch[],
+    extraFailures: ScreenCaptureFailure[] = [],
+  ): StepObservation["evidence"] => {
+    const failures = [...epochFailures(epochs), ...extraFailures];
+    return {
+      screenBefore,
+      screenAfterAdvance,
+      screenshots: screenshotIds(epochs),
+      screenCaptures: epochs,
+      captureFailures: failures,
+      captureFailureCount: sumCaptureFailures(failures),
+    };
+  };
 
   page.on("pageerror", (e: unknown) => {
     const err = e as { message?: string; stack?: string };
@@ -791,6 +2055,21 @@ export async function walkPath(
   // buried in screen 7's payload is a limitation nobody reads. Summed as well as listed,
   // because "we looked and found none" (0) and "nobody looked" (absent) are different claims.
   const readerLimitations: Array<{ stepIndex: number; kind: string; detail: string; count: number }> = [];
+  // AND WHAT THE WALKER COULD NOT ANSWER, lifted the same way and for the same reason. A
+  // password field refused on screen 4 and left in screen 4's payload is a refusal nobody reads,
+  // while the walk's own outcome says only "this screen offered no enabled control that advances
+  // the survey" — a sentence indistinguishable from a normal ending.
+  const unfillableControls: Array<UnfillableControl & { stepIndex: number }> = [];
+  /** How many answers on this walk the harness invented. See PathObservation. */
+  let navigatorDefaultAnswerCount = 0;
+  const countDefaults = (as: PerformedAction[]): void => {
+    for (const a of as) if (a.ok && typeof a.detail === "string" && a.detail.startsWith("navigator-default")) navigatorDefaultAnswerCount += 1;
+  };
+  /** The refusals raised on THIS screen, phrased for an `outcomeDetail`. */
+  const nameUnfilled = (list: UnfillableControl[]): string =>
+    list
+      .map((u) => `<input type="${u.type}">${u.label ? ` "${u.label.slice(0, 60)}"` : ""}${u.required ? " (required)" : ""} — ${u.detail}`)
+      .join("; ");
 
   while (stepIndex < opts.maxSteps && Date.now() < opts.deadline && outcome !== "error") {
     const stepT0 = Date.now();
@@ -800,6 +2079,14 @@ export async function walkPath(
     try {
       before = await read(page);
     } catch (err) {
+      recordCaptureFailure(
+        captureFailureRow(
+          "screen-read-failed",
+          `screen JSON read failed before step ${stepIndex}: ${errorText(err)}`,
+          stepIndex,
+          "before",
+        ),
+      );
       outcome = "error";
       outcomeDetail = `screen read failed: ${String(err).slice(0, 300)}`;
       break;
@@ -827,9 +2114,15 @@ export async function walkPath(
     // screen. The question this asks instead is whether the page has any QUESTION on it:
     // no options, no text input, no question text. A survey screen with none of those,
     // when the page also raised a script error, did not render.
+    //
+    // `valueInputs`, NOT `textInputs`, and that widening is the same lesson one type family
+    // over: a screen whose only question is a slider or a date picker has ZERO text inputs, so
+    // the narrow count scored it as "no question on the page" exactly as it once did a screen
+    // whose only question was a number field. `?? textInputs` keeps a screen read by an older
+    // reader on its old answer rather than on a missing field.
     const rendered =
       before.counts.options > 0 ||
-      before.counts.textInputs > 0 ||
+      (before.counts.valueInputs ?? before.counts.textInputs) > 0 ||
       (before.questionText !== null && before.questionText.length > 0) ||
       before.grid !== null;
     if (stepIndex === 0 && !rendered && pageErrors.length > 0) {
@@ -838,6 +2131,8 @@ export async function walkPath(
         stack: (before.collectedErrors ?? [])[0]?.stack ?? null,
         capturedAt: new Date().toISOString(),
       };
+      // Capture all modalities before the trace's R2 write widens the browser epoch.
+      recordEpoch(await captureScreenEpoch(page, cap, before, "load-failure", 0, opts.viewport));
       const evId = await captureFailure(
         cap,
         {
@@ -851,22 +2146,15 @@ export async function walkPath(
         "load-failure",
       );
       evidenceIds.push(evId);
-      const png = await shoot(page);
-      if (png) evidenceIds.push(await captureScreenshot(cap, png, "load-failure", 0));
       outcome = "load-crash";
       outcomeDetail = loadFailure.message;
       break;
     }
 
-    const beforeEv = await captureScreenJson(cap, before, "before", stepIndex);
-    evidenceIds.push(beforeEv);
-    const beforePng = await shoot(page);
-    const shots: string[] = [];
-    if (beforePng) {
-      const id = await captureScreenshot(cap, beforePng, "before", stepIndex);
-      shots.push(id);
-      evidenceIds.push(id);
-    }
+    const beforeCapture = recordEpoch(
+      await captureScreenEpoch(page, cap, before, "before", stepIndex, opts.viewport),
+    );
+    const beforeEv = beforeCapture.screenJson.evidenceId;
 
     // A REFUSED DECISION IS NOT CONSUMED. `splice` runs only on an actual binding, so a
     // decision this screen could not be identified as stays pending and is offered to every
@@ -878,21 +2166,45 @@ export async function walkPath(
     if (matched) remaining.splice(matched.index, 1);
     bindingRefusalCount += binding.refusals.length;
 
-    const { actions, notOffered } = await applyDecision(page, before, decision);
+    const { actions, notOffered, unfillable } = await applyDecision(page, before, decision);
+    for (const u of unfillable) unfillableControls.push({ ...u, stepIndex });
+    countDefaults(actions);
 
+    const stepReadFailures: ScreenCaptureFailure[] = [];
     let afterAction: RenderedScreen | null = null;
     try {
       afterAction = await read(page);
-    } catch {
+    } catch (err) {
+      const failure = recordCaptureFailure(
+        captureFailureRow(
+          "screen-read-failed",
+          `screen JSON read failed after acting on step ${stepIndex}: ${errorText(err)}`,
+          stepIndex,
+          "after-action",
+        ),
+      );
+      stepReadFailures.push(failure);
       afterAction = null;
     }
 
     const nb = nextButton(afterAction ?? before);
+    const afterActionCapture = afterAction
+      ? recordEpoch(
+          await captureScreenEpoch(
+            page,
+            cap,
+            afterAction,
+            nb ? "after-action" : "final",
+            stepIndex,
+            opts.viewport,
+          ),
+        )
+      : null;
     if (!nb) {
       // No control advances the survey: either the end, or a dead end. Both are recorded
       // as what they are — the absence of an advance control on THIS complete screen.
-      const afterEv = afterAction ? await captureScreenJson(cap, afterAction, "final", stepIndex) : null;
-      if (afterEv) evidenceIds.push(afterEv);
+      const afterEv = afterActionCapture?.screenJson.evidenceId ?? null;
+      const stepCaptures = [beforeCapture, ...(afterActionCapture ? [afterActionCapture] : [])];
       steps.push({
         stepIndex,
         decisionQuestion: decision ? String(decision.question ?? "") : null,
@@ -907,6 +2219,7 @@ export async function walkPath(
         screenAfterAdvance: null,
         actions,
         requestedButNotOffered: notOffered,
+        unfillableControls: unfillable,
         advanced: false,
         // NOTE THE FLAGS, AND THE TRAP THEY SET. Nothing was submitted here, so `blocked`
         // stays false — yet `advanced` is false too. A disabled Next button lands on exactly
@@ -917,11 +2230,24 @@ export async function walkPath(
         blockedReason: "no-advance-control",
         pageErrors: pageErrors.slice(errAt),
         consoleErrors: consoleErrors.slice(),
-        evidence: { screenBefore: beforeEv, screenAfterAdvance: afterEv, screenshots: shots },
+        evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
         wallMs: Date.now() - stepT0,
       });
       outcome = "no-advance-control";
-      outcomeDetail = `screen ${stepIndex} offered no enabled control that advances the survey`;
+      // NAME THE UNANSWERED CONTROL, OR THIS SENTENCE IS A NORMAL ENDING.
+      //
+      // "screen N offered no enabled control that advances the survey" is exactly what a
+      // thank-you page produces. It is ALSO what a screen produces when its Next button is
+      // disabled until a field the walker refused — a password — is answered. One sentence, two
+      // opposite meanings, and the walker is the only thing that can tell them apart, because it
+      // is the only thing that knows it declined to fill something. So when it did, it says so
+      // here, where an `outcome`-reading consumer cannot miss it.
+      outcomeDetail =
+        `screen ${stepIndex} offered no enabled control that advances the survey` +
+        (unfillable.length > 0
+          ? ` — AND THE WALKER LEFT ${unfillable.length} CONTROL(S) ON IT UNANSWERED, so this is not necessarily the ` +
+            `end of the survey: ${nameUnfilled(unfillable)}`
+          : "");
       break;
     }
 
@@ -933,7 +2259,11 @@ export async function walkPath(
       targetCode: null,
       value: null,
       ok: clickRes.ok,
-      detail: clickRes.detail,
+      // WHICH RULE CHOSE THIS CONTROL travels with the act. A press chosen because the control
+      // named itself and a press chosen by elimination are different evidence — the second is
+      // how a reader that could not classify a single SurveyJS button still advanced screen 1
+      // and looked healthy doing it.
+      detail: `${clickRes.detail} via ${nb.via}`,
     });
 
     // Did the survey move? Poll the screen signature rather than waiting on navigation:
@@ -942,12 +2272,16 @@ export async function walkPath(
     const sigBefore = (afterAction ?? before).screenSignature;
     let after: RenderedScreen | null = null;
     let advanced = false;
+    let pollReadFailureCount = 0;
+    let lastPollReadFailure: unknown = null;
     const waitUntil = Date.now() + opts.advanceTimeoutMs;
     while (Date.now() < waitUntil) {
       await sleep(180);
       try {
         after = await read(page);
-      } catch {
+      } catch (err) {
+        pollReadFailureCount += 1;
+        lastPollReadFailure = err;
         after = null;
         continue;
       }
@@ -956,18 +2290,35 @@ export async function walkPath(
         break;
       }
     }
+    if (pollReadFailureCount > 0) {
+      const failure = recordCaptureFailure(
+        captureFailureRow(
+          "screen-read-failed",
+          `${pollReadFailureCount} post-advance screen read(s) failed; last error: ${errorText(lastPollReadFailure)}`,
+          stepIndex,
+          advanced ? "advanced" : "blocked",
+          new Date().toISOString(),
+          pollReadFailureCount,
+        ),
+      );
+      stepReadFailures.push(failure);
+    }
+    const afterWasRead = after !== null;
     if (!after) after = afterAction;
 
-    const afterEv = after ? await captureScreenJson(cap, after, advanced ? "advanced" : "blocked", stepIndex) : null;
-    if (afterEv) evidenceIds.push(afterEv);
-    if (!advanced) {
-      const png = await shoot(page);
-      if (png) {
-        const id = await captureScreenshot(cap, png, "blocked", stepIndex);
-        shots.push(id);
-        evidenceIds.push(id);
-      }
-    }
+    // Never pair a CURRENT PNG/AX tree with the stale `afterAction` JSON fallback. If every
+    // post-submit read failed, the missing epoch is named above and `afterEv` stays null.
+    const afterCapture = afterWasRead && after
+      ? recordEpoch(
+          await captureScreenEpoch(page, cap, after, advanced ? "advanced" : "blocked", stepIndex, opts.viewport),
+        )
+      : null;
+    const afterEv = afterCapture?.screenJson.evidenceId ?? null;
+    const stepCaptures = [
+      beforeCapture,
+      ...(afterActionCapture ? [afterActionCapture] : []),
+      ...(afterCapture ? [afterCapture] : []),
+    ];
 
     steps.push({
       stepIndex,
@@ -983,6 +2334,7 @@ export async function walkPath(
       screenAfterAdvance: after,
       actions,
       requestedButNotOffered: notOffered,
+      unfillableControls: unfillable,
       advanced,
       // `blocked` IS STILL JUST `!advanced` — it is the outcome of a polling race and it says
       // nothing about the survey's opinion of the input. That is precisely why the next line
@@ -992,7 +2344,7 @@ export async function walkPath(
       blockedReason: advanced ? null : whyBlocked(before, afterAction, after),
       pageErrors: pageErrors.slice(errAt),
       consoleErrors: consoleErrors.slice(),
-      evidence: { screenBefore: beforeEv, screenAfterAdvance: afterEv, screenshots: shots },
+      evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
       wallMs: Date.now() - stepT0,
     });
 
@@ -1001,11 +2353,18 @@ export async function walkPath(
       // answering validly so the remainder of the walk still happens; a probe that ends
       // the walk would cost every downstream observation on this path.
       const wasProbe = decision?.action !== undefined || decision?.text_entry?.value === "";
+      // THE RECOVERY MUST ANSWER VALIDLY, AND `PROBE_TEXT` IS NOT A VALID ANSWER TO MOST
+      // CONTROLS. This used to force `text_entry: { value: "QA-PROBE" }`, which travels the
+      // PLANNED path — so the recovery typed letters into number fields and assigned nonsense to
+      // date pickers, which discard it, leaving the walk blocked and reporting "the survey did
+      // not advance even after a valid answer" about an answer that never landed. That is the
+      // exact defect D42 fixed on the first pass and left standing on the recovery pass. Leaving
+      // `text_entry` off makes every control take its own per-type navigator default, which is
+      // what "answer validly" has to mean once the walker knows more than one kind of input.
       const recovery = await applyDecision(page, after ?? before, {
         question: decision?.question ?? "",
         select: decision?.select ?? [],
         source: "recovery",
-        text_entry: { required: true, value: PROBE_TEXT },
       } as PlannedDecision);
       const again = await clickIdx(page, nb.idx);
       recovery.actions.push({
@@ -1018,24 +2377,43 @@ export async function walkPath(
         detail: `recovery-after-block (${again.detail})`,
       });
       await sleep(600);
+      const recoveryReadFailures: ScreenCaptureFailure[] = [];
       let recovered: RenderedScreen | null = null;
       try {
         recovered = await read(page);
-      } catch {
+      } catch (err) {
+        const failure = recordCaptureFailure(
+          captureFailureRow(
+            "screen-read-failed",
+            `screen JSON read failed after recovery on step ${stepIndex}: ${errorText(err)}`,
+            stepIndex,
+            "recovery",
+          ),
+        );
+        recoveryReadFailures.push(failure);
         recovered = null;
       }
-      const recoveredEv = recovered ? await captureScreenJson(cap, recovered, "recovery", stepIndex) : null;
-      if (recoveredEv) evidenceIds.push(recoveredEv);
+      const recoveredCapture = recovered
+        ? recordEpoch(
+            await captureScreenEpoch(page, cap, recovered, "recovery", stepIndex, opts.viewport),
+          )
+        : null;
+      const recoveredEv = recoveredCapture?.screenJson.evidenceId ?? null;
+      const recoveryBeforeCapture = afterCapture ?? afterActionCapture ?? beforeCapture;
+      const recoveryCaptures = [recoveryBeforeCapture, ...(recoveredCapture ? [recoveredCapture] : [])];
       steps.push({
         stepIndex: stepIndex + 0.5,
         decisionQuestion: decision ? String(decision.question ?? "") : null,
         decisionSource: "recovery",
-        requested: { select: decision?.select ?? [], textEntry: PROBE_TEXT, action: "recover-after-block" },
+        // `textEntry: null` because the recovery no longer forces one value on every control —
+        // each takes its own per-type navigator default, and the actions record what each got.
+        requested: { select: decision?.select ?? [], textEntry: null, action: "recover-after-block" },
         screenBefore: after ?? before,
         screenAfterAction: null,
         screenAfterAdvance: recovered,
         actions: recovery.actions,
         requestedButNotOffered: recovery.notOffered,
+        unfillableControls: recovery.unfillable,
         advanced: !!recovered && recovered.screenSignature !== (after ?? before).screenSignature,
         blocked: !!recovered && recovered.screenSignature === (after ?? before).screenSignature,
         blockedReason:
@@ -1044,12 +2422,23 @@ export async function walkPath(
             : null,
         pageErrors: pageErrors.slice(errAt),
         consoleErrors: [],
-        evidence: { screenBefore: null, screenAfterAdvance: recoveredEv, screenshots: [] },
+        evidence: stepEvidence(null, recoveredEv, recoveryCaptures, recoveryReadFailures),
         wallMs: 0,
       });
+      for (const u of recovery.unfillable) unfillableControls.push({ ...u, stepIndex: stepIndex + 0.5 });
       if (recovered && recovered.screenSignature === (after ?? before).screenSignature) {
         outcome = wasProbe ? "blocked-after-probe" : "blocked";
-        outcomeDetail = `the survey did not advance from screen ${stepIndex} even after a valid answer` +
+        // SAME RULE AS ABOVE, and it matters more here: "the survey did not advance even after a
+        // valid answer" is a claim that the answer WAS valid. If the walker left a control on
+        // that screen unanswered, it was not, and the sentence would blame the survey for the
+        // harness's own gap.
+        const unfilledHere = [...unfillable, ...recovery.unfillable];
+        outcomeDetail =
+          `the survey did not advance from screen ${stepIndex} even after a valid answer` +
+          (unfilledHere.length > 0
+            ? ` — THOUGH THE WALKER LEFT ${unfilledHere.length} CONTROL(S) ON IT UNANSWERED, so "a valid answer" ` +
+              `overstates what was submitted: ${nameUnfilled(unfilledHere)}`
+            : "") +
           (after?.validationMessages.length ? `; validation said: ${after.validationMessages.join(" | ")}` : "");
         break;
       }
@@ -1067,6 +2456,18 @@ export async function walkPath(
     outcomeDetail = "walk hit its wall-clock budget";
   }
 
+  // HOW THIS WALK ENDED, typed from the final screen. Computed for EVERY outcome, not only the
+  // terminal ones: a walk that hit a cap or a block has an ending too — `stalled` — and leaving
+  // the field off those artifacts would make "we did not classify it" and "it did not end"
+  // indistinguishable again, one level up from the defect this closes.
+  const unbound = remaining.length;
+  const ending = classifyEnding(finalScreenOf(steps), {
+    outcome,
+    unboundDecisions: unbound,
+    navigatorDefaults: navigatorDefaultAnswerCount,
+    unfillable: unfillableControls,
+  });
+
   const obs: PathObservation = {
     kind: "v2-path-observation/1.0.0",
     runId: opts.runId,
@@ -1082,6 +2483,7 @@ export async function walkPath(
     steps,
     outcome,
     outcomeDetail,
+    ending,
     shimmed: opts.applyHistoryShim,
     shimNote,
     loadFailure,
@@ -1098,6 +2500,18 @@ export async function walkPath(
     bindingRefusalCount,
     readerLimitations,
     readerLimitationCount: readerLimitations.reduce((n, l) => n + l.count, 0),
+    // WHAT THIS WALK DID NOT ANSWER, and how much of what it DID answer it made up. Present-but-
+    // empty is a claim ("we met nothing we could not answer"); absent is a walk from before the
+    // check existed. A consumer may never read the one as the other.
+    unfillableControls,
+    unfillableControlCount: unfillableControls.length,
+    navigatorDefaultAnswerCount,
+    // New reader: present-but-empty means every attempted visual/AX capture completed. Older
+    // artifacts omit all four fields and therefore never masquerade as checked-and-clean.
+    screenCaptures,
+    screenCaptureCount: screenCaptures.length,
+    captureFailures,
+    captureFailureCount: sumCaptureFailures(captureFailures),
     evidenceIds,
     viewport: opts.viewport,
   };

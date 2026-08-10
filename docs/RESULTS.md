@@ -1,4 +1,13 @@
-# Validation & Results
+# Historical Validation & Results
+
+> **Status: historical benchmark record, not current acceptance evidence.** These runs predate
+> the repository's 2 August 2026 North Star. The questionnaires and sites were generated from
+> known manifests and share conventions with the implementation, so the figures below measure
+> regression performance on that generated corpus; they do **not** establish generalization to an
+> arbitrary questionnaire and survey URL. In particular, “held-out” below means withheld from the
+> prompt/development loop, not independently authored or convention-independent. Current work must
+> report uncovered cases and named limitations and must be evaluated under `AGENTS.md` and
+> `docs/EVALUATION-BOUNDARY.md`. The original figures are retained for provenance only.
 
 Two kinds of evidence back this tool: a **seeded benchmark** (a survey with known planted
 errors, used during development) and a **held-out generalization test** (surveys the tool has
@@ -68,9 +77,9 @@ brands, fresh error instances, in six languages including CJK, over external cro
 - The hard categories held in every language: **missing-question** (a whole question deleted from
   the site but present in the doc), broken piping, CJK mojibake encoding, scale mislabels.
 
-**Bottom line:** ~100% effective / 99.6% strict recall on 240 planted errors in surveys it had never
-seen, at under one false positive per survey. This is a defensible generalization result, not just
-"10/10 on the demo."
+**Historical interpretation:** ~100% effective / 99.6% strict recall on 240 planted errors in
+withheld generated fixtures, at under one false positive per survey. Under the current North Star,
+this is a useful regression measurement but not a defensible generalization claim.
 
 ---
 

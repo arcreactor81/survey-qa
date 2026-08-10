@@ -918,10 +918,10 @@ function renderDocumentQuestions(view) {
        <p class="muted">No contract item fell below the report-builder rule (${esc(q.rule.description)}). Lowest recorded extraction confidence is shown per row in the coverage audit.</p>`;
 
   const assumptions = q.assumptions.length
-    ? `<h3>Contract assumptions (${q.assumptions.length})</h3>
-       <p class="muted">Interpretations the extractor committed to. If one of these is wrong, the scope built on it is wrong.</p>
+    ? `<h3>Contract assumptions and limitations (${q.assumptions.length})</h3>
+       <p class="muted">Recorded interpretation risks and coverage limits. If one is wrong or incomplete, the scope built on it may be wrong.</p>
        <ul>${q.assumptions.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>`
-    : `<h3>Contract assumptions</h3><p class="muted">The record lists no contract assumptions.</p>`;
+    : `<h3>Contract assumptions and limitations</h3><p class="muted">The record lists no contract assumptions or limitations.</p>`;
 
   const nothingJudged = !q.ambiguities.length && !q.ambiguousResultItems.length;
 

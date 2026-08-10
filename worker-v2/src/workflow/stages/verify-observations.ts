@@ -111,11 +111,13 @@
  * artifact (`StepObservation.blockedReason`) so this stage READS a witness instead of
  * reconstructing one — and that account may name a refusal to decide and never author one.
  *
- * WHAT IS DELIBERATELY *NOT* CLAIMED. Only two case kinds carry an expectation this stage can
- * decide without reading the document: `route` and `boundary`. `rendered-state`, `copy`,
- * `option-set` and `configuration` need the document's own prose compared to a screen, which
- * is the model verifier's job, and it is not wired. They return `insufficient` with
- * NO_TYPED_EXPECTATION and the run reports `pending` for them. A narrower verifier that is
+ * WHAT IS DELIBERATELY *NOT* CLAIMED. THREE case kinds carry an expectation this stage can
+ * decide without reading the document: `route`, `boundary` and — since 1.6.0 — `option-set`,
+ * whose sealed payload is answer-option labels read from the DOCUMENT'S OWN QUOTE rather than
+ * from a model's prose about it (see `optionSetOffered` and `extract/expand.ts#mintOptionSet`).
+ * `rendered-state`, `copy` and `configuration` still need the document's own prose compared to
+ * a screen, which is the model verifier's job, and it is not wired. They return `insufficient`
+ * with NO_TYPED_EXPECTATION and the run reports `pending` for them. A narrower verifier that is
  * right is worth more than a broad one that guesses.
  *
  * ==================== THE DOCUMENT'S OWN WORDING IS THE THIRD WITNESS (1.4.0) ====================
@@ -186,6 +188,130 @@
  * letting one of them win silently. All three fields are OPTIONAL — an artifact written before
  * they existed carries none, and their ABSENCE vetoes nothing and changes no verdict.
  *
+ * ==================== A PASS IS A CLAIM TOO (1.5.0) ====================
+ *
+ * THE HOLE, AND IT IS THE MIRROR OF THE ONE 0.2 CLOSED. 0.2 made the route `violated` arm demand
+ * a MARKUP witness because prose back-references another question. It scoped that to the accusing
+ * arm, and left the `satisfied` arm reading the plain UNION — so a rendered-text TOKEN alone could
+ * mint a PASS. The failing shape is concrete, not hypothetical:
+ *
+ *     the document routes Q7 -> Q9. The survey actually lands on Q10. Q10 is nobody's
+ *     `targetQuestionId`, so it is NOT in `ctx.sealedQuestionIds` and nothing on the screen
+ *     resolves to it. Q10's prose opens "As you said in Q9, ...". The identity union is then
+ *     exactly `{Q9}` — a singleton, `alsoPresent` empty — and the case was VERIFIED. A real
+ *     routing defect, certified as correct, by the arm nobody audits.
+ *
+ * A FALSE PASS IS NOT THE CHEAP DIRECTION. A false FAIL is contestable — the client opens the
+ * survey and shows you the route works. A false PASS is silent and permanent: it does not merely
+ * fail to find the defect, it CERTIFIES that there is none, which is the one thing this product
+ * sells. The two errors are equal and this file may not price them differently.
+ *
+ * THE RULE, AND WHY IT IS NOT PLAIN SYMMETRY. The mistake would be to read the fix as "prose may
+ * not pass". The witness that failed is not prose in general — it is prose read WITHOUT REGARD TO
+ * WHERE ON THE SCREEN IT SITS. Four readings, and exactly one of them has the hole:
+ *
+ *   BODY TOKEN     the id found anywhere in the rendered prose, which INCLUDES the body — and the
+ *                  body is where "as you said in Q9…" lives. It cannot tell a heading from a
+ *                  quotation. THIS IS THE HOLE, and it is the only reading removed.
+ *   HEADING TOKEN  the id printed in the screen's own `questionText`/`title` (`tokenInHeading`).
+ *                  A text-id instrument states its identity exactly here. A heading is what this
+ *                  screen ASKS — a statement about itself, not about another question.
+ *   WORDING        precision taken against that same heading (`questionWordingScore`), so quoted
+ *                  body prose cannot inflate it. Text-class, and not holed this way.
+ *   MARKUP         the `name`/`id` of a field THIS screen submits. Strongest; back-references do
+ *                  not have `name` attributes.
+ *
+ * So `satisfied` requires MARKUP, WORDING, or the HEADING token, and a destination found only in
+ * the BODY is `DESTINATION_PRESENTED_BY_TEXT_TOKEN_ONLY` — insufficient, counted, nobody accused.
+ * The `violated` arm did NOT move: it still requires MARKUP alone
+ * (`DESTINATION_IDENTIFIED_BY_TEXT_ONLY`). A wording match is a screen SCORING like a question and
+ * a summary screen scores like the question it summarises; a heading is stronger than a body but
+ * it is still prose a site is free to write. The residual asymmetry is therefore deliberate and
+ * one-directional — the bar to ACCUSE stays higher than the bar to PASS — and what was wrong
+ * before was not that the bars differed but that the lower one admitted the reading with a known
+ * hole in it.
+ *
+ * WHY NOT MARKUP-ONLY ON BOTH ARMS, WHICH IS THE OBVIOUS "SYMMETRIC" FIX. It deletes 1.4.0 and it
+ * deletes text-id instruments in the same stroke. The survey this system was built against prints
+ * no ids and names its controls opaquely — wording is the only witness it has — and a text-id
+ * instrument that prints "Q9." in its heading has no markup at all. Markup-only `satisfied`
+ * returns both to the null run: fail-closed collapsing into fail-silent, which is a different way
+ * of failing, not a safer one. MEASURED: it turns four existing verified fixtures insufficient;
+ * the rule as written turns zero.
+ *
+ * THE RESIDUAL, NAMED RATHER THAN PAPERED OVER. A HEADING that names another question and never
+ * its own — "Q10. As you said in Q9, which brand?" on a screen no case targets — still passes.
+ * It is a narrower and rarer shape than a body back-reference, it is not what D29 measured, and
+ * closing it needs the document's own text for the destination: the wording witness where the
+ * revision words it, and the model verifier where it does not.
+ *
+ * ==================== A TERMINAL DESTINATION, WHEN THE WALK TYPES ITS ENDING (1.5.0) ====================
+ *
+ * "Answering 'No' must SCREEN THE RESPONDENT OUT" is a routing requirement like any other, and
+ * until 1.5.0 it was unverifiable by construction: `TERMINAL_DESTINATION_NOT_DISCRIMINABLE` for
+ * every terminal case, however clearly the walk reached the screen-out. That was right at the
+ * time — a completion page and a screen-out page are the same DOM shape — and it was measured to
+ * cost real findings: the screen-out path was REACHED on two separate runs with the terminal text
+ * sitting in the evidence, and nothing could say so.
+ *
+ * `browser/driver.ts` now TYPES the ending of a walk (`completed` / `screened-out` / `stalled`).
+ * That is a fact only the walker is placed to record, and it is the ONE bit this stage cannot
+ * recompute. Everything else around it IS recomputed here, from the re-read, re-hashed bytes,
+ * and all of it must hold before either arm fires:
+ *
+ *   1. THE ENDING IS TYPED AND IN VOCABULARY. Absent, or a literal this build does not know, and
+ *      the answer is `TERMINAL_DESTINATION_NOT_DISCRIMINABLE` — byte-for-byte what 1.4.0 said. AN
+ *      OLDER ARTIFACT DOES NOT BECOME DECIDABLE BY GUESSWORK; it stays exactly as undecided as it
+ *      was. The producer's own fourth state, `unclassified` — it reached a dead end and nothing
+ *      on the screen said which kind — stays undecided too, under its own reason.
+ *   2. THE ENDING IS ABOUT *THIS* DESTINATION. An ending describes where the WALK stopped, and a
+ *      route case is about where ONE ANSWER led. They coincide only when the screen this step
+ *      advanced to IS the walk's final screen, which is checked by `screenSignature` equality —
+ *      the capture's own content hash of the screen, compared to the last step's. Otherwise the
+ *      walk carried on past this destination and its ending witnesses a different screen:
+ *      `TERMINAL_ENDING_NOT_BOUND_TO_DESTINATION`.
+ *   3. THE REACHED SCREEN IS ACTUALLY A DEAD END, recomputed here: no button on it is visible,
+ *      enabled and not a `back`. This is DELIBERATELY STRICTER than the driver's own
+ *      `nextButton` rule (which also gives up when two non-`next` buttons tie), so the two can
+ *      only ever disagree in the direction that COSTS a verdict —
+ *      `DESTINATION_NOT_STRUCTURALLY_TERMINAL`, never a fabricated one. It is the drift detector
+ *      against a classifier this file does not own.
+ *
+ * ONLY THEN is the sealed terminal compared to the ending, and BOTH directions are verdicts:
+ * `complete` <-> `completed`, `screenout` <-> `screened-out`. `quota` has no counterpart and never
+ * will from the DOM — a quota-full page and a screen-out page are the same bytes — so it is
+ * `TERMINAL_KIND_HAS_NO_WITNESS` forever. `stalled` says the walk stopped for its OWN reasons and
+ * reached no ending at all: `WALK_DID_NOT_REACH_AN_ENDING`.
+ *
+ * WHY THE MISMATCH ARM IS ALLOWED, given the polarity rule. `bindingVia` is refused because it is
+ * the producer's answer to a question THIS FILE ANSWERS INDEPENDENTLY — reading it is circular.
+ * The ending is not that: this stage has no terminal classifier and is not getting one (a
+ * model-free "does this look like a screen-out" heuristic in the verdict path is precisely what is
+ * forbidden). It is a typed observation inside bytes this stage re-hashed, like `advanced`, and
+ * once (2) and (3) are recomputed the only trusted bit is WHICH terminal.
+ *
+ * THE PROPERTY THAT MAKES IT SAFE, AND IT IS CHECKABLE RATHER THAN ASSUMED: THE VOCABULARY IS
+ * AFFIRMATIVE. `completed` has to mean "a completion was recognised", never "not a screen-out" —
+ * because a DEFAULT would be inherited here in both directions and nothing this file recomputes
+ * would notice. `browser/types.ts` carries exactly that guarantee in the type itself: there is a
+ * fourth state, `unclassified`, for "nothing said which kind of ending this is", declared as "a
+ * REAL, COUNTED residual" precisely so that an unrecognised ending is never defaulted to
+ * `completed`. A vocabulary with a residual class is one where the three named states are
+ * positive findings. THIS FILE STILL DOES NOT GET TO ASSUME IT STAYS THAT WAY: collapsing
+ * `unclassified` into `completed` on the producing side would silently arm this predicate, which
+ * is why the residual is consumed HERE as its own refusal rather than folded into the others.
+ *
+ * WHAT REMAINS A RELIANCE: the classification is made from TERMINAL WORDING on the final screen,
+ * so a survey whose screen-out page says nothing recognisable lands in `unclassified` (a counted
+ * refusal, the safe direction), and one whose completion page uses disqualification language
+ * would be misread. That is a shared limitation of the two halves, and it is the reason the
+ * accusation also has to clear the two fences this file recomputes before it is allowed out.
+ *
+ * MAKING ONLY THE `satisfied` ARM ADMISSIBLE WOULD NOT HAVE ESCAPED ANY OF THIS. A mistyped
+ * ending mints a false PASS on a documented completion just as readily as a false ACCUSATION on a
+ * documented screen-out — the same failure wearing the quieter face, on the side of the ledger
+ * this whole revision exists to stop under-policing.
+ *
  * WORKERSAI_ENABLED IS FALSE BY DEFAULT (the free neuron allowance is spent), and the
  * degradation is the design, not a stopgap: a verifier that is unavailable yields
  * `insufficient` for everything it cannot decide, the run reports `incomplete` for those, and
@@ -200,12 +326,13 @@ import { loadRunInputs } from "./run-inputs";
 import type { StageResult } from "../gates";
 import type {
   EvidenceCatalogEntry,
+  ExpectedDestinationPayload,
   FacetCase,
   FacetInstance,
   Observation,
   VerifierDecision,
 } from "../../types/record";
-import type { PathObservation, RenderedScreen, StepObservation } from "../../browser/types";
+import type { PathObservation, RenderedScreen, StepObservation, WalkEndingKind } from "../../browser/types";
 import type { WalkProjectionPayload } from "./project-observations";
 // THE WORDING IS SHARED CODE, NOT A SECOND IMPLEMENTATION. `questionWordingScore` is the
 // driver's own scorer and `buildQuestionWordingIndex`/`resolveQuestionWording` are the plan's own
@@ -217,6 +344,18 @@ import { buildQuestionWordingIndex, resolveQuestionWording } from "./plan";
 import type { QuestionWordingIndex } from "./plan";
 
 /**
+ * 1.6.0 — `option-set` became decidable: the registry opened for exactly one new kind and the
+ * predicate compares a sealed OPTION MEMBERSHIP payload (labels read from the document's own
+ * quote, `extract/expand.ts`) against one screen's complete option inventory. It changes which
+ * observations reach a verdict, and it is the first predicate in this file that can set
+ * `fromAbsence`, so a record written by 1.5.0 and one written by this must not be compared as
+ * though the same predicate produced them.
+ *
+ * 1.5.0 — the route `satisfied` arm stopped accepting a rendered-text TOKEN as sufficient
+ * identification of the destination (it now needs the MARKUP or the WORDING witness), and a
+ * TERMINAL destination became decidable when — and only when — the walk carries a typed ending.
+ * Both change which observations reach a verdict.
+ *
  * 1.4.0 — the document's own wording of a question became a third screen-identity witness
  * (shared with `browser/driver.ts`, on the union, so it may bind or refuse and never relax), and
  * the walker's recorded binding REFUSALS became a veto. Both change which observations reach a
@@ -225,7 +364,7 @@ import type { QuestionWordingIndex } from "./plan";
  *
  * 1.3.0 — the boundary outcome became four-valued and screen identity gained provenance.
  */
-export const VERIFIER_VERSION = "v2-structural-verifier/1.4.0";
+export const VERIFIER_VERSION = "v2-structural-verifier/1.6.0";
 
 /** What a predicate may return. Never prose, never a score. */
 export type PredicateOutcome = "satisfied" | "violated" | "insufficient" | "no-observation" | "error";
@@ -238,12 +377,52 @@ export type PredicateOutcome = "satisfied" | "violated" | "insufficient" | "no-o
 export const VERIFIER_REASON = Object.freeze({
   // verified
   ROUTE_DESTINATION_REACHED: "ROUTE_DESTINATION_REACHED",
+  /**
+   * 1.5.0 — the sealed destination is a TERMINAL state and the walk's own typed ending names
+   * that same state, on the screen this step advanced to, which this stage independently
+   * confirmed is the walk's last screen and offers nothing to advance with. See
+   * `terminalDestination`.
+   */
+  ROUTE_TERMINAL_AS_DOCUMENTED: "ROUTE_TERMINAL_AS_DOCUMENTED",
   BOUNDARY_ACCEPTED_AS_DOCUMENTED: "BOUNDARY_ACCEPTED_AS_DOCUMENTED",
   BOUNDARY_REJECTED_AS_DOCUMENTED: "BOUNDARY_REJECTED_AS_DOCUMENTED",
+  /**
+   * 1.6.0 — every answer option this requirement states is offered on the screen the case
+   * bound to, by an exact label match against that screen's COMPLETE option inventory. On an
+   * `exhaustive` payload it also says the screen offers nothing the document does not list,
+   * which is why that half routes through the absence/completeness guard.
+   */
+  OPTION_SET_AS_DOCUMENTED: "OPTION_SET_AS_DOCUMENTED",
   // contradicted
   ROUTE_DESTINATION_MISMATCH: "ROUTE_DESTINATION_MISMATCH",
+  /**
+   * 1.5.0 — the document says this answer ends the interview one way and the walk's typed
+   * ending says it ended the other way ("the document screens this respondent out; the walk
+   * reached the completion page"). Same three preconditions as the pass; the comparison is
+   * symmetric because a witness too weak to accuse is too weak to certify.
+   */
+  ROUTE_TERMINAL_MISMATCH: "ROUTE_TERMINAL_MISMATCH",
   BOUNDARY_NOT_REJECTED: "BOUNDARY_NOT_REJECTED",
   BOUNDARY_REJECTED_UNEXPECTEDLY: "BOUNDARY_REJECTED_UNEXPECTEDLY",
+  /**
+   * 1.6.0 — the document requires this question to offer an option the screen's COMPLETE
+   * inventory does not carry, under that label or any variant of it. The seeded `missing-option`
+   * defect class.
+   */
+  OPTION_MISSING: "OPTION_MISSING",
+  /**
+   * 1.6.0 — the site renders a documented option under different wording. Requires an
+   * independent witness that the site's answer CODES mean what the document's do (some other
+   * option of the same question matches by code AND label), because without it a same-code
+   * pair is far more likely to be two numbering schemes than a defect.
+   */
+  OPTION_LABEL_MISMATCH: "OPTION_LABEL_MISMATCH",
+  /**
+   * 1.6.0 — the requirement CLOSES the option set in the document's own words and the screen
+   * offers something it does not list. Never claimable from a per-option requirement, which
+   * entails membership and says nothing about what else a question may offer.
+   */
+  OPTION_OFFERED_NOT_DOCUMENTED: "OPTION_OFFERED_NOT_DOCUMENTED",
   /**
    * RETIRED BY D23 AND DELIBERATELY NOT DELETED. Nothing emits this: it named the arm that
    * turned a producer's own `contradiction`/`error` payload key into a defect claim, and that
@@ -275,6 +454,50 @@ export const VERIFIER_REASON = Object.freeze({
    * text-only foreign id cannot carry a destination MISMATCH. See `routeDestination`.
    */
   DESTINATION_IDENTIFIED_BY_TEXT_ONLY: "DESTINATION_IDENTIFIED_BY_TEXT_ONLY",
+  /**
+   * 1.5.0 — THE MIRROR OF THE ONE ABOVE, ON THE ARM THAT PASSES. The reached screen presented
+   * the expected destination id ONLY IN THE BODY of its rendered prose — not in its own heading,
+   * not on a control, and not by matching the document's wording of it. The body is where a
+   * back-reference lives ("as you said in Q9…"), so a screen that merely QUOTES the destination
+   * is not the destination and may not mint a pass either. Distinct from
+   * `DESTINATION_IDENTIFIED_BY_TEXT_ONLY` on purpose: that one
+   * is an accusation withheld (a possible real defect went unreported), this one is a
+   * CERTIFICATION withheld (a healthy-looking screen went uncertified). Different repairs,
+   * different sides of the ledger, so they must not share a bucket in the histogram.
+   */
+  DESTINATION_PRESENTED_BY_TEXT_TOKEN_ONLY: "DESTINATION_PRESENTED_BY_TEXT_TOKEN_ONLY",
+  /**
+   * 1.5.0 — the walk carries a typed ending, but it describes a screen that is not the one this
+   * route advanced to: the walk went on past this destination, so how it eventually ended
+   * witnesses nothing about where this answer led.
+   */
+  TERMINAL_ENDING_NOT_BOUND_TO_DESTINATION: "TERMINAL_ENDING_NOT_BOUND_TO_DESTINATION",
+  /**
+   * 1.5.0 — the reached screen still offers something visible and enabled to advance with, so it
+   * is not the end of anything, whatever the walk's ending says. Recomputed here from the
+   * re-read bytes, and deliberately stricter than the walker's own rule so a disagreement can
+   * only ever cost a verdict.
+   */
+  DESTINATION_NOT_STRUCTURALLY_TERMINAL: "DESTINATION_NOT_STRUCTURALLY_TERMINAL",
+  /**
+   * 1.5.0 — the walk's typed ending is `stalled`: it stopped for its own reasons (a cap, a
+   * timeout, a page that would not move) and reached no ending the document could name.
+   */
+  WALK_DID_NOT_REACH_AN_ENDING: "WALK_DID_NOT_REACH_AN_ENDING",
+  /**
+   * 1.5.0 — the walk's typed ending is `unclassified`: the walker reached a screen with nothing
+   * left to press and nothing on it said which kind of ending it was. Distinct from
+   * `TERMINAL_DESTINATION_NOT_DISCRIMINABLE` (an artifact from before endings were typed) because
+   * the repairs differ: this one is closed by better terminal markers on the producing side, that
+   * one is closed by nothing at all.
+   */
+  TERMINAL_ENDING_UNCLASSIFIED: "TERMINAL_ENDING_UNCLASSIFIED",
+  /**
+   * 1.5.0 — the sealed terminal is `quota`, and no ending expresses it. A quota-full page and a
+   * screen-out page are the same DOM, so the walker cannot draw the distinction either and this
+   * is structural rather than a gap to be closed by better walking.
+   */
+  TERMINAL_KIND_HAS_NO_WITNESS: "TERMINAL_KIND_HAS_NO_WITNESS",
   BOUNDARY_INPUT_NOT_ENTERED: "BOUNDARY_INPUT_NOT_ENTERED",
   /**
    * 1.4.0 — THE WALKER REFUSED TO CALL THIS SCREEN THIS QUESTION, and this file's own
@@ -310,6 +533,29 @@ export const VERIFIER_REASON = Object.freeze({
   /** A rejection was witnessed, but the screen offers more than one thing it could be about. */
   BOUNDARY_REJECTION_NOT_ATTRIBUTABLE: "BOUNDARY_REJECTION_NOT_ATTRIBUTABLE",
   PARTIAL_SCOPE_CANNOT_SUPPORT_ABSENCE: "PARTIAL_SCOPE_CANNOT_SUPPORT_ABSENCE",
+  // 1.6.0 — THE OPTION-SET REFUSALS. Each names a DIFFERENT thing that stopped an option list
+  // being compared, because "we could not tell" over five distinct causes is unactionable.
+  /** No step of this walk captured a screen carrying any answer options at all. */
+  OPTION_INVENTORY_NOT_CAPTURED: "OPTION_INVENTORY_NOT_CAPTURED",
+  /** The screen is a grid: its inventory is per-row cells, whose attribution this stage cannot recompute. */
+  OPTION_SET_ON_A_GRID_NOT_COMPARED: "OPTION_SET_ON_A_GRID_NOT_COMPARED",
+  /** The screen hosts several option groups and none of them names the case's question. */
+  OPTION_GROUP_NOT_ATTRIBUTABLE: "OPTION_GROUP_NOT_ATTRIBUTABLE",
+  /**
+   * The screen offers a NEAR VARIANT of the documented label and no exact match. A document and
+   * a site may word one option two ways ("18-24" / "18 to 24"), so this is the refusal that
+   * stops a wording difference being reported as a missing option. It is also the reason a
+   * similarity test may never mint an accusation on its own.
+   */
+  OPTION_LABEL_NEAR_MATCH_ONLY: "OPTION_LABEL_NEAR_MATCH_ONLY",
+  /** The documented option is in the markup but hidden or inoperable — a third state, not a verdict. */
+  OPTION_PRESENT_BUT_NOT_OPERABLE: "OPTION_PRESENT_BUT_NOT_OPERABLE",
+  /**
+   * An option ACCUSATION rests on what the screen does NOT offer, and this capture did not
+   * attest that its read was complete: it reported reader limitations, or it predates the
+   * check and recorded no limitation state at all. Absence is never "none".
+   */
+  OPTION_INVENTORY_READ_NOT_ATTESTED: "OPTION_INVENTORY_READ_NOT_ATTESTED",
   // D23 — the observation's own payload flagged a contradiction or an error. That is the
   // PRODUCER'S word about itself, so it is a reason to withhold a pass and never a reason to
   // claim a defect. See `structuralDecision`.
@@ -555,12 +801,11 @@ export async function decideObservation(
   // An absence-derived `satisfied` needs a complete scoped inventory behind it. A partial
   // walk saw part of the survey, and "it was not there" over part of a survey is not a fact.
   //
-  // NOTE FOR THE NEXT PERSON: NO PREDICATE IN THIS FILE CURRENTLY SETS `fromAbsence`. Both
-  // route and boundary conclude from positive witnesses, so this branch is unreachable today
-  // and is untested. It is here because the absence-shaped predicates (`option-set`,
-  // `copy`) are the ones the model verifier will bring, and the completeness rule has to be
-  // enforced at the promotion point rather than remembered by whoever writes them. Do not
-  // read it as protection that is currently doing work.
+  // LIVE SINCE 1.6.0, AND IT WAS WRITTEN FOR EXACTLY THIS. Route and boundary conclude from
+  // positive witnesses and never set the flag. `option-set` sets it on the `satisfied` arm of
+  // an EXHAUSTIVE payload — "…and the screen offers nothing the document does not list" is a
+  // claim about what was not there, and a walk that saw part of the survey cannot support one.
+  // A membership pass (an exact label match) is positive and does not set it.
   if (result.outcome === "satisfied" && result.fromAbsence && o.completeness !== "complete-scoped-inventory") {
     return insufficient(
       predicate.id,
@@ -715,10 +960,40 @@ const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
  */
 function tokenOnScreen(screen: RenderedScreen | null, token: string): boolean {
   if (!screen || !token) return false;
-  const haystack = norm(`${screen.questionText ?? ""} ${screen.title ?? ""} ${screen.visibleText ?? ""}`);
+  return wholeWordIn(`${screen.questionText ?? ""} ${screen.title ?? ""} ${screen.visibleText ?? ""}`, token);
+}
+
+const wholeWordIn = (haystack: string, token: string): boolean => {
   const t = norm(token).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   if (!t) return false;
-  return new RegExp(`(^|[^a-z0-9])${t}([^a-z0-9]|$)`).test(haystack);
+  return new RegExp(`(^|[^a-z0-9])${t}([^a-z0-9]|$)`).test(norm(haystack));
+};
+
+/**
+ * DOES THE SCREEN PRINT `token` IN ITS OWN HEADING — not merely somewhere in its prose?
+ *
+ * THE SAME SPLIT `questionWordingScore` ALREADY MAKES, applied to the token reading (1.5.0). A
+ * screen's HEADING is its statement of what IT asks; its BODY may quote, pipe or back-reference
+ * anything, and "as you said in Q9…" lives in the body. `tokenOnScreen` unions the two and
+ * therefore cannot tell a heading from a back-reference — which is the exact hole that let a
+ * screen the walk was never sent to certify a route.
+ *
+ * NO `visibleText` FALLBACK, deliberately, and it is the difference from `questionWordingScore`:
+ * that function falls back to the first 600 characters when a capture has no `questionText`,
+ * because a score of zero would be indistinguishable from "no heading was captured". Here the
+ * fallback would put body prose back in the one reading this exists to keep out. A capture with
+ * neither `questionText` nor `title` therefore has NO heading witness, and the caller refuses —
+ * which is the fail-closed direction.
+ *
+ * WHAT THIS STILL DOES NOT CATCH, stated rather than papered over: a heading that names ANOTHER
+ * question and never its own ("Q10. As you said in Q9, which brand?" where Q10 is not in the
+ * sealed vocabulary). That is a narrower and rarer shape than a body back-reference, and closing
+ * it needs the document's own text for the destination — the wording witness, when the revision
+ * words it, or the model verifier, which is not wired.
+ */
+function tokenInHeading(screen: RenderedScreen | null, token: string): boolean {
+  if (!screen || !token) return false;
+  return wholeWordIn(`${screen.questionText ?? ""} ${screen.title ?? ""}`, token);
 }
 
 /**
@@ -875,6 +1150,14 @@ export interface ScreenIdentity {
   ids: string[];
   /** Ids printed in the rendered prose. May be this screen's, or a reference to another's. */
   text: string[];
+  /**
+   * The SUBSET of `text` printed in the screen's own HEADING (`questionText` / `title`) rather
+   * than anywhere in its prose (1.5.0). A heading is what this screen ASKS; a body may quote
+   * another question. Being a subset is what makes it purely additive: `ids` is unchanged, so no
+   * refusal anywhere in this file is weakened by its existence, and the one arm that needed to
+   * tell a heading from a back-reference can.
+   */
+  heading: string[];
   /** Ids carried by the screen's own controls' `name` / `id`. */
   markup: string[];
   /**
@@ -898,10 +1181,11 @@ export function screenIdentity(
   questionWording?: QuestionWordingIndex | null,
 ): ScreenIdentity {
   const text = sealedQuestionIds.filter((q) => tokenOnScreen(screen, q));
+  const heading = sealedQuestionIds.filter((q) => tokenInHeading(screen, q));
   const markup = controlSealedIdsOnScreen(screen, sealedQuestionIds);
   const wording = wordingClaims(screen, sealedQuestionIds, questionWording ?? null);
   const ids = [...new Set([...text, ...markup, ...wording])];
-  return { ids, text: [...new Set(text)], markup, wording };
+  return { ids, text: [...new Set(text)], heading: [...new Set(heading)], markup, wording };
 }
 
 /** The union alone, for the callers that only ever need "is this set a singleton?". */
@@ -1117,14 +1401,11 @@ const routeDestination: Predicate = {
       );
     }
     if (dest.terminal) {
-      // "complete" vs "screenout" vs "quota" is a distinction the DOM does not draw, and
-      // guessing it from the absence of a Next button would be exactly that: a guess.
-      return insufficient(
-        this.id,
-        VERIFIER_REASON.TERMINAL_DESTINATION_NOT_DISCRIMINABLE,
-        `the sealed destination is the terminal state "${dest.terminal}", which this verifier cannot tell apart ` +
-          `from the other terminal states without reading the document`,
-      );
+      // "complete" vs "screenout" vs "quota" is a distinction THE DOM DOES NOT DRAW, and guessing
+      // it from the absence of a Next button would be exactly that: a guess. What 1.5.0 adds is
+      // not a guess but a WITNESS — the walk's own typed ending — fenced by two facts this stage
+      // recomputes from the re-read bytes. With no such witness the answer is unchanged.
+      return terminalDestination(this.id, dest.terminal, walk, step);
     }
 
     const wanted = dest.questionId ?? dest.screen;
@@ -1157,11 +1438,56 @@ const routeDestination: Predicate = {
             `apart without the document`,
         );
       }
+      // A PASS IS A CLAIM TOO (1.5.0) — AND THE TOKEN READING CANNOT CARRY IT.
+      //
+      // The singleton rule one line up does NOT close this. It refuses when the screen presents
+      // a SECOND SEALED id, and the screen that produces the false pass presents none: it is a
+      // question the seal does not target (so nothing on it resolves), whose prose opens "as you
+      // said in ${wanted}…". The union is then exactly `{${wanted}}` and the case was VERIFIED —
+      // a real routing defect certified as correct.
+      //
+      // THE LINE THAT MOVED IS *WHERE* THE ID WAS PRINTED, NOT WHETHER PROSE MAY PASS. Three
+      // readings may carry a pass and one may not:
+      //
+      //   MARKUP   the fields this screen submits — a back-reference has no `name` attribute.
+      //   WORDING  precision taken against the screen's own HEADING, so quoted body prose cannot
+      //            inflate it. On an instrument that prints no ids at all this is the ONLY
+      //            witness there is, which is why removing it would delete 1.4.0 outright.
+      //   HEADING  the id printed in the screen's own `questionText`/`title` — "Q9. Which
+      //            brands…". A text-id instrument states its identity exactly here, and that is
+      //            a statement about ITSELF.
+      //
+      // What is refused is the id found ONLY in the body of the prose, which is precisely where
+      // "as you said in ${wanted}…" lives and is the one reading that cannot tell a heading from
+      // a quotation. Note the shape of the trade: this keeps every text-id instrument verifiable
+      // (the id is in its heading) while removing the class of screen that merely MENTIONS the
+      // destination. See the 1.5.0 section of the header for the residual it does not close.
+      if (
+        !identity.markup.includes(wanted) &&
+        !identity.wording.includes(wanted) &&
+        !identity.heading.includes(wanted)
+      ) {
+        return insufficient(
+          this.id,
+          VERIFIER_REASON.DESTINATION_PRESENTED_BY_TEXT_TOKEN_ONLY,
+          `the reached screen mentions ${wanted} in its rendered prose, but not in its own heading; no control on ` +
+            `it is named after ${wanted}; and it does not match the document's own wording of ${wanted}. Body prose ` +
+            `carries BACK-REFERENCES ("as you said in ${wanted}…"), so a screen that MENTIONS ${wanted} need not BE ` +
+            `${wanted} — and certifying this route as correct on that alone would conceal a routing defect rather ` +
+            `than report one`,
+        );
+      }
       return {
         outcome: "satisfied",
         reason: VERIFIER_REASON.ROUTE_DESTINATION_REACHED,
         predicate: this.id,
-        detail: `selecting the documented answer advanced to a screen presenting ${wanted}`,
+        detail:
+          `selecting the documented answer advanced to a screen presenting ${wanted}` +
+          (identity.markup.includes(wanted)
+            ? " on its own controls"
+            : identity.heading.includes(wanted)
+              ? " in its own heading"
+              : " through the document's own wording of it"),
       };
     }
 
@@ -1239,6 +1565,193 @@ const routeDestination: Predicate = {
     );
   },
 };
+
+// ---------------------------------------------------------------------------
+// A TERMINAL DESTINATION (1.5.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * THE ENDING THIS STAGE WILL ACT ON — a narrowing of `browser/types.ts`'s own `WalkEndingKind`.
+ *
+ * THE TYPE IS THEIRS, IMPORTED, NOT RE-DECLARED. `WalkEnding` is a four-state vocabulary
+ * (`completed` / `screened-out` / `stalled` / `unclassified`) published by the half that produces
+ * it; a private copy here would be free to drift from the producer, which is the defect 1.4.0
+ * exists to close, one field over.
+ *
+ * ONLY THREE OF THE FOUR REACH A COMPARISON, and it is still validated at RUNTIME rather than
+ * trusted from the type: a walk artifact is JSON re-read from R2, so its `ending` is whatever the
+ * bytes say — including nothing at all, or a literal written by a future driver this build has
+ * never heard of. Both come back `null`, and `null` restores 1.4.0's behaviour exactly. THE
+ * DEGRADATION IS THE CONTRACT, and it is the producer's own stated requirement: "consumers must
+ * read it as 'not decidable', never as an ending. Absence is never a completion."
+ *
+ * NOT `walk.outcome`. That field's `"completed"` means "the step loop exited under budget", and a
+ * real thank-you page lands on `"no-advance-control"` instead — the two-meanings-in-one-value
+ * defect that made a typed ending necessary. Reading it here would be a false friend of exactly
+ * the kind this file exists to refuse.
+ */
+type DecidableEnding = Extract<WalkEndingKind, "completed" | "screened-out" | "stalled">;
+
+function typedWalkEnding(walk: PathObservation): DecidableEnding | "unclassified" | null {
+  const raw: unknown = walk.ending;
+  const kind: unknown = raw && typeof raw === "object" ? (raw as { kind?: unknown }).kind : null;
+  return kind === "completed" || kind === "screened-out" || kind === "stalled" || kind === "unclassified"
+    ? kind
+    : null;
+}
+
+/**
+ * THE SIGNATURE OF THE LAST SCREEN THIS WALK WAS ON — what an ending is an ending OF.
+ *
+ * `screenSignature` is the capture's own content identity for a rendered screen, so comparing two
+ * of them asks "is this the same screen?" without this file inventing a notion of sameness. The
+ * walk's final screen is the last step's post-advance screen when it advanced, and the screen it
+ * was looking at when it stopped when it did not — which is the shape the no-advance-control
+ * path writes.
+ *
+ * WHY THAT COMPARISON CAN SUCCEED AT ALL, CHECKED RATHER THAN ASSUMED. The two sides are TWO
+ * SEPARATE CAPTURES of one screen (step N's `screenAfterAdvance` and step N+1's `screenBefore`),
+ * so a signature containing anything volatile — a timestamp, a progress reading, a live-region
+ * message — would make this fence structurally unable to pass and every terminal case would land
+ * in `TERMINAL_ENDING_NOT_BOUND_TO_DESTINATION` forever, which is fail-SILENT and is exactly the
+ * class of unfailable gate this repository keeps shipping. It is not volatile: `page-script.ts`
+ * builds it as the question text (or the first 200 characters of the body) plus the sorted option
+ * inventory, and DELIBERATELY not the URL. `at` and `url` are captured as separate fields and are
+ * not in it. The driver's own advance poll depends on the same stability.
+ *
+ * AND IF IT EVER STOPS BEING STABLE, the failure is a counted refusal rather than a wrong answer —
+ * which is the only reason a cross-capture comparison is admissible here at all.
+ */
+function finalScreenSignature(walk: PathObservation): string | null {
+  const last = walk.steps.length > 0 ? walk.steps[walk.steps.length - 1] : undefined;
+  if (!last) return null;
+  const screen = last.screenAfterAdvance ?? last.screenBefore ?? null;
+  const sig = screen?.screenSignature;
+  return typeof sig === "string" && sig.length > 0 ? sig : null;
+}
+
+/**
+ * IS THIS SCREEN A DEAD END, by this file's own reading of the re-read bytes?
+ *
+ * DELIBERATELY STRICTER THAN `browser/driver.ts#nextButton`. That function also gives up when
+ * two non-`back` buttons tie with no `next` among them; this one calls such a screen NON-terminal.
+ * The strictness is the point: the two rules can then disagree only in the direction that
+ * WITHHOLDS a verdict, so a drift between the walker's terminality and this one's can cost a
+ * finding and can never fabricate one. A screen with no buttons at all — the ordinary thank-you
+ * or screen-out page — satisfies it.
+ */
+function offersNoAdvanceControl(screen: RenderedScreen): boolean {
+  const buttons = Array.isArray(screen.buttons) ? screen.buttons : [];
+  return buttons.every((b) => !b || b.visible !== true || b.disabled === true || b.role === "back");
+}
+
+/** The sealed terminal each ending is a witness for. `stalled` witnesses none. */
+const ENDING_WITNESSES: Record<DecidableEnding, "complete" | "screenout" | null> = {
+  completed: "complete",
+  "screened-out": "screenout",
+  stalled: null,
+};
+
+/**
+ * DID THIS ANSWER END THE INTERVIEW THE WAY THE DOCUMENT SAYS IT DOES?
+ *
+ * Three recomputed fences before any comparison, in an order chosen so that the OLDEST artifact
+ * takes the OLDEST answer: no typed ending is checked FIRST, and returns the identical reason
+ * 1.4.0 returned for every terminal case. Nothing an older record says changes meaning.
+ *
+ * See the 1.5.0 section of this file's header for why the mismatch arm is admissible and for the
+ * one assumption it rests on that this stage cannot check.
+ */
+function terminalDestination(
+  predicateId: string,
+  wanted: NonNullable<ExpectedDestinationPayload["terminal"]>,
+  walk: PathObservation,
+  step: StepObservation,
+): PredicateResult {
+  const ending = typedWalkEnding(walk);
+  if (!ending) {
+    return insufficient(
+      predicateId,
+      VERIFIER_REASON.TERMINAL_DESTINATION_NOT_DISCRIMINABLE,
+      `the sealed destination is the terminal state "${wanted}", and this walk records no typed ending — so a ` +
+        `completion, a screen-out and a quota-full page are the same bytes here, exactly as they were before ` +
+        `endings were typed. An artifact that predates the field does not become decidable by assuming one`,
+    );
+  }
+  if (ending === "unclassified") {
+    // THE PRODUCER'S OWN COUNTED RESIDUAL, kept as a residual here. `unclassified` means the
+    // walker read the final screen and nothing on it said WHICH kind of ending it was — a
+    // different fact, and a different repair, from an artifact that predates endings altogether.
+    // Folding the two into one bucket would hide a live work item behind a structural one.
+    return insufficient(
+      predicateId,
+      VERIFIER_REASON.TERMINAL_ENDING_UNCLASSIFIED,
+      `the sealed destination is the terminal state "${wanted}", and the walk's own ending is "unclassified": it ` +
+        `reached a screen with nothing left to press and nothing on it said which kind of ending it was. The ` +
+        `producer counts that as undecided and so does this — defaulting it to a completion is the exact defect ` +
+        `the typed ending exists to remove`,
+    );
+  }
+  if (ending === "stalled") {
+    return insufficient(
+      predicateId,
+      VERIFIER_REASON.WALK_DID_NOT_REACH_AN_ENDING,
+      `the sealed destination is the terminal state "${wanted}", but this walk's own ending is "stalled": it ` +
+        `stopped for its own reasons and reached no ending the document names, so it witnesses neither arrival ` +
+        `at the documented terminal nor a failure to arrive`,
+    );
+  }
+  if (wanted === "quota") {
+    return insufficient(
+      predicateId,
+      VERIFIER_REASON.TERMINAL_KIND_HAS_NO_WITNESS,
+      `the sealed destination is the terminal state "quota", which no ending expresses: a quota-full page and a ` +
+        `screen-out page are the same DOM, so the walker cannot draw the distinction either and neither may this`,
+    );
+  }
+
+  const reached = step.screenAfterAdvance;
+  const reachedSig = typeof reached?.screenSignature === "string" ? reached.screenSignature : null;
+  const finalSig = finalScreenSignature(walk);
+  if (!reached || !reachedSig || !finalSig || reachedSig !== finalSig) {
+    return insufficient(
+      predicateId,
+      VERIFIER_REASON.TERMINAL_ENDING_NOT_BOUND_TO_DESTINATION,
+      `this walk ended "${ending}", but the screen this answer advanced to is not the screen the walk ended on ` +
+        `(${reachedSig ?? "no signature"} vs ${finalSig ?? "no signature"}). The walk carried on past this ` +
+        `destination, so how it eventually ended says nothing about where this answer led`,
+    );
+  }
+  if (!offersNoAdvanceControl(reached)) {
+    return insufficient(
+      predicateId,
+      VERIFIER_REASON.DESTINATION_NOT_STRUCTURALLY_TERMINAL,
+      `this walk ended "${ending}", but the screen this answer advanced to still offers a visible, enabled ` +
+        `control that is not a back button — so by this stage's own reading of the same bytes it is not the end ` +
+        `of anything, and the walker's ending and this reading disagree about the screen in front of them`,
+    );
+  }
+
+  const observed = ENDING_WITNESSES[ending];
+  if (observed === wanted) {
+    return {
+      outcome: "satisfied",
+      reason: VERIFIER_REASON.ROUTE_TERMINAL_AS_DOCUMENTED,
+      predicate: predicateId,
+      detail:
+        `the document ends the interview here as "${wanted}"; selecting the documented answer advanced to the ` +
+        `screen this walk ended on, which offers nothing to advance with, and the walk typed that ending "${ending}"`,
+    };
+  }
+  return {
+    outcome: "violated",
+    reason: VERIFIER_REASON.ROUTE_TERMINAL_MISMATCH,
+    predicate: predicateId,
+    detail:
+      `the document ends the interview here as "${wanted}"; selecting the documented answer advanced to the ` +
+      `screen this walk ended on, and the walk typed that ending "${ending}" — the other documented terminal`,
+  };
+}
 
 /** Did this step actually click the documented answer? Exact code, or exact label. */
 function selectedAnswer(step: StepObservation, code: string | null, label: string | null): boolean {
@@ -1535,12 +2048,341 @@ const boundaryOutcome: Predicate = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// OPTION SET — "Q3 must offer 'BIMZELX' as an answer option"
+// ---------------------------------------------------------------------------
+
+/**
+ * ==================== WHAT THIS PREDICATE MAY CONCLUDE, AND FROM WHAT ====================
+ *
+ * THE EXPECTATION is `FacetCase.optionSet` — labels read from the DOCUMENT'S OWN QUOTE at
+ * expansion time and corroborated against the requirement's sentence (`extract/expand.ts`).
+ * THE FACT is one screen's option inventory inside re-read, re-hashed artifact bytes, which
+ * `browser/types.ts` documents as COMPLETE and in DOM order ("a subset here would make every
+ * absence claim unfalsifiable"). Nothing here reads the document, and nothing here reads the
+ * producer's summary of itself.
+ *
+ * ==================== THE ACCUSATION IS ABOUT LABELS. IT IS NEVER ABOUT CODES ====================
+ *
+ * A respondent reads LABELS; a site's answer CODES are an implementation detail it is free to
+ * choose. `test-suite/branching`'s engine emits `value="<document code>"`, but a real platform
+ * numbers from zero, uses positions, or uses GUIDs — and a predicate that accused on a code
+ * mismatch would report a defect on every one of them. So:
+ *
+ *   - PRESENCE is witnessed by a LABEL match. A code match alone never certifies.
+ *   - ABSENCE of a label is the only thing that can make a MISSING claim.
+ *   - A code is a MATCH KEY and a LICENCE, used in exactly one place: the label-mismatch arm,
+ *     and only after the site's code vocabulary has been shown to agree with the document's on
+ *     a DIFFERENT option of the same question (`codeVocabularyLicensed`). Without that witness
+ *     a same-code/different-label pair is far more likely to be two numbering schemes than a
+ *     wording defect, and it is refused.
+ *
+ * ==================== NEAR-VARIANTS ONLY EVER WITHHOLD ====================
+ *
+ * "18-24" in a document and "18 to 24" on a screen are the same option written twice. A
+ * label-equality test alone would call that a MISSING OPTION — a confident defect against a
+ * healthy survey, which is this product's cardinal failure. So a documented label with no
+ * exact match but a NEAR-VARIANT on the screen is `OPTION_LABEL_NEAR_MATCH_ONLY`: insufficient,
+ * counted, nobody accused.
+ *
+ * THE PROPERTY THAT MATTERS AND THAT A TEST PINS: similarity NEVER MINTS AN ACCUSATION ON ITS
+ * OWN. It subtracts (withholding a missing claim, withholding an extra claim), or it gates an
+ * arm that already required an independent code witness. The first "improve the yield" edit
+ * that lets a near-match accuse re-opens exactly the hole this paragraph exists to close.
+ *
+ * ==================== ORDER IS NOT COMPARED, AND THAT IS DELIBERATE ====================
+ *
+ * The seal carries no order claim (`extract/expand.ts`, A8'), so there is nothing here to
+ * compare: a document that permits rotation and a site that rotates are both correct, and the
+ * capture's `order` is DOM order rather than display order. A rotation requirement is a
+ * different construct and would need its own kind, which this change does not add.
+ *
+ * ==================== EXTRA OPTIONS NEED THE DOCUMENT TO CLOSE THE SET ====================
+ *
+ * "The site offers something the document does not list" is an absence claim ABOUT THE
+ * DOCUMENT, and a per-option requirement never entailed it: a question whose "Other" and
+ * "Prefer not to say" are stated in rows this case has not seen would be accused of offering
+ * them. So the arm fires only on `optionSet.exhaustive` — the requirement closed the set in its
+ * own words AND its quote yielded the count it stated — and even then a site option that is a
+ * near-variant of a documented one is not counted as extra.
+ */
+
+/** Alphanumeric tokens, for the similarity test. Deliberately not the whole string. */
+const labelTokens = (s: string): string[] =>
+  String(s ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+
+const labelsEqual = (a: string, b: string): boolean => norm(a) === norm(b);
+
+/**
+ * IS THIS PLAUSIBLY THE SAME OPTION, WORDED DIFFERENTLY?
+ *
+ * Token-set based, so a shared prefix cannot pull two different words together ("no" and
+ * "none" share no token, and must not, because a survey that dropped "No" and kept "None of
+ * the above" HAS lost an option). Two rules, both of which a human would accept at a glance:
+ *
+ *   SUBSET   every token of one appears in the other — "Other" vs "Other (please specify)",
+ *            "18-24" vs "18 to 24".
+ *   JACCARD  at least half the tokens are shared — "Very satisfied" vs "Very dissatisfied" is
+ *            1/3 and is NOT near, which is the case that has to stay separable.
+ *
+ * USED ONLY TO WITHHOLD OR TO GATE. See the header.
+ */
+function nearVariantLabel(a: string, b: string): boolean {
+  const ta = new Set(labelTokens(a));
+  const tb = new Set(labelTokens(b));
+  if (ta.size === 0 || tb.size === 0) return false;
+  let shared = 0;
+  for (const t of ta) if (tb.has(t)) shared += 1;
+  if (shared === ta.size || shared === tb.size) return true;
+  return shared / (ta.size + tb.size - shared) >= 0.5;
+}
+
+type ScreenOption = RenderedScreen["optionGroups"][number]["options"][number];
+
+/**
+ * WHICH OPTION GROUP ON THIS SCREEN IS THE TARGET QUESTION'S?
+ *
+ * ONE group is unambiguous once the screen has identified itself as the target and nothing
+ * else — which `selectCaseStep` already established through `screenIdentity`. With more than
+ * one, the screen hosts more than one answerable thing, and the group must NAME the target
+ * through the same markup reading screen identity uses; anything else is a guess about which
+ * inventory the document's options were meant to be compared against.
+ */
+function targetOptionGroup(
+  screen: RenderedScreen,
+  target: string,
+): { group: RenderedScreen["optionGroups"][number] } | { why: string } {
+  const groups = (screen.optionGroups ?? []).filter((g) => Array.isArray(g?.options) && g.options.length > 0);
+  if (groups.length === 0) return { why: "the screen presented no answer-option inventory at all" };
+  if (groups.length === 1) return { group: groups[0]! };
+  const named = groups.filter((g) => {
+    if (typeof g.name === "string" && g.name === target) return true;
+    const prefix = typeof g.name === "string" ? g.name.split(/[_\-.:$[\]]/)[0] : "";
+    return prefix === target;
+  });
+  if (named.length === 1) return { group: named[0]! };
+  return {
+    why:
+      `the screen carries ${groups.length} answer-option groups (${groups.map((g) => g.name).join(", ")}) and ` +
+      `${named.length} of them name ${target}, so which inventory this requirement's options belong to cannot be ` +
+      `read off the screen`,
+  };
+}
+
+/**
+ * IS THE SITE'S ANSWER-CODE VOCABULARY THE SAME ONE THE DOCUMENT USES?
+ *
+ * Witnessed, not assumed: some OTHER option of this same question, stated by the document with
+ * a code, appears on this screen under that code WITH that label. One such pair is enough to
+ * say the two numbering schemes coincide here; zero means a code comparison would be reading a
+ * position as an identity.
+ */
+const codeVocabularyLicensed = (siblings: readonly { code: string | null; label: string }[], offered: readonly ScreenOption[]): boolean =>
+  siblings.some(
+    (s) => s.code !== null && offered.some((o) => o.code === s.code && labelsEqual(o.label, s.label)),
+  );
+
+const optionSetOffered: Predicate = {
+  id: "option-set-offered/1.0.0",
+  run(expectation, walk, ctx) {
+    const sealed = expectation.optionSet;
+    if (!sealed || !Array.isArray(sealed.asserted) || sealed.asserted.length === 0) {
+      return insufficient(
+        this.id,
+        VERIFIER_REASON.NO_TYPED_EXPECTATION,
+        "the sealed option-set case names no answer option the document requires, so there is nothing to look for",
+      );
+    }
+
+    // THE SAME BINDING RULE AS ROUTE AND BOUNDARY, AND IT IS THE WHOLE DEFENCE AGAINST THE
+    // CARDINAL FAILURE HERE: an option inventory compared against the WRONG screen accuses a
+    // healthy survey of missing options it offers two screens later. The stimulus is "this
+    // screen presented an answer-option inventory", because an option requirement is exercised
+    // by the screen RENDERING, not by anything the driver did to it.
+    const selection = selectCaseStep(this.id, walk, ctx, {
+      performed: (s) => (s.screenBefore?.optionGroups ?? []).some((g) => (g?.options?.length ?? 0) > 0),
+      describe: "presented an answer-option inventory",
+      notPerformed: VERIFIER_REASON.OPTION_INVENTORY_NOT_CAPTURED,
+      notPerformedDetail:
+        "no step in this walk recorded a screen carrying any answer options, so no inventory was ever captured to " +
+        "compare the document's option list against",
+    });
+    if (selection.step === null) return selection.failure;
+    const screen = selection.step.screenBefore;
+    if (!screen) {
+      return insufficient(
+        this.id,
+        VERIFIER_REASON.OPTION_INVENTORY_NOT_CAPTURED,
+        "the bound step carries no screen capture, so there is no inventory to compare",
+      );
+    }
+
+    // A GRID'S INVENTORY IS THE GRID'S, AND THE GRID READ IS THE ONE WITH A KNOWN OFFSET
+    // DEFECT BEHIND IT (`browser/types.ts#ReaderLimitation`). Refuse rather than compare a
+    // document's option list against cells whose column attribution this stage cannot check.
+    if (screen.grid) {
+      return insufficient(
+        this.id,
+        VERIFIER_REASON.OPTION_SET_ON_A_GRID_NOT_COMPARED,
+        "the screen carries a grid, whose option inventory is per-row cells rather than one list; comparing a " +
+          "document's option list against it needs the row and column attribution this stage cannot recompute",
+      );
+    }
+
+    const attributed = targetOptionGroup(screen, ctx.targetQuestionId ?? "");
+    if ("why" in attributed) {
+      return insufficient(this.id, VERIFIER_REASON.OPTION_GROUP_NOT_ATTRIBUTABLE, attributed.why);
+    }
+    const offered = attributed.group.options;
+
+    // THE READ MUST HAVE SAID IT WENT WELL, AND SAYING NOTHING IS NOT SAYING IT WENT WELL.
+    // `readerLimitations` is an EMPTY ARRAY when the reader looked and found none, and ABSENT
+    // on a capture that predates the check (`browser/types.ts`: "absence is never none"). Only
+    // the ACCUSING arms need this — a PASS is a positive label match, which a degraded read can
+    // only ever cost.
+    const limitations = screen.readerLimitations;
+    const accusable = Array.isArray(limitations) && limitations.length === 0;
+    const notAccusable = (what: string): PredicateResult =>
+      insufficient(
+        this.id,
+        VERIFIER_REASON.OPTION_INVENTORY_READ_NOT_ATTESTED,
+        `${what}, but the capture of this screen ${
+          Array.isArray(limitations)
+            ? `reported ${limitations.length} reader limitation(s) (${limitations.map((l) => l.kind).join(", ")})`
+            : "recorded no reader-limitation state at all"
+        }, so the inventory it presents is not a complete positive read and cannot support a claim about what is absent from it`,
+      );
+
+    const missing: string[] = [];
+    const mismatched: string[] = [];
+    const withheld: string[] = [];
+    const hidden: string[] = [];
+
+    for (const want of sealed.asserted) {
+      const exact = offered.filter((o) => labelsEqual(o.label, want.label));
+      if (exact.length > 0) {
+        // OFFERED IS NOT THE SAME AS AVAILABLE. An option present in the markup but invisible
+        // or inoperable is neither "as documented" nor "missing", and calling it either would
+        // be picking a claim the evidence does not distinguish.
+        if (exact.some((o) => o.visible !== false && o.operable !== false)) continue;
+        hidden.push(want.label);
+        continue;
+      }
+      const near = offered.filter((o) => nearVariantLabel(o.label, want.label));
+      if (near.length === 0) {
+        missing.push(want.code === null ? want.label : `${want.code}=${want.label}`);
+        continue;
+      }
+      const byCode = want.code === null ? [] : offered.filter((o) => o.code === want.code);
+      if (
+        byCode.length === 1 &&
+        nearVariantLabel(byCode[0]!.label, want.label) &&
+        codeVocabularyLicensed(sealed.siblings, offered)
+      ) {
+        mismatched.push(`the document's ${want.code}=${JSON.stringify(want.label)} is rendered ${JSON.stringify(byCode[0]!.label)}`);
+        continue;
+      }
+      withheld.push(
+        `${JSON.stringify(want.label)} (the screen offers ${near.map((o) => JSON.stringify(o.label)).join(", ")})`,
+      );
+    }
+
+    // WITHHOLDING DOMINATES. A case that is unsure about ANY of its options is unsure, full
+    // stop: reporting the confident half as a defect while quietly dropping the doubtful half
+    // is how a partial reading becomes a whole accusation.
+    if (withheld.length > 0) {
+      return insufficient(
+        this.id,
+        VERIFIER_REASON.OPTION_LABEL_NEAR_MATCH_ONLY,
+        `the screen offers no option labelled exactly as the document states, but it does offer a near variant of ` +
+          `each: ${withheld.join("; ")}. A document and a site can word one option two ways, and calling that a ` +
+          `missing option would accuse a survey that offers it`,
+      );
+    }
+    if (hidden.length > 0) {
+      return insufficient(
+        this.id,
+        VERIFIER_REASON.OPTION_PRESENT_BUT_NOT_OPERABLE,
+        `the screen carries ${hidden.map((l) => JSON.stringify(l)).join(", ")} in its markup, but every instance is ` +
+          `hidden or inoperable at this viewport; "offered to the respondent" and "present in the DOM" are different ` +
+          `claims and this evidence does not separate them`,
+      );
+    }
+
+    if (missing.length > 0) {
+      if (!accusable) return notAccusable(`the screen offers no option labelled ${missing.join(", ")}`);
+      return {
+        outcome: "violated",
+        reason: VERIFIER_REASON.OPTION_MISSING,
+        predicate: this.id,
+        detail:
+          `the document requires this question to offer ${missing.join(", ")}; the screen's complete option ` +
+          `inventory (${offered.map((o) => JSON.stringify(o.label)).join(", ")}) contains no such label and no ` +
+          `variant of one`,
+      };
+    }
+    if (mismatched.length > 0) {
+      if (!accusable) return notAccusable(`the screen renders a documented option under different wording`);
+      return {
+        outcome: "violated",
+        reason: VERIFIER_REASON.OPTION_LABEL_MISMATCH,
+        predicate: this.id,
+        detail:
+          `${mismatched.join("; ")}. The site's answer codes are corroborated against this document's on another ` +
+          `option of the same question, so the two are the same option under different wording`,
+      };
+    }
+
+    if (sealed.exhaustive) {
+      const documented = [...sealed.asserted, ...sealed.siblings];
+      const extra = offered.filter(
+        (o) => !documented.some((d) => labelsEqual(o.label, d.label) || nearVariantLabel(o.label, d.label)),
+      );
+      if (extra.length > 0) {
+        if (!accusable) return notAccusable(`the screen offers ${extra.length} option(s) the document does not list`);
+        return {
+          outcome: "violated",
+          reason: VERIFIER_REASON.OPTION_OFFERED_NOT_DOCUMENTED,
+          predicate: this.id,
+          detail:
+            `the document closes this question's option set and the screen offers ` +
+            `${extra.map((o) => JSON.stringify(o.label)).join(", ")}, which it does not list`,
+        };
+      }
+    }
+
+    return {
+      outcome: "satisfied",
+      reason: VERIFIER_REASON.OPTION_SET_AS_DOCUMENTED,
+      predicate: this.id,
+      detail:
+        `every answer option this requirement states is offered on the screen it was compared against` +
+        (sealed.exhaustive ? ", and the screen offers nothing the document does not list" : ""),
+      // AN EXHAUSTIVE PASS IS PARTLY AN ABSENCE CLAIM ("and nothing else"), so it is routed
+      // through the completeness guard in `decideObservation` — the first predicate to use it.
+      // A membership pass is a positive label match and is not.
+      fromAbsence: sealed.exhaustive,
+    };
+  },
+};
+
 /**
  * THE REGISTRY. Case kinds absent from this table are UNVERIFIABLE BY THIS STAGE — the
  * lookup returns undefined and the decision is `insufficient`. There is no default
  * predicate, because a default is how an unrecognised case kind would acquire a pass.
+ *
+ * EXPORTED SINCE 1.6.0 for one reason: `extract/expand.ts#KINDS_WITH_A_PREDICATE` decides
+ * whether a sealed case is reported as TYPED, and it is a second copy of this table's key set.
+ * `tools/tests/d45-option-set.test.mjs` asserts the two are set-EQUAL, so the drift that file's
+ * own comment warns about turns the suite red rather than mis-reporting the ceiling.
  */
-const PREDICATE_FOR_KIND: Partial<Record<FacetCase["kind"], Predicate>> = {
+export const PREDICATE_FOR_KIND: Partial<Record<FacetCase["kind"], Predicate>> = {
   route: routeDestination,
   boundary: boundaryOutcome,
+  "option-set": optionSetOffered,
 };

@@ -1,0 +1,8 @@
+[b0001] (heading) SECTION I — PRICING
+[b0002] Q20. What do you currently pay per month for electricity?
+[b0003] Q21. And what would you consider a fair monthly price?
+[b0004] WATERMARK NOTE: this version is DRAFT ONLY. Do not script until the client has signed off Section I.
+[b0005] (image-alt ) [image with no alt text — content unreadable]
+[b0006] (header ) DRAFT — NOT FOR FIELD
+[b0007] (header ) CONFIDENTIAL — prepared for Northwind Utilities plc | Project 41-2287 | v6.2
+[b0008] (footer ) All monetary values shown to respondents must be in GBP and rounded to the nearest £1. Do not show pence.

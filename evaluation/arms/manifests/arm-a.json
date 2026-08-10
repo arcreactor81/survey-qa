@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "ARM A — MODEL-ONLY. Ablation role: the hybrid minus the graph (C - A = what the graph adds).",
+    "",
+    "THIS MANIFEST DESCRIBES ARM A AS PRE-REGISTRATION.md §1.1 DEFINES IT, NOT AS worker-v2",
+    "IS BUILT. §1.1: 'An LLM navigates the site, decides what to test, reports findings.",
+    "Coverage is ATTESTED by the model.' worker-v2 does none of that -- it plans",
+    "deterministically (plan-core.js: 'zero model calls'), walks deterministically, and",
+    "derives verdicts deterministically, with model calls in EXTRACTION ONLY",
+    "(docs/STATE-OF-PLAY.md §5: '7 in total, all extraction ... zero during navigation and",
+    "judging').",
+    "",
+    "So `plan` and `judge` name components that DO NOT EXIST, and verify.mjs reports arm A as",
+    "a maturity blocker. That is the honest state and it is the subject of the proposed",
+    "amendment in ARCHITECTURE.md §11.1 -- a design fork for the owner, not a bug to patch.",
+    "Writing `v2-two-tier` here instead would make arm A resolve today and would silently",
+    "redefine the ablation baseline."
+  ],
+  "manifestVersion": "survey-qa-arm-manifest/1.0.0",
+  "armId": "A",
+  "label": "model-only",
+  "workerName": "survey-qa-arm-a",
+  "components": {
+    "ingest": "shared-sealed",
+    "structure": "none",
+    "plan": "model-attested",
+    "traverse": "harness-walk",
+    "judge": "model-freeform"
+  },
+  "sharedIngestRevision": null,
+  "declaredAttribution": ["model", "unattributed"]
+}

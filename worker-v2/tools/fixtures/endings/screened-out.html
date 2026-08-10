@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Endings fixture — a respondent who is turned away</title>
+</head>
+<body>
+<!--
+  A REAL BROWSER PROOF THAT A SCREEN-OUT IS NOT A COMPLETION.
+
+  `outcome: "no-advance-control"` used to be the only thing recorded here, and it is the same
+  value a finished survey produces — so a respondent turned away at the screener and a
+  respondent who answered every question were the same bytes. This page ends on the wording a
+  real instrument uses (measured on the t1-easy target, where the screen-out path was reached
+  twice and nothing could tell it apart from a normal ending): it thanks you AND disqualifies
+  you, which is exactly why the screen-out lexicon is consulted before the completion one.
+
+  Deliberately hand-written HTML, not a survey platform: the classifier must work off what the
+  page says and the controls it offers, not off any framework's conventions.
+-->
+<div id="screen"></div>
+<script>
+  var STATE = { at: 0 };
+  function render() {
+    var el = document.getElementById('screen');
+    if (STATE.at === 0) {
+      el.innerHTML =
+        '<h2>S1. Are you currently practising in the specialty this study covers?</h2>' +
+        '<div><label><input type="radio" name="S1" value="1"> Yes</label></div>' +
+        '<div><label><input type="radio" name="S1" value="2"> No</label></div>' +
+        '<div><button type="button" id="go">Next</button></div>';
+      document.getElementById('go').addEventListener('click', function () {
+        STATE.at = 1;
+        render();
+      });
+      return;
+    }
+    el.innerHTML =
+      '<h2>Thank you for your interest in this survey.</h2>' +
+      '<p>Unfortunately, on this occasion you do not qualify to take part. ' +
+      'Your answers have not been recorded.</p>';
+  }
+  render();
+</script>
+</body>
+</html>

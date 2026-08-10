@@ -1,0 +1,23 @@
+[b0001] (heading) SECTION E — BRAND AWARENESS
+[b0002] Q14. Which of these suppliers have you heard of? SHOW LIST A. SELECT ALL THAT APPLY.
+[b0003] Q15. And which have you ever switched to? SHOW LIST A, PUNCHED AT Q14.
+[b0004] Q16. Which of these tariff types are you aware of? SHOW LIST B. SINGLE CODE.
+[b0005] (heading) APPENDIX 1 — MASTER CODE LISTS
+[b0006] LIST A — Energy suppliers (randomise 1-9, anchor 98 and 99)
+[b0007] 1. Britannia Power
+[b0008] 2. Kestrel Energy
+[b0009] 3. Northwind Utilities
+[b0010] 4. Sable & Co Energy
+[b0011] 5. Verdant Grid
+[b0012] 6. OrbitOne
+[b0013] 7. Halcyon Supply
+[b0014] 8. Trellis Energy
+[b0015] 9. Marchmont Gas & Power
+[b0016] 98. Other (specify)
+[b0017] 99. None of these — EXCLUSIVE
+[b0018] LIST B — Tariff types (do NOT randomise; keep in order shown)
+[b0019] 1. Fixed-rate, 12 month
+[b0020] 2. Fixed-rate, 24 month
+[b0021] 3. Standard variable
+[b0022] 4. Time-of-use / Economy 7
+[b0023] 5. Green-only tariff

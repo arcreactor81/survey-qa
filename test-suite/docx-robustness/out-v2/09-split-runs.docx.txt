@@ -1,0 +1,7 @@
+[b0001] (heading) SECTION K — RUN FRAGMENTATION
+[b0002] Q30. How satisfied are you with the speed of the callout service?
+[b0003] Q31. Would you recommend Northwind to a friend?
+[b0004] IF Q31 = 1 THEN TERMINATE (T9)
+[b0005] SCREEN OUT anyone under 18 years of age.
+[b0006] Q32. Please read the privacy notice at northwind.example/privacy before continuing.
+[b0007] Document page 3 of 7 — quota table continues overleaf.

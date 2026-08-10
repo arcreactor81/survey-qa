@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Endings fixture — a survey the walker cannot get past</title>
+</head>
+<body>
+<!--
+  A REAL BROWSER PROOF THAT A STALL IS NOT AN ENDING.
+
+  THIS IS THE HALF THAT MATTERS. Anything can report "completed" on a page that says thank you;
+  the failure this whole change exists to close is the OTHER direction — four medical walks that
+  never left screen 1, recorded 38 captures of that one screen, and had that number read upward
+  as progress. So the fixture that has to exist is one where the walk gets nowhere and the
+  record must SAY SO.
+
+  This page offers a Next button that is enabled, hit-testable and does nothing at all. The
+  walker presses it, the screen never changes, and the ending must come back `stalled` with the
+  still-present advance control named — never `completed`, never `unclassified`, and never a
+  silence that reads as an ending.
+-->
+<div id="screen">
+  <h2>Q1. Which of the following have you used in the past 12 months?</h2>
+  <div><label><input type="radio" name="Q1" value="1"> Option one</label></div>
+  <div><label><input type="radio" name="Q1" value="2"> Option two</label></div>
+  <div><button type="button" id="go">Next</button></div>
+</div>
+<script>
+  // Enabled, drawn, clickable — and inert. The commonest shape of a survey defect that a
+  // walker must report as "we did not get past this", not as "the survey ended here".
+  document.getElementById('go').addEventListener('click', function () { /* deliberately inert */ });
+</script>
+</body>
+</html>

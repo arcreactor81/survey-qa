@@ -32,8 +32,16 @@ import type {
   SourceBlock,
 } from "./types";
 import { dropCounts } from "./coerce";
+import { sourceAtomRole } from "./source-role";
 
-export const MERGE_VERSION = "v2-extract-merge/1.0.0";
+export { NON_ANSWER_OPTION_SOURCE_ROLE, isNonAnswerOptionSourceRole, sourceAtomRole } from "./source-role";
+
+/**
+ * 1.1.0 makes two parser-origin facts survive into the sealed source atoms. A revision
+ * merged by 1.0.0 cannot be reused safely: an open combo-box suggestion or a ruby reading
+ * looked exactly like an ordinary option source to the deterministic expander.
+ */
+export const MERGE_VERSION = "v2-extract-merge/1.1.0";
 export const LEDGER_VERSION = "v2-source-ledger/1.0.0";
 
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
@@ -158,7 +166,7 @@ export interface SourceLedger {
  */
 const MAX_IDENTITY_LEVEL = 2;
 
-interface IdentitySeed {
+export interface IdentitySeed {
   statement: string;
   docQuote: string;
   scope: string;
@@ -176,7 +184,7 @@ interface IdentitySeed {
  * version object, which is part of the hashed JSON. `tools/tests/d27-identity-collision`
  * pins this against the literal pre-fix formula.
  */
-async function mintIdentity(seed: IdentitySeed, level: number): Promise<{ fingerprintHex: string; versionHex: string }> {
+export async function mintIdentity(seed: IdentitySeed, level: number): Promise<{ fingerprintHex: string; versionHex: string }> {
   const base = `${seed.construct}|${normalizeText(seed.statement)}`;
   const version = {
     s: seed.statement,
@@ -209,6 +217,27 @@ async function mintIdentity(seed: IdentitySeed, level: number): Promise<{ finger
   };
 }
 
+/** The one projection from semantic identity material to public requirement identifiers. */
+export async function deriveRequirementIdentity(
+  seed: IdentitySeed,
+  level: number,
+): Promise<{
+  requirementLineageId: string;
+  requirementVersionId: string;
+  semanticFingerprint: string;
+  fingerprintHex: string;
+  versionHex: string;
+}> {
+  const { fingerprintHex, versionHex } = await mintIdentity(seed, level);
+  return {
+    requirementLineageId: `req_${shortId(fingerprintHex, 12)}`,
+    requirementVersionId: `reqv_${versionHex.slice(0, 24)}`,
+    semanticFingerprint: `fp_${fingerprintHex.slice(0, 16)}`,
+    fingerprintHex,
+    versionHex,
+  };
+}
+
 /** Normalize one raw item into a sealed-contract requirement row. */
 async function toRequirement(
   raws: RawRequirement[],
@@ -222,7 +251,7 @@ async function toRequirement(
     (x, y) => y.blockIds.length - x.blockIds.length || y.confidence - x.confidence,
   )[0]!;
 
-  const { fingerprintHex, versionHex } = await mintIdentity(
+  const identity = await deriveRequirementIdentity(
     {
       statement: primary.statement,
       docQuote: primary.docQuote,
@@ -247,7 +276,7 @@ async function toRequirement(
         blockId: id,
         kind: b?.kind === "heading" || b?.kind === "list-item" ? b.kind : (b?.kind ?? "paragraph"),
         coords: b?.coords ?? null,
-        role: primary.construct,
+        role: sourceAtomRole(b, primary.construct),
         atomTextHash: `sha256:${quoteHash}`,
       });
     }
@@ -257,9 +286,9 @@ async function toRequirement(
   return {
     // Deterministic: the same document + the same reading yields the same lineage id on a
     // re-run, which is what makes a cross-run comparison of a result cell mean anything.
-    requirementLineageId: `req_${shortId(fingerprintHex, 12)}`,
-    requirementVersionId: `reqv_${versionHex.slice(0, 24)}`,
-    semanticFingerprint: `fp_${fingerprintHex.slice(0, 16)}`,
+    requirementLineageId: identity.requirementLineageId,
+    requirementVersionId: identity.requirementVersionId,
+    semanticFingerprint: identity.semanticFingerprint,
     scope: primary.scope,
     quantifier: (["every", "each", "only", "any", "none", "specific"].includes(primary.quantifier)
       ? primary.quantifier
@@ -276,6 +305,7 @@ async function toRequirement(
     composition: null,
     normativeStatement: primary.statement,
     displayQuote: primary.docQuote,
+    displayQuoteHash: `sha256:${quoteHash}`,
     retiredAt: null,
   };
 }

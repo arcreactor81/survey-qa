@@ -97,12 +97,14 @@ const MUTANTS = [
     name: "the seam stops distinguishing the two readings — everything counts as markup",
     breaks: "provenance is the whole point of the seam; without it the accusing arm is unguarded again",
     file: VERIFY,
-    // RE-ANCHORED for 1.4.0. The seam gained a THIRD witness (the document's own wording), so
-    // the union is now built into `ids` on its own line and the return names four fields. The
-    // property under test is unchanged and the mutation is the same one: collapse the
-    // provenance by declaring the whole union to be markup, which un-guards the accusing arm.
-    find: "  return { ids, text: [...new Set(text)], markup, wording };",
-    replace: "  return { ids, text: [...new Set(text)], markup: ids, wording };",
+    // RE-ANCHORED for 1.4.0, and again for 1.5.0. 1.4.0 gave the seam a THIRD witness (the
+    // document's own wording); 1.5.0 split the text reading into the SUBSET printed in the
+    // screen's own heading, which the `satisfied` arm needs and which is a strict subset of
+    // `text`, so `ids` is unchanged. The property under test and the mutation are the same in
+    // both revisions: collapse the provenance by declaring the whole union to be markup, which
+    // un-guards the accusing arm.
+    find: "  return { ids, text: [...new Set(text)], heading: [...new Set(heading)], markup, wording };",
+    replace: "  return { ids, text: [...new Set(text)], heading: [...new Set(heading)], markup: ids, wording };",
     kills: ["THE ONE THAT MATTERS: a screen that says 'as you said in Q2' must not be reported AS Q2"],
   },
   {

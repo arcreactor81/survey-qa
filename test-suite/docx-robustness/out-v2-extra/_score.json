@@ -1,0 +1,27 @@
+{
+  "suite": "corpus-v2-extra",
+  "passed": 12,
+  "total": 31,
+  "failing": [
+    "21-gridspan-header-vmerge.docx (cell r3c2 col=\"City\") Manchester",
+    "21-gridspan-header-vmerge.docx col=\"Awareness\") aware-no",
+    "21-gridspan-header-vmerge.docx col=\"Price\") 42 GBP",
+    "21-gridspan-header-vmerge.docx col=\"Price\") weekly",
+    "21-gridspan-header-vmerge.docx col=\"Usage\") aware-no",
+    "21-gridspan-header-vmerge.docx col=\"Usage\") weekly",
+    "21-gridspan-header-vmerge.docx row=\"METRO\" col=\"City\") Manchester",
+    "22-gridbefore-ragged-row.docx col=\"Aware\") monthly",
+    "22-gridbefore-ragged-row.docx col=\"Aware\") no",
+    "22-gridbefore-ragged-row.docx col=\"Brand\") no",
+    "22-gridbefore-ragged-row.docx col=\"Use\") monthly",
+    "23-ruby-furigana.docx Q17. 電気の契約について。",
+    "23-ruby-furigana.docx けいやく",
+    "23-ruby-furigana.docx でんき",
+    "24-dropdown-value-shapes.docx (list) Prefer not to say",
+    "24-dropdown-value-shapes.docx (list) Under 20 GBP",
+    "24-dropdown-value-shapes.docx (list) Yes, definitely",
+    "26-tblheader-not-row-0.docx col=\"Aware\") 62%",
+    "26-tblheader-not-row-0.docx col=\"Use\") 41%"
+  ],
+  "policyFailing": []
+}

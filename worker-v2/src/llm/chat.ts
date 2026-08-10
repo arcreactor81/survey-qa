@@ -228,8 +228,13 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
   });
 }
 
+/**
+ * Preserve the calculated charge here. The durable usage authority applies its conservative
+ * micro-dollar ceiling; rounding at the transport boundary would erase sub-micro tails before
+ * the cap could account for them.
+ */
 export const costOf = (spec: ProviderSpec, inTok: number, outTok: number): number =>
-  Math.round(((inTok / 1e6) * spec.inputUsdPerMTok + (outTok / 1e6) * spec.outputUsdPerMTok) * 1e6) / 1e6;
+  (inTok / 1e6) * spec.inputUsdPerMTok + (outTok / 1e6) * spec.outputUsdPerMTok;
 
 /** Lenient parse: strip fences, then fall back to the outermost {...} span. */
 export function parseJsonObject(content: string): Record<string, unknown> | null {
