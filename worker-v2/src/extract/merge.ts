@@ -40,9 +40,18 @@ export { NON_ANSWER_OPTION_SOURCE_ROLE, isNonAnswerOptionSourceRole, sourceAtomR
  * 1.1.0 makes two parser-origin facts survive into the sealed source atoms. A revision
  * merged by 1.0.0 cannot be reused safely: an open combo-box suggestion or a ruby reading
  * looked exactly like an ordinary option source to the deterministic expander.
+ *
+ * 1.2.0 restricts the ledger's row accounting to true `kind === "table-cell"` blocks: a
+ * lifted combo-box suggestion or ruby reading hosted at table coordinates is no longer
+ * absorbed behind a cited sibling cell, and citing one no longer accounts its row's real
+ * cells. A 1.1.0 merge could silently swallow an uncited open suggestion in a cited row —
+ * a coverage hole the ledger never named (Codex review, blocker 3).
  */
-export const MERGE_VERSION = "v2-extract-merge/1.1.0";
-export const LEDGER_VERSION = "v2-source-ledger/1.0.0";
+export const MERGE_VERSION = "v2-extract-merge/1.2.0";
+// v2-source-ledger/1.1.0 — `accountedVia` is granted only to true table-cell blocks; a
+// lifted origin-bearing block now appears as its own entry (cited, or named unexplained),
+// never row-absorbed. A 1.0.0 ledger may under-report unexplainedNormativeBlocks.
+export const LEDGER_VERSION = "v2-source-ledger/1.1.0";
 
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 const shortId = (hex: string, n: number): string => {
@@ -114,7 +123,11 @@ export interface SourceLedger {
     kind: string;
     disposition: string;
     citedBy: string[];
-    /** Present only when the block is accounted for by its ROW rather than by itself. */
+    /**
+     * Present only when the block is accounted for by its ROW rather than by itself. Only a
+     * true `table-cell` block is eligible: lifted origin-bearing blocks (combo-box
+     * suggestions, ruby readings) are never row-absorbed and never carry this.
+     */
     accountedVia?: { by: "table-row"; row: string; citedBy: string[] };
   }>;
 }
@@ -662,8 +675,16 @@ export function buildLedger(
   // requirement still has to name a real block of that row, the row still has to be read,
   // and the ledger entry records which row carried it, so an auditor can see the mechanism
   // rather than a silently-passing count. Nothing outside a shared table row is covered.
+  //
+  // ROW-ACCOUNTABILITY REQUIRES A TRUE TABLE CELL. An origin-bearing block LIFTED to its
+  // host cell's coordinates (a combo-box suggestion, a ruby reading — DOCX 1.3.0) carries
+  // tableId+coords as PROVENANCE, not as row membership. It is never absorbed behind a
+  // cited sibling cell, and citing it never accounts the row's real cells: it stays
+  // individually accountable — cited, or counted unaccounted — which is what stops an
+  // uncited open suggestion silently vanishing behind an ordinary cited cell in the same
+  // row (Codex review, blocker 3). `pass-b.ts#unaccountedBlocks` counts the same way.
   const rowKey = (b: SourceBlock): string | null =>
-    b.tableId !== null && b.coords !== null ? `${b.tableId}#r${b.coords.row}` : null;
+    b.kind === "table-cell" && b.tableId !== null && b.coords !== null ? `${b.tableId}#r${b.coords.row}` : null;
   const citedRows = new Map<string, string[]>();
   for (const b of blocks) {
     const key = rowKey(b);

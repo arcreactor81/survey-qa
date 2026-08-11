@@ -18,7 +18,13 @@
 import { CONSTRUCT_CLASSES } from "./types";
 
 export const PROMPT_VERSION_A = "v2-extract-pass-a/1.1.0";
-export const PROMPT_VERSION_B = "v2-extract-pass-b/1.1.0";
+// v2-extract-pass-b/1.2.0 — PROMPT TEXT UNCHANGED. This constant is also the version gate
+// on every persisted pass-B artifact (chunks, sweeps, the whole-pass payload), so it covers
+// what pass B COMPUTES from a parse, not just the words it sends: 1.2.0 restricts the
+// unaccounted-sweep's row accounting to `kind === "table-cell"`, so a lifted combo-box
+// suggestion or ruby reading in a cited row is SWEPT instead of silently absorbed. A 1.1.0
+// artifact may have skipped exactly those blocks and must not be reused.
+export const PROMPT_VERSION_B = "v2-extract-pass-b/1.2.0";
 
 const SHARED_GROUND_RULES = `BINDING GROUND RULE
 The questionnaire document is the SOLE source of truth. You have never seen the implemented

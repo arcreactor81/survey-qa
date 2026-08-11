@@ -360,8 +360,10 @@ const MUTANTS = [
     name: "the first option group on the screen is assumed to be the target's",
     breaks: "comparing a document's options against another question's inventory accuses a healthy survey",
     file: VERIFY,
-    find: "  if (named.length === 1) return { group: named[0]! };",
-    replace: "  if (groups.length >= 1) return { group: groups[0]! };",
+    // Re-anchored for 1.8.1: acceptance carries its provenance; the mutant hands the first
+    // group back AS IF name-attributed, so every arm (extra included) treats it as the target's.
+    find: '  if (named.length === 1) return { group: named[0]!, attribution: "named" };',
+    replace: '  if (groups.length >= 1) return { group: groups[0]!, attribution: "named" };',
     kills: [
       "NEVER ACCUSED: a grid is not compared, and a screen hosting two groups is not guessed at",
       "FIX C1: the consent-checkbox case — a sole unrelated group beside a free-text target refuses",
@@ -378,7 +380,10 @@ const MUTANTS = [
       "a consent checkbox, another question's radios — inherits the comparison and a healthy survey is accused",
     file: VERIFY,
     find: "  const named = groups.filter((g) => {",
-    replace: "  if (groups.length === 1) return { group: groups[0]! };\n  const named = groups.filter((g) => {",
+    // "attribution: named" is the faithful rendering of the original bug: the sole group was
+    // believed to be the target's outright, so every arm — the extra arm included — ran on it.
+    replace:
+      '  if (groups.length === 1) return { group: groups[0]!, attribution: "named" };\n  const named = groups.filter((g) => {',
     kills: [
       "FIX C1: the consent-checkbox case — a sole unrelated group beside a free-text target refuses",
       "FIX C1 respin: a sole '(unnamed)' group is refused — never satisfied, never violated",
@@ -421,9 +426,24 @@ const MUTANTS = [
       "a screen carrying a text entry (or any other candidate rendering) beside an unattributed sole group can " +
       "have that group's inventory read as the target's — the exact borrowed-comparison FIX C1 exists to refuse",
     file: VERIFY,
-    find: "    if (otherAnswerable.length === 0) return { group: groups[0]! };",
-    replace: "    if (true) return { group: groups[0]! };",
+    find: '    if (otherAnswerable.length === 0) return { group: groups[0]!, attribution: "only-answerable" };',
+    replace: '    if (true) return { group: groups[0]!, attribution: "only-answerable" };',
     kills: ["FIX C1 respin boundary: a sole 'answer' group beside an answerable text input refuses"],
+  },
+  {
+    // 1.8.1 guard (Codex review BLOCKER 1): the clause-(ii) licence gate on the offered-extra
+    // arm is deleted — the pre-1.8.1 arm, verbatim. `page-script.ts` merges radio/checkbox
+    // controls into groups by NAME alone, so a target and a consent question sharing one
+    // control name fuse into ONE group; an exhaustive target then accuses the fused-in
+    // consent option as an undocumented offer — the confident false accusation 1.8.1 closes.
+    name: "the offered-extra arm is re-licensed under the only-answerable clause (pre-1.8.1)",
+    breaks:
+      "a sole group accepted only as the screen's one answerable thing may be a NAME-FUSION of two questions; " +
+      "accusing its extra entries reads the other fused question's option as the target's undocumented offer",
+    file: VERIFY,
+    find: '        if (attributed.attribution !== "named") {',
+    replace: "        if (false) {",
+    kills: ["FIX 1.8.1: a fused target+consent group under one name never mints the extra-option accusation"],
   },
   {
     // FIX C2 guard: the extra arm's offered-vs-present split is deleted — the pre-1.7.0 arm.

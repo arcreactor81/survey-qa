@@ -9,7 +9,7 @@
  * the node suite pins the parts that are (the derivation table, the refusal, the naming) and this
  * proves the rest against the thing itself.
  *
- * FOUR FIXTURES, AND THE SECOND IS THE LOAD-BEARING ONE:
+ * FIVE FIXTURES, AND THE SECOND IS THE LOAD-BEARING ONE:
  *
  *   1. EVERY TYPE  — one screen carrying every control a respondent can answer, gated by a Next
  *                    that stays disabled until the form is constraint-VALID. The walk may only
@@ -30,6 +30,14 @@
  *                    disabled until the page's script computes whole numbers summing to
  *                    exactly 100. An advance here is the page's arbitration that the driver's
  *                    allocation split satisfied the site's constant-sum rule.
+ *   5. ALLOCATION, STEP-CONSTRAINED — the 11 Aug review counterexample in a real engine:
+ *                    total 20 over {min 0, max 5, step 3} + {min 0, max 20, step 1}, with Next
+ *                    gated on the form's OWN checkValidity() as well as the sum. The pre-fix
+ *                    clamp cut the snapped share to the RAW max and wrote [5,15]; 5 is
+ *                    stepMismatch in the engine itself ({0, 3} is all that input admits), so
+ *                    only a lattice-valid split — [3,17] — can advance here. This is the
+ *                    fixture that makes "the driver never knowingly writes an invalid value"
+ *                    a claim arbitrated by the engine, not by the harness about itself.
  *
  * LOCAL CHROME ONLY. Nothing here touches Browser Rendering.
  *
@@ -202,6 +210,54 @@ const ALLOCATION = `<!doctype html>
     var cell = document.getElementById('alloc-total');
     if (cell) cell.textContent = String(sum);
     next.disabled = !(all && sum === 100);
+  }
+  f.addEventListener('input', sync);
+  f.addEventListener('change', sync);
+  next.addEventListener('click', function () {
+    document.getElementById('root').remove();
+    document.getElementById('end').style.display = '';
+    document.title = 'done';
+  });
+  sync();
+</script>
+</body></html>`;
+
+/**
+ * Fixture 5 — the review counterexample, arbitrated by the engine. Same shape as ALLOCATION
+ * (table, one number input per row, live Total mirror, target only in prose) but the inputs
+ * declare min/max/step, and the gate adds the form's own checkValidity(): a value off an
+ * input's step grid is stepMismatch IN THE ENGINE, so Next never enables for [5,15].
+ */
+const ALLOCATION_STEPPED = `<!doctype html>
+<html><head><title>Q7. Split your hours</title></head><body>
+<div id="root">
+  <h2 id="q">Q7. Split your weekly clinic hours across the two services.</h2>
+  <p class="instruction">Enter a value in every row. Your answers must sum to exactly 20.</p>
+  <form id="f">
+    <table class="alloc">
+      <tr><td>Group clinics</td><td><input type="number" name="q7_r1" data-row="r1" min="0" max="5" step="3"></td></tr>
+      <tr><td>One-to-one consultations</td><td><input type="number" name="q7_r2" data-row="r2" min="0" max="20" step="1"></td></tr>
+      <tr class="alloc-total"><td>Total</td><td id="alloc-total">0</td></tr>
+    </table>
+  </form>
+  <button id="next" type="button" disabled>Next</button>
+</div>
+<div id="end" style="display:none"><h2>Thank you for completing the survey.</h2><p>Your responses have been recorded.</p></div>
+<script>
+  var f = document.getElementById('f');
+  var next = document.getElementById('next');
+  function sync() {
+    var sum = 0;
+    var all = true;
+    Array.prototype.forEach.call(f.querySelectorAll('input[data-row]'), function (e) {
+      var v = e.value.trim();
+      var n = Number(v);
+      if (v === '' || isNaN(n)) { all = false; return; }
+      sum += n;
+    });
+    var cell = document.getElementById('alloc-total');
+    if (cell) cell.textContent = String(sum);
+    next.disabled = !(all && sum === 20 && f.checkValidity());
   }
   f.addEventListener('input', sync);
   f.addEventListener('change', sync);
@@ -485,6 +541,39 @@ process.stdout.write("\nFIXTURE 4 — the allocation grid: Next enabled only by 
     obs.navigatorDefaultAnswerCount === 3,
     `navigatorDefaultAnswerCount=${obs.navigatorDefaultAnswerCount}`,
   );
+}
+
+/* ---- 5. THE STEP-CONSTRAINED ALLOCATION ---- */
+process.stdout.write("\nFIXTURE 5 — the review counterexample: step grids arbitrated by the form's own checkValidity()\n");
+{
+  const obs = await walkHtml(mod, ALLOCATION_STEPPED);
+  const step0 = obs.steps[0] ?? null;
+  const typed = (step0?.actions ?? []).filter((a) => a.kind === "type-text");
+  const split = typed.filter((a) => /navigator-default:allocation-split\(/.test(a.detail ?? ""));
+  const filled = step0 ? step0.screenAfterAction : null;
+  const held = (filled?.controls ?? []).filter((c) => c.type === "number").map((c) => c.value);
+
+  check(
+    "the walk ADVANCED — Next was gated on the engine's OWN checkValidity(), which a step-invalid [5,15] can never pass",
+    step0?.advanced === true,
+    `advanced=${step0?.advanced} outcome=${obs.outcome} detail=${obs.outcomeDetail}`,
+  );
+  check(
+    "both rows were answered by the allocation split, with its provenance prefix",
+    split.length === 2,
+    `${split.length} of ${typed.length} typed action(s): ${typed.map((a) => a.detail).join(" | ")}`,
+  );
+  check(
+    "the split is the lattice-valid [3,17] — 3 on the {0,3} grid of {min 0, max 5, step 3}, never the raw-clamped 5",
+    split.map((a) => a.value).join(",") === "3,17",
+    split.map((a) => `${a.targetLabel}=${a.value}`).join(", "),
+  );
+  check(
+    "the DOM agrees: the engine KEPT both values and they sum to exactly 20",
+    held.join(",") === "3,17",
+    JSON.stringify(held),
+  );
+  check("the ending is typed `completed`", obs.ending?.kind === "completed", JSON.stringify(obs.ending));
 }
 
 const failed = results.filter((r) => !r.ok);

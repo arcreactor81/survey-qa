@@ -1718,15 +1718,31 @@ export type AllocationSplit =
   | { ok: false; why: string };
 
 /**
- * THE VALUE RULE — deterministic and least-committed, the group analogue of the midpoint:
+ * THE VALUE RULE — deterministic and least-committed, the group analogue of the midpoint.
+ *
+ * THE LATTICE INVARIANT (the 11 Aug review blocker): every phase moves ONLY on each member's
+ * own VALID VALUE LATTICE — the min-anchored step grid intersected with [min, max]; for
+ * step="any", the whole interval. The pre-fix clamp cut a snapped value to the RAW max,
+ * which the member's own grid may not contain ({min 0, max 5, step 3} admits {0, 3}, and
+ * clamping 9 to 5 wrote a value the input's own validity.stepMismatch condemns), while the
+ * success check verified only the final total — a knowingly step-invalid write recorded as
+ * a successful navigator default, with the site's later rejection blamed on the site.
  *
  *   1. equal split of T over N, snapped DOWN to each input's own step grid, anchored at its
  *      own min (the same base constraint validation uses — reuse of num/tidy arithmetic);
  *   2. the remainder goes ONE STEP at a time to the FIRST inputs in DOM order;
- *   3. each value is clamped into its own min/max, and any deficit the clamps created is
- *      redistributed greedily in DOM order;
- *   4. bounds or step grids that make T unreachable are a NAMED failure carrying the
- *      arithmetic — never a silently wrong sum.
+ *   3. each value is clamped INTO ITS OWN LATTICE: below min it rises to min (a lattice
+ *      point — the grid is anchored there), above max it drops to the LARGEST grid point
+ *      <= max, never to the raw max;
+ *   4. any deficit/surplus the clamps created is redistributed greedily in DOM order, each
+ *      member moving in MULTIPLES OF ITS OWN STEP inside its lattice, so every intermediate
+ *      state stays member-valid;
+ *   5. a residual greedy order cannot place goes to the BOUNDED EXACT SEARCH over the
+ *      members' lattices (`exactLatticeRepair` below) — greedy quanta alone can strand a
+ *      FEASIBLE split (grids {4} and {3} cannot greedily place a residual of 6 even though
+ *      3+3 exists), and a false "unfillable" is the other face of the blocker;
+ *   6. only a total NO lattice combination reaches is a NAMED failure carrying the
+ *      arithmetic — never a silently wrong sum, and never a knowingly-invalid write.
  */
 export function allocationValues(group: AllocationGroup): AllocationSplit {
   const EPS = 1e-9;
@@ -1738,19 +1754,32 @@ export function allocationValues(group: AllocationGroup): AllocationSplit {
       .trim()
       .toLowerCase();
     const parsed = rawStep === "any" ? null : (num(m.step) ?? 1);
-    return {
-      idx: m.idx,
-      lo: declaredMin ?? 0,
-      hi: num(m.max) ?? Number.POSITIVE_INFINITY,
-      // `step="any"` is the site saying "no grid" — the one case a fraction is legal.
-      step: parsed !== null && parsed > 0 ? parsed : null,
-      anchor: declaredMin ?? 0,
-      v: 0,
-    };
+    // `step="any"` is the site saying "no grid" — the one case a fraction is legal.
+    const step = parsed !== null && parsed > 0 ? parsed : null;
+    const lo = declaredMin ?? 0;
+    const hi = num(m.max) ?? Number.POSITIVE_INFINITY;
+    // The TOP of the member's own lattice: the largest grid point <= max. The raw max is
+    // not necessarily on the grid, and nothing below may ever land off the grid.
+    const hiLat = step === null ? hi : lo + step * Math.floor((hi - lo) / step + EPS);
+    return { idx: m.idx, lo, hi, hiLat, step, anchor: lo, v: 0 };
   });
 
+  for (const m of ms) {
+    if (m.hiLat < m.lo - EPS) {
+      return {
+        ok: false,
+        why:
+          `the site's own declarations leave an input no valid value at all ` +
+          `(min ${tidy(m.lo)}, max ${tidy(m.hi)}, step ${m.step === null ? '"any"' : tidy(m.step)})`,
+      };
+    }
+  }
+
   const sumMin = ms.reduce((a, m) => a + m.lo, 0);
-  const sumMax = ms.reduce((a, m) => a + m.hi, 0);
+  // The reachable ceiling is the sum of LATTICE tops, not raw maxes: {min 0, max 5, step 3}
+  // contributes 3, and pretending it contributes 5 is exactly how a step-invalid clamp used
+  // to slip through this check.
+  const sumMax = ms.reduce((a, m) => a + m.hiLat, 0);
   if (sumMin > T + EPS) {
     return {
       ok: false,
@@ -1763,8 +1792,8 @@ export function allocationValues(group: AllocationGroup): AllocationSplit {
     return {
       ok: false,
       why:
-        `the site's own declarations make the declared total unreachable: the inputs' max values allow ` +
-        `at most ${tidy(sumMax)}, below the declared total ${tidy(T)}`,
+        `the site's own declarations make the declared total unreachable: the inputs' max values ` +
+        `(each snapped to its own step grid) allow at most ${tidy(sumMax)}, below the declared total ${tidy(T)}`,
     };
   }
 
@@ -1787,21 +1816,24 @@ export function allocationValues(group: AllocationGroup): AllocationSplit {
     }
   }
 
-  // 3. clamp each value into its own bounds — AFTER the remainder, so a capped member's
-  //    excess becomes a deficit the next phase moves elsewhere.
+  // 3. clamp each value INTO ITS OWN LATTICE — AFTER the remainder, so a capped member's
+  //    excess becomes a deficit the next phase moves elsewhere. Below min the value rises to
+  //    min, a lattice point by construction; above max it drops to hiLat, the largest grid
+  //    point <= max — NEVER to the raw max, which may sit between the member's own grid
+  //    points (the review's counterexample: 9 clamped to raw 5 on a {0, 3} grid).
   for (const m of ms) {
     if (m.v < m.lo) m.v = m.lo;
-    if (m.v > m.hi) m.v = m.hi;
+    if (m.v > m.hiLat) m.v = m.hiLat;
   }
 
   // 4. clamping (or a step-shaped remainder) may leave the sum off in either direction:
   //    redistribute greedily in DOM order, each member moving as far as its own grid and
-  //    bounds allow.
+  //    lattice bounds allow — always in multiples of its own step, so values stay valid.
   let deficit = T - ms.reduce((a, m) => a + m.v, 0);
   for (const m of ms) {
     if (Math.abs(deficit) <= EPS) break;
     if (deficit > 0) {
-      const room = Math.min(deficit, m.hi - m.v);
+      const room = Math.min(deficit, m.hiLat - m.v);
       const add = m.step === null ? room : m.step * Math.floor(room / m.step + EPS);
       if (add > EPS) {
         m.v += add;
@@ -1816,19 +1848,158 @@ export function allocationValues(group: AllocationGroup): AllocationSplit {
       }
     }
   }
+
+  // 5. a residual here is NOT yet proof of infeasibility — greedy DOM order can strand a
+  //    feasible split. The bounded exact search settles it either way.
+  let searched = false;
   if (Math.abs(deficit) > EPS) {
-    return {
-      ok: false,
-      why:
-        `the inputs' declared step grids cannot land on the declared total ${tidy(T)} exactly ` +
-        `(closest reachable sum: ${tidy(T - deficit)})`,
-    };
+    const repaired = exactLatticeRepair(ms, deficit, EPS);
+    if (repaired === "exhausted") {
+      return {
+        ok: false,
+        why:
+          `the exact search over the inputs' step grids exhausted its budget before landing on the ` +
+          `declared total ${tidy(T)} or ruling it out — refusing to write a possibly-invalid split`,
+      };
+    }
+    if (repaired === "solved") {
+      searched = true;
+      deficit = T - ms.reduce((a, m) => a + m.v, 0);
+    }
+    if (Math.abs(deficit) > EPS) {
+      return {
+        ok: false,
+        why:
+          `the inputs' declared step grids cannot land on the declared total ${tidy(T)} exactly ` +
+          `(nearest reachable sum found: ${tidy(T - deficit)})`,
+      };
+    }
   }
   return {
     ok: true,
     values: ms.map((m) => ({ idx: m.idx, value: tidy(m.v) })),
-    how: `${tidy(T)} over ${n} inputs, equal split snapped to each input's own step grid`,
+    how:
+      `${tidy(T)} over ${n} inputs, equal split snapped to each input's own step grid` +
+      (searched ? ", residual placed by exact lattice search" : ""),
   };
+}
+
+/**
+ * PHASE 5 OF `allocationValues` — the bounded exact search, only ever reached when the greedy
+ * phases left a residual.
+ *
+ * The question it answers EXACTLY: is there any assignment on the members' own lattices that
+ * sums to the declared total? Formulated as adjustments from the greedy state: a stepped
+ * member may move by k*step while staying inside [lo, hiLat]; step="any" members can jointly
+ * absorb any residual inside the interval [sum(lo - v), sum(hi - v)]. DFS over the stepped
+ * members in DOM order, candidates ordered smallest |k| first (up before down on ties) —
+ * deterministic, and biased to move each member as little as possible off the greedy shape.
+ * Candidate ranges are pruned by suffix bounds (what the members after this one can still
+ * absorb), dead (member, residual) states are memoised, and every candidate tried costs
+ * budget, so the walk terminates unconditionally. Realistic groups (a handful of members,
+ * totals in the hundreds) sit orders of magnitude below the budget; "exhausted" exists so a
+ * pathological screen fails CLOSED instead of looping or writing an unproven split.
+ *
+ *   "solved"     — ms[].v now holds a member-valid assignment summing exactly to the total
+ *   "infeasible" — PROVEN: no lattice combination reaches the total (the search was exhaustive)
+ *   "exhausted"  — the budget ran out first; NOT proof of infeasibility, the caller fails closed
+ */
+function exactLatticeRepair(
+  ms: Array<{ lo: number; hi: number; hiLat: number; step: number | null; v: number }>,
+  deficit: number,
+  EPS: number,
+): "solved" | "infeasible" | "exhausted" {
+  const stepped = ms.filter((m) => m.step !== null);
+  const free = ms.filter((m) => m.step === null);
+  const freeLo = free.reduce((a, m) => a + (m.lo - m.v), 0);
+  const freeHi = free.reduce((a, m) => a + (m.hiLat - m.v), 0);
+
+  // Suffix bounds: what stepped members i.. plus ALL free members can still absorb.
+  const nS = stepped.length;
+  const sufLo: number[] = new Array(nS + 1);
+  const sufHi: number[] = new Array(nS + 1);
+  sufLo[nS] = freeLo;
+  sufHi[nS] = freeHi;
+  for (let i = nS - 1; i >= 0; i--) {
+    sufLo[i] = sufLo[i + 1]! + (stepped[i]!.lo - stepped[i]!.v);
+    sufHi[i] = sufHi[i + 1]! + (stepped[i]!.hiLat - stepped[i]!.v);
+  }
+
+  let budget = 20_000;
+  const dead = new Set<string>();
+  const chosen: number[] = new Array(nS).fill(0);
+
+  // 1 = solved, 0 = infeasible from this node, -1 = budget exhausted.
+  const dfs = (i: number, rest: number): 1 | 0 | -1 => {
+    if (i === nS) return rest >= freeLo - EPS && rest <= freeHi + EPS ? 1 : 0;
+    const key = `${i}|${tidy(rest)}`;
+    if (dead.has(key)) return 0;
+    const m = stepped[i]!;
+    const step = m.step as number;
+    // k must keep the member inside its own lattice AND leave a residual the rest can absorb.
+    const kLo = Math.max(
+      Math.ceil((m.lo - m.v) / step - EPS),
+      Number.isFinite(sufHi[i + 1]!) ? Math.ceil((rest - sufHi[i + 1]!) / step - EPS) : Number.NEGATIVE_INFINITY,
+    );
+    const kHi = Math.min(
+      Number.isFinite(m.hiLat) ? Math.floor((m.hiLat - m.v) / step + EPS) : Number.POSITIVE_INFINITY,
+      Math.floor((rest - sufLo[i + 1]!) / step + EPS),
+    );
+    const tryK = (k: number): 1 | 0 | -1 => {
+      if (--budget <= 0) return -1;
+      const r = dfs(i + 1, rest - k * step);
+      if (r === 1) chosen[i] = k;
+      return r;
+    };
+    if (kLo <= kHi) {
+      if (kLo >= 0) {
+        // All candidates move up: ascending k IS ascending |k|.
+        for (let k = kLo; k <= kHi; k++) {
+          const r = tryK(k);
+          if (r !== 0) return r;
+        }
+      } else if (kHi <= 0) {
+        // All candidates move down: descending k IS ascending |k|.
+        for (let k = kHi; k >= kLo; k--) {
+          const r = tryK(k);
+          if (r !== 0) return r;
+        }
+      } else {
+        const first = tryK(0);
+        if (first !== 0) return first;
+        for (let d = 1, span = Math.max(kHi, -kLo); d <= span; d++) {
+          if (d <= kHi) {
+            const r = tryK(d);
+            if (r !== 0) return r;
+          }
+          if (-d >= kLo) {
+            const r = tryK(-d);
+            if (r !== 0) return r;
+          }
+        }
+      }
+    }
+    dead.add(key);
+    return 0;
+  };
+
+  const outcome = dfs(0, deficit);
+  if (outcome === -1) return "exhausted";
+  if (outcome === 0) return "infeasible";
+  for (let i = 0; i < nS; i++) stepped[i]!.v += chosen[i]! * (stepped[i]!.step as number);
+  // Water-fill the free members with what remains: each takes clamp(rest - what the LATER
+  // free members must at least take, own bounds). Exact whenever the leaf interval check
+  // admitted the residual — the suffix-lo subtraction is what keeps the tail feasible.
+  let rest = deficit - chosen.reduce((a, k, i) => a + k * (stepped[i]!.step as number), 0);
+  for (let i = 0; i < free.length; i++) {
+    const f = free[i]!;
+    let loAfter = 0;
+    for (let j = i + 1; j < free.length; j++) loAfter += free[j]!.lo - free[j]!.v;
+    const t = Math.min(f.hiLat - f.v, Math.max(f.lo - f.v, rest - loAfter));
+    f.v += t;
+    rest -= t;
+  }
+  return "solved";
 }
 
 /**

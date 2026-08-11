@@ -441,3 +441,231 @@ suite("D50 — table-hosted source roles survive the cell fold (finding B1)", ()
     );
   });
 });
+
+/**
+ * BLOCKER 3 (Codex review of the DOCX 1.3.0 refinement) — ROW ACCOUNTING ABSORBED THE
+ * LIFTED BLOCKS.
+ *
+ * DOCX 1.3.0 gives a lifted combo-box suggestion or ruby reading its HOST CELL's
+ * tableId+coords — correct for identity — but both row-accounting algorithms treated ANY
+ * block with tableId+coords as row-accountable: pass B's unaccounted sweep removed every
+ * uncited block in a cited row, and the merge ledger marked every same-row block mapped
+ * through `accountedVia` before disposition. So an UNCITED open suggestion or ruby reading
+ * silently disappeared behind an ordinary cited cell in the same row — a coverage hole no
+ * output named, violating computed-coverage/fail-loud doctrine.
+ *
+ * The fix: row-accountability requires `kind === "table-cell"`. A lifted origin-bearing
+ * block shares its row's coordinates as PROVENANCE, not as membership — it is never
+ * absorbed by row accounting (in either direction: it is not swallowed by a cited row, and
+ * citing it does not account the row) and remains individually accountable.
+ *
+ * Mutation evidence these can fail: `tools/mutate-source-roles.mjs` (drop-the-kind-check
+ * mutants on merge.ts and pass-b.ts). All four tests are RED on the pre-fix code.
+ */
+suite("D50 — row accounting never absorbs lifted origin-bearing blocks (blocker 3)", () => {
+  const liftedDocx = (bodyXml) =>
+    zipSync({
+      "word/document.xml": strToU8(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+          `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+          bodyXml +
+          `</w:body></w:document>`,
+      ),
+    });
+
+  /** One table row: a plain cell, then a cell hosting the given combo-box suggestions. */
+  const comboRowXml = (labels) =>
+    `<w:p><w:r><w:t>Q4. Choose or enter a specialty.</w:t></w:r></w:p>` +
+    `<w:tbl><w:tr>` +
+    `<w:tc><w:p><w:r><w:t>Specialty</w:t></w:r></w:p></w:tc>` +
+    `<w:tc><w:p><w:r><w:t>Pick or type: </w:t></w:r>` +
+    `<w:sdt><w:sdtPr><w:comboBox>` +
+    labels.map((l) => `<w:listItem w:displayText="${l}" w:value="${l[0]}"/>`).join("") +
+    `</w:comboBox></w:sdtPr><w:sdtContent><w:r><w:t>Choose or type</w:t></w:r></w:sdtContent></w:sdt>` +
+    `</w:p></w:tc>` +
+    `</w:tr></w:tbl>`;
+
+  /** The pass saw and classified EVERY block — the exact posture the absorption hid behind. */
+  const allNormative = (blocks) =>
+    blocks.map((b) => ({ blockId: b.blockId, disposition: "normative", reason: "fixture: classified by the pass" }));
+
+  /** Merge with pass B citing exactly one block, dispositioning all of them normative. */
+  const ledgerCiting = async (mod, parsed, citedBlockId, label) => {
+    const passB = pass("B", [raw("cited", citedBlockId, "1", label)]);
+    passB.dispositions = allNormative(parsed.blocks);
+    const merged = await mod.merge.mergePasses(
+      pass("A", []),
+      passB,
+      { blocks: parsed.blocks, coverage: parsed.coverage },
+      [],
+    );
+    return merged.ledger;
+  };
+
+  test("row accounting: a cited plain cell must NOT absorb an uncited combo suggestion in the same row", async () => {
+    const mod = await worker();
+    const parsed = mod.docxBlocks.parseDocxBlocks(liftedDocx(comboRowXml(["Cardiology", "Oncology"])));
+    const suggestions = parsed.blocks.filter((b) => b.origin === "combo-box-suggestion");
+    assertEq(suggestions.length, 2, "the fixture must lift both suggestions as origin-bearing blocks");
+    const plainCell = parsed.blocks.find((b) => b.kind === "table-cell" && b.text === "Specialty");
+    const hostCell = parsed.blocks.find((b) => b.kind === "table-cell" && b.text.includes("Pick or type"));
+    assert(plainCell && hostCell, "the fixture must emit both true table cells");
+
+    const ledger = await ledgerCiting(mod, parsed, plainCell.blockId, "Specialty");
+    const entryFor = (id) => ledger.entries.find((e) => e.blockId === id);
+
+    // The row mechanism itself still works: the UNCITED TRUE CELL of the cited row is
+    // accounted via its row, exactly as before the fix.
+    const host = entryFor(hostCell.blockId);
+    assert(host.accountedVia, "a true table cell in a cited row must still be accounted via its row");
+    assertEq(host.accountedVia.by, "table-row");
+
+    // But the lifted suggestions are NOT row-absorbable. Pre-fix they carried accountedVia
+    // and vanished from `unexplained` — the silent coverage hole this suite closes.
+    for (const s of suggestions) {
+      assertEq(entryFor(s.blockId).accountedVia, undefined, `lifted suggestion ${s.blockId} was absorbed by row accounting`);
+      assert(
+        ledger.unexplained.some((u) => u.blockId === s.blockId),
+        `uncited suggestion ${s.blockId} must be a NAMED unaccounted block, not vanish behind its row`,
+      );
+    }
+    assert(ledger.unexplainedNormativeBlocks >= 2, "the gate must count both swallowed suggestions");
+  });
+
+  test("row accounting: a cited cell must NOT absorb an uncited ruby reading in the same row", async () => {
+    const mod = await worker();
+    const parsed = mod.docxBlocks.parseDocxBlocks(
+      liftedDocx(
+        `<w:p><w:r><w:t>Q17. Electricity contract.</w:t></w:r></w:p>` +
+          `<w:tbl><w:tr>` +
+          `<w:tc><w:p><w:r><w:ruby><w:rubyPr/><w:rt><w:r><w:t>でんき</w:t></w:r></w:rt>` +
+          `<w:rubyBase><w:r><w:t>電気</w:t></w:r></w:rubyBase></w:ruby></w:r><w:r><w:t>の料金</w:t></w:r></w:p></w:tc>` +
+          `<w:tc><w:p><w:r><w:t>Monthly</w:t></w:r></w:p></w:tc>` +
+          `</w:tr></w:tbl>`,
+      ),
+    );
+    const reading = parsed.blocks.find((b) => b.origin.startsWith("ruby-reading"));
+    const monthlyCell = parsed.blocks.find((b) => b.kind === "table-cell" && b.text === "Monthly");
+    const baseCell = parsed.blocks.find((b) => b.kind === "table-cell" && b.text.includes("電気"));
+    assert(reading && monthlyCell && baseCell, "the fixture must emit the reading and both true cells");
+
+    const ledger = await ledgerCiting(mod, parsed, monthlyCell.blockId, "Monthly");
+    const entryFor = (id) => ledger.entries.find((e) => e.blockId === id);
+
+    assert(entryFor(baseCell.blockId).accountedVia, "the reading's TRUE host cell must still be accounted via its row");
+    assertEq(entryFor(reading.blockId).accountedVia, undefined, "the lifted ruby reading was absorbed by row accounting");
+    assert(
+      ledger.unexplained.some((u) => u.blockId === reading.blockId),
+      "the uncited reading must be a NAMED unaccounted block, not vanish behind its row",
+    );
+  });
+
+  test("a genuinely cited lifted block accounts normally, and does not row-absorb the true cells", async () => {
+    const mod = await worker();
+    const parsed = mod.docxBlocks.parseDocxBlocks(liftedDocx(comboRowXml(["Cardiology", "Oncology"])));
+    const [first, second] = parsed.blocks.filter((b) => b.origin === "combo-box-suggestion");
+    const hostCell = parsed.blocks.find((b) => b.kind === "table-cell" && b.text.includes("Pick or type"));
+
+    const ledger = await ledgerCiting(mod, parsed, first.blockId, "Cardiology");
+    const entryFor = (id) => ledger.entries.find((e) => e.blockId === id);
+
+    // Cited: the lifted block is accounted by ITS OWN citation, like any block.
+    assertEq(entryFor(first.blockId).citedBy.length, 1, "the cited lifted block must carry its citation");
+    assert(
+      !ledger.unexplained.some((u) => u.blockId === first.blockId),
+      "a cited lifted block must not be reported unaccounted",
+    );
+
+    // And the citation of a LIFTED block is not row citation: the true cells of that row are
+    // NOT absorbed through it, and the sibling suggestion stays individually unaccounted.
+    assertEq(
+      entryFor(hostCell.blockId).accountedVia,
+      undefined,
+      "citing a lifted suggestion must not account the true cells of its host row",
+    );
+    assert(
+      ledger.unexplained.some((u) => u.blockId === hostCell.blockId),
+      "the uncited host cell must stay a named unaccounted block when only the lifted block is cited",
+    );
+    assert(
+      ledger.unexplained.some((u) => u.blockId === second.blockId),
+      "the sibling suggestion stays individually accountable",
+    );
+  });
+
+  test("pass B's unaccounted sweep still buys a lifted block hosted in a cited row", async () => {
+    const mod = await worker();
+    // ONE suggestion, so the post-fix unaccounted set is exactly the lifted block and the
+    // sweep arithmetic below is exact.
+    const parsed = mod.docxBlocks.parseDocxBlocks(liftedDocx(comboRowXml(["Cardiology"])));
+    const suggestion = parsed.blocks.find((b) => b.origin === "combo-box-suggestion");
+    assert(suggestion, "the fixture must lift the suggestion as an origin-bearing block");
+    const suggestionId = suggestion.blockId;
+
+    // Transport-boundary stub, the d21 pattern: the CHUNK call cites every block EXCEPT the
+    // suggestion while dispositioning all of them normative — Codex's exact scenario. A
+    // SWEEP call cites whatever it is given.
+    const original = globalThis.fetch;
+    const requests = [];
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      const user = String(body.messages[1].content);
+      const unit = (user.match(/Your chunk id for this call is: (\S+)/) ?? [])[1] ?? "?";
+      const blockIds = [...new Set([...user.matchAll(/\[(b\d{4})\]/g)].map((m) => m[1]))];
+      requests.push({ unit, blockIds });
+      const cite = unit.startsWith("SWEEP") ? blockIds : blockIds.filter((id) => id !== suggestionId);
+      const payload = {
+        obligations: cite.map((id, i) => ({
+          id: `${unit}-R${i + 1}`,
+          construct: "question",
+          scope: "question",
+          quantifier: "every",
+          selector: id,
+          exceptions: [],
+          statement: `block ${id} must be honoured`,
+          doc_quote: `text for ${id}`,
+          block_ids: [id],
+          browser_observable: "full",
+          confidence: 0.9,
+        })),
+        block_dispositions: blockIds.map((id) => ({
+          block_id: id,
+          disposition: "normative",
+          reason: "states something an implementation must do",
+        })),
+        construct_checklist: [],
+      };
+      return new Response(
+        JSON.stringify({
+          model: "stub-model",
+          usage: { prompt_tokens: 100, completion_tokens: 50 },
+          choices: [{ message: { content: JSON.stringify(payload) }, finish_reason: "stop" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    try {
+      const env = testEnv({ DEEPSEEK_API_KEY: "test-deepseek-key", EXTRACT_MAX_ATTEMPTS: "1" });
+      const out = await mod.passB.runPassB(env, "run_d50_blocker3_sweep", parsed, "blocker3.docx");
+
+      // Pre-fix this is where the hole lived: the cited host row swallowed the suggestion,
+      // `unaccountedBlocks` came back empty, and NO sweep was ever issued.
+      const sweeps = requests.filter((r) => r.unit.startsWith("SWEEP"));
+      assertEq(sweeps.length, 1, "the sweep must be issued over the lifted block a cited row used to swallow");
+      assertEq(
+        JSON.stringify(sweeps[0].blockIds),
+        JSON.stringify([suggestionId]),
+        "the sweep owes EXACTLY the lifted block — the true cells stay accounted through their row",
+      );
+      assertEq(out.slice.sweepCallsIssued, 1, "the slice must record the sweep purchase");
+      assertEq(out.slice.done, true, "the pass finishes once the lifted block is accounted");
+      assert(
+        out.requirements.some((r) => r.blockIds.includes(suggestionId)),
+        "the sweep's obligation over the lifted block must reach the pass result",
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});

@@ -749,3 +749,80 @@ suite("D55 — THE LIVE RETRY: one pivot, linked records, a fresh attempt, no do
     assertEq(progress.walks.length, 1, "a plan-intended termination was fought by the retry");
   });
 });
+
+/* ============================================================ 6. the attempt budget (Codex-review BLOCKER 4)
+ *
+ * EXEC_BATCH_MAX_ATTEMPTS is the batch's NAMED attempt cap, and before this fix it was
+ * checked only at the outer work-item gate: a pivot was admitted by deadline and pivot
+ * count alone, so maxAttempts=1 could execute THREE attempts (attempt 0 + two pivots) and
+ * maxAttempts=4 six — the named cost/side-effect cap was not real for pivots.
+ *
+ * THE ACCOUNTING RULE PINNED HERE: the budget is checked before every attempt against the
+ * SAME `pathsWalked` counter the outer gate reads — the outer walk at the work-item gate,
+ * the pivot at the eligibility site AT PIVOT TIME — and every attempt consumes it
+ * identically, `pathsWalked += 1` after its per-attempt commit. The cap means the same
+ * thing everywhere: attempts, not outer work items.
+ */
+
+suite("D55 — BLOCKER 4, the attempt budget: EXEC_BATCH_MAX_ATTEMPTS caps pivots like any other attempt", () => {
+  test("eligibility reads the batch's attempt accounting: a spent budget refuses AT PIVOT TIME, remaining budget does not", async () => {
+    const mod = await worker();
+    // The counter and cap are the executor's own `pathsWalked` / `maxAttempts` — the exact
+    // pair the outer work-item gate compares.
+    assertEq(mod.executeBatch.screenoutRetryEligible(eligArgs({ pathsWalked: 1, maxAttempts: 1 })), false);
+    assertEq(mod.executeBatch.screenoutRetryEligible(eligArgs({ pathsWalked: 3, maxAttempts: 3 })), false);
+    assertEq(mod.executeBatch.screenoutRetryEligible(eligArgs({ pathsWalked: 1, maxAttempts: 2 })), true, "one attempt of budget left IS budget");
+  });
+
+  test("THE BUDGET BINDS PIVOTS: maxAttempts=1 means ONE attempt — an eligible screen-out does NOT pivot on an exhausted budget", async () => {
+    const mod = await worker();
+    const env = testEnv({ EXEC_BATCH_MAX_ATTEMPTS: "1" });
+    const bed = await liveBed(mod, env);
+    // The completion script exists only to catch an ILLEGAL pivot: pre-fix the retry loop
+    // never consulted the attempt budget and this walked twice under a cap of one.
+    const { out, pages } = await withBrowser([screenoutScript(), completionScript()], () => runBatch(mod, env, bed));
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(progress.walks.length, 1, `maxAttempts=1 executed ${progress.walks.length} attempts — the named cap is not real for pivots`);
+    assertEq(pages.length, 1, "a second page was opened under a budget of one");
+    assertEq(out.pathsWalked, 1);
+    assertEq(progress.walks[0].ending?.kind, "screened-out");
+    assertEq("pivot" in progress.walks[0], false);
+    assertEq(progress.screenoutPivots?.["FLOOR-01"] ?? 0, 0, "a refused pivot must not consume a pivot ordinal");
+    // Budget exhaustion is not a stuck path: the committed screened-out attempt stands.
+    assertEq(progress.floorDone.includes("FLOOR-01"), true);
+  });
+
+  test("THE BUDGET IS SHARED: maxAttempts=3 with one item — attempt 0 + 2 pivots land exactly ON the cap, never past it", async () => {
+    const mod = await worker();
+    const env = testEnv({ EXEC_BATCH_MAX_ATTEMPTS: "3" });
+    const bed = await liveBed(mod, env);
+    // Every attempt screens out; the last script repeats for any illegal extra walk.
+    const { out, pages } = await withBrowser(
+      [screenoutScript(), screenoutScript(), screenoutScript()],
+      () => runBatch(mod, env, bed),
+    );
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    // The boundary, from both sides: the second pivot fires at pathsWalked=2 < 3 (an
+    // over-tightened clause would stop at 2 walks), and nothing walks past 3 (outer
+    // accounting + pivots share one counter).
+    assertEq(progress.walks.length, 3, `expected exactly the budget's 3 attempts, got ${progress.walks.length}`);
+    assertEq(pages.length, 3);
+    assertEq(out.pathsWalked, 3);
+    assertEq(progress.screenoutPivots?.["FLOOR-01"], 2);
+    assertEq(progress.walks[1].pivot?.ordinal, 1);
+    assertEq(progress.walks[2].pivot?.ordinal, 2);
+  });
+
+  test("NO OVER-TIGHTENING: one attempt of remaining budget still admits the pivot (maxAttempts=2)", async () => {
+    const mod = await worker();
+    const env = testEnv({ EXEC_BATCH_MAX_ATTEMPTS: "2" });
+    const bed = await liveBed(mod, env);
+    const { out, pages } = await withBrowser([screenoutScript(), completionScript()], () => runBatch(mod, env, bed));
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(progress.walks.length, 2, "the budget clause refused a pivot the budget allows");
+    assertEq(pages.length, 2);
+    assertEq(out.pathsWalked, 2);
+    assertEq(progress.walks[1].pivot?.ordinal, 1);
+    assertEq(progress.walks[1].ending?.kind, "completed");
+  });
+});

@@ -50,6 +50,22 @@ await runMutantSuite({
       kills: ["THE MEASURED WALL COMES DOWN: the fleet-shape grid is filled to its declared total, not with 1s"],
     },
     {
+      name: "the post-clamp lattice re-snap regresses to the raw max",
+      breaks:
+        "the lattice invariant — the 11 Aug review blocker, re-opened verbatim. Clamping a " +
+        "snapped value to the RAW max lands between the input's own grid points ({min 0, max 5, " +
+        "step 3} clamps 9 to 5, which the {0, 3} grid does not contain), the DOM-order " +
+        "redistribution still lands the TOTAL exactly, and the success check blesses a value the " +
+        "input's own validity.stepMismatch condemns — a knowingly step-invalid write recorded as " +
+        "a successful navigator default, with the site's rejection blamed on the site",
+      file: DR,
+      find: "    if (m.v > m.hiLat) m.v = m.hiLat;",
+      replace: "    if (m.v > m.hi) m.v = m.hi;",
+      kills: [
+        "THE REVIEW'S COUNTEREXAMPLE: total 20 over {min 0, max 5, step 3} + {min 0, max 20, step 1} is [3,17] — never the step-invalid [5,15]",
+      ],
+    },
+    {
       name: "detection stops requiring the site to declare a total",
       breaks:
         "the conservative half of detection. Any two grid-hosted number inputs now get a GUESSED " +

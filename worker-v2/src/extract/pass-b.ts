@@ -616,7 +616,11 @@ export async function runPassB(
  *
  * The sweep must agree with `merge.ts#buildLedger` or it buys calls for blocks that were
  * never going to hold the gate open. The ledger accounts a grid cell through its table ROW;
- * so does this.
+ * so does this — and, like the ledger, ONLY a true `table-cell` block is row-accountable.
+ * An origin-bearing block LIFTED to its host cell's coordinates (a combo-box suggestion,
+ * a ruby reading) carries tableId+coords as PROVENANCE, not as row membership: it is never
+ * absorbed behind a cited sibling cell, so an uncited one stays in this sweep's set instead
+ * of silently vanishing (Codex review, blocker 3).
  */
 function unaccountedBlocks(
   blocks: SourceBlock[],
@@ -630,7 +634,7 @@ function unaccountedBlocks(
     if (!prev || prev === "unresolved") dispositionOf.set(d.blockId, d.disposition);
   }
   const rowOf = (b: SourceBlock): string | null =>
-    b.tableId !== null && b.coords !== null ? `${b.tableId}#r${b.coords.row}` : null;
+    b.kind === "table-cell" && b.tableId !== null && b.coords !== null ? `${b.tableId}#r${b.coords.row}` : null;
   const citedRows = new Set<string>();
   for (const b of blocks) {
     const row = rowOf(b);

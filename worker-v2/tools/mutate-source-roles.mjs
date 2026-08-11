@@ -14,6 +14,8 @@ const HUMAN = "src/contract/human-authored.ts";
 const EXPAND = "src/extract/expand.ts";
 const DOCX = "src/extract/docx-blocks.ts";
 
+const PASSB = "src/extract/pass-b.ts";
+
 const MODEL = "model merge: combo suggestions and ruby readings stay counted gaps and never become siblings";
 const MAP = "origin mapper: exact combo and every ruby-reading prefix map; lookalikes do not";
 const HUMAN_PATH = "human exact-span path carries the same roles and produces the same named gaps";
@@ -24,6 +26,10 @@ const COMBO_TABLE =
   "combo-box suggestions in a table cell stay origin-labelled, marked OPEN-NOT-EXHAUSTIVE, and are refused as an answer list";
 const RUBY_TABLE = "ruby readings in a table cell stay origin-labelled and are refused as an answer list";
 const CELL_BOUNDARY = "boundary: an empty cell still emits its suggestions; plain text and dropdowns in cells fold unchanged";
+// Blocker 3 guards (Codex review of DOCX 1.3.0): row accounting requires kind === "table-cell".
+const ROW_COMBO = "row accounting: a cited plain cell must NOT absorb an uncited combo suggestion in the same row";
+const ROW_RUBY = "row accounting: a cited cell must NOT absorb an uncited ruby reading in the same row";
+const ROW_SWEEP = "pass B's unaccounted sweep still buys a lifted block hosted in a cited row";
 
 const MUTANTS = [
   {
@@ -146,6 +152,32 @@ const MUTANTS = [
       "        // drafts: skipping the empty cell must not silently drop the open suggestions.\n" +
       "        continue;",
     kills: [CELL_BOUNDARY],
+  },
+
+  // ================================================== blocker 3: row accounting absorbs lifted blocks
+  // Single-LINE anchors on purpose: merge.ts is CRLF on disk while pass-b.ts is LF, so a
+  // multi-line "\n" anchor silently fails to match one of them (BROKEN-ANCHOR, not a kill).
+  {
+    name: "the ledger row-accounts ANY block with tableId+coords (the pre-fix behaviour)",
+    breaks:
+      "an uncited combo suggestion or ruby reading in a cited row gains accountedVia and vanishes from " +
+      "the ledger's unexplained list — a silent coverage hole behind an ordinary cited cell",
+    file: MERGE,
+    find:
+      '    b.kind === "table-cell" && b.tableId !== null && b.coords !== null ? `${b.tableId}#r${b.coords.row}` : null;',
+    replace: "    b.tableId !== null && b.coords !== null ? `${b.tableId}#r${b.coords.row}` : null;",
+    kills: [ROW_COMBO, ROW_RUBY],
+  },
+  {
+    name: "pass B's unaccounted sweep row-accounts ANY block with tableId+coords (the pre-fix behaviour)",
+    breaks:
+      "the sweep's unaccounted set drops every uncited lifted block whose host row is cited, so the one " +
+      "call that would have finished the read is never issued and the block silently disappears",
+    file: PASSB,
+    find:
+      '    b.kind === "table-cell" && b.tableId !== null && b.coords !== null ? `${b.tableId}#r${b.coords.row}` : null;',
+    replace: "    b.tableId !== null && b.coords !== null ? `${b.tableId}#r${b.coords.row}` : null;",
+    kills: [ROW_SWEEP],
   },
 ];
 

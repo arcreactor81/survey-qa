@@ -344,6 +344,20 @@ import { buildQuestionWordingIndex, resolveQuestionWording } from "./plan";
 import type { QuestionWordingIndex } from "./plan";
 
 /**
+ * 1.8.1 — FIX (Codex review BLOCKER 1): the exhaustive EXTRA-OPTION accusation now requires
+ * clause (i) name/id-prefix attribution. `browser/page-script.ts` merges every radio/checkbox
+ * control into a group by NAME ALONE (`c.name || '(unnamed)'`), so a second question that
+ * shares the target's control name FUSES into the target's sole group — clause (ii)'s
+ * exclusions assumed a second question's radios "would have created a second group", which is
+ * false exactly when names collide — and an exhaustive target then accused the fused-in
+ * question's option as OPTION_OFFERED_NOT_DOCUMENTED: a confident false accusation. Acceptance
+ * now carries its provenance (`attribution`): under clause (ii) the offered-extra arm demotes
+ * to a named insufficient (`OPTION_EXTRA_UNATTRIBUTED_GROUP`), because a fused group is
+ * indistinguishable there from a single question and an "extra" may simply belong to the other
+ * fused question. The MEMBERSHIP arms are deliberately unchanged — fusion only ADDS options,
+ * so a documented option absent from the fused superset is absent from the target's rendering
+ * too, and OPTION_MISSING stays sound. Changes which observations reach a verdict.
+ *
  * 1.8.0 — FIX C1 respin: the sole-group arm's unconditional attribution requirement narrowed
  * to a discriminator — a sole non-empty option group is accepted iff it attributes to the
  * target by name/id-prefix OR it is the screen's only answerable thing beyond navigation
@@ -384,7 +398,7 @@ import type { QuestionWordingIndex } from "./plan";
  *
  * 1.3.0 — the boundary outcome became four-valued and screen identity gained provenance.
  */
-export const VERIFIER_VERSION = "v2-structural-verifier/1.8.0";
+export const VERIFIER_VERSION = "v2-structural-verifier/1.8.1";
 
 /** What a predicate may return. Never prose, never a score. */
 export type PredicateOutcome = "satisfied" | "violated" | "insufficient" | "no-observation" | "error";
@@ -596,6 +610,19 @@ export const VERIFIER_REASON = Object.freeze({
    * in the histogram.
    */
   OPTION_PRESENT_BUT_NOT_OPERABLE_EXTRA: "OPTION_PRESENT_BUT_NOT_OPERABLE_EXTRA",
+  /**
+   * 1.8.1 — the closed set's EXTRA arm reached an offered, undocumented entry, but the sole
+   * group was accepted via clause (ii) (only-answerable) rather than by name/id-prefix
+   * attribution. The page reader merges radio/checkbox controls into groups by NAME ALONE, so
+   * a same-named second question fuses into this group and is indistinguishable, on this
+   * screen, from the target's own inventory — the "extra" may simply belong to the other
+   * fused question. Membership stays decidable there (fusion only ADDS options); the extra
+   * accusation alone is withheld. A DISTINCT key from OPTION_GROUP_NOT_ATTRIBUTABLE on
+   * purpose: that one refused the whole comparison, this one withholds ONE arm of a
+   * comparison that ran — different repairs (name the group vs nothing to repair at all), so
+   * they must not share a bucket in the histogram.
+   */
+  OPTION_EXTRA_UNATTRIBUTED_GROUP: "OPTION_EXTRA_UNATTRIBUTED_GROUP",
   /**
    * An option ACCUSATION rests on what the screen does NOT offer, and this capture did not
    * attest that its read was complete: it reported reader limitations, or it predates the
@@ -2248,15 +2275,29 @@ type ScreenOption = RenderedScreen["optionGroups"][number]["options"][number];
  *
  * CLAUSE (ii)'s EXCLUSIONS, each stated. Navigation controls (page-script's own `buttons`
  * reading: tag `button`/`a`, type `submit`/`button`) and `hidden` inputs are answerable by
- * nobody. Radio/checkbox controls are the sole group's OWN rendering — on a real capture
- * every radio/checkbox belongs to some group, and a second question's radios would have
- * created a SECOND group and left this arm entirely. Everything else — a select, a text
- * entry, a custom widget — COULD be the target's rendering, so its presence defeats the
- * clause; visibility and operability are deliberately ignored (a hidden text entry may be the
- * target's rendering in another layout — unknown shapes must defeat, never license). And
- * "(unnamed)" is excluded because it is the page reader's MERGE KEY (`page-script.ts`:
- * `c.name || '(unnamed)'`) — unnamed radios from SEVERAL questions collapse under it, so a
- * sole "(unnamed)" group may be a fusion no single question owns.
+ * nobody. Radio/checkbox controls are members of the sole group itself — on a real capture
+ * every radio/checkbox belongs to some group, and a second question's radios create a second
+ * group WHEN their name differs; a same-named second question FUSES into this one instead
+ * (the reader's merge is by name alone), which is why clause (ii)'s acceptance is weaker
+ * than clause (i)'s — see THE ACCEPTANCE CARRIES ITS PROVENANCE below. Everything else — a
+ * select, a text entry, a custom widget — COULD be the target's rendering, so its presence
+ * defeats the clause; visibility and operability are deliberately ignored (a hidden text
+ * entry may be the target's rendering in another layout — unknown shapes must defeat, never
+ * license). And "(unnamed)" is excluded because it is the page reader's MERGE KEY
+ * (`page-script.ts`: `c.name || '(unnamed)'`) — unnamed radios from SEVERAL questions
+ * collapse under it, so a sole "(unnamed)" group may be a fusion no single question owns.
+ *
+ * THE ACCEPTANCE CARRIES ITS PROVENANCE (1.8.1, Codex review BLOCKER 1). A NAMED sole group
+ * can also be a fusion: two questions that both emit `name="answer"` merge into one
+ * non-"(unnamed)" group the exclusions above cannot see (their radios/checkboxes are, by
+ * construction, members of the group). Such a fused group is still SOUND for membership —
+ * fusion only ADDS options, so a documented option absent from the superset is absent from
+ * the target — and the respondent does answer the target inside this widget, so clause (ii)
+ * keeps accepting it. What fusion breaks is the EXTRA direction: an offered option beyond the
+ * document's closed set may belong to the OTHER fused question, so accusing it would be
+ * reading a neighbour's inventory as the target's. The result therefore says WHICH clause
+ * accepted (`attribution: "named" | "only-answerable"`), and the exhaustive extra arm is
+ * licensed by clause (i) alone.
  *
  * THE SELECT-RENDERED TARGET IS DETECTED AND REFUSED, NOT EVALUATED. When a `<select>` on this
  * screen is bound to the target by the same name/id-prefix reading screen identity uses, the
@@ -2271,7 +2312,9 @@ type ScreenOption = RenderedScreen["optionGroups"][number]["options"][number];
 function targetOptionGroup(
   screen: RenderedScreen,
   target: string,
-): { group: RenderedScreen["optionGroups"][number] } | { why: string; reason: VerifierReason } {
+):
+  | { group: RenderedScreen["optionGroups"][number]; attribution: "named" | "only-answerable" }
+  | { why: string; reason: VerifierReason } {
   const groups = (screen.optionGroups ?? []).filter((g) => Array.isArray(g?.options) && g.options.length > 0);
   if (groups.length === 0)
     return {
@@ -2305,7 +2348,7 @@ function targetOptionGroup(
     const prefix = typeof g.name === "string" ? g.name.split(/[_\-.:$[\]]/)[0] : "";
     return prefix === target;
   });
-  if (named.length === 1) return { group: named[0]! };
+  if (named.length === 1) return { group: named[0]!, attribution: "named" };
 
   // 1.8.0 (FIX C1 respin), clause (ii): a sole group that fails name/prefix attribution is
   // still the target's when NOTHING ELSE on this screen could be the target's rendering. See
@@ -2318,13 +2361,16 @@ function targetOptionGroup(
       if (c.tag === "button" || c.tag === "a" || c.type === "submit" || c.type === "button") return false;
       // No respondent answers a hidden input.
       if (c.type === "hidden") return false;
-      // The sole group's own rendering: every radio/checkbox belongs to some group, and a
-      // second question's radios would have created a second group and left this arm.
+      // Members of the sole group itself: every radio/checkbox belongs to some group. A
+      // DIFFERENTLY-named second question's radios create a second group and leave this arm;
+      // a SAME-named one fuses into this group (the reader merges by name alone) and cannot
+      // be seen here — which is why this acceptance is tagged "only-answerable" and does not
+      // license the exhaustive extra arm (1.8.1).
       if (c.type === "radio" || c.type === "checkbox") return false;
       // Anything else — select, text entry, custom widget — could be the target's rendering.
       return true;
     });
-    if (otherAnswerable.length === 0) return { group: groups[0]! };
+    if (otherAnswerable.length === 0) return { group: groups[0]!, attribution: "only-answerable" };
     return {
       reason: VERIFIER_REASON.OPTION_GROUP_NOT_ATTRIBUTABLE,
       why:
@@ -2536,6 +2582,25 @@ const optionSetOffered: Predicate = {
       const extraOffered = extra.filter((o) => o.visible !== false && o.operable !== false);
       const extraNotOperable = extra.filter((o) => !(o.visible !== false && o.operable !== false));
       if (extraOffered.length > 0) {
+        // 1.8.1 (Codex review BLOCKER 1) — THE EXTRA ARM IS LICENSED BY CLAUSE (i) ALONE.
+        // Under clause (ii) the sole group may be a NAME-FUSION of the target with another
+        // same-named question (page-script merges radio/checkbox groups by name alone), so an
+        // offered entry beyond the document's closed set may simply belong to the other fused
+        // question. This gate sits BEFORE the attestation check because it is structural: no
+        // better capture of this screen could attribute the extra. Membership arms above are
+        // untouched — fusion only ADDS options, so absence from the superset stays absence.
+        if (attributed.attribution !== "named") {
+          return insufficient(
+            this.id,
+            VERIFIER_REASON.OPTION_EXTRA_UNATTRIBUTED_GROUP,
+            `the screen offers ${extraOffered.map((o) => JSON.stringify(o.label)).join(", ")} beyond the ` +
+              `document's closed option set, but the sole option group was accepted as the target's only because ` +
+              `it is the screen's one answerable thing — its name does not attribute it — and the page reader ` +
+              `merges every same-named radio/checkbox control into one group, so this group may be a fusion of ` +
+              `the target with another question and the extra option(s) may belong to that other question, not ` +
+              `to the target's own inventory`,
+          );
+        }
         if (!accusable) return notAccusable(`the screen offers ${extraOffered.length} option(s) the document does not list`);
         return {
           outcome: "violated",

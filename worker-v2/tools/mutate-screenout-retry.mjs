@@ -8,8 +8,11 @@
  * (the shim retry's reuse is the documented anti-pattern — walk-artifact-index resolves
  * attempts BY attemptId), and a retry's artifact basenames are DISJOINT from attempt 0's
  * (the judge's signed manifest keys the catalogue by basename; a collision raises
- * MANIFEST_DUPLICATE_ARTIFACT and the run mints no judgement). Each mutant below
- * re-opens exactly one of those, and the named guard test must go red for it.
+ * MANIFEST_DUPLICATE_ARTIFACT and the run mints no judgement) — plus a fifth from the
+ * Codex review (BLOCKER 4): a pivot spends the batch's EXEC_BATCH_MAX_ATTEMPTS budget
+ * like any other attempt, checked at pivot time against the same counter the outer
+ * work-item gate reads. Each mutant below re-opens exactly one of those, and the named
+ * guard test must go red for it.
  *
  *   node tools/mutate-screenout-retry.mjs
  */
@@ -65,6 +68,20 @@ await runMutantSuite({
       find: "        const retryAttemptId = mintAttemptId();",
       replace: "        const retryAttemptId = attemptId;",
       kills: ["a FRESH attemptId is minted for every pivot attempt — never the shim retry's reuse"],
+    },
+    {
+      name: "the eligibility gate drops the attempt-budget clause (Codex BLOCKER 4)",
+      breaks:
+        "the named cap. EXEC_BATCH_MAX_ATTEMPTS is checked only at the outer work-item " +
+        "gate, so a pivot rides for free: maxAttempts=1 executes three attempts, " +
+        "maxAttempts=4 six — the batch's cost/side-effect budget is not real for the one " +
+        "feature that walks a path more than once on purpose",
+      file: EB,
+      find: "  if (args.pathsWalked >= args.maxAttempts) return false;",
+      replace: "  // (attempt-budget clause dropped by mutant)",
+      kills: [
+        "THE BUDGET BINDS PIVOTS: maxAttempts=1 means ONE attempt — an eligible screen-out does NOT pivot on an exhausted budget",
+      ],
     },
     {
       name: "the retry writes its artifacts under attempt 0's refs",

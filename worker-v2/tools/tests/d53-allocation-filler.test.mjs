@@ -545,3 +545,160 @@ suite("D53 — the driver claims the group before the grid and value passes", ()
     );
   });
 });
+
+/* ============================================================ 4. BLOCKER 2 — the lattice invariant */
+
+/**
+ * THE 11 AUG REVIEW BLOCKER: `allocationValues` snapped the equal split to each input's step
+ * grid, but the clamp phase clamped to the RAW min/max without re-snapping, and the success
+ * check verified only the final total. Total 20 over A={min 0, max 5, step 3} and
+ * B={min 0, max 20, step 1} returned [5,15] — 5 is not on A's own grid ({0, 3} is all it
+ * admits) — while a fully valid [3,17] exists. The driver then recorded the step-invalid
+ * write as a successful navigator default, and the site's later rejection was blamed on the
+ * site. The invariant these tests pin: every value returned lies on its member's own VALID
+ * LATTICE (the min-anchored step grid intersected with [min, max]) and the total is exact —
+ * or the group is a named unfillable. Never a knowingly-invalid write.
+ */
+suite("D53 — BLOCKER 2: every allocation value lies on its member's own valid lattice", () => {
+  const member = (idx, extra = {}) => ({ idx, label: `row ${idx}`, min: null, max: null, step: null, value: "", required: false, ...extra });
+  const group = (members, total) => ({ total, targetSource: "test", members });
+
+  /** Independent oracle: the member's valid values — its min-anchored step grid cut to [min, max]. */
+  const lattice = (m) => {
+    const lo = Number(m.min ?? 0);
+    const hi = Number(m.max);
+    const step = Number(m.step ?? 1);
+    const out = [];
+    for (let k = 0; ; k++) {
+      const v = Number((lo + k * step).toPrecision(12));
+      if (v > hi + 1e-9) break;
+      out.push(v);
+    }
+    return out;
+  };
+
+  /** Every returned value sits on its own member's lattice (interval membership for step="any"). */
+  const assertMemberValid = (split, members) => {
+    for (let i = 0; i < members.length; i++) {
+      const v = Number(split.values[i].value);
+      const m = members[i];
+      if (String(m.step ?? "").toLowerCase() === "any") {
+        const lo = Number(m.min ?? 0);
+        const hi = m.max === null ? Number.POSITIVE_INFINITY : Number(m.max);
+        assert(v >= lo - 1e-9 && v <= hi + 1e-9, `member ${i} holds ${v}, outside its own [${lo}, ${hi}]: ${JSON.stringify(split)}`);
+        continue;
+      }
+      assert(
+        lattice(m).some((x) => Math.abs(x - v) < 1e-9),
+        `member ${i} holds ${v}, which is NOT on its own grid {${lattice(m).join(",")}}: ${JSON.stringify(split)}`,
+      );
+    }
+  };
+
+  const sumOf = (split) => split.values.reduce((a, v) => a + Number(v.value), 0);
+
+  test("THE REVIEW'S COUNTEREXAMPLE: total 20 over {min 0, max 5, step 3} + {min 0, max 20, step 1} is [3,17] — never the step-invalid [5,15]", async () => {
+    const mod = await worker();
+    const members = [member(0, { min: "0", max: "5", step: "3" }), member(1, { min: "0", max: "20", step: "1" })];
+    const split = mod.driver.allocationValues(group(members, 20));
+    assert(split.ok, JSON.stringify(split));
+    assertEq(split.values.map((v) => v.value).join(","), "3,17", JSON.stringify(split));
+    assertMemberValid(split, members);
+    assertEq(sumOf(split), 20, `the split does not land the declared total exactly: ${JSON.stringify(split)}`);
+  });
+
+  test("...and the driver types the lattice-valid split end to end, not the raw-clamped one", async () => {
+    const mod = await worker();
+    const s = allocScreen({
+      n: 2,
+      instruction: "Enter a whole number in every row. Your answers must sum to exactly 20.",
+      memberExtra: (i) => (i === 0 ? { min: "0", max: "5", step: "3" } : { min: "0", max: "20", step: "1" }),
+    });
+    const { obs, page } = await walk(mod, testEnv(), advancing(s));
+    const typed = actionsOf(obs, "type-text");
+    assertEq(typed.length, 2, JSON.stringify(obs.steps[0].actions));
+    assertEq(typed.map((a) => a.value).join(","), "3,17", JSON.stringify(typed.map((a) => a.value)));
+    assertEq(page.typed.map((t) => t.text).join(","), "3,17", `the keystrokes disagree with the record: ${JSON.stringify(page.typed)}`);
+  });
+
+  test("A TOTAL NO LATTICE COMBINATION REACHES IS NAMED UNFILLABLE — raw maxes said 25 was fine, the grids top out at 23", async () => {
+    const mod = await worker();
+    // Raw maxes sum to 5 + 20 = 25, but the first member's own grid tops out at 3, so the
+    // true reachable ceiling is 23. Pre-fix this returned ok with [5,20] — a step-invalid 5
+    // laundered by an exact-looking total.
+    const members = [member(0, { min: "0", max: "5", step: "3" }), member(1, { min: "0", max: "20", step: "1" })];
+    const split = mod.driver.allocationValues(group(members, 25));
+    assert(!split.ok, `a lattice-unreachable total produced a write: ${JSON.stringify(split)}`);
+    assert(/23/.test(split.why) && /25/.test(split.why), `the lattice arithmetic is not named: ${split.why}`);
+  });
+
+  test('step="any" IS UNCHANGED: no grid means fractions are legal and the equal split stands', async () => {
+    const mod = await worker();
+    const members = [member(0, { step: "any" }), member(1, { step: "any" })];
+    const split = mod.driver.allocationValues(group(members, 25));
+    assert(split.ok, JSON.stringify(split));
+    assertEq(split.values.map((v) => v.value).join(","), "12.5,12.5", JSON.stringify(split));
+  });
+
+  test('...and in a MIXED group the step="any" member absorbs what the grids cannot, exactly', async () => {
+    const mod = await worker();
+    // {0..20, step 3} can only hold multiples of 3; whatever offset that leaves against the
+    // total, the continuous member must take — a shape the greedy quanta alone cannot always
+    // close (pre-fix this exact group was declared unfillable at deficit 1).
+    const members = [member(0, { min: "0", max: "10", step: "any" }), member(1, { min: "0", max: "20", step: "3" })];
+    const split = mod.driver.allocationValues(group(members, 20));
+    assert(split.ok, `a feasible mixed group was declared unfillable: ${JSON.stringify(split)}`);
+    assertMemberValid(split, members);
+    assertEq(sumOf(split), 20, JSON.stringify(split));
+  });
+
+  test("GREEDY STEP-QUANTA ALONE WOULD STRAND A FEASIBLE SPLIT — the bounded exact search places it", async () => {
+    const mod = await worker();
+    // After the equal split, remainder and clamps, the deficit is 2 and NO single member can
+    // absorb it in its own quanta ({4}, {3}, {1 at its cap}) — greedy DOM order dead-ends.
+    // Yet 4+6+0 lands the total exactly. A false "unfillable" here is the other face of the
+    // blocker: the caller records per-member no-derivation rows for a group the site itself
+    // considers answerable.
+    const members = [
+      member(0, { min: "0", max: "4", step: "4" }),
+      member(1, { min: "0", max: "6", step: "3" }),
+      member(2, { min: "0", max: "1", step: "1" }),
+    ];
+    const split = mod.driver.allocationValues(group(members, 10));
+    assert(split.ok, `a feasible lattice split was declared unfillable: ${JSON.stringify(split)}`);
+    assertMemberValid(split, members);
+    assertEq(sumOf(split), 10, JSON.stringify(split));
+  });
+
+  test("PROPERTY: over a deterministic (min,max,step,T) sweep, every split is member-valid and total-exact, and unfillable EXACTLY when no lattice combination reaches T", async () => {
+    const mod = await worker();
+    const configs = [
+      { min: "0", max: "5", step: "3" },
+      { min: "0", max: "20", step: "1" },
+      { min: "0", max: "6", step: "3" },
+      { min: "2", max: "8", step: "2" }, // anchored at min 2: the grid is {2,4,6,8}, NOT the even numbers from 0
+      { min: "0", max: "4", step: "4" },
+      { min: "1", max: "7", step: "1" },
+    ];
+    const totals = [0, 5, 7, 10, 13, 20, 26];
+    let checked = 0;
+    for (const a of configs) {
+      for (const b of configs) {
+        for (const T of totals) {
+          const members = [member(0, a), member(1, b)];
+          const split = mod.driver.allocationValues(group(members, T));
+          const feasible = lattice(a).some((x) => lattice(b).some((y) => Math.abs(x + y - T) < 1e-9));
+          if (split.ok) {
+            assert(feasible, `an infeasible total ${T} over ${JSON.stringify([a, b])} produced a write: ${JSON.stringify(split)}`);
+            assertMemberValid(split, members);
+            assertEq(sumOf(split), T, `${JSON.stringify([a, b, T])}: ${JSON.stringify(split)}`);
+          } else {
+            assert(!feasible, `a feasible total ${T} over ${JSON.stringify([a, b])} was declared unfillable: ${split.why}`);
+          }
+          checked += 1;
+        }
+      }
+    }
+    assertEq(checked, configs.length * configs.length * totals.length, "the sweep did not cover the declared set");
+  });
+});

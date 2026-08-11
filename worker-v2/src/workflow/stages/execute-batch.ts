@@ -667,7 +667,8 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       // un-say what the first walk observed. Each loop turn is one full attempt with the
       // same per-attempt commit discipline; `screenoutRetryEligible` owns every refusal
       // (typed screened-out on invented answers only, never sealed stimulus or intended
-      // terminations, capped at SCREENOUT_PIVOT_CAP, deadline-bounded).
+      // terminations, capped at SCREENOUT_PIVOT_CAP, attempt-budget-bounded,
+      // deadline-bounded).
       //
       // DURABLE BEFORE EFFECT: the pivot counter is incremented and SAVED before the
       // re-walk starts — the hungPaths pattern. If the Workflow step replays after that
@@ -683,6 +684,12 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
           obs,
           path: item.path,
           pivots: progress.screenoutPivots,
+          // The batch's attempt accounting, AT PIVOT TIME: the same `pathsWalked` counter
+          // the outer work-item gate compares against `maxAttempts`. Each loop turn
+          // re-reads it after the previous attempt's `pathsWalked += 1`, so a pivot is
+          // admitted only while the budget the outer gate enforces has room left.
+          pathsWalked,
+          maxAttempts,
           now: Date.now(),
           batchDeadline,
         })
@@ -792,7 +799,8 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         args.cursor.pendingCaseIds = args.cursor.pendingCaseIds.filter((id) => !retryClosed.includes(id));
 
         // pathsWalked counts ATTEMPTS, so pivots spend the same maxAttempts/deadline
-        // budget as any walk and the wall-clock ledger stays honest.
+        // budget as any walk and the wall-clock ledger stays honest — and the eligibility
+        // gate above READS this counter, so the spend is enforced, not just recorded.
         pathsWalked += 1;
         casesClosed += retryClosed.length;
         steps += obs.steps.length;
@@ -1031,6 +1039,14 @@ export function assessExercised(
  *     terminated_at/case_action clauses and the cap still bound the damage.)
  *   - the pivot cap — two pivots, then the last walk's screened-out ending stands, with
  *     the pivot-linked records telling the story;
+ *   - the batch attempt budget — EXEC_BATCH_MAX_ATTEMPTS caps ATTEMPTS, not outer work
+ *     items, so the cap means the same thing everywhere. The clause reads the executor's
+ *     own accounting pair: `pathsWalked` is the SAME counter the outer work-item gate
+ *     compares against `maxAttempts`, passed at pivot time (the while condition re-reads
+ *     it each turn, and every attempt — outer or pivot — consumes it identically with
+ *     `pathsWalked += 1` after its per-attempt commit). Without this clause the named
+ *     budget was not real for pivots: maxAttempts=1 could execute three attempts. Both
+ *     fields are mandatory in the signature; the executor is the only caller.
  *   - the batch deadline — a pivot is budgeted work like any other walk.
  *
  * Pure and exported so every clause is directly testable without a browser; the executor
@@ -1042,6 +1058,8 @@ export function screenoutRetryEligible(args: {
   obs: Pick<PathObservation, "ending" | "navigatorDefaultAnswerCount">;
   path: PlannedPath;
   pivots: Record<string, number> | undefined;
+  pathsWalked: number;
+  maxAttempts: number;
   now: number;
   batchDeadline: number;
 }): boolean {
@@ -1052,6 +1070,7 @@ export function screenoutRetryEligible(args: {
   if (Array.isArray(path.decisions) && path.decisions.some((d) => d && d.case_action !== undefined)) return false;
   if ((path as { adjacency?: { side?: string } }).adjacency?.side === "just-triggers") return false;
   if ((args.pivots?.[path.id] ?? 0) >= SCREENOUT_PIVOT_CAP) return false;
+  if (args.pathsWalked >= args.maxAttempts) return false;
   if (args.now >= args.batchDeadline) return false;
   return true;
 }

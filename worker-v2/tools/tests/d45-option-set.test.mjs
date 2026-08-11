@@ -701,7 +701,13 @@ suite("D45 — fail-closed must not become fail-silent: the seeded defect IS cla
 
   test("AN EXTRA OPTION is claimable ONLY when the document closes the set", async () => {
     const mod = await worker();
-    const withExtra = q3Screen([...BIOLOGICS, ["9", "ENBREL"]]);
+    // 1.8.1 re-anchor: the extra accusation now ALSO needs clause (i) name attribution (a
+    // clause (ii) sole group may be a name-fusion — see the 1.8.1 suite at the end of this
+    // file), so this fixture names its group "Q3". The property pinned HERE is unchanged:
+    // an extra option is claimable only when the document CLOSES the set.
+    const withExtra = screen(Q3_WORDING, {
+      optionGroups: [group([...BIOLOGICS, ["9", "ENBREL"]].map(([c, l], i) => opt(i, c, l)), "Q3")],
+    });
     const closed = {
       asserted: BIOLOGICS.map(([c, l]) => documented(c, l)),
       siblings: [],
@@ -1824,8 +1830,12 @@ suite("D45 — FIX C1/C2: a borrowed inventory and a hidden extra are refusals, 
     // operable, so the accusation stands — but the hidden sentinel beside it must not be
     // quoted as evidence. On pre-1.7.0 code this test FAILS: the detail quoted "" as an
     // undocumented offer alongside ENBREL.
+    // 1.8.1 re-anchor: the group is named "Q3" because the offered-extra ACCUSATION now needs
+    // clause (i) attribution; the offered-vs-present split this test pins is unchanged.
     const mod = await worker();
-    const withBoth = q3Screen([...BIOLOGICS, ["9", "ENBREL"]]);
+    const withBoth = screen(Q3_WORDING, {
+      optionGroups: [group([...BIOLOGICS, ["9", "ENBREL"]].map(([c, l], i) => opt(i, c, l)), "Q3")],
+    });
     withBoth.optionGroups[0].options.push(opt(6, "", "", { visible: false, operable: false }));
     const closed = { asserted: BIOLOGICS.map(([c, l]) => documented(c, l)), siblings: [], exhaustive: true };
     const { row } = await verifyCase(mod, testEnv(), {
@@ -1998,5 +2008,127 @@ suite("D45 — 1.9.0: a word-shaped capture is not a count clause (owner-approve
     assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
     assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
     assertEq(out.coverage.typedCases, 0, "the softened count clause must not make a gap-marked case decidable");
+  });
+});
+
+// ===========================================================================
+// 1.8.1 (Codex review BLOCKER 1) — A NAME-FUSED GROUP LICENSES NO EXTRA ACCUSATION.
+//
+// THE COUNTEREXAMPLE. `page-script.ts` merges every radio/checkbox into a group by NAME
+// ALONE (`c.name || '(unnamed)'`), so a target checkbox question and a consent question that
+// both emit `name="answer"` arrive here as ONE fused group. Clause (ii) of the 1.8.0
+// discriminator accepted that sole group — its exclusions assumed a second question's
+// radios "would have created a SECOND group", which is false exactly when names collide —
+// and an exhaustive target then accused the fused-in consent option as
+// OPTION_OFFERED_NOT_DOCUMENTED: a confident false accusation about a healthy survey, the
+// product's cardinal failure.
+//
+// THE 1.8.1 RULE. Acceptance now carries its OWN provenance: clause (i) (name/id-prefix)
+// keeps the full extra arm; clause (ii) (only-answerable) does NOT license it — a fused
+// group is indistinguishable from a single question there, and an "extra" option may simply
+// belong to the other fused question, so the offered-extra arm demotes to a named
+// insufficient (OPTION_EXTRA_UNATTRIBUTED_GROUP). The MEMBERSHIP arms are deliberately
+// unchanged: fusion only ADDS options to the group, so a documented option absent from the
+// fused superset is absent from the target's rendering too — OPTION_MISSING stays sound,
+// and the corpus's one proven detection stays a claim.
+//
+// `tools/mutate-option-set.mjs` re-licenses the extra arm under clause (ii); the first test
+// below is the one that kills it.
+// ===========================================================================
+suite("D45 — 1.8.1: a name-fused group licenses no EXTRA accusation (Codex review BLOCKER 1)", () => {
+  /** The closed exhaustive payload: the document lists all five biologics and no others. */
+  const closedSet = () => ({
+    asserted: BIOLOGICS.map(([c, l]) => documented(c, l)),
+    siblings: [],
+    exhaustive: true,
+  });
+  const closedCase = () => [
+    facet("fi_d45_closed", { target: "Q3", kind: "option-set", lineage: "req_d45opt1", optionSet: closedSet() }),
+  ];
+  /** The fused-in consent option: shares no token with any documented label, visible, operable. */
+  const CONSENT_LABEL = "I agree to take part in this study";
+
+  test("FIX 1.8.1: a fused target+consent group under one name never mints the extra-option accusation", async () => {
+    // RED ON PRE-1.8.1 CODE: contradicted/OPTION_OFFERED_NOT_DOCUMENTED, quoting the consent
+    // option as an undocumented offer of Q3. The screen is byte-shaped as page-script fuses
+    // it: Q3's five checkboxes AND the consent checkbox all emit name="answer", so the reader
+    // merges them into ONE group and nothing else on the screen is answerable — clause (ii)
+    // accepts, correctly, because the membership comparison is still sound on the superset.
+    // The EXTRA arm is what may not fire: the consent option is beyond the document's closed
+    // set for Q3, but it may simply belong to the other fused question.
+    const mod = await worker();
+    const fused = screen(Q3_WORDING, {
+      optionGroups: [
+        group([...BIOLOGICS.map(([c, l], i) => opt(i, c, l)), opt(5, "1", CONSENT_LABEL)], "answer"),
+      ],
+    });
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_closed",
+      cases: closedCase(),
+      steps: [step(0, fused)],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_EXTRA_UNATTRIBUTED_GROUP");
+    assert(
+      row.verifier.detail.includes(CONSENT_LABEL),
+      `the refusal must name the option it declines to accuse: ${row.verifier.detail}`,
+    );
+    assertEq(result.value.contradicted, 0, "a fused-in option must accuse nobody");
+  });
+
+  test("UNCHANGED 1.8.1: the s4-style OPTION_MISSING through clause (ii) still detects — plain and fused", async () => {
+    // The detection the gate must not cost, in BOTH shapes. Plain: the branching engine's
+    // flawed Q3 (BIMZELX dropped) under the sole "answer" group. Fused: the same flawed
+    // inventory WITH the consent option fused in — fusion only ADDS options, so the
+    // documented option absent from the superset is absent from Q3, period, and the
+    // membership arm proceeds under clause (ii) exactly as before.
+    const mod = await worker();
+    const flawedPlain = screen(Q3_WORDING, {
+      optionGroups: [group(BIOLOGICS.filter(([c]) => c !== "5").map(([c, l], i) => opt(i, c, l)), "answer")],
+    });
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, flawedPlain)],
+    });
+    assertEq(row.verifier.decision, "contradicted", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_MISSING");
+    assertEq(result.value.contradicted, 1, "the corpus's one true positive must remain a claim");
+
+    const flawedFused = screen(Q3_WORDING, {
+      optionGroups: [
+        group(
+          [...BIOLOGICS.filter(([c]) => c !== "5").map(([c, l], i) => opt(i, c, l)), opt(4, "1", CONSENT_LABEL)],
+          "answer",
+        ),
+      ],
+    });
+    const { result: result2, row: row2 } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, flawedFused)],
+    });
+    assertEq(row2.verifier.decision, "contradicted", JSON.stringify(row2.verifier));
+    assertEq(row2.verifier.reason, "OPTION_MISSING");
+    assertEq(result2.value.contradicted, 1, "fusion only ADDS options; an absent documented option is still absent");
+  });
+
+  test("UNCHANGED 1.8.1: a name-attributed group with a real extra still accuses", async () => {
+    // Clause (i) keeps the full extra arm: when the group NAMES the target, the inventory is
+    // the target's by the markup's own word, an extra is the target's extra, and the closed
+    // set the document states is violated. The gate must move clause (ii) only.
+    const mod = await worker();
+    const attributedExtra = screen(Q3_WORDING, {
+      optionGroups: [group([...BIOLOGICS.map(([c, l], i) => opt(i, c, l)), opt(5, "9", "ENBREL")], "Q3")],
+    });
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_closed",
+      cases: closedCase(),
+      steps: [step(0, attributedExtra)],
+    });
+    assertEq(row.verifier.decision, "contradicted", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_OFFERED_NOT_DOCUMENTED");
+    assert(/ENBREL/.test(row.verifier.detail), row.verifier.detail);
+    assertEq(result.value.contradicted, 1);
   });
 });
