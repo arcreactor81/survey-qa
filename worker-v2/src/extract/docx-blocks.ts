@@ -44,7 +44,10 @@ import type { DocumentCoverage, ParsedDocument, SourceBlock } from "./types";
  * Load-bearing parser semantics. Persisted model work records this value and must not be
  * reused after it changes, even when the document's block ids happen to remain identical.
  */
-export const DOCX_BLOCKS_VERSION = "v2-docx-blocks/1.1.0" as const;
+// 1.3.0 — table-hosted combo-box/ruby blocks inherit their host cell's structural
+// coordinates, and a table banner starts even when an empty first cell emits only a lifted
+// origin-bearing block. Persisted 1.2.0 output cannot identify that host cell after merge.
+export const DOCX_BLOCKS_VERSION = "v2-docx-blocks/1.3.0" as const;
 
 const PACKAGE_RELS = "_rels/.rels";
 /** What `partsRead` calls a flat Word 2003 XML document, which has no parts at all. */
@@ -601,10 +604,14 @@ export function annotate(blocks: SourceBlock[]): string {
   const out: string[] = [];
   let lastTable: string | null = null;
   for (const b of blocks) {
-    if (b.kind === "table-cell" && b.tableId !== lastTable) {
+    // `tableId`, not `kind`, is the table-membership fact. A combo-box suggestion or ruby
+    // reading is deliberately a paragraph block so its source authority survives, but it is
+    // still hosted by a table cell and may be the table's first emitted block when that cell
+    // has no rendered text of its own.
+    if (b.tableId !== null && b.tableId !== lastTable) {
       out.push(`--- table ${b.tableId} ---`);
       lastTable = b.tableId;
-    } else if (b.kind !== "table-cell") {
+    } else if (b.tableId === null) {
       lastTable = null;
     }
     const inlineText = b.text.replace(/\n/g, " ⏎ ");
@@ -928,6 +935,14 @@ interface TableCell {
   gridCol: number;
   span: number;
   vMerge: VerticalMerge;
+  /**
+   * Origin-bearing drafts hosted by this cell (combo-box suggestions, ruby readings). They
+   * are emitted as SEPARATE blocks after the cell, exactly as the body path emits them after
+   * their host paragraph — folding them into cell text erased the origin that annotate()'s
+   * OPEN-NOT-EXHAUSTIVE marker and the option-set source-role refusal both key on, which let
+   * an open suggestion list in a table cell be sealed as an exhaustive answer list.
+   */
+  drafts: Draft[];
 }
 
 interface TableRow {
@@ -1059,16 +1074,31 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
       }
 
       const parts: string[] = [];
+      const cellDrafts: Draft[] = [];
       const paraRe = new RegExp(s.paragraphSrc, "g");
       let paraMatch: RegExpExecArray | null;
       while ((paraMatch = paraRe.exec(cellXml)) !== null) {
         if (paraMatch[1] === undefined) continue;
         for (const d of paragraphDrafts(paraMatch[1], s, coverage, origin)) {
           if (d.origin === "image-alt") parts.push(d.text);
-          else if (clean(d.text).length > 0) parts.push(clean(d.text));
+          // An origin-bearing draft (combo-box suggestion, ruby reading) keeps its origin as
+          // its own block instead of being folded into cell text: the origin is the ONLY
+          // thing that stops an open suggestion sealing as an exhaustive answer list.
+          // Drafts carrying the part origin itself (the paragraph's own text, dropdown
+          // items) still fold, unchanged.
+          else if (d.origin !== origin) {
+            // The draft remains a paragraph so its origin continues to control authority, but
+            // its host cell is still exact source provenance. `rows.length + 1` is the current
+            // one-based row because this row has not yet been appended to `rows`.
+            cellDrafts.push({
+              ...d,
+              tableId,
+              coords: { row: rows.length + 1, col: gridCol, rowHeader: null, colHeader: null },
+            });
+          } else if (clean(d.text).length > 0) parts.push(clean(d.text));
         }
       }
-      cells.push({ text: parts.join("\n"), gridCol, span, vMerge });
+      cells.push({ text: parts.join("\n"), gridCol, span, vMerge, drafts: cellDrafts });
       gridCol = Math.min(MAX_GRID_COLUMNS + 1, gridCol + span);
     }
     rows.push({ cells, repeatHeader: onOffProperty(tblHeaderRe.exec(trPr)?.[0] ?? "") });
@@ -1133,7 +1163,12 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
     const row = rows[r]!;
     for (const c of row.cells) {
       const text = c.text;
-      if (clean(text).length === 0) continue;
+      if (clean(text).length === 0) {
+        // A cell whose only content is a content control still owes its origin-bearing
+        // drafts: skipping the empty cell must not silently drop the open suggestions.
+        out.push(...c.drafts);
+        continue;
+      }
       out.push({
         kind: "table-cell",
         text,
@@ -1147,6 +1182,9 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
           colHeader: null,
         },
       });
+      // Reading order mirrors the body path: the host cell's own text first, then its
+      // origin-bearing drafts.
+      out.push(...c.drafts);
     }
   }
   return [...out, ...nestedDrafts];

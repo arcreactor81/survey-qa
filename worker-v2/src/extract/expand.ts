@@ -83,6 +83,7 @@ import { sha256Hex } from "../store/hash";
 import {
   constrainsMatching,
   EXPECTATION_GAP,
+  OPTION_SET_CLOSURE_ASSESSMENT,
   type DocumentedOption,
   type ExpectationGap,
   type ExpectationGapCode,
@@ -133,7 +134,22 @@ const expansionOf = (row: ExpansionInputRow): RawExpansion | null =>
  * readings remain counted source material but can no longer mint option-set payloads or
  * corroborate another option through the sibling inventory.
  */
-export const EXPANDER_VERSION = "v2-floor-expander/1.4.0";
+/**
+ * 1.5.0 — full-line accounting on the option quote, and sibling gates.
+ */
+/**
+ * 1.8.0 — option authority is positive and entailed-only. An explicit-negative option row
+ * cannot enter `OptionSetPayload.asserted` or sibling corroboration until a polarity-bearing
+ * predicate exists. A quote with an unread line now carries a gap and NO option payload: the
+ * previous payload+gap shape was simultaneously executable and counted untyped, contradicting
+ * `FacetInstance.expectationGap` and allowing a verifier verdict from a gap. Unicode letters
+ * and numbers are labels; bracketed or symbol-only lines whose role is not structurally known
+ * are unread material, never silently discarded as English-shaped "punctuation" or "markers".
+ * Semicolons without delimiter provenance and distinct duplicate-label occurrences likewise
+ * refuse instead of being split/collapsed. Every minted payload carries computed closure
+ * coverage, separating safe membership from a closure claim this compiler did not evaluate.
+ */
+export const EXPANDER_VERSION = "v2-floor-expander/1.8.0";
 
 /**
  * The producer's own classification of a requirement facet. It decides which requirements
@@ -359,12 +375,19 @@ export function bindDestination(raw: string | null, vocabulary: Map<string, stri
  * refuse like any other row whose quote yields no options.
  */
 
-/** Bracketed programmer markers a document prints beside an option, and the list bullets. */
+/** Internal list bullets whose structure is known, plus a bracket-shaped suffix we must NOT guess about. */
 const OPTION_LINE_NOISE = /^(?:\[b\d+\]\s*)?(?:\(list\)\s*)?(?:\[#\]\s*)?/i;
 const TRAILING_MARKER = /\s*\[[A-Z][A-Z0-9 ,;:'\/-]{1,}\]\s*$/;
 
 /** `3) Label`, `3. Label`, `3 - Label`, `3: Label` — the code the DOCUMENT printed. */
 const CODED_OPTION = /^(\d{1,3})\s*[).:\-]\s+(.+)$/;
+
+/**
+ * More than one sentence is prose-shaped in every script, not only after ASCII `.?!`.
+ * The no-space branch is limited to a following LETTER so `3.5` remains a label while
+ * Japanese `一文。次文。` and Arabic `جملة؟جملة` are still recognized as multi-sentence.
+ */
+const MULTI_SENTENCE_LINE = /\p{Sentence_Terminal}(?:\s+\S|(?=\p{L}))/u;
 
 const NUMBER_WORD: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
@@ -374,29 +397,76 @@ const NUMBER_WORD: Record<string, number> = {
 /**
  * SPLIT A DOCUMENT QUOTE INTO THE OPTION LINES IT CARRIES.
  *
- * Newlines first (the common multi-option quote), then the `(list)` marker and `;` which the
- * block joiner uses when it flattens several source blocks into one quote. A quote with none
- * of those is one line, which is the common single-option quote.
+ * Newlines and the repository-owned `[bNNN]` / `(list)` tokens are structural separators. A
+ * semicolon is NOT: it can separate flattened blocks or occur inside one respondent-visible
+ * label, and `displayQuote` carries no delimiter provenance. It therefore stays on the line
+ * for `parseDocumentedOptionsAccounted` to report as unread rather than being guessed apart.
  */
 function optionLinesOf(quote: string): string[] {
   const flattened = quote.replace(/\s*\[b\d+\]\s*/gi, "\n").replace(/\s*\(list\)\s*/gi, "\n");
   return flattened
-    .split(/[\n;]+/)
+    .split(/\n+/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+/** `parseDocumentedOptionsAccounted`'s result: the options read, plus the lines it could not read. */
+export interface ParsedDocumentedOptions {
+  options: DocumentedOption[];
+  /**
+   * 1.8.0 — CANDIDATE OPTION LINES THE PARSER COULD NOT CLASSIFY SAFELY: a line killed by the
+   * prose/two-sentence guard, the trailing-colon header guard, or the length cap, plus a pure
+   * bracketed or symbol-only line whose role is not carried by structural source metadata.
+   * Every one can be a real option on an unknown questionnaire ("Other (please specify):",
+   * "[None]", "★"), so none may disappear as an English-shaped programmer convention.
+   * A semicolon whose delimiter role is unknown and a normalized duplicate carried by a
+   * DISTINCT code/source occurrence are included too. Empty text after stripping an internal
+   * join/bullet token and an exact duplicate of the same semantic occurrence remain
+   * definitional skips; they add no distinct label bytes to the document inventory.
+   * The count is load-bearing: `mintOptionSet` refuses the whole option payload when any
+   * candidate line could not be read. The current schema cannot represent safe membership
+   * and an unread closure obligation separately, and the dropped line may itself be an option
+   * the site legitimately offers.
+   */
+  unparsedLines: string[];
 }
 
 /**
  * READ THE OPTIONS OUT OF A DOCUMENT QUOTE. Never a guess: a line this cannot read is DROPPED
  * and the caller refuses when nothing is left, rather than inventing a label from the prose.
+ * Since 1.5.0 the drop is ACCOUNTED, not silent — see `ParsedDocumentedOptions.unparsedLines`.
  */
-export function parseDocumentedOptions(quote: string): DocumentedOption[] {
+export function parseDocumentedOptionsAccounted(quote: string): ParsedDocumentedOptions {
   const out: DocumentedOption[] = [];
-  const seen = new Set<string>();
+  const unparsedLines: string[] = [];
+  const seen = new Map<string, { code: string | null; line: string }>();
   for (const raw of optionLinesOf(String(quote ?? ""))) {
-    const line = raw.replace(OPTION_LINE_NOISE, "").replace(TRAILING_MARKER, "").trim();
-    // A bracketed line is a programmer instruction, a scale header or a range — never a label.
-    if (!line || /^\[.*\]$/.test(line)) continue;
+    // These leading tokens are emitted by this repository's own block/list joiner, so their
+    // structural role is known. Arbitrary bracketed DOCUMENT text is not: `[ROTATE]` may be an
+    // instruction, while `[None]` may be the respondent-visible label. Syntax alone cannot
+    // choose, so a pure bracketed document line is counted unread and blocks a closure claim.
+    const sourceText = raw.replace(OPTION_LINE_NOISE, "").trim();
+    if (!sourceText) continue;
+    // `;` is both ordinary label punctuation and a legacy flattening separator. Without the
+    // source block boundary there is no safe reading, so neither splitting nor preserving it
+    // as one label can acquire verdict authority.
+    if (sourceText.includes(";")) {
+      unparsedLines.push(sourceText);
+      continue;
+    }
+    if (/^\[.*\]$/u.test(sourceText)) {
+      unparsedLines.push(sourceText);
+      continue;
+    }
+    // A suffix like `[EXCLUSIVE]` is often a programmer annotation, but `[NONE]` or `[A]` can
+    // also be respondent-visible label text. The display quote has no per-suffix role, so the
+    // old unconditional strip was another silent convention. Count the whole line unread; a
+    // future source adapter may remove/role-tag annotations only when its source proves that.
+    if (TRAILING_MARKER.test(sourceText)) {
+      unparsedLines.push(sourceText);
+      continue;
+    }
+    const line = sourceText;
     // AN ANSWER OPTION IS A PHRASE, NOT PROSE, and this is the guard that keeps a sentence out
     // of the seal. A quote like "PROGRAMMER NOTE: Present options in the exact order listed
     // above. Do not randomize." is one line with letters in it, and without this it becomes a
@@ -404,19 +474,49 @@ export function parseDocumentedOptions(quote: string): DocumentedOption[] {
     // absent, which is a FABRICATED missing-option claim with a document quote in front of it.
     // Two shapes, both structural rather than lexical: more than one sentence, or a header
     // ending in a colon.
-    if (/[.!?]\s+\S/.test(line) || /:$/.test(line)) continue;
+    // NFKC makes compatibility-equivalent colons (`：`, `﹕`) visible to the same structural
+    // header guard without translating or otherwise normalizing the label bytes we preserve.
+    if (MULTI_SENTENCE_LINE.test(line) || line.normalize("NFKC").endsWith(":")) {
+      unparsedLines.push(line);
+      continue;
+    }
     const coded = CODED_OPTION.exec(line);
     const code = coded ? coded[1]! : null;
-    const label = (coded ? coded[2]! : line).replace(TRAILING_MARKER, "").trim();
-    // A label with no letter or digit is punctuation; one this long is a paragraph, not an
-    // answer option, and comparing it to a rendered option would never match anything.
-    if (!label || label.length > 160 || !/[a-z0-9]/i.test(label)) continue;
+    const label = (coded ? coded[2]! : line).trim();
+    if (!label) continue;
+    // Unicode letters/numbers are ordinary label material. A non-empty symbol-only line may
+    // ALSO be a real answer (`★`, `✓`, emoji), but this payload has no source-role evidence
+    // that can distinguish it from a separator. Refuse it visibly instead of silently
+    // shortening a closed set. `/[a-z0-9]/` would misclassify every non-Latin questionnaire.
+    if (!/[\p{L}\p{N}]/u.test(label)) {
+      unparsedLines.push(line);
+      continue;
+    }
+    // One this long is a paragraph, not an answer option, and comparing it to a rendered
+    // option would never match anything — but the cap is a heuristic, and the line WAS in the
+    // quote, so its loss is recorded and blocks a closure claim like the prose guard's does.
+    if (label.length > 160) {
+      unparsedLines.push(line);
+      continue;
+    }
     const key = norm(label);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const previous = seen.get(key);
+    if (previous) {
+      // An exact repeated semantic occurrence is idempotent stitching. A different code or
+      // source line under the same normalized label may be two distinct answer choices; this
+      // payload has no multiplicity semantics, so collapsing them would silently shorten it.
+      if (previous.code !== code || previous.line !== line) unparsedLines.push(line);
+      continue;
+    }
+    seen.set(key, { code, line });
     out.push({ code, label });
   }
-  return out;
+  return { options: out, unparsedLines };
+}
+
+/** The options alone, for callers that read membership material and never seal a closure claim. */
+export function parseDocumentedOptions(quote: string): DocumentedOption[] {
+  return parseDocumentedOptionsAccounted(quote).options;
 }
 
 /** Does the requirement's own sentence carry this label? Normalized containment, both ways round. */
@@ -432,15 +532,53 @@ const statementCorroborates = (statement: string, label: string): boolean =>
  * lists. So a stated count must EQUAL the number of options read, and a closure phrase with no
  * count needs at least two.
  */
-function statesAClosedSet(statement: string, parsed: number): boolean {
-  const s = norm(statement);
+function assessClosedSet(
+  r: ScopedRequirement,
+  parsed: number,
+  asserted: number,
+): { exhaustive: boolean; assessment: OptionSetPayload["closureAssessment"] } {
+  const s = norm(r.normativeStatement);
   const closed = /\b(?:exactly|and no others?|no other (?:answer |response )?options?|only the following)\b/.test(s);
-  if (!closed || parsed < 2) return false;
+  if (!closed) {
+    return {
+      exhaustive: false,
+      assessment: {
+        status: "not-evaluated",
+        code: OPTION_SET_CLOSURE_ASSESSMENT.NOT_EVALUATED,
+        detail:
+          `positive membership is typed, but no language-neutral closed-set proof is present in this payload ` +
+          `(requirement quantifier ${JSON.stringify(r.quantifier)}). The current lexical recognizer did not ` +
+          `establish “these and no others”; exhaustive is therefore false and extra-option coverage was NOT evaluated`,
+      },
+    };
+  }
   const stated = /\b(?:exactly|following)\s+(?:the\s+following\s+)?(\d{1,2}|[a-z]+)\s+(?:answer|response|scale)?\s*options?\b/.exec(s);
-  if (!stated) return true;
-  const token = stated[1]!;
-  const n = /^\d+$/.test(token) ? Number(token) : NUMBER_WORD[token];
-  return n === undefined ? true : n === parsed;
+  const token = stated?.[1] ?? null;
+  const n = token === null ? null : /^\d+$/.test(token) ? Number(token) : (NUMBER_WORD[token] ?? null);
+  const countAgrees = n === null ? stated === null : n === parsed;
+  if (parsed < 2 || asserted !== parsed || !countAgrees) {
+    return {
+      exhaustive: false,
+      assessment: {
+        status: "not-established",
+        code: OPTION_SET_CLOSURE_ASSESSMENT.EVIDENCE_INCOMPLETE,
+        detail:
+          `the requirement carries a closed-set phrase, but closure evidence is incomplete: parsed=${parsed}, ` +
+          `corroborated=${asserted}, statedCount=${n ?? "not established"}. Exhaustive remains false, so no ` +
+          `extra-option verdict can be minted`,
+      },
+    };
+  }
+  return {
+    exhaustive: true,
+    assessment: {
+      status: "established",
+      code: OPTION_SET_CLOSURE_ASSESSMENT.ESTABLISHED,
+      detail:
+        `the requirement closes the set in its own words and all ${parsed} parsed option(s) are corroborated` +
+        (n === null ? "" : `; its stated count is ${n}`),
+    },
+  };
 }
 
 export interface OptionSetBinding {
@@ -450,6 +588,17 @@ export interface OptionSetBinding {
 
 const nonAnswerOptionSourceRoles = (r: ScopedRequirement): string[] =>
   [...new Set((r.sourceAtoms ?? []).map((atom) => atom.role).filter(isNonAnswerOptionSourceRole))].sort();
+
+/**
+ * DOES THE ROW'S STATEMENT NAME ANOTHER QUESTION THE DOCUMENT KNOWS? Shared by
+ * `mintOptionSet`'s OPTION_SET_QUESTION_AMBIGUOUS refusal and the sibling inventory in
+ * `expandFloor` (1.5.0), so the two cannot drift: a row refused as question-ambiguous must
+ * not corroborate a sibling either — its options may belong to the OTHER question.
+ */
+const namesAnotherQuestion = (r: ScopedRequirement, questionId: string, vocabulary: Map<string, string>): string[] =>
+  [...vocabulary.entries()]
+    .filter(([key, id]) => id.length > 1 && id !== questionId && mentions(r.normativeStatement, key))
+    .map(([, id]) => id);
 
 /**
  * MINT THE SEALED OPTION EXPECTATION FOR ONE ROW, OR SAY WHY NOT.
@@ -464,6 +613,22 @@ export function mintOptionSet(
   vocabulary: Map<string, string>,
   siblingsFor: (questionId: string, exclude: ScopedRequirement) => DocumentedOption[],
 ): OptionSetBinding {
+  // `OptionSetPayload.asserted` means "the survey must offer this". An explicit-negative row
+  // means the opposite and cannot be represented by that payload without inverting the
+  // document. Keep a counted case, but no executable expectation, until a typed negative
+  // option predicate exists. Other non-entailed statuses are withheld before this function.
+  if (r.assertionStatus === "explicit-negative") {
+    return {
+      optionSet: null,
+      expectationGap: gap(
+        EXPECTATION_GAP.OPTION_SET_NEGATIVE_PREDICATE_NOT_AVAILABLE,
+        `the document explicitly states a negative option proposition (${JSON.stringify(r.normativeStatement)}), ` +
+          `but the current option-set payload and predicate represent required positive membership only. Treating ` +
+          `this label as asserted would accuse a compliant survey of missing an option the document forbids`,
+      ),
+    };
+  }
+
   const refusedRoles = nonAnswerOptionSourceRoles(r);
   if (refusedRoles.length > 0) {
     return {
@@ -493,9 +658,7 @@ export function mintOptionSet(
 
   // The statement names ANOTHER question this document knows. Which question's options these
   // are has two readings, and no predicate may pick one.
-  const named = [...vocabulary.entries()]
-    .filter(([key, id]) => id.length > 1 && id !== questionId && mentions(r.normativeStatement, key))
-    .map(([, id]) => id);
+  const named = namesAnotherQuestion(r, questionId, vocabulary);
   if (named.length > 0) {
     return {
       optionSet: null,
@@ -507,7 +670,25 @@ export function mintOptionSet(
     };
   }
 
-  const parsed = parseDocumentedOptions(r.displayQuote ?? "");
+  const { options: parsed, unparsedLines } = parseDocumentedOptionsAccounted(r.displayQuote ?? "");
+
+  // FULL-LINE ACCOUNTING (1.7.0). Check this BEFORE `parsed.length`: an all-unread quote is
+  // still a known parser limitation and must retain its unread-line count, not collapse into
+  // the less specific "nothing read" bucket. A case-level `expectationGap` means no registered
+  // predicate can decide the case, so it cannot coexist with a positive membership payload.
+  if (unparsedLines.length > 0) {
+    return {
+      optionSet: null,
+      expectationGap: gap(
+        EXPECTATION_GAP.OPTION_SET_QUOTE_LINE_UNPARSED,
+        `${unparsedLines.length} line(s) of this requirement's document quote could not be read as answer ` +
+          `options (${unparsedLines.map((l) => JSON.stringify(l.slice(0, 80))).join(", ")}). Although ${parsed.length} ` +
+          `option(s) were readable, this case carries no option-set expectation: the current contract cannot ` +
+          `represent checked membership and an unchecked closure claim as separate obligations`,
+      ),
+    };
+  }
+
   if (parsed.length === 0) {
     return {
       optionSet: null,
@@ -533,14 +714,17 @@ export function mintOptionSet(
     };
   }
 
+  const closure = assessClosedSet(r, parsed.length, asserted.length);
   return {
     optionSet: {
       asserted,
       siblings: siblingsFor(questionId, r),
       // The closure claim is taken over what was PARSED, not over what survived corroboration:
       // a set is closed by the document's words, and dropping an uncorroborated line must not
-      // make the remainder look complete.
-      exhaustive: asserted.length === parsed.length && statesAClosedSet(r.normativeStatement, parsed.length),
+      // make the remainder look complete. The full-line guard above means this point is
+      // reachable only when every candidate quote line was accounted for.
+      exhaustive: closure.exhaustive,
+      closureAssessment: closure.assessment,
     },
     expectationGap: null,
   };
@@ -581,6 +765,16 @@ export interface ExpansionCoverage {
   byGap: Record<string, number>;
   /** Case kind -> { cases, typed }. */
   byKind: Record<string, { cases: number; typed: number }>;
+  /** Computed coverage of the separate closed-set / extra-option claim. */
+  optionSetClosure: {
+    cases: number;
+    payloadCases: number;
+    established: number;
+    notEstablished: number;
+    notEvaluated: number;
+    unavailableBecauseCaseUntyped: number;
+    byCode: Record<string, number>;
+  };
 }
 
 export interface ExpansionOutput {
@@ -608,13 +802,27 @@ export async function expandFloor(
   for (const row of rows) {
     const r = row.requirement;
     if (FACET_TO_CASE_KIND[r.facet] !== "option-set") continue;
+    // Positive option authority is ENTAILED-ONLY. `explicit-negative` constrains matching in
+    // the abstract contract, but this payload has no polarity and represents only options the
+    // survey MUST offer. Letting a forbidden label into `siblings` can mask a forbidden extra
+    // or license a code-keyed accusation; disputed/ambiguous/document-silent rows likewise
+    // carry no positive authority.
+    if (r.assertionStatus !== "entailed") continue;
     // A source unsafe as an assertion is equally unsafe as sibling corroboration, where it
     // could otherwise license a code-keyed label accusation in a different requirement.
     if (nonAnswerOptionSourceRoles(r).length > 0) continue;
     const q = questionOf(r);
     if (!q) continue;
+    // 1.5.0 — a row `mintOptionSet` refuses as OPTION_SET_QUESTION_AMBIGUOUS has two readings
+    // of which question owns its options; they may belong to the OTHER question, and must not
+    // corroborate this one.
+    if (namesAnotherQuestion(r, q, vocabulary).length > 0) continue;
+    const { options, unparsedLines } = parseDocumentedOptionsAccounted(r.displayQuote ?? "");
+    // The whole case is untyped when any candidate line was unread, so its surviving labels
+    // cannot acquire verdict authority indirectly as another case's sibling evidence.
+    if (unparsedLines.length > 0) continue;
     const held = optionsByQuestion.get(q) ?? [];
-    for (const o of parseDocumentedOptions(r.displayQuote ?? "")) {
+    for (const o of options) {
       if (statementCorroborates(r.normativeStatement, o.label)) held.push({ from: r.requirementVersionId, option: o });
     }
     optionsByQuestion.set(q, held);
@@ -777,7 +985,9 @@ export async function expandFloor(
       basis = bound.optionSet
         ? `one option-set case: the document states ${bound.optionSet.asserted.length} answer option(s) for this ` +
           `question, read from its own quote and corroborated by the requirement's statement` +
-          (bound.optionSet.exhaustive ? ", and closes the set" : "")
+          (bound.optionSet.exhaustive
+            ? ", and closes the set"
+            : `; closure coverage: ${bound.optionSet.closureAssessment.code}`)
         : `one option-set case, carrying no expectation: ${bound.expectationGap?.code}`;
     } else {
       const kind = FACET_TO_CASE_KIND[r.facet] ?? "rendered-state";
@@ -913,6 +1123,15 @@ function coverageOf(
 ): ExpansionCoverage {
   const byGap: Record<string, number> = {};
   const byKind: Record<string, { cases: number; typed: number }> = {};
+  const optionSetClosure: ExpansionCoverage["optionSetClosure"] = {
+    cases: 0,
+    payloadCases: 0,
+    established: 0,
+    notEstablished: 0,
+    notEvaluated: 0,
+    unavailableBecauseCaseUntyped: 0,
+    byCode: {},
+  };
   let typed = 0;
   for (const fi of facetInstances) {
     const k = (byKind[fi.case.kind] ??= { cases: 0, typed: 0 });
@@ -921,6 +1140,20 @@ function coverageOf(
     else {
       typed += 1;
       k.typed += 1;
+    }
+    if (fi.case.kind === "option-set") {
+      optionSetClosure.cases += 1;
+      const payload = fi.case.optionSet;
+      if (!payload) {
+        optionSetClosure.unavailableBecauseCaseUntyped += 1;
+      } else {
+        optionSetClosure.payloadCases += 1;
+        const assessment = payload.closureAssessment;
+        if (assessment.status === "established") optionSetClosure.established += 1;
+        else if (assessment.status === "not-established") optionSetClosure.notEstablished += 1;
+        else optionSetClosure.notEvaluated += 1;
+        optionSetClosure.byCode[assessment.code] = (optionSetClosure.byCode[assessment.code] ?? 0) + 1;
+      }
     }
   }
   return {
@@ -931,6 +1164,7 @@ function coverageOf(
     untypedCases: facetInstances.length - typed,
     byGap,
     byKind,
+    optionSetClosure,
   };
 }
 

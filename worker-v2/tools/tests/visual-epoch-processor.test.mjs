@@ -29,6 +29,8 @@ await esbuild.build({
       `export * as visionTypes from ${p("src/vision/types.ts")};`,
       `export * as visionObserve from ${p("src/vision/observe.ts")};`,
       `export * as visionSchema from ${p("src/vision/schema.ts")};`,
+      `export * as visionDurableClient from ${p("src/vision/durable-client.ts")};`,
+      `export * as hash from ${p("src/store/hash.ts")};`,
     ].join("\n"),
     resolveDir: WORKER_ROOT,
     sourcefile: "visual-epoch-processor-test-entry.ts",
@@ -263,6 +265,93 @@ async function fixture({ capModelCalls = 20 } = {}) {
   return { ...fx, row, fence };
 }
 
+/** A second eligible epoch in the same run: distinct screenshot bytes -> distinct paid identity. */
+async function secondEpochRow(fx) {
+  const geometry2 = {
+    width: 120,
+    height: 80,
+    deviceScaleFactor: 1,
+    scrollX: 0,
+    scrollY: 0,
+    documentWidth: 120,
+    documentHeight: 160,
+    source: "browser",
+  };
+  const screenEntry = await putEvidence(fx, {
+    bytes: enc.encode(JSON.stringify({ visibleText: "Second epoch DOM", controls: [] })),
+    type: "dom-excerpt",
+    mediaType: "application/json",
+    sourceEvidenceId: "EV-screen-2",
+    artifactRef: "observations/path/screen-2.json",
+  });
+  const screenshotEntry = await putEvidence(fx, {
+    bytes: png(120, 80),
+    type: "screenshot",
+    mediaType: "image/png",
+    sourceEvidenceId: "EV-screenshot-2",
+    artifactRef: "observations/path/screen-2.png",
+  });
+  const screenRef = ref(screenEntry, "screen-json");
+  const screenshotRef = ref(screenshotEntry, "screenshot");
+  const axArtifact = {
+    kind: "v2-accessibility-snapshot/1.0.0",
+    epochId: "epoch-visual-2",
+    stepIndex: 0,
+    slot: "before",
+    scope: scope(),
+    capturedAt: at(6),
+    screenReadAt: at(5),
+    screenSignatureHash: "a".repeat(64),
+    geometry: geometry2,
+    pairing: { screenJson: screenRef, screenshot: screenshotRef },
+    capture: {
+      interestingOnly: false,
+      completeness: "complete",
+      limitations: [],
+      nodeCount: 3,
+      maxDepthObserved: 2,
+      serializedBytes: 0,
+      limits: { maxNodes: 5_000, maxDepth: 64, maxValueChars: 16_384, maxSerializedBytes: 1_500_000 },
+    },
+    tree: {
+      role: "WebArea",
+      name: "Survey",
+      children: [{
+        role: "radiogroup",
+        name: "Choose one",
+        children: [{ role: "radio", name: "Option A", checked: false, children: [] }],
+      }],
+    },
+  };
+  const accessibilityEntry = await putEvidence(fx, {
+    bytes: settleArtifactBytes(axArtifact),
+    type: "state",
+    mediaType: "application/json",
+    sourceEvidenceId: "EV-accessibility-2",
+    artifactRef: "observations/path/screen-2.accessibility.json",
+  });
+  const row = {
+    ...fx.row,
+    epochOrdinal: 1,
+    epochId: "epoch-visual-2",
+    startedAt: at(4),
+    endedAt: at(7),
+    screenReadAt: at(5),
+    geometry: geometry2,
+    screen: { status: "captured", ref: screenRef },
+    screenshot: { status: "captured", ref: screenshotRef },
+    accessibility: {
+      status: "captured",
+      ref: ref(accessibilityEntry, "accessibility"),
+      completeness: "complete",
+      limitations: [],
+    },
+    cacheInputIdentity: null,
+  };
+  row.cacheInputIdentity = await mod.visualWork.computeCaptureInputIdentity(row);
+  return row;
+}
+
 function telemetry(request, overrides = {}) {
   return {
     callId: request.callId,
@@ -390,6 +479,258 @@ test("paired-content empty-inventory limitation survives the stored epoch projec
   assert.equal(counter.calls, 1);
 });
 
+function driftClient(counter, driftedModel) {
+  return {
+    async observe(request) {
+      counter.calls += 1;
+      return {
+        content: inventory,
+        // Drifted echo with provider-not-reported cost: exactly the gateway shape from the
+        // finding (adapter preserves the echo verbatim; configured pricing refuses a drifted
+        // model, so costUsd stays null and the ledger records an unknown-cost paid attempt).
+        telemetry: telemetry(request, { model: driftedModel, costUsd: null }),
+      };
+    },
+  };
+}
+
+test("provider model-echo drift closes as a stored counted identity-mismatch limitation (finding E1)", async () => {
+  // QA pin for review vision-billing finding E1 — this test FAILS on the pre-fix tree
+  // (733c333). There, the durable receipt settled "observed" (content-only validation) while
+  // the observer read "malformed" with the named model-identity-mismatch limitation, and
+  // assertObservationMatchesOutcome threw observation-inference-state-mismatch on every run and
+  // replay: the paid observation was discarded unpersisted and the wave mislabelled the epoch
+  // "persistence-failed", blocking the whole visual channel. The observe-level pin
+  // (visual-observation.test.mjs "timeout, unavailable provider, and model identity drift...")
+  // covers observeVisualPage only; the EPOCH level was the untested seam. Two cooperating
+  // fixes close it: DurableVisionClient now classifies a NEW drift receipt as "malformed" at
+  // settlement, and the epoch assert reconciles legacy observed+drift receipts (see the
+  // replayed-receipt test below). Either way this whole-path scenario must end in a stored,
+  // counted limitation — never a throw.
+  const fx = await fixture();
+  const counter = { calls: 0 };
+  const driftedModel = `${model.model}-002`;
+  const client = driftClient(counter, driftedModel);
+
+  const result = await mod.processor.processVisualEpoch(inputFor(fx, client));
+  assert.equal(result.state, "stored");
+  assert.equal(result.readState, "malformed");
+  assert.deepEqual(result.observation.limitationKinds, ["model-identity-mismatch"]);
+  assert.equal(counter.calls, 1);
+
+  const observation = await mod.visionStore.readVisualObservationArtifact(
+    fx.bucket,
+    result.observation.storage,
+  );
+  assert.notEqual(observation, null, "the paid observation must be persisted, not discarded");
+  assert.equal(observation.readState, "malformed");
+  // The evidence of substitution is preserved verbatim (store/vision.ts drift intent).
+  assert.equal(observation.provenance.model.reportedModel, driftedModel);
+  assert.equal(observation.provenance.model.requestedModel, model.model);
+  assert.equal(
+    observation.limitations.some((item) => item.kind === "model-identity-mismatch"),
+    true,
+  );
+
+  // Replay converges to the same closed state without another provider purchase.
+  const replay = await mod.processor.processVisualEpoch(inputFor(fx, client));
+  assert.deepEqual(replay, result);
+  assert.equal(counter.calls, 1);
+
+  // The paid attempt stays durably recorded with unknown cost. That deliberately stops FURTHER
+  // purchases (see the companion prior-cost-unknown test) but never erases this observation.
+  const usage = await mod.usage.readVisualUsageLedger(fx.bucket, fx.runId);
+  assert.equal(usage.events.length, 1);
+  assert.equal(usage.totals.modelCallsUsed, 1);
+  assert.equal(usage.totals.unknownCostCount, 1);
+});
+
+/**
+ * Seed the exact durable state a PRE-FIX run left behind after paying for a drifted call:
+ * an immutable claim + a settled "observed" receipt whose telemetry model drifted (the old
+ * DurableVisionClient validated content only), plus the strict-ledger reservation the epoch's
+ * admission had already written. store/vision.ts deliberately admits such receipts on read
+ * (the drift is preserved paid evidence), so replay must reconcile them forever.
+ */
+async function seedSettledDriftReceipt(fx, driftedModel) {
+  const [promptSha256, responseSchemaSha256] = await Promise.all([
+    mod.visionObserve.visualPromptSha256(),
+    mod.visionObserve.visualResponseSchemaSha256(),
+  ]);
+  const inferenceCacheKey = await mod.visionObserve.computeVisualInferenceCacheKey({
+    screenshotSha256: fx.row.screenshot.ref.contentHash,
+    pixelWidth: 100,
+    pixelHeight: 80,
+    provider: model.provider,
+    model: model.model,
+    configurationSha256: model.configurationSha256,
+    promptSha256,
+    responseSchemaSha256,
+  });
+  const digest = mod.keys.visualInferenceDigest(inferenceCacheKey);
+  const callId = `visual-${digest.slice(-32)}`;
+  const storageKeys = {
+    digest,
+    claimKey: mod.keys.visualInferenceClaimKey(fx.runId, inferenceCacheKey),
+    outcomeKey: mod.keys.visualInferenceOutcomeKey(fx.runId, inferenceCacheKey),
+  };
+  await mod.visionStore.claimVisualInference(fx.bucket, storageKeys, {
+    schemaVersion: mod.visionStore.VISUAL_INFERENCE_CLAIM_SCHEMA_VERSION,
+    kind: "survey-qa-visual-inference-claim",
+    inferenceCacheKey,
+    callId,
+    claimedAt: FIXED_AT,
+    request: {
+      screenshotSha256: fx.row.screenshot.ref.contentHash,
+      mediaType: "image/png",
+      pixelWidth: 100,
+      pixelHeight: 80,
+      provider: model.provider,
+      model: model.model,
+      transport: model.transport,
+      configurationSha256: model.configurationSha256,
+      prompt: { version: mod.visionSchema.VISUAL_PROMPT_VERSION, sha256: promptSha256 },
+      responseSchema: {
+        version: mod.visionSchema.VISUAL_RESPONSE_SCHEMA_VERSION,
+        sha256: responseSchemaSha256,
+      },
+    },
+  });
+  const parsed = mod.visionSchema.validateModelVisualInventory(inventory);
+  assert.equal(parsed.ok, true);
+  const responseSha256 = await mod.hash.sha256Hex(mod.hash.canonicalJson(parsed.value));
+  await mod.visionStore.settleVisualInference(fx.bucket, storageKeys, {
+    schemaVersion: mod.visionStore.VISUAL_INFERENCE_OUTCOME_SCHEMA_VERSION,
+    kind: "survey-qa-visual-inference-outcome",
+    inferenceCacheKey,
+    callId,
+    settledAt: FIXED_AT,
+    result: { state: "observed", inventory: parsed.value, responseSha256 },
+    telemetry: {
+      callId,
+      provider: model.provider,
+      model: driftedModel,
+      providerRequestId: "provider-request-1",
+      gatewayLogId: null,
+      inputTokens: 100,
+      outputTokens: 20,
+      costUsd: null,
+      usageSource: "provider-reported",
+      attempts: 1,
+      latencyMs: 25,
+    },
+  });
+  // The pre-fix epoch had already admitted this purchase before the provider settled; recreate
+  // that reservation so the replay's idempotent accounting can convert it exactly once.
+  await mod.usage.preflightVisualInferenceStrict(fx.env, fx.runId, fx.fence, {
+    callId,
+    inferenceCacheKey,
+    provider: model.provider,
+    model: model.model,
+    maximumCostUsd: 0.05,
+    maximumVisualCalls: rollout.maximumCalls,
+    maximumVisualUsd: rollout.maximumUsd,
+  });
+  return { inferenceCacheKey, callId };
+}
+
+test("a replayed legacy observed+drift receipt converges to the counted limitation (finding E1)", async () => {
+  // The sharpest pin for finding E1's replay clause — this test FAILS on the pre-fix
+  // visual-epoch.ts even with the hardened DurableVisionClient, because the hardening only
+  // reclassifies NEW settlements: a legacy receipt settled "observed" with drifted telemetry
+  // replays verbatim, the observer reads "malformed" (model-identity-mismatch), and the old
+  // epoch assert threw observation-inference-state-mismatch deterministically forever —
+  // discarding the already-paid observation and blocking the channel as "persistence-failed".
+  // Post-fix the epoch must persist the observation, close as a counted limitation, and
+  // converge identically on every replay without any repurchase.
+  const fx = await fixture();
+  const driftedModel = `${model.model}-002`;
+  await seedSettledDriftReceipt(fx, driftedModel);
+  const counter = { calls: 0 };
+  const client = {
+    async observe() {
+      counter.calls += 1;
+      throw new Error("a settled receipt must never repurchase");
+    },
+  };
+
+  const result = await mod.processor.processVisualEpoch(inputFor(fx, client));
+  assert.equal(result.state, "stored");
+  assert.equal(result.readState, "malformed");
+  assert.deepEqual(result.observation.limitationKinds, ["model-identity-mismatch"]);
+  assert.equal(counter.calls, 0);
+
+  const observation = await mod.visionStore.readVisualObservationArtifact(
+    fx.bucket,
+    result.observation.storage,
+  );
+  assert.notEqual(observation, null, "the paid observation must be persisted, not discarded");
+  assert.equal(observation.provenance.model.reportedModel, driftedModel);
+
+  const replay = await mod.processor.processVisualEpoch(inputFor(fx, client));
+  assert.deepEqual(replay, result);
+  assert.equal(counter.calls, 0);
+
+  const usage = await mod.usage.readVisualUsageLedger(fx.bucket, fx.runId);
+  assert.equal(usage.events.length, 1);
+  assert.equal(usage.totals.unknownCostCount, 1);
+});
+
+test("a forged observation state that contradicts the settled receipt still throws (E1 counterweight)", async () => {
+  // Counterweight boundary test for finding E1: the identity-mismatch reconciliation must not
+  // widen into a general bypass of the forged-success assert. The SAME readState pair
+  // ("malformed" observation vs settled "observed" receipt) WITHOUT the named
+  // model-identity-mismatch limitation remains fatal. (This forge cannot even be set up on the
+  // pre-fix code: the drift epoch never persisted an observation there, so this test also goes
+  // red pre-fix — but only the two E1 tests above fail for the pinned reason.)
+  const fx = await fixture();
+  await seedSettledDriftReceipt(fx, `${model.model}-002`);
+  const client = {
+    async observe() {
+      throw new Error("a settled receipt must never repurchase");
+    },
+  };
+  const first = await mod.processor.processVisualEpoch(inputFor(fx, client));
+  assert.equal(first.readState, "malformed");
+
+  const stored = await fx.bucket.get(first.observation.storage.key);
+  const artifact = JSON.parse(await stored.text());
+  // Swap the one recognized exception kind for the other closed telemetry limitation kind;
+  // everything else (empty inventory, counts, null call telemetry) stays store-valid.
+  const swapped = artifact.limitations.find((item) => item.kind === "model-identity-mismatch");
+  assert.notEqual(swapped, undefined);
+  swapped.kind = "model-call-identity-mismatch";
+  await fx.bucket.put(first.observation.storage.key, JSON.stringify(artifact));
+
+  await assert.rejects(
+    mod.processor.processVisualEpoch(inputFor(fx, client)),
+    (error) =>
+      error?.name === "VisualEpochProcessingError" &&
+      error.code === "observation-inference-state-mismatch",
+  );
+});
+
+test("after a drift-closed epoch the next admission still refuses on prior unknown cost", async () => {
+  // Edge test around the moved boundary (finding E1): closing the drift epoch as a counted
+  // limitation must NOT resume purchasing. The unknown-cost paid attempt stops the NEXT
+  // epoch's strict admission (usage.ts prior-cost-unknown) — that refusal is the deliberate
+  // convention this fix leaves intact; the win is the honest disposition and the persisted
+  // observation, not renewed spending.
+  const fx = await fixture();
+  const counter = { calls: 0 };
+  await mod.processor.processVisualEpoch(inputFor(fx, driftClient(counter, `${model.model}-002`)));
+  assert.equal(counter.calls, 1);
+
+  const row2 = await secondEpochRow(fx);
+  const counter2 = { calls: 0 };
+  await assert.rejects(
+    mod.processor.processVisualEpoch(inputFor(fx, observedClient(counter2), { row: row2 })),
+    (error) =>
+      error?.name === "VisualUsageAdmissionRefused" && error.reason === "prior-cost-unknown",
+  );
+  assert.equal(counter2.calls, 0, "no provider call may follow an unknown-cost attempt");
+});
+
 test("a stored epoch replays without another provider purchase or accounting charge", async () => {
   const fx = await fixture();
   const counter = { calls: 0 };
@@ -403,6 +744,54 @@ test("a stored epoch replays without another provider purchase or accounting cha
   assert.equal(checkpoint.checkpoint.usage.modelCalls.used, 0);
   assert.equal(usage.totals.modelCallsUsed, 1);
   assert.equal(usage.events.length, 1);
+});
+
+test("provider-reported model drift is one replayable malformed state, not a persistence failure", async () => {
+  const fx = await fixture();
+  let calls = 0;
+  const reportedModel = `${model.model}-002`;
+  const client = {
+    async observe(request) {
+      calls += 1;
+      return {
+        content: inventory,
+        telemetry: telemetry(request, { model: reportedModel }),
+      };
+    },
+  };
+
+  const first = await mod.processor.processVisualEpoch(inputFor(fx, client));
+  const replay = await mod.processor.processVisualEpoch(inputFor(fx, client));
+
+  assert.deepEqual(replay, first);
+  assert.equal(first.state, "stored");
+  assert.equal(first.readState, "malformed");
+  assert.equal(first.reconciliation.facts, 0);
+  assert.equal(first.reconciliation.conflicts, 0);
+  assert.equal(calls, 1, "a settled model-drift receipt must never repurchase on replay");
+
+  const observation = await mod.visionStore.readVisualObservationArtifact(
+    fx.bucket,
+    first.observation.storage,
+  );
+  assert.equal(observation.provenance.model.requestedModel, model.model);
+  assert.equal(observation.provenance.model.reportedModel, reportedModel);
+  assert.ok(observation.limitations.some((item) => item.kind === "model-identity-mismatch"));
+
+  const inferenceOutcome = [...fx.bucket._store.entries()]
+    .find(([key]) => key.endsWith("/outcome.json"));
+  assert.ok(inferenceOutcome, "the paid attempt must retain one immutable inference outcome");
+  const outcome = JSON.parse(new TextDecoder().decode(inferenceOutcome[1].bytes));
+  assert.equal(outcome.result.state, "malformed");
+  assert.equal(outcome.result.failure.kind, "model-identity-mismatch");
+  assert.equal(outcome.telemetry.model, reportedModel);
+
+  const usage = await mod.usage.readVisualUsageLedger(fx.bucket, fx.runId);
+  assert.equal(usage.totals.modelCallsUsed, 1);
+  assert.equal(usage.events.length, 1);
+  assert.equal(usage.events[0].model, model.model);
+  assert.equal(usage.events[0].resultState, "malformed");
+  assert.doesNotMatch(allStoredText(fx.bucket), /persistence-failed/u);
 });
 
 test("loader-ineligible returns a counted non-purchase result with zero I/O or ledger activity", async () => {

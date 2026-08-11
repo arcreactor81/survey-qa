@@ -152,6 +152,14 @@ suite("D50 — DOCX source roles block option-set fabrication", () => {
     const combo = parsed.blocks.find((entry) => entry.origin === "combo-box-suggestion");
     const ruby = parsed.blocks.find((entry) => entry.origin.startsWith("ruby-reading"));
     assert(combo && ruby, "the in-memory document must expose both special source blocks");
+    assertEq(combo.coords, null, "a body-hosted combo suggestion acquired invented table coordinates");
+    assertEq(ruby.coords, null, "a body-hosted ruby reading acquired invented table coordinates");
+    assertEq(combo.tableId, null, "a body-hosted combo suggestion acquired an invented table id");
+    assertEq(ruby.tableId, null, "a body-hosted ruby reading acquired an invented table id");
+    assert(
+      !parsed.annotatedText.includes("--- table "),
+      "body-hosted source metadata manufactured a table banner",
+    );
 
     const documentSha256 = await mod.hash.sha256Hex(docx);
     const authored = {
@@ -211,6 +219,225 @@ suite("D50 — DOCX source roles block option-set fabrication", () => {
     assert(
       prepared.facetInstances.every((entry) => entry.case.optionSet === null && entry.expectationGap?.code === GAP),
       "human-authored special sources did not receive the same deterministic refusal",
+    );
+  });
+});
+
+/**
+ * FINDING B1 (review-extract.md finding 2) — TABLE CELLS ERASED THE ORIGIN THE REFUSAL KEYS ON.
+ *
+ * Pre-1.2.0, `scanTable`'s cell loop folded every draft `paragraphDrafts` returned into plain
+ * cell text, special-casing only "image-alt". A combo-box suggestion or ruby reading INSIDE A
+ * TABLE CELL therefore lost the `combo-box-suggestion` / `ruby-reading; …` origin that
+ * annotate()'s OPEN-NOT-EXHAUSTIVE marker, merge's `sourceAtomRole` and the expander's
+ * OPTION_SET_SOURCE_NOT_AN_ANSWER_LIST refusal ALL key on — so open suggestions in a table
+ * could be sealed as an exhaustive answer list and mint an OPTION_MISSING accusation against a
+ * survey whose free-entry field is behaving exactly as documented.
+ *
+ * THE GAP THAT LET IT SHIP: every pre-existing fixture in this file and in the docx-robustness
+ * corpora (gen-v2-extra docs 23 and 29) places combo boxes and ruby ONLY in body paragraphs,
+ * never inside a `w:tc`. These tests are the table-hosted counterparts and FAIL on
+ * v2-docx-blocks/1.1.0.
+ */
+suite("D50 — table-hosted source roles survive the cell fold (finding B1)", () => {
+  const tableDocx = (bodyXml) =>
+    zipSync({
+      "word/document.xml": strToU8(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+          `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+          bodyXml +
+          `</w:body></w:document>`,
+      ),
+    });
+
+  /** One merged+expanded row citing `blockId`, driven through the REAL merge and expander. */
+  const expandCiting = async (mod, parsed, blockId, label) => {
+    const merged = await mod.merge.mergePasses(
+      pass("A", []),
+      pass("B", [raw("cited", blockId, "2", label)]),
+      { blocks: parsed.blocks, coverage: parsed.coverage },
+      [],
+    );
+    const row = merged.rows.find((entry) => entry.requirement.normativeStatement.includes(label));
+    const expanded = await mod.expand.expandFloor(merged.rows, { locale: "en", viewport: "desktop" });
+    const entry = expanded.facetInstances.find(
+      (candidate) => candidate.requirementLineageId === row.requirement.requirementLineageId,
+    );
+    return { row, entry };
+  };
+
+  test("combo-box suggestions in a table cell stay origin-labelled, marked OPEN-NOT-EXHAUSTIVE, and are refused as an answer list", async () => {
+    const mod = await worker();
+    const parsed = mod.docxBlocks.parseDocxBlocks(
+      tableDocx(
+        `<w:p><w:r><w:t>Q4. Choose or enter a specialty.</w:t></w:r></w:p>` +
+          `<w:tbl><w:tr>` +
+          `<w:tc><w:p><w:r><w:t>Specialty</w:t></w:r></w:p></w:tc>` +
+          `<w:tc><w:p><w:r><w:t>Pick or type: </w:t></w:r>` +
+          `<w:sdt><w:sdtPr><w:comboBox>` +
+          `<w:listItem w:displayText="Cardiology" w:value="C"/>` +
+          `<w:listItem w:displayText="Oncology" w:value="O"/>` +
+          `</w:comboBox></w:sdtPr><w:sdtContent><w:r><w:t>Choose or type</w:t></w:r></w:sdtContent></w:sdt>` +
+          `</w:p></w:tc>` +
+          `</w:tr></w:tbl>` +
+          `<w:p><w:r><w:t>OPEN ENTRY.</w:t></w:r></w:p>`,
+      ),
+    );
+
+    // Pre-fix, these blocks do not exist: the labels are folded into the cell's plain text.
+    const suggestions = parsed.blocks.filter((b) => b.origin === "combo-box-suggestion");
+    assertEq(
+      JSON.stringify(suggestions.map((b) => b.text)),
+      JSON.stringify(["Cardiology", "Oncology"]),
+      "table-hosted combo suggestions were not emitted as origin-bearing blocks",
+    );
+    assert(
+      suggestions.every((b) => b.tableId === "t1"),
+      "a lifted suggestion lost the tableId of the cell that hosts it",
+    );
+    assertEq(
+      JSON.stringify(suggestions.map((b) => b.coords)),
+      JSON.stringify([
+        { row: 1, col: 2, rowHeader: null, colHeader: null },
+        { row: 1, col: 2, rowHeader: null, colHeader: null },
+      ]),
+      "lifted suggestions lost the exact coordinates of their host cell",
+    );
+    const hostCell = parsed.blocks.find((b) => b.kind === "table-cell" && b.text.includes("Choose or type"));
+    assert(hostCell, "the host cell's own rendered text was lost");
+    assert(
+      !hostCell.text.includes("Cardiology") && !hostCell.text.includes("Oncology"),
+      "suggestion labels are still folded into plain cell text, where the origin is erased",
+    );
+
+    // The prompt-side guard: both passes read the marker, or the contract at prompts.ts never engages.
+    const annotated = mod.docxBlocks.annotate(parsed.blocks);
+    assert(
+      annotated.includes("[combo-box suggestion — OPEN, NOT EXHAUSTIVE: Cardiology]"),
+      "annotate() renders a table-hosted suggestion as ordinary cell text",
+    );
+    // The lifted blocks stay INSIDE their table in the rendering: exactly one banner, not one
+    // per interleaved draft (pins the annotate() lastTable condition this fix moved).
+    assertEq(annotated.split("--- table t1 ---").length - 1, 1, "the table banner re-printed around a lifted draft");
+
+    // The reconciliation sentence in coverage was WRITTEN as if this fix existed ("emitted as
+    // open-suggestion paragraph blocks" counted in-cell labels); the fix makes it true rather
+    // than adjusting the count. Assert the statement against the blocks actually emitted.
+    const combo = parsed.coverage.problems.find((p) => /combo-box content control/.test(p));
+    assert(combo, "the combo-box reconciliation problem is missing");
+    assert(
+      /2 emitted as open-suggestion paragraph/.test(combo),
+      `the reconciliation message no longer matches: ${combo}`,
+    );
+    assertEq(suggestions.length, 2, "the emitted count in coverage is not the number of blocks actually emitted");
+
+    // The deterministic backstop: a requirement citing the suggestion is REFUSED as an answer
+    // list — named, counted, never a cleverer guess.
+    const { row, entry } = await expandCiting(mod, parsed, suggestions[0].blockId, "Cardiology");
+    assertEq(row.requirement.sourceAtoms[0].role, "source-origin:combo-box-suggestion");
+    assertEq(
+      JSON.stringify(row.requirement.sourceAtoms[0].coords),
+      JSON.stringify({ row: 1, col: 2, rowHeader: null, colHeader: null }),
+      "merge discarded the suggestion's host-cell coordinates",
+    );
+    assertEq(entry.case.optionSet, null, "a table-hosted open suggestion minted an option payload");
+    assertEq(entry.expectationGap.code, GAP, "the refusal must fire on a table-hosted suggestion");
+  });
+
+  test("ruby readings in a table cell stay origin-labelled and are refused as an answer list", async () => {
+    const mod = await worker();
+    const parsed = mod.docxBlocks.parseDocxBlocks(
+      tableDocx(
+        `<w:p><w:r><w:t>Q17. Electricity contract.</w:t></w:r></w:p>` +
+          `<w:tbl><w:tr>` +
+          `<w:tc><w:p><w:r><w:ruby><w:rubyPr/><w:rt><w:r><w:t>でんき</w:t></w:r></w:rt>` +
+          `<w:rubyBase><w:r><w:t>電気</w:t></w:r></w:rubyBase></w:ruby></w:r><w:r><w:t>の料金</w:t></w:r></w:p></w:tc>` +
+          `<w:tc><w:p><w:r><w:t>Monthly</w:t></w:r></w:p></w:tc>` +
+          `</w:tr></w:tbl>`,
+      ),
+    );
+
+    // Pre-fix the reading is folded into the cell as a plain line, so no ruby-reading block
+    // exists and the phonetic annotation can seal as an answer option.
+    const reading = parsed.blocks.find((b) => b.origin.startsWith("ruby-reading"));
+    assert(reading, "the table-hosted ruby reading was not emitted as an origin-bearing block");
+    assertEq(reading.text, "でんき", "the reading text changed");
+    assert(reading.origin.includes('base="電気"'), "the reading lost its base association");
+    assertEq(reading.tableId, "t1", "the lifted reading lost the tableId of the cell that hosts it");
+    assertEq(
+      JSON.stringify(reading.coords),
+      JSON.stringify({ row: 1, col: 1, rowHeader: null, colHeader: null }),
+      "the lifted reading lost the exact coordinates of its host cell",
+    );
+    const hostCell = parsed.blocks.find((b) => b.kind === "table-cell" && b.text.includes("電気"));
+    assert(hostCell, "the host cell's visible base text was lost");
+    assertEq(hostCell.text, "電気の料金", "the cell's visible text is not byte-exact");
+    assert(!hostCell.text.includes("でんき"), "the reading is still folded into the cell text");
+    assert(mod.docxBlocks.annotate(parsed.blocks).includes("[ruby-reading;"), "the annotated marker is missing");
+
+    const { row, entry } = await expandCiting(mod, parsed, reading.blockId, "でんき");
+    assertEq(row.requirement.sourceAtoms[0].role, "source-origin:ruby-reading");
+    assertEq(
+      JSON.stringify(row.requirement.sourceAtoms[0].coords),
+      JSON.stringify({ row: 1, col: 1, rowHeader: null, colHeader: null }),
+      "merge discarded the ruby reading's host-cell coordinates",
+    );
+    assertEq(entry.case.optionSet, null, "a table-hosted ruby reading minted an option payload");
+    assertEq(entry.expectationGap.code, GAP, "the refusal must fire on a table-hosted reading");
+  });
+
+  test("boundary: an empty cell still emits its suggestions; plain text and dropdowns in cells fold unchanged", async () => {
+    const mod = await worker();
+    const parsed = mod.docxBlocks.parseDocxBlocks(
+      tableDocx(
+        `<w:p><w:r><w:t>Q9. Boundary shapes.</w:t></w:r></w:p>` +
+          `<w:tbl><w:tr>` +
+          // A cell whose ONLY content is a combo control with no rendered text: pre-fix the
+          // empty-text skip dropped the whole cell, suggestions included, in silence.
+          `<w:tc><w:p><w:sdt><w:sdtPr><w:comboBox>` +
+          `<w:listItem w:displayText="Only-suggestion" w:value="x"/>` +
+          `</w:comboBox></w:sdtPr><w:sdtContent></w:sdtContent></w:sdt></w:p></w:tc>` +
+          // A closed dropdown and plain text: these carry the PART origin — there is no
+          // authority label to erase — so B1 deliberately leaves their fold untouched.
+          `<w:tc><w:p><w:r><w:t>Tariff: </w:t></w:r>` +
+          `<w:sdt><w:sdtPr><w:dropDownList>` +
+          `<w:listItem w:displayText="Fixed" w:value="1"/>` +
+          `<w:listItem w:displayText="Variable" w:value="2"/>` +
+          `</w:dropDownList></w:sdtPr><w:sdtContent><w:r><w:t>Choose an item.</w:t></w:r></w:sdtContent></w:sdt>` +
+          `</w:p></w:tc>` +
+          `</w:tr></w:tbl>`,
+      ),
+    );
+
+    const only = parsed.blocks.find((b) => b.origin === "combo-box-suggestion");
+    assert(only, "an empty cell's suggestions were dropped with the cell");
+    assertEq(only.text, "Only-suggestion");
+    assertEq(
+      JSON.stringify(only.coords),
+      JSON.stringify({ row: 1, col: 1, rowHeader: null, colHeader: null }),
+      "an empty host cell did not transfer its coordinates to the surviving suggestion",
+    );
+    assert(
+      !parsed.blocks.some((b) => b.kind === "table-cell" && b.coords?.col === 1),
+      "an empty cell was emitted as a table-cell block",
+    );
+
+    const annotated = mod.docxBlocks.annotate(parsed.blocks);
+    const bannerAt = annotated.indexOf("--- table t1 ---");
+    const suggestionAt = annotated.indexOf("[combo-box suggestion — OPEN, NOT EXHAUSTIVE: Only-suggestion]");
+    assert(bannerAt >= 0, "an empty first cell's lifted suggestion did not start its table banner");
+    assert(suggestionAt > bannerAt, "the first table-hosted suggestion was emitted before its table banner");
+    assertEq(annotated.split("--- table t1 ---").length - 1, 1, "the table banner was not emitted exactly once");
+
+    const dropdownCell = parsed.blocks.find((b) => b.kind === "table-cell" && b.text.includes("Tariff:"));
+    assert(dropdownCell, "the dropdown host cell was lost");
+    assert(
+      dropdownCell.text.includes("Fixed") && dropdownCell.text.includes("Variable"),
+      "closed dropdown items must still fold into the cell text — they carry no origin label",
+    );
+    assert(
+      !parsed.blocks.some((b) => b.kind === "list-item"),
+      "a folded dropdown item became a separate list-item block; that is outside B1's scope",
     );
   });
 });

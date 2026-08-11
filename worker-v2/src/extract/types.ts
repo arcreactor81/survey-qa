@@ -27,8 +27,9 @@ export interface SourceBlock {
   /** Nearest preceding heading, or null before the first one. */
   section: string | null;
   /**
-   * Structural table start coordinates. WordprocessingML has no semantic th/scope
-   * equivalent, so its parser leaves rowHeader/colHeader null.
+   * Structural table start coordinates for a cell or for an origin-bearing block lifted
+   * from that cell (for example a combo-box suggestion or ruby reading). WordprocessingML
+   * has no semantic th/scope equivalent, so its parser leaves rowHeader/colHeader null.
    */
   coords: { row: number; col: number; rowHeader: string | null; colHeader: string | null } | null;
   tableId: string | null;

@@ -42,6 +42,11 @@
 
 import { runMutantSuite } from "./mutate-runner.mjs";
 
+// The FINDING-B1 mutants (table cells folding combo/ruby drafts back into plain cell text —
+// the 1.1.0 behaviour) live in tools/mutate-source-roles.mjs, NOT here: their guard tests are
+// in the D50 suite, and this harness's "DOCX READER" filter never runs D50, so a kill named
+// here could never be proven (permanent SURVIVED over a baseline that lacks the guard).
+
 const DOCX = "src/extract/docx-blocks.ts";
 
 const SCORE_GATE = "the frozen 20-file corpus scores 89/99 and the FAILING SET is exactly the known ten";

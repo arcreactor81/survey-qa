@@ -553,13 +553,42 @@ function assertSettledInference(
   }
 }
 
+/**
+ * FIX (review vision-billing finding E1): a provider model-echo drift used to produce a
+ * DELIBERATE disagreement between two validators — the durable receipt validated content only
+ * and settled "observed" while preserving the drifted telemetry verbatim (store/vision.ts, so
+ * the evidence of substitution survives), and the observer validated telemetry identity and
+ * read "malformed" with the named `model-identity-mismatch` limitation (observe.ts). The
+ * equality assert converted that intended endpoint into a thrown
+ * `observation-inference-state-mismatch` on every run AND replay: the paid observation was
+ * discarded unpersisted and the wave mislabelled the epoch "persistence-failed", blocking the
+ * whole visual channel with a false cause. DurableVisionClient now classifies NEW drift
+ * receipts as "malformed" at settlement, but already-settled "observed" receipts carrying a
+ * drifted telemetry model are immutable paid evidence that store/vision.ts deliberately still
+ * admits on read — replaying one must converge, not crash. The single recognized
+ * reconciliation below lets such an epoch close as a counted limitation with the observation
+ * persisted; it requires the named limitation on an otherwise-empty malformed read (no call
+ * telemetry, no inventory items), so no visual fact can ride through it. Every other
+ * readState/outcome disagreement is still a forged-success or corruption signal and remains
+ * fatal.
+ */
 function assertObservationMatchesOutcome(
   observation: VisualObservationArtifact,
   outcomeState: "observed" | "timeout" | "unavailable" | "malformed",
 ): void {
-  if (observation.readState !== outcomeState) {
-    throw new VisualEpochProcessingError("observation-inference-state-mismatch");
-  }
+  if (observation.readState === outcomeState) return;
+  const namedIdentityMismatch =
+    observation.readState === "malformed" &&
+    outcomeState === "observed" &&
+    observation.limitations.some((limitation) => limitation.kind === "model-identity-mismatch") &&
+    observation.provenance.call === null &&
+    observation.inventory.questionRegions.length === 0 &&
+    observation.inventory.optionGroups.length === 0 &&
+    observation.inventory.controls.length === 0 &&
+    observation.inventory.messages.length === 0 &&
+    observation.inventory.visualLimitations.length === 0;
+  if (namedIdentityMismatch) return;
+  throw new VisualEpochProcessingError("observation-inference-state-mismatch");
 }
 
 function assertReconciliationIdentity(

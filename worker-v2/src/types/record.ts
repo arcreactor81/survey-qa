@@ -102,7 +102,11 @@ export const constrainsMatching = (s: AssertionStatus): boolean =>
 export interface SourceAtom {
   blockId: string;
   kind: "paragraph" | "table-cell" | "footnote" | "cross-reference" | "heading" | "list-item";
-  /** Structural table start coordinates, when kind === "table-cell". */
+  /**
+   * Structural table-origin coordinates whenever this atom came from a table cell. `kind` may
+   * be `table-cell`, or an origin-bearing paragraph/list block lifted from that cell; `kind`
+   * alone is therefore not the provenance discriminator.
+   */
   coords: { row: number; col: number; rowHeader: string | null; colHeader: string | null } | null;
   role: string;
   atomTextHash: string;
@@ -212,6 +216,35 @@ export interface DocumentedOption {
 }
 
 /**
+ * Closure is a separate claim from positive option membership. A membership case can be fully
+ * typed while the compiler still lacks language-neutral evidence that the document says
+ * "these and no others". Recording that state prevents `exhaustive: false` from silently
+ * meaning both "the document leaves the set open" and "this compiler did not evaluate it".
+ */
+export const OPTION_SET_CLOSURE_ASSESSMENT = Object.freeze({
+  ESTABLISHED: "OPTION_SET_CLOSURE_ESTABLISHED",
+  EVIDENCE_INCOMPLETE: "OPTION_SET_CLOSURE_EVIDENCE_INCOMPLETE",
+  NOT_EVALUATED: "OPTION_SET_CLOSURE_NOT_EVALUATED",
+} as const);
+
+export type OptionSetClosureAssessment =
+  | {
+      status: "established";
+      code: typeof OPTION_SET_CLOSURE_ASSESSMENT.ESTABLISHED;
+      detail: string;
+    }
+  | {
+      status: "not-established";
+      code: typeof OPTION_SET_CLOSURE_ASSESSMENT.EVIDENCE_INCOMPLETE;
+      detail: string;
+    }
+  | {
+      status: "not-evaluated";
+      code: typeof OPTION_SET_CLOSURE_ASSESSMENT.NOT_EVALUATED;
+      detail: string;
+    };
+
+/**
  * WHAT THE DOCUMENT SAYS A QUESTION MUST OFFER — a MEMBERSHIP claim, not a set.
  *
  * ==================== WHY MEMBERSHIP AND NOT A SET ====================
@@ -252,6 +285,8 @@ export interface OptionSetPayload {
    * Only an exhaustive payload can support "the site offers an option the document does not".
    */
   exhaustive: boolean;
+  /** Computed coverage for the distinct closed-set/extra-option claim. */
+  closureAssessment: OptionSetClosureAssessment;
 }
 
 export interface FacetCase {
@@ -370,6 +405,23 @@ export const EXPECTATION_GAP = Object.freeze({
    * compared against the wrong screen is the failure this whole module is arranged to avoid.
    */
   OPTION_SET_QUESTION_AMBIGUOUS: "OPTION_SET_QUESTION_AMBIGUOUS",
+  /**
+   * The document explicitly states that an option must NOT be offered. `OptionSetPayload`
+   * currently represents positive membership only, so feeding this row to that predicate
+   * would invert the document and accuse a compliant survey of MISSING the forbidden option.
+   * The row stays counted and untyped until a polarity-bearing payload and predicate exist.
+   */
+  OPTION_SET_NEGATIVE_PREDICATE_NOT_AVAILABLE: "OPTION_SET_NEGATIVE_PREDICATE_NOT_AVAILABLE",
+  /**
+   * 1.7.0 — The quote carried at least one candidate option line the parser could not classify
+   * safely: a trailing-colon shape ("Other (please specify):"), a two-sentence or over-long
+   * label, or bracketed/symbol-only text whose structural role was not established. The whole
+   * case is untyped and carries no `optionSet` payload. Some labels may have parsed safely, but
+   * this schema has no separate place for "membership checked; closure unread"; putting a
+   * payload beside `expectationGap` would contradict the invariant below and still let the
+   * verifier mint a verdict from a case coverage calls untyped.
+   */
+  OPTION_SET_QUOTE_LINE_UNPARSED: "OPTION_SET_QUOTE_LINE_UNPARSED",
 } as const);
 
 export type ExpectationGapCode = (typeof EXPECTATION_GAP)[keyof typeof EXPECTATION_GAP];

@@ -118,19 +118,21 @@ const membership = (code, label, { exhaustive = false, siblings = null } = {}) =
   exhaustive,
 });
 
-function contractBody({ cases }) {
+function contractBody({ cases, requirements = null }) {
   return {
     schemaVersion: "v2-contract-revision/1.0.0",
     kind: "survey-qa-v2-contract-revision",
     documentRevisionId: "d".repeat(64),
     documentSha256: "d".repeat(64),
     sealedAt: "2026-08-09T00:00:00.000Z",
-    requirements: [
-      // The QUESTION rows carry the wording witness the verifier identifies screens by.
-      req("req_d45q3word", "question", Q3_WORDING, Q3_WORDING, "question:Q3"),
-      req("req_d45q4word", "question", Q4_WORDING, Q4_WORDING, "question:Q4"),
-      ...BIOLOGICS.map(([c, l]) => optionRow(c, l)),
-    ],
+    requirements:
+      requirements ??
+      [
+        // The QUESTION rows carry the wording witness the verifier identifies screens by.
+        req("req_d45q3word", "question", Q3_WORDING, Q3_WORDING, "question:Q3"),
+        req("req_d45q4word", "question", Q4_WORDING, Q4_WORDING, "question:Q4"),
+        ...BIOLOGICS.map(([c, l]) => optionRow(c, l)),
+      ],
     facetInstances: [
       ...cases,
       // Q4 is a sealed target too, so "Q3" and "Q4" are both in the vocabulary a screen is read
@@ -157,9 +159,14 @@ function contractBody({ cases }) {
 
 /**
  * The branching engine emits `name="answer"` and `id="opt-<code>"` — so NOTHING in the markup
- * names the question, and screen identity here is carried by the document's WORDING alone.
- * That is the real instrument, and building the fixture any other way would test a survey we do
- * not have.
+ * names the question, and screen identity there is carried by the document's WORDING alone.
+ * 1.8.0 (FIX C1 respin): that shape DECIDES again. A sole non-empty group that fails
+ * name/prefix attribution is still accepted when it is the screen's ONLY answerable thing
+ * beyond navigation controls and its name is not the reader's "(unnamed)" merge key — which
+ * is exactly the engine's shape (radios named "answer" plus a Next button and nothing else).
+ * The borrowed-inventory shapes 1.7.0 closed (a select-rendered target, a consent group
+ * beside a textarea target) still refuse, because in each of them ANOTHER answerable control
+ * on the screen could be the target's rendering — see the FIX C1 suite below.
  */
 const opt = (order, code, label, over = {}) => ({
   order,
@@ -173,6 +180,17 @@ const opt = (order, code, label, over = {}) => ({
   ...over,
 });
 
+/**
+ * THE DEFAULT GROUP IS "answer" — the real branching engine's shape, RESTORED (1.8.0, FIX C1
+ * respin). The strict 1.7.0 rule required name/prefix attribution even for a sole group, so
+ * these fixtures were briefly renamed "Q3" to keep the guards BEHIND attribution (near-match,
+ * hidden, attested, exhaustive, mismatch) exercised; under the 1.8.0 discriminator the
+ * engine's sole "answer" group is attributable-by-only-answerable — these screens carry no
+ * other answerable control beyond the group's own checkboxes — so the fixtures are once again
+ * the instrument the live test actually runs, and the same guards are exercised through the
+ * clause the corpus itself takes. Name/prefix attribution is still exercised by the "Q3" and
+ * "Q3_answer" fixtures in the FIX C1 suite below.
+ */
 const group = (options, name = "answer") => ({ name, kind: "checkbox", options });
 
 const screen = (
@@ -285,9 +303,14 @@ const walkArtifact = (runId, steps) => ({
 // The REAL verify stage over REAL content-addressed evidence
 // ---------------------------------------------------------------------------
 
-async function verifyCase(mod, env, { caseId, cases, steps, completeness = "complete-scoped-inventory" }) {
+async function verifyCase(
+  mod,
+  env,
+  { caseId, cases, steps, completeness = "complete-scoped-inventory", requirements = null },
+) {
   const runId = mod.ids.mintRunId();
-  const { contractRevisionId, contractHash } = await mod.contractRevision.sealContract(env, contractBody({ cases }));
+  const body = contractBody({ cases, requirements });
+  const { contractRevisionId, contractHash } = await mod.contractRevision.sealContract(env, body);
 
   const entry = await mod.evidence.putEvidence(env, {
     runId,
@@ -341,7 +364,7 @@ async function verifyCase(mod, env, { caseId, cases, steps, completeness = "comp
       contractRevisionId,
       contractHash,
       total,
-      requirements: { total: 7, ambiguous: 0, disputed: 0, notBrowserObservable: 0 },
+      requirements: { total: body.requirements.length, ambiguous: 0, disputed: 0, notBrowserObservable: 0 },
     };
     // The coverage ledger refuses a checkpoint whose buckets do not sum to the sealed total.
     d.counts = { ...d.counts, exercised: 1, pending: total - 1 };
@@ -441,8 +464,10 @@ suite("D45 — the half that matters: a correct option set is NEVER accused", ()
     // The walk only ever saw Q4. Q3's options are absent from it — and reading Q4's inventory
     // as Q3's would report all five biologics missing from a survey that offers them one
     // screen later. Binding refuses; nobody is accused.
+    // Named "Q4" explicitly: this screen IS Q4 and its group may as well say so; identity
+    // (wording = Q4) refuses the bind either way, before any group logic runs.
     const q4 = screen(Q4_WORDING, {
-      optionGroups: [group([opt(0, "1", "Very satisfied"), opt(1, "2", "Somewhat satisfied")])],
+      optionGroups: [group([opt(0, "1", "Very satisfied"), opt(1, "2", "Somewhat satisfied")], "Q4")],
     });
     const { row } = await verifyCase(mod, testEnv(), {
       caseId: "fi_d45_bimzelx",
@@ -568,6 +593,13 @@ suite("D45 — the half that matters: a correct option set is NEVER accused", ()
 // ===========================================================================
 suite("D45 — fail-closed must not become fail-silent: the seeded defect IS claimed", () => {
   test("THE SEEDED DEFECT: s1-skip's flawed Q3 drops BIMZELX, and the run says so", async () => {
+    // 1.8.0 (FIX C1 respin) — BACK ON THE ENGINE'S OWN SHAPE. The sole group here is named
+    // "answer" again (the `group` default): under 1.7.0's unconditional attribution rule this
+    // exact fixture refused (OPTION_GROUP_NOT_ATTRIBUTABLE), which traded the corpus's one
+    // proven true positive for the false-accusation fix. The 1.8.0 discriminator keeps both —
+    // this group is the screen's only answerable thing beyond navigation, so it IS Q3's
+    // rendering whatever the markup calls it, and the seeded defect is claimed again. The
+    // borrowed-inventory shapes that motivated 1.7.0 stay refusals in the FIX C1 suite below.
     const mod = await worker();
     const { result, row } = await verifyCase(mod, testEnv(), {
       caseId: "fi_d45_bimzelx",
@@ -748,11 +780,11 @@ suite("D45 — the mint: labels come from the DOCUMENT, and an unbound list refu
       requirementVersionId: (over.id ?? "req_mint01").replace("req_", "reqv_"),
       semanticFingerprint: "fp_mint",
       scope: over.scope ?? "question:Q3",
-      quantifier: "specific",
+      quantifier: over.quantifier ?? "specific",
       selector: null,
       exceptions: [],
       facet: over.facet ?? "option-list",
-      assertionStatus: "entailed",
+      assertionStatus: over.assertionStatus ?? "entailed",
       testability: "browser-observable",
       notBrowserObservableReason: null,
       sourceAtoms: [],
@@ -766,6 +798,14 @@ suite("D45 — the mint: labels come from the DOCUMENT, and an unbound list refu
 
   const expand = async (mod, rows) =>
     await mod.expand.expandFloor(rows, { locale: "en", viewport: "desktop" });
+
+  /** A contract register with one ordinary option row replaced by the exact row under test. */
+  const requirementsReplacing = (code, replacement) => [
+    req("req_d45q3word", "question", Q3_WORDING, Q3_WORDING, "question:Q3"),
+    req("req_d45q4word", "question", Q4_WORDING, Q4_WORDING, "question:Q4"),
+    ...BIOLOGICS.filter(([held]) => held !== code).map(([held, label]) => optionRow(held, label)),
+    replacement,
+  ];
 
   test("THE LABEL BYTES ARE THE DOCUMENT'S: three real extraction shapes all mint", async () => {
     const mod = await worker();
@@ -842,9 +882,13 @@ suite("D45 — the mint: labels come from the DOCUMENT, and an unbound list refu
     ]);
     for (const f of out.facetInstances) {
       assertEq(f.case.optionSet, null, `${f.requirementLineageId} minted a payload from prose alone`);
-      assertEq(f.expectationGap.code, "OPTION_SET_NOT_READ_FROM_THE_DOCUMENT_QUOTE");
+      assertEq(
+        f.expectationGap.code,
+        "OPTION_SET_QUOTE_LINE_UNPARSED",
+        "a structurally plausible line that cannot be classified is counted unread, not silently discarded",
+      );
     }
-    assertEq(out.coverage.byGap.OPTION_SET_NOT_READ_FROM_THE_DOCUMENT_QUOTE, 3);
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 3);
   });
 
   test("REFUSED: PROSE the statement DOES quote must not become a sealed option label", async () => {
@@ -858,7 +902,7 @@ suite("D45 — the mint: labels come from the DOCUMENT, and an unbound list refu
     const out = await expand(mod, [rowFor({ id: "req_prose", statement: note, quote: note })]);
     const f = out.facetInstances[0];
     assertEq(f.case.optionSet, null, "a multi-sentence line is prose, and prose is not an answer option");
-    assertEq(f.expectationGap.code, "OPTION_SET_NOT_READ_FROM_THE_DOCUMENT_QUOTE");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
   });
 
   test("REFUSED: a label the requirement's own STATEMENT does not carry is a disagreement, not a fact", async () => {
@@ -914,6 +958,459 @@ suite("D45 — the mint: labels come from the DOCUMENT, and an unbound list refu
     const short = out.facetInstances.find((f) => f.requirementLineageId === "req_short");
     assertEq(short.case.optionSet.asserted.length, 1, "only the option the document QUOTED is asserted");
     assertEq(short.case.optionSet.exhaustive, false, "a stated count the quote does not bear out never closes a set");
+  });
+
+  test("FIX A1 (review-extract finding 1): a numeral-free closure over a DROPPED quote line must not close the set", async () => {
+    // PINS THE PRE-FIX BUG (expander < 1.5.0): `exhaustive` was computed from `parsed.length`
+    // — the count that SURVIVED parseDocumentedOptions' filters — so the two-sentence line
+    // "Not sure. I would need more information." vanished silently, the numeral-free closure
+    // phrase returned true ("answer" is not a NUMBER_WORD), and `exhaustive: true` sealed over
+    // an incomplete option list. A site faithfully rendering all three options was then
+    // accused of OPTION_OFFERED_NOT_DOCUMENTED — a confident wrong answer about a compliant
+    // survey. On pre-1.5.0 code this test FAILS: exhaustive === true and no gap is counted.
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_droppedline",
+        scope: "question:Q7",
+        statement:
+          "Q7 offers exactly the following answer options and no others: Yes, No, Not sure. I would need more information.",
+        quote: "Yes\nNo\nNot sure. I would need more information.",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.case.optionSet, null, "a gap-marked case must carry no executable membership payload");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED", "the loss is named on the untyped case");
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1, "the loss is COUNTED, not silent");
+    assertEq(out.coverage.typedCases, 0, "coverage must not call a gap-marked case decidable");
+    assertEq(out.coverage.untypedCases, 1, "the counted gap and the untyped denominator are the same case");
+  });
+
+  test("FIX A1: 'Other (please specify):' killed by the header guard cannot seal a closed set", async () => {
+    // The same finding via the `/:$/` guard — the strongest real-world route. "Other (please
+    // specify):" is an extremely common genuine option line; TRAILING_MARKER does not strip
+    // its colon, so the header guard drops it, and pre-1.5.0 the row sealed `exhaustive: true`
+    // over [Yes, No] — accusing a compliant site of offering the "Other" the document lists.
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_otherline",
+        scope: "question:Q9",
+        statement: "Q9 offers exactly the following answer options and no others: Yes, No, Other (please specify).",
+        quote: "Yes\nNo\nOther (please specify):",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.case.optionSet, null, "the unread Other line makes the whole option expectation untyped");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+  });
+
+  test("FIX A1 edge: a NUMERIC closure whose stated count matches the SURVIVORS still cannot close over a dropped line", async () => {
+    // The numeric variant of the same hole: the statement says "exactly two", the quote
+    // carries THREE lines, and the prose guard drops the third — so the stated count equals
+    // the survivor count by coincidence and pre-1.5.0 sealed `exhaustive: true`. The
+    // reconciliation is against the quote's FULL line accounting, not against what survived.
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_twocount",
+        scope: "question:Q6",
+        statement: "Q6 offers exactly two answer options and no others: Yes, No.",
+        quote: "Yes\nNo\nPrefer not to say. Skip to the end of the survey.",
+      }),
+    ]);
+    assertEq(out.facetInstances[0].case.optionSet, null);
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+  });
+
+  test("FIX A1 edge: an over-long quote line (the 160-char cap) is a counted loss, not a silent one", async () => {
+    // The third heuristic filter named by the finding. One sentence, no trailing colon — it
+    // survives the prose guard and dies on the length cap; the loss must block closure and be
+    // counted exactly like the other two.
+    const long =
+      "Never because " + "the current formulary restrictions in my practice setting ".repeat(3) + "prevent it";
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_longline",
+        scope: "question:Q4",
+        statement: `Q4 offers exactly the following answer options and no others: Yes, No, ${long}.`,
+        quote: `Yes\nNo\n${long}`,
+      }),
+    ]);
+    assertEq(out.facetInstances[0].case.optionSet, null);
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+  });
+
+  test("FIX A1/NORTH STAR: a pure bracketed line is ambiguous without source-role evidence and blocks closure", async () => {
+    // `[ROTATE]` may be an instruction in one authoring convention; `[None]` may be the
+    // respondent-visible label in another. The display quote carries no per-line source role,
+    // so syntax cannot choose between them. Pre-1.7.0 silently dropped the third line, sealed
+    // an exhaustive set over [Yes, No], then accused a compliant site's `[None]` as extra.
+    const mod = await worker();
+    const bracketed = rowFor({
+      id: "req_d45opt5",
+      scope: "question:Q3",
+      statement: "Q3 offers only the following answer options: Yes, No, [None].",
+      quote: "Yes\nNo\n[None]",
+    });
+    const out = await expand(mod, [
+      bracketed,
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.case.optionSet, null, "an ambiguous bracketed line must not disappear from a closed set");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+    assertEq(out.coverage.typedCases, 0);
+
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: f.facetInstanceId,
+      cases: [f],
+      requirements: requirementsReplacing("5", bracketed.requirement),
+      steps: [
+        step(
+          0,
+          q3Screen([
+            ["1", "Yes"],
+            ["2", "No"],
+            ["3", "[None]"],
+          ]),
+        ),
+      ],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "NO_TYPED_EXPECTATION");
+    assertEq(result.value.contradicted, 0, "a compliant bracket-label survey must not be accused from a silent short read");
+  });
+
+  test("FIX A1/NORTH STAR: a trailing bracket suffix is not stripped without source-role evidence", async () => {
+    // `[EXCLUSIVE]` is commonly an instruction, but syntax does not make it one: a different
+    // instrument may render that text as part of its label. The source adapter must establish
+    // the role before removing bytes. Until then the entire case is a counted limitation.
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_suffix",
+        scope: "question:Q3",
+        statement: "Q3 offers only the following answer options: Yes, No, None [EXCLUSIVE].",
+        quote: "Yes\nNo\nNone [EXCLUSIVE]",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.case.optionSet, null, "an untyped suffix must not be removed to manufacture a shorter closed set");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+  });
+
+  test("FIX A1/NORTH STAR: a semicolon with no delimiter provenance is counted, never split into options", async () => {
+    // This document has ONE visible label containing punctuation. The deliberately wrong site
+    // splits it into two controls. Pre-1.8.0 split the quote on `;`, sealed those two invented
+    // labels, and could certify this divergent site. With no source-boundary provenance the
+    // only honest result is an untyped, counted case.
+    const semicolonRow = rowFor({
+      id: "req_d45opt5",
+      scope: "question:Q3",
+      statement: "Q3 offers only the following answer options: Research; development, Other.",
+      quote: "Research; development\nOther",
+    });
+    const mod = await worker();
+    const out = await expand(mod, [semicolonRow]);
+    const f = out.facetInstances[0];
+    assertEq(f.case.optionSet, null, "delimiter ambiguity must not mint a split or combined label");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: f.facetInstanceId,
+      cases: [f],
+      requirements: requirementsReplacing("5", semicolonRow.requirement),
+      steps: [
+        step(
+          0,
+          q3Screen([
+            ["1", "Research"],
+            ["2", "development"],
+            ["3", "Other"],
+          ]),
+        ),
+      ],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "NO_TYPED_EXPECTATION");
+    assertEq(result.value.contradicted, 0);
+  });
+
+  test("FIX A1/NORTH STAR: distinct duplicate-label occurrences never collapse into one typed option", async () => {
+    // Codes 1 and 2 are two source occurrences with the same visible label. The current
+    // payload has no multiplicity predicate, so keeping one and dropping the other would call
+    // the case typed while testing only half its source material.
+    const duplicateRow = rowFor({
+      id: "req_d45opt5",
+      scope: "question:Q3",
+      statement: "Q3 includes two answer choices labelled 'Other', with codes 1 and 2.",
+      quote: "1) Other\n2) Other",
+    });
+    const mod = await worker();
+    const out = await expand(mod, [duplicateRow]);
+    const f = out.facetInstances[0];
+    assertEq(f.case.optionSet, null, "distinct coded occurrences cannot be deduplicated by label alone");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+
+    const { row } = await verifyCase(mod, testEnv(), {
+      caseId: f.facetInstanceId,
+      cases: [f],
+      requirements: requirementsReplacing("5", duplicateRow.requirement),
+      steps: [
+        step(
+          0,
+          q3Screen([
+            ["1", "Other"],
+            ["2", "Other"],
+          ]),
+        ),
+      ],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "NO_TYPED_EXPECTATION");
+  });
+
+  test("FIX A1/NORTH STAR: Unicode letters are ordinary option labels, not ASCII-shaped punctuation", async () => {
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_unicode",
+        scope: "question:Q3",
+        statement: "Q3 offers exactly the following three answer options and no others: はい, いいえ, わからない.",
+        quote: "はい\nいいえ\nわからない",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.expectationGap, null, "a non-Latin questionnaire must not lose its option vocabulary");
+    assertEq(JSON.stringify(f.case.optionSet.asserted.map((o) => o.label)), JSON.stringify(["はい", "いいえ", "わからない"]));
+    assertEq(f.case.optionSet.exhaustive, true);
+    assertEq(f.case.optionSet.closureAssessment.status, "established");
+    assertEq(f.case.optionSet.closureAssessment.code, "OPTION_SET_CLOSURE_ESTABLISHED");
+    assertEq(out.coverage.typedCases, 1);
+    assertEq(out.coverage.optionSetClosure.established, 1);
+  });
+
+  test("FIX A1/NORTH STAR: unproven closure has explicit computed coverage while membership stays typed", async () => {
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_closure_coverage",
+        scope: "question:Q3",
+        quantifier: "only",
+        statement: "Q3の回答選択肢は次の3つのみです：はい、いいえ、わからない。",
+        quote: "はい\nいいえ\nわからない",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.expectationGap, null, "positive membership remains safely typed");
+    assertEq(f.case.optionSet.exhaustive, false, "unproven language-neutral closure stays conservative");
+    assertEq(f.case.optionSet.closureAssessment.status, "not-evaluated");
+    assertEq(f.case.optionSet.closureAssessment.code, "OPTION_SET_CLOSURE_NOT_EVALUATED");
+    assert(
+      f.case.optionSet.closureAssessment.detail.includes("extra-option coverage was NOT evaluated"),
+      f.case.optionSet.closureAssessment.detail,
+    );
+    assertEq(out.coverage.optionSetClosure.cases, 1);
+    assertEq(out.coverage.optionSetClosure.payloadCases, 1);
+    assertEq(out.coverage.optionSetClosure.established, 0);
+    assertEq(out.coverage.optionSetClosure.notEvaluated, 1);
+    assertEq(out.coverage.optionSetClosure.notEstablished, 0);
+    assertEq(out.coverage.optionSetClosure.unavailableBecauseCaseUntyped, 0);
+    assertEq(out.coverage.optionSetClosure.byCode.OPTION_SET_CLOSURE_NOT_EVALUATED, 1);
+  });
+
+  test("FIX A1/NORTH STAR: Unicode sentence boundaries are prose, not answer labels", async () => {
+    const note = "選択肢を記載順に表示します。ランダム化しないでください。";
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({ id: "req_unicode_prose", scope: "question:Q3", statement: note, quote: note }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.case.optionSet, null, "non-Latin prose must not become a respondent-visible option requirement");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+  });
+
+  test("FIX A1/NORTH STAR: a compatibility-equivalent non-ASCII colon remains an unread header shape", async () => {
+    const header = "その他（具体的に）：";
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({ id: "req_unicode_colon", scope: "question:Q3", statement: header, quote: header }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.case.optionSet, null, "a full-width colon must not bypass the counted header ambiguity");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+  });
+
+  test("FIX A1/NORTH STAR: a symbol-only candidate is counted unread rather than silently shortening a set", async () => {
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_symbol",
+        scope: "question:Q3",
+        statement: "Q3 offers only the following answer options: Yes, No, ★.",
+        quote: "Yes\nNo\n★",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.case.optionSet, null, "a star can be a real scale label and cannot be dropped as punctuation");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+    assertEq(out.coverage.untypedCases, 1);
+  });
+
+  test("FIX A1 seam: a partial quote is untyped end-to-end and cannot accuse from its readable fragment", async () => {
+    // The cardinal counterexample for the old payload+gap shape. BIMZELX is readable and the
+    // walked screen omits it, so ANY leaked membership payload produces OPTION_MISSING. The
+    // unread Other line makes the case untyped: it stays counted, contributes no sibling
+    // authority, and the real verifier must decline rather than accuse from half a quote.
+    const mod = await worker();
+    const partialRow = rowFor({
+      id: "req_d45opt5",
+      statement: "Q3 offers exactly the following answer options and no others: BIMZELX, Other (please specify).",
+      quote: "5) BIMZELX\nOther (please specify):",
+    });
+    const ordinaryRow = rowFor({
+      id: "req_d45opt1",
+      statement: "Q3 includes option 1: 'SKYRIZI'.",
+      quote: "1) SKYRIZI",
+    });
+    const out = await expand(mod, [partialRow, ordinaryRow]);
+    const partial = out.facetInstances.find((f) => f.requirementLineageId === "req_d45opt5");
+    const ordinary = out.facetInstances.find((f) => f.requirementLineageId === "req_d45opt1");
+
+    assertEq(partial.case.optionSet, null, "a case coverage calls untyped must carry no executable payload");
+    assertEq(partial.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
+    assertEq(
+      ordinary.case.optionSet.siblings.length,
+      0,
+      "readable fragments of an untyped row must not acquire verdict authority as sibling evidence",
+    );
+    assertEq(out.coverage.cases, 2);
+    assertEq(out.coverage.typedCases, 1);
+    assertEq(out.coverage.untypedCases, 1);
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+    const preview = out.preview.find((entry) => entry.requirementLineageId === "req_d45opt5");
+    assertEq(preview.typedCaseCount, 0);
+    assertEq(preview.gaps.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: partial.facetInstanceId,
+      cases: [partial],
+      requirements: requirementsReplacing("5", partialRow.requirement),
+      steps: [step(0, FLAWED_Q3())],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "NO_TYPED_EXPECTATION");
+    assertEq(result.value.contradicted, 0, "a gap-marked partial quote must mint no defect verdict");
+  });
+
+  test("FIX A3: an explicit-negative option is never positive assertion or sibling authority", async () => {
+    // `OptionSetPayload.asserted` means REQUIRED PRESENT. Before this guard, a human-authored
+    // explicit-negative row flowed through the generic `constrainsMatching` gate, so the
+    // forbidden label became a required option. The correct screen below omits BIMZELX; the
+    // old payload inverted the document and accused it of OPTION_MISSING.
+    const mod = await worker();
+    const negativeRow = rowFor({
+      id: "req_d45opt5",
+      assertionStatus: "explicit-negative",
+      statement: "Q3 must not offer option 5: 'BIMZELX'.",
+      quote: "5) BIMZELX",
+    });
+    const ordinaryRow = rowFor({
+      id: "req_d45opt1",
+      statement: "Q3 includes option 1: 'SKYRIZI'.",
+      quote: "1) SKYRIZI",
+    });
+    const out = await expand(mod, [negativeRow, ordinaryRow]);
+    const negative = out.facetInstances.find((f) => f.requirementLineageId === "req_d45opt5");
+    const ordinary = out.facetInstances.find((f) => f.requirementLineageId === "req_d45opt1");
+
+    assertEq(negative.case.optionSet, null, "a positive-only payload cannot represent a forbidden option");
+    assertEq(negative.expectationGap.code, "OPTION_SET_NEGATIVE_PREDICATE_NOT_AVAILABLE");
+    assertEq(
+      ordinary.case.optionSet.siblings.length,
+      0,
+      "a forbidden option must not widen the documented-positive union or license a code comparison",
+    );
+    assertEq(out.coverage.typedCases, 1);
+    assertEq(out.coverage.untypedCases, 1);
+    assertEq(out.coverage.byGap.OPTION_SET_NEGATIVE_PREDICATE_NOT_AVAILABLE, 1);
+
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: negative.facetInstanceId,
+      cases: [negative],
+      requirements: requirementsReplacing("5", negativeRow.requirement),
+      steps: [step(0, FLAWED_Q3())],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "NO_TYPED_EXPECTATION");
+    assertEq(result.value.contradicted, 0, "correctly omitting a forbidden option must never be accused as missing it");
+  });
+
+  test("FIX A2 (review-extract finding 3): a DISPUTED row's options never enter a sibling inventory", async () => {
+    // PINS THE PRE-FIX BUG (expander < 1.5.0): the sibling loop skipped the
+    // `constrainsMatching` gate, so a row the two extraction passes DISAGREED on
+    // (assertionStatus "disputed" — minting zero cases of its own since 1.3.0) still pushed
+    // its options into the per-question inventory. A sealed Q3 case then carried TREMFYA in
+    // `siblings`, widening the verifier's `documented` union (masking a genuinely
+    // undocumented extra option as documented — silent green) and able to witness a
+    // code-vocabulary licence off evidence the expander itself refused to seal. On pre-1.5.0
+    // code this test FAILS: siblings.length === 1.
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({ id: "req_sibok", statement: "Q3 includes option 1: 'SKYRIZI'.", quote: "(list) 1) SKYRIZI" }),
+      rowFor({
+        id: "req_sibdisp",
+        statement: "Q3 includes option 2: 'TREMFYA'.",
+        quote: "(list) 2) TREMFYA",
+        assertionStatus: "disputed",
+      }),
+    ]);
+    assert(
+      !out.facetInstances.some((f) => f.requirementLineageId === "req_sibdisp"),
+      "a disputed row mints zero cases (1.3.0) — unchanged",
+    );
+    const ok = out.facetInstances.find((f) => f.requirementLineageId === "req_sibok");
+    assertEq(
+      ok.case.optionSet.siblings.length,
+      0,
+      `a row the expander refused to seal must not corroborate another: ${JSON.stringify(ok.case.optionSet.siblings)}`,
+    );
+  });
+
+  test("FIX A2: a question-AMBIGUOUS row's options never enter a sibling inventory", async () => {
+    // The same gate via the OPTION_SET_QUESTION_AMBIGUOUS refusal: a Q3-scoped row whose
+    // statement also names Q5 is refused as an assertion precisely because which question
+    // owns its options has two readings — yet pre-1.5.0 those options still landed in the
+    // Q3 inventory and surfaced inside other rows' sealed `siblings`, able to certify an
+    // undocumented Q3 option as documented. On pre-1.5.0 code this test FAILS.
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({ id: "req_q5head", scope: "question:Q5", statement: "Q5 asks about barriers.", quote: "Q5.", facet: "question" }),
+      rowFor({
+        id: "req_sibamb",
+        scope: "question:Q3",
+        statement: "The options carried forward from Q5 include 'ENBREL'.",
+        quote: "(list) 9) ENBREL",
+      }),
+      rowFor({ id: "req_sibok2", scope: "question:Q3", statement: "Q3 includes option 1: 'SKYRIZI'.", quote: "(list) 1) SKYRIZI" }),
+    ]);
+    const amb = out.facetInstances.find((f) => f.requirementLineageId === "req_sibamb");
+    assertEq(amb.expectationGap.code, "OPTION_SET_QUESTION_AMBIGUOUS", "the assertion-side refusal — unchanged");
+    const ok = out.facetInstances.find((f) => f.requirementLineageId === "req_sibok2");
+    assertEq(
+      ok.case.optionSet.siblings.length,
+      0,
+      `a refused-as-ambiguous row's options corroborate nothing: ${JSON.stringify(ok.case.optionSet.siblings)}`,
+    );
   });
 
   test("SIBLINGS are the other rows' options for the SAME question, and carry no claim", async () => {
@@ -991,5 +1488,354 @@ suite("D45 — the registry opened for exactly one kind, and the two tables agre
       { locale: "en", viewport: "desktop" },
     );
     assertEq(out.facetInstances[0].expectationGap.code, "NO_TYPED_PREDICATE_FOR_KIND");
+  });
+});
+
+// ===========================================================================
+// FIX C1 (respin, verifier 1.8.0) / FIX C2 (review-verdict-path findings 1-2)
+//
+// C1: `targetOptionGroup`'s sole-group early return handed back the only non-empty group with
+//     NO attribution check, while page-script puts only radio/checkbox controls into
+//     `optionGroups` — so a target rendered as a `<select>` contributed no group and INHERITED
+//     an unrelated group's inventory, minting a confident OPTION_MISSING against a complete,
+//     correctly-rendered dropdown. The 1.7.0 fix required name/prefix attribution
+//     unconditionally — which also refused the ENTIRE branching corpus (the engine names every
+//     option control "answer") and turned the product's one proven true positive into a
+//     refusal. 1.8.0 narrows the boundary to a discriminator: a sole group that fails
+//     attribution is accepted only when it is the screen's ONLY answerable thing beyond
+//     navigation controls AND is not the "(unnamed)" merge key. Every borrowed-inventory
+//     shape below still refuses — in each, something else on the screen could be the target's
+//     rendering — while the engine's shape detects again.
+// C2: the exhaustive extra-option arm filtered `offered` with no visible/operable test, so a
+//     hidden sentinel radio was accused as an undocumented offer — the conflation the
+//     membership arm explicitly refuses, 70 lines up, in the opposite direction.
+// ===========================================================================
+suite("D45 — FIX C1/C2: a borrowed inventory and a hidden extra are refusals, never accusations", () => {
+  /** A `<select>` control bound to the target, carrying its own COMPLETE option list. */
+  const selectControl = (name, options) => ({
+    idx: 0,
+    tag: "select",
+    type: "select",
+    name,
+    id: name,
+    code: null,
+    label: Q3_WORDING,
+    text: "",
+    checked: null,
+    value: null,
+    disabled: false,
+    required: false,
+    visible: true,
+    placeholder: null,
+    maxlength: null,
+    readOnly: false,
+    options: options.map(([c, l], i) => ({ order: i, code: c, label: l, selected: false, disabled: false })),
+  });
+
+  const checkboxControl = (idx, name, code, label) => ({
+    idx,
+    tag: "input",
+    type: "checkbox",
+    name,
+    id: `${name}-${code}`,
+    code,
+    label,
+    text: "",
+    checked: false,
+    value: null,
+    disabled: false,
+    required: false,
+    visible: true,
+    placeholder: null,
+    maxlength: null,
+    readOnly: false,
+  });
+
+  test("FIX C1 respin: the branching engine's sole 'answer' group DETECTS the seeded defect again", async () => {
+    // THE RED-ON-PRE-RESPIN PIN, superseding 1.7.0's "pin flip" test which asserted the exact
+    // opposite outcome on this same shape. Byte-for-byte the branching engine's markup: flawed
+    // Q3, ONE group named "answer", its own radios and nothing else answerable on the screen.
+    // Under the strict 1.7.0 rule this returned insufficient/OPTION_GROUP_NOT_ATTRIBUTABLE —
+    // the s4-style OPTION_MISSING true positive became a refusal across the whole corpus, the
+    // product's only proven detection capability. Clause (ii) of the 1.8.0 discriminator
+    // attributes it structurally: the step is already BOUND to Q3, and this group is the only
+    // thing a respondent could answer Q3 with, so the inventory is Q3's whatever the markup
+    // calls it. On the 1.7.0 tree this test FAILS (refusal instead of detection); the shapes
+    // that must STILL refuse are pinned in the tests that follow.
+    const mod = await worker();
+    const engineShaped = screen(Q3_WORDING, {
+      optionGroups: [group(BIOLOGICS.filter(([c]) => c !== "5").map(([c, l], i) => opt(i, c, l)), "answer")],
+    });
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, engineShaped)],
+    });
+    assertEq(row.verifier.decision, "contradicted", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_MISSING");
+    assertEq(result.value.contradicted, 1, "the corpus's one true positive must be a claim again");
+  });
+
+  test("FIX C1 respin: a sole '(unnamed)' group is refused — never satisfied, never violated", async () => {
+    // "(unnamed)" is the page reader's MERGE KEY (`page-script.ts`: `c.name || '(unnamed)'`):
+    // radios from SEVERAL unnamed questions collapse under it, so a sole "(unnamed)" group may
+    // be a fusion whose inventory belongs to no single question — the only-answerable clause
+    // deliberately excludes it. Review 1 flagged this shape as unpinned; both directions are
+    // pinned here: a full inventory must not certify (never satisfied) and a flawed one must
+    // not accuse (never violated). Controls carry `name: null`, which is what actually
+    // produces the "(unnamed)" group key in a real capture.
+    const mod = await worker();
+    const unnamedRadio = (idx, code, label) => ({
+      idx,
+      tag: "input",
+      type: "radio",
+      name: null,
+      id: `opt-${code}`,
+      code,
+      label,
+      text: "",
+      checked: false,
+      value: null,
+      disabled: false,
+      required: false,
+      visible: true,
+      placeholder: null,
+      maxlength: null,
+      readOnly: false,
+    });
+    const unnamedScreen = (labels) =>
+      screen(Q3_WORDING, {
+        optionGroups: [group(labels.map(([c, l], i) => opt(i, c, l)), "(unnamed)")],
+        controls: labels.map(([c, l], i) => unnamedRadio(i, c, l)),
+      });
+
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, unnamedScreen(BIOLOGICS))],
+    });
+    assertEq(row.verifier.decision, "insufficient", `never satisfied: ${JSON.stringify(row.verifier)}`);
+    assertEq(row.verifier.reason, "OPTION_GROUP_NOT_ATTRIBUTABLE");
+    assertEq(result.value.contradicted, 0);
+
+    const { result: result2, row: row2 } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, unnamedScreen(BIOLOGICS.filter(([c]) => c !== "5")))],
+    });
+    assertEq(row2.verifier.decision, "insufficient", `never violated: ${JSON.stringify(row2.verifier)}`);
+    assertEq(row2.verifier.reason, "OPTION_GROUP_NOT_ATTRIBUTABLE");
+    assertEq(result2.value.contradicted, 0, "a possibly-fused inventory must accuse nobody");
+  });
+
+  test("FIX C1 respin boundary: a sole 'answer' group beside an answerable text input refuses", async () => {
+    // THE EDGE OF CLAUSE (ii): it fails the moment ANYTHING else answerable is on the screen.
+    // The text input could be the target's rendering — Q3 rendered free-text while the group
+    // belongs to some other unnamed-by-id question — so the unattributed group is no longer
+    // the only candidate, and comparing it would be guessing between two. The flawed inventory
+    // makes the stakes concrete: acceptance here would mint contradicted/OPTION_MISSING.
+    const mod = await worker();
+    const flawed = BIOLOGICS.filter(([c]) => c !== "5");
+    const withTextInput = screen(Q3_WORDING, {
+      optionGroups: [group(flawed.map(([c, l], i) => opt(i, c, l)), "answer")],
+      controls: [
+        ...flawed.map(([c, l], i) => checkboxControl(i, "answer", c, l)),
+        {
+          idx: flawed.length,
+          tag: "input",
+          type: "text",
+          name: "otherq",
+          id: "otherq",
+          code: null,
+          label: "Anything else?",
+          text: "",
+          checked: null,
+          value: "",
+          disabled: false,
+          required: false,
+          visible: true,
+          placeholder: null,
+          maxlength: null,
+          readOnly: false,
+        },
+      ],
+    });
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, withTextInput)],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_GROUP_NOT_ATTRIBUTABLE");
+    assertEq(result.value.contradicted, 0, "with a second candidate rendering on screen, nobody is accused");
+  });
+
+  test("FIX C1: a target rendered as a <select> never inherits another control's inventory", async () => {
+    // PINS review-verdict-path FINDING 1 (the select half). The screen renders Q3 as a
+    // COMPLETE dropdown — all five biologics on the select's own options — plus one unrelated
+    // consent checkbox. The select contributes no option group, so pre-1.7.0 the sole consent
+    // group inherited the comparison and every asserted option "went missing": a confident
+    // OPTION_MISSING against a correctly-rendered dropdown, this product's cardinal failure.
+    // On pre-1.7.0 code this test FAILS (contradicted/OPTION_MISSING).
+    const mod = await worker();
+    const dropdown = screen(Q3_WORDING, {
+      optionGroups: [group([opt(0, "1", "I consent")], "consent")],
+      controls: [selectControl("Q3", BIOLOGICS), checkboxControl(1, "consent", "1", "I consent")],
+    });
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, dropdown)],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_INVENTORY_CONTROL_SCOPED_NOT_GROUPED");
+    assertEq(result.value.contradicted, 0, "a complete dropdown must never be accused of missing its options");
+  });
+
+  test("FIX C1: the consent-checkbox case — a sole unrelated group beside a free-text target refuses", async () => {
+    // The walked scenario without any select: Q3 is a textarea, the only option group on the
+    // screen is a consent checkbox. Pre-1.7.0 the consent inventory decided Q3's case
+    // (contradicted/OPTION_MISSING); the honest answer is that no inventory of Q3's was ever
+    // captured to compare. On pre-1.7.0 code this test FAILS.
+    const mod = await worker();
+    const textWithConsent = screen(Q3_WORDING, {
+      optionGroups: [group([opt(0, "1", "I consent"), opt(1, "2", "I do not consent")], "consent")],
+      controls: [
+        {
+          idx: 0,
+          tag: "textarea",
+          type: "textarea",
+          name: "freetext",
+          id: "freetext",
+          code: null,
+          label: Q3_WORDING,
+          text: "",
+          checked: null,
+          value: "",
+          disabled: false,
+          required: false,
+          visible: true,
+          placeholder: null,
+          maxlength: null,
+          readOnly: false,
+        },
+        checkboxControl(1, "consent", "1", "I consent"),
+        checkboxControl(2, "consent", "2", "I do not consent"),
+      ],
+    });
+    const { row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, textWithConsent)],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_GROUP_NOT_ATTRIBUTABLE");
+  });
+
+  test("FIX C1 edge: id-PREFIX attribution still binds a sole group, in both directions", async () => {
+    // The boundary that moved is "no attribution at all"; the multi-group path's prefix rule
+    // (`Q3_answer` -> `Q3`) now applies to the sole group too. A clean screen stays verified
+    // and the seeded defect stays claimed — attribution must not have become a blanket refusal.
+    const mod = await worker();
+    const cleanPrefixed = screen(Q3_WORDING, {
+      optionGroups: [group(BIOLOGICS.map(([c, l], i) => opt(i, c, l)), "Q3_answer")],
+    });
+    const { row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, cleanPrefixed)],
+    });
+    assertEq(row.verifier.decision, "verified", JSON.stringify(row.verifier));
+
+    const flawedPrefixed = screen(Q3_WORDING, {
+      optionGroups: [group(BIOLOGICS.filter(([c]) => c !== "5").map(([c, l], i) => opt(i, c, l)), "Q3_answer")],
+    });
+    const { row: row2 } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, flawedPrefixed)],
+    });
+    assertEq(row2.verifier.decision, "contradicted", JSON.stringify(row2.verifier));
+    assertEq(row2.verifier.reason, "OPTION_MISSING");
+  });
+
+  test("FIX C1 edge: a select bound to ANOTHER question does not block an attributed group", async () => {
+    // The select refusal is scoped to selects the target is BOUND to — an unrelated dropdown
+    // (a country picker) beside an attributed Q3 group must not widen the refusal, or the fix
+    // would silently delete the predicate's yield on ordinary mixed screens.
+    const mod = await worker();
+    const mixed = screen(Q3_WORDING, {
+      optionGroups: [group(BIOLOGICS.filter(([c]) => c !== "5").map(([c, l], i) => opt(i, c, l)), "Q3")],
+      controls: [
+        selectControl("country", [["uk", "United Kingdom"], ["fr", "France"]]),
+        ...BIOLOGICS.filter(([c]) => c !== "5").map(([c, l], i) => checkboxControl(i + 1, "Q3", c, l)),
+      ],
+    });
+    const { row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, mixed)],
+    });
+    assertEq(row.verifier.decision, "contradicted", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_MISSING");
+  });
+
+  test("FIX C2: a hidden 'no answer' sentinel with an empty label is not an undocumented offer", async () => {
+    // PINS review-verdict-path FINDING 2. LimeSurvey/SurveyJS emit a hidden empty-value radio
+    // in every group; its label reads as "" and it is neither visible nor operable. The
+    // document closes Q3's set at five, all five match exactly — and pre-1.7.0 the sentinel
+    // fell through the extra filter (no visible/operable test) into a contradicted
+    // OPTION_OFFERED_NOT_DOCUMENTED literally quoting "": an accusation about an option no
+    // respondent can see or reach. On pre-1.7.0 code this test FAILS.
+    const mod = await worker();
+    const withSentinel = q3Screen(BIOLOGICS);
+    withSentinel.optionGroups[0].options.push(opt(5, "", "", { visible: false, operable: false }));
+    const closed = { asserted: BIOLOGICS.map(([c, l]) => documented(c, l)), siblings: [], exhaustive: true };
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_closed",
+      cases: [facet("fi_d45_closed", { target: "Q3", kind: "option-set", lineage: "req_d45opt1", optionSet: closed })],
+      steps: [step(0, withSentinel)],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_PRESENT_BUT_NOT_OPERABLE_EXTRA");
+    assertEq(result.value.contradicted, 0, "a hidden sentinel must accuse nobody");
+  });
+
+  test("FIX C2: a display:none alternate-layout option is not an undocumented offer either", async () => {
+    // The other real shape: a mobile/alternate layout the media query switched off, whose
+    // wording is genuinely dissimilar to every documented label (so the near-variant absorber
+    // cannot catch it). `visible: false` alone must already withhold — operability is a
+    // separate fact and either failing reading kills the claim "offered to the respondent".
+    const mod = await worker();
+    const withAlternate = q3Screen(BIOLOGICS);
+    withAlternate.optionGroups[0].options.push(opt(5, "99", "None of the above", { visible: false, operable: true }));
+    const closed = { asserted: BIOLOGICS.map(([c, l]) => documented(c, l)), siblings: [], exhaustive: true };
+    const { row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_closed",
+      cases: [facet("fi_d45_closed", { target: "Q3", kind: "option-set", lineage: "req_d45opt1", optionSet: closed })],
+      steps: [step(0, withAlternate)],
+    });
+    assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_PRESENT_BUT_NOT_OPERABLE_EXTRA");
+  });
+
+  test("FIX C2 edge: a genuinely offered extra still accuses, and quotes only what is reachable", async () => {
+    // The fail-silent counterweight, and the boundary of the moved line: ENBREL is visible AND
+    // operable, so the accusation stands — but the hidden sentinel beside it must not be
+    // quoted as evidence. On pre-1.7.0 code this test FAILS: the detail quoted "" as an
+    // undocumented offer alongside ENBREL.
+    const mod = await worker();
+    const withBoth = q3Screen([...BIOLOGICS, ["9", "ENBREL"]]);
+    withBoth.optionGroups[0].options.push(opt(6, "", "", { visible: false, operable: false }));
+    const closed = { asserted: BIOLOGICS.map(([c, l]) => documented(c, l)), siblings: [], exhaustive: true };
+    const { row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_closed",
+      cases: [facet("fi_d45_closed", { target: "Q3", kind: "option-set", lineage: "req_d45opt1", optionSet: closed })],
+      steps: [step(0, withBoth)],
+    });
+    assertEq(row.verifier.decision, "contradicted", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_OFFERED_NOT_DOCUMENTED");
+    assert(/ENBREL/.test(row.verifier.detail), row.verifier.detail);
+    assert(!row.verifier.detail.includes('""'), `the hidden sentinel must not be quoted as an offer: ${row.verifier.detail}`);
   });
 });

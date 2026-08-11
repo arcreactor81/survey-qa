@@ -247,6 +247,14 @@ const opt = (order, code, label) => ({
 
 const capturedScreen = () => {
   const options = [opt(0, "1", "Red"), opt(1, "2", "Blue")];
+  // Named "answer" — the real engine shape, RESTORED (verifier 1.8.0, FIX C1 respin). The
+  // strict 1.7.0 rule required name/prefix attribution even for a sole group, so this fixture
+  // was briefly renamed "Q1" to keep the suite green; the 1.8.0 discriminator accepts a sole
+  // non-attributing group when it is the screen's ONLY answerable thing beyond navigation
+  // (these controls are just the group's own radios) and its name is not "(unnamed)" — so the
+  // engine shape decides again, and this suite proves the human-contract seam over the shape
+  // the corpus actually renders. The shapes that must still refuse are pinned in d45's FIX C1
+  // suite.
   const optionGroups = [{ name: "answer", kind: "radio", options }];
   const controls = options.map((option) => ({
     idx: option.idx,

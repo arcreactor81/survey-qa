@@ -95,16 +95,37 @@ const MUTANTS = [
 
   // ------------------------------------------------- where on the screen the id was printed
   {
+    // RE-ANCHORED for 1.7.0 (FIX C3): tokenInHeading now drops `questionText` when the capture
+    // itself flagged it polluted, so the heading string is built through the `polluted` guard.
+    // The property under test and the mutation are unchanged: readmit the BODY (`visibleText`)
+    // into the heading reading and the back-reference passes again.
     name: "the heading reading falls back to the BODY — the split it exists to make is undone",
     breaks: "a back-reference lives in the body; a fallback puts it straight back into the pass arm",
     file: VERIFY,
-    find: '  return wholeWordIn(`${screen.questionText ?? ""} ${screen.title ?? ""}`, token);',
+    find: '  return wholeWordIn(`${polluted ? "" : (screen.questionText ?? "")} ${screen.title ?? ""}`, token);',
     replace:
-      '  return wholeWordIn(`${screen.questionText ?? ""} ${screen.title ?? ""} ${screen.visibleText ?? ""}`, token);',
+      '  return wholeWordIn(`${polluted ? "" : (screen.questionText ?? "")} ${screen.title ?? ""} ${screen.visibleText ?? ""}`, token);',
     kills: [
       "THE FALSE PASS: a screen that only BACK-REFERENCES the destination does not certify the route",
       "THE HEADING AND THE BODY ARE THE SAME BYTES TO THE OLD READING — one passes, one does not",
     ],
+  },
+  {
+    // FIX C3 guard (1.7.0): the capture's own pollution report is ignored — the pre-1.7.0
+    // reading, where a `questionText` the reader itself said was a container grab (title +
+    // body back-references + option labels) still fed the heading witness and certified a
+    // mis-route from body text.
+    name: "the capture's `question-text-includes-controls` report is ignored (pre-1.7.0)",
+    breaks:
+      "page-script raises that limitation exactly when questionText is NOT a heading; believing the string anyway " +
+      "lets a body back-reference mint satisfied/ROUTE_DESTINATION_REACHED on a real routing defect",
+    file: VERIFY,
+    find:
+      "  const polluted =\n" +
+      "    Array.isArray(screen.readerLimitations) &&\n" +
+      "    screen.readerLimitations.some((l) => l?.kind === QUESTION_TEXT_POLLUTED_KIND);",
+    replace: "  const polluted = false;",
+    kills: ["FIX C3: the polluted-heading grab does NOT certify the mis-route once the capture says so"],
   },
   {
     name: "the identity seam stops splitting heading from body — `heading` becomes the whole text reading",

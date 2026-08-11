@@ -2,7 +2,16 @@ import { createHash } from "node:crypto";
 import { readFile, readdir, stat, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { LIVE_CANARY_ORIGIN, PRODUCTION_ACCESS_ORIGIN } from "./live-canary-contract.mjs";
+import {
+  LIVE_CANARY_IDENTITY_HEADER,
+  LIVE_CANARY_MAXIMUM_USD_HEADER,
+  LIVE_CANARY_ORIGIN,
+  LIVE_CANARY_POLICY_HEADER,
+  LIVE_CANARY_PROVIDER_CONFIGURATION_HEADER,
+  LIVE_CANARY_PROVIDER_HEADER,
+  LIVE_CANARY_VERSION_ID_HEADER,
+  PRODUCTION_ACCESS_ORIGIN,
+} from "./live-canary-contract.mjs";
 import {
   CANARY_VISUAL_PROVIDERS,
   canaryVisualPolicy,
@@ -19,6 +28,8 @@ const MAX_ENV_BYTES = 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 64 * 1024 * 1024;
 const RUN_ID = /^v2r_[0-9a-hjkmnp-tv-z]{26}$/;
+const SHA256_HEX = /^[a-f0-9]{64}$/;
+const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const VISUAL_STATUS_SCHEMA_VERSION = "survey-qa-visual-status/1.0.0";
 const RUN_STATUS_SCHEMA_VERSION = "run-status/2.0.0";
 const PARTIAL_TEST_COMPLETIONS = Object.freeze([
@@ -186,17 +197,26 @@ export async function executeLiveCanary(options, dependencies = {}) {
   if (typeof fetchImpl !== "function") throw new LiveCanaryError("FETCH_UNAVAILABLE", "a fetch implementation is required");
   const sleep = dependencies.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const nowMs = dependencies.nowMs ?? Date.now;
+  // Bind the operator's intended questionnaire before credentials, output mutation, or network
+  // access. Recording a hash after reading the file is provenance; requiring the independently
+  // supplied hash before POST is the deployment interlock.
+  const documentBytes = await readAndValidateDocx(validated.docx);
+  const documentSha256 = sha256(documentBytes);
+  if (documentSha256 !== validated.expectedDocumentSha256) {
+    throw new LiveCanaryError(
+      "DOCUMENT_SHA256_MISMATCH",
+      "the questionnaire bytes do not match --expected-document-sha256; no submission was attempted",
+    );
+  }
   const authentication = await loadClientAuthentication({
     envFile: validated.envFile,
     canaryTokenFile: validated.canaryTokenFile,
   });
   assertAuthenticationOrigin(validated.baseUrl, authentication);
   const outputDirectory = await prepareOutputDirectory(validated.outputDir);
-  const documentBytes = await readAndValidateDocx(validated.docx);
-  const documentSha256 = sha256(documentBytes);
 
   await writeJsonExclusive(outputDirectory, "submission-plan.json", {
-    schemaVersion: "survey-qa-live-canary-plan/1.1.0",
+    schemaVersion: "survey-qa-live-canary-plan/1.2.0",
     mode: "execute",
     baseUrl: validated.baseUrl.origin,
     surveyUrl: validated.surveyUrl,
@@ -204,6 +224,7 @@ export async function executeLiveCanary(options, dependencies = {}) {
       name: path.basename(validated.docx),
       bytes: documentBytes.byteLength,
       sha256: documentSha256,
+      expectedSha256: validated.expectedDocumentSha256,
     },
     submission: {
       profile: "standard",
@@ -230,12 +251,49 @@ export async function executeLiveCanary(options, dependencies = {}) {
     documentBytes,
     documentName: path.basename(validated.docx),
   });
+  const submissionHeaders = { "content-type": "application/json; charset=utf-8" };
+  if (validated.submissionRuntimeIdentity !== null) {
+    Object.assign(submissionHeaders, {
+      [LIVE_CANARY_IDENTITY_HEADER]: validated.submissionRuntimeIdentity.identitySha256,
+      [LIVE_CANARY_VERSION_ID_HEADER]: validated.submissionRuntimeIdentity.versionId,
+      [LIVE_CANARY_PROVIDER_HEADER]: validated.submissionRuntimeIdentity.provider,
+      [LIVE_CANARY_POLICY_HEADER]: validated.submissionRuntimeIdentity.policySha256,
+      [LIVE_CANARY_PROVIDER_CONFIGURATION_HEADER]:
+        validated.submissionRuntimeIdentity.providerConfigurationSha256,
+      [LIVE_CANARY_MAXIMUM_USD_HEADER]: validated.submissionRuntimeIdentity.maximumUsd,
+    });
+  }
+
+  // The hardened deploy-to-spend wrapper installs this final interlock. It runs only after the
+  // questionnaire and file-backed credential have been read and the exact POST body has been
+  // constructed, but before the first byte can reach the paid submission route. The hook gets
+  // hashes and public routing data only; credential/document bytes are deliberately absent.
+  if (dependencies.beforeSubmission !== undefined) {
+    if (typeof dependencies.beforeSubmission !== "function") {
+      throw new LiveCanaryError(
+        "BEFORE_SUBMISSION_GATE_INVALID",
+        "the optional pre-submission gate must be a function",
+      );
+    }
+    await dependencies.beforeSubmission(Object.freeze({
+      authenticationKind: authentication.kind,
+      authenticationCredentialSha256: authentication.kind === "canary-token"
+        ? sha256(Buffer.from(authentication.redactionValues[0], "utf8"))
+        : null,
+      baseUrl: validated.baseUrl.origin,
+      documentBytes: documentBytes.byteLength,
+      documentSha256,
+      submissionRuntimeIdentity: validated.submissionRuntimeIdentity,
+      submissionBodySha256: sha256(Buffer.from(submissionBody, "utf8")),
+      surveyUrl: validated.surveyUrl,
+    }));
+  }
 
   const submission = await requestJson(
     new URL("api/v2/runs", validated.baseUrl),
     {
       method: "POST",
-      headers: { "content-type": "application/json; charset=utf-8" },
+      headers: submissionHeaders,
       body: submissionBody,
     },
     authentication,
@@ -378,11 +436,18 @@ async function finalizeCollectedRun({
   let coreFailure = null;
   let finalStatus = null;
   try {
-    const assessed = coreTerminalFailure(artifacts, pollResult);
+    const assessed = coreTerminalFailure(artifacts, runId);
     coreFailure = assessed.failure;
     finalStatus = assessed.status;
   } catch (error) {
     coreFailure = normaliseCanaryFailure(error, authentication);
+  }
+
+  // As with the visual channel, a core contract violation observed while polling remains
+  // authoritative even if the retained status re-read later happens to validate. Artifact
+  // collection must complete first, but it must not erase an already-observed status gap.
+  if (coreFailure === null && pollResult?.corePollFailure instanceof LiveCanaryError) {
+    coreFailure = normaliseCanaryFailure(pollResult.corePollFailure, authentication);
   }
 
   let visualAudit = null;
@@ -417,6 +482,13 @@ async function finalizeCollectedRun({
     } catch (error) {
       visualFailure = normaliseCanaryFailure(error, authentication);
     }
+  }
+
+  // FIX (review canary-security finding 2): a contract gap observed at poll time is authoritative
+  // even when the later artifact re-read happens to validate — a projection that violated the
+  // contract at any observed point is recorded as a failure, never silently forgotten.
+  if (visualFailure === null && pollResult?.visualPollFailure instanceof LiveCanaryError) {
+    visualFailure = normaliseCanaryFailure(pollResult.visualPollFailure, authentication);
   }
 
   // Preserve the previous useful precedence: a concrete visual integrity defect outranks a
@@ -529,6 +601,34 @@ export function assertClosedVisualStatus(value, expected = {}) {
     gap("VISUAL_WORK_GAP", "visual work epoch buckets do not close discovered epochs");
   }
 
+  // FIX (review canary-security finding 1): the closure identities above are pure arithmetic and
+  // all hold at zero, so an enabled one-call smoke arm whose provider was never successfully
+  // called (or that inspected nothing at all) used to certify "passed" with zeroSilentGaps true.
+  // Under an explicit "enabled" expectation the arm exists to prove one successful, billed
+  // provider call, so refuse: an empty denominator, zero stored observations, and a stored
+  // observation count the Worker's committed-call usage ledger does not corroborate. The check
+  // order is deliberate: inspected-nothing, then no-success, then the billing cross-check.
+  // Disabled/either expectations keep their previous behavior unchanged.
+  if (expected.expectConfiguration === "enabled") {
+    if (denominator === 0) {
+      gap("VISUAL_EMPTY_DENOMINATOR", "the enabled visual channel inspected nothing; an empty denominator cannot prove the provider arm");
+    }
+    if (successful < 1) {
+      gap("VISUAL_NO_SUCCESSFUL_OBSERVATION", "the enabled visual channel stored no successful observation; a working provider call was never proven");
+    }
+    const usage = object(root.usage, "visual usage ledger projection");
+    if (usage.state !== "available") {
+      gap("VISUAL_COMMITTED_CALLS_MISMATCH", "the visual usage ledger is unavailable, so stored observations cannot be corroborated against committed provider calls");
+    }
+    const committedCalls = integer(usage.committedCalls, "committed provider calls");
+    if (committedCalls !== successful || committedCalls !== configuration.maximumCalls) {
+      gap(
+        "VISUAL_COMMITTED_CALLS_MISMATCH",
+        "committed provider calls must equal both stored successful observations and the configured one-call maximum",
+      );
+    }
+  }
+
   return {
     configuration: visualConfigurationSummary(configuration, expected.expectedVisualPolicy),
     denominatorItems: denominator,
@@ -556,19 +656,67 @@ async function validateExecutionOptions(options) {
     throw new LiveCanaryError("AUTH_MODE_CONFLICT", "choose either envFile or canaryTokenFile, not both");
   }
   const expectedVisual = expectedVisualPolicy(expectVisual, options?.expectedVisualProvider);
+  const submissionRuntimeIdentity = validateSubmissionRuntimeIdentity(
+    options?.submissionRuntimeIdentity,
+    expectedVisual,
+  );
   return {
     baseUrl,
     surveyUrl: survey.href,
     docx: path.resolve(requireText(options?.docx, "docx")),
+    expectedDocumentSha256: requireSha256(
+      options?.expectedDocumentSha256,
+      "expectedDocumentSha256",
+    ),
     outputDir: path.resolve(requireText(options?.outputDir, "outputDir")),
     envFile: options?.canaryTokenFile ? undefined : path.resolve(options?.envFile ?? DEFAULT_ACCESS_ENV_FILE),
     canaryTokenFile: options?.canaryTokenFile ? path.resolve(options.canaryTokenFile) : undefined,
     expectVisual,
     ...expectedVisual,
+    submissionRuntimeIdentity,
     pollIntervalMs: boundedInteger(options?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS, "pollIntervalMs", 100, 60_000),
     pollTimeoutMs: boundedInteger(options?.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS, "pollTimeoutMs", 1_000, 6 * 60 * 60 * 1_000),
     requestTimeoutMs: boundedInteger(options?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS, "requestTimeoutMs", 1_000, 300_000),
   };
+}
+
+function validateSubmissionRuntimeIdentity(value, expectedVisual) {
+  if (value === undefined || value === null) return null;
+  if (
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join("\0") !== [
+      "identitySha256",
+      "maximumUsd",
+      "policySha256",
+      "provider",
+      "providerConfigurationSha256",
+      "versionId",
+    ].join("\0") ||
+    !SHA256_HEX.test(value.identitySha256 ?? "") ||
+    !UUID.test(value.versionId ?? "") ||
+    !SHA256_HEX.test(value.policySha256 ?? "") ||
+    !SHA256_HEX.test(value.providerConfigurationSha256 ?? "") ||
+    value.provider !== expectedVisual.expectedVisualProvider ||
+    value.policySha256 !== expectedVisual.expectedVisualPolicy?.sha256 ||
+    value.maximumUsd !== expectedVisual.expectedVisualPolicy?.maximumUsd
+  ) {
+    throw new LiveCanaryError(
+      "SUBMISSION_RUNTIME_IDENTITY_INVALID",
+      "submission runtime identity must match the closed enabled one-call visual policy",
+    );
+  }
+  return Object.freeze({ ...value });
+}
+
+function requireSha256(value, name) {
+  if (typeof value !== "string" || !SHA256_HEX.test(value)) {
+    throw new LiveCanaryError(
+      "ARGUMENT_INVALID",
+      `${name} must be one lowercase SHA-256 digest`,
+    );
+  }
+  return value;
 }
 
 function validateCollectionOptions(options) {
@@ -739,8 +887,13 @@ async function pollRun(input) {
       input.requestTimeoutMs,
       input.fetchImpl,
     );
-    requireHttpStatus(statusResponse, 200, "STATUS_POLL_FAILED", input.authentication);
-    status = validateRunStatus(statusResponse.body, input.runId);
+    try {
+      requireHttpStatus(statusResponse, 200, "STATUS_POLL_FAILED", input.authentication);
+      status = validateRunStatus(statusResponse.body, input.runId);
+    } catch (error) {
+      if (!(error instanceof LiveCanaryError)) throw error;
+      return { polls, status: null, visual: null, corePollFailure: error };
+    }
     if (isCoreInfrastructureFailure(status)) return { polls, status, visual: null };
 
     if (!isCoreVisualEligibleFinal(status)) {
@@ -755,12 +908,23 @@ async function pollRun(input) {
       input.requestTimeoutMs,
       input.fetchImpl,
     );
-    requireHttpStatus(visualResponse, 200, "VISUAL_STATUS_POLL_FAILED", input.authentication);
-    visual = validateVisualPollStatus(
-      visualResponse.body,
-      input.runId,
-      input.expectedVisualPolicy,
-    );
+    // FIX (review canary-security finding 2): retain first, judge second. A visual contract gap
+    // used to throw straight out of pollRun, aborting before collectArtifacts so the output
+    // directory kept only the two submission files — contradicting the retention contract — and
+    // --collect re-threw identically on the same line. A gap detected here is now carried back
+    // to finalizeCollectedRun, which records it in the summary AFTER every endpoint artifact is
+    // retained. Transport failures (non-LiveCanaryError) still throw unchanged.
+    try {
+      requireHttpStatus(visualResponse, 200, "VISUAL_STATUS_POLL_FAILED", input.authentication);
+      visual = validateVisualPollStatus(
+        visualResponse.body,
+        input.runId,
+        input.expectedVisualPolicy,
+      );
+    } catch (error) {
+      if (!(error instanceof LiveCanaryError)) throw error;
+      return { polls, status, visual: null, visualPollFailure: error };
+    }
     const visualTerminal = visual.coverage.state === "finalized" || visual.terminal.state === "limitation";
     if (visualTerminal) return { polls, status, visual };
     await input.sleep(input.pollIntervalMs);
@@ -784,7 +948,7 @@ async function collectArtifacts(input) {
   return artifacts;
 }
 
-function coreTerminalFailure(artifacts, pollResult) {
+function coreTerminalFailure(artifacts, runId) {
   const statusResponse = artifacts.status;
   if (statusResponse.status !== 200) {
     return {
@@ -794,7 +958,9 @@ function coreTerminalFailure(artifacts, pollResult) {
   }
   let status;
   try {
-    status = validateRunStatus(statusResponse.body, pollResult.status.runId);
+    // Validate retained bytes against the operator's immutable plan, never against an identity
+    // copied from the response currently under validation.
+    status = validateRunStatus(statusResponse.body, runId);
   } catch (error) {
     return { status: null, failure: normaliseCanaryFailure(error, null) };
   }

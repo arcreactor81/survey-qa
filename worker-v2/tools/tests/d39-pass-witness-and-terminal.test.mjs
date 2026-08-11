@@ -699,3 +699,131 @@ test("QUOTA IS NEVER DECIDABLE — a quota-full page and a screen-out page are t
   assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
   assertEq(row.verifier.reason, "TERMINAL_KIND_HAS_NO_WITNESS");
 });
+
+// ===========================================================================
+// FIX C3 (review-verdict-path finding 3, verifier 1.7.0)
+//
+// `tokenInHeading` read `screen.questionText` unconditionally, but page-script raises the
+// reader limitation `question-text-includes-controls` EXACTLY when `questionText` was taken
+// from a control-bearing CONTAINER — the title plus the body prose plus every option label.
+// On such a capture the heading/body split the 1.5.0 fence depends on does not exist inside
+// `questionText`, so a body back-reference ("as you said in Q9…") landed in the heading
+// witness and CERTIFIED a mis-route. The fix believes the capture's own report: when the flag
+// is present, `questionText` is not a heading witness and the case falls to the existing
+// DESTINATION_PRESENTED_BY_TEXT_TOKEN_ONLY refusal. `title` (document.title, captured
+// independently of the container grab) stays usable, and an ABSENT `readerLimitations` stays
+// usable too — only a positive pollution report disables the reading.
+// ===========================================================================
+suite("D39 — FIX C3: a heading the capture itself called polluted cannot certify a route", () => {});
+
+/**
+ * The polluted container grab, as page-script builds it on the fallback branch: the reached
+ * screen's OWN title (Q10's — outside the sealed vocabulary), then the body back-reference
+ * naming Q9, then the option labels. One string, exactly what `txt(qEl)` yields.
+ */
+const POLLUTED_GRAB = `${Q10_HEADING} ${Q10_BACKREF} Yes No`;
+
+const pollutedLimitation = () => [
+  {
+    kind: "question-text-includes-controls",
+    detail: "no heading-ish element on this screen is free of form controls",
+    count: 2,
+  },
+];
+
+/** The mis-route walk whose destination capture carries the polluted grab as `questionText`. */
+const pollutedWalk = (readerLimitations, { title = null } = {}) => [
+  clickStep(0, {
+    before: q7Screen(),
+    after: {
+      ...screen(POLLUTED_GRAB, opaqueOptions()),
+      title,
+      // `readerLimitations: undefined` here means the key is ABSENT — a capture from before
+      // the check existed — which must keep its pre-1.7.0 reading (see the last test).
+      ...(readerLimitations !== undefined ? { readerLimitations } : {}),
+    },
+  }),
+];
+
+test("FIX C3: the polluted-heading grab does NOT certify the mis-route once the capture says so", async () => {
+  // PINS review-verdict-path FINDING 3. The document routes Q7='Yes' -> Q9; the site
+  // mis-routes to Q10, whose capture hit the fallback branch: questionText is the whole
+  // container (Q10's title + "As you said in Q9…" + option labels) and the capture NAMED that
+  // pollution. Pre-1.7.0 the heading witness read the polluted string anyway, found Q9, and
+  // returned satisfied/ROUTE_DESTINATION_REACHED "in its own heading" — a real routing defect
+  // certified as correct. On pre-1.7.0 code this test FAILS (decision comes back verified).
+  const mod = await worker();
+  const { row } = await verifyCase(mod, testEnv(), {
+    caseId: "fi_route_q7",
+    contract: { wordQuestions: false },
+    steps: pollutedWalk(pollutedLimitation()),
+  });
+
+  assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
+  assertEq(row.verifier.reason, "DESTINATION_PRESENTED_BY_TEXT_TOKEN_ONLY");
+});
+
+test("FIX C3 boundary: the SAME capture without the pollution flag keeps the pre-1.7.0 reading", async () => {
+  // The other half of the discriminating pair — same bytes, limitations attested EMPTY ("we
+  // looked and found none"). A capture that does not report pollution is believed, exactly as
+  // before: this is the residual `tokenInHeading`'s header already documents (a heading whose
+  // sentence names another question), and the fix deliberately narrows nothing here — going
+  // further would refuse every text-id instrument, the fail-silent trap this file's header
+  // warns about. Satisfied ONLY without the flag.
+  const mod = await worker();
+  const { row } = await verifyCase(mod, testEnv(), {
+    caseId: "fi_route_q7",
+    contract: { wordQuestions: false },
+    steps: pollutedWalk([]),
+  });
+
+  assertEq(row.verifier.decision, "verified", JSON.stringify(row.verifier));
+  assertEq(row.verifier.reason, "ROUTE_DESTINATION_REACHED");
+});
+
+test("FIX C3 edge: `title` is sourced independently of the container grab and stays usable", async () => {
+  // `title` is `document.title` (page-script: `title: document.title || null`), captured
+  // outside the heading-candidate walk that raises the limitation — so a polluted
+  // `questionText` says nothing about it. A destination whose TAB TITLE names Q9 keeps its
+  // pass even on a polluted capture.
+  const mod = await worker();
+  const { row } = await verifyCase(mod, testEnv(), {
+    caseId: "fi_route_q7",
+    contract: { wordQuestions: false },
+    steps: pollutedWalk(pollutedLimitation(), { title: "Q9 — brand follow-up" }),
+  });
+
+  assertEq(row.verifier.decision, "verified", JSON.stringify(row.verifier));
+  assertEq(row.verifier.reason, "ROUTE_DESTINATION_REACHED");
+  assert(/in its own heading/.test(row.verifier.detail), row.verifier.detail);
+});
+
+test("FIX C3 edge: an UNRELATED limitation does not disable the heading witness", async () => {
+  // Only the capture's own report about `questionText` (`question-text-includes-controls`)
+  // says the heading/body split is gone. A grid or counts limitation is about something else,
+  // and widening the fence to any limitation would silently delete the heading witness class.
+  const mod = await worker();
+  const { row } = await verifyCase(mod, testEnv(), {
+    caseId: "fi_route_q7",
+    contract: { wordQuestions: false },
+    steps: pollutedWalk([{ kind: "counts-contradict-inventory", detail: "summary and inventory disagree", count: 1 }]),
+  });
+
+  assertEq(row.verifier.decision, "verified", JSON.stringify(row.verifier));
+  assertEq(row.verifier.reason, "ROUTE_DESTINATION_REACHED");
+});
+
+test("FIX C3 edge: an ABSENT `readerLimitations` keeps the pre-flag reading — absence is not pollution", async () => {
+  // A capture that predates the check never reported anything either way. Disabling the
+  // heading witness on absence would turn every older artifact and every text-id instrument
+  // insufficient — fail-closed becoming fail-silent. Absence changes nothing.
+  const mod = await worker();
+  const { row } = await verifyCase(mod, testEnv(), {
+    caseId: "fi_route_q7",
+    contract: { wordQuestions: false },
+    steps: pollutedWalk(undefined),
+  });
+
+  assertEq(row.verifier.decision, "verified", JSON.stringify(row.verifier));
+  assertEq(row.verifier.reason, "ROUTE_DESTINATION_REACHED");
+});

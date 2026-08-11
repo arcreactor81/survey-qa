@@ -20,6 +20,7 @@ import type { ProcessVisualEpochResult } from "./visual-epoch";
 const HASH = /^[0-9a-f]{64}$/;
 const MAX_DETAIL = 4_000;
 const EMPTY_INVENTORY_LIMITATION = "model-inventory-empty-despite-paired-content" as const;
+const IDENTITY_MISMATCH_LIMITATION = "model-identity-mismatch" as const;
 
 export interface VisualProcessedCoverageItem {
   denominatorOrdinal: number;
@@ -175,6 +176,19 @@ export function visualProcessedItemFromEpochResult(
     };
   }
   if (result.readState === "malformed") {
+    // FIX (review vision-billing finding E1): a provider model-echo drift now closes the epoch
+    // as a stored, counted limitation instead of throwing (visual-epoch.ts). The disposition
+    // stays inside the existing closed vocabulary ("provider-malformed" = the settled response
+    // violated the closed contract), but the detail must name the telemetry-identity mismatch:
+    // the generic text below would falsely claim a schema failure for a schema-valid response.
+    if (result.observation.limitationKinds.includes(IDENTITY_MISMATCH_LIMITATION)) {
+      return limitationItem(
+        denominatorOrdinal,
+        denominator,
+        "provider-malformed",
+        `The stored observation carries ${IDENTITY_MISMATCH_LIMITATION}; the provider-reported model identity did not match the requested model, so the settled response was refused and no visual facts were admitted.`,
+      );
+    }
     return limitationItem(
       denominatorOrdinal,
       denominator,

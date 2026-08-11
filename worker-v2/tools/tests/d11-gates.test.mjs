@@ -18,7 +18,7 @@ import path from "node:path";
 
 import { assert, assertEq, assertThrows, fakeStep, REPO_ROOT, suite, test } from "../testkit.mjs";
 import { seedRun, testEnv, worker } from "./_helpers.mjs";
-import { contractBody, passingGates, runRecordV2 } from "../fixtures/v2-fixture.mjs";
+import { contractBody, FIXTURE_KEY, passingGates, runRecordV2 } from "../fixtures/v2-fixture.mjs";
 import { signRunRecordV2 } from "../assembler/assemble-v2.mjs";
 import { loadEvidenceAuthority } from "../../../pipeline/judge/lib/authority.mjs";
 import { contractGateFailures, REQUIRED_CONTRACT_GATES } from "../../shared/v2-record.mjs";
@@ -363,6 +363,91 @@ suite("D11 — no stage may certify work it did not do", () => {
     assertEq(cp.reportAvailable, true);
     assertEq(cp.completion.test, "complete", "the test axis must be complete when all cases are settled");
     assertEq(cp.completion.reasonCode, null);
+  });
+
+  test("WORKFLOW: a blocked axis is terminal in the signed closure before the report is published", async () => {
+    // Exact regression shape from the reuse review: execution has no remaining cursor work,
+    // then the plan artifact becomes unreadable before the closing gate re-reads it. That is a
+    // close-test-axis blocker reached while completion.test is still `running`, rather than an
+    // earlier deliberate partial stop. The step hook below models that storage race precisely.
+    // Finalize used to repair the checkpoint only AFTER supersede-record and report, leaving the
+    // signed closure permanently in the non-terminal state it observed before the repair.
+    const mod = await worker();
+    const env = testEnv({
+      RECORD_SIGNING_KEY: FIXTURE_KEY.privateKeyPem,
+      RECORD_SIGNING_KEY_ID: FIXTURE_KEY.keyId,
+    });
+    const seeded = await seedRun(mod, env, { testCompletion: "running" });
+    await mod.checkpoint.updateCheckpoint(env, seeded.runId, (d) => {
+      d.execution = {
+        batchIndex: 0,
+        sessionId: null,
+        sessionOpenedAt: null,
+        pendingCaseIds: [],
+        completedCaseIds: [],
+        planRevisionId: "plan_removed_at_closure",
+      };
+    });
+
+    const sealedCaseIds = (
+      await mod.contractRevision.getContractRevision(env, seeded.contractRevisionId)
+    ).facetInstances.map((fi) => fi.facetInstanceId);
+    const planKey = mod.keys.planKey(seeded.runId, "plan_removed_at_closure");
+    await env.EVIDENCE.put(
+      planKey,
+      JSON.stringify({
+        kind: "v2-execution-program/2.0.0",
+        runId: seeded.runId,
+        planRevisionId: "plan_removed_at_closure",
+        contractRevisionId: seeded.contractRevisionId,
+        contractHash: seeded.contractHash,
+        generatedAt: "2026-08-11T00:00:00.000Z",
+        surveyUrl: "https://fixture.invalid/survey",
+        floor: [],
+        exploration: [],
+        caseOrder: sealedCaseIds,
+        unassignedCaseIds: sealedCaseIds,
+        coverage: {
+          obligations: sealedCaseIds.length,
+          witnessedByFloor: sealedCaseIds.length,
+          coversAllObligations: true,
+          coversAllAfterMandatoryExploration: true,
+          uncovered: [],
+        },
+        warnings: [],
+        plan: { floor: { paths: [] }, exploration: { queue: [] } },
+      }),
+      { httpMetadata: { contentType: "application/json" } },
+    );
+
+    const step = fakeStep();
+    const executeStep = step.do;
+    step.do = async (name, a, b) => {
+      if (name === "close-test-axis") await env.EVIDENCE.delete(planKey);
+      return await executeStep(name, a, b);
+    };
+
+    const wf = new mod.workflow.SurveyRunWorkflowV2({}, env);
+    await wf.run(payloadFor(seeded.runId), step);
+
+    const cp = (await mod.checkpoint.loadCheckpoint(env, seeded.runId)).checkpoint;
+    assertEq(cp.completion.test, "failed", "the blocker must terminate before publication");
+    assertEq(cp.completion.reasonCode, "test-axis-never-closed");
+
+    const record = await (await env.EVIDENCE.get(mod.keys.recordKey(seeded.runId))).json();
+    assert(record.attestation?.payloadHash, "the closure under test must actually be signed");
+    assert(record.closure, "the published record must be the superseding closure revision");
+    assertEq(record.closure.testAxis.closed, false);
+    assertEq(
+      record.closure.testAxis.completion,
+      "failed",
+      "the signed closure must see the same terminal state as the final checkpoint",
+    );
+    assertEq(record.closure.testAxis.reasonCode, "test-axis-never-closed");
+    assert(record.closure.testAxis.blockers.length > 0, "the closure must retain what prevented closure");
+
+    const report = await (await env.EVIDENCE.get(mod.keys.reportPointerKey(seeded.runId))).json();
+    assertEq(report.final, false, "a blocked axis must never publish a final report manifest");
   });
 
   test("WORKFLOW: a run with unsettled cases NEVER closes the test axis", async () => {

@@ -203,9 +203,28 @@ export class DurableVisionClient implements VisionClient {
     telemetry: VisionCallTelemetry,
   ): Promise<VisualInferenceOutcomeReceipt> {
     let result: VisualInferenceOutcomeResult;
-    const forbidden = forbiddenDecisionFields(content);
-    const parsed = forbidden.length === 0 ? validateModelVisualInventory(content) : null;
-    if (parsed !== null && parsed.ok) {
+    const reportedModelMismatch = telemetry.model !== this.dependencies.model.model;
+    const forbidden = reportedModelMismatch ? [] : forbiddenDecisionFields(content);
+    const parsed = reportedModelMismatch || forbidden.length > 0
+      ? null
+      : validateModelVisualInventory(content);
+    if (reportedModelMismatch) {
+      // The requested model is part of the inference-cache identity, while telemetry.model is
+      // the provider-reported identity. Preserve and account the paid receipt, but classify its
+      // content as malformed at this durable boundary. If we stored it as `observed`, the outer
+      // observer would (correctly) reject the drift as `malformed` and the epoch processor would
+      // see two contradictory durable states on every replay.
+      result = {
+        state: "malformed",
+        inventory: null,
+        responseSha256: null,
+        failure: {
+          kind: "model-identity-mismatch",
+          count: 1,
+          detail: "Provider telemetry reported a model other than the requested model; response content was discarded.",
+        },
+      };
+    } else if (parsed !== null && parsed.ok) {
       result = {
         state: "observed",
         inventory: parsed.value,

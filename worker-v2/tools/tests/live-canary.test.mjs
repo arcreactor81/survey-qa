@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -28,6 +29,7 @@ const ACCESS_ID = "client-id-must-never-be-emitted.access";
 const ACCESS_SECRET = "ACCESS_SECRET_MUST_NEVER_BE_EMITTED_0123456789";
 const CANARY_TOKEN = "CANARY_TOKEN_MUST_NEVER_BE_EMITTED_9876543210";
 const EXPECTED_VISUAL_PROVIDER = CANARY_VISUAL_PROVIDERS[0];
+const EXPECTED_DOCUMENT_SHA256 = "d".repeat(64);
 
 test("operator request deadline defaults to measured 120 seconds and keeps its safety ceiling", async (t) => {
   assert.equal(DEFAULT_REQUEST_TIMEOUT_MS, 120_000);
@@ -69,6 +71,8 @@ test("enabled execute and collect modes require one closed expected visual provi
     "https://survey.example.test/instrument",
     "--docx",
     "questionnaire.docx",
+    "--expected-document-sha256",
+    EXPECTED_DOCUMENT_SHA256,
     "--output-dir",
     "canary-output",
     "--expect-visual",
@@ -102,6 +106,42 @@ test("enabled execute and collect modes require one closed expected visual provi
     "probe-only keeps its existing no-provider requirement",
   );
   assert.match(usage(), /--expected-visual-provider workers-ai-gemma4\|cloudflare-gateway-gemini\|mistral-medium35-direct/);
+  assert.match(usage(), /--expected-document-sha256 SHA256/);
+});
+
+test("execute requires an explicit lowercase document digest and rejects it before any side effect", async (t) => {
+  const fixture = await executionFixture(t);
+  const base = [
+    "--execute",
+    "--base-url",
+    LIVE_CANARY_ORIGIN,
+    "--canary-token-file",
+    fixture.tokenFile,
+    "--survey-url",
+    "https://survey.example.test/instrument",
+    "--docx",
+    fixture.docx,
+    "--output-dir",
+    fixture.outputDir,
+  ];
+  assert.throws(
+    () => parseArguments(base),
+    (error) => error instanceof LiveCanaryError && error.code === "ARGUMENT_MISSING",
+  );
+  const malformed = await runCli([...base, "--expected-document-sha256", "D".repeat(64)], {
+    fetchImpl: async () => { throw new Error("fetch must not run"); },
+  });
+  assert.equal(malformed.exitCode, 1);
+  assert.match(malformed.stderr, /ARGUMENT_INVALID/);
+
+  let fetches = 0;
+  const mismatch = await runCli([...base, "--expected-document-sha256", "0".repeat(64)], {
+    fetchImpl: async () => { fetches += 1; throw new Error("fetch must not run"); },
+  });
+  assert.equal(mismatch.exitCode, 1);
+  assert.match(mismatch.stderr, /DOCUMENT_SHA256_MISMATCH/);
+  assert.equal(fetches, 0);
+  assert.equal(await fileExists(fixture.outputDir), false, "hash mismatch must precede output-directory creation");
 });
 
 test("Access credentials are origin-bound before fetch and never emitted", async (t) => {
@@ -233,6 +273,7 @@ test("full fake run submits deterministic JSON, preserves every artifact, and pr
     canaryTokenFile: fixture.tokenFile,
     surveyUrl: "https://survey.example.test/instrument",
     docx: fixture.docx,
+    expectedDocumentSha256: fixture.expectedDocumentSha256,
     outputDir: fixture.outputDir,
     expectVisual: "disabled",
     pollIntervalMs: 100,
@@ -272,6 +313,7 @@ test("terminal visual limitation is retained and makes the canary fail explicitl
       canaryTokenFile: fixture.tokenFile,
       surveyUrl: "https://survey.example.test/instrument",
       docx: fixture.docx,
+      expectedDocumentSha256: fixture.expectedDocumentSha256,
       outputDir: fixture.outputDir,
       pollIntervalMs: 100,
       pollTimeoutMs: 1_000,
@@ -315,6 +357,7 @@ test("core terminal failure still saves all seven endpoint responses", async (t)
       canaryTokenFile: fixture.tokenFile,
       surveyUrl: "https://survey.example.test/instrument",
       docx: fixture.docx,
+      expectedDocumentSha256: fixture.expectedDocumentSha256,
       outputDir: fixture.outputDir,
       pollIntervalMs: 100,
       pollTimeoutMs: 1_000,
@@ -545,6 +588,256 @@ test("enabled collection rejects a retained provider mismatch without leaving GE
   assert.equal(calls.some((call) => call.url.pathname === "/api/v2/runs"), false);
 });
 
+test("an enabled arm with zero successful observations is refused, never certified", async (t) => {
+  // QA pin for review canary-security finding 1 (zero-success-passes): on pre-fix code this
+  // exact fixture — the old enabledVisualStatus shape with observed-stored:0 /
+  // budget-not-authorized:2 — closed every arithmetic identity and this collect CLI exited 0
+  // with zeroSilentGaps:true, certifying an "enabled" one-call smoke arm whose provider was
+  // never successfully called. It must exit nonzero with the named no-success gap.
+  const fixture = await executionFixture(t);
+  const visual = enabledVisualStatus(EXPECTED_VISUAL_PROVIDER);
+  visual.coverage.totals.successfulItems = 0;
+  visual.coverage.totals.limitationItems = 2;
+  visual.coverage.totals.dispositions["observed-stored"] = 0;
+  visual.coverage.totals.dispositions["budget-not-authorized"] = 2;
+  visual.coverage.successfulDataManifest = null;
+  visual.usage = { ...visual.usage, committedCalls: 0 };
+  const result = await runCli([
+    "--collect",
+    "--run-id",
+    RUN_ID,
+    "--base-url",
+    LIVE_CANARY_ORIGIN,
+    "--canary-token-file",
+    fixture.tokenFile,
+    "--output-dir",
+    fixture.outputDir,
+    "--expect-visual",
+    "enabled",
+    "--expected-visual-provider",
+    EXPECTED_VISUAL_PROVIDER,
+    "--poll-interval-ms",
+    "100",
+    "--poll-timeout-ms",
+    "1000",
+    "--request-timeout-ms",
+    "1000",
+  ], {
+    fetchImpl: fakeRunFetch({ status: completeStatus(), visual }),
+    sleep: async () => {},
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /VISUAL_NO_SUCCESSFUL_OBSERVATION/);
+  const summary = JSON.parse(await readFile(path.join(fixture.outputDir, "canary-summary.json"), "utf8"));
+  assert.equal(summary.outcome, "failed");
+  assert.equal(summary.failures.visual.code, "VISUAL_NO_SUCCESSFUL_OBSERVATION");
+  assert.equal(summary.visual.zeroSilentGaps, false, "a refused arm must not carry the closed-audit stamp");
+});
+
+test("a visual contract gap retains every endpoint artifact before the run is judged", async (t) => {
+  // QA pin for review canary-security finding 2 (abort-before-retention): pre-fix,
+  // validateVisualPollStatus threw straight out of pollRun before collectArtifacts, so this
+  // exact provider-mismatch execute run left ONLY submission-plan.json and submission.json on
+  // disk — contradicting the retention contract — and never wrote canary-summary.json.
+  const fixture = await executionFixture(t);
+  await assert.rejects(
+    executeLiveCanary({
+      baseUrl: LIVE_CANARY_ORIGIN,
+      canaryTokenFile: fixture.tokenFile,
+      surveyUrl: "https://survey.example.test/instrument",
+      docx: fixture.docx,
+      expectedDocumentSha256: fixture.expectedDocumentSha256,
+      outputDir: fixture.outputDir,
+      expectVisual: "enabled",
+      expectedVisualProvider: EXPECTED_VISUAL_PROVIDER,
+      pollIntervalMs: 100,
+      pollTimeoutMs: 1_000,
+      requestTimeoutMs: 1_000,
+    }, {
+      fetchImpl: fakeRunFetch({
+        status: completeStatus(),
+        visual: enabledVisualStatus(CANARY_VISUAL_PROVIDERS[1]),
+      }),
+      sleep: async () => {},
+    }),
+    (error) => {
+      assert.ok(error instanceof LiveCanaryError);
+      assert.equal(error.code, "VISUAL_PROVIDER_MISMATCH");
+      assert.equal(error.summary.outcome, "failed");
+      assert.equal(error.summary.failures.visual.code, "VISUAL_PROVIDER_MISMATCH");
+      return true;
+    },
+  );
+  const expectedFiles = [
+    "submission-plan.json",
+    "submission.json",
+    "status.json",
+    "coverage.json",
+    "visual-status.json",
+    "record.json",
+    "report-data.json",
+    "export.json",
+    "evidence.json",
+    "canary-summary.json",
+  ];
+  assert.deepEqual((await readdir(fixture.outputDir)).sort(), expectedFiles.sort());
+  const summary = JSON.parse(await readFile(path.join(fixture.outputDir, "canary-summary.json"), "utf8"));
+  assert.equal(summary.outcome, "failed");
+  assert.equal(summary.failures.visual.code, "VISUAL_PROVIDER_MISMATCH");
+});
+
+test("a visual poll HTTP failure retains every endpoint response before judgment", async (t) => {
+  const fixture = await executionFixture(t);
+  await assert.rejects(
+    executeLiveCanary({
+      baseUrl: LIVE_CANARY_ORIGIN,
+      canaryTokenFile: fixture.tokenFile,
+      surveyUrl: "https://survey.example.test/instrument",
+      docx: fixture.docx,
+      expectedDocumentSha256: fixture.expectedDocumentSha256,
+      outputDir: fixture.outputDir,
+      pollIntervalMs: 100,
+      pollTimeoutMs: 1_000,
+      requestTimeoutMs: 1_000,
+    }, {
+      fetchImpl: fakeRunFetch({
+        status: completeStatus(),
+        visual: closedVisualStatus(),
+        unavailableArtifacts: new Set(["visual-status"]),
+      }),
+      sleep: async () => {},
+    }),
+    (error) => {
+      assert.ok(error instanceof LiveCanaryError);
+      assert.equal(error.code, "ARTIFACT_UNAVAILABLE");
+      assert.equal(error.summary.failures.visual.code, "ARTIFACT_UNAVAILABLE");
+      return true;
+    },
+  );
+
+  const expectedFiles = [
+    "submission-plan.json",
+    "submission.json",
+    "status.json",
+    "coverage.json",
+    "visual-status.json",
+    "record.json",
+    "report-data.json",
+    "export.json",
+    "evidence.json",
+    "canary-summary.json",
+  ];
+  assert.deepEqual((await readdir(fixture.outputDir)).sort(), expectedFiles.sort());
+  assert.equal(
+    JSON.parse(await readFile(path.join(fixture.outputDir, "visual-status.json"), "utf8")).error.code,
+    "NOT_AVAILABLE",
+  );
+  const summary = JSON.parse(await readFile(path.join(fixture.outputDir, "canary-summary.json"), "utf8"));
+  assert.equal(summary.outcome, "failed");
+  assert.equal(summary.artifacts["visual-status"].httpStatus, 404);
+});
+
+test("collect mode records an unconditional visual schema gap after retaining the evidence", async (t) => {
+  // QA pin for review canary-security finding 2, unconditional-gap leg: schema/channel/identity
+  // gaps have no expectation-relaxing flag escape, and pre-fix the same gap re-threw identically
+  // from pollRun on every --collect attempt, so the run's evidence was permanently
+  // unrecoverable through this tool. Retention must now precede the recorded refusal.
+  const fixture = await executionFixture(t);
+  const visual = closedVisualStatus();
+  visual.schemaVersion = "survey-qa-visual-status/2.0.0";
+  const result = await runCli([
+    "--collect",
+    "--run-id",
+    RUN_ID,
+    "--base-url",
+    LIVE_CANARY_ORIGIN,
+    "--canary-token-file",
+    fixture.tokenFile,
+    "--output-dir",
+    fixture.outputDir,
+    "--poll-interval-ms",
+    "100",
+    "--poll-timeout-ms",
+    "1000",
+    "--request-timeout-ms",
+    "1000",
+  ], {
+    fetchImpl: fakeRunFetch({ status: completeStatus(), visual }),
+    sleep: async () => {},
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /VISUAL_SCHEMA_MISMATCH/);
+  const expectedFiles = [
+    "collection-plan.json",
+    "status.json",
+    "coverage.json",
+    "visual-status.json",
+    "record.json",
+    "report-data.json",
+    "export.json",
+    "evidence.json",
+    "canary-summary.json",
+  ];
+  assert.deepEqual((await readdir(fixture.outputDir)).sort(), expectedFiles.sort());
+  const summary = JSON.parse(await readFile(path.join(fixture.outputDir, "canary-summary.json"), "utf8"));
+  assert.equal(summary.mode, "collect");
+  assert.equal(summary.outcome, "failed");
+  assert.equal(summary.failures.visual.code, "VISUAL_SCHEMA_MISMATCH");
+  assert.equal(
+    JSON.parse(await readFile(path.join(fixture.outputDir, "visual-status.json"), "utf8")).schemaVersion,
+    "survey-qa-visual-status/2.0.0",
+    "the offending projection bytes themselves must be retained as evidence",
+  );
+});
+
+test("a gap seen at poll time is recorded even if the retained artifact later validates", async (t) => {
+  // Edge of the review canary-security finding 2 fix: the poll observed a contract violation,
+  // the artifact re-read then returned healthy bytes. The run must still be refused — a
+  // projection that violated the contract at any observed point is never silently certified.
+  const fixture = await executionFixture(t);
+  let visualRequests = 0;
+  const result = await runCli([
+    "--collect",
+    "--run-id",
+    RUN_ID,
+    "--base-url",
+    LIVE_CANARY_ORIGIN,
+    "--canary-token-file",
+    fixture.tokenFile,
+    "--output-dir",
+    fixture.outputDir,
+    "--poll-interval-ms",
+    "100",
+    "--poll-timeout-ms",
+    "1000",
+    "--request-timeout-ms",
+    "1000",
+  ], {
+    fetchImpl: fakeRunFetch({
+      status: completeStatus(),
+      visual: () => {
+        visualRequests += 1;
+        if (visualRequests === 1) {
+          const mutated = closedVisualStatus();
+          mutated.channel = "verdict";
+          return mutated;
+        }
+        return closedVisualStatus();
+      },
+    }),
+    sleep: async () => {},
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /VISUAL_CHANNEL_MISMATCH/);
+  assert.equal(visualRequests, 2, "one detecting poll plus the retained artifact are expected");
+  const summary = JSON.parse(await readFile(path.join(fixture.outputDir, "canary-summary.json"), "utf8"));
+  assert.equal(summary.outcome, "failed");
+  assert.equal(summary.failures.visual.code, "VISUAL_CHANNEL_MISMATCH");
+});
+
 test("visual launch eligibility covers complete and partial durable finals and kills weak predicates", () => {
   const cases = [
     ["complete durable report", "complete", "complete", true, true],
@@ -598,6 +891,7 @@ for (const partial of ["partial-blocked", "partial-time", "partial-budget"]) {
         canaryTokenFile: fixture.tokenFile,
         surveyUrl: "https://survey.example.test/instrument",
         docx: fixture.docx,
+        expectedDocumentSha256: fixture.expectedDocumentSha256,
         outputDir: fixture.outputDir,
         pollIntervalMs: 100,
         pollTimeoutMs: 1_000,
@@ -638,6 +932,7 @@ test("a true core failure returns before visual polling even if a stale report c
       canaryTokenFile: fixture.tokenFile,
       surveyUrl: "https://survey.example.test/instrument",
       docx: fixture.docx,
+      expectedDocumentSha256: fixture.expectedDocumentSha256,
       outputDir: fixture.outputDir,
       pollIntervalMs: 100,
       pollTimeoutMs: 1_000,
@@ -671,6 +966,7 @@ test("a report failure returns before visual polling even when the test axis com
       canaryTokenFile: fixture.tokenFile,
       surveyUrl: "https://survey.example.test/instrument",
       docx: fixture.docx,
+      expectedDocumentSha256: fixture.expectedDocumentSha256,
       outputDir: fixture.outputDir,
       pollIntervalMs: 100,
       pollTimeoutMs: 1_000,
@@ -705,6 +1001,7 @@ test("a partial durable core stops polling on a named visual terminal limitation
       canaryTokenFile: fixture.tokenFile,
       surveyUrl: "https://survey.example.test/instrument",
       docx: fixture.docx,
+      expectedDocumentSha256: fixture.expectedDocumentSha256,
       outputDir: fixture.outputDir,
       pollIntervalMs: 100,
       pollTimeoutMs: 1_000,
@@ -750,6 +1047,7 @@ test("a partial core failure cannot hide a finalized visual denominator mutation
       canaryTokenFile: fixture.tokenFile,
       surveyUrl: "https://survey.example.test/instrument",
       docx: fixture.docx,
+      expectedDocumentSha256: fixture.expectedDocumentSha256,
       outputDir: fixture.outputDir,
       pollIntervalMs: 100,
       pollTimeoutMs: 1_000,
@@ -764,7 +1062,7 @@ test("a partial core failure cannot hide a finalized visual denominator mutation
   );
 });
 
-test("unknown persisted core completion states fail the polling loop immediately", async (t) => {
+test("unknown persisted core completion states stop polling but retain every endpoint and summary", async (t) => {
   const mutations = [
     {
       name: "unknown test completion",
@@ -789,6 +1087,7 @@ test("unknown persisted core completion states fail the polling loop immediately
           canaryTokenFile: fixture.tokenFile,
           surveyUrl: "https://survey.example.test/instrument",
           docx: fixture.docx,
+          expectedDocumentSha256: fixture.expectedDocumentSha256,
           outputDir: fixture.outputDir,
           pollIntervalMs: 100,
           pollTimeoutMs: 1_000,
@@ -806,11 +1105,140 @@ test("unknown persisted core completion states fail the polling loop immediately
         }),
         (error) => error instanceof LiveCanaryError && error.code === "STATUS_COMPLETION_INVALID",
       );
-      assert.equal(statusRequests, 1, "the first persisted unknown state must stop polling");
-      assert.equal(visualRequests, 0, "unknown core state must not be treated as visual-launch eligible");
+      assert.equal(statusRequests, 2, "one detecting poll plus the retained status artifact are expected");
+      assert.equal(visualRequests, 1, "unknown core state is retained once but never treated as visual-launch eligible");
       assert.equal(sleeps, 0, "the client must not burn the 90-minute default timeout on an unknown state");
+      const expectedFiles = [
+        "submission-plan.json",
+        "submission.json",
+        "status.json",
+        "coverage.json",
+        "visual-status.json",
+        "record.json",
+        "report-data.json",
+        "export.json",
+        "evidence.json",
+        "canary-summary.json",
+      ];
+      assert.deepEqual((await readdir(fixture.outputDir)).sort(), expectedFiles.sort());
+      const summary = JSON.parse(await readFile(path.join(fixture.outputDir, "canary-summary.json"), "utf8"));
+      assert.equal(summary.outcome, "failed");
+      assert.equal(summary.failures.core.code, "STATUS_COMPLETION_INVALID");
     });
   }
+});
+
+test("a core poll contract gap remains authoritative after a healthy retained status", async (t) => {
+  const fixture = await executionFixture(t);
+  let statusRequests = 0;
+  let visualRequests = 0;
+  await assert.rejects(
+    executeLiveCanary({
+      baseUrl: LIVE_CANARY_ORIGIN,
+      canaryTokenFile: fixture.tokenFile,
+      surveyUrl: "https://survey.example.test/instrument",
+      docx: fixture.docx,
+      expectedDocumentSha256: fixture.expectedDocumentSha256,
+      outputDir: fixture.outputDir,
+      pollIntervalMs: 100,
+      pollTimeoutMs: 1_000,
+      requestTimeoutMs: 1_000,
+    }, {
+      fetchImpl: fakeRunFetch({
+        status: () => {
+          statusRequests += 1;
+          const status = completeStatus();
+          if (statusRequests === 1) {
+            status.completion = { test: "partial-aborted", report: "complete", reasonCode: "transient-mutant" };
+          }
+          return status;
+        },
+        visual: () => {
+          visualRequests += 1;
+          return closedVisualStatus();
+        },
+      }),
+      sleep: async () => {},
+    }),
+    (error) => {
+      assert.ok(error instanceof LiveCanaryError);
+      assert.equal(error.code, "STATUS_COMPLETION_INVALID");
+      assert.equal(error.summary.failures.core.code, "STATUS_COMPLETION_INVALID");
+      assert.deepEqual(error.summary.core.completion, completeStatus().completion);
+      return true;
+    },
+  );
+  assert.equal(statusRequests, 2, "the retained status re-read validates independently of the failed poll");
+  assert.equal(visualRequests, 1, "visual status is retained after the core gap but was not polled");
+  const expectedFiles = [
+    "submission-plan.json",
+    "submission.json",
+    "status.json",
+    "coverage.json",
+    "visual-status.json",
+    "record.json",
+    "report-data.json",
+    "export.json",
+    "evidence.json",
+    "canary-summary.json",
+  ];
+  assert.deepEqual((await readdir(fixture.outputDir)).sort(), expectedFiles.sort());
+});
+
+test("collect mode validates retained core identity against the planned run and keeps all evidence", async (t) => {
+  const fixture = await executionFixture(t);
+  const invalidStatus = completeStatus();
+  invalidStatus.runId = "not-a-valid-run-id";
+  let statusRequests = 0;
+  let visualRequests = 0;
+  const result = await runCli([
+    "--collect",
+    "--run-id",
+    RUN_ID,
+    "--base-url",
+    LIVE_CANARY_ORIGIN,
+    "--canary-token-file",
+    fixture.tokenFile,
+    "--output-dir",
+    fixture.outputDir,
+    "--poll-interval-ms",
+    "100",
+    "--poll-timeout-ms",
+    "1000",
+    "--request-timeout-ms",
+    "1000",
+  ], {
+    fetchImpl: fakeRunFetch({
+      status: invalidStatus,
+      visual: closedVisualStatus(),
+      onCall: async (url) => {
+        if (url.pathname === `/api/v2/runs/${RUN_ID}/status`) statusRequests += 1;
+        if (url.pathname === `/api/v2/runs/${RUN_ID}/visual-status`) visualRequests += 1;
+      },
+    }),
+    sleep: async () => {},
+  });
+
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /STATUS_IDENTITY_INVALID/);
+  assert.equal(statusRequests, 2, "one detecting poll plus the retained status artifact are expected");
+  assert.equal(visualRequests, 1, "the invalid core status never becomes visual-launch eligible");
+  const expectedFiles = [
+    "collection-plan.json",
+    "status.json",
+    "coverage.json",
+    "visual-status.json",
+    "record.json",
+    "report-data.json",
+    "export.json",
+    "evidence.json",
+    "canary-summary.json",
+  ];
+  assert.deepEqual((await readdir(fixture.outputDir)).sort(), expectedFiles.sort());
+  assert.equal(JSON.parse(await readFile(path.join(fixture.outputDir, "status.json"), "utf8")).runId, "not-a-valid-run-id");
+  const summary = JSON.parse(await readFile(path.join(fixture.outputDir, "canary-summary.json"), "utf8"));
+  assert.equal(summary.runId, RUN_ID, "the immutable collection plan supplies summary identity");
+  assert.equal(summary.failures.core.code, "STATUS_IDENTITY_INVALID");
 });
 
 test("a visual limitation is accepted only after poll-time schema, channel, run, and reason validation", async (t) => {
@@ -835,6 +1263,7 @@ test("a visual limitation is accepted only after poll-time schema, channel, run,
           canaryTokenFile: fixture.tokenFile,
           surveyUrl: "https://survey.example.test/instrument",
           docx: fixture.docx,
+          expectedDocumentSha256: fixture.expectedDocumentSha256,
           outputDir: fixture.outputDir,
           pollIntervalMs: 100,
           pollTimeoutMs: 1_000,
@@ -851,7 +1280,12 @@ test("a visual limitation is accepted only after poll-time schema, channel, run,
         }),
         (error) => error instanceof LiveCanaryError && error.code === expectedCode,
       );
-      assert.equal(visualRequests, 1, "the invalid terminal response must fail on its first poll");
+      // FIX (review canary-security finding 2): this used to assert visualRequests === 1 —
+      // pinning the abort-before-retention behavior in which the poll-time gap threw before
+      // collectArtifacts ever ran. The gap is still detected on the very first poll (sleeps
+      // stays 0), but the artifacts are now retained before the run is judged, so the
+      // visual-status endpoint is read once by the poll and once by artifact collection.
+      assert.equal(visualRequests, 2, "one detecting poll plus the retained artifact are expected");
       assert.equal(sleeps, 0);
     });
   }
@@ -863,6 +1297,95 @@ test("denominator mutation makes the zero-silent-gap gate fail", () => {
   assert.throws(
     () => assertClosedVisualStatus(visual, { runId: RUN_ID }),
     (error) => error instanceof LiveCanaryError && error.code === "VISUAL_COVERAGE_GAP",
+  );
+});
+
+test("enabled success floor: boundary cases around empty, zero-success, and uncorroborated runs", () => {
+  // Edge cases for review canary-security finding 1. Every branch here was a certified pass on
+  // pre-fix code because all closure identities hold at zero.
+  const policy = canaryVisualPolicy(EXPECTED_VISUAL_PROVIDER, 1);
+  const expected = { runId: RUN_ID, expectConfiguration: "enabled", expectedVisualPolicy: policy };
+
+  // Degenerate variant: denominator 0 makes every identity 0===0; an enabled channel that
+  // inspected nothing must be a named inspected-nothing gap, not a pass.
+  const empty = enabledVisualStatus(EXPECTED_VISUAL_PROVIDER);
+  empty.work.denominatorItems = 0;
+  empty.work.totals = {
+    ...empty.work.totals,
+    indexWalks: 0,
+    walksReconciled: 0,
+    uniquelyResolvedWalks: 0,
+    verifiedArtifactWalks: 0,
+    epochsDiscovered: 0,
+    eligibleEpochs: 0,
+    ineligibleEpochs: 0,
+  };
+  empty.coverage.successfulDataManifest = null;
+  empty.coverage.totals = {
+    denominatorItems: 0,
+    epochItems: 0,
+    eligibleEpochItems: 0,
+    ineligibleEpochItems: 0,
+    unknownEpochWalkItems: 0,
+    noEpochWalkItems: 0,
+    successfulItems: 0,
+    limitationItems: 0,
+    dispositions: Object.fromEntries(
+      Object.keys(empty.coverage.totals.dispositions).map((key) => [key, 0]),
+    ),
+  };
+  assert.throws(
+    () => assertClosedVisualStatus(empty, expected),
+    (error) => error instanceof LiveCanaryError && error.code === "VISUAL_EMPTY_DENOMINATOR",
+  );
+
+  // A usage-ledger projection that is not "available" cannot corroborate the stored observation.
+  const absentUsage = enabledVisualStatus(EXPECTED_VISUAL_PROVIDER);
+  absentUsage.usage = { state: "absent", key: "v2/example/visual/usage" };
+  assert.throws(
+    () => assertClosedVisualStatus(absentUsage, expected),
+    (error) => error instanceof LiveCanaryError && error.code === "VISUAL_COMMITTED_CALLS_MISMATCH",
+  );
+
+  // More stored observations than committed billed calls is an accounting contradiction.
+  const uncorroborated = enabledVisualStatus(EXPECTED_VISUAL_PROVIDER);
+  uncorroborated.usage = { ...uncorroborated.usage, committedCalls: 0 };
+  assert.throws(
+    () => assertClosedVisualStatus(uncorroborated, expected),
+    (error) => error instanceof LiveCanaryError && error.code === "VISUAL_COMMITTED_CALLS_MISMATCH",
+  );
+
+  // The boundary itself: exactly one stored observation, one committed call, and the configured
+  // one-call maximum agree. Both under-billing and over-billing are the same named integrity gap.
+  const healthy = enabledVisualStatus(EXPECTED_VISUAL_PROVIDER);
+  assert.equal(assertClosedVisualStatus(healthy, expected).zeroSilentGaps, true);
+  const extraBilled = enabledVisualStatus(EXPECTED_VISUAL_PROVIDER);
+  extraBilled.usage = { ...extraBilled.usage, committedCalls: 2 };
+  assert.throws(
+    () => assertClosedVisualStatus(extraBilled, expected),
+    (error) => error instanceof LiveCanaryError && error.code === "VISUAL_COMMITTED_CALLS_MISMATCH",
+  );
+
+  // Matching two stored observations to two committed calls is still outside the one-call arm.
+  // This kills a weaker equality-only check that forgets the configured maximum.
+  const matchingButOverCap = enabledVisualStatus(EXPECTED_VISUAL_PROVIDER);
+  matchingButOverCap.coverage.totals.successfulItems = 2;
+  matchingButOverCap.coverage.totals.limitationItems = 0;
+  matchingButOverCap.coverage.totals.dispositions["observed-stored"] = 2;
+  matchingButOverCap.coverage.totals.dispositions["budget-not-authorized"] = 0;
+  matchingButOverCap.usage = { ...matchingButOverCap.usage, committedCalls: 2 };
+  assert.throws(
+    () => assertClosedVisualStatus(matchingButOverCap, expected),
+    (error) => error instanceof LiveCanaryError && error.code === "VISUAL_COMMITTED_CALLS_MISMATCH",
+  );
+
+  // Disabled/either expectations keep their previous behavior: a zero-success closed status is
+  // still a valid audit when no provider arm was promised.
+  const either = closedVisualStatus();
+  assert.equal(assertClosedVisualStatus(either, { runId: RUN_ID }).zeroSilentGaps, true);
+  assert.equal(
+    assertClosedVisualStatus(closedVisualStatus(), { runId: RUN_ID, expectConfiguration: "disabled" }).zeroSilentGaps,
+    true,
   );
 });
 
@@ -904,10 +1427,11 @@ async function executionFixture(t) {
   const docx = path.join(root, "questionnaire.docx");
   const outputDir = path.join(root, "output");
   const docxBytes = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]);
+  const expectedDocumentSha256 = createHash("sha256").update(docxBytes).digest("hex");
   await writeFile(envFile, `CF_ACCESS_CLIENT_ID=${ACCESS_ID}\nCF_ACCESS_CLIENT_SECRET=${ACCESS_SECRET}\n`);
   await writeFile(tokenFile, `${CANARY_TOKEN}\n`);
   await writeFile(docx, docxBytes);
-  return { root, envFile, tokenFile, docx, outputDir, docxBytes };
+  return { root, envFile, tokenFile, docx, outputDir, docxBytes, expectedDocumentSha256 };
 }
 
 function fakeRunFetch({ status, visual, unavailableArtifacts = new Set(), onCall = async () => {} }) {
@@ -1005,6 +1529,29 @@ function enabledVisualStatus(provider) {
     maximumCalls: Number(policy.maximumCalls),
     maximumUsd: Number(policy.maximumUsd),
     maximumWaves: Number(policy.maximumWaves),
+  };
+  // FIX (review canary-security finding 1): this fixture used to inherit closedVisualStatus()'s
+  // observed-stored:0 / budget-not-authorized:2 totals, and the enabled-collection test asserted
+  // exit 0 on it — pinning the zero-success-passes bug: an "enabled" arm certified green without
+  // one successful, billed provider call. The healthy enabled fixture now carries exactly one
+  // stored observation corroborated by one committed call in the usage-ledger projection.
+  visual.coverage.totals.successfulItems = 1;
+  visual.coverage.totals.limitationItems = 1;
+  visual.coverage.totals.dispositions["observed-stored"] = 1;
+  visual.coverage.totals.dispositions["budget-not-authorized"] = 1;
+  visual.coverage.successfulDataManifest = {
+    key: "v2/example/visual/manifest",
+    contentSha256: "b".repeat(64),
+  };
+  visual.usage = {
+    state: "available",
+    key: "v2/example/visual/usage",
+    revision: 1,
+    ownership: { instanceId: `${RUN_ID}-visual-e0`, epoch: 0 },
+    committedCalls: 1,
+    knownCostUsd: 0.0002,
+    unknownCostCount: 0,
+    reservation: { state: "none" },
   };
   return visual;
 }

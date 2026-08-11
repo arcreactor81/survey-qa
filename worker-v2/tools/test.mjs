@@ -342,6 +342,18 @@ const FILES = [
   // D52 — planned back-navigation and repeated sessions are counted unsupported work until
   // the browser adapter can emit receipts for them; one forward walk never means they ran.
   "./tests/d52-probe-execution-truth.test.mjs",
+  // AXIS CLOSURE — review-run-workflow.md finding 1. The contract-reuse adopted branch
+  // skipped both `phase-extracting` arms (the only writers of `completion.test = "running"`)
+  // and finalize's never-closed backstop tested `=== "running"` exactly — so a reuse-adopted
+  // run that hit a test-axis blocker ended durably `not-started` / reasonCode null / no
+  // active marker: neither terminal nor sweepable, invisible to every resolver. Adoption now
+  // marks the axis in flight inside the same durable write, and the backstop promotes ANY
+  // non-terminal axis (`!isTerminalTest`) to `failed` / `test-axis-never-closed` — the belt
+  // for whatever branch forgets next. The edge tests hold the other direction: a terminal
+  // state or a deliberate reasonCode is never clobbered by the promotion.
+  // The signed cross-surface ordering gate is mutation-proved by
+  // `tools/mutate-axis-closure.mjs`.
+  "./tests/axis-closure.test.mjs",
   // D47 — every screen epoch is captured as three explicitly paired modalities: the legacy
   // screen JSON, a viewport PNG and Chrome's full accessibility tree. Exact hashes/media and
   // viewport/scroll/DPR metadata bind them; browser handles are stripped through a closed

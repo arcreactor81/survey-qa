@@ -265,6 +265,42 @@ test("processed observations map to exact success refs while provider failures r
   }
 });
 
+test("identity-mismatch malformed reads close as provider-malformed naming the drift, not a schema failure", async () => {
+  // Companion to review vision-billing finding E1: the epoch no longer throws on a provider
+  // model-echo drift (visual-epoch.ts), so the drifted epoch now reaches this projection with
+  // readState "malformed" and the named model-identity-mismatch limitation. The coverage row
+  // must name the identity mismatch; the generic malformed detail would falsely claim the
+  // schema-valid response "failed the closed observation schema".
+  const fx = await fixture();
+  const kind = "model-identity-mismatch";
+  const drifted = mod.closure.visualProcessedItemFromEpochResult(
+    0,
+    fx.denominator[0],
+    storedResult(fx.epoch, "malformed", [kind]),
+  );
+  assert.equal(drifted.disposition, "provider-malformed");
+  assert.equal(drifted.success, null);
+  assert.match(drifted.detail, new RegExp(kind));
+  assert.doesNotMatch(drifted.detail, /failed the closed observation schema/);
+
+  const generic = mod.closure.visualProcessedItemFromEpochResult(
+    0,
+    fx.denominator[0],
+    storedResult(fx.epoch, "malformed"),
+  );
+  assert.equal(generic.disposition, "provider-malformed");
+  assert.match(generic.detail, /failed the closed observation schema/);
+
+  const entries = await close({
+    workManifest: fx.manifest,
+    processed: [drifted],
+    remainder: { state: "wave-limit", detail: "fixture limit" },
+  });
+  const totals = mod.coverage.computeVisualCoverageTotals(entries);
+  assert.equal(totals.successfulItems, 0, "an identity drift is never visual coverage");
+  assert.equal(totals.dispositions["provider-malformed"], 1);
+});
+
 test("paired-content empty inventory closes as a counted limitation, never as successful coverage", async () => {
   const fx = await fixture();
   const kind = "model-inventory-empty-despite-paired-content";

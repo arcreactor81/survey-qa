@@ -344,6 +344,26 @@ import { buildQuestionWordingIndex, resolveQuestionWording } from "./plan";
 import type { QuestionWordingIndex } from "./plan";
 
 /**
+ * 1.8.0 — FIX C1 respin: the sole-group arm's unconditional attribution requirement narrowed
+ * to a discriminator — a sole non-empty option group is accepted iff it attributes to the
+ * target by name/id-prefix OR it is the screen's only answerable thing beyond navigation
+ * controls (and its name is not the "(unnamed)" merge key) — so unambiguous sole-group
+ * instruments decide again while borrowed-inventory shapes still refuse; changes which
+ * observations reach a verdict.
+ *
+ * 1.7.0 — three refusal-widening fixes, all closing confident-wrong-answer paths (review
+ * findings C1–C3). (C1) an option inventory must be ATTRIBUTED to the target question even when
+ * it is the screen's ONLY option group — a sole group no longer inherits the comparison by
+ * default — and a target whose bound control is a `<select>` (whose options live on the control
+ * and never reach `optionGroups`) refuses as `OPTION_INVENTORY_CONTROL_SCOPED_NOT_GROUPED`
+ * rather than borrowing another control's inventory. (C2) the exhaustive extra-option arm stops
+ * accusing options that are present in the markup but hidden/inoperable — the same
+ * offered-vs-present split the membership arm already draws — routing them to
+ * `OPTION_PRESENT_BUT_NOT_OPERABLE_EXTRA`. (C3) the route pass-arm's HEADING witness no longer
+ * reads a `questionText` whose own capture flagged `question-text-includes-controls`; such a
+ * screen falls to the existing `DESTINATION_PRESENTED_BY_TEXT_TOKEN_ONLY` refusal. All three
+ * change which observations reach a verdict.
+ *
  * 1.6.0 — `option-set` became decidable: the registry opened for exactly one new kind and the
  * predicate compares a sealed OPTION MEMBERSHIP payload (labels read from the document's own
  * quote, `extract/expand.ts`) against one screen's complete option inventory. It changes which
@@ -364,7 +384,7 @@ import type { QuestionWordingIndex } from "./plan";
  *
  * 1.3.0 — the boundary outcome became four-valued and screen identity gained provenance.
  */
-export const VERIFIER_VERSION = "v2-structural-verifier/1.6.0";
+export const VERIFIER_VERSION = "v2-structural-verifier/1.8.0";
 
 /** What a predicate may return. Never prose, never a score. */
 export type PredicateOutcome = "satisfied" | "violated" | "insufficient" | "no-observation" | "error";
@@ -539,8 +559,23 @@ export const VERIFIER_REASON = Object.freeze({
   OPTION_INVENTORY_NOT_CAPTURED: "OPTION_INVENTORY_NOT_CAPTURED",
   /** The screen is a grid: its inventory is per-row cells, whose attribution this stage cannot recompute. */
   OPTION_SET_ON_A_GRID_NOT_COMPARED: "OPTION_SET_ON_A_GRID_NOT_COMPARED",
-  /** The screen hosts several option groups and none of them names the case's question. */
+  /**
+   * No option group on the screen can be tied to the case's question. Until 1.7.0 this fired
+   * only when SEVERAL groups were present; a sole group was assumed to be the target's, which
+   * accused healthy surveys whenever the target's real inventory never reached `optionGroups`
+   * (a `<select>`-rendered target, or radios collapsed under one `(unnamed)` key). Since 1.7.0
+   * a sole group needs the SAME name/prefix attribution the multi-group path always required.
+   */
   OPTION_GROUP_NOT_ATTRIBUTABLE: "OPTION_GROUP_NOT_ATTRIBUTABLE",
+  /**
+   * 1.7.0 — the target question's bound control on this screen is a `<select>`. The capture
+   * pipeline attaches a select's options to the CONTROL (`browser/page-script.ts`), never to
+   * `optionGroups`, and the control-scoped list carries no per-option visibility/operability
+   * evidence — so there is no inventory here this predicate may compare, and any group the
+   * screen does carry belongs to some OTHER control. A named refusal, never a borrowed
+   * inventory.
+   */
+  OPTION_INVENTORY_CONTROL_SCOPED_NOT_GROUPED: "OPTION_INVENTORY_CONTROL_SCOPED_NOT_GROUPED",
   /**
    * The screen offers a NEAR VARIANT of the documented label and no exact match. A document and
    * a site may word one option two ways ("18-24" / "18 to 24"), so this is the refusal that
@@ -550,6 +585,17 @@ export const VERIFIER_REASON = Object.freeze({
   OPTION_LABEL_NEAR_MATCH_ONLY: "OPTION_LABEL_NEAR_MATCH_ONLY",
   /** The documented option is in the markup but hidden or inoperable — a third state, not a verdict. */
   OPTION_PRESENT_BUT_NOT_OPERABLE: "OPTION_PRESENT_BUT_NOT_OPERABLE",
+  /**
+   * 1.7.0 — the mirror of the one above, on the EXTRA-OPTION arm of a closed set: the screen's
+   * markup carries an entry the document does not list, but no respondent can see or reach it
+   * (a hidden "no answer" sentinel, an alternate layout the media query switched off). The
+   * membership arm already refused to read DOM presence as "offered"; the exhaustive arm now
+   * draws the same line. A DISTINCT key on purpose: that one withholds a MISSING accusation
+   * about a documented option, this one withholds an EXTRA accusation about an undocumented
+   * entry — different repairs, different sides of the ledger, so they must not share a bucket
+   * in the histogram.
+   */
+  OPTION_PRESENT_BUT_NOT_OPERABLE_EXTRA: "OPTION_PRESENT_BUT_NOT_OPERABLE_EXTRA",
   /**
    * An option ACCUSATION rests on what the screen does NOT offer, and this capture did not
    * attest that its read was complete: it reported reader limitations, or it predates the
@@ -990,10 +1036,36 @@ const wholeWordIn = (haystack: string, token: string): boolean => {
  * sealed vocabulary). That is a narrower and rarer shape than a body back-reference, and closing
  * it needs the document's own text for the destination — the wording witness, when the revision
  * words it, or the model verifier, which is not wired.
+ *
+ * 1.7.0 (FIX C3) — THE CAPTURE'S OWN WORD ABOUT ITS HEADING IS BELIEVED. `browser/page-script.ts`
+ * raises the named reader limitation `question-text-includes-controls` exactly when NO
+ * heading-ish element was control-free and `questionText` was taken from a CONTAINER — the
+ * title plus every option label plus any body prose, which is where "as you said in Q9…"
+ * lives. On such a capture the heading/body separation this function exists to make DOES NOT
+ * EXIST inside `questionText`, so reading it here let a polluted grab manufacture the very
+ * pass the 1.5.0 fence was built to withhold. When the flag is present `questionText` is not
+ * a heading witness; the caller falls to the existing
+ * `DESTINATION_PRESENTED_BY_TEXT_TOKEN_ONLY` refusal (the fail-closed direction).
+ *
+ * `title` STAYS USABLE, DELIBERATELY: it is `document.title` (`page-script.ts`,
+ * `title: document.title || null`), captured independently of the heading-candidate walk that
+ * raises this limitation, so the pollution says nothing about it.
+ *
+ * ABSENT `readerLimitations` IS UNCHANGED, DELIBERATELY: absence means the reader predates the
+ * check, and refusing every pre-flag capture (and with it the whole text-id instrument class)
+ * is the fail-SILENT trap d39's header warns about. Only the capture's own positive report of
+ * pollution disables the reading.
  */
+
+/** The capture-side name for "questionText was taken from a control-bearing container". */
+const QUESTION_TEXT_POLLUTED_KIND = "question-text-includes-controls";
+
 function tokenInHeading(screen: RenderedScreen | null, token: string): boolean {
   if (!screen || !token) return false;
-  return wholeWordIn(`${screen.questionText ?? ""} ${screen.title ?? ""}`, token);
+  const polluted =
+    Array.isArray(screen.readerLimitations) &&
+    screen.readerLimitations.some((l) => l?.kind === QUESTION_TEXT_POLLUTED_KIND);
+  return wholeWordIn(`${polluted ? "" : (screen.questionText ?? "")} ${screen.title ?? ""}`, token);
 }
 
 /**
@@ -2104,7 +2176,10 @@ const boundaryOutcome: Predicate = {
  * "Prefer not to say" are stated in rows this case has not seen would be accused of offering
  * them. So the arm fires only on `optionSet.exhaustive` — the requirement closed the set in its
  * own words AND its quote yielded the count it stated — and even then a site option that is a
- * near-variant of a documented one is not counted as extra.
+ * near-variant of a documented one is not counted as extra. AND (1.7.0, FIX C2) an extra
+ * candidate that is hidden or inoperable is not counted either: "offered to the respondent"
+ * and "present in the DOM" are different claims on THIS arm exactly as on the membership arm,
+ * and a hidden "no answer" sentinel radio is not an undocumented offer.
  */
 
 /** Alphanumeric tokens, for the similarity test. Deliberately not the whole string. */
@@ -2147,28 +2222,132 @@ type ScreenOption = RenderedScreen["optionGroups"][number]["options"][number];
 /**
  * WHICH OPTION GROUP ON THIS SCREEN IS THE TARGET QUESTION'S?
  *
- * ONE group is unambiguous once the screen has identified itself as the target and nothing
- * else — which `selectCaseStep` already established through `screenIdentity`. With more than
- * one, the screen hosts more than one answerable thing, and the group must NAME the target
- * through the same markup reading screen identity uses; anything else is a guess about which
- * inventory the document's options were meant to be compared against.
+ * 1.8.0 (FIX C1 respin) — THE DISCRIMINATOR. The sole non-empty group is the target's iff
+ *
+ *   (i)  it ATTRIBUTES to the target by the same name/id-prefix reading
+ *        `controlSealedIdsOnScreen` uses — the rule the multi-group path always applied — OR
+ *   (ii) it is the screen's ONLY ANSWERABLE THING beyond navigation controls (no select
+ *        present that could be the target's rendering, no other answerable non-navigation
+ *        control that could be), AND its name is not the reader's "(unnamed)" merge key.
+ *
+ * WHY THIS BOUNDARY AND NOT EITHER NEIGHBOUR. The pre-1.7.0 code handed back a sole group
+ * unexamined, confusing "one GROUP" with "one ANSWERABLE THING": `browser/page-script.ts`
+ * puts only radio/checkbox controls into `optionGroups`, so a target rendered as a `<select>`
+ * contributes NO group — and the sole group the screen did carry (a consent checkbox, another
+ * question's radios) inherited the comparison, minting a confident OPTION_MISSING against a
+ * complete, correctly-rendered dropdown. 1.7.0 closed that by requiring attribution
+ * unconditionally — and thereby refused every instrument whose group names never carry the
+ * question id, including the ENTIRE branching corpus (`test-suite/branching/engine.js` names
+ * every option control "answer"), turning the product's one proven true positive into a
+ * refusal. The narrower rule keeps both properties, because an UNATTRIBUTED sole group is
+ * trustworthy exactly when nothing else on the screen could be the target's rendering: the
+ * step is already BOUND to the target before this function runs, so if the screen's one
+ * answerable thing is this group, it is what a respondent answers the target with, whatever
+ * the markup calls it. Every borrowed-inventory accusation above involved a SECOND candidate
+ * (the select, the textarea) — clause (ii) detects that second candidate and refuses.
+ *
+ * CLAUSE (ii)'s EXCLUSIONS, each stated. Navigation controls (page-script's own `buttons`
+ * reading: tag `button`/`a`, type `submit`/`button`) and `hidden` inputs are answerable by
+ * nobody. Radio/checkbox controls are the sole group's OWN rendering — on a real capture
+ * every radio/checkbox belongs to some group, and a second question's radios would have
+ * created a SECOND group and left this arm entirely. Everything else — a select, a text
+ * entry, a custom widget — COULD be the target's rendering, so its presence defeats the
+ * clause; visibility and operability are deliberately ignored (a hidden text entry may be the
+ * target's rendering in another layout — unknown shapes must defeat, never license). And
+ * "(unnamed)" is excluded because it is the page reader's MERGE KEY (`page-script.ts`:
+ * `c.name || '(unnamed)'`) — unnamed radios from SEVERAL questions collapse under it, so a
+ * sole "(unnamed)" group may be a fusion no single question owns.
+ *
+ * THE SELECT-RENDERED TARGET IS DETECTED AND REFUSED, NOT EVALUATED. When a `<select>` on this
+ * screen is bound to the target by the same name/id-prefix reading screen identity uses, the
+ * target's real inventory is the CONTROL's own `options` list — which this predicate does not
+ * compare, because that list carries no per-option `visible`/`operable` evidence (see
+ * `browser/types.ts#ControlState.options` vs `OptionGroupState.options`): evaluating it could
+ * not distinguish "offered to the respondent" from "present in the markup", the exact
+ * conflation the membership and extra arms refuse, and a placeholder row ("Please select…")
+ * would surface as an undocumented extra. A named insufficient
+ * (`OPTION_INVENTORY_CONTROL_SCOPED_NOT_GROUPED`) is the honest reading of that evidence.
  */
 function targetOptionGroup(
   screen: RenderedScreen,
   target: string,
-): { group: RenderedScreen["optionGroups"][number] } | { why: string } {
+): { group: RenderedScreen["optionGroups"][number] } | { why: string; reason: VerifierReason } {
   const groups = (screen.optionGroups ?? []).filter((g) => Array.isArray(g?.options) && g.options.length > 0);
-  if (groups.length === 0) return { why: "the screen presented no answer-option inventory at all" };
-  if (groups.length === 1) return { group: groups[0]! };
+  if (groups.length === 0)
+    return {
+      reason: VERIFIER_REASON.OPTION_GROUP_NOT_ATTRIBUTABLE,
+      why: "the screen presented no answer-option inventory at all",
+    };
+
+  // The same two readings `controlSealedIdsOnScreen` applies, restricted to selects: `name`
+  // equal to the target outright, else the `id` prefix before its first separator.
+  const targetSelects = (screen.controls ?? []).filter((c) => {
+    if (c?.tag !== "select" && c?.type !== "select") return false;
+    if (typeof c?.name === "string" && c.name === target) return true;
+    const prefix = typeof c?.id === "string" ? c.id.split(/[_\-.:$[\]]/)[0] : "";
+    return prefix === target;
+  });
+  if (targetSelects.length > 0) {
+    return {
+      reason: VERIFIER_REASON.OPTION_INVENTORY_CONTROL_SCOPED_NOT_GROUPED,
+      why:
+        `the target question ${target} is bound on this screen to a <select> control, whose option inventory ` +
+        `lives on the control itself and never reaches the screen's option groups — the group(s) captured here ` +
+        `(${groups.map((g) => JSON.stringify(g.name)).join(", ")}) belong to OTHER controls. Comparing the ` +
+        `document's option list against any of them would read another question's inventory as ${target}'s, and ` +
+        `the control-scoped list carries no per-option visibility or operability evidence, so it cannot support ` +
+        `this comparison either`,
+    };
+  }
+
   const named = groups.filter((g) => {
     if (typeof g.name === "string" && g.name === target) return true;
     const prefix = typeof g.name === "string" ? g.name.split(/[_\-.:$[\]]/)[0] : "";
     return prefix === target;
   });
   if (named.length === 1) return { group: named[0]! };
+
+  // 1.8.0 (FIX C1 respin), clause (ii): a sole group that fails name/prefix attribution is
+  // still the target's when NOTHING ELSE on this screen could be the target's rendering. See
+  // the header for the exclusions and why each is safe; the select-bound-to-target case was
+  // already refused above, before any group logic.
+  if (groups.length === 1 && groups[0]!.name !== "(unnamed)") {
+    const otherAnswerable = (screen.controls ?? []).filter((c) => {
+      if (!c) return false;
+      // Navigation, by page-script's own `buttons` reading — answerable by nobody.
+      if (c.tag === "button" || c.tag === "a" || c.type === "submit" || c.type === "button") return false;
+      // No respondent answers a hidden input.
+      if (c.type === "hidden") return false;
+      // The sole group's own rendering: every radio/checkbox belongs to some group, and a
+      // second question's radios would have created a second group and left this arm.
+      if (c.type === "radio" || c.type === "checkbox") return false;
+      // Anything else — select, text entry, custom widget — could be the target's rendering.
+      return true;
+    });
+    if (otherAnswerable.length === 0) return { group: groups[0]! };
+    return {
+      reason: VERIFIER_REASON.OPTION_GROUP_NOT_ATTRIBUTABLE,
+      why:
+        `the screen's sole answer-option group (${JSON.stringify(groups[0]!.name)}) does not name ${target}, and ` +
+        `the screen also carries ${otherAnswerable.length} other answerable control(s) ` +
+        `(${otherAnswerable.map((c) => `${c.tag}/${c.type}${c.name ? ` name=${JSON.stringify(c.name)}` : ""}`).join(", ")}), ` +
+        `any of which could be ${target}'s rendering — so which inventory is ${target}'s cannot be read off the ` +
+        `screen (1.8.0)`,
+    };
+  }
+  if (groups.length === 1) {
+    return {
+      reason: VERIFIER_REASON.OPTION_GROUP_NOT_ATTRIBUTABLE,
+      why:
+        `the screen's sole answer-option group carries the reader's "(unnamed)" merge key, under which unnamed ` +
+        `controls from SEVERAL questions collapse — the group may be a fusion, so its inventory cannot be ` +
+        `attributed to ${target} (1.8.0)`,
+    };
+  }
   return {
+    reason: VERIFIER_REASON.OPTION_GROUP_NOT_ATTRIBUTABLE,
     why:
-      `the screen carries ${groups.length} answer-option groups (${groups.map((g) => g.name).join(", ")}) and ` +
+      `the screen carries ${groups.length} answer-option group(s) (${groups.map((g) => g.name).join(", ")}) and ` +
       `${named.length} of them name ${target}, so which inventory this requirement's options belong to cannot be ` +
       `read off the screen`,
   };
@@ -2236,7 +2415,9 @@ const optionSetOffered: Predicate = {
 
     const attributed = targetOptionGroup(screen, ctx.targetQuestionId ?? "");
     if ("why" in attributed) {
-      return insufficient(this.id, VERIFIER_REASON.OPTION_GROUP_NOT_ATTRIBUTABLE, attributed.why);
+      // 1.7.0 — the refusal now names its cause: an unattributable group and a control-scoped
+      // (select) inventory are different repairs, so `targetOptionGroup` picks the reason.
+      return insufficient(this.id, attributed.reason, attributed.why);
     }
     const offered = attributed.group.options;
 
@@ -2343,16 +2524,37 @@ const optionSetOffered: Predicate = {
       const extra = offered.filter(
         (o) => !documented.some((d) => labelsEqual(o.label, d.label) || nearVariantLabel(o.label, d.label)),
       );
-      if (extra.length > 0) {
-        if (!accusable) return notAccusable(`the screen offers ${extra.length} option(s) the document does not list`);
+      // 1.7.0 (FIX C2) — THE SAME OFFERED-VS-PRESENT SPLIT THE MEMBERSHIP ARM MAKES, mirrored.
+      // The membership arm refuses to call a hidden documented option "offered"
+      // (OPTION_PRESENT_BUT_NOT_OPERABLE); until now this arm ACCUSED a hidden undocumented one
+      // as an offer — the same conflation, in the accusing direction. A hidden "no answer"
+      // sentinel (`<input type=radio style="display:none">`, which LimeSurvey and SurveyJS
+      // emit) or an alternate layout the media query switched off is present in the DOM and
+      // offered to nobody. Only a visible AND operable extra still accuses; the rest are a
+      // named insufficient, and when both kinds are present the accusation quotes only what a
+      // respondent could actually reach.
+      const extraOffered = extra.filter((o) => o.visible !== false && o.operable !== false);
+      const extraNotOperable = extra.filter((o) => !(o.visible !== false && o.operable !== false));
+      if (extraOffered.length > 0) {
+        if (!accusable) return notAccusable(`the screen offers ${extraOffered.length} option(s) the document does not list`);
         return {
           outcome: "violated",
           reason: VERIFIER_REASON.OPTION_OFFERED_NOT_DOCUMENTED,
           predicate: this.id,
           detail:
             `the document closes this question's option set and the screen offers ` +
-            `${extra.map((o) => JSON.stringify(o.label)).join(", ")}, which it does not list`,
+            `${extraOffered.map((o) => JSON.stringify(o.label)).join(", ")}, which it does not list`,
         };
+      }
+      if (extraNotOperable.length > 0) {
+        return insufficient(
+          this.id,
+          VERIFIER_REASON.OPTION_PRESENT_BUT_NOT_OPERABLE_EXTRA,
+          `the screen carries ${extraNotOperable.map((o) => JSON.stringify(o.label)).join(", ")} in its markup ` +
+            `beyond the document's closed option set, but every instance is hidden or inoperable at this ` +
+            `viewport; "offered to the respondent" and "present in the DOM" are different claims and this ` +
+            `evidence does not separate them`,
+        );
       }
     }
 

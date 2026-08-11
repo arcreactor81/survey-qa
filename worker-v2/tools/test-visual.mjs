@@ -41,10 +41,17 @@ export const REQUIRED_VISUAL_NODE_TESTS = Object.freeze([
   "tools/tests/walk-artifact-index.test.mjs",
   "tools/tests/visual-rollout-config.test.mjs",
   "tools/tests/visual-deploy-config-audit.test.mjs",
+  "tools/tests/private-local-output.test.mjs",
   "tools/tests/live-canary-deploy.test.mjs",
   "tools/tests/live-canary-remote-secret-audit.test.mjs",
   "tools/tests/live-canary-workflow-gate.test.mjs",
   "tools/tests/live-canary.test.mjs",
+  "tools/tests/pinned-wrangler-command.test.mjs",
+  "tools/tests/canary-source-snapshot.test.mjs",
+  "tools/tests/canary-bundle-inputs.test.mjs",
+  "tools/tests/canary-post-deploy-attestation.test.mjs",
+  "tools/tests/hardened-canary-deploy.test.mjs",
+  "tools/tests/hardened-one-call-runner.test.mjs",
 ]);
 
 /** These are relevant visual suites, but `node tools/test.mjs` owns their custom registry. */
@@ -52,8 +59,15 @@ export const CUSTOM_REGISTRY_VISUAL_EXCLUSIONS = Object.freeze([
   "tools/tests/d49-vision-reconcile.test.mjs",
 ]);
 
-const MANIFEST_PATH = /^tools\/tests\/[A-Za-z0-9._-]+\.test\.mjs$/u;
-const RELEVANT_TEST_NAME = /(?:vision|visual|canary|mistral)/iu;
+const MANIFEST_PATH = /^tools\/tests\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.mjs$/u;
+// FIX (review ledger-claims finding 1): the orphan sweep used to pre-filter candidate filenames
+// with /(vision|visual|canary|mistral)/i, so a future gemini-*.test.mjs or ocr4-*.test.mjs was
+// executed by NO runner and both suites stayed green. The sweep now computes full mutual runner
+// closure over tools/tests instead: every *.test.mjs must be owned by exactly one runner —
+// either this manifest (REQUIRED + custom-registry exclusions) or the dispatcher's literal FILES
+// list in tools/test.mjs, which is parsed fail-closed below.
+const DISPATCHER_MANIFEST_RELATIVE = "tools/test.mjs";
+const DISPATCHER_ENTRY_LINE = /^"(\.\/tests\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.mjs)",?$/u;
 const NODE_TEST_IMPORT = /\bfrom\s+["']node:test["']|\bimport\s+["']node:test["']/u;
 const CUSTOM_REGISTRY_IMPORT =
   /^[ \t]*import[ \t]*\{[^}]*\b(?:suite|test)\b[^}]*\}[ \t]*from[ \t]*["'][^"'\r\n]*testkit\.mjs["']/mu;
@@ -113,35 +127,164 @@ export function verifyVisualTestManifest({
     }
   }
 
-  const allowed = new Set([...required, ...exclusions]);
-  const testsDirectory = path.join(root, "tools", "tests");
-  let directoryEntries;
-  try {
-    directoryEntries = readdirSync(testsDirectory, { withFileTypes: true });
-  } catch {
+  // Full mutual runner closure (see the FIX note at DISPATCHER_MANIFEST_RELATIVE). The literal
+  // rule "exactly one of dispatcher FILES or this manifest" cannot hold verbatim: the
+  // custom-registry exclusions are BY DESIGN files the dispatcher runs (they are visual-relevant
+  // but testkit-registered), so the declared overlap is exactly the exclusion list and every
+  // exclusion must actually be dispatched — otherwise the excluded file runs nowhere.
+  const dispatched = new Set(readDispatcherManifest(root));
+  const undispatchedExclusion = exclusions.find((entry) => !dispatched.has(entry));
+  if (undispatchedExclusion !== undefined) {
     throw new VisualTestRunnerError(
-      "TEST_DIRECTORY_UNAVAILABLE",
-      "visual test directory is unavailable",
+      "EXCLUSION_NOT_DISPATCHED",
+      `custom-registry exclusion is not in the dispatcher FILES manifest, so it would run under no runner: ${undispatchedExclusion}`,
     );
   }
-  const unregistered = directoryEntries
-    .filter(
-      (entry) =>
-        entry.isFile() &&
-        entry.name.endsWith(".test.mjs") &&
-        RELEVANT_TEST_NAME.test(entry.name),
-    )
-    .map((entry) => `tools/tests/${entry.name}`)
-    .filter((entry) => !allowed.has(entry))
+  const dualRegistered = required.find((entry) => dispatched.has(entry));
+  if (dualRegistered !== undefined) {
+    throw new VisualTestRunnerError(
+      "DUAL_REGISTERED_TEST",
+      `test is claimed by both the dispatcher FILES manifest and the required visual manifest: ${dualRegistered}`,
+    );
+  }
+
+  const allowed = new Set([...required, ...exclusions]);
+  const unregistered = discoverSemanticTestModules(root)
+    .filter((entry) => !allowed.has(entry) && !dispatched.has(entry))
     .sort();
   if (unregistered.length > 0) {
+    // Code name kept from the name-filtered era for grep continuity; every test file in
+    // tools/tests is now relevant — there is no name filter any more.
     throw new VisualTestRunnerError(
       "UNREGISTERED_RELEVANT_TEST",
-      `relevant visual test is not classified in the closed manifest: ${unregistered.join(", ")}`,
+      `test file is owned by no runner (neither dispatcher FILES nor the visual manifest): ${unregistered.join(", ")}`,
     );
   }
 
   return resolvedRequired;
+}
+
+/**
+ * Recursively enumerate executable test modules by what they import, not by a filename keyword
+ * or `.test.mjs` suffix. A nested `gemini-check.spec.mjs` is just as capable of containing a
+ * real node:test suite as a top-level visual test. Links are refused rather than traversed: a
+ * linked subtree makes the denominator mutable outside the repository path being checked.
+ */
+export function discoverSemanticTestModules(workerRoot) {
+  const root = path.resolve(workerRoot);
+  const testsDirectory = path.join(root, "tools", "tests");
+  const discovered = [];
+
+  const visit = (directory) => {
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      throw new VisualTestRunnerError(
+        "TEST_DIRECTORY_UNAVAILABLE",
+        "visual test directory or one of its nested directories is unavailable",
+      );
+    }
+
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      const absolutePath = path.join(directory, entry.name);
+      let stat;
+      try {
+        stat = lstatSync(absolutePath);
+      } catch {
+        throw new VisualTestRunnerError(
+          "TEST_PATH_UNAVAILABLE",
+          "a path beneath the visual test directory could not be inspected",
+        );
+      }
+      if (stat.isSymbolicLink()) {
+        throw new VisualTestRunnerError(
+          "TEST_PATH_LINKED",
+          "the visual test directory must not contain symbolic links or junctions",
+        );
+      }
+      if (stat.isDirectory()) {
+        visit(absolutePath);
+        continue;
+      }
+      if (!stat.isFile() || !entry.name.endsWith(".mjs")) continue;
+
+      let source;
+      try {
+        source = readFileSync(absolutePath, "utf8");
+      } catch {
+        throw new VisualTestRunnerError(
+          "TEST_FILE_UNREADABLE",
+          "a JavaScript module beneath the visual test directory could not be read",
+        );
+      }
+      if (!NODE_TEST_IMPORT.test(source) && !CUSTOM_REGISTRY_IMPORT.test(source)) continue;
+      const relative = path.relative(root, absolutePath).split(path.sep).join("/");
+      if (!MANIFEST_PATH.test(relative)) {
+        throw new VisualTestRunnerError(
+          "DISCOVERED_TEST_PATH_INVALID",
+          "a semantically identified test module has a path the runners cannot name safely",
+        );
+      }
+      discovered.push(relative);
+    }
+  };
+
+  visit(testsDirectory);
+  return discovered.sort();
+}
+
+/**
+ * Parse the dispatcher's literal FILES manifest without importing tools/test.mjs (importing it
+ * would execute the whole custom-registry suite and process.exit). The parse is fail-closed: a
+ * missing file, a missing literal, an entry line that is not exactly one quoted
+ * "./tests/<safe-relative-name>.mjs" string, an empty list, or a duplicate all refuse with a named code
+ * rather than silently shrinking the closure set.
+ */
+export function readDispatcherManifest(workerRoot) {
+  const dispatcherPath = path.join(path.resolve(workerRoot), "tools", "test.mjs");
+  let source;
+  try {
+    source = readFileSync(dispatcherPath, "utf8");
+  } catch {
+    throw new VisualTestRunnerError(
+      "DISPATCHER_MANIFEST_UNAVAILABLE",
+      `${DISPATCHER_MANIFEST_RELATIVE} could not be read for runner-closure verification`,
+    );
+  }
+  const literal = source.match(/const FILES = \[([\s\S]*?)^\];/mu);
+  if (literal === null) {
+    throw new VisualTestRunnerError(
+      "DISPATCHER_MANIFEST_UNPARSEABLE",
+      `${DISPATCHER_MANIFEST_RELATIVE} no longer contains the literal FILES manifest`,
+    );
+  }
+  const entries = [];
+  for (const rawLine of literal[1].split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("//")) continue;
+    const match = DISPATCHER_ENTRY_LINE.exec(line);
+    if (match === null) {
+      throw new VisualTestRunnerError(
+        "DISPATCHER_MANIFEST_UNPARSEABLE",
+        `${DISPATCHER_MANIFEST_RELATIVE} FILES manifest has an unrecognized line; runner closure cannot be proven`,
+      );
+    }
+    entries.push(`tools/tests/${match[1].slice("./tests/".length)}`);
+  }
+  if (entries.length === 0) {
+    throw new VisualTestRunnerError(
+      "DISPATCHER_MANIFEST_UNPARSEABLE",
+      `${DISPATCHER_MANIFEST_RELATIVE} FILES manifest is empty`,
+    );
+  }
+  if (new Set(entries).size !== entries.length) {
+    throw new VisualTestRunnerError(
+      "DISPATCHER_MANIFEST_DUPLICATE",
+      `${DISPATCHER_MANIFEST_RELATIVE} FILES manifest contains duplicates`,
+    );
+  }
+  return entries;
 }
 
 export function runVisualVerification({

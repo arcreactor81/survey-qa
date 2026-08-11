@@ -52,6 +52,12 @@
  *    claims an ownership epoch, refuses to write once superseded, and picks up the sealed
  *    contract, the plan and the cursor that already exist instead of re-extracting and
  *    re-sealing from scratch.
+ *
+ * CHANGELOG (this file has no version constant; changes are noted here):
+ *   2026-08-11 (review-run-workflow finding 1): contract-reuse adoption now marks
+ *   `completion.test = "running"` inside the same durable write that adopts the sealed
+ *   revision, and finalize's never-closed backstop promotes ANY non-terminal test axis —
+ *   not only the literal `"running"` — to `failed` / `test-axis-never-closed`.
  */
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
@@ -87,6 +93,7 @@ import {
   FAILURE_MESSAGE_MAX,
   OwnershipLost,
   isPartialTestCompletion,
+  isTerminalTest,
   sanitiseErrorText,
   type RunCheckpoint,
   type RunFailure,
@@ -1804,6 +1811,26 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           );
           await beat(this.env, runId, "test axis closed: every case has a terminal disposition", "close");
         } else {
+          // A refusal is itself the terminal result of this gate. Leaving an open axis here
+          // and relying on `finalize` to repair it was too late: the superseding signed record
+          // and the report are both created between this step and that backstop, so they could
+          // permanently describe `running`/`not-started` even though the checkpoint was later
+          // changed to `failed`. Terminalize before either publication surface is built. Keep a
+          // deliberate terminal outcome and its more specific reason untouched.
+          await updateCheckpoint(
+            this.env,
+            runId,
+            (d) => {
+              if (!isTerminalTest(d.completion.test)) {
+                d.completion.test = "failed";
+                d.completion.reasonCode = d.completion.reasonCode ?? TEST_AXIS_NEVER_CLOSED;
+                d.error =
+                  d.error ??
+                  "the test-axis gate refused to close because one or more coverage or adjudication requirements were not satisfied";
+              }
+            },
+            { progressed: true, fence },
+          );
           await beat(this.env, runId, `test axis NOT closed: ${blockers.join("; ")}`, "close-blocked");
           console.log(`v2 ${runId}: test axis not closed — ${blockers.join("; ")}`);
         }
@@ -2115,6 +2142,16 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             },
           };
           d.counts = { ...d.counts, pending: d10.executionCases };
+          // THE TEST AXIS IS IN FLIGHT FROM HERE (review-run-workflow finding 1). Adoption
+          // skips both `phase-extracting` arms, which were the only production writers of
+          // `completion.test = "running"` — so an adopted run used to sail to finalize with
+          // the axis still `not-started`, and the never-closed backstop (then keyed on the
+          // literal `"running"`) had nothing to promote: a test-axis blocker ended the run
+          // neither terminal nor sweepable. Mark it inside the same durable write that
+          // adopts the revision, as the sibling extract paths do. Guarded (unlike the
+          // siblings, which run first thing on a fresh run) so this later step can never
+          // clobber a deliberately written axis state.
+          if (d.completion.test === "not-started") d.completion.test = "running";
           setPhase(d, "extracting", "complete");
         },
         { progressed: true, fence },
@@ -2418,10 +2455,17 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // recoverable as such from the envelope alone.
       const loaded = await loadCheckpoint(this.env, runId);
 
-      // A run that reaches finalize with the test axis still `running` never closed it,
-      // and leaving it there would keep the sweeper poking a finished run forever while
-      // every reader shows an in-progress test. Name it.
-      const stillRunning = loaded?.checkpoint.completion.test === "running";
+      // A run that reaches finalize with the test axis still OPEN never closed it, and
+      // leaving it there would end the run in a state no reader or sweeper resolves. Name
+      // it. Widened from `=== "running"` to any NON-TERMINAL state (review-run-workflow
+      // finding 1): the contract-reuse adoption reached here with `"not-started"` and the
+      // strict equality let a blocked run end durably with no reasonCode, no error and no
+      // active marker — a loud refusal turned silent. `isTerminalTest` makes this the belt
+      // for whatever branch forgets to mark the axis next, not a check on one spelling of
+      // "open". Every deliberate stop writes a terminal state before reporting, so this
+      // fires only on the forgotten-branch path.
+      const axis = loaded?.checkpoint.completion.test;
+      const stillRunning = axis !== undefined && !isTerminalTest(axis);
       if (stillRunning) {
         await updateCheckpoint(
           this.env,
