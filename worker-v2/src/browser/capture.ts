@@ -27,6 +27,22 @@ export interface CaptureContext {
   attemptId: string;
   pathId: string;
   /**
+   * WHICH ATTEMPT OF THIS PATH THE WALK IS. 0 (or absent) for the first walk — the only
+   * walk most paths ever get — and the durable pivot ordinal (1..) on a bounded screen-out
+   * retry. `observationRef` keys artifacts by pathId alone, and the judge's signed manifest
+   * keys the catalogue by BASENAME (`pipeline/judge/lib/authority.mjs`), so a re-walk of
+   * the same path under the same refs raises MANIFEST_DUPLICATE_ARTIFACT and the run mints
+   * no judgement. When this is > 0 every artifact leaf carries a `retry-<n>-` slug, making
+   * a retry's basenames disjoint from attempt 0's by construction. Absent/0 leaves every
+   * ref BYTE-IDENTICAL to what single-attempt runs have always written.
+   *
+   * `sourceEvidenceId` is deliberately NOT suffixed: `walk-artifact-index.ts` resolves a
+   * walk's PathObservation by the exact producer id `EV-<pathId>-observation` and
+   * disambiguates attempts by `attemptId`, which every entry already carries. The derived
+   * evidence id stays unique because `evidenceIdFor` hashes the artifactRef.
+   */
+  attemptOrdinal?: number;
+  /**
    * Obligation ids the plan associates with this walk. Recorded on the artifact as
    * RELEVANCE — "this is the screen where these obligations would be observable" — and
    * never as a claim about whether any of them holds.
@@ -59,8 +75,14 @@ export function artifactSlug(pathId: string): string {
   return safe.length > 0 ? safe : "path";
 }
 
-const observationRef = (pathId: string, leaf: string): string =>
-  `observations/${pathId}/${artifactSlug(pathId)}-${leaf}`;
+const observationRef = (ctx: Pick<CaptureContext, "pathId" | "attemptOrdinal">, leaf: string): string => {
+  // Attempt 0 refs are BYTE-IDENTICAL to what this function has always produced; a retry
+  // ordinal prefixes the leaf (inside the artifactSlug alphabet) so its basenames cannot
+  // collide with attempt 0's in the basename-keyed signed manifest. See `attemptOrdinal`.
+  const ordinal = ctx.attemptOrdinal ?? 0;
+  const attemptLeaf = ordinal > 0 ? `retry-${ordinal}-${leaf}` : leaf;
+  return `observations/${ctx.pathId}/${artifactSlug(ctx.pathId)}-${attemptLeaf}`;
+};
 
 function typedRef<K extends ScreenArtifactRef["kind"]>(
   entry: EvidenceCatalogEntry,
@@ -87,7 +109,7 @@ export async function captureScreenJsonRef(
   slot: string,
   stepIndex: number,
 ): Promise<ScreenArtifactRef & { kind: "screen-json" }> {
-  const ref = observationRef(ctx.pathId, `step-${String(stepIndex).padStart(3, "0")}-${slot}.json`);
+  const ref = observationRef(ctx, `step-${String(stepIndex).padStart(3, "0")}-${slot}.json`);
   const sourceEvidenceId = `EV-${ctx.pathId}-${stepIndex}-${slot}`;
   const entry = await putEvidence(ctx.env, {
     runId: ctx.runId,
@@ -119,7 +141,7 @@ export async function captureScreenshotRef(
   slot: string,
   stepIndex: number,
 ): Promise<ScreenArtifactRef & { kind: "screenshot" }> {
-  const ref = observationRef(ctx.pathId, `step-${String(stepIndex).padStart(3, "0")}-${slot}.png`);
+  const ref = observationRef(ctx, `step-${String(stepIndex).padStart(3, "0")}-${slot}.png`);
   const sourceEvidenceId = `EV-${ctx.pathId}-${stepIndex}-${slot}-png`;
   const entry = await putEvidence(ctx.env, {
     runId: ctx.runId,
@@ -155,7 +177,7 @@ export async function captureAccessibilitySnapshot(
   stepIndex: number,
 ): Promise<ScreenArtifactRef & { kind: "accessibility" }> {
   const ref = observationRef(
-    ctx.pathId,
+    ctx,
     `step-${String(stepIndex).padStart(3, "0")}-${slot}.accessibility.json`,
   );
   const sourceEvidenceId = `EV-${ctx.pathId}-${stepIndex}-${slot}-ax`;
@@ -188,7 +210,7 @@ export async function captureFailure(
     routeId: ctx.pathId,
     witnesses: ctx.witnesses,
     sourceEvidenceId: `EV-${ctx.pathId}-${label}`,
-    artifactRef: observationRef(ctx.pathId, `${label}.json`),
+    artifactRef: observationRef(ctx, `${label}.json`),
   });
   return entry.evidenceId;
 }
@@ -204,7 +226,7 @@ export async function capturePathObservation(ctx: CaptureContext, obs: PathObser
     routeId: ctx.pathId,
     witnesses: ctx.witnesses,
     sourceEvidenceId: `EV-${ctx.pathId}-observation`,
-    artifactRef: observationRef(ctx.pathId, "observation.json"),
+    artifactRef: observationRef(ctx, "observation.json"),
   });
   return entry.evidenceId;
 }

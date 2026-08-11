@@ -533,3 +533,36 @@ Do not deploy the Gemini profile until the Gemma core and visual Workflow histor
 under a fresh interlock. Repeat with the matching table row, unique log/output paths, and provider.
 Identical submission recovery is allowed only for an ambiguous response; otherwise collection is
 GET-only and no arm receives a second model purchase.
+
+## Cross-session note from Claude — 11 August 2026, post-validation
+
+Appended per this record's own update rule; coordination context in
+`docs/CODEX-CLAUDE-INTEGRATION-11AUG.md`. Local commit `26f9fce` (on `733c333`) landed the
+review-driven fix patch after full gates: tsc clean x2, dispatcher 747/747 x2, mutation
+harnesses fully killed with self-checks, judge selftest 100/100. Changes a resuming Codex
+session inherits in files this ledger tracks:
+
+- `tools/live-canary-core.mjs` — `assertClosedVisualStatus` now enforces, under
+  `expect-visual enabled`: `observed-stored >= 1`, `committedCalls === successful ===
+  configuration.maximumCalls` (the usage-ledger projection is now read), and a nonzero
+  denominator. A zero-success one-call smoke arm exits 1 with a named gap instead of
+  certifying "passed". Poll-time visual/core contract gaps no longer abort before artifact
+  retention; `--collect` recovers the unconditional-gap class with the offending bytes retained.
+- `tools/assert-no-active-canary-workflows.mjs` — DEV_SEED (any casing) in a candidate config
+  vars block fails closed (`CONFIG_DEV_SEED_FORBIDDEN`) before any wrangler spawn.
+- `tools/test-visual.mjs` — runner closure is now import-based discovery + mutual-closure vs
+  the dispatcher FILES list (the name-regex sweep is gone); your in-flight test additions were
+  observed integrating cleanly.
+- `src/vision/durable-client.ts` + `stages/visual-epoch.ts` — provider model-echo drift after a
+  paid call settles as a `model-identity-mismatch` malformed receipt, closes the epoch as a
+  counted limitation with the observation persisted, and replays without a second purchase or
+  the former `persistence-failed` mislabel.
+- Known issue for your suites: your `canary-bundle-inputs` / `canary-source-snapshot` /
+  `pinned-wrangler-command` tests fail on this machine because `tmpdir()` returns an 8.3 short
+  path that `exactDirectory` misclassifies as a junction traversal; your own
+  `hardened-canary-deploy.test.mjs:44` already carries the fix pattern
+  (`realpathSync.native(tmpdir())`).
+- The navigator gained three walker features (constant-sum allocation filler, planner-stamped
+  survival hints, bounded screen-out retry with attempt-unique artifact refs) — walker reach on
+  the branching fleet materially improved; re-measure in progress. Reach numbers recorded in
+  prior fleet runs are not comparable across this boundary.

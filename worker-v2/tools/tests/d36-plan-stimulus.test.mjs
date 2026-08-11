@@ -486,7 +486,168 @@ suite("D36 — the new limitation codes are emitted at COUNT ZERO", () => {
 });
 
 // ===========================================================================
-// 6. CONTRACT IDENTITY INCLUDES THE SEMANTICS, NOT JUST THE ROW IDS
+// 6. SURVIVAL HINTS — documented screen-outs reach the walker as INPUT, never EVIDENCE
+// ===========================================================================
+
+/**
+ * The model shapes are exactly what `plan-core.js` emits at plan time (`model.questions`
+ * with boolean `options[].terminates`, `questions[].terminates`, `model.terminals`) — the
+ * data that was ALWAYS in the plan artifact while the driver's position-1 default walked
+ * s2-clean into its documented S3 screen-out.
+ */
+const survivalModel = () => ({
+  question_order: ["S3", "Q7"],
+  questions: [
+    {
+      id: "S3",
+      index: 0,
+      options: [
+        { code: "1", text: "Market research", fixed: false, specify: false, terminates: true },
+        { code: "2", text: "Software", fixed: false, specify: false, terminates: false },
+      ],
+      terminates: [{ answer: "Market research", terminal: "TERM-1" }],
+    },
+    { id: "Q7", index: 1, options: [{ code: "1", text: "Yes", terminates: false }], terminates: [] },
+  ],
+  terminals: [{ id: "TERM-1", kind: "screen-out", trigger: { question: "S3", answers: ["Market research"] } }],
+});
+
+const survivalPath = (over = {}) => ({
+  id: "FLOOR-SH1",
+  tier: 1,
+  kind: "floor",
+  intent: "walk to the end",
+  decisions: [
+    {
+      question: "S3",
+      select: [],
+      source: "default:navigator-discretion",
+      question_text: "Which industry do you work in for your main job?",
+    },
+    { question: "Q7", select: ["Yes"], source: "constraint" },
+  ],
+  skipped_questions: [],
+  terminated_at: null,
+  witnesses: [],
+  witness_notes: [],
+  needs_repeats: [],
+  steps: 4,
+  ...over,
+});
+
+suite("D36 — survival hints: stamped from the model's own terminate data, additively", () => {
+  test("documented terminating labels land on discretion decisions AND on the path's hints", async () => {
+    const mod = await worker();
+    const p = survivalPath();
+    const result = mod.plan.stampSurvivalHints([p], survivalModel());
+
+    assertEq(JSON.stringify(p.decisions[0].avoid_labels), JSON.stringify(["Market research"]));
+    assertEq(p.decisions[1].avoid_labels, undefined, "a question with no documented trigger must not be stamped");
+    // Path-level hints cover the screens NO decision binds; the wording rides along so a
+    // reader can see which screen the hint is about.
+    assertEq(
+      JSON.stringify(p.survival_hints),
+      JSON.stringify([
+        {
+          question: "S3",
+          question_text: "Which industry do you work in for your main job?",
+          avoid_labels: ["Market research"],
+        },
+      ]),
+    );
+    assertEq(result.decisionsStamped, 1);
+    assertEq(result.pathsStamped, 1);
+  });
+
+  test("a path that INTENDS termination is not stamped — steering it would fight the experiment", async () => {
+    const mod = await worker();
+    const p = survivalPath({ terminated_at: { question: "S3", answer: "Market research", terminal: "TERM-1" } });
+    const result = mod.plan.stampSurvivalHints([p], survivalModel());
+
+    assertEq(p.decisions[0].avoid_labels, undefined);
+    assertEq(p.survival_hints, undefined);
+    assertEq(result.decisionsStamped, 0);
+    assertEq(result.pathsStamped, 0);
+  });
+
+  test("sealed stimulus is sealed: a case_action decision is never written to", async () => {
+    const mod = await worker();
+    const p = survivalPath();
+    p.decisions[0].case_action = {
+      facetInstanceId: "fi_sealed",
+      targetQuestionId: "S3",
+      kind: "route",
+      routeAnswer: { code: "1", label: "Market research" },
+      boundaryInput: null,
+    };
+    mod.plan.stampSurvivalHints([p], survivalModel());
+
+    assertEq(p.decisions[0].avoid_labels, undefined, "the stamp wrote onto sealed stimulus");
+    // The PATH's hints are unaffected: they serve unbound screens, which sealed stimulus is not.
+    assertEq(p.survival_hints.length, 1);
+  });
+
+  test("terminal-adjacency: just-triggers probes are skipped, just-avoids probes are stamped", async () => {
+    const mod = await worker();
+    const triggers = survivalPath({ id: "EXP-TRIG", adjacency: { side: "just-triggers", terminal: "TERM-1" } });
+    const avoids = survivalPath({ id: "EXP-AVOID", adjacency: { side: "just-avoids", terminal: "TERM-1" } });
+    mod.plan.stampSurvivalHints([triggers, avoids], survivalModel());
+
+    assertEq(triggers.decisions[0].avoid_labels, undefined, "a just-triggers probe exists to take the trigger");
+    assertEq(triggers.survival_hints, undefined);
+    assertEq(JSON.stringify(avoids.decisions[0].avoid_labels), JSON.stringify(["Market research"]));
+  });
+
+  test("stamping is SIGNATURE-NEUTRAL: pathSignature is byte-identical before and after", async () => {
+    const mod = await worker();
+    const p = survivalPath();
+    const before = mod.plan.pathSignature(structuredClone(p.decisions));
+    mod.plan.stampSurvivalHints([p], survivalModel());
+    const after = mod.plan.pathSignature(p.decisions);
+
+    // Two paths that differ only in the hints stamped on them are the SAME experiment. A
+    // signature that moved here would mean the hint entered a hashed field — `select` being
+    // the leak vector that also fabricates missing-option evidence.
+    assertEq(after, before, "stamping survival hints changed the path's identity");
+  });
+
+  test("a stamped discretion decision stays INVISIBLE to the exercised gate", async () => {
+    const mod = await worker();
+    const p = survivalPath();
+    mod.plan.stampSurvivalHints([p], survivalModel());
+
+    // The gate reads select/action/text_entry/case_action. A hint that made a delegated
+    // decision constraining would move the coverage denominator on stimulus metadata.
+    assertEq(mod.executeBatch.isConstrainingDecision(p.decisions[0]), false, "a hint moved the exercised gate");
+    // The same call CAN discriminate: the constrained sibling on the same path is counted.
+    assertEq(mod.executeBatch.isConstrainingDecision(p.decisions[1]), true);
+  });
+
+  test("screen-outs with no stampable label are counted; completion endpoints are not", async () => {
+    const mod = await worker();
+    const codes = mod.plan.PLAN_LIMITATION_CODES;
+    assert(typeof codes.survivalHintsUnstampable === "string" && codes.survivalHintsUnstampable.length > 0);
+
+    const model = survivalModel();
+    model.terminals = [
+      ...model.terminals,
+      // The document mentions a screen-out but no triggering answer resolved to a label —
+      // the walker cannot steer around this one, and that has to be COUNTED, not implied.
+      { id: "TERM-2", kind: "screen-out", trigger: null, statement: "close the interview if quota is full" },
+      // A completion endpoint is a successful end; "avoiding" it would sabotage every walk.
+      { id: "TERM-3", kind: "completion", trigger: null },
+    ];
+    const flagged = mod.plan.stampSurvivalHints([survivalPath()], model);
+    assertEq(flagged.unstampable.length, 1);
+    assertEq(flagged.unstampable[0].terminal, "TERM-2");
+
+    const clean = mod.plan.stampSurvivalHints([survivalPath()], survivalModel());
+    assertEq(clean.unstampable.length, 0, "'we looked and found none' must be a real zero, not an absence");
+  });
+});
+
+// ===========================================================================
+// 7. CONTRACT IDENTITY INCLUDES THE SEMANTICS, NOT JUST THE ROW IDS
 // ===========================================================================
 
 const semanticHashContract = () => ({

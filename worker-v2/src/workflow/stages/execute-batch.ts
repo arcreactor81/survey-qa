@@ -168,6 +168,17 @@ export interface WalkRecord {
    * the producer's name on it.
    */
   ending?: WalkEnding;
+  /**
+   * BOUNDED SCREEN-OUT RETRY: present ONLY on a pivot walk — the re-walk of an attempt
+   * that ended `screened-out` on navigator-default answers (see `screenoutRetryEligible`).
+   * `retryOf` names the attemptId this walk re-walked, so each pivot links its OWN
+   * predecessor and the chain reads attempt 0 -> pivot 1 -> pivot 2; `ordinal` is the
+   * durable pivot number (1..SCREENOUT_PIVOT_CAP) and doubles as the driver's
+   * deterministic filler variant; `reason` says why the pivot ran, in words. Carried by
+   * its own conditional spread in `walkRecord()` like every other optional walk fact —
+   * absent means "not a pivot", never a default.
+   */
+  pivot?: { retryOf: string; ordinal: number; reason: string };
   /** Planned decisions no screen was ever identified as — the walk's account of what it did NOT do. */
   unboundDecisions?: PathObservation["unboundDecisions"];
   /** How many times a screen was refused a binding. The walker's name for it, kept. */
@@ -190,6 +201,14 @@ export interface ExecProgress {
   shimRequired: boolean;
   /** Paths whose browser hung. A path here has had its one retry on a fresh session. */
   hungPaths?: string[];
+  /**
+   * BOUNDED SCREEN-OUT RETRY: pivots consumed per path id. Incremented and SAVED before
+   * each re-walk starts (durable-before-effect, the hungPaths pattern), so a Workflow
+   * step replay re-derives the same ordinal and the same deterministic filler variant —
+   * never a third walk the cap forbids. Additive like `hungPaths`: a progress.json from
+   * before this field re-reads as zero pivots everywhere.
+   */
+  screenoutPivots?: Record<string, number>;
   shimEvidence: string | null;
   totalSteps: number;
   totalEvidence: number;
@@ -205,6 +224,7 @@ const emptyProgress = (runId: string, planRevisionId: string): ExecProgress => (
   shimRequired: false,
   shimEvidence: null,
   hungPaths: [],
+  screenoutPivots: {},
   totalSteps: 0,
   totalEvidence: 0,
 });
@@ -470,7 +490,17 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         witnesses: Array.isArray(item.path.witnesses) ? (item.path.witnesses as string[]) : [],
       };
 
-      const walkOnce = async (shim: boolean): Promise<PathObservation> => {
+      // The defaults are the first attempt's identity. A BOUNDED SCREEN-OUT RETRY passes its
+      // own fresh attemptId, its own attempt-ordinal capture context (attempt-unique artifact
+      // refs — the judge's manifest keys by basename) and the pivot ordinal as the driver's
+      // deterministic filler variant. The shim retry deliberately keeps the defaults: its
+      // attemptId reuse is a pre-existing, documented exposure this change must not widen.
+      const walkOnce = async (
+        shim: boolean,
+        walkAttemptId = attemptId,
+        walkCap = cap,
+        walkVariant = 0,
+      ): Promise<PathObservation> => {
         const page = (await withTimeout(handle.browser.newPage(), 30_000, "newPage")) as PageLike;
         try {
           return await walkPath(
@@ -480,15 +510,16 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
               surveyUrl: program.surveyUrl || args.surveyUrl,
               runId: args.runId,
               planRevisionId: args.planRevisionId,
-              attemptId,
+              attemptId: walkAttemptId,
               tier: item.tier,
               maxSteps,
               deadline: Math.min(batchDeadline, Date.now() + num(env.EXEC_BATCH_MAX_MS, 120_000)),
               viewport: { width: 1280, height: 900 },
               applyHistoryShim: shim,
               advanceTimeoutMs,
+              variant: walkVariant,
             },
-            cap,
+            walkCap,
           );
         } finally {
           try {
@@ -628,6 +659,146 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       pathsWalked += 1;
       casesClosed += closed.length;
       steps += obs.steps.length;
+
+      // ==================== BOUNDED SCREEN-OUT RETRY ====================
+      //
+      // The attempt above is COMMITTED — record pushed, progress saved, checkpoint
+      // written, cursor synced — before any pivot is considered, so a pivot can never
+      // un-say what the first walk observed. Each loop turn is one full attempt with the
+      // same per-attempt commit discipline; `screenoutRetryEligible` owns every refusal
+      // (typed screened-out on invented answers only, never sealed stimulus or intended
+      // terminations, capped at SCREENOUT_PIVOT_CAP, deadline-bounded).
+      //
+      // DURABLE BEFORE EFFECT: the pivot counter is incremented and SAVED before the
+      // re-walk starts — the hungPaths pattern. If the Workflow step replays after that
+      // save, the counter yields the same ordinal, the same variant, the same walk; if
+      // the instance dies between the save and the re-walk, the retry is LOST, not
+      // repeated — the committed screened-out attempt stands and the path stays done.
+      //
+      // Closure is a UNION across attempts: each attempt closes cases through the same
+      // `assessExercised` gate as any walk, and the cursor filter above each closure list
+      // is what stops a pivot from re-closing what attempt 0 already closed.
+      while (
+        screenoutRetryEligible({
+          obs,
+          path: item.path,
+          pivots: progress.screenoutPivots,
+          now: Date.now(),
+          batchDeadline,
+        })
+      ) {
+        const ordinal = (progress.screenoutPivots?.[item.path.id] ?? 0) + 1;
+        progress.screenoutPivots = { ...(progress.screenoutPivots ?? {}), [item.path.id]: ordinal };
+        await saveProgress(env, progress);
+
+        // The pivot record is derived from the PREVIOUS attempt, before `obs` is replaced.
+        const pivot = {
+          retryOf: obs.attemptId,
+          ordinal,
+          reason:
+            `attempt ${obs.attemptId} ended screened-out with ` +
+            `${obs.navigatorDefaultAnswerCount ?? 0} navigator-default answer(s) — ` +
+            `re-walking with deterministic filler variant ${ordinal}`,
+        };
+        // A FRESH attemptId, never the shim retry's reuse: walk-artifact-index and
+        // project-observations disambiguate multiple walks of one path by attemptId.
+        const retryAttemptId = mintAttemptId();
+        const retryCap: CaptureContext = { ...cap, attemptId: retryAttemptId, attemptOrdinal: ordinal };
+        await beat(
+          env,
+          args.runId,
+          `batch ${args.batch}: ${item.path.id} screened out on invented answers — re-walking with varied fillers (pivot ${ordinal})`,
+          `${args.batch}:${item.path.id}:pivot${ordinal}`,
+        );
+
+        let retryHung = false;
+        try {
+          obs = await withTimeout(
+            walkOnce(progress.shimRequired && allowShim, retryAttemptId, retryCap, ordinal),
+            walkTimeoutMs,
+            `walk ${item.path.id} pivot ${ordinal}`,
+          );
+        } catch (err) {
+          retryHung = err instanceof BrowserTimeout;
+          obs = {
+            kind: "v2-path-observation/1.0.0",
+            runId: args.runId,
+            pathId: item.path.id,
+            tier: item.tier,
+            attemptId: retryAttemptId,
+            planRevisionId: args.planRevisionId,
+            surveyUrl: program.surveyUrl || args.surveyUrl,
+            startedAt: new Date().toISOString(),
+            endedAt: new Date().toISOString(),
+            wallMs: 0,
+            plannedWitnesses: [],
+            steps: [],
+            outcome: retryHung ? "browser-hung" : "error",
+            outcomeDetail: String(err).slice(0, 500),
+            shimmed: false,
+            shimNote: null,
+            loadFailure: null,
+            evidenceIds: [],
+            viewport: { width: 1280, height: 900 },
+          };
+        }
+
+        // ---- the pivot's own per-attempt commit: same discipline as the walk above ----
+        const retryAudit = assessExercised(obs, item.path.decisions as PlannedDecision[] | undefined);
+        const retryClosed =
+          item.assignment && retryAudit.exercised
+            ? item.assignment.caseIds.filter((id) => !args.cursor.completedCaseIds.includes(id))
+            : [];
+        const retryWalkedOk = obs.outcome !== "error";
+
+        progress.walks.push(walkRecord(obs, retryClosed, retryAudit, pivot));
+        progress.totalSteps += obs.steps.length;
+        progress.totalEvidence += obs.evidenceIds.length;
+        if (retryHung) {
+          // The path was already marked done by the attempt above; the hung marker only
+          // records that THIS browser is dead so the batch hands it back.
+          sessionWedged = true;
+          progress.hungPaths = progress.hungPaths ?? [];
+          if (!progress.hungPaths.includes(item.path.id)) progress.hungPaths.push(item.path.id);
+        }
+        await saveProgress(env, progress);
+
+        await updateCheckpoint(
+          env,
+          args.runId,
+          (d) => {
+            const c = d.execution;
+            if (!c) return false;
+            const next: ExecutionCursor = applySessionToCursor(
+              {
+                ...c,
+                batchIndex: args.batch + 1,
+                pendingCaseIds: c.pendingCaseIds.filter((id) => !retryClosed.includes(id)),
+                completedCaseIds: [...c.completedCaseIds, ...retryClosed],
+              },
+              handle,
+            );
+            d.execution = next;
+            d.counts.pending = Math.max(0, d.counts.pending - retryClosed.length);
+            d.counts.exercised += retryClosed.length;
+            d.attempts.started += 1;
+            if (retryWalkedOk) d.attempts.completed += 1;
+            d.currentAttempt = null;
+            return true;
+          },
+          { progressed: true, fence: args.fence },
+        );
+        args.cursor.completedCaseIds = [...args.cursor.completedCaseIds, ...retryClosed];
+        args.cursor.pendingCaseIds = args.cursor.pendingCaseIds.filter((id) => !retryClosed.includes(id));
+
+        // pathsWalked counts ATTEMPTS, so pivots spend the same maxAttempts/deadline
+        // budget as any walk and the wall-clock ledger stays honest.
+        pathsWalked += 1;
+        casesClosed += retryClosed.length;
+        steps += obs.steps.length;
+
+        if (retryHung) break;
+      }
 
       if (sessionWedged) break; // this browser is dead; the next batch starts a fresh one
     }
@@ -831,6 +1002,60 @@ export function assessExercised(
   };
 }
 
+/**
+ * ==================== BOUNDED SCREEN-OUT RETRY: THE ELIGIBILITY GATE ====================
+ *
+ * WHY A RETRY EXISTS AT ALL. Numeric screeners are structurally unreachable by planner
+ * stimulus: `plan-core.js#mineThresholds` mines no numeric terminate rules and terminal
+ * triggers are label-quoted only, so "terminate if >= 15" exists nowhere as data. Survival
+ * hints (D54) steer LABEL fillers; when the walker's own invented NUMBER lands a typed
+ * `screened-out`, the only honest move left is a bounded, deterministic re-walk with a
+ * different filler variant — never a retuned constant (the midpoint is pinned, d44).
+ *
+ * EVERY CLAUSE IS A REFUSAL, and each is here because pivoting past it would fight an
+ * outcome something else intended:
+ *
+ *   - not a typed `screened-out` ending — everything else (completed, stalled,
+ *     unclassified, absent) is not the failure this feature exists for;
+ *   - no navigator-default answers on the walk — the plan's own answers replay
+ *     IDENTICALLY on every attempt, so a plan-caused screen-out reproduces byte-for-byte
+ *     and a pivot could only waste the two walks the cap allows;
+ *   - `terminated_at` non-null — the plan INTENDS this walk to terminate;
+ *   - any `case_action` decision — sealed typed-case stimulus; its outcome is the
+ *     observation, and re-walking it would fight the experiment itself;
+ *   - a `just-triggers` terminal-adjacency probe — it exists to BE screened out.
+ *     (VERIFIED: `adjacency.side` is emitted on exploration entries at
+ *     plan-core.js:1699/1713 through the open index signature and travels verbatim in
+ *     the plan artifact to this executor; it is not a declared ExplorationEntry field,
+ *     so the clause reads it structurally and absent degrades to eligible — the
+ *     terminated_at/case_action clauses and the cap still bound the damage.)
+ *   - the pivot cap — two pivots, then the last walk's screened-out ending stands, with
+ *     the pivot-linked records telling the story;
+ *   - the batch deadline — a pivot is budgeted work like any other walk.
+ *
+ * Pure and exported so every clause is directly testable without a browser; the executor
+ * consults it and nothing else does. Evidence it can fail: `tools/mutate-screenout-retry.mjs`.
+ */
+export const SCREENOUT_PIVOT_CAP = 2;
+
+export function screenoutRetryEligible(args: {
+  obs: Pick<PathObservation, "ending" | "navigatorDefaultAnswerCount">;
+  path: PlannedPath;
+  pivots: Record<string, number> | undefined;
+  now: number;
+  batchDeadline: number;
+}): boolean {
+  const { obs, path } = args;
+  if (obs.ending?.kind !== "screened-out") return false;
+  if (!((obs.navigatorDefaultAnswerCount ?? 0) > 0)) return false;
+  if (path.terminated_at != null) return false;
+  if (Array.isArray(path.decisions) && path.decisions.some((d) => d && d.case_action !== undefined)) return false;
+  if ((path as { adjacency?: { side?: string } }).adjacency?.side === "just-triggers") return false;
+  if ((args.pivots?.[path.id] ?? 0) >= SCREENOUT_PIVOT_CAP) return false;
+  if (args.now >= args.batchDeadline) return false;
+  return true;
+}
+
 /** Outcomes that ARE the site refusing to advance: the walk died there. */
 const BLOCKING_OUTCOMES = new Set(["blocked", "blocked-after-probe"]);
 
@@ -903,7 +1128,13 @@ const NOT_ASSESSED: ExercisedAssessment = {
  * driving a whole batch to prove that one field survives one function needs a browser, and a
  * property that can only be checked in a browser is a property this suite does not check.
  */
-export function walkRecord(obs: PathObservation, caseIds: string[], audit: ExercisedAssessment = NOT_ASSESSED): WalkRecord {
+export function walkRecord(
+  obs: PathObservation,
+  caseIds: string[],
+  audit: ExercisedAssessment = NOT_ASSESSED,
+  /** BOUNDED SCREEN-OUT RETRY: set ONLY on a pivot walk. See `WalkRecord.pivot`. */
+  pivot?: WalkRecord["pivot"],
+): WalkRecord {
   return {
     ...audit,
     screensAdvanced: obs.steps.filter((s) => s.advanced).length,
@@ -921,6 +1152,10 @@ export function walkRecord(obs: PathObservation, caseIds: string[], audit: Exerc
     ...(obs.bindingRefusalCount !== undefined ? { bindingRefusalCount: obs.bindingRefusalCount } : {}),
     ...(obs.readerLimitations !== undefined ? { readerLimitations: obs.readerLimitations } : {}),
     ...(obs.readerLimitationCount !== undefined ? { readerLimitationCount: obs.readerLimitationCount } : {}),
+    // The pivot is the CALLER's fact, not the producer's — the walker does not know it is a
+    // retry — but it travels by the same opt-in spread: without it, `"pivot" in walk` would
+    // read every ordinary walk as one that HAS a (undefined) pivot.
+    ...(pivot !== undefined ? { pivot } : {}),
     pathId: obs.pathId,
     tier: obs.tier,
     attemptId: obs.attemptId,

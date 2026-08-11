@@ -202,7 +202,10 @@ function cdpPage(sess) {
 
 // ---------------------------------------------------------------------------
 
-async function walkOne(mod, url, { maxSteps = 12, decisions = [] } = {}) {
+// maxSteps raised 12 -> 30 for the phase-2c reach re-measure: the 2026-08-10/11 baseline
+// showed s6-kitchen-sink (19 expected screens) would be CENSORED by a 12-step cap once the
+// allocation filler unlocks the Q6 wall — the cap would clip the very improvement under test.
+async function walkOne(mod, url, { maxSteps = 30, decisions = [] } = {}) {
   const sess = await open("local-chromium");
   try {
     const { cdp, sessionId: sid } = sess;

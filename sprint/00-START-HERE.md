@@ -42,6 +42,25 @@ Read in order: **`07-LIVE-RESULTS.md`** → this file → `01-THE-EXPERIMENT.md`
 > post-sprint** unless the owner says otherwise. If you find the deployed parser and the tree disagree, that is
 > why.
 
+> ### Second and third owner-ordered exceptions to the freeze — 11 Aug review fixes + navigator upgrade
+>
+> Same precedent as the parser patch above, same authority: the owner ordered (11 Aug) fixes for the
+> 13 review-confirmed defects (local commit `26f9fce` — including changes to `expand.ts`,
+> `verify-observations.ts` and the option-set predicate's attribution rules) and a navigator/reach
+> upgrade (allocation filler, survival hints, bounded screen-out retry; uncommitted on top).
+> **These are not freeze violations.**
+>
+> What this means for the sprint's measurement:
+> 1. The experiment's core design is intact — it runs against a hand-authored frozen contract, so
+>    extraction stays out of the measured path.
+> 2. **The checker being measured is now the fixed checker** — four confirmed false-accusation
+>    paths in the option-set chain are closed, and the sole-group attribution rule changed
+>    (VERIFIER 1.8.0). The 0/10 false-positive threshold now tests the repaired predicate.
+> 3. **Reach is materially different**: walks that used to die at allocation grids and screeners
+>    now pass them. Re-verify every planted defect's reachability with `tools/live-walk.mjs`
+>    AFTER these changes — pre-11-Aug reach observations are stale, in the walker's favor.
+> 4. Fleet numbers from before this boundary are not comparable to numbers after it.
+
 ---
 
 ## Your own verdict, restated as the mandate

@@ -342,6 +342,52 @@ const FILES = [
   // D52 — planned back-navigation and repeated sessions are counted unsupported work until
   // the browser adapter can emit receipts for them; one forward walk never means they ran.
   "./tests/d52-probe-execution-truth.test.mjs",
+  // D53 — THE CONSTANT-SUM WALL, the #1 reach blocker MEASURED on the branching fleet
+  // (reach baseline 2026-08-10/11, 12 targets x 2 passes): 3 of 12 walks hard-blocked at a
+  // "must sum to exactly 100" allocation grid (s5-allocation Q1, s6-kitchen-sink Q6 twice),
+  // gating ~24 screens. The per-control filler wrote 1 into each of 5 independent number
+  // inputs, the site echoed "Values must sum to exactly 100 (current total: 5)", and the
+  // recovery re-derived byte-identical values — a deterministic, terminal block. The repair
+  // is a group-aware pass in `applyDecision`: detection is structural AND declared (>= 2
+  // writable number inputs in one grid or name-prefix family, plus a total read from the
+  // site's own instruction/question text, its validation echo, or a shared per-input max
+  // corroborated by sum wording — no confident target, no action); the value is an equal
+  // split snapped to each input's own step grid, remainder to the first inputs in DOM
+  // order, clamped and redistributed, with unreachable totals a NAMED UnfillableControl
+  // per member instead of a wrong sum. Every value carries the
+  // `navigator-default:allocation-split(...)` prefix so the ending's provenance keeps
+  // counting invented answers. The DOM half is proved in a real browser: FIXTURE 4 of
+  // `tools/probe-input-types.mjs`, whose Next is enabled only when the engine's own sum
+  // check passes. Evidence they can fail: `tools/mutate-allocation.mjs`.
+  "./tests/d53-allocation-filler.test.mjs",
+  // D54 — PLANNER-DRIVEN SURVIVAL HINTS, the #2 reach blocker MEASURED on the same baseline:
+  // the option default's position-1 pick walked s2-clean into its documented S3 screen-out
+  // ("Market research" is the disqualifying industry the plan already knew about via
+  // `options[].terminates` / `model.terminals`). The plan now stamps additive stimulus —
+  // per-decision `avoid_labels` + per-path `survival_hints` (`plan.ts#stampSurvivalHints`,
+  // same seam as wording, BEFORE materializeCasePaths so clones inherit) — and the driver's
+  // option default prefers the first answerable option matching NO avoid label, falling back
+  // to today's position-1 when all are flagged. THE INVARIANT, pinned here and in the d36
+  // extension: hints are INPUT, never EVIDENCE — they never enter `select` (the leak vector
+  // that feeds requestedButNotOffered and the exercised gate), the steered click keeps its
+  // counted `navigator-default:` provenance, and the grid/value fillers are NOT consumers.
+  // Evidence they can fail: `tools/mutate-survival-hints.mjs`.
+  "./tests/d54-survival-hints.test.mjs",
+  // D55 — BOUNDED SCREEN-OUT RETRY, the last navigator feature of phase 2: numeric
+  // screeners are STRUCTURALLY unreachable by planner hints (no numeric terminate rules
+  // are mined — the pinned counterexample is s2's S4, where d44 asserts the midpoint 16
+  // STAYS screened out at >= 15), so a walk with a typed `screened-out` ending reached on
+  // navigator-default answers gets up to TWO deterministic re-walks with varied fillers
+  // (variant 1: 25% quantile / 2nd eligible option after hint filtering; variant 2: 75% /
+  // 3rd, clamped). Eligibility is narrow (never `case_action` sealed stimulus, never a
+  // plan-intended `terminated_at`, never a just-triggers adjacency probe, capped at 2,
+  // deadline-bounded); the pivot counter is durable BEFORE the re-walk (the hungPaths
+  // pattern); every attempt gets a fresh attemptId, its own pivot-linked WalkRecord, and
+  // ATTEMPT-UNIQUE artifact refs — the landing gate, because the judge's signed manifest
+  // keys the catalogue by basename and a re-walk under attempt 0's refs raises
+  // MANIFEST_DUPLICATE_ARTIFACT. Closure is a union across attempts through the cursor's
+  // existing dedupe. Evidence they can fail: `tools/mutate-screenout-retry.mjs`.
+  "./tests/d55-screenout-retry.test.mjs",
   // AXIS CLOSURE — review-run-workflow.md finding 1. The contract-reuse adopted branch
   // skipped both `phase-extracting` arms (the only writers of `completion.test = "running"`)
   // and finalize's never-closed backstop tested `=== "running"` exactly — so a reuse-adopted

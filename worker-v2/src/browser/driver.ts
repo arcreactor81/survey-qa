@@ -61,6 +61,7 @@ import type {
   AccessibilitySnapshotNode,
   BindingRefusal,
   BlockedReason,
+  ControlState,
   PathObservation,
   PerformedAction,
   RenderedScreen,
@@ -124,6 +125,22 @@ export interface WalkOptions {
   applyHistoryShim: boolean;
   /** ms to wait for the screen to change after pressing Next before calling it blocked. */
   advanceTimeoutMs: number;
+  /**
+   * BOUNDED SCREEN-OUT RETRY: which deterministic filler variant this walk uses. 0 (or
+   * absent) is today's defaults, byte-for-byte; `execute-batch.ts` sets the durable pivot
+   * ordinal (1..2) when re-walking a path that screened out on navigator-default answers.
+   *
+   * Consumed ONLY by the navigator-default choosers inside `applyDecision`: the option
+   * default picks the Nth eligible option AFTER survival-hint filtering (clamped to the
+   * last one), and number/range fillers take the 25%/75% quantile of the site's declared
+   * range for variant 1/2 — still snapped to the site's own step grid, still clamped.
+   * Planned answers, the grid default, and the constant-sum pass are NOT consumers: a
+   * plan-specified answer replays identically on every attempt (so a plan-caused
+   * screen-out reproduces and the pivot cap closes it), and an allocation's values are
+   * constraint-determined, not chosen. The variant is durable state, never a clock or a
+   * random draw — the same inputs walk the same walk on every Workflow step replay.
+   */
+  variant?: number;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -1343,6 +1360,52 @@ function stepAlignedMidpoint(
   return { value: tidy(v), how: `midpoint of ${declared}, snapped to its own step of ${stepped}` };
 }
 
+/**
+ * THE RETRY'S NUMERIC FILLER — a SEPARATE code path from `stepAlignedMidpoint`, on purpose.
+ *
+ * The midpoint is PINNED, honest counterexample and all (d44 asserts that 0..31 midpoints to
+ * 16 and STAYS screened out on s2's S4; `mutate-input-coverage.mjs` kills constant retuning):
+ * retuning it to dodge a screener is the hard-anchoring CLAUDE.md forbids. What the bounded
+ * screen-out retry needs is not a better constant — no constant passes every screener — but a
+ * DIFFERENT deterministic point on the same declared range for the re-walk. Variant 1 takes
+ * the 25% quantile, variant 2 the 75%: one probe below the middle, one above, which between
+ * them straddle any single threshold the midpoint sat on the wrong side of.
+ *
+ * Same discipline as the midpoint, reusing the same arithmetic building blocks (`num`,
+ * `tidy`, min-anchored grid snap, clamp into the declared bounds): the range is the SITE'S,
+ * the grid is the SITE'S, and the value is recorded as a `navigator-default` under a
+ * `retry-N` tag so it can never be mistaken for a documented answer.
+ */
+export function variantQuantile(variant: number): number {
+  return variant === 1 ? 0.25 : 0.75;
+}
+
+export function stepAlignedQuantile(
+  c: { type: string; min?: string | null; max?: string | null; step?: string | null },
+  quantile: number,
+): { value: string; how: string } | null {
+  const lo = num(c.min);
+  const hi = num(c.max);
+  const isRange = c.type === "range";
+  const effLo = lo ?? (isRange ? 0 : null);
+  const effHi = hi ?? (isRange ? 100 : null);
+  if (effLo === null || effHi === null || !(effHi > effLo)) return null;
+
+  const point = effLo + (effHi - effLo) * quantile;
+  const pct = Math.round(quantile * 100);
+  const rawStep = String(c.step ?? "").trim().toLowerCase();
+  // `step="any"` is the site saying "no grid" — the one case a fractional value is legal.
+  const grid = rawStep === "any" ? null : (num(c.step) ?? 1);
+  if (grid === null || !(grid > 0)) {
+    return { value: tidy(point), how: `the ${pct}% point of the site's declared ${effLo}..${effHi} (step="any", so no grid)` };
+  }
+  // Min-anchored, exactly like the midpoint: the same base constraint validation uses.
+  let v = effLo + grid * Math.round((point - effLo) / grid);
+  if (v > effHi) v -= grid;
+  if (v < effLo) v = effLo;
+  return { value: tidy(v), how: `the ${pct}% point of the site's declared ${effLo}..${effHi}, snapped to its own step of ${grid}` };
+}
+
 /** ISO date helpers for the date family. Fixed, neutral, and inside every plausible range. */
 const NEUTRAL_DATE = "2000-01-15";
 
@@ -1380,12 +1443,22 @@ export interface NavigatorValue {
   via: "type" | "set";
 }
 
-export function navigatorValueFor(c: {
-  type: string;
-  min?: string | null;
-  max?: string | null;
-  step?: string | null;
-}): NavigatorValue | null {
+export function navigatorValueFor(
+  c: {
+    type: string;
+    min?: string | null;
+    max?: string | null;
+    step?: string | null;
+  },
+  /**
+   * BOUNDED SCREEN-OUT RETRY (see WalkOptions.variant): 0 keeps every rule below
+   * byte-identical; 1/2 move ONLY the ranged number/range fillers to the 25%/75% quantile
+   * of the same declared range (`stepAlignedQuantile` — the midpoint itself is pinned and
+   * untouched). Types with a single fixed neutral value, and numbers with fewer than two
+   * bounds, have no range to vary across and deliberately return their variant-0 value.
+   */
+  variant = 0,
+): NavigatorValue | null {
   const t = String(c.type ?? "").toLowerCase();
   switch (t) {
     case "text":
@@ -1405,6 +1478,13 @@ export function navigatorValueFor(c: {
       return { value: "+15555550100", how: "a reserved fictitious number (NANP 555-01xx)", via: "type" };
     case "number": {
       const mid = stepAlignedMidpoint(c);
+      // The retry's variant: a different deterministic point on the SAME declared range,
+      // tagged `retry-N` so the counted `navigator-default:` detail names which pivot
+      // chose it. Falls through to the pinned midpoint when there is no range to vary.
+      if (variant > 0) {
+        const q = stepAlignedQuantile(c, variantQuantile(variant));
+        if (q) return { value: q.value, how: `retry-${variant}:${q.how}`, via: "type" };
+      }
       if (mid) return { value: mid.value, how: mid.how, via: "type" };
       // A midpoint needs TWO ends. With one bound or none there is no middle, so this keeps the
       // long-standing "1, raised or lowered into whatever bound exists" — a guess about nothing
@@ -1425,6 +1505,11 @@ export function navigatorValueFor(c: {
     // SET, never typed: a range answers to arrow keys and pointer drags, not to inserted text.
     case "range": {
       const mid = stepAlignedMidpoint(c);
+      // Same retry variant as `number` above; a range always has a range (HTML defaults).
+      if (variant > 0) {
+        const q = stepAlignedQuantile(c, variantQuantile(variant));
+        if (q) return { value: q.value, how: `retry-${variant}:${q.how}`, via: "set" };
+      }
       return mid ? { value: mid.value, how: mid.how, via: "set" } : null;
     }
     case "date":
@@ -1453,11 +1538,381 @@ function dateMidpoint(c: { min?: string | null; max?: string | null }): string |
   return mid.toISOString().slice(0, 10);
 }
 
+/* ------------------------------------------------------------------------------------------
+ * CONSTANT-SUM ("allocation") GROUPS — the wall the reach baseline measured.
+ *
+ * MEASURED (reach baseline, 2026-08-10/11): 3 of 12 fleet walks hard-blocked at a "must sum to
+ * exactly 100" grid (s5-allocation Q1, s6-kitchen-sink Q6 twice), gating ~24 screens. Every one
+ * is table-rendered with ONE number input per row and ZERO header labels; the per-control
+ * filler wrote 1 into each of 5 independent inputs, the site echoed "Values must sum to exactly
+ * 100 (current total: 5)", and the recovery pass re-derived byte-identical values — a
+ * deterministic, terminal block.
+ *
+ * DETECTION IS STRUCTURAL + CONSERVATIVE, and both halves are required: >= 2 operable, writable
+ * number inputs hosted in one grid or sharing a non-empty name prefix, AND a sum target read
+ * from THE SITE'S OWN declarations. A wrong sum guess typed into a screen that never asked for
+ * one is worse than today's named failure, so no confident target means DO NOTHING and the
+ * per-control midpoints run exactly as before.
+ */
+
+export interface AllocationMember {
+  idx: number;
+  label: string;
+  min?: string | null;
+  max?: string | null;
+  step?: string | null;
+  /** What the control holds right now — lets a group that already sums to T be left alone. */
+  value?: string | null;
+  required?: boolean;
+}
+
+export interface AllocationGroup {
+  /** The total the site itself declares the group must sum to. */
+  total: number;
+  /** WHERE the total was read, quoting the site's own words — travels into the action detail. */
+  targetSource: string;
+  /** The member inputs, in DOM order. */
+  members: AllocationMember[];
+}
+
+/**
+ * Phrases that STATE a total. Deliberately narrow: each requires a sum-verb immediately before
+ * the number ("must sum to exactly 100", "must total 100", "adds up to 100", "Allocate 100
+ * points", "out of 100"). `visibleText` is NEVER scanned — the fleet's allocation tables render
+ * a live "Total 0" mirror row in body text, and its 0 would conflict with the declared 100.
+ */
+const SUM_TARGET_RES: readonly RegExp[] = [
+  /(?:sum|total|add(?:s)?\s+up)\s*(?:(?:up\s+)?to\s+)?(?:exactly\s+)?(\d+(?:\.\d+)?)/gi,
+  /(?:allocate|distribute|divide|split)\s+(\d+(?:\.\d+)?)/gi,
+  /out\s+of\s+(?:a\s+total\s+of\s+)?(\d+(?:\.\d+)?)/gi,
+];
+
+/** Sum LANGUAGE without a number — corroboration only, for the shared-max fallback. */
+const SUM_WORDING_RE = /(total|sum|adds?\s+up|allocate|distribute|100\s*%|out\s+of\s+\d+)/i;
+
+/**
+ * The declared total for a candidate group, or null when the screen does not state one
+ * confidently. Sources, in order:
+ *
+ *   1. An EXPLICIT number in the question text, the instruction text, or the site's own
+ *      validation echo after a blocked submit ("Points must sum to exactly 100 (current
+ *      total: 5)" — the echo is how the RECOVERY pass learns the target when the instruction
+ *      never stated it). The echo's "current total: N" is the site reporting the walker's own
+ *      wrong sum, never a target, so it is stripped before scanning. Different numbers from
+ *      different sources mean the screen has not declared ONE total: abstain.
+ *   2. A per-input max EVERY member shares, corroborated by sum wording on the screen. This is
+ *      deliberately SECOND: an equal per-row cap is a cap, not a total (five inputs capped at
+ *      20 under "must sum to exactly 100" total 100, not 20), so an explicit statement always
+ *      wins.
+ */
+function readSumTarget(
+  screen: RenderedScreen,
+  members: AllocationMember[],
+): { total: number; source: string } | null {
+  const texts: Array<[string, string]> = [
+    ["the question text", screen.questionText ?? ""],
+    ["the instruction text", screen.instructionText ?? ""],
+    ["the site's validation message", (screen.validationMessages ?? []).join(" | ")],
+  ];
+  const found: Array<{ total: number; where: string; quote: string }> = [];
+  for (const [where, raw] of texts) {
+    if (!raw) continue;
+    const text = raw.replace(/current\s+total\s*:?\s*\d+(?:\.\d+)?/gi, " ");
+    for (const re of SUM_TARGET_RES) {
+      re.lastIndex = 0;
+      for (let m = re.exec(text); m; m = re.exec(text)) {
+        const total = Number(m[1]);
+        if (Number.isFinite(total) && total > 0) found.push({ total, where, quote: m[0] });
+      }
+    }
+  }
+  const totals = new Set(found.map((f) => f.total));
+  if (totals.size === 1) {
+    const f = found[0]!;
+    return { total: f.total, source: `${f.where} ("${f.quote.trim()}")` };
+  }
+  if (totals.size > 1) return null; // the site names two different totals — not confident
+  const maxes = members.map((m) => num(m.max));
+  const shared = maxes[0] ?? null;
+  if (shared !== null && shared > 0 && maxes.every((v) => v === shared)) {
+    const context = `${screen.questionText ?? ""} ${screen.instructionText ?? ""}`;
+    if (SUM_WORDING_RE.test(context)) {
+      return {
+        total: shared,
+        source: `the max="${tidy(shared)}" every input shares, corroborated by the screen's sum wording`,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * The constant-sum groups on this screen. Empty unless BOTH halves hold: structure (>= 2
+ * writable, operable number inputs in one grid or one name-prefix family) and a confidently
+ * readable target (see readSumTarget).
+ */
+export function allocationGroups(screen: RenderedScreen): AllocationGroup[] {
+  // Writable AND operable: a readonly "Total" mirror is not a member, and neither is a
+  // honeypot or an input in a display:none alternate layout.
+  const candidates = screen.controls.filter(
+    (c) =>
+      String(c.type).toLowerCase() === "number" &&
+      c.visible &&
+      !c.disabled &&
+      !c.readOnly &&
+      (c.operable ?? c.visible),
+  );
+  if (candidates.length < 2) return [];
+
+  const lists: ControlState[][] = [];
+  const used = new Set<number>();
+
+  // (a) hosted in one grid — the fleet shape: a table with one number input per row. Keyed off
+  // input TYPE, never screen shape: radio grids have no number inputs and are untouched.
+  if (screen.grid) {
+    const gridIdxs = new Set<number>();
+    for (const row of screen.grid.rows) for (const cell of row.cells) gridIdxs.add(cell.idx);
+    const inGrid = candidates.filter((c) => gridIdxs.has(c.idx));
+    if (inGrid.length >= 2) {
+      lists.push(inGrid);
+      for (const c of inGrid) used.add(c.idx);
+    }
+  }
+
+  // (b) a shared name prefix ("q7_1"…"q7_4", "alloc[1]"…): digit runs collapsed, and the
+  // residue must still say something — inputs named "1" and "2" share only digits, which is
+  // no family at all. Unnamed inputs can only group through a grid.
+  const byPrefix = new Map<string, ControlState[]>();
+  for (const c of candidates) {
+    if (used.has(c.idx) || !c.name) continue;
+    const prefix = c.name.replace(/\d+/g, "#");
+    if (!/[a-z]/i.test(prefix)) continue;
+    const list = byPrefix.get(prefix) ?? [];
+    list.push(c);
+    byPrefix.set(prefix, list);
+  }
+  for (const list of byPrefix.values()) if (list.length >= 2) lists.push(list);
+
+  const out: AllocationGroup[] = [];
+  for (const list of lists) {
+    const members: AllocationMember[] = [...list]
+      .sort((a, b) => a.idx - b.idx)
+      .map((c) => ({
+        idx: c.idx,
+        label: c.label,
+        min: c.min ?? null,
+        max: c.max ?? null,
+        step: c.step ?? null,
+        value: c.value ?? null,
+        required: !!c.required,
+      }));
+    const target = readSumTarget(screen, members);
+    if (!target) continue; // NO confident target => do nothing at all
+    out.push({ total: target.total, targetSource: target.source, members });
+  }
+  return out;
+}
+
+export type AllocationSplit =
+  | { ok: true; values: Array<{ idx: number; value: string }>; how: string }
+  | { ok: false; why: string };
+
+/**
+ * THE VALUE RULE — deterministic and least-committed, the group analogue of the midpoint:
+ *
+ *   1. equal split of T over N, snapped DOWN to each input's own step grid, anchored at its
+ *      own min (the same base constraint validation uses — reuse of num/tidy arithmetic);
+ *   2. the remainder goes ONE STEP at a time to the FIRST inputs in DOM order;
+ *   3. each value is clamped into its own min/max, and any deficit the clamps created is
+ *      redistributed greedily in DOM order;
+ *   4. bounds or step grids that make T unreachable are a NAMED failure carrying the
+ *      arithmetic — never a silently wrong sum.
+ */
+export function allocationValues(group: AllocationGroup): AllocationSplit {
+  const EPS = 1e-9;
+  const T = group.total;
+  const n = group.members.length;
+  const ms = group.members.map((m) => {
+    const declaredMin = num(m.min);
+    const rawStep = String(m.step ?? "")
+      .trim()
+      .toLowerCase();
+    const parsed = rawStep === "any" ? null : (num(m.step) ?? 1);
+    return {
+      idx: m.idx,
+      lo: declaredMin ?? 0,
+      hi: num(m.max) ?? Number.POSITIVE_INFINITY,
+      // `step="any"` is the site saying "no grid" — the one case a fraction is legal.
+      step: parsed !== null && parsed > 0 ? parsed : null,
+      anchor: declaredMin ?? 0,
+      v: 0,
+    };
+  });
+
+  const sumMin = ms.reduce((a, m) => a + m.lo, 0);
+  const sumMax = ms.reduce((a, m) => a + m.hi, 0);
+  if (sumMin > T + EPS) {
+    return {
+      ok: false,
+      why:
+        `the site's own declarations make the declared total unreachable: the inputs' min values alone ` +
+        `sum to ${tidy(sumMin)}, above the declared total ${tidy(T)}`,
+    };
+  }
+  if (sumMax < T - EPS) {
+    return {
+      ok: false,
+      why:
+        `the site's own declarations make the declared total unreachable: the inputs' max values allow ` +
+        `at most ${tidy(sumMax)}, below the declared total ${tidy(T)}`,
+    };
+  }
+
+  // 1. equal split, snapped down to each input's own grid.
+  const base = T / n;
+  for (const m of ms) {
+    m.v = m.step === null ? base : m.anchor + m.step * Math.floor((base - m.anchor) / m.step + EPS);
+  }
+
+  // 2. the remainder: one step to each member in DOM order until it is gone (the "first k
+  //    inputs" rule — with a uniform step the snap-down leaves less than one step per member,
+  //    so exactly the first k members take one step each).
+  let left = T - ms.reduce((a, m) => a + m.v, 0);
+  for (const m of ms) {
+    if (left <= EPS) break;
+    const add = m.step === null ? left : m.step <= left + EPS ? m.step : 0;
+    if (add > 0) {
+      m.v += add;
+      left -= add;
+    }
+  }
+
+  // 3. clamp each value into its own bounds — AFTER the remainder, so a capped member's
+  //    excess becomes a deficit the next phase moves elsewhere.
+  for (const m of ms) {
+    if (m.v < m.lo) m.v = m.lo;
+    if (m.v > m.hi) m.v = m.hi;
+  }
+
+  // 4. clamping (or a step-shaped remainder) may leave the sum off in either direction:
+  //    redistribute greedily in DOM order, each member moving as far as its own grid and
+  //    bounds allow.
+  let deficit = T - ms.reduce((a, m) => a + m.v, 0);
+  for (const m of ms) {
+    if (Math.abs(deficit) <= EPS) break;
+    if (deficit > 0) {
+      const room = Math.min(deficit, m.hi - m.v);
+      const add = m.step === null ? room : m.step * Math.floor(room / m.step + EPS);
+      if (add > EPS) {
+        m.v += add;
+        deficit -= add;
+      }
+    } else {
+      const room = Math.min(-deficit, m.v - m.lo);
+      const sub = m.step === null ? room : m.step * Math.floor(room / m.step + EPS);
+      if (sub > EPS) {
+        m.v -= sub;
+        deficit += sub;
+      }
+    }
+  }
+  if (Math.abs(deficit) > EPS) {
+    return {
+      ok: false,
+      why:
+        `the inputs' declared step grids cannot land on the declared total ${tidy(T)} exactly ` +
+        `(closest reachable sum: ${tidy(T - deficit)})`,
+    };
+  }
+  return {
+    ok: true,
+    values: ms.map((m) => ({ idx: m.idx, value: tidy(m.v) })),
+    how: `${tidy(T)} over ${n} inputs, equal split snapped to each input's own step grid`,
+  };
+}
+
+/**
+ * PLANNER-DRIVEN SURVIVAL HINTS — the additive stimulus channel that keeps the option
+ * DEFAULT from volunteering a documented screen-out answer.
+ *
+ * THE MEASURED DEFECT (reach baseline 2026-08-10/11): s2-clean died at S3 because the
+ * position-1 default answered "Which industry…" with "Market research" — the one answer the
+ * questionnaire documents as disqualifying. The plan knew the trigger all along
+ * (`plan.model.questions[].options[].terminates`, `model.terminals`); the driver had no
+ * channel for it. `stages/plan.ts#stampSurvivalHints` now stamps per-decision
+ * `avoid_labels` and per-path `survival_hints`, and THIS is the one place they are read.
+ *
+ * INPUT, NEVER EVIDENCE — the boundary, stated where it is enforced:
+ *   - a hint NEVER joins `wanted`/`select`, so it cannot reach `requestedButNotOffered`
+ *     (missing-option evidence) or `isConstrainingDecision` (the exercised gate);
+ *   - the steered click keeps the counted `navigator-default:` provenance prefix — it is
+ *     still an invented answer, only a better-informed one;
+ *   - a hint may re-order which filler is picked; it may NEVER refuse an answer. All
+ *     options flagged => today's position-1 pick stands.
+ *   - the grid default and the value fillers are NOT consumers: hints are a label
+ *     mechanism (phase 2); numeric screen-outs belong to the bounded-retry feature.
+ *
+ * Path-level hints apply only to UNBOUND screens and are matched by OFFERED-LABEL OVERLAP
+ * alone — they pick among fillers and never bind identity (binding stays `bindDecision`'s).
+ */
+export interface SurvivalHint {
+  question?: string;
+  question_text?: string;
+  avoid_labels: string[];
+}
+
+/** Non-empty strings only; everything else in a hint row is noise, never a crash. */
+const hintLabels = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
+
+/** The path's `survival_hints`, sanitized once per walk. Unknown shapes degrade to []. */
+export function survivalHintsOf(path: unknown): SurvivalHint[] {
+  const raw = (path as { survival_hints?: unknown } | null | undefined)?.survival_hints;
+  if (!Array.isArray(raw)) return [];
+  const out: SurvivalHint[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const labels = hintLabels((row as Record<string, unknown>)["avoid_labels"]);
+    if (labels.length === 0) continue;
+    const q = (row as Record<string, unknown>)["question"];
+    out.push({ ...(typeof q === "string" ? { question: q } : {}), avoid_labels: labels });
+  }
+  return out;
+}
+
+/**
+ * The avoid labels in force for THIS screen. A bound decision speaks for itself
+ * (`avoid_labels`, stamped from the same terminate data); an unbound screen consults the
+ * path's hints, and a hint applies only when its labels overlap what the screen OFFERS —
+ * matching a hint for one screen against another would steer fillers on a guess.
+ */
+export function survivalAvoidLabels(
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+  screen: RenderedScreen,
+): string[] {
+  if (decision) return hintLabels((decision as Record<string, unknown>)["avoid_labels"]);
+  if (pathHints.length === 0) return [];
+  const offered = screen.optionGroups.flatMap((g) => g.options.map((o) => o.label));
+  if (offered.length === 0) return [];
+  const out: string[] = [];
+  for (const hint of pathHints) {
+    const labels = hintLabels(hint?.avoid_labels);
+    if (labels.length === 0) continue;
+    if (!labels.some((a) => offered.some((o) => labelMatches(o, a)))) continue;
+    for (const l of labels) if (!out.includes(l)) out.push(l);
+  }
+  return out;
+}
+
 /** Apply one decision to the screen in front of us. Returns what was actually done. */
 async function applyDecision(
   page: PageLike,
   screen: RenderedScreen,
   decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[] = [],
+  /** BOUNDED SCREEN-OUT RETRY filler variant (WalkOptions.variant). 0 = today's defaults. */
+  variant = 0,
 ): Promise<{ actions: PerformedAction[]; notOffered: string[]; unfillable: UnfillableControl[] }> {
   const actions: PerformedAction[] = [];
   const notOffered: string[] = [];
@@ -1468,6 +1923,96 @@ async function applyDecision(
   const probeAction = String(decision?.action ?? "");
   /** How the reader said THIS control is actuated. Grid cells carry only an index. */
   const actuation = (idx: number) => screen.controls.find((c) => c.idx === idx) ?? null;
+  const wantsBlank = probeAction === "leave-blank-and-continue" || decision?.text_entry?.value === "";
+  // ---- survival hints in force here: consumed ONLY by the option default below ----
+  // Computed once, up front, so the ONE-consumer rule is auditable: `avoid` appears in the
+  // option default and nowhere else. See `survivalAvoidLabels` for the evidence boundary.
+  const avoid = survivalAvoidLabels(decision, pathHints, screen);
+
+  // ---- constant-sum ("allocate 100 points") groups: claimed BEFORE the grid and value passes ----
+  //
+  // The controls this pass answers (or names unfillable) are CLAIMED here, and both later
+  // passes honour the claim: the grid pass must not land its meaningless click on a number
+  // cell this pass filled, and the value loop must not overwrite a group sum with per-control
+  // midpoints. Detection keys off input TYPE, never screen shape — see allocationGroups.
+  const allocationClaimed = new Set<number>();
+  // A planned `text_entry` fans out to EVERY value control on this screen (see the value
+  // loop), so on an allocation screen every member is a planned member: the "exclude planned
+  // members and subtract their values from T" rule degenerates to excluding all of them, and
+  // the pass abstains — the plan always wins. `case_action` boundary probes materialize as
+  // text_entry, so sealed stimulus lands in this same guard; a leave-blank probe is an act of
+  // its own and is likewise never overridden.
+  if (!wantsBlank && decision?.text_entry?.value === undefined) {
+    for (const group of allocationGroups(screen)) {
+      const held = group.members.map((m) => num(m.value ?? null));
+      const heldSum = held.reduce((a: number, v) => a + (v ?? 0), 0);
+      if (held.every((v) => v !== null) && Math.abs(heldSum - group.total) < 1e-9) {
+        // The group already sums to the site's own target — the group-level analogue of
+        // `alreadyAnswered`, claimed silently so no later pass disturbs a correct state.
+        for (const m of group.members) allocationClaimed.add(m.idx);
+        continue;
+      }
+      // NOTE the overwrite: members may already hold values (the recovery pass sees the first
+      // pass's own fillers, `valueIsUserSupplied` and all). A group that does NOT sum to the
+      // site's declared target is not an answered group, so the fillers are replaced; the
+      // sum-matches guard above is what protects a genuinely answered one.
+      const split = allocationValues(group);
+      if (!split.ok) {
+        for (const m of group.members) {
+          allocationClaimed.add(m.idx);
+          const c = actuation(m.idx);
+          unfillable.push({
+            idx: m.idx,
+            type: c?.type ?? "number",
+            label: c?.label ?? m.label,
+            required: !!c?.required,
+            reason: "no-derivation",
+            detail: `constant-sum group unfillable: ${split.why}`,
+          });
+          actions.push({
+            kind: "refuse-fill",
+            targetIdx: m.idx,
+            targetLabel: c?.label ?? m.label,
+            targetCode: null,
+            value: null,
+            ok: false,
+            detail: `constant-sum group unfillable: ${split.why}`,
+          });
+        }
+        continue;
+      }
+      for (const { idx, value } of split.values) {
+        allocationClaimed.add(idx);
+        const c = actuation(idx);
+        const r = await typeIdx(page, idx, value);
+        actions.push({
+          kind: "type-text",
+          targetIdx: idx,
+          targetLabel: c?.label ?? "",
+          targetCode: null,
+          value,
+          ok: r.ok,
+          // The `navigator-default:` prefix is REQUIRED: countDefaults and the ending's
+          // provenance line key off it, and these values are invented answers like any other
+          // filler — stimulus is INPUT, never EVIDENCE.
+          detail: `navigator-default:allocation-split(${split.how}; target from ${group.targetSource}) (${r.detail})`,
+        });
+        if (r.discarded || !r.ok) {
+          unfillable.push({
+            idx,
+            type: c?.type ?? "number",
+            label: c?.label ?? "",
+            required: !!c?.required,
+            reason: "value-rejected",
+            detail:
+              `the control did not keep the value "${value}" it was given` +
+              (r.got !== undefined ? ` — it holds "${r.got}"` : "") +
+              (c?.step ? ` (the site declares step="${c.step}")` : ""),
+          });
+        }
+      }
+    }
+  }
 
   // ---- grid / matrix screens: every row must be answered before the screen advances ----
   if (screen.grid && screen.grid.rows.length > 0) {
@@ -1477,6 +2022,10 @@ async function applyDecision(
       const wantedCell = wantColumn ? row.cells.find((c) => c.column && labelMatches(c.column, wantColumn)) : null;
       const cell = wantedCell ?? row.cells[0];
       if (!cell) continue;
+      // The allocation pass already answered this row's input — a click on a filled number
+      // cell is not an answer and must not be recorded as one. Same shape as the option-group
+      // skip below.
+      if (allocationClaimed.has(cell.idx)) continue;
       const r = await clickIdx(page, cell.idx, actuation(cell.idx));
       // THE FALLBACK IS NAMED. Taking cells[0] because no column matched is a DIFFERENT act
       // from answering the documented column, and it used to be recorded identically — which
@@ -1552,15 +2101,67 @@ async function applyDecision(
       // made a 0-10 NPS score unreachable and answered "Don't know" instead.
       const first = g.options.find((o) => answerable(o));
       if (!first) continue;
-      const r = await clickIdx(page, first.idx, first);
+      // SURVIVAL HINTS: prefer the first answerable option matching NO documented
+      // screen-out label. A hint may re-order which filler is picked — it may NEVER refuse
+      // an answer: when every answerable option is flagged, today's position-1 choice
+      // stands, because a filler that keeps walking beats a stall on a hint.
+      const flagged = (o: (typeof g.options)[number]): boolean => avoid.some((a) => labelMatches(o.label, a));
+      // ---- BOUNDED SCREEN-OUT RETRY: the Nth eligible option, AFTER hint filtering ----
+      //
+      // The first walk's position-1 pick (below) reached a documented screen-out, so the
+      // pivot moves to the variant-th answerable option matching no avoid label — CLAMPED
+      // to the last one, not wrapped: with more pivots than eligible options, wraparound
+      // would return to position-1, the exact answer the first walk already screened out
+      // on, so the clamp repeats the furthest untried position instead. All-flagged
+      // degrades to the full answerable list (a hint may re-order fillers, never refuse
+      // one), and the detail keeps the counted `navigator-default:` prefix under a
+      // `retry-N` tag — a pivot filler is still an invented answer.
+      if (variant > 0) {
+        const answerableOpts = g.options.filter((o) => answerable(o));
+        const nonFlagged = avoid.length > 0 ? answerableOpts.filter((o) => !flagged(o)) : answerableOpts;
+        const eligible = nonFlagged.length > 0 ? nonFlagged : answerableOpts;
+        const pick = Math.min(variant, eligible.length - 1);
+        const alt = eligible[pick]!;
+        const rv = await clickIdx(page, alt.idx, alt);
+        actions.push({
+          kind: "click-option",
+          targetIdx: alt.idx,
+          targetLabel: alt.label,
+          targetCode: alt.code,
+          value: null,
+          ok: rv.ok,
+          detail:
+            `navigator-default:retry-${variant}:option-${pick + 1}-of-${eligible.length}-eligible` +
+            `${avoid.length > 0 ? "-after-hint-filtering" : ""} (${rv.detail})`,
+        });
+        if (g.kind === "radio") continue;
+        break;
+      }
+      const preferred = avoid.length > 0 ? g.options.find((o) => answerable(o) && !flagged(o)) : first;
+      const chosen = preferred ?? first;
+      // The labels actually steered around, in DOM order — named in the detail so a reader
+      // can see WHY this filler is not position-1. Empty when the pick equals position-1.
+      const avoided: string[] = [];
+      if (chosen !== first) {
+        for (const o of g.options) {
+          if (o.idx === chosen.idx) break;
+          if (answerable(o) && flagged(o)) avoided.push(o.label);
+        }
+      }
+      const r = await clickIdx(page, chosen.idx, chosen);
       actions.push({
         kind: "click-option",
-        targetIdx: first.idx,
-        targetLabel: first.label,
-        targetCode: first.code,
+        targetIdx: chosen.idx,
+        targetLabel: chosen.label,
+        targetCode: chosen.code,
         value: null,
         ok: r.ok,
-        detail: `navigator-default:first-option (${r.detail})`,
+        // BOTH shapes keep the `navigator-default:` prefix — countDefaults and the ending's
+        // provenance line key off it, and a hint-steered filler is still an invented answer.
+        detail:
+          avoided.length > 0
+            ? `navigator-default:first-non-flagged-option(avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}) (${r.detail})`
+            : `navigator-default:first-option (${r.detail})`,
       });
       if (g.kind === "radio") continue;
       break;
@@ -1579,8 +2180,10 @@ async function applyDecision(
   const valueControls = screen.controls.filter(
     (c) => c.visible && !c.disabled && !c.readOnly && (isValueEntry(c.type) || fillRefusalFor(c.type) !== null),
   );
-  const wantsBlank = probeAction === "leave-blank-and-continue" || decision?.text_entry?.value === "";
   for (const c of valueControls) {
+    // Already claimed by the constant-sum pass above — answered as a group, or named
+    // unfillable as a group. Either way this loop has nothing to add.
+    if (allocationClaimed.has(c.idx)) continue;
     // ---- a control this harness will not, or cannot, answer ----
     const refusal = fillRefusalFor(c.type);
     if (refusal) {
@@ -1618,7 +2221,7 @@ async function applyDecision(
     if (alreadyAnswered) continue;
 
     const planned = decision?.text_entry?.value;
-    const derived = navigatorValueFor(c);
+    const derived = navigatorValueFor(c, variant);
     if (planned === undefined && !derived) {
       // NO RULE IS NOT "NOTHING TO ANSWER". The type is one the reader classes as fillable and
       // this harness has no value for it — said out loud rather than passed over.
@@ -2050,6 +2653,13 @@ export async function walkPath(
   // question whose decision has been used is evidence about which screen this is NOT, and the
   // binder needs that as much as it needs the pending list.
   const walkQuestionIds = (Array.isArray(path.decisions) ? path.decisions : []).map((d) => String(d.question ?? ""));
+  // Path-level survival hints, for screens NO decision binds — sanitized once per walk.
+  // See `survivalAvoidLabels` for the single consumer and the INPUT-never-EVIDENCE boundary.
+  const pathHints = survivalHintsOf(path);
+  // BOUNDED SCREEN-OUT RETRY: the walk-level filler variant, applied to EVERY
+  // navigator-default choice on this walk (the main pass and the recovery pass alike) so
+  // one attempt is one coherent variant. See WalkOptions.variant for the contract.
+  const fillerVariant = opts.variant ?? 0;
   let bindingRefusalCount = 0;
   // WHAT THE READER COULD NOT DO, LIFTED TO THE WALK. A limitation named on screen 7 and
   // buried in screen 7's payload is a limitation nobody reads. Summed as well as listed,
@@ -2166,7 +2776,7 @@ export async function walkPath(
     if (matched) remaining.splice(matched.index, 1);
     bindingRefusalCount += binding.refusals.length;
 
-    const { actions, notOffered, unfillable } = await applyDecision(page, before, decision);
+    const { actions, notOffered, unfillable } = await applyDecision(page, before, decision, pathHints, fillerVariant);
     for (const u of unfillable) unfillableControls.push({ ...u, stepIndex });
     countDefaults(actions);
 
@@ -2361,11 +2971,19 @@ export async function walkPath(
       // exact defect D42 fixed on the first pass and left standing on the recovery pass. Leaving
       // `text_entry` off makes every control take its own per-type navigator default, which is
       // what "answer validly" has to mean once the walker knows more than one kind of input.
-      const recovery = await applyDecision(page, after ?? before, {
-        question: decision?.question ?? "",
-        select: decision?.select ?? [],
-        source: "recovery",
-      } as PlannedDecision);
+      // `pathHints` is passed for uniformity but is inert here: the recovery decision is
+      // non-null, so `survivalAvoidLabels` reads only ITS `avoid_labels` (it carries none).
+      const recovery = await applyDecision(
+        page,
+        after ?? before,
+        {
+          question: decision?.question ?? "",
+          select: decision?.select ?? [],
+          source: "recovery",
+        } as PlannedDecision,
+        pathHints,
+        fillerVariant,
+      );
       const again = await clickIdx(page, nb.idx);
       recovery.actions.push({
         kind: "click-next",

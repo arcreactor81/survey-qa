@@ -116,6 +116,13 @@ export const PLAN_LIMITATION_CODES = {
   caseWithoutStimulus: "cases-with-no-stimulus-payload",
   caseTargetNotOnWitnessPath: "cases-whose-target-question-is-not-on-their-witness-path",
   caseWithoutWitnessPath: "cases-whose-requirement-has-no-witness-path",
+  /**
+   * Documented screen-outs the survival-hint stamp could not steer around: the document
+   * states a disqualification but no answer LABEL could be resolved for it, so the walker's
+   * default fillers may still walk into it. Emitted at zero so "nothing to avoid" stays
+   * distinguishable from "no hints were stamped".
+   */
+  survivalHintsUnstampable: "screen-outs-with-no-stampable-answer-label",
   /** Planned browser actions the current forward-only driver has no action or receipt for. */
   backNavigationUnsupported: "planned-back-navigation-not-executable",
   /** Multi-session evidence the current one-walk-per-path executor cannot produce. */
@@ -613,6 +620,172 @@ export function stampQuestionWording(
   };
 }
 
+// ---------------------------------------------------------------------------
+// SURVIVAL HINTS — the plan's documented screen-out triggers, handed to the walker's
+// FILLERS as steering input.
+//
+// THE DEFECT THIS EXISTS TO CLOSE. `plan-core.js#defaultAnswer` already avoids documented
+// terminating labels when it can name an answer — but a `default:navigator-discretion`
+// decision has an EMPTY select, and a screen no decision binds has nothing at all, so the
+// DRIVER answers both with its position-1 default, terminate-blind. Measured on the reach
+// baseline (2026-08-10/11): s2-clean died at S3 because position 1, "Market research", is
+// the questionnaire's documented disqualifying industry. The trigger data was in the plan
+// artifact the whole time (`model.questions[].options[].terminates`, `questions[].terminates`,
+// `model.terminals`); nothing carried it to the walker.
+//
+// THE CHANNEL IS ADDITIVE AND EVIDENCE-INVISIBLE, by construction:
+//   - per-decision `avoid_labels` and per-path `survival_hints` are fields `pathSignature`
+//     does not hash (the `question_text` precedent, plan-core.d.ts:44-49) and
+//     `isConstrainingDecision` does not read — stamping moves no path identity and no
+//     coverage gate;
+//   - the driver consumes them ONLY to pick among its own navigator-default fillers
+//     (`browser/driver.ts#survivalAvoidLabels`); they never enter `select`, so they can
+//     never become `requestedButNotOffered` (missing-option evidence);
+//   - a hint can only re-order which invented answer is clicked — reach, never verdict.
+//
+// Numeric screen-outs ("terminate if age < 18") are NOT mined by extraction at all
+// (`mineThresholds` reads character/selection/scale bounds only), so no hint can exist for
+// them — that gap belongs to the bounded screen-out retry, not to this stamp.
+// ---------------------------------------------------------------------------
+
+/** One question's documented terminating labels, stamped onto a path for unbound screens. */
+export interface SurvivalHintStamp {
+  question: string;
+  /** The document's wording, when a decision on the same carrier already carries it. */
+  question_text?: string;
+  avoid_labels: string[];
+}
+
+const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 ? v : null);
+
+/**
+ * EVERY documented terminate trigger the model states at label level, per question — plus
+ * the screen-outs that could NOT be resolved to a label, which are the stamp's own named
+ * shortfall. Reads the three places `plan-core.js` emits trigger data (options[].terminates,
+ * questions[].terminates, model.terminals) and dedupes; `buildTerminals` already folds the
+ * first two into each other, so the union is defensive, not doctrinal.
+ */
+export function survivalAvoidIndex(model: unknown): {
+  avoid: Map<string, string[]>;
+  unstampable: Array<{ terminal: string; question: string | null; why: string }>;
+} {
+  const avoid = new Map<string, string[]>();
+  const put = (q: string, label: string): void => {
+    const held = avoid.get(q) ?? [];
+    if (!held.includes(label)) held.push(label);
+    avoid.set(q, held);
+  };
+  const m = (model ?? {}) as { questions?: unknown; terminals?: unknown };
+  for (const row of Array.isArray(m.questions) ? m.questions : []) {
+    const q = (row ?? {}) as { id?: unknown; options?: unknown; terminates?: unknown };
+    const qid = nonEmpty(q.id);
+    if (!qid) continue;
+    for (const o of Array.isArray(q.options) ? q.options : []) {
+      const opt = (o ?? {}) as { text?: unknown; terminates?: unknown };
+      const label = nonEmpty(opt.text);
+      // The emitted model coerces this to a boolean (`terminates: !!o.terminates`); truthy
+      // is accepted so a pre-coercion model object stamps identically.
+      if (label && opt.terminates) put(qid, label);
+    }
+    for (const t of Array.isArray(q.terminates) ? q.terminates : []) {
+      const label = nonEmpty((t as { answer?: unknown } | null)?.answer);
+      if (label) put(qid, label);
+    }
+  }
+  const unstampable: Array<{ terminal: string; question: string | null; why: string }> = [];
+  for (const row of Array.isArray(m.terminals) ? m.terminals : []) {
+    const t = (row ?? {}) as { id?: unknown; kind?: unknown; trigger?: unknown };
+    // Completion endpoints are successful ends, not screen-outs; nothing to avoid there.
+    if (t.kind !== "screen-out") continue;
+    const trigger = (t.trigger ?? null) as { question?: unknown; answers?: unknown } | null;
+    const tq = trigger ? nonEmpty(trigger.question) : null;
+    const answers = (trigger && Array.isArray(trigger.answers) ? trigger.answers : [])
+      .map(nonEmpty)
+      .filter((x): x is string => x !== null);
+    if (!tq || answers.length === 0) {
+      unstampable.push({
+        terminal: nonEmpty(t.id) ?? "TERM-?",
+        question: tq,
+        why: trigger
+          ? "the screen-out's trigger names no usable answer label"
+          : "the document states a screen-out but no triggering answer could be resolved to a label",
+      });
+      continue;
+    }
+    for (const a of answers) put(tq, a);
+  }
+  return { avoid, unstampable };
+}
+
+/**
+ * STAMP SURVIVAL HINTS ONTO EVERY ELIGIBLE CARRIER. Additive and signature-neutral, and it
+ * runs in the SAME SEAM as `stampQuestionWording` — after wording (so path hints can carry
+ * it), BEFORE `materializeCasePaths` (so every per-case clone inherits the stamps and there
+ * is still exactly one place a decision acquires anything).
+ *
+ * THREE REFUSALS, each a thing this pass could do and must not:
+ *   - a carrier with `terminated_at` set is a walk that INTENDS its termination — the plan
+ *     chose a documented trigger on purpose; steering its fillers would fight the experiment;
+ *   - a terminal-adjacency probe whose `adjacency.side` is `just-triggers` exists to take
+ *     the terminating answer; same reason, stronger form;
+ *   - a decision carrying `case_action` is sealed stimulus and is never written to
+ *     (`materializeCasePaths` documents why nothing may rewrite it). Clones minted AFTER
+ *     this pass inherit stamps passively, exactly as they inherit `question_text`.
+ */
+export function stampSurvivalHints(
+  carriers: Array<{ decisions?: PlannedDecision[]; [k: string]: unknown }>,
+  model: unknown,
+): {
+  decisionsStamped: number;
+  pathsStamped: number;
+  /** question id -> the labels stamped, for the report and the tests. */
+  questions: Array<{ question: string; avoid_labels: string[] }>;
+  /** Documented screen-outs this pass could NOT steer around, each with the reason. */
+  unstampable: Array<{ terminal: string; question: string | null; why: string }>;
+} {
+  const { avoid, unstampable } = survivalAvoidIndex(model);
+  let decisionsStamped = 0;
+  let pathsStamped = 0;
+  for (const carrier of avoid.size > 0 ? carriers : []) {
+    if (!carrier || typeof carrier !== "object") continue;
+    if (carrier["terminated_at"] != null) continue;
+    const adjacency = carrier["adjacency"] as { side?: unknown } | null | undefined;
+    if (adjacency && adjacency.side === "just-triggers") continue;
+    const decisions = Array.isArray(carrier.decisions) ? carrier.decisions : [];
+    const wordingByQuestion = new Map<string, string>();
+    for (const d of decisions) {
+      const q = nonEmpty(d?.question);
+      if (q && typeof d.question_text === "string" && !wordingByQuestion.has(q)) {
+        wordingByQuestion.set(q, d.question_text);
+      }
+    }
+    for (const d of decisions) {
+      if (!d || d.case_action) continue;
+      const labels = avoid.get(String(d.question ?? ""));
+      if (!labels || labels.length === 0) continue;
+      d.avoid_labels = [...labels];
+      decisionsStamped += 1;
+    }
+    // Path-level hints cover the screens NO decision binds; the driver matches them by
+    // offered-label overlap only. Emitted in model question order, so a replan is byte-stable.
+    const hints: SurvivalHintStamp[] = [...avoid.entries()].map(([question, labels]) => ({
+      question,
+      ...(wordingByQuestion.has(question) ? { question_text: wordingByQuestion.get(question)! } : {}),
+      avoid_labels: [...labels],
+    }));
+    if (hints.length > 0) {
+      carrier["survival_hints"] = hints;
+      pathsStamped += 1;
+    }
+  }
+  return {
+    decisionsStamped,
+    pathsStamped,
+    questions: [...avoid.entries()].map(([question, labels]) => ({ question, avoid_labels: [...labels] })),
+    unstampable,
+  };
+}
+
 export function contractFromRevision(revision: ContractRevision): PlannerContract {
   return {
     obligations: revision.requirements.map(requirementToObligation),
@@ -743,6 +916,14 @@ export async function planStage(
   const wordingIndex = buildQuestionWordingIndex(revision);
   const wording = stampQuestionWording([...plan.floor.paths, ...plan.exploration.queue], wordingIndex);
 
+  // ---- survival: stamp documented screen-out triggers, in the SAME pre-clone seam ----
+  //
+  // After wording (so path hints can carry `question_text`), before `materializeCasePaths`
+  // (so per-case clones inherit). Hints are INPUT, never EVIDENCE: `avoid_labels` /
+  // `survival_hints` are unhashed, gate-invisible fields the driver reads only to pick
+  // among its own navigator-default fillers. See `stampSurvivalHints`.
+  const survival = stampSurvivalHints([...plan.floor.paths, ...plan.exploration.queue], plan.model);
+
   // ---- assignment: mandatory execution case -> the floor path that witnesses it ----
   const witnessMap: Record<string, string> = (plan.floor.coverage.witness_map ?? {}) as Record<string, string>;
   const materialized = materializeCasePaths(plan.floor.paths, revision.facetInstances, witnessMap);
@@ -816,6 +997,16 @@ export async function planStage(
       count: materialized.unresolvedRouteCodes.length,
       caseIds: materialized.unresolvedRouteCodes.map((r) => r.facetInstanceId),
       questionIds: [...new Set(materialized.unresolvedRouteCodes.map((r) => `${r.question} (code ${r.code})`))].sort(),
+    },
+    {
+      code: PLAN_LIMITATION_CODES.survivalHintsUnstampable,
+      what:
+        `${survival.unstampable.length} documented screen-out(s) name no answer label this plan could stamp as a ` +
+        `survival hint, so the walker's default fillers cannot steer around them and a walk may still end there. ` +
+        `${survival.pathsStamped} path(s) did receive hints covering ${survival.questions.length} question(s); ` +
+        `zero here means every documented screen-out was stamped, not that nobody looked.`,
+      count: survival.unstampable.length,
+      questionIds: survival.unstampable.map((u) => `${u.terminal}${u.question ? ` (${u.question})` : ""} — ${u.why}`),
     },
     // THE FOUR CAUSES BEHIND `unassignedCases`, counted apart. The aggregate row above says how
     // many walks are missing; these say what to fix, and each is emitted at zero so a cause that

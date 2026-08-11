@@ -9,7 +9,7 @@
  * the node suite pins the parts that are (the derivation table, the refusal, the naming) and this
  * proves the rest against the thing itself.
  *
- * THREE FIXTURES, AND THE SECOND IS THE LOAD-BEARING ONE:
+ * FOUR FIXTURES, AND THE SECOND IS THE LOAD-BEARING ONE:
  *
  *   1. EVERY TYPE  — one screen carrying every control a respondent can answer, gated by a Next
  *                    that stays disabled until the form is constraint-VALID. The walk may only
@@ -22,6 +22,14 @@
  *   3. SLIDER-ONLY — a screen whose only question is a range. It has ZERO text inputs, so this is
  *                    what proves `counts.valueInputs` (not `textInputs`) is what "did this survey
  *                    render?" now reads.
+ *   4. ALLOCATION  — the constant-sum wall the reach baseline measured (3 of 12 fleet walks
+ *                    hard-blocked at "must sum to exactly 100", gating ~24 screens). Rendered
+ *                    the way the fleet renders it — a table, ONE bare number input per row, no
+ *                    header labels, a live "Total" mirror row, the target stated only in the
+ *                    instruction prose — and gated by the ENGINE'S OWN check: Next stays
+ *                    disabled until the page's script computes whole numbers summing to
+ *                    exactly 100. An advance here is the page's arbitration that the driver's
+ *                    allocation split satisfied the site's constant-sum rule.
  *
  * LOCAL CHROME ONLY. Nothing here touches Browser Rendering.
  *
@@ -152,6 +160,59 @@ const SLIDER_ONLY = surveyPage(
   "Q1. How likely are you to recommend us?",
   `<label>0 to 10 <input type="range" name="nps" min="0" max="10"></label>`,
 );
+
+/**
+ * THE CONSTANT-SUM WALL, fleet-faithful (see targets/fleet …/engine.js `renderInputs`): a
+ * table, one BARE `<input type=number>` per row (no name, no min/max — the group is only
+ * discoverable through the reader's grid parse), a live "Total" mirror row the page keeps
+ * updated (which is why `visibleText` must never be scanned for a target: its 0 would
+ * contradict the declared 100), and the target stated once, in the instruction prose. This
+ * page does NOT reuse `surveyPage`'s checkValidity gate — bare inputs are trivially valid.
+ * The gate is the site's own constant-sum rule: Next is disabled until every row holds a
+ * whole number and the rows sum to exactly 100. The ENGINE arbitrates the advance.
+ */
+const ALLOCATION = `<!doctype html>
+<html><head><title>Q6. Allocate points</title></head><body>
+<div id="root">
+  <h2 id="q">Q6. Allocate 100 points across the following factors according to how much each drives your choice.</h2>
+  <p class="instruction">Enter a whole number in every row. Your answers must sum to exactly 100.</p>
+  <form id="f">
+    <table class="alloc">
+      <tr><td>Efficacy</td><td><input type="number" data-row="r1"></td></tr>
+      <tr><td>Safety profile</td><td><input type="number" data-row="r2"></td></tr>
+      <tr><td>Dosing convenience</td><td><input type="number" data-row="r3"></td></tr>
+      <tr class="alloc-total"><td>Total</td><td id="alloc-total">0</td></tr>
+    </table>
+  </form>
+  <button id="next" type="button" disabled>Next</button>
+</div>
+<div id="end" style="display:none"><h2>Thank you for completing the survey.</h2><p>Your responses have been recorded.</p></div>
+<script>
+  var f = document.getElementById('f');
+  var next = document.getElementById('next');
+  function sync() {
+    var sum = 0;
+    var all = true;
+    Array.prototype.forEach.call(f.querySelectorAll('input[data-row]'), function (e) {
+      var v = e.value.trim();
+      var n = Number(v);
+      if (v === '' || isNaN(n) || Math.floor(n) !== n) { all = false; return; }
+      sum += n;
+    });
+    var cell = document.getElementById('alloc-total');
+    if (cell) cell.textContent = String(sum);
+    next.disabled = !(all && sum === 100);
+  }
+  f.addEventListener('input', sync);
+  f.addEventListener('change', sync);
+  next.addEventListener('click', function () {
+    document.getElementById('root').remove();
+    document.getElementById('end').style.display = '';
+    document.title = 'done';
+  });
+  sync();
+</script>
+</body></html>`;
 
 /* --------------------------------------------------------------- a PageLike over CDP */
 
@@ -381,6 +442,49 @@ process.stdout.write("\nFIXTURE 3 — a screen whose only question is a slider\n
   );
   check("the reader's own summary does not contradict its inventory", (before?.readerLimitations ?? []).length === 0, JSON.stringify(before?.readerLimitations));
   check("the walk advanced off it", obs.steps[0]?.advanced === true, `outcome=${obs.outcome}`);
+}
+
+/* ---- 4. THE CONSTANT-SUM WALL ---- */
+process.stdout.write("\nFIXTURE 4 — the allocation grid: Next enabled only by the engine's own sum-to-100 check\n");
+{
+  const obs = await walkHtml(mod, ALLOCATION);
+  const step0 = obs.steps[0] ?? null;
+  const typed = (step0?.actions ?? []).filter((a) => a.kind === "type-text");
+  const split = typed.filter((a) => /navigator-default:allocation-split\(/.test(a.detail ?? ""));
+  const filled = step0 ? step0.screenAfterAction : null;
+  const held = (filled?.controls ?? []).filter((c) => c.type === "number").map((c) => Number(c.value));
+
+  check(
+    "the walk ADVANCED — the page's own constant-sum check is what enabled Next",
+    step0?.advanced === true,
+    `advanced=${step0?.advanced} outcome=${obs.outcome} detail=${obs.outcomeDetail}`,
+  );
+  check(
+    "all three rows were answered by the allocation split, with its provenance prefix",
+    split.length === 3,
+    `${split.length} of ${typed.length} typed action(s) carry the prefix: ${typed.map((a) => a.detail).join(" | ")}`,
+  );
+  check(
+    "the typed values sum to exactly the declared 100",
+    split.reduce((a, t) => a + Number(t.value), 0) === 100,
+    split.map((a) => `${a.targetLabel}=${a.value}`).join(", "),
+  );
+  check(
+    "the DOM agrees: every row HOLDS its value and they sum to 100 — the mirror row did not poison the target",
+    held.length === 3 && held.every((v) => Number.isFinite(v)) && held.reduce((a, v) => a + v, 0) === 100,
+    JSON.stringify(held),
+  );
+  check(
+    "the reader parsed the table as a grid and the claim held: no grid-cell click landed on a filled input",
+    (step0?.actions ?? []).every((a) => a.kind !== "select-grid-cell"),
+    JSON.stringify((step0?.actions ?? []).map((a) => [a.kind, a.targetIdx])),
+  );
+  check("the ending is typed `completed`", obs.ending?.kind === "completed", JSON.stringify(obs.ending));
+  check(
+    "the three invented answers are counted as navigator-defaults",
+    obs.navigatorDefaultAnswerCount === 3,
+    `navigatorDefaultAnswerCount=${obs.navigatorDefaultAnswerCount}`,
+  );
 }
 
 const failed = results.filter((r) => !r.ok);

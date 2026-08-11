@@ -167,8 +167,13 @@ await runMutantSuite({
         "a date input handed something it cannot parse discards it silently. Reporting that as a fill " +
         "is how the harness's own malformed value becomes 'the survey rejected our answer'",
       file: DR,
-      find: "    if (r.discarded || !r.ok) {",
-      replace: "    if (false) {",
+      // RE-ANCHORED (D55 sweep): the D53 allocation pass introduced a second
+      // `if (r.discarded || !r.ok) {` at deeper indent whose text CONTAINS the old
+      // one-line anchor, so it matched twice and the harness went BROKEN-ANCHOR — blind
+      // on this guard. The value loop's own `idx: c.idx` line disambiguates it (the
+      // allocation pass pushes a bare `idx`).
+      find: "    if (r.discarded || !r.ok) {\n      unfillable.push({\n        idx: c.idx,",
+      replace: "    if (false) {\n      unfillable.push({\n        idx: c.idx,",
       kills: ["A VALUE THE CONTROL REFUSED IS RECORDED AS REFUSED, never as filled"],
     },
   ],
