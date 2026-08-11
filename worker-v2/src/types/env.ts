@@ -23,6 +23,8 @@ export interface Env {
   V2_VISUAL_WORKFLOW: Workflow;
   /** Workers AI. Optional at runtime: free neurons are exhausted, validators must degrade. */
   AI?: Ai;
+  /** Cloudflare-supplied immutable identity for the currently executing Worker Version. */
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
 
   // --- secrets (Secrets Store bindings resolve via .get()) ---
   ANTHROPIC_API_KEY?: string | SecretBinding;
@@ -155,6 +157,21 @@ export interface Env {
    * is never stored in Worker vars or R2.
    */
   CANARY_AUTH_SHA256?: string;
+  /** Non-secret, constituent-based deployment identity for the isolated canary wrapper. */
+  CANARY_DEPLOYMENT_IDENTITY_SHA256?: string;
+  /** Exact Cloudflare version tag derived from the canary deployment identity. */
+  CANARY_VERSION_TAG?: string;
+  CANARY_EXPECTED_DOCUMENT_SHA256?: string;
+  CANARY_SOURCE_MANIFEST_SHA256?: string;
+  CANARY_BUNDLE_INPUTS_MANIFEST_SHA256?: string;
+  CANARY_BUNDLE_METAFILE_SHA256?: string;
+  CANARY_REVIEWED_BUNDLE_MANIFEST_SHA256?: string;
+  CANARY_VISUAL_POLICY_SHA256?: string;
+  /** Ephemeral canary-only Ed25519 material, supplied as Worker secrets. */
+  RECORD_SIGNING_KEY?: string;
+  RECORD_SIGNING_KEY_ID?: string;
+  JUDGEMENT_SIGNING_KEY?: string;
+  JUDGEMENT_SIGNING_KEY_ID?: string;
   MAX_VIEWPORTS?: string;
   MAX_LOCALE_LENGTH?: string;
   /** "block-private" (default) | "allow-private" — outbound survey-URL target policy. */

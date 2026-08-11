@@ -47,6 +47,7 @@ export const REQUIRED_VISUAL_NODE_TESTS = Object.freeze([
   "tools/tests/live-canary-workflow-gate.test.mjs",
   "tools/tests/live-canary.test.mjs",
   "tools/tests/pinned-wrangler-command.test.mjs",
+  "tools/tests/pinned-wrangler-output-graph.integration.test.mjs",
   "tools/tests/canary-source-snapshot.test.mjs",
   "tools/tests/canary-bundle-inputs.test.mjs",
   "tools/tests/canary-post-deploy-attestation.test.mjs",

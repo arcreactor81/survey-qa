@@ -17,7 +17,16 @@ import {
   runCli,
   runRemoteSecretAudit,
 } from "../audit-live-canary-remote-secrets.mjs";
-import { canaryVisualPolicy } from "../generate-live-canary-config.mjs";
+import {
+  CANARY_COMPATIBILITY_DATE,
+  CANARY_COMPATIBILITY_FLAGS,
+  CANARY_SECRET_BINDINGS,
+  CANARY_SECRET_STORE_ID,
+  CANARY_STATIC_VARS,
+  CANARY_SUBREQUEST_LIMIT,
+  canaryVisualPolicy,
+} from "../generate-live-canary-config.mjs";
+import { resolvePinnedTypeScriptToolchain } from "../pinned-wrangler-command.mjs";
 
 const DEFAULT_EXPECTED_PROVIDER = "workers-ai-gemma4";
 
@@ -69,6 +78,13 @@ const CLOSED_FORBIDDEN_ENVIRONMENT = [
   "FORCE_COLOR",
 ];
 
+let cachedPinnedWrangler;
+
+function pinnedWrangler() {
+  cachedPinnedWrangler ??= resolvePinnedTypeScriptToolchain();
+  return cachedPinnedWrangler;
+}
+
 function fixture(t, mutate = (value) => value, expectedProvider = DEFAULT_EXPECTED_PROVIDER) {
   const root = mkdtempSync(path.join(tmpdir(), "survey-qa-secret-audit-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -85,7 +101,11 @@ function fixture(t, mutate = (value) => value, expectedProvider = DEFAULT_EXPECT
     name: "survey-qa-v2-visual-canary",
     account_id: EXPECTED_CLOUDFLARE_ACCOUNT_ID,
     compliance_region: "public",
+    version_metadata: { binding: "CF_VERSION_METADATA" },
     main: path.join(workerRoot, "tools", "live-canary-worker.ts"),
+    compatibility_date: CANARY_COMPATIBILITY_DATE,
+    compatibility_flags: [...CANARY_COMPATIBILITY_FLAGS],
+    rules: [{ type: "Text", globs: ["**/report.css"], fallthrough: false }],
     workers_dev: true,
     preview_urls: false,
     assets: {
@@ -93,9 +113,30 @@ function fixture(t, mutate = (value) => value, expectedProvider = DEFAULT_EXPECT
       binding: "ASSETS",
       run_worker_first: ["/api/v2/*", "/runs/*", "/v2/*"],
     },
+    browser: { binding: "BROWSER" },
+    ai: { binding: "AI" },
     r2_buckets: [{ binding: "EVIDENCE", bucket_name: EXPECTED_CANARY_BUCKET }],
+    limits: { subrequests: CANARY_SUBREQUEST_LIMIT },
     workflows: EXPECTED_CANARY_WORKFLOW_BINDINGS.map((binding) => ({ ...binding })),
+    secrets_store_secrets: CANARY_SECRET_BINDINGS.map((binding) => ({
+      binding,
+      store_id: CANARY_SECRET_STORE_ID,
+      secret_name: binding,
+    })),
     vars: {
+      ...CANARY_STATIC_VARS,
+      CANARY_AUTH_SHA256: "a".repeat(64),
+      CANARY_EXPECTED_DOCUMENT_SHA256: "c".repeat(64),
+      CANARY_SOURCE_MANIFEST_SHA256: "b".repeat(64),
+      JUDGEMENT_KEY_REGISTRY: JSON.stringify({
+        keys: {
+          "judgement-test-1": {
+            publicKeySpki: "MCowBQYDK2VwAyEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            trust: "production",
+            note: "remote audit fixture",
+          },
+        },
+      }),
       VISUAL_SHADOW_ENABLED: "true",
       VISUAL_PROVIDER: visualPolicy.provider,
       VISUAL_MAX_CALLS: visualPolicy.maximumCalls,
@@ -106,6 +147,7 @@ function fixture(t, mutate = (value) => value, expectedProvider = DEFAULT_EXPECT
       CANARY_VISUAL_PROFILE: visualPolicy.profile,
       CANARY_VISUAL_POLICY_SHA256: visualPolicy.sha256,
     },
+    observability: { enabled: true },
   });
   writeFileSync(configPath, `${JSON.stringify(config)}\n`, { encoding: "utf8", mode: 0o600 });
 
@@ -115,6 +157,13 @@ function fixture(t, mutate = (value) => value, expectedProvider = DEFAULT_EXPECT
     configPath,
     logFile: path.join(auditRoot, "wrangler-secret-audit.log"),
     expectedProvider,
+    resolvePinnedWranglerCommandImpl() {
+      return pinnedWrangler();
+    },
+    verifyPinnedWranglerCommandImpl(expected) {
+      assert.equal(expected, pinnedWrangler());
+      return pinnedWrangler();
+    },
     assertPrivatePathImpl() {},
     verifyAuditLogImpl() {
       return { bytes: 321, sha256: "b".repeat(64) };
@@ -123,10 +172,11 @@ function fixture(t, mutate = (value) => value, expectedProvider = DEFAULT_EXPECT
 }
 
 function identityPreflightResult(args) {
-  if (args.length === 3 && args[2] === "--version") {
+  const suffix = args.slice(pinnedWrangler().argsPrefix.length);
+  if (suffix.length === 1 && suffix[0] === "--version") {
     return { status: 0, stdout: `${EXPECTED_WRANGLER_VERSION}\n`, stderr: "" };
   }
-  if (args.length === 3 && args[2] === "whoami") {
+  if (suffix.length === 1 && suffix[0] === "whoami") {
     return { status: 0, stdout: `Account ID ${EXPECTED_CLOUDFLARE_ACCOUNT_ID}\n`, stderr: "" };
   }
   return null;
@@ -151,6 +201,7 @@ test("closed signer set and environment scrub list are independently frozen", ()
 test("post-deploy audit runs only identity checks and one exact read-only secret-list command", (t) => {
   const input = fixture(t);
   const calls = [];
+  let verificationCount = 0;
   const hostileEnvironment = Object.fromEntries(
     CLOSED_FORBIDDEN_ENVIRONMENT.map((name, index) => [
       index % 2 === 0 ? name : name.toLowerCase(),
@@ -158,6 +209,9 @@ test("post-deploy audit runs only identity checks and one exact read-only secret
     ]),
   );
   hostileEnvironment.SAFE_TEST_ENV = "preserved";
+  hostileEnvironment.PATH = "C:\\fixture-npx-poison";
+  hostileEnvironment.NODE_OPTIONS = "--import=fixture-poison.mjs";
+  hostileEnvironment.npm_config_prefix = "C:\\fixture-npm-poison";
   const remoteJson = `${JSON.stringify(signerRecords([
     "RECORD_SIGNING_KEY_ID",
     "JUDGEMENT_SIGNING_KEY",
@@ -167,8 +221,12 @@ test("post-deploy audit runs only identity checks and one exact read-only secret
 
   const audit = runRemoteSecretAudit({
     ...input,
-    platform: "win32",
     environment: hostileEnvironment,
+    verifyPinnedWranglerCommandImpl(expected) {
+      verificationCount += 1;
+      assert.equal(expected, pinnedWrangler());
+      return pinnedWrangler();
+    },
     spawnSyncImpl(command, args, options) {
       calls.push({ command, args, options });
       const identity = identityPreflightResult(args);
@@ -178,13 +236,13 @@ test("post-deploy audit runs only identity checks and one exact read-only secret
   });
 
   assert.equal(calls.length, 3);
-  assert.ok(calls.every((call) => call.command === "npx.cmd"));
+  assert.equal(verificationCount, 3);
+  assert.ok(calls.every((call) => call.command === pinnedWrangler().command));
   assert.deepEqual(calls.map((call) => call.args), [
-    ["--no-install", "wrangler", "--version"],
-    ["--no-install", "wrangler", "whoami"],
+    [...pinnedWrangler().argsPrefix, "--version"],
+    [...pinnedWrangler().argsPrefix, "whoami"],
     [
-      "--no-install",
-      "wrangler",
+      ...pinnedWrangler().argsPrefix,
       "secret",
       "list",
       "--config",
@@ -196,7 +254,12 @@ test("post-deploy audit runs only identity checks and one exact read-only secret
   assert.ok(calls.every((call) => call.options.cwd === input.workerRoot));
   assert.ok(calls.every((call) => call.options.timeout === 120_000));
   assert.ok(calls.every((call) => call.options.maxBuffer === 1024 * 1024));
-  assert.ok(calls.every((call) => call.options.env.SAFE_TEST_ENV === "preserved"));
+  assert.ok(calls.every((call) => call.options.env.SAFE_TEST_ENV === undefined));
+  assert.ok(calls.every((call) => call.options.env.PATH === undefined));
+  assert.ok(calls.every((call) => call.options.env.NODE_OPTIONS === undefined));
+  assert.ok(calls.every((call) => call.options.env.npm_config_prefix === undefined));
+  assert.ok(calls.every((call) => !/npx/iu.test(call.command)));
+  assert.ok(calls.every((call) => call.args.every((argument) => !/^(?:npx|--no-install)$/iu.test(argument))));
   assert.ok(calls.every((call) => call.options.env.WRANGLER_API_ENVIRONMENT === "production"));
   assert.ok(calls.every((call) => call.options.env.CLOUDFLARE_COMPLIANCE_REGION === "public"));
   assert.ok(calls.every((call) => call.options.env.WRANGLER_LOG_PATH === input.logFile));
@@ -261,6 +324,30 @@ test("post-deploy audit runs only identity checks and one exact read-only secret
   assert.deepEqual(audit.logAudit, { bytes: 321, sha256: "b".repeat(64) });
   assert.match(audit.configSha256, /^[a-f0-9]{64}$/u);
   assert.doesNotMatch(JSON.stringify(audit), /stdout|stderr|secret_text|forbidden-marker/u);
+});
+
+test("Wrangler descriptor is reverified before every subprocess and drift stops before the next spawn", (t) => {
+  const input = fixture(t);
+  let verificationCount = 0;
+  let spawnCount = 0;
+  assert.throws(
+    () => runRemoteSecretAudit({
+      ...input,
+      verifyPinnedWranglerCommandImpl(expected) {
+        verificationCount += 1;
+        assert.equal(expected, pinnedWrangler());
+        if (verificationCount === 2) throw new Error("fixture descriptor drift");
+        return pinnedWrangler();
+      },
+      spawnSyncImpl(_command, args) {
+        spawnCount += 1;
+        return identityPreflightResult(args);
+      },
+    }),
+    (error) => error.code === "WRANGLER_PIN_INVALID",
+  );
+  assert.equal(verificationCount, 2);
+  assert.equal(spawnCount, 1);
 });
 
 test("schema and signer-set mutants are killed instead of becoming a false green", async (t) => {
@@ -356,7 +443,7 @@ test("config, CLI version, and authenticated account mismatches stop before secr
       ...wrongVersion,
       spawnSyncImpl(_command, args) {
         versionCalls += 1;
-        if (args[2] === "--version") return { status: 0, stdout: "4.999.0\n", stderr: "" };
+        if (args.at(-1) === "--version") return { status: 0, stdout: "4.999.0\n", stderr: "" };
         throw new Error("must not list secrets after version drift");
       },
     }),
@@ -371,8 +458,8 @@ test("config, CLI version, and authenticated account mismatches stop before secr
       ...wrongAccount,
       spawnSyncImpl(_command, args) {
         accountCalls += 1;
-        if (args[2] === "--version") return identityPreflightResult(args);
-        if (args[2] === "whoami") {
+        if (args.at(-1) === "--version") return identityPreflightResult(args);
+        if (args.at(-1) === "whoami") {
           return { status: 0, stdout: `Account ID ${"2".repeat(32)}\n`, stderr: "" };
         }
         throw new Error("must not list secrets after account drift");

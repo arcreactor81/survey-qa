@@ -8,6 +8,11 @@
  */
 
 import { isV2RunId, mintRunId } from "../src/ids";
+import type { Env } from "../src/types/env";
+import { cloudflareGatewayGeminiModelSpec } from "../src/vision/providers/cloudflare-gateway-gemini";
+import { mistralMedium35ModelSpec } from "../src/vision/providers/mistral-medium35";
+import { workersAiGemma4ModelSpec } from "../src/vision/providers/workers-ai-gemma4";
+import { createHash, createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
 import {
   activeMarkerKey,
   checkpointKey,
@@ -21,10 +26,24 @@ import {
   LIVE_CANARY_ACCEPTANCE_SCHEMA,
   LIVE_CANARY_PLANNED_RUN_ID_HEADER,
 } from "../src/api/canary-internal";
+import {
+  LIVE_CANARY_IDENTITY_HEADER,
+  LIVE_CANARY_MAXIMUM_USD_HEADER,
+  LIVE_CANARY_POLICY_HEADER,
+  LIVE_CANARY_PROVIDER_CONFIGURATION_HEADER,
+  LIVE_CANARY_PROVIDER_HEADER,
+  LIVE_CANARY_VERSION_ID_HEADER,
+} from "./live-canary-contract.mjs";
 
 export { LIVE_CANARY_PLANNED_RUN_ID_HEADER };
 
 export const LIVE_CANARY_AUTH_HEADER = "x-survey-qa-canary-token" as const;
+export const LIVE_CANARY_ATTESTATION_PATH = "/api/v2/canary-attestation" as const;
+
+const LIVE_CANARY_REMOTE_ATTESTATION_SCHEMA =
+  "survey-qa-canary-remote-attestation/1.0.0";
+const LIVE_CANARY_ATTESTATION_CHALLENGE_DOMAIN =
+  "survey-qa-canary-attestation-fixed-challenge/1\u0000";
 
 const LIVE_CANARY_SUBMISSION_CLAIM_PREFIX = "v2/live-canary/submission-claims/";
 const CLAIM_SCHEMA_VERSION = "survey-qa-live-canary-submission-claim/2.0.0";
@@ -36,6 +55,10 @@ const DEFAULT_MAX_SUBMISSION_BYTES =
   + 1024 * 1024;
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SAFE_SIGNER_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/+\-]{0,199}$/;
+const SAFE_DECIMAL = /^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,9})?$/;
+const VERSION_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const SAFE_REASON = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const MIN_TOKEN_LENGTH = 32;
 const MAX_TOKEN_LENGTH = 256;
@@ -45,6 +68,34 @@ const CANARY_RUN_READ = new RegExp(
     "(status|coverage|visual-status|record|report-data|export|evidence)$",
 );
 const JSON_MEDIA_TYPE = /^application\/json(?:\s*;\s*charset=utf-8)?$/i;
+const BASE64_WITH_TRAILING_PADDING = /^[A-Za-z0-9+/]+={0,2}$/;
+const LIVE_CANARY_SUBMISSION_KEYS = Object.freeze([
+  "contractSource",
+  "documentBase64",
+  "documentName",
+  "locale",
+  "profile",
+  "surveyUrl",
+  "viewports",
+]);
+const LIVE_CANARY_ATTESTED_BINDINGS = Object.freeze([
+  "AI",
+  "ANTHROPIC_API_KEY",
+  "ASSETS",
+  "BROWSER",
+  "CF_VERSION_METADATA",
+  "DEEPSEEK_API_KEY",
+  "EVIDENCE",
+  "GEMINI_API_KEY",
+  "JUDGEMENT_SIGNING_KEY",
+  "JUDGEMENT_SIGNING_KEY_ID",
+  "MISTRAL_API_KEY",
+  "RECORD_SIGNING_KEY",
+  "RECORD_SIGNING_KEY_ID",
+  "V2_RUN_WORKFLOW",
+  "V2_VISUAL_WORKFLOW",
+  "XAI_API_KEY",
+] as const);
 
 type PendingClaim = {
   schemaVersion: typeof CLAIM_SCHEMA_VERSION;
@@ -104,16 +155,124 @@ export async function isAuthorizedLiveCanaryRequest(
 }
 
 /** Exact routes needed by probe, polling and retained artifact collection. */
-export function liveCanaryRequestMode(request: Request): "read" | "submission" | null {
+export function liveCanaryRequestMode(request: Request): "attestation" | "read" | "submission" | null {
   const url = new URL(request.url);
-  if (url.search !== "") return null;
   if (request.method === "GET") {
+    // The dedicated handler closes and authenticates the one allowed challenge query. Keeping
+    // it out of the ordinary read branch makes it structurally impossible to forward.
+    if (url.pathname === LIVE_CANARY_ATTESTATION_PATH) return "attestation";
+    if (url.search !== "") return null;
     if (url.pathname === "/api/v2/health" || CANARY_RUN_READ.test(url.pathname)) return "read";
     return null;
   }
+  if (url.search !== "") return null;
   return request.method === "POST" && url.pathname === "/api/v2/runs"
     ? "submission"
     : null;
+}
+
+/**
+ * Return a closed, non-secret runtime attestation for this exact one-call canary build.
+ *
+ * The caller only echoes the fixed build-bound challenge digest. It never controls bytes that
+ * are signed. Every validation except the final unused-claim lookup occurs before R2, and the
+ * handler has no write, Workflow, provider, or production-forward capability.
+ */
+export async function handleLiveCanaryAttestation(request: Request, env: Env): Promise<Response> {
+  try {
+    const url = new URL(request.url);
+    if (request.method !== "GET" || url.pathname !== LIVE_CANARY_ATTESTATION_PATH) {
+      return liveCanaryNotFound();
+    }
+
+    const identitySha256 = requiredSha256(env.CANARY_DEPLOYMENT_IDENTITY_SHA256);
+    const challengeBytes = new TextEncoder().encode(
+      `${LIVE_CANARY_ATTESTATION_CHALLENGE_DOMAIN}${identitySha256}`,
+    );
+    const challengeSha256 = await sha256Bytes(challengeBytes);
+    // Raw equality rejects absent, duplicate, reordered, percent-encoded, and unknown fields.
+    if (url.search !== `?challenge=${challengeSha256}`) return liveCanaryNotFound();
+
+    const expectedVersionTag = `sqac-${identitySha256.slice(0, 24)}`;
+    if (env.CANARY_VERSION_TAG !== expectedVersionTag) throw new Error("configured canary version tag is invalid");
+    const workerVersion = closedWorkerVersion(env.CF_VERSION_METADATA, expectedVersionTag);
+    const build = {
+      bundleInputsManifestSha256: requiredSha256(env.CANARY_BUNDLE_INPUTS_MANIFEST_SHA256),
+      bundleMetafileSha256: requiredSha256(env.CANARY_BUNDLE_METAFILE_SHA256),
+      reviewedBundleManifestSha256: requiredSha256(env.CANARY_REVIEWED_BUNDLE_MANIFEST_SHA256),
+      sourceManifestSha256: requiredSha256(env.CANARY_SOURCE_MANIFEST_SHA256),
+    };
+    const documentSha256 = requiredSha256(env.CANARY_EXPECTED_DOCUMENT_SHA256);
+    const policySha256 = requiredSha256(env.CANARY_VISUAL_POLICY_SHA256);
+    if (env.VISUAL_MAX_CALLS !== "1") throw new Error("canary is not a one-call arm");
+    if (
+      typeof env.VISUAL_MAX_USD !== "string" ||
+      !SAFE_DECIMAL.test(env.VISUAL_MAX_USD) ||
+      Number(env.VISUAL_MAX_USD) <= 0
+    ) throw new Error("canary visual cost cap is invalid");
+    const model = await attestedVisualModel(env);
+
+    const bindings = closedBindingPresence(env);
+    const recordSigner = signerSelfCheck(
+      env.RECORD_SIGNING_KEY,
+      env.RECORD_SIGNING_KEY_ID,
+      challengeBytes,
+    );
+    const judgementSigner = signerSelfCheck(
+      env.JUDGEMENT_SIGNING_KEY,
+      env.JUDGEMENT_SIGNING_KEY_ID,
+      challengeBytes,
+    );
+    if (recordSigner.keyId === judgementSigner.keyId) throw new Error("canary signer ids collide");
+    assertJudgementRegistry(env.JUDGEMENT_KEY_REGISTRY, judgementSigner);
+
+    // The wrapper has exactly one state-changing arm, represented by exactly this claim key.
+    // Absence is therefore the auditable pre-spend state. This is the endpoint's sole R2 read.
+    const authSha256 = requiredSha256(env.CANARY_AUTH_SHA256);
+    const claimKey = await liveCanarySubmissionClaimKey(authSha256);
+    if (await env.EVIDENCE.get(claimKey) !== null) return liveCanaryNotFound();
+
+    return new Response(JSON.stringify({
+      bindings,
+      build,
+      documentSha256,
+      identitySha256,
+      provider: {
+        configurationSha256: model.configurationSha256,
+        maximumCalls: 1,
+        maximumUsd: env.VISUAL_MAX_USD,
+        model: model.model,
+        name: env.VISUAL_PROVIDER,
+        policySha256,
+      },
+      safety: {
+        providerCalls: 0,
+        providerCostUsd: "0",
+        submissionClaimState: "unused",
+        workflowInstancesCreated: 0,
+      },
+      schemaVersion: LIVE_CANARY_REMOTE_ATTESTATION_SCHEMA,
+      signers: {
+        challengeSha256,
+        judgementKeyId: judgementSigner.keyId,
+        judgementPublicKeySha256: judgementSigner.publicKeySha256,
+        judgementVerified: true,
+        recordKeyId: recordSigner.keyId,
+        recordPublicKeySha256: recordSigner.publicKeySha256,
+        recordVerified: true,
+      },
+      workerVersion,
+    }), {
+      status: 200,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+      },
+    });
+  } catch {
+    return liveCanaryNotFound();
+  }
 }
 
 /** Mirror the production request-body ceiling without silently repairing bad config. */
@@ -139,6 +298,7 @@ export function requestWithoutLiveCanaryCredential(request: Request): Request {
   const headers = new Headers(request.headers);
   headers.delete(LIVE_CANARY_AUTH_HEADER);
   headers.delete(LIVE_CANARY_PLANNED_RUN_ID_HEADER);
+  deleteLiveCanaryRuntimeIdentityHeaders(headers);
   return new Request(request, { headers });
 }
 
@@ -158,12 +318,26 @@ export async function handleLiveCanarySubmission(
   expectedSha256: string | undefined,
   forward: (request: Request) => Promise<Response>,
   options: {
+    expectedDocumentSha256?: string;
     maximumBytes?: number;
     now?: () => Date;
     mintRunId?: () => string;
+    runtimeEnv?: Env;
   } = {},
 ): Promise<Response> {
-  if (expectedSha256 === undefined || !SHA256_HEX.test(expectedSha256)) return liveCanaryNotFound();
+  const expectedDocumentSha256 = options.expectedDocumentSha256;
+  if (
+    expectedSha256 === undefined ||
+    !SHA256_HEX.test(expectedSha256) ||
+    expectedDocumentSha256 === undefined ||
+    !SHA256_HEX.test(expectedDocumentSha256)
+  ) return liveCanaryNotFound();
+  try {
+    await assertLiveCanarySubmissionRuntimeIdentity(options.runtimeEnv, request);
+  } catch {
+    // Version/provider identity is checked before request buffering, R2 claim, Workflow, or model.
+    return liveCanaryNotFound();
+  }
   const ingress = requestWithoutLiveCanaryInternalHeaders(request);
   if (liveCanaryRequestMode(ingress) !== "submission") return liveCanaryNotFound();
 
@@ -201,17 +375,23 @@ export async function handleLiveCanarySubmission(
     return liveCanaryJsonError(400, "CANARY_SUBMISSION_BODY_UNREADABLE", "the canary submission body could not be read");
   }
 
-  // Syntax errors are known rejections, not an ambiguity worth reserving the single arm for.
-  // Full schema/media validation remains in submitRun; a schema rejection is CAS-recorded and
-  // released only after the production handler proves it created no durable run state.
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new Error("submission JSON is not an object");
     }
   } catch {
     return liveCanaryJsonError(400, "CANARY_SUBMISSION_JSON_INVALID", "the canary submission must be one valid UTF-8 JSON object");
   }
+
+  // This public wrapper accepts only the deterministic JSON shape emitted by
+  // buildLiveCanarySubmissionBody. The normal API remains general-purpose; this adapter is
+  // deliberately closed so the configured document digest binds the only paid canary arm.
+  const documentBytes = closedCanaryDocumentBytes(parsed);
+  if (documentBytes === null) return liveCanaryNotFound();
+  const actualDocumentSha256 = await sha256Bytes(documentBytes);
+  if (!constantTimeEqual(actualDocumentSha256, expectedDocumentSha256)) return liveCanaryNotFound();
 
   const requestSha256 = await sha256Bytes(bytes);
   const now = options.now ?? (() => new Date());
@@ -285,6 +465,172 @@ export function liveCanaryNotFound(): Response {
       "x-content-type-options": "nosniff",
     },
   });
+}
+
+async function attestedVisualModel(env: Env): Promise<{ model: string; configurationSha256: string }> {
+  let model: { model: string; configurationSha256: string };
+  switch (env.VISUAL_PROVIDER) {
+    case "workers-ai-gemma4":
+      model = await workersAiGemma4ModelSpec();
+      break;
+    case "cloudflare-gateway-gemini":
+      if (typeof env.CF_AIG_GATEWAY_ID !== "string") throw new Error("AI Gateway id is absent");
+      model = await cloudflareGatewayGeminiModelSpec(env.CF_AIG_GATEWAY_ID);
+      break;
+    case "mistral-medium35-direct":
+      model = await mistralMedium35ModelSpec();
+      break;
+    default:
+      throw new Error("visual provider is not an attested canary selector");
+  }
+  requiredSha256(model.configurationSha256);
+  return model;
+}
+
+/** The paid route repeats the exact runtime identity check immediately before any claim. */
+async function assertLiveCanarySubmissionRuntimeIdentity(
+  env: Env | undefined,
+  request: Request,
+): Promise<void> {
+  if (env === undefined) throw new Error("canary runtime identity is absent");
+  const identitySha256 = requiredSha256(env.CANARY_DEPLOYMENT_IDENTITY_SHA256);
+  const expectedVersionTag = `sqac-${identitySha256.slice(0, 24)}`;
+  if (env.CANARY_VERSION_TAG !== expectedVersionTag) throw new Error("configured canary version tag is invalid");
+  const workerVersion = closedWorkerVersion(env.CF_VERSION_METADATA, expectedVersionTag);
+  const policySha256 = requiredSha256(env.CANARY_VISUAL_POLICY_SHA256);
+  if (
+    env.VISUAL_MAX_CALLS !== "1" ||
+    typeof env.VISUAL_MAX_USD !== "string" ||
+    !SAFE_DECIMAL.test(env.VISUAL_MAX_USD) ||
+    Number(env.VISUAL_MAX_USD) <= 0
+  ) throw new Error("canary one-call policy is invalid");
+  const model = await attestedVisualModel(env);
+  const suppliedIdentity = request.headers.get(LIVE_CANARY_IDENTITY_HEADER) ?? "";
+  const suppliedVersionId = request.headers.get(LIVE_CANARY_VERSION_ID_HEADER) ?? "";
+  const suppliedPolicy = request.headers.get(LIVE_CANARY_POLICY_HEADER) ?? "";
+  const suppliedConfiguration = request.headers.get(LIVE_CANARY_PROVIDER_CONFIGURATION_HEADER) ?? "";
+  if (
+    !SHA256_HEX.test(suppliedIdentity) ||
+    !constantTimeEqual(suppliedIdentity, identitySha256) ||
+    !UUID.test(suppliedVersionId) ||
+    suppliedVersionId !== workerVersion.id ||
+    request.headers.get(LIVE_CANARY_PROVIDER_HEADER) !== env.VISUAL_PROVIDER ||
+    !SHA256_HEX.test(suppliedPolicy) ||
+    !constantTimeEqual(suppliedPolicy, policySha256) ||
+    !SHA256_HEX.test(suppliedConfiguration) ||
+    !constantTimeEqual(suppliedConfiguration, model.configurationSha256) ||
+    request.headers.get(LIVE_CANARY_MAXIMUM_USD_HEADER) !== env.VISUAL_MAX_USD
+  ) throw new Error("canary submission runtime identity header is invalid");
+}
+
+function closedWorkerVersion(
+  value: WorkerVersionMetadata | undefined,
+  expectedTag: string,
+): { id: string; tag: string; timestamp: string } {
+  if (
+    value === undefined ||
+    !UUID.test(value.id) ||
+    value.tag !== expectedTag ||
+    !VERSION_TIMESTAMP.test(value.timestamp) ||
+    !Number.isFinite(Date.parse(value.timestamp))
+  ) throw new Error("Worker version metadata is invalid");
+  return { id: value.id, tag: value.tag, timestamp: value.timestamp };
+}
+
+function closedBindingPresence(env: Env): Record<(typeof LIVE_CANARY_ATTESTED_BINDINGS)[number], true> {
+  const values = env as unknown as Record<string, unknown>;
+  const result = {} as Record<(typeof LIVE_CANARY_ATTESTED_BINDINGS)[number], true>;
+  for (const name of LIVE_CANARY_ATTESTED_BINDINGS) {
+    const value = values[name];
+    let present = false;
+    if (name === "ASSETS" || name === "BROWSER") {
+      present = objectMethod(value, "fetch");
+    } else if (name === "EVIDENCE") {
+      present = objectMethod(value, "get") && objectMethod(value, "put");
+    } else if (name === "V2_RUN_WORKFLOW" || name === "V2_VISUAL_WORKFLOW") {
+      present = objectMethod(value, "create");
+    } else if (name === "AI") {
+      present = objectMethod(value, "run");
+    } else if (name === "CF_VERSION_METADATA") {
+      present = typeof value === "object" && value !== null;
+    } else if (name.endsWith("_SIGNING_KEY") || name.endsWith("_SIGNING_KEY_ID")) {
+      present = typeof value === "string" && value.length > 0;
+    } else {
+      // Secrets Store bindings are proved structurally and are never resolved here.
+      present = (typeof value === "string" && value.length > 0) || objectMethod(value, "get");
+    }
+    if (!present) throw new Error(`required canary binding ${name} is unavailable`);
+    result[name] = true;
+  }
+  return result;
+}
+
+function objectMethod(value: unknown, method: string): boolean {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) return false;
+  return typeof (value as Record<string, unknown>)[method] === "function";
+}
+
+type SignerSelfCheck = {
+  keyId: string;
+  publicKeySha256: string;
+  publicKeySpki: string;
+};
+
+function signerSelfCheck(
+  privateKeyPem: string | undefined,
+  keyId: string | undefined,
+  challenge: Uint8Array,
+): SignerSelfCheck {
+  if (
+    typeof privateKeyPem !== "string" ||
+    privateKeyPem.length === 0 ||
+    privateKeyPem.length > 16 * 1024 ||
+    typeof keyId !== "string" ||
+    !SAFE_SIGNER_ID.test(keyId)
+  ) throw new Error("canary signer configuration is invalid");
+  const privateKey = createPrivateKey(privateKeyPem.replace(/\\n/g, "\n"));
+  if (privateKey.type !== "private" || privateKey.asymmetricKeyType !== "ed25519") {
+    throw new Error("canary signer is not Ed25519");
+  }
+  const publicKey = createPublicKey(privateKey);
+  if (publicKey.type !== "public" || publicKey.asymmetricKeyType !== "ed25519") {
+    throw new Error("canary signer public key is not Ed25519");
+  }
+  const signature = sign(null, challenge, privateKey);
+  if (!verify(null, challenge, publicKey, signature)) throw new Error("canary signer self-check failed");
+  const publicKeyDer = publicKey.export({ type: "spki", format: "der" });
+  return {
+    keyId,
+    publicKeySha256: createHash("sha256").update(publicKeyDer).digest("hex"),
+    publicKeySpki: publicKeyDer.toString("base64"),
+  };
+}
+
+function assertJudgementRegistry(value: string | undefined, signer: SignerSelfCheck): void {
+  if (typeof value !== "string" || value.length === 0 || value.length > 64 * 1024) {
+    throw new Error("judgement registry is unavailable");
+  }
+  const parsed: unknown = JSON.parse(value);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("judgement registry is invalid");
+  }
+  const keys = (parsed as Record<string, unknown>).keys;
+  if (typeof keys !== "object" || keys === null || Array.isArray(keys)) {
+    throw new Error("judgement registry keys are invalid");
+  }
+  const entry = (keys as Record<string, unknown>)[signer.keyId];
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    throw new Error("judgement signer is not registered");
+  }
+  const record = entry as Record<string, unknown>;
+  if (record.publicKeySpki !== signer.publicKeySpki || record.trust !== "production") {
+    throw new Error("judgement signer registry identity is invalid");
+  }
+}
+
+function requiredSha256(value: string | undefined): string {
+  if (typeof value !== "string" || !SHA256_HEX.test(value)) throw new Error("required digest is invalid");
+  return value;
 }
 
 async function acquireSubmissionClaim(
@@ -538,10 +884,65 @@ function forwardedSubmissionRequest(request: Request, bytes: Uint8Array, runId: 
   const headers = new Headers(request.headers);
   headers.delete(LIVE_CANARY_AUTH_HEADER);
   headers.delete(LIVE_CANARY_PLANNED_RUN_ID_HEADER);
+  deleteLiveCanaryRuntimeIdentityHeaders(headers);
   headers.delete("content-length");
   headers.set(LIVE_CANARY_PLANNED_RUN_ID_HEADER, runId);
   const body = bytes.slice().buffer;
   return new Request(request.url, { method: "POST", headers, body, redirect: "manual" });
+}
+
+function deleteLiveCanaryRuntimeIdentityHeaders(headers: Headers): void {
+  headers.delete(LIVE_CANARY_IDENTITY_HEADER);
+  headers.delete(LIVE_CANARY_PROVIDER_HEADER);
+  headers.delete(LIVE_CANARY_POLICY_HEADER);
+  headers.delete(LIVE_CANARY_PROVIDER_CONFIGURATION_HEADER);
+  headers.delete(LIVE_CANARY_MAXIMUM_USD_HEADER);
+  headers.delete(LIVE_CANARY_VERSION_ID_HEADER);
+}
+
+function closedCanaryDocumentBytes(value: unknown): Uint8Array | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== LIVE_CANARY_SUBMISSION_KEYS.length ||
+    keys.some((key, index) => key !== LIVE_CANARY_SUBMISSION_KEYS[index]) ||
+    typeof record.surveyUrl !== "string" ||
+    record.surveyUrl.length === 0 ||
+    record.surveyUrl.length > 8_192 ||
+    typeof record.documentName !== "string" ||
+    record.documentName.length === 0 ||
+    record.documentName.length > 1_024 ||
+    record.profile !== "standard" ||
+    record.locale !== "en" ||
+    !Array.isArray(record.viewports) ||
+    record.viewports.length !== 1 ||
+    record.viewports[0] !== "desktop" ||
+    record.contractSource !== "extract"
+  ) return null;
+  return decodeCanonicalBase64(record.documentBase64);
+}
+
+function decodeCanonicalBase64(value: unknown): Uint8Array | null {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length % 4 !== 0 ||
+    !BASE64_WITH_TRAILING_PADDING.test(value)
+  ) return null;
+  try {
+    const binary = atob(value);
+    // atob accepts whitespace, missing padding, and encodings with non-zero trailing pad
+    // bits. Re-encoding closes all three alternate spellings before the document hash gate.
+    if (binary.length === 0 || btoa(binary) !== value) return null;
+    const decoded = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      decoded[index] = binary.charCodeAt(index);
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
 }
 
 async function readBoundedBody(request: Request, maximumBytes: number): Promise<Uint8Array | null> {

@@ -1,7 +1,17 @@
 import type { VisionClient, VisionClientOutcome, VisionClientRequest, VisionModelSpec } from "../types";
 import { VisionProviderUnavailableError } from "../types";
+// @ts-ignore -- plain ESM is the single runtime/deployment provider-configuration source
+import * as providerConfigurationSource from "../../../shared/visual-provider-config.mjs";
+const {
+  CLOUDFLARE_GATEWAY_GEMINI_MAX_COMPLETION_TOKENS: SHARED_GATEWAY_MAX_COMPLETION_TOKENS,
+  CLOUDFLARE_GATEWAY_GEMINI_MAX_MODEL_CONTENT_CHARS,
+  CLOUDFLARE_GATEWAY_GEMINI_MAX_SCREENSHOT_BYTES,
+  CLOUDFLARE_GATEWAY_GEMINI_MODEL: SHARED_GATEWAY_MODEL,
+  CLOUDFLARE_GATEWAY_GEMINI_PROVIDER: SHARED_GATEWAY_PROVIDER,
+  CLOUDFLARE_GATEWAY_GEMINI_TRANSPORT: SHARED_GATEWAY_TRANSPORT,
+  cloudflareGatewayGeminiConfiguration: sharedCloudflareGatewayGeminiConfiguration,
+} = providerConfigurationSource;
 import {
-  VISION_PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   assertExactProductionVisionRequest,
   boundedProviderString,
   elapsedMilliseconds,
@@ -13,64 +23,29 @@ import {
   providerTokenCount,
   sanitizedProviderFailure,
   throwIfAborted,
-  type VisionProviderConfigurationEnvelope,
 } from "./shared";
 
-export const CLOUDFLARE_GATEWAY_GEMINI_PROVIDER = "cloudflare-ai-gateway";
-export const CLOUDFLARE_GATEWAY_GEMINI_MODEL = "google-ai-studio/gemini-3.6-flash";
-export const CLOUDFLARE_GATEWAY_GEMINI_TRANSPORT =
-  "workers-ai-binding-ai-gateway-unified-billing";
+export const CLOUDFLARE_GATEWAY_GEMINI_PROVIDER: "cloudflare-ai-gateway" =
+  SHARED_GATEWAY_PROVIDER;
+export const CLOUDFLARE_GATEWAY_GEMINI_MODEL: "google-ai-studio/gemini-3.6-flash" =
+  SHARED_GATEWAY_MODEL;
+export const CLOUDFLARE_GATEWAY_GEMINI_TRANSPORT:
+  "workers-ai-binding-ai-gateway-unified-billing" = SHARED_GATEWAY_TRANSPORT;
 
-const MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024;
-const MAX_MODEL_CONTENT_CHARS = 2 * 1024 * 1024;
+const MAX_SCREENSHOT_BYTES: number = CLOUDFLARE_GATEWAY_GEMINI_MAX_SCREENSHOT_BYTES;
+const MAX_MODEL_CONTENT_CHARS: number = CLOUDFLARE_GATEWAY_GEMINI_MAX_MODEL_CONTENT_CHARS;
 // Bound the charged tail so the strict preflight can reserve a real worst case. If one viewport
 // cannot fit, closed validation fails visibly and the capture layer can tile it.
-export const CLOUDFLARE_GATEWAY_GEMINI_MAX_COMPLETION_TOKENS = 2_048;
+export const CLOUDFLARE_GATEWAY_GEMINI_MAX_COMPLETION_TOKENS: 2048 =
+  SHARED_GATEWAY_MAX_COMPLETION_TOKENS;
 const MAX_COMPLETION_TOKENS = CLOUDFLARE_GATEWAY_GEMINI_MAX_COMPLETION_TOKENS;
 const GATEWAY_ID = /^[A-Za-z0-9_-]{1,128}$/;
 
 export function cloudflareGatewayGeminiConfiguration(
   gatewayId: string,
-): VisionProviderConfigurationEnvelope {
+): import("./shared").VisionProviderConfigurationEnvelope {
   assertGatewayId(gatewayId);
-  return {
-    schemaVersion: VISION_PROVIDER_CONFIGURATION_SCHEMA_VERSION,
-    provider: CLOUDFLARE_GATEWAY_GEMINI_PROVIDER,
-    model: CLOUDFLARE_GATEWAY_GEMINI_MODEL,
-    transport: CLOUDFLARE_GATEWAY_GEMINI_TRANSPORT,
-    request: {
-      api: "ai-binding-openai-chat-completions",
-      gateway: {
-        id: gatewayId,
-        collectLog: false,
-        retries: { maxAttempts: 1 },
-        skipCache: true,
-      },
-      image: { mediaType: "image/png", detail: "high", encoding: "data-url" },
-      structuredOutput: {
-        type: "json_schema",
-        strict: true,
-        acceptedBindingResponse: "single-chat-completion-object",
-        requiredFinishReason: "stop",
-        alternateCompletionSurface: "reject",
-        usageValidation: "prompt-plus-completion-equals-total",
-      },
-      generation: {
-        maxCompletionTokens: MAX_COMPLETION_TOKENS,
-        n: 1,
-        reasoningEffort: "low",
-        seed: 0,
-        store: false,
-        stream: false,
-        temperature: 0,
-      },
-      transportPolicy: {
-        attempts: 1,
-        maxModelContentChars: MAX_MODEL_CONTENT_CHARS,
-        maxScreenshotBytes: MAX_SCREENSHOT_BYTES,
-      },
-    },
-  };
+  return sharedCloudflareGatewayGeminiConfiguration(gatewayId);
 }
 
 export async function cloudflareGatewayGeminiModelSpec(

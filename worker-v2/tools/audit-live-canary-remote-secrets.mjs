@@ -13,13 +13,14 @@
 import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL, fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import {
   EXPECTED_CANARY_WORKER,
   EXPECTED_CANARY_VISUAL_PROVIDERS,
   EXPECTED_CLOUDFLARE_ACCOUNT_ID,
   EXPECTED_WRANGLER_VERSION,
+  LEGACY_REMOTE_SECRET_AUDIT_DOCUMENT_BINDING_MODE,
   REPOSITORY_ROOT,
   WORKER_ROOT,
   assertWranglerAccount,
@@ -27,6 +28,12 @@ import {
   readAndValidateCanaryConfig,
   verifyAuditLog as verifyWranglerAuditLog,
 } from "./assert-no-active-canary-workflows.mjs";
+import { buildPinnedDeployEnvironment } from "./canary-post-deploy-attestation.mjs";
+import {
+  assertPinnedWranglerDescriptor,
+  resolvePinnedWranglerCommand,
+  verifyPinnedWranglerCommand,
+} from "./pinned-wrangler-command.mjs";
 import { assertPrivateLocalPath } from "./private-local-output.mjs";
 
 export const EXPECTED_SIGNER_SECRET_NAMES = Object.freeze([
@@ -143,35 +150,16 @@ export function parseArguments(argv) {
   return parsed;
 }
 
-/**
- * Build the child environment from a case-insensitively scrubbed copy. This deliberately uses
- * stored Wrangler OAuth state after the separate login step; inherited API credentials are not
- * accepted as evidence that the intended operator/account was queried.
- */
+/** Build the same minimal closed child environment as the hardened deploy path. */
 export function buildPinnedControlPlaneEnvironment(environment, logFile) {
-  if (environment === null || typeof environment !== "object" || Array.isArray(environment)) {
-    throw new RemoteSecretAuditError("ENVIRONMENT_INVALID", "child environment is not an object");
+  try {
+    return buildPinnedDeployEnvironment(environment, path.resolve(logFile));
+  } catch {
+    throw new RemoteSecretAuditError(
+      "ENVIRONMENT_INVALID",
+      "Wrangler child environment could not be reduced to the pinned deploy allowlist",
+    );
   }
-  const childEnvironment = { ...environment };
-  const forbidden = new Set(
-    FORBIDDEN_INHERITED_CONTROL_PLANE_ENVIRONMENT.map((name) => name.toUpperCase()),
-  );
-  for (const name of Object.keys(childEnvironment)) {
-    if (forbidden.has(name.toUpperCase())) delete childEnvironment[name];
-  }
-  Object.assign(childEnvironment, {
-    WRANGLER_API_ENVIRONMENT: "production",
-    CLOUDFLARE_COMPLIANCE_REGION: "public",
-    WRANGLER_LOG_PATH: logFile,
-    WRANGLER_WRITE_LOGS: "true",
-    WRANGLER_LOG_SANITIZE: "true",
-    WRANGLER_LOG: "log",
-    WRANGLER_SEND_METRICS: "false",
-    WRANGLER_SEND_ERROR_REPORTS: "false",
-    NO_COLOR: "1",
-    FORCE_COLOR: "0",
-  });
-  return childEnvironment;
 }
 
 /** Validate one captured read-only response without ever returning its raw bytes. */
@@ -295,17 +283,45 @@ export function runRemoteSecretAudit({
   repositoryRoot = REPOSITORY_ROOT,
   workerRoot = WORKER_ROOT,
   environment = process.env,
-  platform = process.platform,
   spawnSyncImpl = spawnSync,
+  resolvePinnedWranglerCommandImpl = resolvePinnedWranglerCommand,
+  verifyPinnedWranglerCommandImpl = verifyPinnedWranglerCommand,
+  assertPinnedWranglerDescriptorImpl = assertPinnedWranglerDescriptor,
+  buildPinnedControlPlaneEnvironmentImpl = buildPinnedControlPlaneEnvironment,
   assertPrivatePathImpl = assertPrivateLocalPath,
   verifyAuditLogImpl = verifyWranglerAuditLog,
 } = {}) {
-  const config = readAndValidateCanaryConfig(configPath, { repositoryRoot, expectedProvider });
+  // This is a post-deploy secret-name audit retained for pre-document-binding configs. It may
+  // inspect those legacy configs, but it is not a deployment interlock: runWorkflowGate does
+  // not expose this opt-out and requires an independent operator document hash.
+  const config = readAndValidateCanaryConfig(configPath, {
+    repositoryRoot,
+    expectedProvider,
+    documentBindingMode: LEGACY_REMOTE_SECRET_AUDIT_DOCUMENT_BINDING_MODE,
+  });
   const resolvedLogFile = requireNewFilePath(logFile, repositoryRoot, "LOG");
   assertPrivatePathImpl(config.configPath, repositoryRoot);
   assertPrivatePathImpl(path.dirname(resolvedLogFile), repositoryRoot, { directory: true });
 
-  const npxCommand = platform === "win32" ? "npx.cmd" : "npx";
+  let pinnedWrangler;
+  try {
+    pinnedWrangler = assertPinnedWranglerDescriptorImpl(resolvePinnedWranglerCommandImpl());
+  } catch {
+    throw new RemoteSecretAuditError(
+      "WRANGLER_PIN_INVALID",
+      "the complete repository-local Wrangler toolchain could not be verified",
+    );
+  }
+  let childEnvironment;
+  try {
+    childEnvironment = buildPinnedControlPlaneEnvironmentImpl(environment, resolvedLogFile);
+  } catch (error) {
+    if (error instanceof RemoteSecretAuditError) throw error;
+    throw new RemoteSecretAuditError(
+      "ENVIRONMENT_INVALID",
+      "Wrangler child environment could not be reduced to the pinned deploy allowlist",
+    );
+  }
   const childOptions = {
     cwd: workerRoot,
     encoding: "utf8",
@@ -313,17 +329,36 @@ export function runRemoteSecretAudit({
     timeout: WRANGLER_TIMEOUT_MS,
     maxBuffer: WRANGLER_MAX_OUTPUT_BYTES,
     killSignal: "SIGTERM",
-    env: buildPinnedControlPlaneEnvironment(environment, resolvedLogFile),
+    env: childEnvironment,
+  };
+  const invokePinnedWrangler = (argumentsAfterPrefix) => {
+    let current;
+    try {
+      current = assertPinnedWranglerDescriptorImpl(
+        verifyPinnedWranglerCommandImpl(pinnedWrangler),
+      );
+    } catch {
+      throw new RemoteSecretAuditError(
+        "WRANGLER_PIN_INVALID",
+        "the complete Wrangler toolchain changed before a remote-secret audit subprocess",
+      );
+    }
+    return spawnSyncImpl(
+      current.command,
+      [...current.argsPrefix, ...argumentsAfterPrefix],
+      childOptions,
+    );
   };
 
   let versionResult;
   let accountResult;
   try {
-    versionResult = spawnSyncImpl(npxCommand, ["--no-install", "wrangler", "--version"], childOptions);
+    versionResult = invokePinnedWrangler(["--version"]);
     assertWranglerVersion(versionResult);
-    accountResult = spawnSyncImpl(npxCommand, ["--no-install", "wrangler", "whoami"], childOptions);
+    accountResult = invokePinnedWrangler(["whoami"]);
     assertWranglerAccount(accountResult);
   } catch (error) {
+    if (error instanceof RemoteSecretAuditError) throw error;
     if (error?.name === "WorkflowGateError") throw error;
     throw new RemoteSecretAuditError(
       "WRANGLER_IDENTITY_UNAVAILABLE",
@@ -332,8 +367,6 @@ export function runRemoteSecretAudit({
   }
 
   const secretArguments = [
-    "--no-install",
-    "wrangler",
     "secret",
     "list",
     "--config",
@@ -343,8 +376,9 @@ export function runRemoteSecretAudit({
   ];
   let secretResult;
   try {
-    secretResult = spawnSyncImpl(npxCommand, secretArguments, childOptions);
-  } catch {
+    secretResult = invokePinnedWrangler(secretArguments);
+  } catch (error) {
+    if (error instanceof RemoteSecretAuditError) throw error;
     throw new RemoteSecretAuditError(
       "WRANGLER_LAUNCH_FAILED",
       "Wrangler remote-secret inspection could not start",
@@ -464,6 +498,8 @@ export async function runCli(argv, dependencies = {}) {
 }
 
 async function main() {
+  // The standalone production path never accepts dependency overrides. Injection remains
+  // available only to programmatic unit tests of runCli/runRemoteSecretAudit.
   const result = await runCli(process.argv.slice(2));
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);

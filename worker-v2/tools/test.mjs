@@ -424,6 +424,11 @@ const FILES = [
   // correct when the SEAL still reads it, not when the parser test passes.
   // Evidence they can fail: `tools/mutate-docx-blocks.mjs`.
   "./tests/docx-robustness.test.mjs",
+  // COMMENT REVIEWER IDENTITY IS NOT SOURCE AUTHORITY. The parser currently carries it in
+  // `SourceBlock.origin`; this executable fixture proves the operator catalogue keeps the
+  // comment block while withholding author/initials and counting that omission. Removing
+  // the output projection makes the sentinel appear in stdout and turns this test red.
+  "./tests/source-block-output-privacy.test.mjs",
 ];
 
 for (const f of FILES) await import(f);

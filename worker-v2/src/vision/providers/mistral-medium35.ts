@@ -5,8 +5,24 @@ import type {
   VisionModelSpec,
 } from "../types";
 import { VisionProviderUnavailableError } from "../types";
+// @ts-ignore -- plain ESM is the single runtime/deployment provider-configuration source
+import * as providerConfigurationSource from "../../../shared/visual-provider-config.mjs";
+const {
+  MISTRAL_MEDIUM35_CONFIGURATION: SHARED_MISTRAL_MEDIUM35_CONFIGURATION,
+  MISTRAL_MEDIUM35_CONTEXT_TOKENS: SHARED_MISTRAL_CONTEXT_TOKENS,
+  MISTRAL_MEDIUM35_ENDPOINT: SHARED_MISTRAL_ENDPOINT,
+  MISTRAL_MEDIUM35_MAX_COMPLETION_TOKENS: SHARED_MISTRAL_MAX_COMPLETION_TOKENS,
+  MISTRAL_MEDIUM35_MAX_ERROR_RESPONSE_BYTES,
+  MISTRAL_MEDIUM35_MAX_INLINE_REQUEST_BYTES,
+  MISTRAL_MEDIUM35_MAX_MODEL_CONTENT_CHARS,
+  MISTRAL_MEDIUM35_MAX_SCREENSHOT_BYTES,
+  MISTRAL_MEDIUM35_MAX_SUCCESS_RESPONSE_BYTES,
+  MISTRAL_MEDIUM35_MODEL: SHARED_MISTRAL_MODEL,
+  MISTRAL_MEDIUM35_PROVIDER: SHARED_MISTRAL_PROVIDER,
+  MISTRAL_MEDIUM35_RESPONSE_SCHEMA_NAME,
+  MISTRAL_MEDIUM35_TRANSPORT: SHARED_MISTRAL_TRANSPORT,
+} = providerConfigurationSource;
 import {
-  VISION_PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   assertExactProductionVisionRequest,
   boundedProviderString,
   elapsedMilliseconds,
@@ -20,24 +36,26 @@ import {
   resolveSecret,
   sanitizedProviderFailure,
   throwIfAborted,
-  type VisionProviderConfigurationEnvelope,
 } from "./shared";
 
-export const MISTRAL_MEDIUM35_PROVIDER = "mistral-api";
-export const MISTRAL_MEDIUM35_MODEL = "mistral-medium-3-5";
-export const MISTRAL_MEDIUM35_TRANSPORT = "mistral-chat-completions-v1-direct-fetch";
-export const MISTRAL_MEDIUM35_ENDPOINT = "https://api.mistral.ai/v1/chat/completions";
-export const MISTRAL_MEDIUM35_CONTEXT_TOKENS = 256_000;
+export const MISTRAL_MEDIUM35_PROVIDER: "mistral-api" = SHARED_MISTRAL_PROVIDER;
+export const MISTRAL_MEDIUM35_MODEL: "mistral-medium-3-5" = SHARED_MISTRAL_MODEL;
+export const MISTRAL_MEDIUM35_TRANSPORT: "mistral-chat-completions-v1-direct-fetch" =
+  SHARED_MISTRAL_TRANSPORT;
+export const MISTRAL_MEDIUM35_ENDPOINT: "https://api.mistral.ai/v1/chat/completions" =
+  SHARED_MISTRAL_ENDPOINT;
+export const MISTRAL_MEDIUM35_CONTEXT_TOKENS: 256000 = SHARED_MISTRAL_CONTEXT_TOKENS;
 
-const MAX_SCREENSHOT_BYTES = 20_000_000;
-const MAX_INLINE_REQUEST_BYTES = 30_000_000;
-const MAX_SUCCESS_RESPONSE_BYTES = 2 * 1024 * 1024;
-const MAX_ERROR_RESPONSE_BYTES = 64 * 1024;
-const MAX_MODEL_CONTENT_CHARS = 2 * 1024 * 1024;
+const MAX_SCREENSHOT_BYTES: number = MISTRAL_MEDIUM35_MAX_SCREENSHOT_BYTES;
+const MAX_INLINE_REQUEST_BYTES: number = MISTRAL_MEDIUM35_MAX_INLINE_REQUEST_BYTES;
+const MAX_SUCCESS_RESPONSE_BYTES: number = MISTRAL_MEDIUM35_MAX_SUCCESS_RESPONSE_BYTES;
+const MAX_ERROR_RESPONSE_BYTES: number = MISTRAL_MEDIUM35_MAX_ERROR_RESPONSE_BYTES;
+const MAX_MODEL_CONTENT_CHARS: number = MISTRAL_MEDIUM35_MAX_MODEL_CONTENT_CHARS;
 // A viewport whose complete closed inventory cannot fit is an explicit truncated provider result,
 // not permission to silently omit visible regions. The capture layer can retry with tiles.
-export const MISTRAL_MEDIUM35_MAX_COMPLETION_TOKENS = 2_048;
-const RESPONSE_SCHEMA_NAME = "survey_qa_visual_inventory";
+export const MISTRAL_MEDIUM35_MAX_COMPLETION_TOKENS: 2048 =
+  SHARED_MISTRAL_MAX_COMPLETION_TOKENS;
+const RESPONSE_SCHEMA_NAME: string = MISTRAL_MEDIUM35_RESPONSE_SCHEMA_NAME;
 
 export type MistralSecretSource =
   | { get(): Promise<string> }
@@ -49,43 +67,7 @@ export type MistralVisionFetch = (
 ) => Promise<Response>;
 
 /** Every inference-affecting Mistral request field and every local wire bound is fingerprinted. */
-export const MISTRAL_MEDIUM35_CONFIGURATION = {
-  schemaVersion: VISION_PROVIDER_CONFIGURATION_SCHEMA_VERSION,
-  provider: MISTRAL_MEDIUM35_PROVIDER,
-  model: MISTRAL_MEDIUM35_MODEL,
-  transport: MISTRAL_MEDIUM35_TRANSPORT,
-  request: {
-    api: "mistral-chat-completions/v1",
-    endpoint: MISTRAL_MEDIUM35_ENDPOINT,
-    image: {
-      mediaType: "image/png",
-      encoding: "inline-base64-data-url",
-      maxBytes: MAX_SCREENSHOT_BYTES,
-    },
-    structuredOutput: {
-      type: "json_schema",
-      name: RESPONSE_SCHEMA_NAME,
-      strict: true,
-      validation: "provider-constrained-plus-observer-closed-schema",
-    },
-    generation: {
-      maxTokens: MISTRAL_MEDIUM35_MAX_COMPLETION_TOKENS,
-      n: 1,
-      randomSeed: 0,
-      reasoningEffort: "low",
-      safePrompt: false,
-      stream: false,
-      temperature: 0,
-    },
-    transportPolicy: {
-      attempts: 1,
-      maxErrorResponseBytes: MAX_ERROR_RESPONSE_BYTES,
-      maxInlineRequestBytes: MAX_INLINE_REQUEST_BYTES,
-      maxModelContentChars: MAX_MODEL_CONTENT_CHARS,
-      maxSuccessResponseBytes: MAX_SUCCESS_RESPONSE_BYTES,
-    },
-  },
-} as const satisfies VisionProviderConfigurationEnvelope;
+export const MISTRAL_MEDIUM35_CONFIGURATION = SHARED_MISTRAL_MEDIUM35_CONFIGURATION;
 
 export async function mistralMedium35ModelSpec(): Promise<VisionModelSpec> {
   return {

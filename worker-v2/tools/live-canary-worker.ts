@@ -9,6 +9,7 @@
 import productionWorker from "../src/index";
 import type { Env } from "../src/types/env";
 import {
+  handleLiveCanaryAttestation,
   handleLiveCanarySubmission,
   isAuthorizedLiveCanaryRequest,
   liveCanaryRequestMode,
@@ -21,8 +22,12 @@ import {
 export { SurveyRunWorkflowV2 } from "../src/workflow/run-workflow";
 export { SurveyVisualShadowWorkflowV1 } from "../src/workflow/visual-shadow-workflow";
 
+// Canary-only fields are optional on Env so the normal Access-protected deployment remains
+// unchanged; this wrapper's closed handlers require them and fail as indistinguishable 404s.
+type LiveCanaryEnv = Env;
+
 export default {
-  async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: LiveCanaryEnv, context: ExecutionContext): Promise<Response> {
     // A public caller never controls the private wrapper-to-router run-id seam. Strip it
     // before auth/routing/fingerprinting; handleLiveCanarySubmission injects its own value.
     const ingress = requestWithoutLiveCanaryInternalHeaders(request);
@@ -31,6 +36,9 @@ export default {
     }
     const mode = liveCanaryRequestMode(ingress);
     if (mode === null) return liveCanaryNotFound();
+    if (mode === "attestation") {
+      return handleLiveCanaryAttestation(ingress, env);
+    }
     if (mode === "submission") {
       const maximumBytes = liveCanarySubmissionByteLimit(env.MAX_SUBMISSION_BYTES);
       if (maximumBytes === null) return liveCanaryNotFound();
@@ -39,7 +47,11 @@ export default {
         env.EVIDENCE,
         env.CANARY_AUTH_SHA256,
         (forwarded) => productionWorker.fetch(forwarded, env, context),
-        { maximumBytes },
+        {
+          expectedDocumentSha256: env.CANARY_EXPECTED_DOCUMENT_SHA256,
+          maximumBytes,
+          runtimeEnv: env,
+        },
       );
     }
     return productionWorker.fetch(requestWithoutLiveCanaryCredential(ingress), env, context);

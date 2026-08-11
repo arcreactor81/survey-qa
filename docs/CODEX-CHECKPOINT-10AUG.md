@@ -118,6 +118,90 @@ Remaining:
   remain exact counted blockers instead of fake execution receipts.
 - `git diff --check` is clean; only existing LF-to-CRLF working-copy notices were emitted.
 
+## Canary deployment-integrity checkpoint - 11 August 2026
+
+The canary-only deployment track now closes the final reviewed-output uncertainty locally:
+
+- hardened preparation automatically performs three pinned Wrangler dry-runs: discovery, audited
+  build, and a final replay of the exact reviewed no-bundle deploy config;
+- the final replay persists a canonical exact census of only the reviewed entry, reviewed
+  additional modules, and Wrangler 4.106.0's named README by-product, bound to final config,
+  reviewed-manifest, toolchain, and sanitized-log hashes;
+- every later prepared-state verification rechecks the retained output/log/config/reviewed bundle
+  and canonical replay manifest before a control-plane side effect;
+- source maps, TypeScript, reviewed manifests, unknown files or directories, links/junctions,
+  wrong module bytes/types/paths, malformed README output, failed Wrangler execution, and
+  post-freeze drift all fail with named errors.
+
+Verification evidence:
+
+- pre-fix negative: 15/16 focused tests, with the missing production replay entrypoint as the
+  deliberate red assertion;
+- current focused deployment suite: 29/29 green on two consecutive runs (15.0 seconds and 12.25
+  seconds);
+- the real preparation orchestrator now has a fail-capable wiring proof: it executes exactly three
+  dry-runs, retains the third replay manifest, and rejects mutated replay bytes before a Workflow
+  gate or control-plane subprocess. Three exact-anchor source mutants remove the automatic replay
+  call, prepared-record retention, or default verification; all three are killed;
+- post-change non-network gates are green: Worker TypeScript clean, dispatcher 840/840 after the
+  registered privacy negative, focused canary 29/29, focused privacy 1/1, and `node --check` plus
+  `git diff --check` clean. The dispatcher required an
+  ignored workspace-local TEMP/TMP because the managed sandbox denies bundle resolution from the
+  default user temp; the same settled tree passed in that supported location;
+- actual pinned Wrangler 4.106.0 output-graph plus production-freeze replay integration: 2/2 green
+  in 90.16 seconds; the production case exercises the production gate rather than a parallel
+  test-only implementation;
+- hardened one-call serial runner: 17/17 green in 8.45 seconds;
+- focused file diff check: clean, with only the existing LF-to-CRLF notice for the visual test
+  manifest;
+- one auxiliary direct canary/config run was 24/25. Its sole failure was the already-recorded
+  Windows 8.3 temporary-path/esbuild resolution issue in the production-submit-seam test. This is
+  not counted as a passing regression gate and no out-of-scope walker or submit-seam code was
+  changed.
+
+No network request, Cloudflare authentication, deployment, secret read, paid request, or model
+call occurred in this work. The replay gate is a local integrity proof only; full settled-tree
+gates, fresh profile generation, live interlocks, remote-secret audit, and explicit deployment
+approval remain required. The policy-stale 20260810-c profiles remain forbidden.
+
+Changed canary-track files for a later repository migration:
+
+- worker-v2/tools/hardened-canary-deploy.mjs
+- worker-v2/tools/tests/hardened-canary-deploy.test.mjs
+- worker-v2/tools/tests/pinned-wrangler-output-graph.integration.test.mjs
+- worker-v2/tools/test-visual.mjs
+- docs/CANARY-DEPLOYMENT-INTEGRITY-11AUG.md
+- docs/CODEX-CHECKPOINT-10AUG.md
+
+## Private real-DOCX ingestion checkpoint - 11 August 2026
+
+A privacy-safe structural audit of the owner's real questionnaire is complete. The source,
+identifiers, exact private census, and aggregate comparison script remain under a git-ignored local
+directory whose Windows ACL and retained files now pass the project's pinned private-output
+verifier. LibreOffice/Poppler was unavailable, so no rendered-page claim was made.
+
+The public-safe handoff is `DOCX-INGESTION-GENERALIZABILITY-GAPS-11AUG.md`. It records generic
+blockers confirmed by the real document: explicit revision authority; per-comment resolution and
+anchor state; auxiliary-section scoping; descriptive-vs-generated image alt; physical-cell/merge
+and package-part reconciliation; auxiliary table provenance; generated numbering; hyperlink
+targets; and a seal disposition for every material coverage problem.
+
+The operator catalogue direct leak is fixed without touching Claude-owned parser/pass code:
+
+- `tools/human-contract-blocks.mjs` now emits schema 1.1.0, replaces identity-bearing comment
+  origins with a generic proposal label, and reports a computed withheld-identity count;
+- `tools/source-block-output.mjs` owns that projection;
+- `tools/tests/source-block-output-privacy.test.mjs` creates an invented comment-bearing DOCX,
+  invokes the real parser and CLI, and proves the sentinel author/initials are absent from raw JSON
+  stdout while the comment block remains visible.
+
+Private model extraction is still a deployment/run blocker. Reviewer identity enters pass-A and
+pass-B prompts; Gateway payload bodies are stored by default unless the request sets
+`cf-aig-collect-log-payload: false`; model echo can reach sealed/report fields; provider response
+snippets can reach persisted errors; and `ChatOutcome.logId` documents a linkage the transport
+does not implement. The operator fix is one boundary, not permission to run a private document
+through models.
+
 ## Live iteration record
 
 ### Gemma attempt A — retained infrastructure failure, not a model score

@@ -27,7 +27,7 @@ function dispatcherSource(entries = ["./tests/d49-vision-reconcile.test.mjs"]) {
 }
 
 test("closed production manifest includes both Mistral suites and no custom-registry suite", () => {
-  assert.equal(REQUIRED_VISUAL_NODE_TESTS.length, 32);
+  assert.equal(REQUIRED_VISUAL_NODE_TESTS.length, 33);
   assert.equal(new Set(REQUIRED_VISUAL_NODE_TESTS).size, REQUIRED_VISUAL_NODE_TESTS.length);
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/mistral-medium35-client.test.mjs"));
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/mistral-ocr4-client.test.mjs"));

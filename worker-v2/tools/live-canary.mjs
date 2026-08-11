@@ -22,6 +22,7 @@ export function parseArguments(argv) {
     runId: null,
     surveyUrl: null,
     docx: null,
+    expectedDocumentSha256: null,
     outputDir: null,
     expectVisual: "either",
     expectedVisualProvider: null,
@@ -37,6 +38,7 @@ export function parseArguments(argv) {
     "--run-id",
     "--survey-url",
     "--docx",
+    "--expected-document-sha256",
     "--output-dir",
     "--expect-visual",
     "--expected-visual-provider",
@@ -70,6 +72,7 @@ export function parseArguments(argv) {
     if (flag === "--run-id") result.runId = value;
     if (flag === "--survey-url") result.surveyUrl = value;
     if (flag === "--docx") result.docx = value;
+    if (flag === "--expected-document-sha256") result.expectedDocumentSha256 = value;
     if (flag === "--output-dir") result.outputDir = value;
     if (flag === "--expect-visual") result.expectVisual = value;
     if (flag === "--expected-visual-provider") result.expectedVisualProvider = value;
@@ -96,6 +99,7 @@ export function parseArguments(argv) {
     for (const [flag, value] of [
       ["--survey-url", result.surveyUrl],
       ["--docx", result.docx],
+      ["--expected-document-sha256", result.expectedDocumentSha256],
       ["--output-dir", result.outputDir],
     ]) {
       if (value === null) throw new LiveCanaryError("ARGUMENT_MISSING", `${flag} is required with --execute`);
@@ -112,12 +116,18 @@ export function parseArguments(argv) {
     if (result.envFile === null && result.canaryTokenFile === null) {
       throw new LiveCanaryError("ARGUMENT_MISSING", "--collect requires exactly one of --env-file or --canary-token-file");
     }
-    if (result.surveyUrl !== null || result.docx !== null) {
+    if (result.surveyUrl !== null || result.docx !== null || result.expectedDocumentSha256 !== null) {
       throw new LiveCanaryError("ARGUMENT_CONFLICT", "--collect does not accept survey or document submission input");
     }
   }
   if (result.mode === "probe-only" && result.runId !== null) {
     throw new LiveCanaryError("ARGUMENT_CONFLICT", "--run-id is valid only with --collect");
+  }
+  if (result.mode === "probe-only" && result.expectedDocumentSha256 !== null) {
+    throw new LiveCanaryError(
+      "ARGUMENT_CONFLICT",
+      "--expected-document-sha256 is valid only with --execute",
+    );
   }
   if (result.mode !== "probe-only" && result.expectVisual === "enabled") {
     if (result.expectedVisualProvider === null) {
@@ -157,7 +167,7 @@ export function usage() {
     "Usage:",
     `  node tools/live-canary.mjs --probe-only --base-url <origin> [--env-file ${DEFAULT_ACCESS_ENV_FILE}]`,
     "  node tools/live-canary.mjs --probe-only --base-url <origin> --canary-token-file <path>",
-    "  node tools/live-canary.mjs --execute --base-url <origin> (--env-file <path> | --canary-token-file <path>) --survey-url <https-url> --docx <questionnaire.docx> --output-dir <empty-dir> [options]",
+    "  node tools/live-canary.mjs --execute --base-url <origin> (--env-file <path> | --canary-token-file <path>) --survey-url <https-url> --docx <questionnaire.docx> --expected-document-sha256 <sha256> --output-dir <empty-dir> [options]",
     "  node tools/live-canary.mjs --collect --run-id <v2-run-id> --base-url <origin> (--env-file <path> | --canary-token-file <path>) --output-dir <empty-dir> [options]",
     "",
     "Authentication is loaded only from a file inside this Node process:",
@@ -167,6 +177,7 @@ export function usage() {
     "  Credential values are not accepted in argv and are never printed.",
     "",
     "Execution options:",
+    "  --expected-document-sha256 SHA256 (required; checked before credentials, output, or POST)",
     "  --expect-visual enabled|disabled|either",
     `  --expected-visual-provider ${CANARY_VISUAL_PROVIDERS.join("|")} (required when visual is enabled)`,
     `  --poll-interval-ms N   default ${DEFAULT_POLL_INTERVAL_MS}`,

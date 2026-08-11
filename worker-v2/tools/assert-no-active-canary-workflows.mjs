@@ -350,7 +350,13 @@ export function readAndValidateCanaryConfig(configPath, {
     assertPrivatePathImpl,
   });
   const expectedMain = deploymentLayout.main;
-  if (typeof parsed.main !== "string" || path.resolve(parsed.main) !== path.resolve(expectedMain)) {
+  const exactReviewedPaths = reviewedDeployment !== undefined;
+  if (
+    typeof parsed.main !== "string" ||
+    (exactReviewedPaths
+      ? parsed.main !== expectedMain.replaceAll("\\", "/")
+      : path.resolve(parsed.main) !== path.resolve(expectedMain))
+  ) {
     throw new WorkflowGateError(
       "CONFIG_ENTRYPOINT_MISMATCH",
       "config does not use the isolated live-canary wrapper entrypoint",
@@ -371,7 +377,9 @@ export function readAndValidateCanaryConfig(configPath, {
     Array.isArray(assets) ||
     assets.binding !== "ASSETS" ||
     typeof assets.directory !== "string" ||
-    path.resolve(assets.directory) !== path.resolve(expectedAssetsDirectory) ||
+    (exactReviewedPaths
+      ? assets.directory !== expectedAssetsDirectory.replaceAll("\\", "/")
+      : path.resolve(assets.directory) !== path.resolve(expectedAssetsDirectory)) ||
     !sameStringArray(assets.run_worker_first, ["/api/v2/*", "/runs/*", "/v2/*"])
   ) {
     throw new WorkflowGateError(
@@ -541,18 +549,14 @@ function resolveCanaryDeploymentLayout({
       "reviewed deployment bytes do not match the independently selected identities",
     );
   }
-  const expectedRules = reviewed.modules.map((module) => ({
-    type: module.type,
-    globs: [module.path],
-    fallthrough: false,
-  }));
+  const expectedRules = independentlyGroupedReviewedRules(reviewed.modules);
   const vars = config.vars;
   if (
     config.no_bundle !== true ||
     config.find_additional_modules !== (reviewed.modules.length > 0) ||
-    config.preserve_file_names !== true ||
+    config.preserve_file_names !== false ||
     typeof config.base_dir !== "string" ||
-    path.resolve(config.base_dir) !== reviewed.reviewedBundleDirectory ||
+    config.base_dir !== reviewed.reviewedBundleDirectory.replaceAll("\\", "/") ||
     JSON.stringify(config.rules) !== JSON.stringify(expectedRules) ||
     "build" in config ||
     "minify" in config ||
@@ -578,6 +582,18 @@ function resolveCanaryDeploymentLayout({
       reviewedBundleManifestSha256: reviewed.manifestSha256,
     }),
   });
+}
+
+function independentlyGroupedReviewedRules(modules) {
+  const grouped = new Map();
+  for (const module of modules) {
+    const globs = grouped.get(module.type) ?? [];
+    globs.push(module.path);
+    grouped.set(module.type, globs);
+  }
+  return [...grouped.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([type, globs]) => ({ type, globs: [...globs].sort(), fallthrough: false }));
 }
 
 export function assertWranglerVersion(result) {

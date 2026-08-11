@@ -13,6 +13,10 @@ import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import process from "node:process";
 import { build } from "esbuild";
+import {
+  isIdentityBearingCommentOrigin,
+  operatorSourceBlock,
+} from "./source-block-output.mjs";
 
 const [inputPath, ...extras] = process.argv.slice(2);
 if (!inputPath || extras.length > 0) {
@@ -49,23 +53,19 @@ const moduleUrl = `data:text/javascript;base64,${Buffer.from(bundled.outputFiles
 const { parseDocxBlocks } = await import(moduleUrl);
 const parsed = parseDocxBlocks(new Uint8Array(bytes));
 const documentSha256 = createHash("sha256").update(bytes).digest("hex");
+const commentReviewerIdentitiesWithheld = parsed.blocks.filter((block) =>
+  isIdentityBearingCommentOrigin(block.origin),
+).length;
 
 process.stdout.write(
   `${JSON.stringify(
     {
-      schemaVersion: "v2-human-contract-block-catalogue/1.0.0",
+      schemaVersion: "v2-human-contract-block-catalogue/1.1.0",
       documentSha256,
       counts: parsed.counts,
       parserCoverage: parsed.coverage,
-      blocks: parsed.blocks.map((block) => ({
-        blockId: block.blockId,
-        kind: block.kind,
-        origin: block.origin,
-        section: block.section,
-        coords: block.coords,
-        utf16Length: block.text.length,
-        text: block.text,
-      })),
+      privacy: { commentReviewerIdentitiesWithheld },
+      blocks: parsed.blocks.map(operatorSourceBlock),
     },
     null,
     2,

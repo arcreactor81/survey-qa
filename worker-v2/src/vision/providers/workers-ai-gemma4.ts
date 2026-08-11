@@ -6,8 +6,19 @@ import type {
   VisionModelSpec,
 } from "../types";
 import { VisionProviderUnavailableError } from "../types";
+// @ts-ignore -- plain ESM is the single runtime/deployment provider-configuration source
+import * as providerConfigurationSource from "../../../shared/visual-provider-config.mjs";
+const {
+  WORKERS_AI_GEMMA4_CONFIGURATION: SHARED_WORKERS_AI_GEMMA4_CONFIGURATION,
+  WORKERS_AI_GEMMA4_MAX_COMPLETION_TOKENS: SHARED_WORKERS_AI_GEMMA4_MAX_COMPLETION_TOKENS,
+  WORKERS_AI_GEMMA4_MAX_MODEL_CONTENT_CHARS,
+  WORKERS_AI_GEMMA4_MAX_SCREENSHOT_BYTES,
+  WORKERS_AI_GEMMA4_MODEL: SHARED_WORKERS_AI_GEMMA4_MODEL,
+  WORKERS_AI_GEMMA4_PROVIDER: SHARED_WORKERS_AI_GEMMA4_PROVIDER,
+  WORKERS_AI_GEMMA4_REQUEST_TAG,
+  WORKERS_AI_GEMMA4_TRANSPORT: SHARED_WORKERS_AI_GEMMA4_TRANSPORT,
+} = providerConfigurationSource;
 import {
-  VISION_PROVIDER_CONFIGURATION_SCHEMA_VERSION,
   assertExactProductionVisionRequest,
   boundedProviderString,
   elapsedMilliseconds,
@@ -16,12 +27,14 @@ import {
   parseModelJsonOrReturnText,
   providerTokenCount,
   throwIfAborted,
-  type VisionProviderConfigurationEnvelope,
 } from "./shared";
 
-export const WORKERS_AI_GEMMA4_PROVIDER = "cloudflare-workers-ai";
-export const WORKERS_AI_GEMMA4_MODEL = "@cf/google/gemma-4-26b-a4b-it";
-export const WORKERS_AI_GEMMA4_TRANSPORT = "workers-ai-binding";
+export const WORKERS_AI_GEMMA4_PROVIDER: "cloudflare-workers-ai" =
+  SHARED_WORKERS_AI_GEMMA4_PROVIDER;
+export const WORKERS_AI_GEMMA4_MODEL: "@cf/google/gemma-4-26b-a4b-it" =
+  SHARED_WORKERS_AI_GEMMA4_MODEL;
+export const WORKERS_AI_GEMMA4_TRANSPORT: "workers-ai-binding" =
+  SHARED_WORKERS_AI_GEMMA4_TRANSPORT;
 export const WORKERS_AI_GEMMA4_FAILURE_CATEGORY = "workers-ai-binding";
 
 export const WORKERS_AI_GEMMA4_FAILURE_CODES = [
@@ -53,56 +66,19 @@ export interface WorkersAiGemma4FailureReference {
   readonly providerCallAttempted: boolean;
 }
 
-const MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024;
-const MAX_MODEL_CONTENT_CHARS = 2 * 1024 * 1024;
+const MAX_SCREENSHOT_BYTES: number = WORKERS_AI_GEMMA4_MAX_SCREENSHOT_BYTES;
+const MAX_MODEL_CONTENT_CHARS: number = WORKERS_AI_GEMMA4_MAX_MODEL_CONTENT_CHARS;
 // A viewport inventory that cannot fit this closed response is reported as malformed and can be
 // recaptured as tiles. A very large completion ceiling would make the pre-call dollar cap unable
 // to reserve a defensible worst case.
-export const WORKERS_AI_GEMMA4_MAX_COMPLETION_TOKENS = 2_048;
+export const WORKERS_AI_GEMMA4_MAX_COMPLETION_TOKENS: 2048 =
+  SHARED_WORKERS_AI_GEMMA4_MAX_COMPLETION_TOKENS;
 const MAX_COMPLETION_TOKENS = WORKERS_AI_GEMMA4_MAX_COMPLETION_TOKENS;
-const REQUEST_TAG = "survey-qa:visual";
+const REQUEST_TAG: string = WORKERS_AI_GEMMA4_REQUEST_TAG;
 const CLOSED_WORKERS_AI_FAILURE = Symbol("closed-workers-ai-gemma4-failure");
 
 /** Every inference-affecting adapter knob is sealed into `configurationSha256`. */
-export const WORKERS_AI_GEMMA4_CONFIGURATION = {
-  schemaVersion: VISION_PROVIDER_CONFIGURATION_SCHEMA_VERSION,
-  provider: WORKERS_AI_GEMMA4_PROVIDER,
-  model: WORKERS_AI_GEMMA4_MODEL,
-  transport: WORKERS_AI_GEMMA4_TRANSPORT,
-  request: {
-    api: "workers-ai-native-binding",
-    payloadShape: "chat-completions-multimodal-message-content",
-    message: {
-      role: "user",
-      contentPartOrder: ["text", "image_url"],
-      image: { field: "image_url.url", mediaType: "image/png", encoding: "data-url", detail: "high" },
-    },
-    structuredOutput: {
-      requestResponseFormat: false,
-      mode: "prompted-json",
-      validation: "observer-closed-schema",
-      acceptedBindingResponse: "chat-completion-object",
-      requiredFinishReason: "stop",
-      unattributedTextResponse: "reject",
-    },
-    generation: {
-      chatTemplateKwargs: { enableThinking: false },
-      maxCompletionTokens: MAX_COMPLETION_TOKENS,
-      n: 1,
-      seed: 0,
-      store: false,
-      stream: false,
-      temperature: 0,
-    },
-    transportPolicy: {
-      attempts: 1,
-      gateway: "none",
-      maxModelContentChars: MAX_MODEL_CONTENT_CHARS,
-      maxScreenshotBytes: MAX_SCREENSHOT_BYTES,
-      tag: REQUEST_TAG,
-    },
-  },
-} as const satisfies VisionProviderConfigurationEnvelope;
+export const WORKERS_AI_GEMMA4_CONFIGURATION = SHARED_WORKERS_AI_GEMMA4_CONFIGURATION;
 
 export async function workersAiGemma4ModelSpec(): Promise<VisionModelSpec> {
   return {

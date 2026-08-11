@@ -6,14 +6,17 @@ import {
   VISUAL_RESPONSE_SCHEMA_VERSION,
 } from "../schema";
 import { VisionProviderUnavailableError, type JsonValue, type VisionClientRequest } from "../types";
+// @ts-ignore -- plain ESM shared verbatim with the local deployment attestor
+import { VISION_PROVIDER_CONFIGURATION_SCHEMA_VERSION as SHARED_PROVIDER_CONFIGURATION_SCHEMA_VERSION } from "../../../shared/visual-provider-config.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10] as const;
 const MAX_CALL_ID_CHARS = 500;
 const MAX_CACHE_KEY_CHARS = 500;
 
-export const VISION_PROVIDER_CONFIGURATION_SCHEMA_VERSION =
-  "survey-qa-vision-provider-configuration/1.0.0";
+export const VISION_PROVIDER_CONFIGURATION_SCHEMA_VERSION:
+  "survey-qa-vision-provider-configuration/1.0.0" =
+    SHARED_PROVIDER_CONFIGURATION_SCHEMA_VERSION;
 
 export interface VisionProviderConfigurationEnvelope {
   schemaVersion: typeof VISION_PROVIDER_CONFIGURATION_SCHEMA_VERSION;

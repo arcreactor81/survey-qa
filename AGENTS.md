@@ -52,6 +52,13 @@ structurally incapable of failing (a test asserting four counts sum to a total i
 property; a gate returning "zero problems" over an empty denominator; a literal `passed: true`).
 New gates should ship with evidence they can fail — a mutation, a negative fixture, or both.
 
+**Parallelize independent work proactively.** Use subagents for bounded workstreams that can run
+safely in parallel, and reuse their slots as tasks finish. Give every subagent an explicit file
+scope, preserve concurrent edits, and require an evidence-backed handoff before integrating its
+work. The owner authorizes up to 10 concurrent subagents when useful (subject to any lower
+platform concurrency cap). Parallelism never relaxes the blind-corpus boundary or the serial
+live-deployment rule.
+
 ## Blind corpus
 
 `test-suite/blind/**` holds evaluation material and its answer keys. **Do not read answer keys**,

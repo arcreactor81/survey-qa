@@ -77,11 +77,23 @@ closed by multi-path decision seeding (approved, see below). Operational rule di
 
 ## In flight right now
 
-- W1 (closure softening), W2 (flake), W3 (recovery hints): Claude agents running.
-- Codex post-work review: peer review of `WALKER-INTEGRATION-PROPOSAL.md` + cross-validation of
-  `733c333..bbd5a92` — in progress.
-- Queued: W4 (behind W3, driver layer), W5 (behind Codex's proposal verdicts), W6 (behind W1,
-  same file).
+- W1 (closure softening), W2 (seal-identity flake), and W3 (recovery hints) are present in local
+  commit `cc3f69e`; current HEAD is `106d0b4` after the cross-review fixes. W4–W6 are not present
+  in the current HEAD or dirty tree as of Codex's 11 August audit and remain Claude-owned.
+- Codex peer review of `WALKER-INTEGRATION-PROPOSAL.md` is complete and recorded in
+  `CODEX-WALKER-INTEGRATION-REVIEW-11AUG.md`. The one-actuator/multiple-perception-engine reframe
+  is accepted; Stage 2 remains blocked on sealed positive seed authority, per-case witness
+  receipts, an alternatives representation that preserves the exact denominator, and explicit
+  occurrence/history identity.
+- Codex's canary replay-wiring negative and private real-DOCX ingestion audit are complete. The
+  privacy-safe DOCX handoff is `DOCX-INGESTION-GENERALIZABILITY-GAPS-11AUG.md`; private source and
+  exact census remain under the ACL-hardened, git-ignored local boundary. Operator comment-origin
+  output is sanitized and negative-tested. Private model extraction remains blocked until
+  reviewer identity is removed from pass-A/pass-B prompts, Gateway payload logging is suppressed
+  per request, provider error snippets are sanitized, and the `ChatOutcome.logId` contract is
+  resolved.
+- Queued on the Claude track: W4 dropdown/drag actuation, W5 seeded traversal after reconciling the
+  four peer-review blockers, and W6 grey-highlight semantics.
 
 ## What comes next
 

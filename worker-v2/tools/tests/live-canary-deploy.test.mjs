@@ -8,11 +8,23 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
 import ts from "typescript";
+import { canonicalize } from "../../../scorer/src/lib/canonical.mjs";
+import {
+  WORKERS_AI_GEMMA4_CONFIGURATION,
+  canaryVisualProviderConfiguration,
+} from "../../shared/visual-provider-config.mjs";
 import {
   LIVE_CANARY_ACCOUNT_ID,
   LIVE_CANARY_BUCKET_NAME,
   LIVE_CANARY_COMPLIANCE_REGION,
+  LIVE_CANARY_IDENTITY_HEADER,
+  LIVE_CANARY_MAXIMUM_USD_HEADER,
+  LIVE_CANARY_POLICY_HEADER,
+  LIVE_CANARY_PROVIDER_CONFIGURATION_HEADER,
+  LIVE_CANARY_PROVIDER_HEADER,
+  LIVE_CANARY_VERSION_ID_HEADER,
 } from "../live-canary-contract.mjs";
+import { freezeCanarySourceSnapshot } from "../canary-source-snapshot.mjs";
 import { cleanupBundle, loadWorker, memoryR2 } from "../testkit.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +35,13 @@ const SIGNING_GENERATOR = path.join(WORKER_ROOT, "tools/generate-live-canary-sig
 const CONFIG_GENERATOR = path.join(WORKER_ROOT, "tools/generate-live-canary-config.mjs");
 const bundleDir = mkdtempSync(path.join(tmpdir(), "live-canary-gate-test-"));
 const cleanupDirectories = new Set();
+const CANONICAL_DOCUMENT_BASE64 = "UEsDBA==";
+const EXPECTED_DOCUMENT_SHA256 = createHash("sha256")
+  .update(Buffer.from(CANONICAL_DOCUMENT_BASE64, "base64"))
+  .digest("hex");
+const WORKERS_AI_GEMMA4_CONFIGURATION_SHA256 = createHash("sha256")
+  .update(canonicalize(WORKERS_AI_GEMMA4_CONFIGURATION), "utf8")
+  .digest("hex");
 
 await esbuild.build({
   entryPoints: [path.join(WORKER_ROOT, "tools/live-canary-auth.ts")],
@@ -34,7 +53,84 @@ await esbuild.build({
   logLevel: "silent",
 });
 
+const wrapperStubPlugin = {
+  name: "live-canary-wrapper-production-stub",
+  setup(build) {
+    build.onResolve({ filter: /^\.\.\/src\/index$/ }, () => ({
+      path: "production-worker",
+      namespace: "live-canary-wrapper-stub",
+    }));
+    build.onResolve({ filter: /^\.\.\/src\/workflow\/run-workflow$/ }, () => ({
+      path: "run-workflow",
+      namespace: "live-canary-wrapper-stub",
+    }));
+    build.onResolve({ filter: /^\.\.\/src\/workflow\/visual-shadow-workflow$/ }, () => ({
+      path: "visual-workflow",
+      namespace: "live-canary-wrapper-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "live-canary-wrapper-stub" }, (args) => {
+      if (args.path === "run-workflow") {
+        return { contents: "export class SurveyRunWorkflowV2 {}", loader: "js" };
+      }
+      if (args.path === "visual-workflow") {
+        return { contents: "export class SurveyVisualShadowWorkflowV1 {}", loader: "js" };
+      }
+      return {
+        loader: "js",
+        contents: `
+          export default {
+            async fetch(request, env) {
+              const body = await request.text();
+              const runId = request.headers.get("x-survey-qa-internal-canary-planned-run-id");
+              globalThis.__LIVE_CANARY_WRAPPER_FORWARD__ = {
+                body,
+                runId,
+                authPresent: request.headers.has("x-survey-qa-canary-token"),
+                runtimeIdentityHeadersPresent: [
+                  "x-survey-qa-canary-identity-sha256",
+                  "x-survey-qa-canary-version-id",
+                  "x-survey-qa-canary-provider",
+                  "x-survey-qa-canary-policy-sha256",
+                  "x-survey-qa-canary-provider-configuration-sha256",
+                  "x-survey-qa-canary-maximum-usd",
+                ].some((name) => request.headers.has(name)),
+              };
+              await Promise.all([
+                env.EVIDENCE.put(\`v2/runs/\${runId}/input/document.docx\`, "PK"),
+                env.EVIDENCE.put(\`v2/runs/\${runId}/input/manifest.json\`, "{}"),
+                env.EVIDENCE.put(\`v2/runs/\${runId}/envelope.json\`, "{}"),
+                env.EVIDENCE.put(\`v2/runs/\${runId}/checkpoint.json\`, "{}"),
+              ]);
+              await env.EVIDENCE.put(
+                \`v2/runs/\${runId}/input/canary-acceptance.json\`,
+                JSON.stringify({
+                  schemaVersion: "survey-qa-live-canary-acceptance/1.0.0",
+                  runId,
+                  acceptedAt: "2026-08-10T01:02:03.000Z",
+                }),
+              );
+              return new Response(JSON.stringify({ runId }), { status: 202 });
+            },
+          };
+        `,
+      };
+    });
+  },
+};
+
+await esbuild.build({
+  entryPoints: [path.join(WORKER_ROOT, "tools/live-canary-worker.ts")],
+  outfile: path.join(bundleDir, "wrapper.mjs"),
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "node22",
+  plugins: [wrapperStubPlugin],
+  logLevel: "silent",
+});
+
 const auth = await import(pathToFileURL(path.join(bundleDir, "auth.mjs")).href);
+const liveCanaryWrapper = await import(pathToFileURL(path.join(bundleDir, "wrapper.mjs")).href);
 const {
   buildCanaryConfig,
   canaryJudgementRegistry,
@@ -105,6 +201,15 @@ test("live canary gate fails closed, strips private headers, and exposes an exac
     "submission",
   );
   assert.equal(
+    auth.liveCanaryRequestMode(new Request("https://canary.invalid/api/v2/canary-attestation")),
+    "attestation",
+  );
+  assert.equal(
+    auth.liveCanaryRequestMode(new Request("https://canary.invalid/api/v2/canary-attestation?unknown=1")),
+    "attestation",
+    "the non-forwarding handler, not the production read branch, owns malformed challenge queries",
+  );
+  assert.equal(
     auth.liveCanaryRequestMode(new Request("https://canary.invalid/api/v2/dev/seed", { method: "POST" })),
     null,
   );
@@ -135,12 +240,209 @@ test("live canary gate fails closed, strips private headers, and exposes an exac
   }
 });
 
+test("authenticated canary attestation is challenge-bound, closed, read-once, and never forwarded", async () => {
+  const token = "attestation-token-material-that-is-long-enough-123456";
+  const digest = createHash("sha256").update(token).digest("hex");
+  const identitySha256 = "e".repeat(64);
+  const challenge = attestationChallenge(identitySha256);
+  const harness = canaryAttestationHarness({ authSha256: digest, identitySha256 });
+  globalThis.__LIVE_CANARY_WRAPPER_FORWARD__ = null;
+
+  const response = await liveCanaryWrapper.default.fetch(
+    canaryAttestationRequest(token, challenge),
+    harness.env,
+    {},
+  );
+  assert.equal(response.status, 200, await response.clone().text());
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+  const text = await response.text();
+  const value = JSON.parse(text);
+  assert.deepEqual(Object.keys(value).sort(), [
+    "bindings", "build", "documentSha256", "identitySha256", "provider", "safety",
+    "schemaVersion", "signers", "workerVersion",
+  ]);
+  assert.deepEqual(value.safety, {
+    providerCalls: 0,
+    providerCostUsd: "0",
+    submissionClaimState: "unused",
+    workflowInstancesCreated: 0,
+  });
+  assert.equal(value.identitySha256, identitySha256);
+  assert.equal(value.signers.challengeSha256, challenge);
+  assert.equal(value.signers.recordPublicKeySha256, REUSABLE_SIGNING_BUNDLE.record.publicKeySpkiSha256);
+  assert.equal(value.signers.judgementPublicKeySha256, REUSABLE_SIGNING_BUNDLE.judgement.publicKeySpkiSha256);
+  assert.ok(Object.values(value.bindings).every((present) => present === true));
+  assert.deepEqual(harness.operations, [
+    { op: "get", key: await auth.liveCanarySubmissionClaimKey(digest) },
+  ]);
+  assert.equal(harness.workflowCreates, 0);
+  assert.equal(harness.providerCalls, 0);
+  assert.equal(harness.secretReads, 0);
+  assert.equal(globalThis.__LIVE_CANARY_WRAPPER_FORWARD__, null);
+  assert.equal(text.includes("PRIVATE KEY"), false);
+  assert.equal(text.includes(REUSABLE_SIGNING_BUNDLE.record.publicKeySpki), false);
+  assert.equal(text.includes(REUSABLE_SIGNING_BUNDLE.judgement.publicKeySpki), false);
+});
+
+test("attestation rejects auth, challenge, schema, signer, version, binding, and spent-arm mutations without writes or forwarding", async () => {
+  const token = "attestation-negative-token-material-that-is-long-enough";
+  const authSha256 = createHash("sha256").update(token).digest("hex");
+  const identitySha256 = "f".repeat(64);
+  const challenge = attestationChallenge(identitySha256);
+  const cases = [
+    { label: "absent auth", token: null, query: challenge },
+    { label: "wrong auth", token: `${token}-wrong`, query: challenge },
+    { label: "absent challenge", token, query: null },
+    { label: "wrong challenge", token, query: "0".repeat(64) },
+    { label: "duplicate challenge", token, rawQuery: `?challenge=${challenge}&challenge=${challenge}` },
+    { label: "unknown query field", token, rawQuery: `?challenge=${challenge}&extra=1` },
+    { label: "wrong version tag", token, query: challenge, env: { CF_VERSION_METADATA: {
+      id: "22222222-2222-4222-8222-222222222222", tag: "wrong", timestamp: "2026-08-11T04:05:06.000Z",
+    } } },
+    { label: "missing browser binding", token, query: challenge, env: { BROWSER: undefined } },
+    { label: "unsupported provider", token, query: challenge, env: { VISUAL_PROVIDER: "fallback" } },
+    { label: "mismatched judgement signer", token, query: challenge, env: {
+      JUDGEMENT_SIGNING_KEY: REUSABLE_SIGNING_BUNDLE.record.privateKeyPkcs8Pem,
+    } },
+  ];
+
+  for (const specimen of cases) {
+    const harness = canaryAttestationHarness({ authSha256, identitySha256, overrides: specimen.env });
+    globalThis.__LIVE_CANARY_WRAPPER_FORWARD__ = null;
+    const request = specimen.rawQuery === undefined
+      ? canaryAttestationRequest(specimen.token, specimen.query)
+      : canaryAttestationRequest(specimen.token, null, specimen.rawQuery);
+    const response = await liveCanaryWrapper.default.fetch(request, harness.env, {});
+    assert.equal(response.status, 404, specimen.label);
+    assert.deepEqual(harness.operations, [], `${specimen.label} must fail before R2`);
+    assert.equal(harness.workflowCreates, 0, specimen.label);
+    assert.equal(harness.providerCalls, 0, specimen.label);
+    assert.equal(harness.secretReads, 0, specimen.label);
+    assert.equal(globalThis.__LIVE_CANARY_WRAPPER_FORWARD__, null, specimen.label);
+  }
+
+  const spent = canaryAttestationHarness({ authSha256, identitySha256, claim: { state: "pending" } });
+  const spentResponse = await liveCanaryWrapper.default.fetch(
+    canaryAttestationRequest(token, challenge),
+    spent.env,
+    {},
+  );
+  assert.equal(spentResponse.status, 404);
+  assert.equal(spent.operations.length, 1);
+  assert.equal(spent.operations[0].op, "get");
+  assert.equal(spent.operations.some(({ op }) => op !== "get"), false);
+  assert.equal(globalThis.__LIVE_CANARY_WRAPPER_FORWARD__, null);
+});
+
+test("the deployed wrapper passes the configured document digest and preserves matching raw bytes", async () => {
+  const token = "wrapper-document-bound-token-material-that-is-long-enough";
+  const digest = createHash("sha256").update(token).digest("hex");
+  const body = canarySubmissionBody({ surveyUrl: "https://survey.example.com/wrapper-exact-body" });
+  const evidence = memoryR2();
+  globalThis.__LIVE_CANARY_WRAPPER_FORWARD__ = null;
+
+  const accepted = await liveCanaryWrapper.default.fetch(
+    canarySubmissionRequest(body, token),
+    {
+      ...validSubmissionRuntimeEnv(),
+      EVIDENCE: evidence,
+      CANARY_AUTH_SHA256: digest,
+      CANARY_EXPECTED_DOCUMENT_SHA256: EXPECTED_DOCUMENT_SHA256,
+      MAX_SUBMISSION_BYTES: "1048576",
+    },
+    {},
+  );
+  assert.equal(accepted.status, 202, await accepted.clone().text());
+  assert.equal(globalThis.__LIVE_CANARY_WRAPPER_FORWARD__.body, body);
+  assert.equal(globalThis.__LIVE_CANARY_WRAPPER_FORWARD__.authPresent, false);
+  assert.equal(globalThis.__LIVE_CANARY_WRAPPER_FORWARD__.runtimeIdentityHeadersPresent, false);
+  assert.match(globalThis.__LIVE_CANARY_WRAPPER_FORWARD__.runId, /^v2r_[0-9a-hjkmnp-tv-z]{26}$/);
+
+  const refusedEvidence = memoryR2();
+  globalThis.__LIVE_CANARY_WRAPPER_FORWARD__ = null;
+  const refused = await liveCanaryWrapper.default.fetch(
+    canarySubmissionRequest(body, token),
+    {
+      ...validSubmissionRuntimeEnv(),
+      EVIDENCE: refusedEvidence,
+      CANARY_AUTH_SHA256: digest,
+      CANARY_EXPECTED_DOCUMENT_SHA256: "0".repeat(64),
+      MAX_SUBMISSION_BYTES: "1048576",
+    },
+    {},
+  );
+  assert.equal(refused.status, 404);
+  assert.equal(globalThis.__LIVE_CANARY_WRAPPER_FORWARD__, null);
+  assert.deepEqual(refusedEvidence._log, []);
+});
+
+test("submission denies version, tag, identity, provider, and policy drift before R2 or forwarding", async () => {
+  const token = "runtime-identity-bound-token-material-that-is-long-enough";
+  const digest = createHash("sha256").update(token).digest("hex");
+  const body = canarySubmissionBody();
+  const driftIdentity = "0".repeat(64);
+  const cases = [
+    ["different valid identity", {
+      CANARY_DEPLOYMENT_IDENTITY_SHA256: driftIdentity,
+      CANARY_VERSION_TAG: `sqac-${driftIdentity.slice(0, 24)}`,
+      CF_VERSION_METADATA: {
+        id: "22222222-2222-4222-8222-222222222222",
+        tag: `sqac-${driftIdentity.slice(0, 24)}`,
+        timestamp: "2026-08-11T04:05:06.000Z",
+      },
+    }],
+    ["configured tag", { CANARY_VERSION_TAG: "sqac-wrong" }],
+    ["runtime tag", { CF_VERSION_METADATA: {
+      id: "22222222-2222-4222-8222-222222222222",
+      tag: "sqac-wrong",
+      timestamp: "2026-08-11T04:05:06.000Z",
+    } }],
+    ["runtime version id", { CF_VERSION_METADATA: {
+      id: "not-a-version-id",
+      tag: `sqac-${"e".repeat(24)}`,
+      timestamp: "2026-08-11T04:05:06.000Z",
+    } }],
+    ["different valid runtime version id", { CF_VERSION_METADATA: {
+      id: "33333333-3333-4333-8333-333333333333",
+      tag: `sqac-${"e".repeat(24)}`,
+      timestamp: "2026-08-11T04:05:06.000Z",
+    } }],
+    ["different valid provider/configuration", {
+      VISUAL_PROVIDER: "cloudflare-gateway-gemini",
+      CF_AIG_GATEWAY_ID: "firstgateway",
+    }],
+    ["different valid policy", { CANARY_VISUAL_POLICY_SHA256: "6".repeat(64) }],
+    ["unsupported provider", { VISUAL_PROVIDER: "unreviewed-provider" }],
+    ["invalid policy", { CANARY_VISUAL_POLICY_SHA256: "not-a-digest" }],
+  ];
+  for (const [label, overrides] of cases) {
+    const evidence = memoryR2();
+    let forwards = 0;
+    const response = await auth.handleLiveCanarySubmission(
+      canarySubmissionRequest(body, token),
+      evidence,
+      digest,
+      async () => { forwards += 1; return new Response("{}", { status: 202 }); },
+      {
+        ...fixedClaimOptions("v2r_00000000000000000000000001"),
+        runtimeEnv: validSubmissionRuntimeEnv(overrides),
+      },
+    );
+    assert.equal(response.status, 404, label);
+    assert.deepEqual(evidence._log, [], `${label} must fail before R2 claim`);
+    assert.equal(forwards, 0, label);
+  }
+});
+
 test("one atomic claim serializes concurrency and makes an accepted submission exactly replayable", async () => {
   const token = "atomic-canary-token-material-that-is-long-enough";
   const digest = createHash("sha256").update(token).digest("hex");
   const runId = "v2r_00000000000000000000000001";
   const spoofedRunId = "v2r_zzzzzzzzzzzzzzzzzzzzzzzzzz";
-  const body = JSON.stringify({ marker: "raw-body-must-not-be-persisted", documentBase64: "UEsDBA==" });
+  const body = canarySubmissionBody({
+    surveyUrl: "https://survey.example.com/raw-body-must-not-be-persisted",
+  });
   const bucket = memoryR2();
   let forwardCount = 0;
   let announceStarted;
@@ -180,7 +482,7 @@ test("one atomic claim serializes concurrency and makes an accepted submission e
   assert.equal(forwardCount, 1);
 
   const differentWhilePending = await auth.handleLiveCanarySubmission(
-    canarySubmissionRequest(JSON.stringify({ marker: "different" }), token),
+    canarySubmissionRequest(canarySubmissionBody({ surveyUrl: "https://survey.example.com/different" }), token),
     bucket,
     digest,
     async () => { throw new Error("a different request must not reuse a pending arm"); },
@@ -208,7 +510,7 @@ test("one atomic claim serializes concurrency and makes an accepted submission e
   assert.equal(forwardCount, 1);
 
   const differentAfterAcceptance = await auth.handleLiveCanarySubmission(
-    canarySubmissionRequest(JSON.stringify({ marker: "different-after" }), token),
+    canarySubmissionRequest(canarySubmissionBody({ surveyUrl: "https://survey.example.com/different-after" }), token),
     bucket,
     digest,
     async () => { throw new Error("a different request must not reuse an accepted arm"); },
@@ -232,7 +534,7 @@ test("an ambiguous first response is recovered from its pending pre-minted run w
   const token = "ambiguous-canary-token-material-that-is-long-enough";
   const digest = createHash("sha256").update(token).digest("hex");
   const runId = "v2r_00000000000000000000000002";
-  const body = JSON.stringify({ marker: "ambiguous-response", documentBase64: "UEsDBA==" });
+  const body = canarySubmissionBody({ surveyUrl: "https://survey.example.com/ambiguous-response" });
   const bucket = memoryR2();
   let forwardCount = 0;
   let receiptWritten;
@@ -284,12 +586,14 @@ test("known rejection stays reusable, while malformed or unsupported media never
   let minted = 0;
   let forwardCount = 0;
   const options = {
+    expectedDocumentSha256: EXPECTED_DOCUMENT_SHA256,
     now: () => new Date("2026-08-10T01:02:03.000Z"),
     mintRunId: () => [firstRunId, secondRunId][Math.min(minted++, 1)],
+    runtimeEnv: validSubmissionRuntimeEnv(),
   };
 
   const rejected = await auth.handleLiveCanarySubmission(
-    canarySubmissionRequest(JSON.stringify({ marker: "schema-rejected" }), token),
+    canarySubmissionRequest(canarySubmissionBody({ surveyUrl: "https://survey.example.com/schema-rejected" }), token),
     bucket,
     digest,
     async () => {
@@ -305,7 +609,7 @@ test("known rejection stays reusable, while malformed or unsupported media never
   const claimKey = await auth.liveCanarySubmissionClaimKey(digest);
   assert.equal(JSON.parse(await (await bucket.get(claimKey)).text()).state, "rejected");
 
-  const acceptedBody = JSON.stringify({ marker: "replacement", documentBase64: "UEsDBA==" });
+  const acceptedBody = canarySubmissionBody({ surveyUrl: "https://survey.example.com/replacement" });
   const accepted = await auth.handleLiveCanarySubmission(
     canarySubmissionRequest(acceptedBody, token),
     bucket,
@@ -355,11 +659,73 @@ test("known rejection stays reusable, while malformed or unsupported media never
   assert.deepEqual(tooLarge._log, []);
 });
 
+test("document binding refuses absent, malformed, alternate, or mismatched bytes before R2 and forwarding", async () => {
+  const token = "document-bound-canary-token-material-that-is-long-enough";
+  const digest = createHash("sha256").update(token).digest("hex");
+  const runId = "v2r_00000000000000000000000008";
+  const validBody = canarySubmissionBody();
+  const cases = [
+    {
+      label: "absent configured digest",
+      body: validBody,
+      options: { ...fixedClaimOptions(runId), expectedDocumentSha256: undefined },
+    },
+    {
+      label: "malformed configured digest",
+      body: validBody,
+      options: { ...fixedClaimOptions(runId), expectedDocumentSha256: EXPECTED_DOCUMENT_SHA256.toUpperCase() },
+    },
+    {
+      label: "absent document",
+      body: canarySubmissionBody({ documentBase64: undefined }),
+      options: fixedClaimOptions(runId),
+    },
+    {
+      label: "malformed base64",
+      body: canarySubmissionBody({ documentBase64: "UEsDB*==" }),
+      options: fixedClaimOptions(runId),
+    },
+    {
+      label: "alternate base64 with the same decoded bytes",
+      body: canarySubmissionBody({ documentBase64: "UEsDBB==" }),
+      options: fixedClaimOptions(runId),
+    },
+    {
+      label: "canonical bytes with a different digest",
+      body: canarySubmissionBody({ documentBase64: "UEsDBQ==" }),
+      options: fixedClaimOptions(runId),
+    },
+    {
+      label: "open submission object",
+      body: canarySubmissionBody({ unexpected: true }),
+      options: fixedClaimOptions(runId),
+    },
+  ];
+
+  for (const specimen of cases) {
+    const bucket = memoryR2();
+    let forwardCount = 0;
+    const response = await auth.handleLiveCanarySubmission(
+      canarySubmissionRequest(specimen.body, token),
+      bucket,
+      digest,
+      async () => {
+        forwardCount += 1;
+        return new Response("{}", { status: 202 });
+      },
+      specimen.options,
+    );
+    assert.equal(response.status, 404, specimen.label);
+    assert.equal(forwardCount, 0, specimen.label);
+    assert.deepEqual(bucket._log, [], `${specimen.label} must not acquire or inspect an R2 claim`);
+  }
+});
+
 test("partial run state spends the arm fail-closed and corrupt claim mutations cannot authorize forwarding", async () => {
   const token = "failed-closed-canary-token-material-that-is-long-enough";
   const digest = createHash("sha256").update(token).digest("hex");
   const runId = "v2r_00000000000000000000000005";
-  const body = JSON.stringify({ marker: "partial", documentBase64: "UEsDBA==" });
+  const body = canarySubmissionBody({ surveyUrl: "https://survey.example.com/partial" });
   const bucket = memoryR2();
   let forwardCount = 0;
   const response = await auth.handleLiveCanarySubmission(
@@ -380,7 +746,10 @@ test("partial run state spends the arm fail-closed and corrupt claim mutations c
   assert.equal(claim.state, "failed-closed");
   assert.equal(claim.reasonCode, "partial-run-state");
 
-  for (const replayBody of [body, JSON.stringify({ marker: "different-after-partial" })]) {
+  for (const replayBody of [
+    body,
+    canarySubmissionBody({ surveyUrl: "https://survey.example.com/different-after-partial" }),
+  ]) {
     assert.equal((await auth.handleLiveCanarySubmission(
       canarySubmissionRequest(replayBody, token),
       bucket,
@@ -517,31 +886,138 @@ test("the production submit seam accepts only a configured wrapper-planned id an
   assert.deepEqual(exportEvidence._log, logBefore, "GET /export must not write or delete R2 objects");
 });
 
-test("synthetic Windows ACL evidence rejects a group recovery owner and accepts an individual user", () => {
-  const currentSid = "S-1-5-21-1000";
-  const ownerSid = "S-1-5-21-2000";
+test("synthetic Windows ACL owner anchors survive creator-to-repository-owner handoff", () => {
+  const creatorSid = "S-1-5-21-1000";
+  const repositoryOwnerSid = "S-1-5-21-2000";
+  const allowed = [creatorSid, repositoryOwnerSid];
+  const fileRules = allowed.map((sid) => ({
+    sid,
+    type: "Allow",
+    inherited: true,
+    rights: "FullControl",
+  }));
+  const fileSnapshot = {
+    protected: false,
+    currentSid: repositoryOwnerSid,
+    repositoryOwnerSid,
+    repositoryOwnerType: "SidTypeUser",
+    privateDirectoryOwnerSid: creatorSid,
+    privateDirectoryOwnerType: "SidTypeUser",
+    allowed,
+    rules: fileRules,
+  };
+
+  assert.doesNotThrow(() =>
+    privateOutput.assertWindowsAclSnapshot(
+      { ...fileSnapshot, targetOwnerSid: creatorSid },
+      { directory: false },
+    ),
+    "an existing creator-owned config must remain verifiable by the repository owner",
+  );
+  assert.doesNotThrow(() =>
+    privateOutput.assertWindowsAclSnapshot(
+      { ...fileSnapshot, targetOwnerSid: repositoryOwnerSid },
+      { directory: false },
+    ),
+    "a later repository-owner-created log must remain inside the parent directory's exact allowlist",
+  );
+  assert.doesNotThrow(() =>
+    privateOutput.assertWindowsAclSnapshot(
+      {
+        ...fileSnapshot,
+        protected: true,
+        targetOwnerSid: creatorSid,
+        rules: allowed.map((sid) => ({ ...fileRules[0], sid, inherited: false })),
+      },
+      { directory: true },
+    ),
+  );
+});
+
+test("synthetic Windows ACL owner anchors reject extra access and unrelated identities", () => {
+  const creatorSid = "S-1-5-21-1000";
+  const repositoryOwnerSid = "S-1-5-21-2000";
+  const unrelatedSid = "S-1-5-21-3000";
+  const allowed = [creatorSid, repositoryOwnerSid];
+  const rule = (sid) => ({
+    sid,
+    type: "Allow",
+    inherited: true,
+    rights: "FullControl",
+  });
+  const snapshot = {
+    protected: false,
+    currentSid: repositoryOwnerSid,
+    repositoryOwnerSid,
+    repositoryOwnerType: "SidTypeUser",
+    privateDirectoryOwnerSid: creatorSid,
+    privateDirectoryOwnerType: "SidTypeUser",
+    targetOwnerSid: creatorSid,
+    allowed,
+    rules: allowed.map(rule),
+  };
+
+  assert.throws(
+    () => privateOutput.assertWindowsAclSnapshot({ ...snapshot, rules: [...snapshot.rules, rule(unrelatedSid)] }),
+    /missing or extra access rule/,
+    "mutation evidence: a third ACE must fail even when both required owners remain covered",
+  );
+  assert.throws(
+    () => privateOutput.assertWindowsAclSnapshot({ ...snapshot, currentSid: unrelatedSid }),
+    /verifier is not an approved owner/,
+    "an unrelated process must not validate someone else's private output",
+  );
+  assert.throws(
+    () => privateOutput.assertWindowsAclSnapshot({ ...snapshot, targetOwnerSid: unrelatedSid }),
+    /file owner is not an approved owner/,
+    "a private file cannot be owned by a third principal",
+  );
+});
+
+test("synthetic Windows ACL owner anchors require user owners and exact directory rules", () => {
+  const creatorSid = "S-1-5-21-1000";
+  const repositoryOwnerSid = "S-1-5-21-2000";
+  const allowed = [creatorSid, repositoryOwnerSid];
+  const rules = allowed.map((sid) => ({
+    sid,
+    type: "Allow",
+    inherited: false,
+    rights: "FullControl",
+  }));
   const snapshot = {
     protected: true,
-    currentSid,
-    repositoryOwnerSid: ownerSid,
+    currentSid: creatorSid,
+    repositoryOwnerSid,
     repositoryOwnerType: "SidTypeUser",
-    allowed: [currentSid, ownerSid],
-    rules: [currentSid, ownerSid].map((sid) => ({
-      sid,
-      type: "Allow",
-      inherited: false,
-      rights: "FullControl",
-    })),
+    privateDirectoryOwnerSid: creatorSid,
+    privateDirectoryOwnerType: "SidTypeUser",
+    targetOwnerSid: creatorSid,
+    allowed,
+    rules,
   };
-  assert.doesNotThrow(() => privateOutput.assertWindowsAclSnapshot(snapshot, { directory: true }));
+
   assert.throws(
     () => privateOutput.assertWindowsAclSnapshot({ ...snapshot, repositoryOwnerType: "SidTypeGroup" }, { directory: true }),
     /recovery owner is not an individual user/,
     "mutation evidence: a broad repository-owner group must not enter the recovery allowlist",
   );
   assert.throws(
-    () => privateOutput.assertWindowsAclSnapshot({ ...snapshot, allowed: [currentSid, ownerSid, "S-1-1-0"] }, { directory: true }),
-    /missing or extra access rule/,
+    () => privateOutput.assertWindowsAclSnapshot({ ...snapshot, privateDirectoryOwnerType: "SidTypeGroup" }, { directory: true }),
+    /directory owner is not an individual user/,
+    "mutation evidence: a group-owned private directory must fail closed",
+  );
+  assert.throws(
+    () => privateOutput.assertWindowsAclSnapshot({ ...snapshot, protected: false }, { directory: true }),
+    /directory still inherits access rules/,
+  );
+  assert.throws(
+    () => privateOutput.assertWindowsAclSnapshot({ ...snapshot, rules: [{ ...rules[0], inherited: true }, rules[1]] }, { directory: true }),
+    /directory has an inherited access rule/,
+  );
+  assert.throws(
+    () => privateOutput.assertWindowsAclSnapshot({ ...snapshot, rules: [{ ...rules[0], rights: "FullControl, Synchronize" }, rules[1]] }, { directory: true }),
+    /unapproved principal or insufficient rights/,
+    "mutation evidence: FullControl must be the exact rights projection",
   );
 });
 
@@ -555,6 +1031,9 @@ test("generated config isolates every mutable Cloudflare identity and freezes sp
     provider: "cloudflare-gateway-gemini",
     bucketName: LIVE_CANARY_BUCKET_NAME,
     tokenSha256: digest,
+    expectedDocumentSha256: EXPECTED_DOCUMENT_SHA256,
+    sourceWorkerRoot: WORKER_ROOT,
+    sourceManifestSha256: "b".repeat(64),
     signingBundle: REUSABLE_SIGNING_BUNDLE,
     visualMaximumCalls: 100,
   });
@@ -584,11 +1063,14 @@ test("generated config isolates every mutable Cloudflare identity and freezes sp
   assert.equal(config.vars.VISUAL_MAX_USD, "3.56");
   assert.equal(config.account_id, LIVE_CANARY_ACCOUNT_ID);
   assert.equal(config.compliance_region, LIVE_CANARY_COMPLIANCE_REGION);
+  assert.deepEqual(config.version_metadata, { binding: "CF_VERSION_METADATA" });
   assert.equal(config.vars.CF_AIG_ACCOUNT_ID, LIVE_CANARY_ACCOUNT_ID);
   assert.equal(config.vars.VISUAL_MAX_WAVES, "100");
   assert.equal(config.vars.CANARY_VISUAL_PROFILE, "full");
   assert.match(config.vars.CANARY_VISUAL_POLICY_SHA256, /^[0-9a-f]{64}$/);
   assert.equal(config.vars.CANARY_AUTH_SHA256, digest);
+  assert.equal(config.vars.CANARY_EXPECTED_DOCUMENT_SHA256, EXPECTED_DOCUMENT_SHA256);
+  assert.equal(config.vars.CANARY_SOURCE_MANIFEST_SHA256, "b".repeat(64));
   assert.equal("DEV_SEED" in config.vars, false);
   assert.equal("CF_ACCESS_CLIENT_ID" in config.vars, false);
   assert.equal("CF_ACCESS_CLIENT_SECRET" in config.vars, false);
@@ -614,6 +1096,9 @@ test("generated config isolates every mutable Cloudflare identity and freezes sp
     provider: "mistral-medium35-direct",
     bucketName: LIVE_CANARY_BUCKET_NAME,
     tokenSha256: digest,
+    expectedDocumentSha256: EXPECTED_DOCUMENT_SHA256,
+    sourceWorkerRoot: WORKER_ROOT,
+    sourceManifestSha256: "b".repeat(64),
     signingBundle: REUSABLE_SIGNING_BUNDLE,
     visualMaximumCalls: 100,
   });
@@ -626,24 +1111,78 @@ test("generated config isolates every mutable Cloudflare identity and freezes sp
   );
 
   assert.throws(
-    () => buildCanaryConfig(parsed.config, { provider: "fallback", bucketName: "valid-bucket", tokenSha256: digest, signingBundle: REUSABLE_SIGNING_BUNDLE, visualMaximumCalls: 100 }),
+    () => buildCanaryConfig(parsed.config, canaryOptions({ provider: "fallback", bucketName: "valid-bucket", tokenSha256: digest })),
     /unsupported visual provider/,
   );
   assert.throws(
-    () => buildCanaryConfig(parsed.config, { provider: "workers-ai-gemma4", bucketName: "../shared", tokenSha256: digest, signingBundle: REUSABLE_SIGNING_BUNDLE, visualMaximumCalls: 100 }),
+    () => buildCanaryConfig(parsed.config, canaryOptions({ bucketName: "../shared", tokenSha256: digest })),
     /invalid R2 bucket name/,
   );
   assert.throws(
-    () => buildCanaryConfig(parsed.config, { provider: "workers-ai-gemma4", bucketName: "survey-qa-artifacts", tokenSha256: digest, signingBundle: REUSABLE_SIGNING_BUNDLE, visualMaximumCalls: 100 }),
+    () => buildCanaryConfig(parsed.config, canaryOptions({ bucketName: "survey-qa-artifacts", tokenSha256: digest })),
     /dedicated non-production/,
   );
   assert.throws(
-    () => buildCanaryConfig(parsed.config, { provider: "workers-ai-gemma4", bucketName: "some-other-valid-bucket", tokenSha256: digest, signingBundle: REUSABLE_SIGNING_BUNDLE, visualMaximumCalls: 100 }),
+    () => buildCanaryConfig(parsed.config, canaryOptions({ bucketName: "some-other-valid-bucket", tokenSha256: digest })),
     /dedicated non-production/,
   );
   assert.throws(
-    () => buildCanaryConfig(parsed.config, { provider: "workers-ai-gemma4", bucketName: LIVE_CANARY_BUCKET_NAME, tokenSha256: "bad", signingBundle: REUSABLE_SIGNING_BUNDLE, visualMaximumCalls: 100 }),
+    () => buildCanaryConfig(parsed.config, canaryOptions({ tokenSha256: "bad" })),
     /invalid canary token digest/,
+  );
+  for (const expectedDocumentSha256 of [undefined, "A".repeat(64), "0".repeat(63)]) {
+    assert.throws(
+      () => buildCanaryConfig(parsed.config, canaryOptions({ expectedDocumentSha256 })),
+      /expected document SHA-256 must be exactly 64 lowercase hexadecimal characters/,
+    );
+  }
+});
+
+test("canary config is a positive projection that cannot inherit production privileges", () => {
+  const hostile = structuredClone(sourceConfig());
+  Object.assign(hostile, {
+    kv_namespaces: [{ binding: "ESCAPE", id: "production" }],
+    d1_databases: [{ binding: "ESCAPE", database_id: "production" }],
+    services: [{ binding: "ESCAPE", service: "production" }],
+    queues: { producers: [{ binding: "ESCAPE", queue: "production" }] },
+    routes: [{ pattern: "production.example/*" }],
+    triggers: { crons: ["* * * * *"] },
+    browser: { binding: "BROWSER", remote: true },
+    ai: { binding: "AI", remote: true },
+    limits: { subrequests: 9_999_999 },
+    observability: { enabled: false },
+    secrets_store_secrets: [{
+      binding: "ESCAPE",
+      store_id: "00000000000000000000000000000000",
+      secret_name: "ROOT",
+    }],
+  });
+  hostile.vars.UNREVIEWED_RUNTIME_POWER = "true";
+  hostile.vars.CAP_STANDARD_MAX_USD = "999999";
+  const config = buildCanaryConfig(hostile, canaryOptions({ visualMaximumCalls: 1 }));
+  const forbidden = [
+    "d1_databases",
+    "kv_namespaces",
+    "queues",
+    "routes",
+    "services",
+    "triggers",
+  ];
+  assert.ok(forbidden.every((name) => !(name in config)));
+  assert.deepEqual(config.browser, { binding: "BROWSER" });
+  assert.deepEqual(config.ai, { binding: "AI" });
+  assert.deepEqual(config.limits, { subrequests: 100_000 });
+  assert.deepEqual(config.observability, { enabled: true });
+  assert.equal(config.vars.UNREVIEWED_RUNTIME_POWER, undefined);
+  assert.equal(config.vars.CAP_STANDARD_MAX_USD, "2");
+  assert.deepEqual(
+    config.secrets_store_secrets.map(({ binding, store_id, secret_name }) => ({ binding, store_id, secret_name })),
+    ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "XAI_API_KEY"]
+      .map((binding) => ({
+        binding,
+        store_id: "55e6ce4174d645cfa68a6c27eef7847f",
+        secret_name: binding,
+      })),
   );
 });
 
@@ -874,6 +1413,15 @@ test("one reusable bundle drives multiple arm configs without leaking key bytes 
   const signingDir = localOutput("reusable-signing");
   const generated = await signing.generateCanarySigningBundle(signingDir);
   const bundle = await signing.loadCanarySigningBundle(generated.bundlePath);
+  const sourceSnapshot = freezeCanarySourceSnapshot({
+    destination: localOutput("config-source-snapshot"),
+    repositoryRoot: REPO_ROOT,
+    selectors: [
+      "worker-v2/wrangler.jsonc",
+      "worker-v2/tools/live-canary-worker.ts",
+      "worker-v2/public",
+    ],
+  });
 
   const outputs = [];
   for (const provider of ["workers-ai-gemma4", "mistral-medium35-direct"]) {
@@ -883,6 +1431,9 @@ test("one reusable bundle drives multiple arm configs without leaking key bytes 
       "--provider", provider,
       "--bucket-name", LIVE_CANARY_BUCKET_NAME,
       "--signing-bundle", generated.bundlePath,
+      "--expected-document-sha256", EXPECTED_DOCUMENT_SHA256,
+      "--source-snapshot-directory", sourceSnapshot.snapshotDirectory,
+      "--source-manifest-sha256", sourceSnapshot.manifestSha256,
       "--visual-maximum-calls", "1",
     ];
     const child = runNode(CONFIG_GENERATOR, args);
@@ -912,6 +1463,20 @@ test("one reusable bundle drives multiple arm configs without leaking key bytes 
     assert.equal(config.vars.CF_AIG_ACCOUNT_ID, LIVE_CANARY_ACCOUNT_ID);
     assert.equal(config.vars.VISUAL_MAX_CALLS, "1");
     assert.equal(config.vars.CANARY_VISUAL_PROFILE, "semantic-smoke-one-call");
+    assert.equal(config.vars.CANARY_EXPECTED_DOCUMENT_SHA256, EXPECTED_DOCUMENT_SHA256);
+    assert.equal(config.vars.CANARY_SOURCE_MANIFEST_SHA256, sourceSnapshot.manifestSha256);
+    assert.equal(
+      path.resolve(config.main),
+      path.join(sourceSnapshot.snapshotDirectory, "worker-v2", "tools", "live-canary-worker.ts"),
+    );
+    assert.equal(
+      path.resolve(config.assets.directory),
+      path.join(sourceSnapshot.snapshotDirectory, "worker-v2", "public"),
+    );
+    assert.equal(metadata.schemaVersion, "survey-qa-live-canary-config/1.1.0");
+    assert.equal(metadata.expectedDocumentSha256, EXPECTED_DOCUMENT_SHA256);
+    assert.equal(metadata.sourceSnapshotDirectory, sourceSnapshot.snapshotDirectory);
+    assert.equal(metadata.sourceManifestSha256, sourceSnapshot.manifestSha256);
     assert.equal(metadata.visualPolicy.sha256, config.vars.CANARY_VISUAL_POLICY_SHA256);
     assert.equal(metadata.signing.registryMode, "isolated-canary-injected");
     assert.equal(metadata.signing.recordKeyId, bundle.record.keyId);
@@ -939,6 +1504,7 @@ test("one reusable bundle drives multiple arm configs without leaking key bytes 
     "--provider", "workers-ai-gemma4",
     "--bucket-name", LIVE_CANARY_BUCKET_NAME,
     "--signing-bundle", generated.bundlePath,
+    "--expected-document-sha256", EXPECTED_DOCUMENT_SHA256,
     "--visual-maximum-calls", "1",
   ]);
   assert.notEqual(refusedOverwrite.status, 0);
@@ -949,6 +1515,7 @@ test("one reusable bundle drives multiple arm configs without leaking key bytes 
     "--provider", "workers-ai-gemma4",
     "--bucket-name", LIVE_CANARY_BUCKET_NAME,
     "--signing-bundle", generated.bundlePath,
+    "--expected-document-sha256", EXPECTED_DOCUMENT_SHA256,
     "--visual-maximum-calls", "2",
   ]);
   assert.notEqual(refusedInvalidCap.status, 0);
@@ -960,18 +1527,155 @@ test("one reusable bundle drives multiple arm configs without leaking key bytes 
     "--provider", "workers-ai-gemma4",
     "--bucket-name", LIVE_CANARY_BUCKET_NAME,
     "--signing-bundle", generated.bundlePath,
+    "--expected-document-sha256", EXPECTED_DOCUMENT_SHA256,
   ]);
   assert.notEqual(refusedMissingCap.status, 0);
   assert.match(refusedMissingCap.stderr, /--visual-maximum-calls <1\|100>/);
   assert.equal(existsSync(missingCapOutput), false);
+
+  for (const [label, expectedDocumentSha256] of [
+    ["missing-document-hash", null],
+    ["uppercase-document-hash", EXPECTED_DOCUMENT_SHA256.toUpperCase()],
+  ]) {
+    const outputDir = localOutput(label);
+    const args = [
+      "--output-dir", outputDir,
+      "--provider", "workers-ai-gemma4",
+      "--bucket-name", LIVE_CANARY_BUCKET_NAME,
+      "--signing-bundle", generated.bundlePath,
+      "--visual-maximum-calls", "1",
+    ];
+    if (expectedDocumentSha256 !== null) {
+      args.push("--expected-document-sha256", expectedDocumentSha256);
+    }
+    const refused = runNode(CONFIG_GENERATOR, args);
+    assert.notEqual(refused.status, 0, label);
+    assert.match(refused.stderr, /--expected-document-sha256 <64-lowercase-hex>/, label);
+    assert.equal(existsSync(outputDir), false, label);
+  }
 });
 
+function attestationChallenge(identitySha256) {
+  return createHash("sha256")
+    .update(`survey-qa-canary-attestation-fixed-challenge/1\0${identitySha256}`)
+    .digest("hex");
+}
+
+function canaryAttestationRequest(token, challenge, rawQuery = undefined) {
+  const query = rawQuery !== undefined
+    ? rawQuery
+    : challenge === null
+      ? ""
+      : `?challenge=${challenge}`;
+  const headers = token === null ? {} : { [auth.LIVE_CANARY_AUTH_HEADER]: token };
+  return new Request(`https://canary.invalid/api/v2/canary-attestation${query}`, { headers });
+}
+
+function canaryAttestationHarness({ authSha256, identitySha256, overrides = {}, claim = null }) {
+  const operations = [];
+  let workflowCreates = 0;
+  let providerCalls = 0;
+  let secretReads = 0;
+  const evidence = {
+    async get(key) {
+      operations.push({ op: "get", key });
+      return claim;
+    },
+    async put() {
+      operations.push({ op: "put" });
+      throw new Error("attestation must never write R2");
+    },
+    async head() {
+      operations.push({ op: "head" });
+      throw new Error("attestation must never inspect run artifacts");
+    },
+    async list() {
+      operations.push({ op: "list" });
+      throw new Error("attestation must never enumerate R2");
+    },
+    async delete() {
+      operations.push({ op: "delete" });
+      throw new Error("attestation must never delete R2");
+    },
+  };
+  const secret = { async get() { secretReads += 1; throw new Error("attestation must not resolve provider secrets"); } };
+  const workflow = { async create() { workflowCreates += 1; throw new Error("attestation must not create workflows"); } };
+  const env = {
+    AI: { async run() { providerCalls += 1; throw new Error("attestation must not call a provider"); } },
+    ANTHROPIC_API_KEY: secret,
+    ASSETS: { async fetch() { throw new Error("attestation must not fetch assets"); } },
+    BROWSER: { async fetch() { throw new Error("attestation must not fetch browser rendering"); } },
+    CF_VERSION_METADATA: {
+      id: "22222222-2222-4222-8222-222222222222",
+      tag: `sqac-${identitySha256.slice(0, 24)}`,
+      timestamp: "2026-08-11T04:05:06.000Z",
+    },
+    DEEPSEEK_API_KEY: secret,
+    EVIDENCE: evidence,
+    GEMINI_API_KEY: secret,
+    JUDGEMENT_KEY_REGISTRY: JSON.stringify({ keys: {
+      [REUSABLE_SIGNING_BUNDLE.judgement.keyId]: {
+        publicKeySpki: REUSABLE_SIGNING_BUNDLE.judgement.publicKeySpki,
+        trust: "production",
+      },
+    } }),
+    JUDGEMENT_SIGNING_KEY: REUSABLE_SIGNING_BUNDLE.judgement.privateKeyPkcs8Pem,
+    JUDGEMENT_SIGNING_KEY_ID: REUSABLE_SIGNING_BUNDLE.judgement.keyId,
+    MISTRAL_API_KEY: secret,
+    RECORD_SIGNING_KEY: REUSABLE_SIGNING_BUNDLE.record.privateKeyPkcs8Pem,
+    RECORD_SIGNING_KEY_ID: REUSABLE_SIGNING_BUNDLE.record.keyId,
+    V2_RUN_WORKFLOW: workflow,
+    V2_VISUAL_WORKFLOW: workflow,
+    XAI_API_KEY: secret,
+    CANARY_AUTH_SHA256: authSha256,
+    CANARY_BUNDLE_INPUTS_MANIFEST_SHA256: "1".repeat(64),
+    CANARY_BUNDLE_METAFILE_SHA256: "2".repeat(64),
+    CANARY_DEPLOYMENT_IDENTITY_SHA256: identitySha256,
+    CANARY_VERSION_TAG: `sqac-${identitySha256.slice(0, 24)}`,
+    CANARY_EXPECTED_DOCUMENT_SHA256: EXPECTED_DOCUMENT_SHA256,
+    CANARY_REVIEWED_BUNDLE_MANIFEST_SHA256: "3".repeat(64),
+    CANARY_SOURCE_MANIFEST_SHA256: "4".repeat(64),
+    CANARY_VISUAL_POLICY_SHA256: "5".repeat(64),
+    VISUAL_MAX_CALLS: "1",
+    VISUAL_MAX_USD: "0.0263",
+    VISUAL_PROVIDER: "workers-ai-gemma4",
+    ...overrides,
+  };
+  return {
+    env,
+    operations,
+    get workflowCreates() { return workflowCreates; },
+    get providerCalls() { return providerCalls; },
+    get secretReads() { return secretReads; },
+  };
+}
+
+function canarySubmissionBody(overrides = {}) {
+  return JSON.stringify({
+    surveyUrl: "https://survey.example.com/canary",
+    documentBase64: CANONICAL_DOCUMENT_BASE64,
+    documentName: "questionnaire.docx",
+    profile: "standard",
+    locale: "en",
+    viewports: ["desktop"],
+    contractSource: "extract",
+    ...overrides,
+  });
+}
+
 function canarySubmissionRequest(body, token, headers = {}) {
+  const runtime = validSubmissionRuntimeEnv();
   return new Request("https://canary.invalid/api/v2/runs", {
     method: "POST",
     headers: {
       "content-type": "application/json; charset=utf-8",
       [auth.LIVE_CANARY_AUTH_HEADER]: token,
+      [LIVE_CANARY_IDENTITY_HEADER]: runtime.CANARY_DEPLOYMENT_IDENTITY_SHA256,
+      [LIVE_CANARY_VERSION_ID_HEADER]: runtime.CF_VERSION_METADATA.id,
+      [LIVE_CANARY_PROVIDER_HEADER]: runtime.VISUAL_PROVIDER,
+      [LIVE_CANARY_POLICY_HEADER]: runtime.CANARY_VISUAL_POLICY_SHA256,
+      [LIVE_CANARY_PROVIDER_CONFIGURATION_HEADER]: WORKERS_AI_GEMMA4_CONFIGURATION_SHA256,
+      [LIVE_CANARY_MAXIMUM_USD_HEADER]: runtime.VISUAL_MAX_USD,
       ...headers,
     },
     body,
@@ -1006,8 +1710,28 @@ async function putAcceptedCanaryRun(bucket, runId) {
 
 function fixedClaimOptions(runId) {
   return {
+    expectedDocumentSha256: EXPECTED_DOCUMENT_SHA256,
     now: () => new Date("2026-08-10T01:02:03.000Z"),
     mintRunId: () => runId,
+    runtimeEnv: validSubmissionRuntimeEnv(),
+  };
+}
+
+function validSubmissionRuntimeEnv(overrides = {}) {
+  const identitySha256 = "e".repeat(64);
+  return {
+    CANARY_DEPLOYMENT_IDENTITY_SHA256: identitySha256,
+    CANARY_VERSION_TAG: `sqac-${identitySha256.slice(0, 24)}`,
+    CANARY_VISUAL_POLICY_SHA256: "5".repeat(64),
+    CF_VERSION_METADATA: {
+      id: "22222222-2222-4222-8222-222222222222",
+      tag: `sqac-${identitySha256.slice(0, 24)}`,
+      timestamp: "2026-08-11T04:05:06.000Z",
+    },
+    VISUAL_MAX_CALLS: "1",
+    VISUAL_MAX_USD: "0.0263",
+    VISUAL_PROVIDER: "workers-ai-gemma4",
+    ...overrides,
   };
 }
 
@@ -1023,6 +1747,9 @@ function canaryOptions(overrides = {}) {
     provider: "workers-ai-gemma4",
     bucketName: LIVE_CANARY_BUCKET_NAME,
     tokenSha256: "a".repeat(64),
+    expectedDocumentSha256: EXPECTED_DOCUMENT_SHA256,
+    sourceWorkerRoot: WORKER_ROOT,
+    sourceManifestSha256: "b".repeat(64),
     signingBundle: REUSABLE_SIGNING_BUNDLE,
     visualMaximumCalls: 100,
     ...overrides,
@@ -1040,6 +1767,9 @@ function runNode(script, args) {
     cwd: WORKER_ROOT,
     encoding: "utf8",
     windowsHide: true,
-    timeout: 30_000,
+    // Snapshot-bound config generation now performs independent Windows ACL verification on the
+    // sealed directory and manifest before it reads source bytes. A loaded CI/desktop host can
+    // spend more than 30 seconds in those PowerShell checks without being hung.
+    timeout: 90_000,
   });
 }
