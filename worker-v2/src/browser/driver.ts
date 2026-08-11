@@ -2971,8 +2971,16 @@ export async function walkPath(
       // exact defect D42 fixed on the first pass and left standing on the recovery pass. Leaving
       // `text_entry` off makes every control take its own per-type navigator default, which is
       // what "answer validly" has to mean once the walker knows more than one kind of input.
-      // `pathHints` is passed for uniformity but is inert here: the recovery decision is
-      // non-null, so `survivalAvoidLabels` reads only ITS `avoid_labels` (it carries none).
+      // THE RECOVERY CONSUMES THE SAME SURVIVAL HINTS AS THE FIRST PASS. The synthetic
+      // decision below is non-null, so inside `applyDecision` `survivalAvoidLabels` reads
+      // only ITS `avoid_labels` — left unstamped they were [], and the re-pick could take
+      // the documented screen-out label the first pass deliberately steered around (hints
+      // steer S3 off "Market research"; something else blocks; the recovery re-picked
+      // position-1 and the walk died on the exact answer the hints exist to avoid). So the
+      // first pass's avoid set is RE-DERIVED from the same sources with the same
+      // precedence — the bound decision's own `avoid_labels`, else the path's hints by
+      // offered-label overlap. This is an input-stamping site, not a new consumer: the
+      // option default inside `applyDecision` remains the ONE consumer of hints.
       const recovery = await applyDecision(
         page,
         after ?? before,
@@ -2980,6 +2988,7 @@ export async function walkPath(
           question: decision?.question ?? "",
           select: decision?.select ?? [],
           source: "recovery",
+          avoid_labels: survivalAvoidLabels(decision, pathHints, after ?? before),
         } as PlannedDecision,
         pathHints,
         fillerVariant,

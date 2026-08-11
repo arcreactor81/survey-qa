@@ -185,6 +185,31 @@ const MUTANTS = [
     kills: ["THE CLOSED SET: `exactly N … and no others` needs the QUOTE to bear the count out"],
   },
   {
+    // 1.9.0 (owner-approved softening, 11 Aug): the pre-1.9.0 expression, reinstated verbatim.
+    name: "the 1.9.0 word-shape rule reverts: any capture is read as a count clause",
+    breaks:
+      "'exactly the following ANSWER options and no others' captures a word where a number is expected; " +
+      "reading the failed NUMBER_WORD lookup as a count disagreement refuses closure on the domain's most " +
+      "canonical closure phrasings and kills the extra-option arm on those questions",
+    file: EXPAND,
+    find: "  const countAgrees = n === null || n === parsed;",
+    replace: "  const countAgrees = n === null ? stated === null : n === parsed;",
+    kills: [
+      "SOFTENED 1.9.0: 'exactly the following answer options and no others' closes a fully-parsed corroborated set",
+      "SOFTENED 1.9.0: 'only the following answer options' closes a fully-parsed corroborated set",
+    ],
+  },
+  {
+    name: "the numeric-mismatch refusal is deleted: a stated count that disagrees still closes",
+    breaks:
+      "a set the document counts at five and the quote bears out at four is not closed; closing it licenses " +
+      "an extra-option accusation against a site rendering the option the document lists",
+    file: EXPAND,
+    find: "  const countAgrees = n === null || n === parsed;",
+    replace: "  const countAgrees = true;",
+    kills: ["UNCHANGED 1.9.0: a stated count that DISAGREES with the parsed options still refuses closure"],
+  },
+  {
     name: "closure coverage is falsely attested as established when the compiler did not evaluate it",
     breaks:
       "membership and closure are separate claims; exhaustive=false must say whether the document left the set " +

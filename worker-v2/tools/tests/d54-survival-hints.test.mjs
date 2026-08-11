@@ -374,3 +374,79 @@ suite("D54 — survival hints have exactly one consumer: grid and value fillers 
     assert(typed[0].detail.startsWith("navigator-default:"), typed[0].detail);
   });
 });
+
+/* ============================================================ 4. the RECOVERY re-pick consumes the same hints */
+
+/**
+ * THE GAP (survival-hints feature report): when a screen blocks and walkPath's recovery pass
+ * re-invokes applyDecision, the synthetic decision it builds is NON-NULL — so
+ * `survivalAvoidLabels` reads only ITS `avoid_labels`, and unstamped it read []. The re-pick
+ * could therefore select the documented screen-out label the FIRST pass deliberately steered
+ * around: hints steer S3 to safety, something else on the screen blocks, and the recovery
+ * clicks position-1 "Market research" — the walk dies on a retry that attempt one would have
+ * survived. The fix re-derives the first pass's avoid set (bound decision's `avoid_labels`,
+ * else path-level `survival_hints` by offered-label overlap) onto the synthetic decision.
+ *
+ * A never-advancing read queue (`[s]` — exhaustion repeats the last screen) forces the
+ * recovery pass; these assert on the RECOVERY step's own actions, not step 0's.
+ */
+
+const recoveryStep = (obs) => obs.steps.find((s) => s.decisionSource === "recovery");
+const recoveryClicks = (obs) => (recoveryStep(obs)?.actions ?? []).filter((a) => a.kind === "click-option" && a.ok);
+
+suite("D54 — survival hints reach the RECOVERY re-pick after a blocked screen", () => {
+  test("THE RETRY REPLAY: a blocked screen's recovery re-pick steers off the flagged position-1 label", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, [industryScreen()], {
+      decisions: [boundDecision({ avoid_labels: ["Market research"] })],
+    });
+
+    // The FIRST pass steered correctly — that half is pinned by suite 1 and holds here too.
+    assertEq(optionClicks(obs)[0].targetLabel, "Software engineering");
+    // Pre-fix this is the whole failure: the recovery's synthetic decision carried no
+    // avoid_labels, so the re-pick clicked position-1 "Market research" — the documented
+    // screen-out the hints exist to avoid — and wore plain `first-option` provenance.
+    const clicks = recoveryClicks(obs);
+    assertEq(clicks.length, 1, JSON.stringify(recoveryStep(obs)?.actions));
+    assertEq(clicks[0].targetLabel, "Software engineering", `the recovery re-pick clicked "${clicks[0].targetLabel}"`);
+    assert(
+      clicks[0].detail.startsWith('navigator-default:first-non-flagged-option(avoided "Market research")'),
+      `the avoid-steering is not named on the recovery action: ${clicks[0].detail}`,
+    );
+  });
+
+  test("the recovery consumes PATH-LEVEL hints on an unbound screen — the second avoid-label source", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    // No decisions at all: the avoid set can only come from the path's survival_hints, by
+    // offered-label overlap — the same source rule the main pass uses on unbound screens.
+    const { obs } = await walk(mod, env, [industryScreen()], {
+      decisions: [],
+      survival_hints: [{ question: "S3", avoid_labels: ["Market research"] }],
+    });
+
+    const clicks = recoveryClicks(obs);
+    assertEq(clicks.length, 1, JSON.stringify(recoveryStep(obs)?.actions));
+    assertEq(clicks[0].targetLabel, "Software engineering", `the recovery re-pick clicked "${clicks[0].targetLabel}"`);
+    assert(
+      clicks[0].detail.startsWith("navigator-default:first-non-flagged-option"),
+      `the avoid-steering is not named on the recovery action: ${clicks[0].detail}`,
+    );
+  });
+
+  test("RECOVERY COUNTERWEIGHT: every answerable option flagged => position-1 fallback, never a refusal", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, [industryScreen()], {
+      decisions: [boundDecision({ avoid_labels: ["Market research", "Software engineering"] })],
+    });
+
+    // A hint may re-order the recovery's filler — it may NEVER refuse one. All flagged
+    // degrades to exactly today's position-1 pick, on the recovery pass as on the first.
+    const clicks = recoveryClicks(obs);
+    assertEq(clicks.length, 1, "the recovery refused an answer instead of falling back");
+    assertEq(clicks[0].targetIdx, 0, "the fallback is position 1, exactly today's behaviour");
+    assert(clicks[0].detail.startsWith("navigator-default:first-option ("), clicks[0].detail);
+  });
+});

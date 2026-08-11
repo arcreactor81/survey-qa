@@ -30,15 +30,27 @@ const LINES = [
 
 const xmlEscape = (value) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
+// THE MTIME IS PINNED, AND THAT IS LOAD-BEARING. fflate's zip writer stamps DOS mtime =
+// Date.now() (2-SECOND resolution) into the local file header and the central directory
+// when no `mtime` is given, so two makeDocx() calls straddling a floor(t/2000) boundary
+// produced DOCX buffers differing at exactly the two mod-time bytes — different
+// documentSha256, different normalizedInputHash, different contractRevisionId. That was
+// the ~2.4% "reordered JSON seals the same semantic revision" flake: a clock edge, not a
+// product-path bug (the normalized rows were byte-identical in every captured divergence;
+// byte-different documents MUST hash differently — that is the seam's provenance design).
+// This fixture claims to BE the same document each call, so it must be a pure function.
 const makeDocx = () =>
-  zipSync({
-    "word/document.xml": strToU8(
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-        `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
-        LINES.map((line) => `<w:p><w:r><w:t>${xmlEscape(line)}</w:t></w:r></w:p>`).join("") +
-        `</w:body></w:document>`,
-    ),
-  });
+  zipSync(
+    {
+      "word/document.xml": strToU8(
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+          `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+          LINES.map((line) => `<w:p><w:r><w:t>${xmlEscape(line)}</w:t></w:r></w:p>`).join("") +
+          `</w:body></w:document>`,
+      ),
+    },
+    { mtime: AUTHORED_AT },
+  );
 
 const baseRow = ({ id, quote, block, facet, statement, expansion = null, scope = "question:Q1" }) => ({
   id,
@@ -969,5 +981,65 @@ suite("D46 — mutation proof reaches the real final predicate", () => {
     assertEq(decision.row.verifier.decision, "contradicted", JSON.stringify(decision.row.verifier));
     assertEq(decision.row.verifier.reason, "ROUTE_DESTINATION_MISMATCH");
     assertEq(decision.result.value.contradicted, 1, "the authored error must reach the final verifier count");
+  });
+});
+
+/**
+ * DETERMINISM PIN — the seal identity flake (diagnosed 11 Aug 2026).
+ *
+ * "Reordered JSON seals the same semantic revision" failed at ~2.4% per run because
+ * makeDocx() was IMPURE: fflate's zip writer stamps DOS mtime = Date.now() (2-second
+ * resolution) when no `mtime` is pinned, so materializations straddling a floor(t/2000)
+ * boundary hashed DIFFERENT document bytes — the field-level diff of the two normalized
+ * artifacts showed documentSha256 (plus its rawInputSha256/normalizedInputHash carriers)
+ * as the ONLY divergence; the normalized requirement rows were byte-identical every time.
+ *
+ * This test makes that failure deterministic instead of statistical: it re-materializes
+ * the same authored input from a FRESH makeDocx() per iteration, for at least 50
+ * iterations AND at least 2.2 seconds of wall clock — a window that must contain a DOS
+ * 2-second tick — and requires every minted normalizedInputHash to be byte-identical.
+ * On the pre-fix fixture the tick lands inside the window and this goes red on every
+ * run; with the mtime pinned the fixture is a pure function and the product hash path
+ * (which the diagnosis proved deterministic over identical bytes) keeps it green.
+ */
+suite("D46 — seal identity is a pure function of the authored bytes", () => {
+  test("repeated materialization mints one normalizedInputHash across a DOS-time tick", async () => {
+    const mod = await worker();
+    const hashes = new Set();
+    const documentHashes = new Set();
+    const started = Date.now();
+    let iterations = 0;
+    while (iterations < 50 || Date.now() - started < 2_200) {
+      const docx = makeDocx();
+      const documentSha256 = await mod.hash.sha256Hex(docx);
+      documentHashes.add(documentSha256);
+      const input = authoredInput(documentSha256);
+      const humanBytes = enc.encode(JSON.stringify(input));
+      const humanSha256 = await mod.hash.sha256Hex(humanBytes);
+      const env = testEnv();
+      const runId = mod.ids.mintRunId();
+      await env.EVIDENCE.put(mod.keys.inputDocumentKey(runId), docx);
+      await env.EVIDENCE.put(mod.keys.inputHumanRequirementsKey(runId), humanBytes);
+      const validation = await mod.humanContract.stageValidateHumanRequirements(
+        env,
+        runId,
+        mod.keys.inputDocumentKey(runId),
+        documentSha256,
+        mod.keys.inputHumanRequirementsKey(runId),
+        humanSha256,
+      );
+      hashes.add(validation.normalizedInputHash);
+      iterations += 1;
+    }
+    assertEq(
+      documentHashes.size,
+      1,
+      `the fixture must be a pure function: ${documentHashes.size} distinct documentSha256 values over ${iterations} iterations (an unpinned zip mtime reintroduces the 2s clock edge)`,
+    );
+    assertEq(
+      hashes.size,
+      1,
+      `one authored input minted ${hashes.size} distinct normalizedInputHash values over ${iterations} iterations: [${[...hashes].join(", ")}]`,
+    );
   });
 });

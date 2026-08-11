@@ -49,6 +49,22 @@ await runMutantSuite({
       kills: ["EVERY answerable option is flagged => today's position-1 fallback, never a refusal"],
     },
     {
+      name: "the recovery re-pick stops consuming survival hints (the pre-fix gap reintroduced)",
+      breaks:
+        "the retry half of the steering contract. When a screen blocks and walkPath's recovery " +
+        "pass re-invokes applyDecision, the synthetic decision is NON-NULL — so an unstamped " +
+        "`avoid_labels` reads as an empty avoid set, and the re-pick takes the documented " +
+        "screen-out label the FIRST pass deliberately steered around: a walk dies on a retry " +
+        "that attempt one would have survived, on the exact answer the hints exist to avoid",
+      file: DR,
+      find: "          avoid_labels: survivalAvoidLabels(decision, pathHints, after ?? before),",
+      replace: "          // (recovery avoid_labels stamp dropped by mutant)",
+      kills: [
+        "THE RETRY REPLAY: a blocked screen's recovery re-pick steers off the flagged position-1 label",
+        "the recovery consumes PATH-LEVEL hints on an unbound screen — the second avoid-label source",
+      ],
+    },
+    {
       name: "the grid default starts consuming hints",
       breaks:
         "the one-consumer rule. Hints are calibrated for the option default's position-1 pick; " +

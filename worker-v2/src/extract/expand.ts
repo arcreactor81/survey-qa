@@ -149,7 +149,20 @@ const expansionOf = (row: ExpansionInputRow): RawExpansion | null =>
  * refuse instead of being split/collapsed. Every minted payload carries computed closure
  * coverage, separating safe membership from a closure claim this compiler did not evaluate.
  */
-export const EXPANDER_VERSION = "v2-floor-expander/1.8.0";
+/**
+ * 1.9.0 — owner-approved softening (11 Aug) of the closed-set COUNT CLAUSE: a word-shaped
+ * capture that is not a number word is NOT a count clause. `assessClosedSet`'s recognizer
+ * captures a token where it expects a number, and the canonical closure phrasings put an
+ * ordinary word there ("exactly the following ANSWER options and no others" captures
+ * "answer"); 1.8.0 read the failed NUMBER_WORD lookup as a count disagreement and refused
+ * closure on exactly those sentences, so their extra-option arm never opened. The rule now:
+ * such a phrase is closure-stating with NO stated count, and closure holds subject to every
+ * OTHER conjunct unchanged — full-line accounting, statement corroboration, entailed-only,
+ * parsed >= 2. A real numeral or NUMBER_WORD entry that disagrees with the parsed option
+ * count still refuses, unchanged. Residual edge, named rather than absorbed: a number word
+ * beyond the table ("thirteen") is word-shaped under this rule and therefore states no count.
+ */
+export const EXPANDER_VERSION = "v2-floor-expander/1.9.0";
 
 /**
  * The producer's own classification of a requirement facet. It decides which requirements
@@ -555,7 +568,13 @@ function assessClosedSet(
   const stated = /\b(?:exactly|following)\s+(?:the\s+following\s+)?(\d{1,2}|[a-z]+)\s+(?:answer|response|scale)?\s*options?\b/.exec(s);
   const token = stated?.[1] ?? null;
   const n = token === null ? null : /^\d+$/.test(token) ? Number(token) : (NUMBER_WORD[token] ?? null);
-  const countAgrees = n === null ? stated === null : n === parsed;
+  // 1.9.0 (owner-approved softening, 11 Aug): a word-shaped capture that is not a number word
+  // is NOT a count clause. The capture group also matches ordinary words — "exactly the
+  // following ANSWER options and no others" captures "answer" — and 1.8.0 read the failed
+  // NUMBER_WORD lookup as a count disagreement, refusing closure on the domain's most
+  // canonical closure phrasings. Such a phrase states closure with NO stated count; only a
+  // count that RESOLVED (a numeral or a NUMBER_WORD entry) can disagree with `parsed`.
+  const countAgrees = n === null || n === parsed;
   if (parsed < 2 || asserted !== parsed || !countAgrees) {
     return {
       exhaustive: false,

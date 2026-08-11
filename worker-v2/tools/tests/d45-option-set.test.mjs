@@ -1839,3 +1839,164 @@ suite("D45 — FIX C1/C2: a borrowed inventory and a hidden extra are refusals, 
     assert(!row.verifier.detail.includes('""'), `the hidden sentinel must not be quoted as an offer: ${row.verifier.detail}`);
   });
 });
+
+// ===========================================================================
+suite("D45 — 1.9.0: a word-shaped capture is not a count clause (owner-approved softening)", () => {
+  /**
+   * THE SEAM THIS PINS. `assessClosedSet`'s count-clause recognizer captures a token where it
+   * expects a number, and the most canonical closure phrasings in the domain put an ordinary
+   * WORD there: "exactly the following ANSWER options and no others" captures "answer", the
+   * NUMBER_WORD lookup fails, and pre-1.9.0 `countAgrees` read that as a count disagreement —
+   * so closure was refused as OPTION_SET_CLOSURE_EVIDENCE_INCOMPLETE on exactly the sentences
+   * that close a set most explicitly, and the extra-option arm never opened on those questions.
+   *
+   * THE OWNER-APPROVED RULE (11 Aug): a word-shaped capture that is not a number word is NOT a
+   * count clause — the phrase states closure with NO stated count. A real numeral or number
+   * word that disagrees with the parsed option count still refuses, unchanged, and every other
+   * 1.8.0 conjunct (full-line accounting, statement corroboration, entailed-only, parsed >= 2)
+   * is byte-untouched. The last test below is the load-bearing edge: the softening must not
+   * reopen the full-line unparsed-line guard.
+   */
+  const rowFor = (over) => ({
+    requirement: {
+      requirementLineageId: over.id ?? "req_v19_01",
+      requirementVersionId: (over.id ?? "req_v19_01").replace("req_", "reqv_"),
+      semanticFingerprint: "fp_v19",
+      scope: over.scope ?? "question:Q3",
+      quantifier: over.quantifier ?? "specific",
+      selector: null,
+      exceptions: [],
+      facet: over.facet ?? "option-list",
+      assertionStatus: over.assertionStatus ?? "entailed",
+      testability: "browser-observable",
+      notBrowserObservableReason: null,
+      sourceAtoms: [],
+      composition: null,
+      normativeStatement: over.statement,
+      displayQuote: over.quote,
+      retiredAt: null,
+    },
+    raw: [{ expansion: null }],
+  });
+
+  const expand = async (mod, rows) =>
+    await mod.expand.expandFloor(rows, { locale: "en", viewport: "desktop" });
+
+  test("SOFTENED 1.9.0: 'exactly the following answer options and no others' closes a fully-parsed corroborated set", async () => {
+    // RED ON PRE-1.9.0 CODE: the capture grabs "answer", NUMBER_WORD misses, countAgrees is
+    // false, and this — the domain's most canonical closure sentence — never seals exhaustive.
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_v19_word_exact",
+        scope: "question:Q3",
+        statement: "Q3 offers exactly the following answer options and no others: SKYRIZI, TREMFYA, COSENTYX.",
+        quote: "SKYRIZI\nTREMFYA\nCOSENTYX",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.expectationGap, null, "a fully-parsed corroborated quote must stay typed");
+    assertEq(f.case.optionSet.asserted.length, 3);
+    assertEq(
+      f.case.optionSet.exhaustive,
+      true,
+      "'answer' is a word, not a count clause — the phrase closes the set with no stated count",
+    );
+    assertEq(f.case.optionSet.closureAssessment.status, "established");
+    assertEq(f.case.optionSet.closureAssessment.code, "OPTION_SET_CLOSURE_ESTABLISHED");
+    assert(
+      !f.case.optionSet.closureAssessment.detail.includes("stated count is"),
+      `no count was stated, so none may be attested: ${f.case.optionSet.closureAssessment.detail}`,
+    );
+    assertEq(out.coverage.optionSetClosure.established, 1);
+  });
+
+  test("SOFTENED 1.9.0: 'only the following answer options' closes a fully-parsed corroborated set", async () => {
+    // RED ON PRE-1.9.0 CODE: same seam via the other canonical phrasing — "following answer
+    // options" captures "answer" and the closure was refused despite a complete, corroborated
+    // quote.
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_v19_word_only",
+        scope: "question:Q3",
+        statement: "Q3 offers only the following answer options: SKYRIZI, TREMFYA.",
+        quote: "SKYRIZI\nTREMFYA",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.expectationGap, null);
+    assertEq(f.case.optionSet.asserted.length, 2);
+    assertEq(f.case.optionSet.exhaustive, true, "'only the following' closes the set; 'answer' states no count");
+    assertEq(f.case.optionSet.closureAssessment.status, "established");
+    assertEq(f.case.optionSet.closureAssessment.code, "OPTION_SET_CLOSURE_ESTABLISHED");
+  });
+
+  test("UNCHANGED 1.9.0: a stated count that DISAGREES with the parsed options still refuses closure", async () => {
+    // The refusal the softening must NOT weaken: "exactly five" RESOLVES to a number, the
+    // quote bears out four, and a closed set over a fragment licenses an extra-option
+    // accusation against a compliant site.
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_v19_five_four",
+        scope: "question:Q5",
+        statement: "Q5 offers exactly five options and no others: Red, Green, Blue, Yellow.",
+        quote: "Red\nGreen\nBlue\nYellow",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.expectationGap, null, "membership stays typed; it is the CLOSURE that is refused");
+    assertEq(f.case.optionSet.asserted.length, 4);
+    assertEq(f.case.optionSet.exhaustive, false, "a resolved count of five over four parsed options never closes a set");
+    assertEq(f.case.optionSet.closureAssessment.status, "not-established");
+    assertEq(f.case.optionSet.closureAssessment.code, "OPTION_SET_CLOSURE_EVIDENCE_INCOMPLETE");
+    assert(
+      f.case.optionSet.closureAssessment.detail.includes("statedCount=5"),
+      f.case.optionSet.closureAssessment.detail,
+    );
+    assertEq(out.coverage.optionSetClosure.notEstablished, 1);
+  });
+
+  test("UNCHANGED 1.9.0: a stated count the parsed options bear out still closes the set", async () => {
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_v19_five_five",
+        scope: "question:Q5",
+        statement: "Q5 offers exactly five options and no others: Red, Green, Blue, Yellow, Purple.",
+        quote: "Red\nGreen\nBlue\nYellow\nPurple",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.expectationGap, null);
+    assertEq(f.case.optionSet.asserted.length, 5);
+    assertEq(f.case.optionSet.exhaustive, true);
+    assertEq(f.case.optionSet.closureAssessment.status, "established");
+    assert(
+      f.case.optionSet.closureAssessment.detail.includes("its stated count is 5"),
+      f.case.optionSet.closureAssessment.detail,
+    );
+  });
+
+  test("LOAD-BEARING EDGE 1.9.0: a word-shape closure over a DROPPED quote line still refuses via the unparsed-line gap", async () => {
+    // The conjunct the softening must not reopen. "Other (please specify):" dies on the
+    // header guard, so one candidate line of the quote was never read — and a closure phrase
+    // that now sails past the count clause must STILL refuse on full-line accounting, or the
+    // softening would seal exhaustive over a set the document lists one option longer.
+    const mod = await worker();
+    const out = await expand(mod, [
+      rowFor({
+        id: "req_v19_dropped",
+        scope: "question:Q9",
+        statement: "Q9 offers only the following answer options: Yes, No, Other (please specify).",
+        quote: "Yes\nNo\nOther (please specify):",
+      }),
+    ]);
+    const f = out.facetInstances[0];
+    assertEq(f.case.optionSet, null, "an unread candidate line must keep the whole option expectation untyped");
+    assertEq(f.expectationGap.code, "OPTION_SET_QUOTE_LINE_UNPARSED");
+    assertEq(out.coverage.byGap.OPTION_SET_QUOTE_LINE_UNPARSED, 1);
+    assertEq(out.coverage.typedCases, 0, "the softened count clause must not make a gap-marked case decidable");
+  });
+});
