@@ -1062,6 +1062,27 @@ function finalReplayCommandContract() {
   });
 }
 
+function assertFinalReplayCommandArgs({ args, pinnedWrangler, outputDirectory, configPath }) {
+  const expected = [
+    ...pinnedWrangler.argsPrefix,
+    "versions",
+    "upload",
+    "--dry-run",
+    "--strict",
+    "--outdir",
+    outputDirectory,
+    "--config",
+    configPath,
+  ];
+  if (canonicalize(args) !== canonicalize(expected)) {
+    refuse(
+      "FINAL_REPLAY_COMMAND_MISMATCH",
+      "final replay must use the exact pinned versions-upload dry-run command",
+    );
+  }
+  return finalReplayCommandContract();
+}
+
 /**
  * Replay the final projected `no_bundle` config through the exact pinned Wrangler CLI.
  *
@@ -1149,8 +1170,7 @@ export function runFinalReviewedNoBundleReplayGate(options = {}, dependencies = 
   const before = verify();
   phaseObserver("final-reviewed-no-bundle-replay");
   const childEnvironment = environmentBuilder(options.environment ?? {}, logPath);
-  const replayCommand = finalReplayCommandContract();
-  const result = spawnSyncImpl(before.currentPinnedWrangler.command, [
+  const replayArgs = [
     ...before.currentPinnedWrangler.argsPrefix,
     ...VERSION_UPLOAD_SUBCOMMAND,
     "--dry-run",
@@ -1159,7 +1179,14 @@ export function runFinalReviewedNoBundleReplayGate(options = {}, dependencies = 
     outputDirectory,
     "--config",
     deployConfigIdentity.path,
-  ], {
+  ];
+  const replayCommand = assertFinalReplayCommandArgs({
+    args: replayArgs,
+    pinnedWrangler: before.currentPinnedWrangler,
+    outputDirectory,
+    configPath: deployConfigIdentity.path,
+  });
+  const result = spawnSyncImpl(before.currentPinnedWrangler.command, replayArgs, {
     cwd: snapshotWorkerRoot,
     encoding: "utf8",
     windowsHide: true,

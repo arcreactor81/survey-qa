@@ -12,7 +12,8 @@ Implemented locally as of 11 August:
 - exact one-call canary accounting and retention-first handling of core/visual poll contract gaps;
 - recursive semantic discovery of required visual test modules;
 - a discovery build, separately audited build, immutable reviewed-bundle freeze, and mandatory
-  final replay of the exact reviewed no-bundle deploy config through pinned Wrangler 4.106.0;
+  final replay of the exact reviewed no-bundle deploy config through pinned Wrangler 4.106.0's
+  production `versions upload` handler in dry-run mode;
 - a retained canonical final-replay manifest that binds the reviewed manifest, deploy-config
   digest, Wrangler toolchain identity, sanitized log identity, and the exact recursive output
   census.
@@ -84,8 +85,10 @@ combined.
 Preparation now has three distinct pinned-Wrangler dry-runs. The first discovers the graph; the
 second is independently audited and becomes the reviewed bundle; the third runs only after the
 final deploy config has been projected onto that reviewed bundle. The third command is exactly
-deploy, dry-run, strict, outdir, and config under the already-validated local Node/Wrangler
-descriptor. It has no metafile argument, secrets file, deploy side effect, or model call.
+`versions upload`, dry-run, strict, outdir, and config under the already-validated local
+Node/Wrangler descriptor. It has no metafile argument, secrets file, control-plane side effect, or
+model call. This is the same pinned subcommand used by the later production version upload, rather
+than an inferred equivalence with `deploy`.
 
 The final replay accepts only the reviewed entry, every reviewed additional module with the same
 path/type/byte length/SHA-256, and Wrangler 4.106.0's timestamped README by-product. It recursively
@@ -104,7 +107,7 @@ Failure-capable evidence recorded on 11 August:
 
 - before production implementation, the focused suite was deliberately red at 15/16 because the
   replay entrypoint did not exist;
-- after implementation, the focused suite is 29/29 green on two consecutive runs, including
+- after implementation, the focused suite is 30/30 green, including
   wrong-rule, nonzero-command, extra-map, missing-module, substituted-byte, and retained-drift
   negatives;
 - a real preparation-orchestrator test executes exactly three dry-runs, proves the third uses and
@@ -113,8 +116,11 @@ Failure-capable evidence recorded on 11 August:
 - three exact-anchor in-memory source mutants remove, respectively, the automatic replay call,
   `prepared.finalReplay` retention, and the default prepared-state verification. Each is killed,
   so deleting any mandatory wiring seam can no longer leave the suite green;
-- the real pinned Wrangler 4.106.0 graph/replay integration is 2/2 green in 90.16 seconds, and its
-  production-freeze case invokes the production replay/census implementation itself;
+- a fourth exact-anchor source mutant replaces `versions upload` with `deploy`; the independent
+  command oracle rejects it with `FINAL_REPLAY_COMMAND_MISMATCH` before any subprocess;
+- the real pinned Wrangler 4.106.0 graph/replay integration is 2/2 green on the settled command
+  guard, and its production-freeze case invokes the production replay/census implementation
+  itself;
 - the serial one-call runner remains 17/17 green;
 - no Cloudflare authentication, network request, deployment, secret read, or model call occurred.
 
@@ -134,11 +140,16 @@ reviewed bytes before the graph/hash checks. The pinned compiler-before-import s
 entrypoint hashes, immutable manifests, and repeated checks narrow that race; they do not claim to
 eliminate a privileged local swap-and-restore attacker.
 
-Named command-parity residual: the retained replay currently invokes `deploy --dry-run`, while the
-later production transition uploads a version. Pinned Wrangler 4.106.0 exposes a distinct
-`versions upload --dry-run --outdir` handler. Before live approval, either replay the exact
-production subcommand or document and mutation-test their pinned output equivalence; a successful
-`deploy` replay is not silently asserted to prove `versions upload` parity.
+Command-parity status: the retained replay now invokes pinned Wrangler 4.106.0's exact
+`versions upload --dry-run --strict --outdir --config` handler, and its canonical evidence records
+that argv shape. The production transition uses the same `versions upload` subcommand and reviewed
+config. Remaining named differences are intentional and bounded: the dry-run omits the production
+`--name`, `--secrets-file`, `--tag`, and `--message` arguments and performs no account lookup or
+upload.
+Therefore it proves the pinned handler's config parsing, no-bundle materialization, module census,
+and dry-run upload-form construction; it does not claim to prove remote secret inheritance,
+version annotation persistence, or Cloudflare's control-plane acceptance. Those stay covered by
+the separate pre/post-upload attestation gates.
 
 ## One hardened deploy process
 

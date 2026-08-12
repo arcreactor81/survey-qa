@@ -833,6 +833,22 @@ test("source mutation controls prove the orchestration test detects every missin
   });
 });
 
+test("source mutation control kills a deploy-handler replay regression before spawn", async (t) => {
+  const mutant = await importHardenedCanaryDeployMutant(
+    t,
+    "deploy-handler-replay",
+    'const VERSION_UPLOAD_SUBCOMMAND = Object.freeze(["versions", "upload"]);',
+    'const VERSION_UPLOAD_SUBCOMMAND = Object.freeze(["deploy"]);',
+  );
+  const fx = finalReplayFixture(t);
+  assert.throws(
+    () => mutant.runFinalReviewedNoBundleReplayGate(fx.options, fx.dependencies),
+    (error) => error.code === "FINAL_REPLAY_COMMAND_MISMATCH",
+    "the independent command oracle must kill a one-token fallback to deploy",
+  );
+  assert.equal(fx.spawns.length, 0, "the wrong Wrangler handler reached the subprocess boundary");
+});
+
 test("final reviewed replay runs the exact third dry-run and persists a recomputable census", (t) => {
   const fx = finalReplayFixture(t);
   const replay = hardenedCanaryDeploy.runFinalReviewedNoBundleReplayGate(
