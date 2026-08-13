@@ -1,254 +1,137 @@
 # Survey QA
 
-**Catch survey-programming errors before they corrupt your data.**
+Survey QA compares a Word questionnaire with the survey respondents actually receive. Give the
+v2 service a `.docx` and a survey URL; it extracts a fixed testing contract, drives the site in a
+real browser, preserves the evidence, derives results without letting a model certify itself, and
+builds an auditable report.
 
-A market-research survey is programmed from a Word questionnaire by hand. The questionnaire
-says option 5 is "Stovetop moka pot", that answering "Can't remember" at Q7 must skip Q8, that
-the allocation grid must sum to 100. The live survey is supposed to do all of that. When it
-does not, nobody finds out from the survey — they find out weeks later, from data that cannot
-be analysed, after real respondents have already answered.
+The binding acceptance rule is broader than any one questionnaire or vendor:
 
-Checking this by hand means one person clicking every path through a survey with a document
-open beside them. It is slow, it is boring, and it is exactly the kind of work where a human
-misses the third branch of the seventh question.
+> **The architecture must work for any survey + link combination.**
 
-This project automates that check: **hand it a survey link and its questionnaire, get back a
-report that says what was checked, what disagrees with the document, and what evidence proves
-it.**
+Example surveys are measurement instruments, not specifications. A convention such as a question
+id in HTML, one question per page, forward-only navigation, grey-highlighted instructions, or a
+particular survey platform may be used only when it is declared, checked, and converted into a
+named limitation when it does not hold. The questionnaire is the source of truth; ambiguity in it
+is surfaced, never guessed.
 
----
+## Start here
 
-## Status — 2 August 2026
+- [System overview](docs/SYSTEM-OVERVIEW.md) explains the complete lifecycle and the terms used in
+  code: blocks, windows, chunks, waves, obligations, dispositions, cases, paths, observations,
+  verification, judgements, coverage, and completion.
+- [AGENTS.md](AGENTS.md) contains the binding North Star, fail-loud rules, and blind-evaluation
+  boundary for contributors and coding agents.
+- [Document-processing playbook](docs/document-processing-playbook.md) records the evidence behind
+  ingestion and graph-coverage decisions. Some implementation-status sentences in that historical
+  design record predate the current Worker; use source and fresh tests for present-tense claims.
+- [v2 migration boundary](worker-v2/MIGRATION.md) explains why v2 cannot read or write v1 state.
+- [v2 deployment guide](worker-v2/DEPLOY.md), [deployed-service record](worker-v2/DEPLOYED.md), and
+  [canary integrity contract](docs/CANARY-DEPLOYMENT-INTEGRITY-11AUG.md) are the operational records.
+  They are dated records: verify current Cloudflare state before acting on a version id or count.
 
-> The words below are used precisely and are not interchangeable. *deployed* = reachable ·
-> *implemented* = code exists · *locally verified* = named tests passed · *fixture-rendered* =
-> worked on constructed data only · *offline-demonstrated* = a real run worked outside the
-> Worker · *stubbed* = intentionally returns no substantive result · *end-to-end* = a
-> submission reaches a truthful report through the supported runtime with no manual handoff.
+## Current posture — 13 August 2026
 
-| | |
+| Surface | Honest status |
 |---|---|
-| **Deployed** | The **v1** proof of concept, at a custom domain behind Cloudflare Access. Login required; the old `*.workers.dev` URLs are dead. Last observed answering behind the login on **1 Aug 2026**. It is deployed — and it is no longer the direction |
-| **Implemented and locally verified** | The **v2** control plane: requirement register, scorer, evidence integrity, derived-verdict judge, report renderer, storage and Worker shell. Test results and dates in [docs/STATE-OF-PLAY.md](docs/STATE-OF-PLAY.md) §6 |
-| **In progress right now** | Extraction, planning, browser execution and judging are being wired into the v2 Worker as you read this. Until that lands, a real submission to v2 stores the document, never opens it, and ends honestly with no contract at all — see [docs/STATE-OF-PLAY.md](docs/STATE-OF-PLAY.md) §4 |
-| **Offline-demonstrated** | One real browser run against one blind survey on **1 Aug 2026** — real Chromium, 119 requirements, 103 evidence artifacts, 95 attempts — driven by scripts **outside** the Worker. It proves parts of the architecture. It does not prove a working v2 service, and it does not prove vendor independence |
-| **Not yet** | v2 is not deployed. No route, no Access application, no v2 hostname. No v2 code has ever written to the production R2 bucket |
-| **Retired** | The single-path deterministic walker, and the three-model N-of-3 consensus design. Both were the v1 product; both were retired as the direction on 1 Aug 2026. See [v1 history](#v1-history) |
+| v2 service | Deployed at `https://survey-qa-v2.wellshit.co.in`, behind its own Cloudflare Access application. Per-run status is authoritative; a deployed route is not proof that a particular run completed. |
+| Core workflow | Implemented as durable Cloudflare Workflow stages: parse/extract, seal, plan, Browser Rendering execution, observation projection, deterministic tri-state verification, deterministic aggregation, signed record, independent judgement, and report. |
+| Document extraction | The intended normal route is exact `grok-4.6` for the whole-document pass and DeepSeek Pro for the independent block pass. An eligible, retained typed Grok failure alone may substitute DeepSeek Flash for Pass A; Flash+Pro is reduced same-provider independence and cannot seal as normal corroboration. Paid Grok calls require the exact 16-field owner-dashboard-copy rate binding described below. Units are persisted and resumed rather than silently truncated or repeatedly purchased. |
+| Browser evidence | Real screen JSON, viewport screenshots, Chrome accessibility snapshots, action receipts, and before/action/after state are captured. Missing modalities and controls the walker cannot answer are counted. |
+| Deterministic verifier | Route, boundary-validation, and option-membership predicates are registered. Unrecognised or incompletely evidenced cases become `insufficient`, never a guessed pass. |
+| Visual perception | Capture/reconciliation infrastructure exists, but paid visual inference is shadow-only and disabled in deployable configuration. The prior Gemma/Gemini/Mistral comparison did not establish a production winner. |
+| OpenAI computer use | The Luna/Terra adapter is a local/mock **GO (21/21)** but a production **NO-GO** because it remains unintegrated: it is not wired into `walkPath`, verification, or production evidence. It has no implicit credential, page origin, budget, pricing, or network client, and it will send a supplied credential only to the exact official Responses endpoint. |
+| Known execution limits | One fixed desktop viewport; native single-select only; named custom-widget, native multi-select, and drag-and-drop limits; no back-navigation receipt; no independent-session repeat execution. Each becomes a named limitation rather than fake coverage. |
+| v1 | Historical production system. **Do not deploy, edit, probe, or reuse its URL/subsystems during v2 work.** v2 has a different Worker, host, Access app, Workflow, run-id shape, binding name, and R2 prefix. |
 
-**One phrase to use carefully.** The v1 system is deployed and the v2 stages that would make
-it LLM-led are being wired now — so do not call the current product "LLM-led" unqualified.
-The accurate framing is: **the v2 target uses LLM-led extraction and navigation on a
-deterministic, evidence-attested control plane.**
+The reviewed Grok prerequisite is the exact 16-field
+`survey-qa-grok-rate-binding/1.0.0` binding for `grok-4.6`: source
+`owner-dashboard-copy`, policy `max-known-text-tier/1.0.0`, observed 13 August 2026,
+canonical SHA-256 `be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5`,
+500K context, and a 200K long-context threshold. Input/cached-input/output rates are
+$2/$0.50/$6 per Mtok at or below 200K and $4/$1/$12 above 200K; the max-known
+reservation is $4/$12 per Mtok. A future authenticated exact-model catalogue receipt is an
+independent cross-check only, not the provenance of this binding or a release prerequisite.
 
-**[docs/STATE-OF-PLAY.md](docs/STATE-OF-PLAY.md) is the single source of truth for status and
-counts.** It is the only file that carries live numbers; everything else links to it.
+The worktree can be ahead of the deployed Worker. “Implemented locally”, “tested”, “uploaded as a
+version”, and “receiving production traffic” are different claims. Do not infer one from another.
 
----
-
-## The v2 target flow
-
-The design principle: **an LLM decides, but it never certifies itself.** Every decision it
-makes lands on a fixed, machine-checkable substrate — a sealed list of obligations, constrained
-browser tooling, hard budgets, and evidence captured at every step. A free-roaming browsing
-agent cannot prove what it covered; a hand-maintained rules engine is what this project agreed
-to leave behind.
+## Lifecycle in one view
 
 ```mermaid
-flowchart TD
-    DOC["questionnaire.docx"] --> REG["<b>Reviewed requirement register</b><br/>every question, rule, branch outcome<br/>and terminal state as a typed obligation<br/><i>sealed — this is the run's fixed denominator</i>"]
-    REG --> PLAN["<b>Floor + exploration cases</b><br/>a floor path set that provably covers<br/>every obligation, plus a risk-ranked<br/>exploration queue that may only ADD findings"]
-    URL["survey URL"] --> PLAN
-    PLAN --> EXEC["<b>Browser evidence</b><br/>each case walked in a real browser;<br/>typed observations, screenshots and<br/>action traces, each content-hashed"]
-    EXEC --> JUDGE["<b>Derived judgement</b><br/>verdicts re-derived from the signed<br/>artifacts alone — the executor's own<br/>prose is never an input"]
-    JUDGE --> REP["<b>Auditable report</b><br/>every register row carries coverage status<br/>AND verdict, on two separate axes,<br/>each linked to the evidence behind it"]
+flowchart LR
+  D[DOCX] --> B[Addressable source blocks]
+  B --> A[Pass A: global rules]
+  B --> C[Pass B: block obligations + dispositions]
+  A --> M[Merge, diff, ledger, typed expansion]
+  C --> M
+  M --> S[Immutable sealed contract]
+  U[Survey URL] --> P[Deterministic floor + exploration plan]
+  S --> P
+  P --> W[Browser walks]
+  W --> E[DOM/AX/pixel evidence + action receipts]
+  E --> O[Typed observations]
+  S --> V[Closed tri-state predicates]
+  O --> V
+  V --> R[Signed RunRecord]
+  R --> J[Independent deterministic judgement]
+  J --> H[Auditable report]
 ```
 
-Two things are scored separately and must never be added together: **execution coverage** (did
-we exercise the register?) and **extraction accuracy** (did the register faithfully capture the
-document?). Without the second, an incomplete register reports a confident, meaningless 100%.
+Two principles keep the diagram honest:
 
-Why "derived judgement" is its own stage: on the one real run, the step that wrote verdicts in
-prose recorded three obligations as PASS while citing the artifact that proved the opposite.
-Re-deriving those verdicts from the artifacts alone removed all three. That failure, and its
-fix, are the reason the architecture looks like this.
+1. The sealed contract fixes the denominator before the browser runs. Exploration may add findings;
+   it cannot shrink or enlarge the mandatory case set.
+2. Models may propose document structure or inventory pixels. They do not author `pass` or `fail`.
+   Current results require deterministic derivation from re-read evidence and a valid binding.
 
-Full design: [docs/llm-led-architecture-proposal.md](docs/llm-led-architecture-proposal.md) ·
-[docs/structured-claim-contract-merged.md](docs/structured-claim-contract-merged.md).
-
----
-
-## Capability matrix
-
-| Capability | Status |
-|---|---|
-| v1 walker + consensus report | **deployed**, retired as direction |
-| Cloudflare Access in front of v1 | **deployed**, last observed 1 Aug 2026 |
-| v2 Worker shell — routing, submission, durable checkpoints, status/coverage projections, cron sweeper | **implemented, locally verified** |
-| Evidence storage + integrity — content-addressed, write-once catalogue, re-hashed on every read, fail-closed | **implemented, locally verified** |
-| Judgement trust boundary — Ed25519 attestation against a pinned registry, run-binding recomputed from durable state | **implemented, locally verified** |
-| Requirement register + report renderer | **implemented, locally verified**; every register rendered so far is **fixture-rendered** |
-| Derived-verdict judge | **implemented, locally verified**, independently audited three times |
-| Scorer — fail-closed validation, attestation, defect matching, metrics | **implemented, locally verified** |
-| Two-tier coverage planner (floor + directed exploration) | **implemented** offline; not wired into the Worker |
-| Blind + branching corpora with machine-readable ground truth | **implemented** |
-| Document extraction in the Worker | **stubbed — being built now** |
-| Planning / case generation in the Worker | **stubbed — being built now** |
-| Browser execution in the Worker | **stubbed — being built now** |
-| Verification + verdict derivation in the Worker | **stubbed — being built now** |
-| Cost and usage accounting | **not implemented** — the caps are enforced against counters nothing increments |
-| Model calls inside the v2 Worker | **none exist today** |
-| A submission reaching a truthful report through the v2 runtime | **not yet end-to-end** |
-
-Per-file evidence for every row: [docs/STATE-OF-PLAY.md](docs/STATE-OF-PLAY.md) §4.
-
----
-
-## Evidence so far
-
-**One real browser run, 1 August 2026** — against `test-suite/blind/t1-easy`, a blind-corpus
-survey whose answer key was attested unread during extraction, planning and execution. Real
-headless Chromium (Puppeteer 25.4.0, `Chrome/151.0.7922.47`) against a local static server,
-driven from local Node — **no Cloudflare Worker was involved**.
-
-- **119** requirements (the sealed denominator) · **103** evidence artifacts, all byte-hashed
-  into the signed record · **95** attempts across **89** distinct paths, in **84** browser
-  sessions · two viewports.
-- **7 model calls in total, all extraction** (`@cf/openai/gpt-oss-120b`). **Zero during
-  navigation and judging** — navigation ran deterministically from the plan, and every verdict
-  was a deterministic DOM assertion. The $0.00 execution spend is not a cost result; it is the
-  absence of the expensive component.
-- Scored against the hidden key: **2 of 3 seeded defects reported**, **3 false passes**, **1
-  penalized false positive**, and 6 of the key's 7 expected-false-positive traps correctly
-  avoided.
-- Plus one finding the expert answer key itself does not contain: in an unmodified browser the
-  survey **does not render at all**. That came from driving a real browser rather than a DOM
-  emulation — which is also why every other verdict in the run is conditional on a disclosed
-  one-line page shim, without which nothing renders.
-- The run's own debrief is blunt about its limits: *"Treat the current pass rate as unmeasured,
-  not as 94%."* One survey, one tier, the easiest tier, n=1. No loops, quotas, piping or
-  carry-forward lists were exercised. The driver script lived in a scratch directory and is not
-  in this repo, so the run is **attested, not reproducible from a clean clone**.
-
-Read it in full — including the parts that did not work — in
-[pipeline/runs/t1-easy/DEBRIEF.md](pipeline/runs/t1-easy/DEBRIEF.md).
-
-**What the derived judge did to that run.** Re-deriving every verdict from the signed artifacts
-alone removed all three false passes and turned the missed seeded defect into a catch cited to
-the artifact that proves it: **seeded recall 2/3 → 3/3, penalized false positives 1 → 0**, at
-the cost of a smaller decided set (103 → 90 rows). An independent auditor re-resolved all 673
-emitted witnesses with a from-scratch resolver and found zero mismatches —
-[pipeline/judge/VERIFICATION.md](pipeline/judge/VERIFICATION.md).
-
-**What has crossed into the Worker.** An offline-assembled signed record plus an attested
-judgement does reach the v2 Worker and publish as current results, proven on the published HTTP
-bytes. It required hand-bridging one field the Worker's only write path cannot carry, so it is
-not yet end-to-end — [pipeline/judge/VERIFICATION-ROUND3.md](pipeline/judge/VERIFICATION-ROUND3.md).
-
-**Test suites.** Measured results with commands, dates and denominators live in
-[docs/STATE-OF-PLAY.md](docs/STATE-OF-PLAY.md) §6, including the two suites that were red at
-the time of writing because the tree was mid-edit.
-
----
+See [docs/SYSTEM-OVERVIEW.md](docs/SYSTEM-OVERVIEW.md) for what every box means and which parts are
+currently limited.
 
 ## Repository map
 
-| Path | What it is |
+| Path | Role |
 |---|---|
-| `src/`, `public/`, `spec/`, `scripts/`, `runner/` | The **v1** system — walker, docx parser, model legs, consensus report, the seeded demo survey and its generators. Deployed |
-| `worker-v2/` | The **v2** Worker — shell, storage, evidence integrity, judgement trust boundary, report bridge. Control plane implemented, pipeline stages stubbed. Not deployed |
-| `pipeline/` | The offline v2 pipeline — `planner/` (two-tier coverage planner), `judge/` (derived-verdict engine), `report/` (audit report renderer, shared verbatim with the Worker), `runs/t1-easy/` (the one real run) |
-| `scorer/` | Fail-closed scoring of a run against a hidden oracle, with its threat model and mutation harness |
-| `test-suite/` | `blind/` (four tiers of blind corpus; ground truth is gitignored), `branching/` (six routing / logic / calculation packages), `cases/` + `testbench/` (the v1 held-out multilingual suite) |
-| `docs/` | Design records, decisions and status — [indexed here](docs/README.md) |
+| `worker-v2/` | Deployed v2 Worker, API, Workflow, parser, extractor, planner adapter, browser driver, verifier, record/report paths, and v2 test harness |
+| `pipeline/` | Shared/offline deterministic planner, judge, and report implementation plus public synthetic run material |
+| `scorer/` | Fail-closed schemas, oracle/scoring code, integrity checks, fixtures, and mutation harness |
+| `evaluation/` | Pre-registered arm/ablation harness; read `evaluation/PRE-REGISTRATION.md` before changing it |
+| `graph-spike/` | Empirical graph/crawler prototype and the generalizability failures in `FINDINGS.md` |
+| `docs/` | Design records, reviews, operational handoffs, and evidence-backed playbooks |
+| `src/`, `runner/`, root `wrangler.jsonc` | v1 implementation and configuration; historical/operationally separate from v2 |
+| `test-suite/blind/` | Blind evaluation material. Do not inspect it or its keys while developing the system |
 
----
+## Local verification
 
-## Local development
-
-Requires **Node 22+**. Deploying requires a Cloudflare account on the Workers Paid plan
-(Browser Rendering + Workflows).
+Install the root dependencies. The v2 package intentionally resolves its tools
+from the repository root.
 
 ```bash
 npm install
-
-# v1 — the deployed system
-npm run typecheck
-npx wrangler dev
-
-# v2 — where the work is
 cd worker-v2
 npm run typecheck
-node tools/test.mjs                                    # no server needed
-npx wrangler dev --port 8799 --var DEV_SEED:enabled
-node tools/smoke.mjs                                   # second shell, against that server
-
-# offline pipeline + scorer
-node scorer/test/run-suites.mjs
-node --test pipeline/judge/selftest/engine.test.mjs
+node tools/test.mjs
 ```
 
-`worker-v2` has **no `deploy` script**, deliberately: deploying is an owner action, sequenced
-in [worker-v2/DEPLOY.md](worker-v2/DEPLOY.md) — Access application first, route second.
+The suite contains negative fixtures and mutation checks because a green gate that cannot fail is
+not evidence. Do not quote an old test count as current; report the command, exit code, and fresh
+denominator from the run you actually performed.
 
-**A fresh clone will not deploy the v1 Worker as-is.** `wrangler.jsonc` carries the original
-author's Cloudflare account identifiers. They are identifiers, not secrets, but you must point
-them at your own account: `store_id` (×3, in `secrets_store_secrets`), `CF_AIG_ACCOUNT_ID`, and
-`CF_AIG_GATEWAY_ID` (or delete both `CF_AIG_*` vars to call providers directly). API keys live
-in the account-level Secrets Store, never in the repo, and each is seeded with `PLACEHOLDER` so
-a model leg stays inert until its real key is set.
+For local UI/runtime inspection, follow [worker-v2/PREVIEW.md](worker-v2/PREVIEW.md). For deployment,
+rollback, live Workflow inspection, and the hardened canary path, use the checked-in operational
+documents linked above rather than reconstructing commands from memory. Deployments are serial:
+freeze and verify one source/config/document tuple, let both relevant Workflows become terminal,
+retain the evidence, then consider another version.
 
----
+## Evaluation and safety boundaries
 
-## v1 history
-
-The v1 proof of concept is the system this README used to describe, and it is still the thing
-that is deployed. **Its architecture was retired as the project's direction on 1 August 2026.**
-This section is a record, not a plan.
-
-**What it was.** A single Cloudflare Worker walked a live survey with a real browser, one page
-at a time along a single path, and compared each rendered page against the Word questionnaire
-using three independent model legs (DeepSeek, Grok, Claude) routed through an AI Gateway. A
-finding was shown once, with N/3 model agreement, a confidence score, and verbatim quotes
-verified against both the document and the rendered page.
-
-**What it measured.** 10/10 recall on the seeded demo across six languages, and 239/240 seeded
-errors across 24 held-out surveys the tool had never seen, at ~0.9 false positives per survey —
-a blind dry-run on **5 July 2026**. Those numbers are real, and they describe the retired
-system. Full record: [docs/RESULTS.md](docs/RESULTS.md) ·
-[docs/model-bakeoff.md](docs/model-bakeoff.md) · [docs/hardening.md](docs/hardening.md) ·
-[test-suite/README.md](test-suite/README.md).
-
-**Why it was retired.** A single-path walker checks language and content fidelity well, but it
-cannot testify about routing, branch outcomes, calculations or terminal states — it only ever
-sees one path, and it cannot prove what it did not cover. And routine three-model consensus
-spends triple at the execution layer, which is where cost is dominated. N-of-3 was not
-abandoned; it moved to the judgment layer, where it is cheap and where the one real run showed
-the failures actually live.
-
-**How it is deployed.** Behind **Cloudflare Access** on a Workers custom domain, since 1 August
-2026: one-time PIN or Google login, 24-hour sessions, an owners policy on a single email plus a
-service-token policy for automation. The `*.workers.dev` route and the preview URLs were
-disabled through the Cloudflare API and observed returning HTTP 404. Setup, verification and the
-follow-ups that are **not** yet applied: [docs/access-setup.md](docs/access-setup.md).
-
-**Two things to know before touching it.** The Worker contains no authentication in code — the
-Access application at the edge is the entire control. And the root `wrangler.jsonc` declares
-neither `workers_dev: false` nor `routes`, so a `wrangler deploy` from the repo root can
-silently re-enable the public `workers.dev` route. Both are tracked in
-[docs/STATE-OF-PLAY.md](docs/STATE-OF-PLAY.md) §3.
-
----
-
-## Documentation
-
-**[docs/README.md](docs/README.md)** indexes every document with a one-line description and a
-label saying whether it is current normative, current implementation, a historical snapshot, or
-owner-rejected.
-
-Start with:
-
-- **[docs/STATE-OF-PLAY.md](docs/STATE-OF-PLAY.md)** — what is true today, with dates. Read this first
-- [docs/llm-led-architecture-proposal.md](docs/llm-led-architecture-proposal.md) — the v2 target architecture
-- [docs/structured-claim-contract-merged.md](docs/structured-claim-contract-merged.md) — how a finding becomes a typed, evidence-bound fact
-- [docs/ui-report-redesign.md](docs/ui-report-redesign.md) — the findings-first report the register feeds
-- [docs/access-setup.md](docs/access-setup.md) — how the deployed Worker is locked down
+- Never read `test-suite/blind/**`, hidden truth material, or `sprint/04-CORPUS.md` while authoring
+  the system. See [docs/EVALUATION-BOUNDARY.md](docs/EVALUATION-BOUNDARY.md).
+- Never turn unread input, a failed call, an empty denominator, or missing evidence into “zero
+  problems”. Those are named unavailable/failed/unresolved states.
+- Never mix the document-requirement denominator with the execution-case denominator. Coverage
+  buckets reconcile to cases; report rows reconcile to document requirements.
+- Never let v2 touch v1 keys or routes. Every v2 R2 key is minted under `v2/`, and v2 run ids begin
+  `v2r_`.
+- Never call a report “final” merely because rendering finished. Test completion, report completion,
+  verdicts, integrity, and judgement authority are separate axes.

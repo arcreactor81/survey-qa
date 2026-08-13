@@ -650,3 +650,76 @@ session inherits in files this ledger tracks:
   survival hints, bounded screen-out retry with attempt-unique artifact refs) — walker reach on
   the branching fleet materially improved; re-measure in progress. Reach numbers recorded in
   prior fleet runs are not comparable across this boundary.
+
+## Recovery/integration update — 13 August 2026
+
+This append-only update records the recovered current tree after the prior Claude session ended.
+It supersedes earlier queue/status statements for W4–W6 without altering their historical record.
+
+### Historical recovery snapshot (superseded where noted below)
+
+- W4's current declared walker capability is integrated: full-identity native-select actuation and
+  retained readback, radio-over-grid semantics, directional navigation filtering, cycle/history
+  handling, and typed ordinary-observation evidence. Custom ARIA, native multi-select, and
+  drag-and-drop surfaces close as named unsupported rather than receiving false actuation credit.
+- W5 multi-path seeding received a final **A–G GO** after the target was joined to its unique
+  owning control in retained screen inventory. Sealed singleton seed authority, exact alternative
+  census, per-case witnesses, stable occurrence/history identity, durable reservation/progress
+  reconciliation, and ambiguous-owner refusal are now part of the boundary.
+- W6's default semantics profile is neutral; its explicit `shop-direct-grey-programming/1.0.0`
+  profile keeps direct-grey programming text for route/termination mining while excluding it from
+  option labels with counted provenance. Relationship and auxiliary-source repairs remain under
+  final release-blocking audit; do not read this historical snapshot as a final W6 freeze.
+- **Provider continuity (historical topology; superseded at “Superseding provider-route implementation” below)** keeps Grok as Pass A and uses DeepSeek Flash plus bounded DeepSeek Pro as a
+  single Pass-B method. Fallback is restricted to named transient or invalid-content failures;
+  exact model echo, cost ceilings, durable failure receipts, and exact-once settlement remain
+  mandatory. Gemini text fallback is not enabled.
+- The v2 activity API/UI now shows actual traversal separately from credited coverage. The
+  retained live baseline resolves to 44 transitions, 2 stable consent/rejection screens, and 0
+  credited questionnaire pages, so the previous walk is visible but cannot masquerade as survey
+  coverage.
+
+### Historical fail-capable evidence (rerun required on the settled candidate)
+
+| Gate | Result |
+|---|---:|
+| Full Worker dispatcher | 918/918 |
+| Combined visual runner | 455/455 |
+| Chrome walker suite | 48/48 |
+| Local computer-use suite | 16/16 |
+| W4 semantic mutation gate | 16/16 mutants killed |
+| W5 semantic mutation gate | 33/33 mutants killed |
+| W6 semantic mutation gate | 15/15 mutants killed |
+| Provider-continuity mutation gate | 22/22 mutants killed |
+
+Computer use is a **local/mock GO (21/21)** and a **production NO-GO because it remains
+unintegrated** with production walking, verification, credentials, budget, and evidence handling.
+This is not a current stale-batch claim. It remains quarantined from production actuation and verdict
+evidence until a separately reviewed production integration exists.
+
+### Release boundary
+
+The source candidate policy is capped at **USD 5 and four hours per run**. That four-hour value is
+not yet the routed service policy: the deployed v2 version retains its prior one-hour wall cap
+until a new version passes the fresh release gates and is promoted. Before deployment, rerun
+TypeScript, full/visual/Chrome and mutation gates; reproduce the reviewed bundle with pinned
+Wrangler; verify no active or ambiguous v2 Workflow; then deploy only v2, serially, with the prior
+version retained for rollback. A new real survey run must prove positive consent, no backward
+button as forward navigation, arrival at the first substantive questionnaire page, and honest
+unique-screen/coverage accounting before the change is called useful.
+
+No deployment was performed as part of this checkpoint update. The v1 URL and v1 subsystems were
+not touched.
+
+### Superseding provider-route implementation — 13 August 2026
+
+The provider paragraph above is historical. The implemented production route now follows the
+owner-approved topology recorded in `docs/COORDINATION.md`: normal pass A is exact `grok-4.6`,
+normal pass B is exact `deepseek-v4-pro`, and `deepseek-v4-flash` is a dormant substitute only
+after a retained eligible Grok trigger. Flash+Pro is explicitly reduced provider independence and
+cannot seal as ordinary cross-provider corroboration.
+
+The quoted evidence counts in this historical checkpoint are not a settled-candidate result and
+must be rerun. The canary deploy/replay suite timed out locally and is not claimed green. Grok 4.6
+paid calls remain fail-closed under `GROK_RATE_UNATTESTED` until an authenticated exact-model rate
+receipt is configured; no 4.5 rate is inferred.

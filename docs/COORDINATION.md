@@ -144,3 +144,121 @@ closed by multi-path decision seeding (approved, see below). Operational rule di
   cross-session note listing what Claude changed in Codex-tracked files).
 - `sprint/00-START-HERE.md` — the falsification sprint + its owner-ordered freeze exceptions.
 - Commit messages on `26f9fce` / `bbd5a92` — the validation evidence summaries.
+
+## Recovery and integration checkpoint — 13 August 2026
+
+This section is append-only and supersedes the earlier "In flight right now" status where the
+same work is described as queued. It does not rewrite the 10–12 August history.
+
+### Integrated state
+
+- **W4 — walker controls:** complete for the current declared capability. Native `<select>`
+  targets are actuated by full scoped option identity and must survive retained post-action readback;
+  radio semantics outrank grid-like presentation, backward/hidden navigation is not treated as a
+  forward action, and ordinary observations carry a typed evidence identity. Custom ARIA widgets,
+  native multi-select, and drag-and-drop surfaces remain named unsupported limitations rather than
+  fabricated coverage.
+- **W5 — multi-path decision seeding:** complete and independently reviewed **GO across A–G**.
+  Seed authority is sealed and singleton, alternatives have an exact census and stable identity,
+  per-case witness receipts preserve occurrence/history, reservations reconcile through durable
+  progress, and a seed is retained only when its target joins uniquely to the owning control in
+  the captured screen inventory. Ambiguous duplicate labels/codes across controls refuse.
+- **W6 — grey-highlight semantics:** the default profile is neutral; the explicit
+  `shop-direct-grey-programming/1.0.0` profile can classify direct grey programming evidence while
+  retaining it for route/termination mining and excluding it from option labels with provenance.
+  Non-grey instructions are still retained for mining. Relationship and auxiliary-source repairs
+  are under final release-blocking audit, so W6 is not yet a final/deployed claim.
+- **Provider continuity (historical topology; superseded below):** Pass A remains Grok. Pass B uses DeepSeek Flash with a bounded Pro
+  fallback only for named transient/invalid-content failures; Flash and Pro are one method, not
+  independent corroboration. Exact returned-model identity, request/output ceilings, durable
+  receipts, conservative rate ceilings, and exact-once settlement are enforced. Gemini text
+  fallback is deliberately not wired.
+- **Run activity:** the v2-only execution-activity projection and UI distinguish transitions,
+  unique screens, and credited questionnaire coverage. The retained real-run baseline is reported
+  honestly as 44 transitions over 2 stable consent/rejection screens and **0 credited
+  questionnaire pages**; it is diagnostic evidence, not a pass.
+- **Computer use:** the Luna/Terra-oriented adapter is local/mock **GO (21/21)**. Production is
+  **NO-GO because it remains unintegrated** with the production walker, verifier, credentials,
+  budget, and evidence boundary—not because of a claimed stale-batch defect. It must not be wired
+  into production until that integration is separately reviewed.
+
+### Historical integration-gate snapshot (must be rerun on the settled candidate)
+
+| Gate | Current result |
+|---|---:|
+| Full Worker dispatcher | 918/918 |
+| Combined visual runner | 455/455 |
+| Chrome walker suite | 48/48 |
+| Local computer-use suite | 16/16 |
+| W4 semantic mutants killed | 16/16 |
+| W5 semantic mutants killed | 33/33 |
+| W6 semantic mutants killed | 15/15 |
+| Provider-continuity mutants killed | 22/22 |
+
+These are historical results from an earlier working-tree snapshot, not permission to skip the final
+pre-deploy rerun or evidence for unreviewed W6 repairs. The source deployment candidate has a **USD 5 run cap and four-hour wall cap**;
+the currently routed v2 version still has the older one-hour policy until a new v2 deployment is
+promoted. Deployment is pending fresh TypeScript, full/visual/Chrome/mutation gates, pinned
+Wrangler dry-run/replay, and a no-active-Workflow control-plane check. Deployment and the first
+post-deploy live run remain serial and rollback-safe.
+
+The v1 URL and all v1 subsystems were untouched throughout this recovery/integration work.
+
+## Owner-authorized provider topology and spend â€” 13 August 2026
+
+This section supersedes the provider-continuity topology described immediately above; that earlier
+text records an intermediate implementation, not the owner-approved production route.
+
+- **Normal extraction:** Grok `grok-4.6` performs the whole-document/global-rule,
+  cross-reference, and ambiguity pass; DeepSeek Pro performs the independent source-block/table
+  and disposition pass.
+- **Grok fallback:** only a retained typed eligible Grok failure (quota/exhaustion, timeout/network,
+  provider unavailability, or bounded invalid/empty content under the exact returned model)
+  authorizes DeepSeek Flash to substitute for the Grok pass. DeepSeek Pro remains the block pass.
+  A Flash+Pro result is explicitly reduced provider independence because both calls are DeepSeek;
+  it must not masquerade as ordinary cross-provider corroboration.
+- **Exact identity:** the owner supplied the API-returned model id `grok-4.6`. Requests and
+  receipts must require that exact returned identity; redirects or aliases are not 4.6 evidence.
+- **Paid-call authorization:** cumulative caps for this sprint are **USD 5 Grok/xAI**,
+  **USD 5 DeepSeek**, and **USD 20 Gemini** (raised from the earlier USD 10 Gemini approval).
+  Codex subscription/local-machine testing is authorized. No numeric OpenAI API spend cap has
+  been granted; adding/funding an OpenAI API key requires a separate operator step.
+- Every paid call remains serially monitored and content-addressed in the usage ledger. An approved
+  cap authorizes calls within the topology; it does not permit an unknown model/rate, unreceipted
+  spend, v1 access, or a live-survey call before the v2 release candidate is frozen.
+
+### Provider-route implementation evidence
+
+The superseding topology above is now implemented in the local v2 tree. Ordinary pass B selects
+Pro directly; Flash is reachable only from a typed Grok trigger persisted with its paid receipt
+before the Flash request. Completed pass-A reuse derives provider independence from those retained
+triggers rather than trusting a label. Flash+Pro returns the named non-evaluated state
+`REDUCED_PROVIDER_INDEPENDENCE` at consolidation and cannot seal as ordinary corroboration.
+
+Local evidence: provider tests **27/27**, D21 pass-B wave/recovery tests **12/12**, D22 pass-A
+wave/recovery tests **13/13**, retained-continuity mutants **22/22**, activation-route mutants
+**12/12**, canary workflow interlocks **25/25**, and the current integrated shared-tree
+TypeScript check is clean. The heavier canary
+deploy/replay suite exceeded two local harness timeouts without output, so it is **not attested**
+by this update and must be rerun in the settled pre-deploy gate.
+
+The main and generated canary configs pin exact `grok-4.6`; activation is authorized only by the
+retained `survey-qa-grok-rate-binding/1.0.0` binding whose fixed-order canonical receipt has SHA-256
+`be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5`. Its provenance is the
+owner-provided model-dashboard transcription supplied in this thread on 13 August 2026
+(`source: owner-dashboard-copy`, `observedAt: 2026-08-13`), not catalogue attestation. The xAI
+catalogue probe failed and supplied no usable rate evidence, so it was not used.
+The retained copy records the exact `grok-4.6` 500,000-token context and every text tier: at or
+below 200,000 tokens, USD 2 input / USD 0.50 cached input / USD 6 output per million tokens; above
+200,000, USD 4 input / USD 1 cached input / USD 12 output. The usage ledger conservatively reserves
+the `max-known-text-tier/1.0.0` ceiling of USD 4 input / USD 12 output per million tokens. Returned
+model identity must still match exactly, and Grok 4.5 prices are never reused for 4.6.
+
+## Failure-class closure principle â€” 13 August 2026
+
+The binding rule now lives in `AGENTS.md`: a failure is useful evidence once; recurrence after a
+claimed fix means the class was not closed. Each live defect must become a general invariant,
+shared-abstraction repair, platform-neutral negative fixture, fail-capable mutation/counterproof,
+nearby counterexamples, and integrated rerun. Unsupported classes remain named and unactuated.
+Limited survey/link access is for discovering the next unknown class after known ones are closed
+locally, using durable before/action/after evidence rather than repeated live rediscovery.

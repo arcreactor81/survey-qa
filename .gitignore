@@ -187,3 +187,8 @@ targets/
 /worker-v2-test-*/
 /.tmp/
 /.test-tmp-*/
+/.tmp-w6-review/
+/.visual-test-tmp/
+
+# Ephemeral local session handoff; retained on disk but never published.
+/docs/HANDOFF-12AUG-SESSION.md

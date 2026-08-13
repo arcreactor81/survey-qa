@@ -52,6 +52,21 @@ structurally incapable of failing (a test asserting four counts sum to a total i
 property; a gate returning "zero problems" over an empty denominator; a literal `passed: true`).
 New gates should ship with evidence they can fail — a mutation, a negative fixture, or both.
 
+**Close failure classes, not individual examples.** A bug or failed run is useful evidence once;
+the same class recurring after a claimed fix means the fix was incomplete. Every observed failure
+must be translated into the violated general invariant, repaired in the shared abstraction rather
+than against one survey/document/vendor, and retained as a minimized platform-neutral negative
+fixture. Critical fixes also require a semantic mutant (or equally fail-capable counterproof),
+nearby counterexamples that guard against over-correction, and an integrated-path rerun. If the
+class cannot yet be supported safely, emit a named counted limitation and perform no guessed
+actuation or coverage credit.
+
+**Treat limited live access as a high-information validation instrument.** Capture durable
+before/action/after evidence and checkpoint progress so a live failure can be reproduced locally.
+Do not spend limited survey/link access rediscovering a known class: generalize it into fixtures,
+close it with fail-capable tests, then return to the link to discover the next unknown. A live-only
+special case is not a completed fix.
+
 **Parallelize independent work proactively.** Use subagents for bounded workstreams that can run
 safely in parallel, and reuse their slots as tasks finish. Give every subagent an explicit file
 scope, preserve concurrent edits, and require an evidence-backed handoff before integrating its

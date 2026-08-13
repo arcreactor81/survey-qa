@@ -1,6 +1,13 @@
 # DeepSeek model check: is v4-flash "even stronger than v4-pro"?
 
-Checked 2026-08-08. Current config: `worker-v2/wrangler.jsonc:206` sets `DEEPSEEK_MODEL = "deepseek-v4-pro"` (fallback default is also `deepseek-v4-pro`, hardcoded in `worker-v2/src/llm/deepseek.ts:21`, along with the price constants `$0.28`/`$0.42` per Mtok used below). DeepSeek does the block-by-block pass A leg, `response_format: json_object`, thinking pinned on, `reasoning_effort: "medium"`.
+> Implementation update, 13 August 2026: normal Pass A uses exact `grok-4.6`; only a
+> retained eligible typed Grok failure may substitute `deepseek-v4-flash` for Pass A.
+> Ordinary Pass B calls `deepseek-v4-pro` directly. Flash+Pro has reduced same-provider
+> independence and cannot seal as normal corroboration. See
+> [PROVIDER-CONTINUITY.md](PROVIDER-CONTINUITY.md). The text below is the dated
+> pre-implementation research record; its present-tense configuration statements are historical.
+
+Historical snapshot checked 2026-08-08: `worker-v2/wrangler.jsonc:206` then set `DEEPSEEK_MODEL = "deepseek-v4-pro"` (the fallback default was also `deepseek-v4-pro`, hardcoded in `worker-v2/src/llm/deepseek.ts:21`, along with the price constants `$0.28`/`$0.42` per Mtok used below). DeepSeek supplied the block-by-block extraction leg, `response_format: json_object`, thinking pinned on, `reasoning_effort: "medium"`.
 
 ## Verdict: **Partly true** — real, but the comparison is apples-to-oranges unless you fix the effort setting
 
