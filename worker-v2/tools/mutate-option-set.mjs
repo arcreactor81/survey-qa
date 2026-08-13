@@ -391,17 +391,24 @@ const MUTANTS = [
     ],
   },
   {
-    // FIX C1 guard 2: the select-rendered-target detection is deleted. Without it the refusal
-    // demotes to OPTION_GROUP_NOT_ATTRIBUTABLE (the on-screen select still defeats clause (ii),
-    // so there is still no accusation) — but the WRONG named cause, and the two call for
-    // different repairs (read the control's own inventory vs name the group), so the distinct
-    // reason is itself load-bearing.
-    name: "the select-rendered target stops being detected",
-    breaks: "a control-scoped inventory and an unattributable group are different repairs and must not share a bucket",
+    // W4 extended the verifier from refusing all target-native-select inventories to comparing
+    // a fully attested one. Mutating the old refusal in `targetOptionGroup` became equivalent:
+    // `targetOptionInventory` now intercepts every attributed select before that code can run.
+    // Break the live dispatch instead. The guards pin BOTH useful directions (a current select
+    // can verify or contradict) and the conservative boundary (an older, unattested select is
+    // still named insufficient rather than borrowing a neighbouring option group).
+    name: "an attributed native-select inventory stops reaching the verifier",
+    breaks:
+      "a fully attested target dropdown is a first-class inventory; silently falling back to group-only refusal " +
+      "loses both verified coverage and real missing-option findings",
     file: VERIFY,
-    find: "  if (targetSelects.length > 0) {",
-    replace: "  if (false) {",
-    kills: ["FIX C1: a target rendered as a <select> never inherits another control's inventory"],
+    find: "  if (targetSelects.length === 1) {\n    const control = targetSelects[0]!;",
+    replace: "  if (false) {\n    const control = targetSelects[0]!;",
+    kills: [
+      "a complete current native-select inventory verifies and its HTML placeholder is not an extra",
+      "a fully attested dropdown missing a documented option produces the real OPTION_MISSING claim",
+      "FIX C1: a target rendered as a <select> never inherits another control's inventory",
+    ],
   },
   {
     // FIX C1 respin guard 1 (1.8.0): the "(unnamed)" carve-out is deleted from the
@@ -496,7 +503,12 @@ const MUTANTS = [
     name: "a screen that captured NO options is bound anyway, collapsing two distinct refusals",
     breaks: "'nothing was captured' and 'an inventory could not be attributed' call for different repairs",
     file: VERIFY,
-    find: "      performed: (s) => (s.screenBefore?.optionGroups ?? []).some((g) => (g?.options?.length ?? 0) > 0),",
+    find:
+      "      performed: (s) =>\n" +
+      "        (s.screenBefore?.optionGroups ?? []).some((g) => (g?.options?.length ?? 0) > 0) ||\n" +
+      "        (s.screenBefore?.controls ?? []).some(\n" +
+      "          (c) => (c?.tag === \"select\" || c?.type === \"select\") && Array.isArray(c.options),\n" +
+      "        ),",
     replace: "      performed: () => true,",
     // NOTE: this stimulus is NOT what binds the case to its question — `stepsOnTargetQuestion`
     // (screen identity) is, and it runs first. An earlier version of this mutant named the

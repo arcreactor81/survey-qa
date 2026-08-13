@@ -204,9 +204,9 @@ const MUTANTS = [
       "EQUIVALENT with respect to this corpus, not evidence of a gap in the check — but it does say the corpus " +
       "cannot detect a whitespace tidy-up anywhere else",
     file: DOCX,
-    find: "    text = `[#] ${text}`;",
-    replace: "    text = `${text}`;",
-    kills: ["THE COLLATERAL PROFILE: only the six named public fixtures read differently from the pre-change parser"],
+    find: "    if (first) first.text = `[#] ${first.text}`;",
+    replace: "    if (first) first.text = first.text;",
+    kills: ["THE COLLATERAL PROFILE: only the named public fixtures change, and auxiliary discovery has exact receipts"],
   },
   {
     name: "w:noBreakHyphen is dropped again",
