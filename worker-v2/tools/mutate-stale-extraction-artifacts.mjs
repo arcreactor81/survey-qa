@@ -20,7 +20,7 @@ await runMutantSuite({
       breaks: "stale success or terminal failure can suppress current pass-A work",
       file: PASS_A,
       find:
-        '    if (parsed["parserVersion"] !== DOCX_BLOCKS_VERSION || parsed["promptVersion"] !== PROMPT_VERSION_A) {\n' +
+        '    if (parsed["parserVersion"] !== parserVersion || parsed["promptVersion"] !== PROMPT_VERSION_A) {\n' +
         "      return null;\n" +
         "    }",
       replace: "    if (false) {\n      return null;\n    }",
@@ -31,7 +31,7 @@ await runMutantSuite({
       breaks: "stale obligations or retry counts can enter the current pass-B result",
       file: PASS_B,
       find:
-        '    if (parsed["parserVersion"] !== DOCX_BLOCKS_VERSION || parsed["promptVersion"] !== PROMPT_VERSION_B) {\n' +
+        '    if (parsed["parserVersion"] !== parserVersion || parsed["promptVersion"] !== PROMPT_VERSION_B) {\n' +
         "      return null;\n" +
         "    }",
       replace: "    if (false) {\n      return null;\n    }",
@@ -42,11 +42,27 @@ await runMutantSuite({
       breaks: "a completed stale pass can bypass document parsing and all current model work",
       file: STAGE,
       find:
-        '    const parsed = JSON.parse(body) as PassResult & { parserVersion?: unknown; promptVersion?: unknown };\n' +
+        "  const body = await obj.text();\n" +
+        "  try {\n" +
+        "    const parsed = JSON.parse(body) as PassResult & {\n" +
+        "      parserVersion?: unknown;\n" +
+        "      promptVersion?: unknown;\n" +
+        "      providerPlanIdentity?: unknown;\n" +
+        "      providerRouteIdentity?: unknown;\n" +
+        "      providerIndependence?: unknown;\n" +
+        "    };\n" +
         '    const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;\n' +
-        "    if (parsed.parserVersion !== DOCX_BLOCKS_VERSION || parsed.promptVersion !== expectedPrompt) return null;",
+        "    if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;",
       replace:
-        '    const parsed = JSON.parse(body) as PassResult & { parserVersion?: unknown; promptVersion?: unknown };\n' +
+        "  const body = await obj.text();\n" +
+        "  try {\n" +
+        "    const parsed = JSON.parse(body) as PassResult & {\n" +
+        "      parserVersion?: unknown;\n" +
+        "      promptVersion?: unknown;\n" +
+        "      providerPlanIdentity?: unknown;\n" +
+        "      providerRouteIdentity?: unknown;\n" +
+        "      providerIndependence?: unknown;\n" +
+        "    };\n" +
         '    const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;\n' +
         "    if (false) return null;",
       kills: [
@@ -59,15 +75,27 @@ await runMutantSuite({
       breaks: "the source ledger can seal a denominator produced under another parser or prompt",
       file: STAGE,
       find:
+        "    const parsed = JSON.parse(await obj.text()) as PassResult & {\n" +
+        "      crossRefs?: CrossRef[];\n" +
+        "      parserVersion?: unknown;\n" +
+        "      promptVersion?: unknown;\n" +
+        "      providerPlanIdentity?: unknown;\n" +
+        "      providerRouteIdentity?: unknown;\n" +
+        "      providerIndependence?: unknown;\n" +
+        "    };\n" +
         '    const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;\n' +
-        "    if (parsed.parserVersion !== DOCX_BLOCKS_VERSION || parsed.promptVersion !== expectedPrompt) return null;\n" +
-        "    if (!Array.isArray(parsed.requirements)) return null;\n" +
-        "    return parsed;",
+        "    if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;",
       replace:
+        "    const parsed = JSON.parse(await obj.text()) as PassResult & {\n" +
+        "      crossRefs?: CrossRef[];\n" +
+        "      parserVersion?: unknown;\n" +
+        "      promptVersion?: unknown;\n" +
+        "      providerPlanIdentity?: unknown;\n" +
+        "      providerRouteIdentity?: unknown;\n" +
+        "      providerIndependence?: unknown;\n" +
+        "    };\n" +
         '    const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;\n' +
-        "    if (false) return null;\n" +
-        "    if (!Array.isArray(parsed.requirements)) return null;\n" +
-        "    return parsed;",
+        "    if (false) return null;",
       kills: ["D51-e consolidation refuses stale pass A or pass B payloads"],
     },
   ],

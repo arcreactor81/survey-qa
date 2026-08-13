@@ -453,11 +453,15 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
     const documentKey = m.keys.inputDocumentKey(runId);
     await env.EVIDENCE.put(documentKey, readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx")));
     await d51Put(env, m.keys.extractionPassKey(runId, "b"), {
+      // Discriminating fixture: the exact current Pro-plan identity is held constant, so
+      // only the stale prompt can reject this payload. Provider-plan mismatch refusal is
+      // independently guarded in provider-continuity.test.mjs.
       parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
       promptVersion: "stale-prompt/0",
+      providerPlanIdentity: m.deepseek.deepseekPassBIdentity(env),
       pass: "B",
       provider: "deepseek",
-      model: "stale-model",
+      model: m.deepseek.deepseekPassBIdentity(env),
       requirements: [],
       ambiguities: [],
       unverifiable: [],

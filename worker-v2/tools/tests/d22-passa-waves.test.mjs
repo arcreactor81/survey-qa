@@ -884,11 +884,16 @@ test("D51-d whole-pass A stale payload cannot take early reuse", async () => {
   const documentKey = m.keys.inputDocumentKey(runId);
   await env.EVIDENCE.put(documentKey, readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx")));
   await d51Put(env, m.keys.extractionPassKey(runId, "a"), {
+    // Discriminating fixture: every provider-route dimension is current and internally
+    // coherent, so only the stale parser can make this payload ineligible. Provider-route
+    // mismatches retain their own counterweights in provider-continuity.test.mjs.
     parserVersion: "stale-parser/0",
     promptVersion: m.passA.PASS_A_VERSION,
+    providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
+    providerIndependence: "independent",
     pass: "A",
     provider: "grok",
-    model: "stale-model",
+    model: "grok-4.6",
     requirements: [],
     ambiguities: [],
     unverifiable: [],
@@ -897,6 +902,8 @@ test("D51-d whole-pass A stale payload cannot take early reuse", async () => {
     failedUnits: [],
     calls: [],
     crossRefs: [],
+    fallbackTriggers: [],
+    routeReceipts: [],
   });
 
   const provider = stubProvider();

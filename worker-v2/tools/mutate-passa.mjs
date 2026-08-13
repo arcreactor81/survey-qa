@@ -98,8 +98,10 @@ await runMutantSuite({
         "once per wave, per step retry, per recovery instance — the 21–24x billing storm, on the " +
         "most expensive call in the system",
       file: PASS_A,
-      find: 'if (existing && existing.kind === "failed" && existing.attempts >= maxIssues) {',
-      replace: 'if (existing && existing.kind === "failed" && existing.attempts >= 999999) {',
+      find:
+        'if (existing && existing.kind === "failed" && existing.attempts >= maxIssues && !pendingFlash) {',
+      replace:
+        'if (existing && existing.kind === "failed" && existing.attempts >= 999999 && !pendingFlash) {',
       kills: [BOUNDED],
     },
     {
@@ -138,8 +140,9 @@ await runMutantSuite({
         "second one, which is exactly the billed-but-unpersisted call the invariant exists to " +
         "protect",
       file: PASS_A,
-      find: "return Math.max(1, num(env.EXTRACT_MAX_ATTEMPTS, 2)) * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));",
-      replace: "return Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));",
+      find:
+        "return 2 * Math.max(1, num(env.EXTRACT_MAX_ATTEMPTS, 2)) * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));",
+      replace: "return 2 * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));",
       kills: [DERIVED_TIMEOUT],
     },
     {
@@ -159,8 +162,12 @@ await runMutantSuite({
         "every wave re-counts every window it reclaimed, walking a large document into " +
         "CAP_MODEL_CALLS on calls nobody ever made",
       file: STAGE,
-      find: "const purchased = result.issuedCalls;",
-      replace: "const purchased = result.calls;",
+      find:
+        "await chargeUsage(env, runId, result.accountingCalls, fence);\n\r\n" +
+        "  const wholeDocumentRead = result.slice.done;",
+      replace:
+        "await chargeUsage(env, runId, result.calls, fence);\n\r\n" +
+        "  const wholeDocumentRead = result.slice.done;",
       kills: [HALF_READ],
     },
     {

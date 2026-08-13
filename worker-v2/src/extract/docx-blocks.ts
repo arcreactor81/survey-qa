@@ -1631,15 +1631,16 @@ function scanTable(
               coords: { row: rows.length + 1, col: gridCol, rowHeader: null, colHeader: null },
             });
           }
-          // An origin-bearing draft (combo-box suggestion, ruby reading) keeps its origin as
-          // its own block instead of being folded into cell text: the origin is the ONLY
-          // thing that stops an open suggestion sealing as an exhaustive answer list.
-          // Drafts carrying the part origin itself (the paragraph's own text, dropdown
-          // items) still fold, unchanged.
+          // A declared `sourceSubrole` above preserves known non-answer authority on its own
+          // block; human-readable `origin` is provenance/display only, never executable
+          // authority. This legacy branch conservatively keeps semantic or origin-bearing
+          // drafts separate instead of silently folding unfamiliar parser output into cell
+          // text. Drafts carrying only the part origin (paragraph text, dropdown items) fold.
           else if (d.origin !== origin || d.semanticSpans.length > 0) {
-            // The draft remains a paragraph so its origin continues to control authority, but
-            // its host cell is still exact source provenance. `rows.length + 1` is the current
-            // one-based row because this row has not yet been appended to `rows`.
+            // Preserve the separate draft and its exact host-cell provenance. Declared subroles
+            // and semantic spans retain their typed meaning; `origin` remains non-authoritative.
+            // `rows.length + 1` is the current one-based row because this row has not yet been
+            // appended to `rows`.
             cellDrafts.push({
               ...d,
               kind: d.semanticSpans.length > 0 ? "paragraph" : d.kind,

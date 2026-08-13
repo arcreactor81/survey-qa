@@ -186,7 +186,8 @@ const MUTANTS = [
     name: "the documented answer no longer has to have been selected",
     breaks: "a destination reached down another branch witnesses nothing about this case",
     file: VERIFY,
-    find: "      performed: (s) => selectedAnswer(s, answer.code, answer.label),",
+    find:
+      '      performed: (s) => selectedAnswer(s, answer.code, answer.label, ctx.targetQuestionId ?? ""),',
     replace: "      performed: () => true,",
     kills: ["NEGATIVE: the walk never selected the documented answer — the branch was never exercised"],
   },

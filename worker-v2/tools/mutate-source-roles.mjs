@@ -17,7 +17,7 @@ const DOCX = "src/extract/docx-blocks.ts";
 const PASSB = "src/extract/pass-b.ts";
 
 const MODEL = "model merge: combo suggestions and ruby readings stay counted gaps and never become siblings";
-const MAP = "origin mapper: exact combo and every ruby-reading prefix map; lookalikes do not";
+const MAP = "structural mapper: declared subroles map; origin text alone never changes authority";
 const HUMAN_PATH = "human exact-span path carries the same roles and produces the same named gaps";
 // Finding B1 guards. They live HERE and not in mutate-docx-blocks.mjs because that harness
 // runs under the "DOCX READER" filter, which never executes the D50 tests these mutants are
@@ -33,27 +33,33 @@ const ROW_SWEEP = "pass B's unaccounted sweep still buys a lifted block hosted i
 
 const MUTANTS = [
   {
-    name: "the combo-box origin is no longer authority-labelled",
-    breaks: "an open suggestion becomes indistinguishable from a closed document answer option",
+    name: "combo authority regresses from a declared subrole to origin text",
+    breaks:
+      "a parser declaration is ignored while a stale or forged human-readable origin can acquire answer-option authority",
     file: ROLE,
-    find: '  if (block?.origin === "combo-box-suggestion") return NON_ANSWER_OPTION_SOURCE_ROLE.COMBO_BOX_SUGGESTION;',
-    replace: '  if (false) return NON_ANSWER_OPTION_SOURCE_ROLE.COMBO_BOX_SUGGESTION;',
-    kills: [MAP, MODEL, HUMAN_PATH],
+    find:
+      '  if (block?.sourceSubrole === "combo-box-suggestion") return NON_ANSWER_OPTION_SOURCE_ROLE.COMBO_BOX_SUGGESTION;',
+    replace:
+      '  if (block?.origin === "combo-box-suggestion") return NON_ANSWER_OPTION_SOURCE_ROLE.COMBO_BOX_SUGGESTION;',
+    kills: [MAP],
   },
   {
-    name: "only the bare ruby origin maps, losing real origins that name their base",
-    breaks: "the parser carries association text after the stable prefix, so exact equality silently drops the role",
+    name: "ruby authority regresses from a declared subrole to an origin-text prefix",
+    breaks:
+      "human-readable provenance becomes executable authority, so a stale or forged ruby label can mint a reserved source role",
     file: ROLE,
-    find: '  if (block?.origin.startsWith("ruby-reading")) return NON_ANSWER_OPTION_SOURCE_ROLE.RUBY_READING;',
-    replace: '  if (block?.origin === "ruby-reading") return NON_ANSWER_OPTION_SOURCE_ROLE.RUBY_READING;',
-    kills: [MAP, MODEL, HUMAN_PATH],
+    find:
+      '  if (block?.sourceSubrole === "ruby-reading") return NON_ANSWER_OPTION_SOURCE_ROLE.RUBY_READING;',
+    replace:
+      '  if (block?.origin.startsWith("ruby-reading")) return NON_ANSWER_OPTION_SOURCE_ROLE.RUBY_READING;',
+    kills: [MAP],
   },
   {
     name: "model merge stops carrying parser-origin authority",
     breaks: "the expander cannot refuse a source fact the merge erased",
     file: MERGE,
-    find: "        role: sourceAtomRole(b, primary.construct),",
-    replace: "        role: primary.construct,",
+    find: "      const rawRole = sourceAtomRole(b, primary.construct);",
+    replace: "      const rawRole = primary.construct;",
     kills: [MODEL],
   },
   {
@@ -83,24 +89,24 @@ const MUTANTS = [
 
   // ============================================================ finding B1: the table-cell fold
   {
-    name: "table cells fold origin-bearing drafts back into plain cell text (the pre-1.2.0 behaviour)",
+    name: "table cells stop lifting structurally declared non-answer drafts",
     breaks:
-      "the EXACT shape that shipped: a combo suggestion or ruby reading inside a w:tc loses the origin " +
-      "annotate()'s OPEN-NOT-EXHAUSTIVE marker and the OPTION_SET_SOURCE_NOT_AN_ANSWER_LIST refusal key on, " +
-      "so an open suggestion list in a table can seal as an exhaustive answer set",
+      "a combo suggestion or ruby reading inside a table cell loses the structural branch that preserves its " +
+      "declared source role, so the block is folded into ordinary cell text and may acquire answer authority",
     file: DOCX,
     find:
-      "          else if (d.origin !== origin) {\n" +
-      "            // The draft remains a paragraph so its origin continues to control authority, but\n" +
-      "            // its host cell is still exact source provenance. `rows.length + 1` is the current\n" +
-      "            // one-based row because this row has not yet been appended to `rows`.\n" +
+      "          if (d.sourceSubrole != null) {\n" +
       "            cellDrafts.push({\n" +
       "              ...d,\n" +
+      '              kind: "paragraph",\n' +
       "              tableId,\n" +
       "              coords: { row: rows.length + 1, col: gridCol, rowHeader: null, colHeader: null },\n" +
       "            });\n" +
       "          }",
-    replace: "          else if (d.origin !== origin && clean(d.text).length > 0) parts.push(clean(d.text));",
+    replace:
+      "          if (d.sourceSubrole != null && clean(d.text).length > 0) {\n" +
+      "            parts.push(clean(d.text));\n" +
+      "          }",
     kills: [COMBO_TABLE, RUBY_TABLE, CELL_BOUNDARY],
   },
   {
@@ -110,9 +116,13 @@ const MUTANTS = [
       "which table row and grid column hosted it",
     file: DOCX,
     find:
+      '              kind: "paragraph",\n' +
       "              tableId,\n" +
       "              coords: { row: rows.length + 1, col: gridCol, rowHeader: null, colHeader: null },",
-    replace: "              tableId,\n" + "              coords: null,",
+    replace:
+      '              kind: "paragraph",\n' +
+      "              tableId,\n" +
+      "              coords: null,",
     kills: [COMBO_TABLE, RUBY_TABLE, CELL_BOUNDARY],
   },
   {

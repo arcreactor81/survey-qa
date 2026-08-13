@@ -139,8 +139,8 @@ await runMutantSuite({
       name: "legacy direction-unknown Back glyph enters sole-forward fallback",
       breaks: "an older screen artifact with role=other and label << is clicked as Next",
       file: DR,
-      find: `  const only = cands.filter((b) => b.role !== "back" && !symbolicBack(b.label));`,
-      replace: `  const only = cands.filter((b) => b.role !== "back");`,
+      find: `  const only = cands.filter((b) => b.role !== "back" && !symbolicBack(b.label)).map((b) => ({`,
+      replace: `  const only = cands.filter((b) => b.role !== "back").map((b) => ({`,
       kills: ["a direction-only << control is Back, never the sole forward candidate"],
     },
     {

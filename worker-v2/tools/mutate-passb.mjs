@@ -94,7 +94,7 @@ await runMutantSuite({
       name: "the ledger sweep stops resuming",
       breaks: "sweep artifacts go back to being write-only, so every re-entry re-buys all of them",
       file: PASS_B,
-      find: "const existing = await readSweep(env, runId, i, allowed);",
+      find: "const existing = await readSweep(env, runId, i, allowed, parserVersion);",
       replace: "const existing = null;",
       kills: ["(c) the ledger sweep resumes too — its calls used to be written and never read back"],
     },
@@ -117,7 +117,7 @@ await runMutantSuite({
         "protect — and EXTRACT_MAX_ATTEMPTS is undeclared in wrangler.jsonc, so the LIVE value " +
         "is chat.ts's own default of 2",
       file: PASS_B,
-      find: "return deepseekContinuityAttemptCeiling(env) * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));",
+      find: "return deepseekPassBAttemptCeiling(env) * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));",
       replace: "return Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));",
       kills: [DERIVED_TIMEOUT],
     },
@@ -137,8 +137,12 @@ await runMutantSuite({
         "every wave re-counts every chunk it reused, walking a large document into CAP_MODEL_CALLS " +
         "on calls nobody ever made",
       file: STAGE,
-      find: "await chargeUsage(env, runId, result.issuedCalls, fence);",
-      replace: "await chargeUsage(env, runId, result.calls, fence);",
+      find:
+        "await chargeUsage(env, runId, result.accountingCalls, fence);\n\r\n" +
+        "  if (!result.slice.done) {",
+      replace:
+        "await chargeUsage(env, runId, result.calls, fence);\n\r\n" +
+        "  if (!result.slice.done) {",
       kills: ["(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the finished one"],
     },
     {
@@ -158,12 +162,11 @@ await runMutantSuite({
         "short — `partial-*` over zero exercised work is the overclaim this reason code exists to " +
         "delete",
       file: WORKFLOW,
-      // NOTE: run-workflow.ts is CRLF on this tree, so a multi-line anchor must carry \r\n.
-      // A \n-only anchor matches zero times and the harness reports BROKEN-ANCHOR — which is
-      // correctly NOT scored as a kill.
-      find: 'd.completion.test = "failed";\r\n              d.completion.reasonCode = EXTRACTION_WAVES_EXHAUSTED;',
+      // Keep both lines in the anchor: `completion.test = "failed"` occurs at other named
+      // extraction stops, while this exact reason-code pair is the pass-B exhaustion seam.
+      find: 'd.completion.test = "failed";\n                d.completion.reasonCode = EXTRACTION_WAVES_EXHAUSTED;',
       replace:
-        'd.completion.test = "partial-blocked";\r\n              d.completion.reasonCode = EXTRACTION_WAVES_EXHAUSTED;',
+        'd.completion.test = "partial-blocked";\n                d.completion.reasonCode = EXTRACTION_WAVES_EXHAUSTED;',
       kills: ["(a) pass B occupies MULTIPLE distinct workflow steps, and exhausting them is a NAMED failure"],
     },
   ],
