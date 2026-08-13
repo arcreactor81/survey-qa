@@ -916,9 +916,39 @@ if ($LASTEXITCODE -ne 0) { throw "audit dry-run failed" }
 & $Node $Wrangler versions upload --dry-run --strict --cwd $V2 --config $Config --name $Worker --tag $Tag --message $Message --outdir $ReplayOut
 if ($LASTEXITCODE -ne 0) { throw "versions-upload replay failed" }
 
+# RELEASE_RELATIVE_PATH_HELPER_BEGIN
+function Get-RelativeChildPath([string] $RootPath, [string] $CandidatePath) {
+  if ([string]::IsNullOrWhiteSpace($RootPath) -or
+      [string]::IsNullOrWhiteSpace($CandidatePath)) {
+    throw "Relative-path census requires non-empty root and candidate paths"
+  }
+  $Separators = [char[]] @(
+    [IO.Path]::DirectorySeparatorChar,
+    [IO.Path]::AltDirectorySeparatorChar
+  )
+  $RootFull = [IO.Path]::GetFullPath($RootPath).TrimEnd($Separators)
+  $CandidateFull = [IO.Path]::GetFullPath($CandidatePath)
+  $RootPrefix = $RootFull + [IO.Path]::DirectorySeparatorChar
+  if (-not $CandidateFull.StartsWith(
+      $RootPrefix,
+      [StringComparison]::OrdinalIgnoreCase
+    )) {
+    throw ("Census path is not a strict child of its output root: " + $CandidateFull)
+  }
+  $RelativePath = $CandidateFull.Substring($RootPrefix.Length)
+  $Segments = @($RelativePath -split "[\\/]")
+  if ([string]::IsNullOrWhiteSpace($RelativePath) -or
+      [IO.Path]::IsPathRooted($RelativePath) -or
+      @($Segments | Where-Object { $_ -eq "." -or $_ -eq ".." }).Count -ne 0) {
+    throw ("Census produced an unsafe relative path: " + $RelativePath)
+  }
+  return $RelativePath
+}
+# RELEASE_RELATIVE_PATH_HELPER_END
+
 $Census = foreach ($root in @($AuditOut,$ReplayOut)) {
   Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object {
-    [ordered]@{ root=$root; relativePath=[IO.Path]::GetRelativePath($root,$_.FullName);
+    [ordered]@{ root=$root; relativePath=(Get-RelativeChildPath -RootPath $root -CandidatePath $_.FullName);
       bytes=$_.Length; sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
   }
 }

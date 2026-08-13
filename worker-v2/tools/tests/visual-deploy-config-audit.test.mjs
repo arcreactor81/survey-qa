@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -168,6 +169,106 @@ function auditNoSourceMapCliOverride(source, label) {
   return commands;
 }
 
+const RELATIVE_HELPER_BEGIN = "# RELEASE_RELATIVE_PATH_HELPER_BEGIN";
+const RELATIVE_HELPER_END = "# RELEASE_RELATIVE_PATH_HELPER_END";
+const UNSUPPORTED_RELATIVE_API = "[IO.Path]::GetRelativePath";
+
+function extractPowerShellBlocks(source, label) {
+  const blocks = [...source.matchAll(/~~~powershell\r?\n([\s\S]*?)\r?\n~~~/gu)]
+    .map((match) => match[1]);
+  if (blocks.length === 0) throw new Error(`${label}: no PowerShell blocks to parse`);
+  return blocks;
+}
+
+function extractReleaseRelativePathHelper(source, label) {
+  const begins = source.split(RELATIVE_HELPER_BEGIN).length - 1;
+  const ends = source.split(RELATIVE_HELPER_END).length - 1;
+  if (begins !== 1 || ends !== 1) {
+    throw new Error(`${label}: release relative-path helper markers must occur exactly once`);
+  }
+  const begin = source.indexOf(RELATIVE_HELPER_BEGIN) + RELATIVE_HELPER_BEGIN.length;
+  const end = source.indexOf(RELATIVE_HELPER_END, begin);
+  const helper = source.slice(begin, end).trim();
+  if (helper.length === 0) throw new Error(`${label}: release relative-path helper is empty`);
+  return helper;
+}
+
+function auditPowerShell51RelativePathBoundary(source, label) {
+  if (source.includes(UNSUPPORTED_RELATIVE_API)) {
+    throw new Error(`${label}: release runbook uses the unsupported PowerShell 5.1 relative-path API`);
+  }
+  const helper = extractReleaseRelativePathHelper(source, label);
+  const requiredTokens = [
+    "function Get-RelativeChildPath",
+    "[IO.Path]::GetFullPath($RootPath)",
+    "$RootFull + [IO.Path]::DirectorySeparatorChar",
+    "[StringComparison]::OrdinalIgnoreCase",
+    "$CandidateFull.Substring($RootPrefix.Length)",
+    "[IO.Path]::IsPathRooted($RelativePath)",
+  ];
+  for (const token of requiredTokens) {
+    if (!helper.includes(token)) throw new Error(`${label}: relative-path helper is missing ${token}`);
+  }
+  if (!source.includes(
+    "Get-RelativeChildPath -RootPath $root -CandidatePath $_.FullName",
+  )) {
+    throw new Error(`${label}: output census does not call the bounded relative-path helper`);
+  }
+  return helper;
+}
+
+function windowsPowerShell51Path() {
+  const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows";
+  return path.join(
+    windowsRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+}
+
+function runPowerShell51(source, input = "") {
+  const encoded = Buffer.from(source, "utf16le").toString("base64");
+  return spawnSync(
+    windowsPowerShell51Path(),
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+    { cwd: WORKER_ROOT, encoding: "utf8", input, timeout: 20_000, windowsHide: true },
+  );
+}
+
+function assertPowerShell51Success(run, label) {
+  assert.equal(run.error, undefined, `${label}: launch failed: ${run.error?.message ?? "unknown"}`);
+  assert.equal(
+    run.status,
+    0,
+    `${label}: status=${run.status}; stderr=${JSON.stringify(run.stderr)}; stdout=${JSON.stringify(run.stdout)}`,
+  );
+}
+
+function exerciseReleaseRelativePathHelper(helper) {
+  const script = `$ErrorActionPreference = "Stop"
+${helper}
+$Root = Join-Path ([IO.Path]::GetTempPath()) "survey-qa-release-root"
+$Inside = Join-Path $Root "nested\\index.js"
+$Expected = "nested" + [IO.Path]::DirectorySeparatorChar + "index.js"
+if ((Get-RelativeChildPath -RootPath $Root -CandidatePath $Inside) -cne $Expected) {
+  throw "valid child did not produce the expected relative path"
+}
+$Outside = @(
+  $Root,
+  ($Root + "-collision" + [IO.Path]::DirectorySeparatorChar + "index.js"),
+  (Join-Path $Root "..\\survey-qa-release-escape\\index.js")
+)
+foreach ($Candidate in $Outside) {
+  $Rejected = $false
+  try { [void] (Get-RelativeChildPath -RootPath $Root -CandidatePath $Candidate) }
+  catch { $Rejected = $true }
+  if (-not $Rejected) { throw ("unsafe census path was accepted: " + $Candidate) }
+}`;
+  return runPowerShell51(script);
+}
+
 test("all production and evaluation configs parse and explicitly disable visual purchases", () => {
   for (const [file, source] of sources) {
     auditDisabledVisualRollout(source, file);
@@ -210,7 +311,7 @@ test("missing, enabled, malformed, and duplicated source-map upload policy fail 
   );
 });
 
-test("documented release commands forbid the source-map upload CLI override", () => {
+test("documented release commands are PS5-safe, boundary-checked, and forbid source-map upload", () => {
   const commands = auditNoSourceMapCliOverride(deployRunbook, "DEPLOY.md");
   assert.ok(commands.some((line) => line.includes("versions upload")));
   assert.ok(commands.some((line) => line.includes("versions deploy")));
@@ -223,6 +324,49 @@ test("documented release commands forbid the source-map upload CLI override", ()
   assert.throws(
     () => auditNoSourceMapCliOverride(mutated, "mutated DEPLOY.md"),
     /--upload-source-maps is forbidden/u,
+  );
+
+  const helper = auditPowerShell51RelativePathBoundary(deployRunbook, "DEPLOY.md");
+  const unsupportedApiMutant = deployRunbook.replace(
+    "Get-RelativeChildPath -RootPath $root -CandidatePath $_.FullName",
+    "[IO.Path]::GetRelativePath($root,$_.FullName)",
+  );
+  assert.notEqual(
+    unsupportedApiMutant,
+    deployRunbook,
+    "the unsupported-API mutant must alter the output census",
+  );
+  assert.throws(
+    () => auditPowerShell51RelativePathBoundary(unsupportedApiMutant, "unsupported API mutant"),
+    /unsupported PowerShell 5\.1 relative-path API/u,
+  );
+
+  const parsedBlocks = extractPowerShellBlocks(deployRunbook, "DEPLOY.md");
+  for (const [index, block] of parsedBlocks.entries()) {
+    const parseScript = `$ErrorActionPreference = "Stop"
+$Source = [Console]::In.ReadToEnd()
+[void] [ScriptBlock]::Create($Source)`;
+    assertPowerShell51Success(
+      runPowerShell51(parseScript, block),
+      `DEPLOY.md PowerShell block ${index + 1}/${parsedBlocks.length}`,
+    );
+  }
+  assertPowerShell51Success(
+    exerciseReleaseRelativePathHelper(helper),
+    "release relative-path helper boundary cases",
+  );
+
+  const unsafePrefixMutant = helper.replace(
+    "$RootFull + [IO.Path]::DirectorySeparatorChar",
+    "$RootFull",
+  );
+  assert.notEqual(unsafePrefixMutant, helper, "the unsafe-prefix mutant must alter the helper");
+  const unsafeRun = exerciseReleaseRelativePathHelper(unsafePrefixMutant);
+  assert.equal(unsafeRun.error, undefined, unsafeRun.error?.message);
+  assert.notEqual(
+    unsafeRun.status,
+    0,
+    "a prefix-only helper must fail the sibling-prefix counterexample",
   );
 });
 

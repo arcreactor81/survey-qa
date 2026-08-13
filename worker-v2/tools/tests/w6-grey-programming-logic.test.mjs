@@ -1,8 +1,6 @@
 import { strToU8, zipSync } from "fflate";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { assert, assertEq, REPO_ROOT, suite, test } from "../testkit.mjs";
+import { assert, assertEq, suite, test } from "../testkit.mjs";
 import { testEnv, worker } from "./_helpers.mjs";
 
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -62,6 +60,137 @@ const SHOP_PROFILE = "shop-direct-grey-programming/1.0.0";
 const NONE_PROFILE = "none/1.0.0";
 const SHOP = { documentSemanticsProfile: SHOP_PROFILE };
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+const GREY_SCALE_SIZES = [8, 32];
+const MAX_SERIALIZED_GROWTH_PER_BLOCK = 1_024;
+const withinLinearGrowthBound = (smaller, larger) => {
+  const emittedBlocks = larger.blockCount - smaller.blockCount;
+  const addedBytes = larger.serializedBytes - smaller.serializedBytes;
+  return emittedBlocks > 0 && addedBytes >= 0 &&
+    addedBytes <= emittedBlocks * MAX_SERIALIZED_GROWTH_PER_BLOCK;
+};
+const hasOneSharedNonemptyTableId = (blocks) => {
+  const ids = blocks.map((block) => block.tableId);
+  return ids.length > 0 && typeof ids[0] === "string" && ids[0].length > 0 &&
+    ids.every((id) => id === ids[0]);
+};
+const greyScaleFixture = (rowCount) => {
+  const expected = [];
+  const rows = Array.from({ length: rowCount }, (_, index) => {
+    const id = String(index).padStart(4, "0");
+    assertEq(id.length, 4, "scale sentinel id must remain fixed-width");
+    const fill = index % 2 === 0 ? "F2F2F2" : "D9D9D9";
+    const inheritedA = `A${id}G`;
+    const inheritedB = `B${id}G`;
+    const highlightControl = `C${id}Y`;
+    const fillControl = `D${id}R`;
+    const directHighlight = `E${id}L`;
+    const neutralControl = `F${id}N`;
+    for (const sentinel of [
+      inheritedA, inheritedB, highlightControl, fillControl, directHighlight, neutralControl,
+    ]) assertEq(sentinel.length, 6, "scale sentinel text must remain fixed-width");
+    expected.push(
+      { text: inheritedA + inheritedB, programming: true, runs: 2, col: 1, fill },
+      { text: highlightControl + fillControl, programming: false, runs: 2, col: 1, fill },
+      { text: directHighlight, programming: true, runs: 1, col: 2, fill: null },
+      { text: neutralControl, programming: false, runs: 1, col: 2, fill: null },
+    );
+    return `<w:tr>` +
+      `<w:tc><w:tcPr><w:shd w:fill="${fill}"/></w:tcPr><w:p>` +
+        run(inheritedA) + run(inheritedB) +
+        run(highlightControl, `<w:highlight w:val="yellow"/>`) +
+        run(fillControl, `<w:shd w:fill="FF0000"/>`) +
+      `</w:p></w:tc>` +
+      `<w:tc><w:p>` +
+        run(directHighlight, `<w:highlight w:val="lightGray"/>`) + run(neutralControl) +
+      `</w:p></w:tc>` +
+    `</w:tr>`;
+  }).join("");
+  return { bytes: docx(`<w:tbl>${rows}</w:tbl>`), expected };
+};
+const assertGreyScaleCensus = (parsed, expected, rowCount) => {
+  const programming = parsed.blocks.filter(isProgramming);
+  const controls = parsed.blocks.filter((block) => !isProgramming(block));
+  assertEq(parsed.blocks.length, rowCount * 4,
+    "one exact four-block projection is owed per synthetic row");
+  assertEq(
+    JSON.stringify(parsed.blocks.map((block) => block.text)),
+    JSON.stringify(expected.map((entry) => entry.text)),
+    "every fixed-width source sentinel must survive once and in source order",
+  );
+  assertEq(programming.length, rowCount * 2,
+    "programming denominator must be computed from rows");
+  assertEq(controls.length, rowCount * 2,
+    "control denominator must be computed from rows");
+  assertEq(
+    parsed.blocks.reduce((count, block) => count + block.formatting.runs.length, 0),
+    rowCount * 6,
+    "format evidence must retain exactly one row per source run",
+  );
+  assertEq(
+    programming.reduce(
+      (count, block) => count + block.semanticSpans.reduce((sum, span) => sum + span.runSpans, 0),
+      0,
+    ),
+    rowCount * 3,
+    "programming span denominator must equal the exact grey source-run census",
+  );
+  assertEq(
+    parsed.blocks.reduce(
+      (count, block) => count +
+        block.formatting.runs.reduce((sum, evidence) => sum + evidence.visibleCharacters, 0),
+      0,
+    ),
+    expected.reduce((count, entry) => count + entry.text.length, 0),
+    "visible-character evidence must conserve every emitted source character",
+  );
+};
+const observeGreyScale = (mod, rowCount) => {
+  const { bytes, expected } = greyScaleFixture(rowCount);
+  const parsed = mod.docxBlocks.parseDocxBlocks(bytes, SHOP);
+  assertGreyScaleCensus(parsed, expected, rowCount);
+  assert(hasOneSharedNonemptyTableId(parsed.blocks),
+    "the synthetic table must retain one shared non-empty provenance identity");
+  assert(!hasOneSharedNonemptyTableId(parsed.blocks.map((block) => ({
+    ...block, tableId: undefined,
+  }))), "the table-provenance predicate must reject a uniformly missing identity");
+  for (let blockIndex = 0; blockIndex < parsed.blocks.length; blockIndex += 1) {
+    const block = parsed.blocks[blockIndex];
+    const entry = expected[blockIndex];
+    assertEq(block.origin, "body", "scale blocks must retain body-part provenance");
+    assertEq(block.coords?.row, Math.floor(blockIndex / 4) + 1,
+      "scale block row provenance drifted");
+    assertEq(block.coords?.col, entry.col, "scale block column provenance drifted");
+    assertEq(block.coords?.rowHeader, null, "row headers must remain unguessed");
+    assertEq(block.coords?.colHeader, null, "column headers must remain unguessed");
+    assertEq(isProgramming(block), entry.programming, "direct formatting role drifted");
+    assertEq(block.formatting.runs.length, entry.runs,
+      "source-run evidence multiplicity drifted");
+    assertEq(block.formatting.cellBackground?.shadingFill ?? null, entry.fill,
+      "cell fill provenance drifted");
+    assert(block.formatting.roleBoundarySplit,
+      "mixed-role source paragraphs must retain their split boundary");
+  }
+  assertEq(
+    parsed.blocks.flatMap((block) => block.formatting.runs)
+      .filter((evidence) => String(evidence.highlight).toLowerCase() === "lightgray").length,
+    rowCount,
+    "one separate direct lightGray run is owed per row",
+  );
+  assertEq(
+    parsed.blocks.flatMap((block) => block.formatting.runs)
+      .filter((evidence) => evidence.shadingFill === "FF0000").length,
+    rowCount,
+    "one explicit non-grey fill control is owed per row",
+  );
+  assert(parsed.coverage.problems.some((problem) =>
+    problem.includes(`contains ${rowCount * 2} non-empty cell(s)`)
+  ), "the exact physical non-empty cell denominator must count mixed-role drafts");
+  return {
+    rowCount,
+    blockCount: parsed.blocks.length,
+    serializedBytes: new TextEncoder().encode(JSON.stringify(parsed)).byteLength,
+  };
+};
 const GROK_OWNER_RATE_FIXTURE = {
   GROK_MODEL: "grok-4.6",
   GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
@@ -107,10 +236,10 @@ suite("W6 — grey programming logic is provenance, not an option label", () => 
     assert(!neutral.coverage.problems.some((p) => /GREY_PROGRAMMING_PROFILE_APPLIED/.test(p)));
   });
 
-  test("grey cell fill classifies consent logic; theme/style backgrounds are named but not guessed", async () => {
+  test("grey cell fill classifies direct instructions; theme/style backgrounds are named but not guessed", async () => {
     const mod = await worker();
     const parsed = mod.docxBlocks.parseDocxBlocks(docx(
-      `<w:tbl><w:tr><w:tc><w:tcPr><w:shd w:fill="F2F2F2"/></w:tcPr><w:p>${run("ROUTE IF CONSENT = 2")}${run("RESPONDENT COPY", `<w:highlight w:val="cyan"/>`)}</w:p></w:tc>` +
+      `<w:tbl><w:tr><w:tc><w:tcPr><w:shd w:fill="F2F2F2"/></w:tcPr><w:p>${run("DIRECT GREY INSTRUCTION")}${run("EXPLICIT COLOUR CONTROL", `<w:highlight w:val="cyan"/>`)}</w:p></w:tc>` +
       `<w:tc><w:tcPr><w:shd w:themeFill="background1"/></w:tcPr><w:p><w:pPr><w:pStyle w:val="ProgrammingNote"/></w:pPr>${run("unresolved style")}</w:p></w:tc></w:tr></w:tbl>` +
       `<w:p><w:pPr><w:shd w:themeFill="accent1"/></w:pPr>${run("unresolved paragraph and run theme", `<w:rStyle w:val="InheritedGrey"/><w:shd w:themeFill="accent2"/>`)}</w:p>`,
       null,
@@ -121,16 +250,16 @@ suite("W6 — grey programming logic is provenance, not an option label", () => 
         "word/theme/theme1.xml": strToU8(`<a:theme xmlns:a="urn:fixture"/>`),
       },
     ), SHOP);
-    const consent = parsed.blocks.find((b) => b.text === "ROUTE IF CONSENT = 2");
-    assert(consent && isProgramming(consent));
-    assertEq(JSON.stringify(consent.coords), JSON.stringify({ row: 1, col: 1, rowHeader: null, colHeader: null }));
-    assertEq(consent.formatting.cellBackground.shadingFill, "F2F2F2");
-    const respondent = parsed.blocks.find((b) => b.text === "RESPONDENT COPY");
-    assert(respondent && !isProgramming(respondent));
-    assertEq(JSON.stringify(respondent.coords), JSON.stringify({ row: 1, col: 1, rowHeader: null, colHeader: null }));
+    const direct = parsed.blocks.find((b) => b.text === "DIRECT GREY INSTRUCTION");
+    assert(direct && isProgramming(direct));
+    assertEq(JSON.stringify(direct.coords), JSON.stringify({ row: 1, col: 1, rowHeader: null, colHeader: null }));
+    assertEq(direct.formatting.cellBackground.shadingFill, "F2F2F2");
+    const control = parsed.blocks.find((b) => b.text === "EXPLICIT COLOUR CONTROL");
+    assert(control && !isProgramming(control));
+    assertEq(JSON.stringify(control.coords), JSON.stringify({ row: 1, col: 1, rowHeader: null, colHeader: null }));
     assertEq(
       parsed.blocks.filter((b) => b.coords?.col === 1).map((b) => b.text).join("|"),
-      "ROUTE IF CONSENT = 2|RESPONDENT COPY",
+      "DIRECT GREY INSTRUCTION|EXPLICIT COLOUR CONTROL",
     );
     const unresolved = parsed.blocks.find((b) => b.text === "unresolved style");
     assert(unresolved && !isProgramming(unresolved));
@@ -531,25 +660,21 @@ suite("W6 — grey programming logic is provenance, not an option label", () => 
     assert(/run-shading-unresolved/.test(unresolved));
   });
 
-
-  test("retained questionnaire preserves consent cell coverage within a bounded artifact size", async () => {
+  test("synthetic shaded-run scale keeps exact provenance and linear artifact growth", async () => {
     const mod = await worker();
-    const path = join(REPO_ROOT, ".local-private", "team-reference-63a45b98", "questionnaire.docx");
-    const bytes = new Uint8Array(readFileSync(path));
-    const parsed = mod.docxBlocks.parseDocxBlocks(bytes, SHOP);
-    assert(parsed.blocks.every((b) => b.formatting && Array.isArray(b.formatting.runs) && Array.isArray(b.semanticSpans)));
-    const programming = parsed.blocks.filter(isProgramming);
-    const light = parsed.blocks.flatMap((b) => b.formatting.runs).filter((r) => String(r.highlight).toLowerCase() === "lightgray").length;
-    const f2 = programming.filter((b) => String(b.formatting.cellBackground?.shadingFill).toUpperCase() === "F2F2F2");
-    // The profile now fails closed on unresolved theme/nil shading, so the historical
-    // programming total legitimately shrank. Keep a retained-document lower bound that
-    // still proves broad direct evidence without enshrining the previous overclassification.
-    assert(programming.length >= 160, `programming denominator collapsed: ${programming.length}`);
-    assert(light >= 300, `lightGray evidence collapsed: ${light}`);
-    assert(f2.length >= 30, `F2F2F2 cell evidence collapsed: ${f2.length}`);
-    assert(f2.some((b) => /consent/i.test(b.text)), "the retained consent cell was missed");
-    const serialized = new TextEncoder().encode(JSON.stringify(parsed)).byteLength;
-    assert(serialized <= 1_100_000, `format evidence artifact exceeds 1.1 MB: ${serialized}`);
-    assert(serialized <= bytes.byteLength * 2.25, `format evidence ratio is unbounded: ${serialized}/${bytes.byteLength}`);
+    const [smaller, larger] = GREY_SCALE_SIZES.map((rowCount) => observeGreyScale(mod, rowCount));
+    assert(withinLinearGrowthBound(smaller, larger),
+      `serialized growth exceeded ${MAX_SERIALIZED_GROWTH_PER_BLOCK} bytes per emitted block: ` +
+      `${larger.serializedBytes - smaller.serializedBytes}/${larger.blockCount - smaller.blockCount}`);
+
+    const emittedBlocks = larger.blockCount - smaller.blockCount;
+    const quadraticCounterexample = {
+      blockCount: larger.blockCount,
+      serializedBytes: smaller.serializedBytes +
+        emittedBlocks * emittedBlocks * MAX_SERIALIZED_GROWTH_PER_BLOCK,
+    };
+    assert(!withinLinearGrowthBound(smaller, quadraticCounterexample),
+      "the linear-growth predicate must reject a quadratic artifact counterexample");
   });
+
 });

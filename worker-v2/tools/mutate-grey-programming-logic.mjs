@@ -20,7 +20,7 @@ const EXPAND = "src/extract/expand.ts";
 const SOURCE_ROLE = "src/extract/source-role.ts";
 
 const MIXED = "mixed runs preserve byte order; strict grey classifies and coloured highlight counterweights";
-const CELL = "grey cell fill classifies consent logic; theme/style backgrounds are named but not guessed";
+const CELL = "grey cell fill classifies direct instructions; theme/style backgrounds are named but not guessed";
 const DIRECT_FILL = "explicit non-grey run shading counterweights grey paragraph and cell ancestors";
 const NOTES = "footnotes and endnotes preserve selected semantics; comment formatting loss is named";
 const NEUTRAL = "neutral is the default: grey stays respondent-eligible, named, and identity-separated";
@@ -30,6 +30,7 @@ const CLOSED = "non-grey marker remains unread and non-exact programming subtrac
 const RELS = "package relationship resolves an arbitrary main-part name across serialization shapes";
 const AUX = "relationship-discovered auxiliary parts keep exact identity, subroles, and unreadable references";
 const SPECIFICITY = "more-specific unresolved paragraph and run formatting cannot inherit a grey cell";
+const SCALE = "synthetic shaded-run scale keeps exact provenance and linear artifact growth";
 
 const MUTANTS = [
   {
@@ -62,7 +63,7 @@ const MUTANTS = [
     file: DOCX,
     find: "  return r === g && g === b && r > 0 && r < 255;",
     replace: "  return /^[0-9a-f]{6}$/i.test(value);",
-    kills: [MIXED],
+    kills: [MIXED, SCALE],
   },
   {
     name: "direct lightGray and darkGray highlights are ignored",
@@ -70,7 +71,7 @@ const MUTANTS = [
     file: DOCX,
     find: '  if (highlight !== null) return highlight === "lightgray" || highlight === "darkgray";',
     replace: "  if (highlight !== null) return false;",
-    kills: [MIXED],
+    kills: [MIXED, SCALE],
   },
   {
     name: "a coloured direct highlight no longer counterweights a grey ancestor",
@@ -78,7 +79,7 @@ const MUTANTS = [
     file: DOCX,
     find: '  if (highlight !== null) return highlight === "lightgray" || highlight === "darkgray";',
     replace: '  if (highlight !== null && (highlight === "lightgray" || highlight === "darkgray")) return true;',
-    kills: [MIXED, CELL],
+    kills: [MIXED, CELL, SCALE],
   },
   {
     name: "an explicit non-grey run fill falls through to a grey ancestor",
@@ -86,7 +87,7 @@ const MUTANTS = [
     file: DOCX,
     find: "    return explicitAchromaticGrey(run.shadingFill);",
     replace: "    return explicitAchromaticGrey(run.shadingFill) || backgroundGreyProgramming(paragraphBackground) || backgroundGreyProgramming(cellBackground);",
-    kills: [DIRECT_FILL],
+    kills: [DIRECT_FILL, SCALE],
   },
   {
     name: "theme-resolved and nil shading are accepted as direct grey",
@@ -154,11 +155,11 @@ const MUTANTS = [
   },
   {
     name: "table-cell background evidence is not propagated into paragraph runs",
-    breaks: "the retained F2F2F2 programming cells, including the consent case, become ordinary answer text",
+    breaks: "explicit grey table-cell instructions lose their declared programming provenance",
     file: DOCX,
     find: "          ...paragraphDrafts(paraMatch[1], s, coverage, origin, cellBackground, documentSemanticsProfile),",
     replace: "          ...paragraphDrafts(paraMatch[1], s, coverage, origin, null, documentSemanticsProfile),",
-    kills: [CELL],
+    kills: [CELL, SCALE],
   },
   {
     name: "paragraph background evidence is ignored",
@@ -190,7 +191,7 @@ const MUTANTS = [
     file: DOCX,
     find: "        clean(cell.text).length > 0 || cell.drafts.some((draft) => clean(draft.text).length > 0),",
     replace: "        clean(cell.text).length > 0,",
-    kills: [CELL],
+    kills: [CELL, SCALE],
   },
   {
     name: "the shop profile is reported even when it changed no block",
