@@ -394,12 +394,15 @@ test("each batched action receives a fresh approval screenshot binding", async (
   assert.equal(h.actions.length, 1);
 });
 
-test("mutants: model identity and response envelope bounds fail closed", async () => {
+test("model identity mismatch fails closed", async () => {
   const mismatch = new cua.OpenAIComputerUseAdapter({
     apiKey: "test-key-opaque",
     fetchImpl: async () => new Response(JSON.stringify({ id: "r", model: "gpt-5.6-terra", status: "completed", output: [], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 }),
   });
   await assert.rejects(() => mismatch.run("identity", policy(), harness()), cua.ComputerUseProtocolError);
+});
+
+test("response envelope bounds fail closed", async () => {
   const oversized = new cua.OpenAIComputerUseAdapter({
     apiKey: "test-key-opaque",
     fetchImpl: async () => response("r", [{ type: "message", content: [{ type: "output_text", text: "too much" }] }]),

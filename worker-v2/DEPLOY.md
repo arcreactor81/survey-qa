@@ -117,9 +117,708 @@ if ($LASTEXITCODE -ne 0) { throw "visual suite failed" }
 & $Node tools\probe-input-types.mjs
 if ($LASTEXITCODE -ne 0) { throw "input probe failed" }
 
-Get-ChildItem -LiteralPath tools -File -Filter "mutate-*.mjs" | Sort-Object Name | ForEach-Object {
-  & $Node $_.FullName
-  if ($LASTEXITCODE -ne 0) { throw ("Mutation gate failed: " + $_.Name) }
+$MutationHarnesses = @(
+  "mutate-allocation.mjs",
+  "mutate-api-authority.mjs",
+  "mutate-axis-closure.mjs",
+  "mutate-binding.mjs",
+  "mutate-claims.mjs",
+  "mutate-closure.mjs",
+  "mutate-docx-blocks.mjs",
+  "mutate-endings.mjs",
+  "mutate-exercised-gate.mjs",
+  "mutate-expander.mjs",
+  "mutate-fabrication-paths.mjs",
+  "mutate-grey-programming-logic.mjs",
+  "mutate-grok-cost-policy.mjs",
+  "mutate-grok-rate-attestation.mjs",
+  "mutate-input-coverage.mjs",
+  "mutate-keyspace.mjs",
+  "mutate-openai-computer-use.mjs",
+  "mutate-option-set.mjs",
+  "mutate-p0-honesty-blockers.mjs",
+  "mutate-passa.mjs",
+  "mutate-passb.mjs",
+  "mutate-payload-trust.mjs",
+  "mutate-plan.mjs",
+  "mutate-probe-execution.mjs",
+  "mutate-projection-carry.mjs",
+  "mutate-provider-activation.mjs",
+  "mutate-provider-continuity.mjs",
+  "mutate-report-case-identity.mjs",
+  "mutate-report-defects.mjs",
+  "mutate-report-fanout.mjs",
+  "mutate-screenout-retry.mjs",
+  "mutate-source-block-output-privacy.mjs",
+  "mutate-source-roles.mjs",
+  "mutate-stale-extraction-artifacts.mjs",
+  "mutate-survival-hints.mjs",
+  "mutate-sweeper-identity.mjs",
+  "mutate-verifier.mjs",
+  "mutate-verifier-destination.mjs",
+  "mutate-verifier-identity.mjs",
+  "mutate-w4-select.mjs",
+  "mutate-w5-seeded-traversal.mjs"
+)
+$MutationLibraries = @(
+  "mutate-runner.mjs"
+)
+if ($MutationHarnesses.Count -ne 41 -or $MutationLibraries.Count -ne 1) {
+  throw "Mutation manifest cardinality changed"
+}
+$MutationDeclared = @($MutationHarnesses + $MutationLibraries)
+if (($MutationDeclared | Sort-Object -Unique).Count -ne $MutationDeclared.Count) {
+  throw "Mutation manifest contains duplicate names"
+}
+$MutationDiscovered = @(
+  Get-ChildItem -LiteralPath (Join-Path $V2 "tools") -File |
+    Where-Object Name -Match "^mutate-[A-Za-z0-9._-]+[.]mjs$" |
+    ForEach-Object Name |
+    Sort-Object
+)
+$MutationCensusDiff = @(Compare-Object ($MutationDeclared | Sort-Object) $MutationDiscovered)
+if ($MutationCensusDiff.Count -ne 0) {
+  throw "Mutation manifest is not set-equal to tools/mutate-*.mjs"
+}
+
+$MutationEvidence = Join-Path $Evidence "mutations"
+New-Item -ItemType Directory -Path $MutationEvidence -ErrorAction Stop | Out-Null
+$MutationTimeoutMs = 7200000
+$MutationChildTimeoutMs = 120000
+$MutationDrainGraceMs = 30000
+$MutationSupervisorStartupGraceMs = 120000
+$MutationTranscriptLimitBytes = 67108864
+$MutationSupervisorWatchdogMs = [int64] $MutationTimeoutMs +
+  [int64] $MutationDrainGraceMs + [int64] $MutationSupervisorStartupGraceMs
+if ($MutationSupervisorWatchdogMs -gt [int]::MaxValue) {
+  throw "Mutation supervisor watchdog exceeds Process.WaitForExit capacity"
+}
+$NodeResolved = (Resolve-Path -LiteralPath $Node).Path
+$NodeSha256 =
+  (Get-FileHash -LiteralPath $NodeResolved -Algorithm SHA256).Hash.ToLowerInvariant()
+$MutationSupervisor =
+  (Resolve-Path -LiteralPath (Join-Path $V2 "tools\windows-job-supervisor.ps1")).Path
+$WindowsDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)
+$PowerShellResolved = (Resolve-Path -LiteralPath (
+  Join-Path $WindowsDirectory "System32\WindowsPowerShell\v1.0\powershell.exe")).Path
+$PowerShellItem = Get-Item -LiteralPath $PowerShellResolved -Force -ErrorAction Stop
+if ($PowerShellItem.PSIsContainer -or
+    ($PowerShellItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+  throw "Pinned Windows PowerShell is not a regular non-reparse file"
+}
+
+function ConvertTo-PowerShellSingleQuotedLiteral {
+  param([string] $Value)
+  if ($null -eq $Value -or $Value.IndexOf([char] 0) -ge 0) {
+    throw "Cannot encode a null or NUL-containing PowerShell argument"
+  }
+  return "'" + $Value.Replace("'", "''") + "'"
+}
+
+function Read-CanonicalClosedJson {
+  param(
+    [string] $PathValue,
+    [string[]] $ExpectedProperties,
+    [int] $Depth,
+    [string] $Label
+  )
+  $Stream = [IO.File]::Open(
+    $PathValue, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+  try {
+    $Length = $Stream.Length
+    if ($Length -lt 1 -or $Length -gt 65536) {
+      throw ($Label + " JSON must be 1..65536 bytes")
+    }
+    $Bytes = [byte[]]::new([int] $Length)
+    $Offset = 0
+    while ($Offset -lt $Bytes.Length) {
+      $Read = $Stream.Read($Bytes, $Offset, $Bytes.Length - $Offset)
+      if ($Read -le 0) { throw ($Label + " JSON ended early") }
+      $Offset += $Read
+    }
+    if ($Stream.ReadByte() -ne -1 -or $Stream.Length -ne $Length) {
+      throw ($Label + " JSON changed during bounded read")
+    }
+  } finally {
+    $Stream.Dispose()
+  }
+  try {
+    $Text = [Text.UTF8Encoding]::new($false, $true).GetString($Bytes)
+  } catch {
+    throw ($Label + " JSON is not strict UTF-8")
+  }
+  $Parsed = $Text | ConvertFrom-Json -ErrorAction Stop
+  $ActualProperties = @(
+    $Parsed.PSObject.Properties | ForEach-Object Name | Sort-Object -CaseSensitive)
+  $WantedProperties = @($ExpectedProperties | Sort-Object -CaseSensitive)
+  if (@(Compare-Object -ReferenceObject $ActualProperties `
+      -DifferenceObject $WantedProperties -CaseSensitive).Count -ne 0) {
+    throw ($Label + " JSON has unknown or missing properties")
+  }
+  $CanonicalBytes = [Text.UTF8Encoding]::new($false).GetBytes(
+    (($Parsed | ConvertTo-Json -Depth $Depth) + [Environment]::NewLine))
+  if (-not [Linq.Enumerable]::SequenceEqual([byte[]] $Bytes, [byte[]] $CanonicalBytes)) {
+    throw ($Label + " JSON is noncanonical or contains duplicate keys")
+  }
+  return $Parsed
+}
+
+function Read-ClosedTranscript {
+  param([string] $PathValue, [long] $MaximumBytes, [string] $Label)
+  $Stream = [IO.File]::Open(
+    $PathValue, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+  try {
+    $Length = $Stream.Length
+    if ($Length -lt 0 -or $Length -gt $MaximumBytes -or $Length -gt [int]::MaxValue) {
+      throw ($Label + " exceeds its trusted bound")
+    }
+    $Bytes = [byte[]]::new([int] $Length)
+    $Hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+      $Offset = 0
+      while ($Offset -lt $Bytes.Length) {
+        $Read = $Stream.Read($Bytes, $Offset, $Bytes.Length - $Offset)
+        if ($Read -le 0) { throw ($Label + " ended early") }
+        $Offset += $Read
+      }
+      if ($Stream.ReadByte() -ne -1 -or $Stream.Length -ne $Length) {
+        throw ($Label + " changed during bounded read")
+      }
+      $Hash = ([BitConverter]::ToString($Hasher.ComputeHash($Bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+      $Hasher.Dispose()
+    }
+  } finally {
+    $Stream.Dispose()
+  }
+  return [pscustomobject]@{ bytes = $Bytes; length = $Length; sha256 = $Hash }
+}
+
+function Assert-JsonExactTypes {
+  param(
+    [object] $Value,
+    [string[]] $StringProperties,
+    [string[]] $BooleanProperties,
+    [string[]] $IntegerProperties,
+    [string[]] $NullableStringProperties,
+    [string[]] $NullableBooleanProperties,
+    [string[]] $NullableIntegerProperties,
+    [string] $Label
+  )
+  foreach ($Property in $StringProperties) {
+    if ($Value.$Property -isnot [string]) {
+      throw ($Label + "." + $Property + " must be a JSON string")
+    }
+  }
+  foreach ($Property in $BooleanProperties) {
+    if ($Value.$Property -isnot [bool]) {
+      throw ($Label + "." + $Property + " must be a JSON boolean")
+    }
+  }
+  foreach ($Property in $IntegerProperties) {
+    $PropertyValue = $Value.$Property
+    if (($PropertyValue -isnot [int] -and $PropertyValue -isnot [long]) -or
+        [long] $PropertyValue -lt [int]::MinValue -or
+        [long] $PropertyValue -gt [int]::MaxValue) {
+      throw ($Label + "." + $Property + " must be a JSON integer")
+    }
+  }
+  foreach ($Property in $NullableStringProperties) {
+    if ($null -ne $Value.$Property -and $Value.$Property -isnot [string]) {
+      throw ($Label + "." + $Property + " must be null or a JSON string")
+    }
+  }
+  foreach ($Property in $NullableBooleanProperties) {
+    if ($null -ne $Value.$Property -and $Value.$Property -isnot [bool]) {
+      throw ($Label + "." + $Property + " must be null or a JSON boolean")
+    }
+  }
+  foreach ($Property in $NullableIntegerProperties) {
+    $PropertyValue = $Value.$Property
+    if ($null -ne $PropertyValue -and
+        (($PropertyValue -isnot [int] -and $PropertyValue -isnot [long]) -or
+         [long] $PropertyValue -lt [int]::MinValue -or
+         [long] $PropertyValue -gt [int]::MaxValue)) {
+      throw ($Label + "." + $Property + " must be null or a JSON integer")
+    }
+  }
+}
+
+function Assert-MutationWatchdogTypes {
+  param([object] $Value)
+  Assert-JsonExactTypes $Value `
+    @("schema", "harness", "processHostPath", "startAttemptUtc", "processStartTimeUtc", "endedUtc") `
+    @("processStarted", "exitedWithinBound", "watchdogFired", "killAttempted", "killSucceeded") `
+    @("waitTimeoutMs", "outerTimeoutMs", "innerTimeoutMs", "drainGraceMs",
+      "startupGraceMs", "transcriptLimitBytes", "processId", "exitCode") `
+    @("killReason", "killError", "controlError") `
+    @("exitedAfterKill") `
+    @() `
+    "mutation watchdog"
+}
+
+function Assert-MutationReceiptTypes {
+  param([object] $Value)
+  Assert-JsonExactTypes $Value `
+    @("schema", "requestSha256", "executablePath", "executableSha256",
+      "executableSha256After", "subjectPath", "subjectSha256", "subjectSha256After",
+      "workingDirectory", "startedUtc", "endedUtc", "containmentScope", "stdoutLog", "stderrLog") `
+    @("requestPinnedThroughRun", "transcriptLimitExceeded", "timedOut", "jobAssigned",
+      "processResumed", "assignmentBeforeResume", "membershipVerified", "terminationIssued",
+      "handlesClosed", "abiValidated", "inputPinsHeldThroughRun", "emptyStdinPipe",
+      "outputHashesCapturedBeforeClose") `
+    @("argumentCount", "executableArgumentCount", "timeoutMs", "drainGraceMs",
+      "transcriptLimitBytes", "durationMs", "pointerSize") `
+    @("completionIssue", "launchErrorType", "postRunErrorType", "stdoutSha256",
+      "stdoutSha256After", "stderrSha256", "stderrSha256After") `
+    @() `
+    @("innerTimeoutMs", "exitCode", "processId", "initialActiveProcesses",
+      "finalActiveProcesses", "stdoutBytes", "stderrBytes") `
+    "mutation supervisor receipt"
+  if ($Value.attestation -isnot [pscustomobject]) {
+    throw "mutation supervisor receipt.attestation must be a JSON object"
+  }
+  $ExpectedAttestationProperties = @(
+    "head", "v2Tree", "harness", "harnessSha256", "selector", "subjectIdentityVerified")
+  $ActualAttestationProperties = @(
+    $Value.attestation.PSObject.Properties | ForEach-Object Name | Sort-Object -CaseSensitive)
+  $WantedAttestationProperties = @($ExpectedAttestationProperties | Sort-Object -CaseSensitive)
+  if (@(Compare-Object -ReferenceObject $WantedAttestationProperties `
+      -DifferenceObject $ActualAttestationProperties -CaseSensitive).Count -ne 0) {
+    throw "mutation supervisor receipt.attestation has unknown or missing properties"
+  }
+  Assert-JsonExactTypes $Value.attestation `
+    @("head", "v2Tree", "harness", "harnessSha256", "selector") `
+    @("subjectIdentityVerified") @() @() @() @() `
+    "mutation supervisor receipt.attestation"
+}
+
+$MutationWatchdogProperties = @(
+  "schema", "harness", "processHostPath", "startAttemptUtc", "processStarted",
+  "processId", "processStartTimeUtc", "waitTimeoutMs", "outerTimeoutMs", "innerTimeoutMs",
+  "drainGraceMs", "startupGraceMs", "transcriptLimitBytes", "exitedWithinBound",
+  "watchdogFired", "killReason", "killAttempted", "killSucceeded", "killError",
+  "exitedAfterKill", "exitCode", "controlError", "endedUtc"
+)
+$MutationReceiptProperties = @(
+  "schema", "requestSha256", "requestPinnedThroughRun", "executablePath",
+  "executableSha256", "executableSha256After", "subjectPath", "subjectSha256",
+  "subjectSha256After", "workingDirectory", "argumentCount", "executableArgumentCount",
+  "timeoutMs", "innerTimeoutMs", "drainGraceMs", "transcriptLimitBytes",
+  "transcriptLimitExceeded", "completionIssue", "startedUtc", "endedUtc", "durationMs",
+  "timedOut", "exitCode", "launchErrorType", "postRunErrorType", "processId",
+  "initialActiveProcesses", "finalActiveProcesses", "jobAssigned", "processResumed",
+  "assignmentBeforeResume", "membershipVerified", "containmentScope", "terminationIssued",
+  "handlesClosed", "abiValidated", "pointerSize", "inputPinsHeldThroughRun",
+  "emptyStdinPipe", "outputHashesCapturedBeforeClose", "stdoutLog", "stdoutBytes",
+  "stdoutSha256", "stdoutSha256After", "stderrLog", "stderrBytes", "stderrSha256",
+  "stderrSha256After", "attestation"
+)
+
+foreach ($Harness in $MutationHarnesses) {
+  Assert-Frozen
+  $MutationSelector = if ($Harness -ceq "mutate-openai-computer-use.mjs") {
+    "cua-model-identity-exact-named-guard"
+  } else {
+    "exact-union-of-declared-kills"
+  }
+  $HarnessPath = (Resolve-Path (Join-Path $V2 ("tools\" + $Harness))).Path
+  $HarnessItem = Get-Item -LiteralPath $HarnessPath -Force -ErrorAction Stop
+  if ($HarnessItem.PSIsContainer -or
+      ($HarnessItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+    throw ("Mutation harness is not a regular non-reparse file: " + $Harness)
+  }
+
+  $Stem = [IO.Path]::GetFileNameWithoutExtension($Harness)
+  $StdoutLog = Join-Path $MutationEvidence ($Stem + ".stdout.log")
+  $StderrLog = Join-Path $MutationEvidence ($Stem + ".stderr.log")
+  $ReceiptPath = Join-Path $MutationEvidence ($Stem + ".receipt.json")
+  $RequestPath = Join-Path $MutationEvidence ($Stem + ".request.json")
+  $WatchdogPath = Join-Path $MutationEvidence ($Stem + ".watchdog.json")
+  $HarnessSha256 =
+    (Get-FileHash -LiteralPath $HarnessPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $MutationRequest = [ordered]@{
+    schema = "survey-qa-windows-job-supervisor-request/1.0.0"
+    executablePath = $NodeResolved
+    subjectPath = $HarnessPath
+    executableArguments = @()
+    arguments = @()
+    workingDirectory = $V2
+    subjectBoundaryPath = $V2
+    ioBoundaryPath = $MutationEvidence
+    stdinPath = $null
+    stdoutPath = $StdoutLog
+    stderrPath = $StderrLog
+    receiptPath = $ReceiptPath
+    timeoutMs = $MutationTimeoutMs
+    innerTimeoutMs = $MutationChildTimeoutMs
+    drainGraceMs = $MutationDrainGraceMs
+    transcriptLimitBytes = $MutationTranscriptLimitBytes
+    environment = [ordered]@{
+      set = [ordered]@{ MUTATION_CHILD_TIMEOUT_MS = [string] $MutationChildTimeoutMs }
+      remove = @("MUTANT_FILE", "MUTANT_FIND", "MUTANT_REPLACE")
+    }
+    attestation = [ordered]@{
+      head = $Head
+      v2Tree = $V2Tree
+      harness = $Harness
+      harnessSha256 = $HarnessSha256
+      selector = $MutationSelector
+    }
+  }
+  $RequestJson = $MutationRequest | ConvertTo-Json -Depth 6
+  $RequestBytes = [Text.UTF8Encoding]::new($false).GetBytes($RequestJson)
+  $RequestStream = [IO.File]::Open(
+    $RequestPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+  try {
+    $RequestStream.Write($RequestBytes, 0, $RequestBytes.Length)
+    $RequestStream.Flush($true)
+  } finally {
+    $RequestStream.Dispose()
+  }
+  $RequestSha256 =
+    (Get-FileHash -LiteralPath $RequestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+  $SupervisorCommand =
+    '$ErrorActionPreference = "Stop"; try { & ' +
+    (ConvertTo-PowerShellSingleQuotedLiteral $MutationSupervisor) +
+    ' -RequestPath ' + (ConvertTo-PowerShellSingleQuotedLiteral $RequestPath) +
+    ' -TrustedExecutablePath ' + (ConvertTo-PowerShellSingleQuotedLiteral $NodeResolved) +
+    ' -TrustedSubjectBoundaryPath ' + (ConvertTo-PowerShellSingleQuotedLiteral $V2) +
+    ' -TrustedIoBoundaryPath ' +
+    (ConvertTo-PowerShellSingleQuotedLiteral $MutationEvidence) +
+    ' -TrustedSelector ' + (ConvertTo-PowerShellSingleQuotedLiteral $MutationSelector) +
+    '; if ($null -eq $LASTEXITCODE) { exit 0 }; exit $LASTEXITCODE } catch { ' +
+    '[Console]::Error.WriteLine($_.Exception.ToString()); exit 1 }'
+  $SupervisorEncodedCommand = [Convert]::ToBase64String(
+    [Text.Encoding]::Unicode.GetBytes($SupervisorCommand))
+  $SupervisorStartInfo = [Diagnostics.ProcessStartInfo]::new()
+  $SupervisorStartInfo.FileName = $PowerShellResolved
+  $SupervisorStartInfo.Arguments =
+    "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " +
+    $SupervisorEncodedCommand
+  $SupervisorStartInfo.WorkingDirectory = $V2
+  $SupervisorStartInfo.UseShellExecute = $false
+  $SupervisorStartInfo.CreateNoWindow = $true
+  $SupervisorStartInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+  $SupervisorProcess = [Diagnostics.Process]::new()
+  $SupervisorProcess.StartInfo = $SupervisorStartInfo
+
+  $SupervisorStartAttemptUtc = (Get-Date).ToUniversalTime()
+  $SupervisorStarted = $false
+  $SupervisorPid = $null
+  $SupervisorStartTimeUtc = $null
+  $SupervisorExitedWithinBound = $false
+  $SupervisorWatchdogFired = $false
+  $SupervisorKillReason = $null
+  $SupervisorKillAttempted = $false
+  $SupervisorKillSucceeded = $false
+  $SupervisorKillError = $null
+  $SupervisorExitedAfterKill = $null
+  $SupervisorExit = $null
+  $SupervisorControlError = $null
+  try {
+    if (-not $SupervisorProcess.Start()) {
+      throw "Pinned mutation supervisor process did not start"
+    }
+    $SupervisorStarted = $true
+    $SupervisorPid = $SupervisorProcess.Id
+    $SupervisorStartTimeUtc = $SupervisorProcess.StartTime.ToUniversalTime().ToString("o")
+    $SupervisorExitedWithinBound =
+      $SupervisorProcess.WaitForExit([int] $MutationSupervisorWatchdogMs)
+    if (-not $SupervisorExitedWithinBound) {
+      $SupervisorWatchdogFired = $true
+      $SupervisorKillReason = "outer-watchdog"
+      $SupervisorKillAttempted = $true
+      try {
+        $SupervisorProcess.Kill()
+        $SupervisorKillSucceeded = $true
+      } catch {
+        $SupervisorKillError =
+          $_.Exception.GetType().FullName + ": " + $_.Exception.Message
+      }
+      $SupervisorExitedAfterKill =
+        $SupervisorProcess.WaitForExit($MutationDrainGraceMs)
+    }
+    if ($SupervisorProcess.HasExited) {
+      $SupervisorExit = $SupervisorProcess.ExitCode
+    }
+  } catch {
+    $SupervisorControlError = $_.Exception.GetType().FullName + ": " + $_.Exception.Message
+    if ($SupervisorStarted -and -not $SupervisorProcess.HasExited -and
+        -not $SupervisorKillAttempted) {
+      $SupervisorKillReason = "control-exception"
+      $SupervisorKillAttempted = $true
+      try {
+        $SupervisorProcess.Kill()
+        $SupervisorKillSucceeded = $true
+      } catch {
+        $SupervisorKillError =
+          $_.Exception.GetType().FullName + ": " + $_.Exception.Message
+      }
+      try {
+        $SupervisorExitedAfterKill =
+          $SupervisorProcess.WaitForExit($MutationDrainGraceMs)
+      } catch {
+        $SupervisorControlError +=
+          "; cleanup wait: " + $_.Exception.GetType().FullName + ": " + $_.Exception.Message
+      }
+    }
+    if ($SupervisorStarted -and $SupervisorProcess.HasExited) {
+      $SupervisorExit = $SupervisorProcess.ExitCode
+    }
+  } finally {
+    $SupervisorEndedUtc = (Get-Date).ToUniversalTime()
+    if ($SupervisorKillAttempted -and $SupervisorExitedAfterKill -ne $true) {
+      $KillClosureError = "exact supervisor did not exit within drain grace after Kill"
+      if ($null -eq $SupervisorControlError) {
+        $SupervisorControlError = $KillClosureError
+      } else {
+        $SupervisorControlError += "; " + $KillClosureError
+      }
+    }
+    $WatchdogRecord = [ordered]@{
+      schema = "survey-qa-mutation-supervisor-watchdog/1.0.0"
+      harness = $Harness
+      processHostPath = $PowerShellResolved
+      startAttemptUtc = $SupervisorStartAttemptUtc.ToString("o")
+      processStarted = $SupervisorStarted
+      processId = $SupervisorPid
+      processStartTimeUtc = $SupervisorStartTimeUtc
+      waitTimeoutMs = $MutationSupervisorWatchdogMs
+      outerTimeoutMs = $MutationTimeoutMs
+      innerTimeoutMs = $MutationChildTimeoutMs
+      drainGraceMs = $MutationDrainGraceMs
+      startupGraceMs = $MutationSupervisorStartupGraceMs
+      transcriptLimitBytes = $MutationTranscriptLimitBytes
+      exitedWithinBound = $SupervisorExitedWithinBound
+      watchdogFired = $SupervisorWatchdogFired
+      killReason = $SupervisorKillReason
+      killAttempted = $SupervisorKillAttempted
+      killSucceeded = $SupervisorKillSucceeded
+      killError = $SupervisorKillError
+      exitedAfterKill = $SupervisorExitedAfterKill
+      exitCode = $SupervisorExit
+      controlError = $SupervisorControlError
+      endedUtc = $SupervisorEndedUtc.ToString("o")
+    }
+    $SupervisorProcess.Dispose()
+    $WatchdogBytes = [Text.UTF8Encoding]::new($false).GetBytes(
+      (($WatchdogRecord | ConvertTo-Json -Depth 4) + [Environment]::NewLine))
+    $WatchdogTemporary =
+      $WatchdogPath + ".tmp-" + [guid]::NewGuid().ToString("N")
+    $WatchdogStream = [IO.File]::Open(
+      $WatchdogTemporary, [IO.FileMode]::CreateNew,
+      [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+      $WatchdogStream.Write($WatchdogBytes, 0, $WatchdogBytes.Length)
+      $WatchdogStream.Flush($true)
+    } finally {
+      $WatchdogStream.Dispose()
+    }
+    try {
+      [IO.File]::Move($WatchdogTemporary, $WatchdogPath)
+    } catch {
+      if (Test-Path -LiteralPath $WatchdogTemporary) {
+        Remove-Item -LiteralPath $WatchdogTemporary -Force -ErrorAction Stop
+      }
+      throw
+    }
+  }
+  if (-not (Test-Path -LiteralPath $WatchdogPath -PathType Leaf)) {
+    throw ("Mutation supervisor emitted no watchdog record: " + $Harness)
+  }
+  $PersistedWatchdog = Read-CanonicalClosedJson `
+    $WatchdogPath $MutationWatchdogProperties 4 "mutation watchdog"
+  Assert-MutationWatchdogTypes $PersistedWatchdog
+  if ($PersistedWatchdog.schema -cne "survey-qa-mutation-supervisor-watchdog/1.0.0" -or
+      $PersistedWatchdog.harness -cne $Harness -or
+      $PersistedWatchdog.processHostPath -cne $PowerShellResolved -or
+      $PersistedWatchdog.startAttemptUtc -cne $SupervisorStartAttemptUtc.ToString("o") -or
+      $PersistedWatchdog.processStarted -ne $SupervisorStarted -or
+      $PersistedWatchdog.processStarted -ne $true -or
+      $PersistedWatchdog.processId -ne $SupervisorPid -or
+      $PersistedWatchdog.processId -le 0 -or
+      $PersistedWatchdog.processStartTimeUtc -cne $SupervisorStartTimeUtc -or
+      $PersistedWatchdog.waitTimeoutMs -ne $MutationSupervisorWatchdogMs -or
+      $PersistedWatchdog.outerTimeoutMs -ne $MutationTimeoutMs -or
+      $PersistedWatchdog.innerTimeoutMs -ne $MutationChildTimeoutMs -or
+      $PersistedWatchdog.drainGraceMs -ne $MutationDrainGraceMs -or
+      $PersistedWatchdog.startupGraceMs -ne $MutationSupervisorStartupGraceMs -or
+      $PersistedWatchdog.transcriptLimitBytes -ne $MutationTranscriptLimitBytes -or
+      $PersistedWatchdog.exitedWithinBound -ne $SupervisorExitedWithinBound -or
+      $PersistedWatchdog.watchdogFired -ne $SupervisorWatchdogFired -or
+      $PersistedWatchdog.killAttempted -ne $SupervisorKillAttempted -or
+      $PersistedWatchdog.killSucceeded -ne $SupervisorKillSucceeded -or
+      $PersistedWatchdog.killReason -ne $null -or
+      $PersistedWatchdog.killSucceeded -ne $false -or
+      $PersistedWatchdog.killError -ne $null -or
+      $PersistedWatchdog.exitedAfterKill -ne $null -or
+      $PersistedWatchdog.exitCode -ne $SupervisorExit -or
+      $PersistedWatchdog.endedUtc -cne $SupervisorEndedUtc.ToString("o") -or
+      $PersistedWatchdog.exitedWithinBound -ne $true -or
+      $PersistedWatchdog.watchdogFired -ne $false -or
+      $PersistedWatchdog.killAttempted -ne $false -or
+      $PersistedWatchdog.controlError -ne $null) {
+    throw ("Mutation supervisor watchdog record is incoherent: " + $Harness)
+  }
+  if ($SupervisorWatchdogFired) {
+    throw ("Mutation supervisor outer watchdog expired: " + $Harness)
+  }
+  if ($null -ne $SupervisorControlError) {
+    throw ("Mutation supervisor process control failed: " + $Harness + "; " +
+      $SupervisorControlError)
+  }
+  if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
+    throw ("Mutation supervisor emitted no receipt: " + $Harness)
+  }
+  $Receipt = Read-CanonicalClosedJson `
+    $ReceiptPath $MutationReceiptProperties 5 "mutation supervisor receipt"
+  Assert-MutationReceiptTypes $Receipt
+  $ReceiptStartedUtc = [DateTimeOffset]::MinValue
+  $ReceiptEndedUtc = [DateTimeOffset]::MinValue
+  if (-not [DateTimeOffset]::TryParseExact(
+        $Receipt.startedUtc, "o", [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind, [ref] $ReceiptStartedUtc) -or
+      -not [DateTimeOffset]::TryParseExact(
+        $Receipt.endedUtc, "o", [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind, [ref] $ReceiptEndedUtc) -or
+      $ReceiptStartedUtc.Offset -ne [TimeSpan]::Zero -or
+      $ReceiptEndedUtc.Offset -ne [TimeSpan]::Zero -or
+      $ReceiptStartedUtc.UtcDateTime.ToString("o") -cne $Receipt.startedUtc -or
+      $ReceiptEndedUtc.UtcDateTime.ToString("o") -cne $Receipt.endedUtc -or
+      $ReceiptEndedUtc -lt $ReceiptStartedUtc -or
+      $Receipt.durationMs -gt $MutationSupervisorWatchdogMs) {
+    throw ("Mutation supervisor receipt timestamps are incoherent: " + $Harness)
+  }
+  foreach ($HashValue in @(
+      $Receipt.requestSha256, $Receipt.executableSha256, $Receipt.executableSha256After,
+      $Receipt.subjectSha256, $Receipt.subjectSha256After, $Receipt.stdoutSha256,
+      $Receipt.stdoutSha256After, $Receipt.stderrSha256, $Receipt.stderrSha256After)) {
+    if ($HashValue -notmatch "^[0-9a-f]{64}$") {
+      throw ("Mutation supervisor receipt contains a malformed SHA-256: " + $Harness)
+    }
+  }
+  $RequestSha256After =
+    (Get-FileHash -LiteralPath $RequestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $StdoutClosed = Read-ClosedTranscript `
+    $StdoutLog $MutationTranscriptLimitBytes "mutation stdout"
+  $StderrClosed = Read-ClosedTranscript `
+    $StderrLog $MutationTranscriptLimitBytes "mutation stderr"
+  if ($StdoutClosed.length -gt
+      ([long] $MutationTranscriptLimitBytes - [long] $StderrClosed.length)) {
+    throw ("Mutation transcripts exceed trusted combined limit: " + $Harness)
+  }
+  $StdoutSha256 = $StdoutClosed.sha256
+  $StderrSha256 = $StderrClosed.sha256
+  if ($Receipt.schema -cne "survey-qa-windows-job-supervisor-receipt/1.0.0" -or
+      $Receipt.requestSha256 -cne $RequestSha256 -or
+      $RequestSha256After -cne $RequestSha256 -or
+      -not $Receipt.requestPinnedThroughRun -or
+      $Receipt.executablePath -cne $NodeResolved -or
+      $Receipt.executableSha256 -cne $NodeSha256 -or
+      $Receipt.executableSha256After -cne $NodeSha256 -or
+      $Receipt.subjectPath -cne $HarnessPath -or
+      $Receipt.subjectSha256 -cne $HarnessSha256 -or
+      $Receipt.subjectSha256After -cne $HarnessSha256 -or
+      $Receipt.workingDirectory -cne $V2 -or
+      $Receipt.argumentCount -ne 0 -or
+      $Receipt.executableArgumentCount -ne 0 -or
+      $Receipt.attestation.harness -cne $Harness -or
+      $Receipt.attestation.harnessSha256 -cne $HarnessSha256 -or
+      $Receipt.attestation.head -cne $Head -or
+      $Receipt.attestation.v2Tree -cne $V2Tree -or
+      $Receipt.attestation.selector -cne $MutationSelector -or
+      -not $Receipt.attestation.subjectIdentityVerified -or
+      -not $Receipt.abiValidated -or
+      $Receipt.pointerSize -ne 8 -or
+      -not $Receipt.inputPinsHeldThroughRun -or
+      $Receipt.emptyStdinPipe -ne $true -or
+      -not $Receipt.jobAssigned -or
+      -not $Receipt.assignmentBeforeResume -or
+      -not $Receipt.membershipVerified -or
+      -not $Receipt.processResumed -or
+      $Receipt.initialActiveProcesses -ne 1 -or
+      -not $Receipt.handlesClosed -or
+      -not $Receipt.outputHashesCapturedBeforeClose -or
+      $Receipt.timeoutMs -ne $MutationTimeoutMs -or
+      $Receipt.innerTimeoutMs -ne $MutationChildTimeoutMs -or
+      $Receipt.drainGraceMs -ne $MutationDrainGraceMs -or
+      $Receipt.transcriptLimitBytes -ne $MutationTranscriptLimitBytes -or
+      $Receipt.transcriptLimitExceeded -ne $false -or
+      $Receipt.completionIssue -ne $null -or
+      $Receipt.containmentScope -cne
+        "win32-job-membership; brokered process creation outside job inheritance is excluded" -or
+      $Receipt.timedOut -ne $false -or
+      $Receipt.exitCode -ne 0 -or
+      $Receipt.exitCode -ne $SupervisorExit -or
+      $Receipt.terminationIssued -ne $false -or
+      $Receipt.processId -le 0 -or
+      $Receipt.durationMs -lt 0 -or
+      $Receipt.launchErrorType -ne $null -or
+      $Receipt.postRunErrorType -ne $null -or
+      $Receipt.stdoutLog -cne [IO.Path]::GetFileName($StdoutLog) -or
+      $Receipt.stdoutBytes -ne $StdoutClosed.length -or
+      $Receipt.stdoutSha256 -cne $StdoutSha256 -or
+      $Receipt.stdoutSha256After -cne $StdoutSha256 -or
+      $Receipt.stderrLog -cne [IO.Path]::GetFileName($StderrLog) -or
+      $Receipt.stderrBytes -ne $StderrClosed.length -or
+      $Receipt.stderrSha256 -cne $StderrSha256 -or
+      $Receipt.stderrSha256After -cne $StderrSha256 -or
+      $Receipt.finalActiveProcesses -ne 0) {
+    throw ("Mutation supervisor receipt is incoherent: " + $Harness)
+  }
+  try {
+    $StdoutTextForResult =
+      [Text.UTF8Encoding]::new($false, $true).GetString($StdoutClosed.bytes)
+  } catch {
+    throw ("Mutation result transcript is not strict UTF-8: " + $Harness)
+  }
+  $ResultLines = @($StdoutTextForResult -split "`r?`n" |
+    Where-Object { $_.StartsWith("MUTATION_RESULT ", [StringComparison]::Ordinal) })
+  if ($ResultLines.Count -ne 1) {
+    throw ("Mutation harness must emit exactly one structured result: " + $Harness)
+  }
+  $SelectorPattern = [Text.RegularExpressions.Regex]::Escape($MutationSelector)
+  $ResultPattern = '^MUTATION_RESULT \{"schema":"survey-qa-mutation-result/1[.]0[.]0",' +
+    '"selector":"' + $SelectorPattern + '","denominator":([1-9][0-9]*),' +
+    '"mutantsTotal":([1-9][0-9]*),"mutantsKilled":([1-9][0-9]*),' +
+    '"selfChecksPassed":2\}$'
+  $ResultMatch = [Text.RegularExpressions.Regex]::Match(
+    $ResultLines[0], $ResultPattern, [Text.RegularExpressions.RegexOptions]::CultureInvariant)
+  if (-not $ResultMatch.Success) {
+    throw ("Mutation structured result is noncanonical or incoherent: " + $Harness)
+  }
+  $ResultDenominator = [int64]::Parse(
+    $ResultMatch.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture)
+  $ResultMutantsTotal = [int64]::Parse(
+    $ResultMatch.Groups[2].Value, [Globalization.CultureInfo]::InvariantCulture)
+  $ResultMutantsKilled = [int64]::Parse(
+    $ResultMatch.Groups[3].Value, [Globalization.CultureInfo]::InvariantCulture)
+  if ($ResultMutantsKilled -ne $ResultMutantsTotal) {
+    throw ("Mutation structured result did not kill its exact denominator: " + $Harness)
+  }
+  if ($MutationSelector -ceq "cua-model-identity-exact-named-guard") {
+    if ($ResultDenominator -ne 1 -or $ResultMutantsTotal -ne 1) {
+      throw ("CUA structured mutation denominator is not exactly one: " + $Harness)
+    }
+  } else {
+    $DenominatorLine = "selected denominator: " + $ResultDenominator +
+      " exact declared kill name(s)"
+    $KillLine = [string] $ResultMutantsTotal + "/" + [string] $ResultMutantsTotal +
+      " mutants killed"
+    if (($StdoutTextForResult.Split(@($DenominatorLine), [StringSplitOptions]::None).Count - 1) -ne 1 -or
+        ($StdoutTextForResult.Split(@($KillLine), [StringSplitOptions]::None).Count - 1) -ne 1) {
+      throw ("Shared mutation result disagrees with its exact text denominator: " + $Harness)
+    }
+  }
+  Write-Host ("mutation {0}: exit={1} timeout={2} durationMs={3}" -f
+    $Harness, $Receipt.exitCode, $Receipt.timedOut, $Receipt.durationMs)
+
+  if ($SupervisorExit -ne 0) {
+    throw ("Mutation gate failed: " + $Harness + " (supervisor exit " + $SupervisorExit + ")")
+  }
+  Assert-Frozen
 }
 
 & $Node --test --test-force-exit tools\tests\hardened-canary-deploy.test.mjs tools\tests\pinned-wrangler-command.test.mjs tools\tests\pinned-wrangler-output-graph.integration.test.mjs tools\tests\live-canary-workflow-gate.test.mjs tools\tests\live-canary-deploy.test.mjs tools\tests\canary-post-deploy-attestation.test.mjs tools\tests\live-canary-remote-secret-audit.test.mjs

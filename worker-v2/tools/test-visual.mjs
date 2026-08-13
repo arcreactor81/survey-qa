@@ -24,6 +24,9 @@ export const REQUIRED_VISUAL_NODE_TESTS = Object.freeze([
   // Quarantined local computer-use transport/actuation adapter. Despite this runner's
   // historical name, its mutual-closure check owns every native node:test suite.
   "tools/tests/openai-computer-use.test.mjs",
+  // Fail-capable audit of the dedicated CUA mutation harness itself. Keeping this beside the
+  // quarantined adapter makes the five meta-tests part of the same closed release manifest.
+  "tools/tests/openai-computer-use-mutant-harness.test.mjs",
   "tools/tests/vision-provider-clients.test.mjs",
   "tools/tests/mistral-medium35-client.test.mjs",
   "tools/tests/mistral-ocr4-client.test.mjs",

@@ -12,6 +12,14 @@
  * the proof that each specific defect is closed and stays closed.
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  EXACT_TEST_NAMES_STDIN_FLAG,
+  parseTestSelection,
+  selectRegistryCases,
+} from "./mutate-runner.mjs";
 import { cleanupBundle, registry } from "./testkit.mjs";
 
 const FILES = [
@@ -460,33 +468,66 @@ const FILES = [
   // occurrence-aware advancement, structural native-choice groups, ambiguous forward controls,
   // and corrupt durable progress that must never reset to empty.
   "./tests/p0-honesty-blockers.test.mjs",
+  // Mutation execution is closed over exact declared guard names, and the release runbook
+  // accounts for every harness separately from the shared library.
+  "./tests/mutation-execution-contract.test.mjs",
 ];
 
-for (const f of FILES) await import(f);
+export async function runVerification({
+  argv = process.argv.slice(2),
+  exactNamesJson,
+  stdout = process.stdout,
+  stderr = process.stderr,
+} = {}) {
+  for (const file of FILES) await import(file);
 
-const filter = process.argv[2] ?? "";
-const selected = registry.filter((c) => !filter || `${c.suite} ${c.name}`.toLowerCase().includes(filter.toLowerCase()));
-
-process.stdout.write(`worker-v2 regression suite — ${selected.length} case(s)\n\n`);
-
-let failed = 0;
-let lastSuite = "";
-for (const c of selected) {
-  if (c.suite !== lastSuite) {
-    process.stdout.write(`${c.suite}\n`);
-    lastSuite = c.suite;
-  }
+  let selected;
   try {
-    await c.fn();
-    process.stdout.write(`  PASS  ${c.name}\n`);
-  } catch (err) {
-    failed += 1;
-    process.stdout.write(
-      `  FAIL  ${c.name}\n        ${String(err?.stack ?? err).split("\n").slice(0, 6).join("\n        ")}\n`,
-    );
+    const stdinJson =
+      argv.length === 1 &&
+      argv[0] === EXACT_TEST_NAMES_STDIN_FLAG &&
+      exactNamesJson === undefined
+        ? readFileSync(0, "utf8")
+        : exactNamesJson ?? "";
+    const selection = parseTestSelection(argv, stdinJson);
+    selected = selectRegistryCases(registry, selection);
+  } catch (error) {
+    cleanupBundle();
+    stderr.write(`test selection failed: ${error?.code ?? "UNKNOWN"}: ${error?.message ?? "unknown error"}\n`);
+    return 2;
   }
+
+  stdout.write(`worker-v2 regression suite — ${selected.length} case(s)\n\n`);
+
+  let failed = 0;
+  let lastSuite = "";
+  for (const candidate of selected) {
+    if (candidate.suite !== lastSuite) {
+      stdout.write(`${candidate.suite}\n`);
+      lastSuite = candidate.suite;
+    }
+    try {
+      await candidate.fn();
+      stdout.write(`  PASS  ${candidate.name}\n`);
+    } catch (error) {
+      failed += 1;
+      stdout.write(
+        `  FAIL  ${candidate.name}\n        ${String(error?.stack ?? error).split("\n").slice(0, 6).join("\n        ")}\n`,
+      );
+    }
+  }
+
+  cleanupBundle();
+  stdout.write(`\n${selected.length - failed}/${selected.length} passed, ${failed} failed\n`);
+  return failed === 0 ? 0 : 1;
 }
 
-cleanupBundle();
-process.stdout.write(`\n${selected.length - failed}/${selected.length} passed, ${failed} failed\n`);
-process.exit(failed === 0 ? 0 : 1);
+const invokedPath = process.argv[1] === undefined ? null : path.resolve(process.argv[1]);
+const modulePath = path.resolve(fileURLToPath(import.meta.url));
+const isMain =
+  invokedPath !== null &&
+  (process.platform === "win32"
+    ? invokedPath.toLowerCase() === modulePath.toLowerCase()
+    : invokedPath === modulePath);
+
+if (isMain) process.exit(await runVerification());

@@ -33,11 +33,12 @@ function dispatcherSource(entries = ["./tests/d49-vision-reconcile.test.mjs"]) {
 }
 
 test("closed production manifest includes provider and CUA suites with no custom-registry suite", () => {
-  assert.equal(REQUIRED_VISUAL_NODE_TESTS.length, 34);
+  assert.equal(REQUIRED_VISUAL_NODE_TESTS.length, 35);
   assert.equal(new Set(REQUIRED_VISUAL_NODE_TESTS).size, REQUIRED_VISUAL_NODE_TESTS.length);
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/mistral-medium35-client.test.mjs"));
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/mistral-ocr4-client.test.mjs"));
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/openai-computer-use.test.mjs"));
+  assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/openai-computer-use-mutant-harness.test.mjs"));
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/test-visual-runner.test.mjs"));
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/private-local-output.test.mjs"));
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/live-canary-remote-secret-audit.test.mjs"));

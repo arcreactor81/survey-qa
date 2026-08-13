@@ -48,6 +48,9 @@ const WRANGLER_PACKAGE_JSON = path.join(
 const MAX_WRANGLER_OUTPUT_BYTES = 4 * 1024 * 1024;
 const SOURCE_EXTERNAL_SPECIFIER = "../../../assets/report.css";
 const PRODUCTION_SOURCE_EXTERNAL_SPECIFIER = "../../../pipeline/report/report.css";
+const PRODUCTION_ENTRYPOINT = "src/index.ts";
+const QUARANTINED_CUA_SOURCE = "src/browser/openai-computer-use.ts";
+const FORBIDDEN_CUA_CONFIG_NAME = /(?:OPENAI|CUA)/iu;
 const PRODUCTION_MODULE_POLICY = Object.freeze({
   preserveFileNames: false,
   findAdditionalModules: false,
@@ -134,6 +137,120 @@ test(
       pinnedWrangler: pinnedWranglerDescriptor(),
       roots,
     });
+  },
+);
+
+test(
+  "actual production pinned output graph keeps the local CUA adapter quarantined",
+  { timeout: 180_000 },
+  (t) => {
+    const roots = [];
+    t.after(() => {
+      for (const root of roots.reverse()) removeFixtureRoot(root);
+    });
+
+    mkdirSync(FIXTURE_BASE, { recursive: true });
+    const root = mkdtempSync(path.join(FIXTURE_BASE, FIXTURE_PREFIX));
+    roots.push(root);
+    hardenPrivateLocalDirectory(root, REPOSITORY_ROOT);
+    assertPrivateLocalPath(root, REPOSITORY_ROOT, { directory: true });
+
+    const productionConfigPath = path.join(WORKER_ROOT, "wrangler.jsonc");
+    const production = runPinnedDryRun({
+      pinnedWrangler: pinnedWranglerDescriptor(),
+      root,
+      cwd: WORKER_ROOT,
+      configPath: productionConfigPath,
+      phaseDirectory: path.join(root, "production-output-graph"),
+      includeMetafile: true,
+    });
+    const metafile = JSON.parse(readFileSync(production.metafilePath, "utf8"));
+    const audited = assertProductionCuaQuarantine(metafile);
+    assert.ok(audited.inputCount > 1, "the production input denominator cannot be empty or trivial");
+    assert.ok(audited.reachableCount > 1, "the production import closure cannot be empty or trivial");
+    assert.ok(audited.outputInputCount > 1, "the emitted production input denominator cannot be empty or trivial");
+    t.diagnostic(
+      `production CUA graph census: ${audited.inputCount} inputs, ` +
+      `${audited.reachableCount} reachable, ${audited.outputInputCount} emitted contributions`,
+    );
+
+    const productionConfig = parseProductionJsonc(
+      readFileSync(productionConfigPath, "utf8"),
+      "wrangler.jsonc",
+    );
+    const configAudit = assertProductionCuaConfigQuarantine(productionConfig);
+    assert.ok(configAudit.directCount > 1, "the ordinary config-key denominator cannot be empty or trivial");
+    assert.ok(configAudit.secretStoreCount > 1, "the Secrets Store key denominator cannot be empty or trivial");
+    assert.ok(configAudit.varsCount > 1, "the vars-key denominator cannot be empty or trivial");
+    t.diagnostic(
+      `production CUA config census: ${configAudit.directCount} direct identifiers, ` +
+      `${configAudit.secretStoreCount} Secrets Store identifiers, ` +
+      `${configAudit.varsCount} vars identifiers`,
+    );
+
+    for (const [surface, mutate] of [
+      ["direct", (config) => { config.OPENAI_API_KEY = "forbidden"; }],
+      ["secrets-store", (config) => {
+        config.secrets_store_secrets.push({
+          binding: "CUA_API_KEY",
+          store_id: "synthetic",
+          secret_name: "CUA_API_KEY",
+        });
+      }],
+      ["vars", (config) => { config.vars.OPENAI_CUA_ENABLED = "true"; }],
+    ]) {
+      const mutation = structuredClone(productionConfig);
+      mutate(mutation);
+      assert.throws(
+        () => assertProductionCuaConfigQuarantine(mutation),
+        (error) =>
+          error?.code === "PRODUCTION_CUA_CONFIG_BINDING" &&
+          error?.message.includes(surface),
+        `semantic negative: the ${surface} CUA/OpenAI binding mutation must fail`,
+      );
+    }
+
+    const reachableMutation = structuredClone(metafile);
+    const entryInputName = findMetafileInputName(
+      reachableMutation.inputs,
+      PRODUCTION_ENTRYPOINT,
+    );
+    const cuaMutationInput = `./${QUARANTINED_CUA_SOURCE}`;
+    reachableMutation.inputs[cuaMutationInput] = {
+      bytes: readFileSync(path.join(WORKER_ROOT, ...QUARANTINED_CUA_SOURCE.split("/"))).length,
+      imports: [],
+      format: "esm",
+    };
+    reachableMutation.inputs[entryInputName].imports.push({
+      path: cuaMutationInput,
+      kind: "import-statement",
+      original: "./browser/openai-computer-use",
+    });
+    const [entryOutput] = Object.values(reachableMutation.outputs).filter(
+      (descriptor) => isRecord(descriptor) && descriptor.entryPoint === PRODUCTION_ENTRYPOINT,
+    );
+    entryOutput.inputs[cuaMutationInput] = { bytesInOutput: 1 };
+    assert.throws(
+      () => assertProductionCuaQuarantine(reachableMutation),
+      (error) =>
+        error?.code === "PRODUCTION_CUA_QUARANTINE_BREACH" &&
+        error?.message.includes("openai-computer-use.ts"),
+      "semantic negative: making the CUA source reachable from the real production entry must fail",
+    );
+
+    const entryMutation = structuredClone(metafile);
+    const [mutatedOutput] = Object.values(entryMutation.outputs).filter(
+      (descriptor) => isRecord(descriptor) && descriptor.entryPoint === PRODUCTION_ENTRYPOINT,
+    );
+    mutatedOutput.entryPoint = path.join(
+      WORKER_ROOT,
+      ...QUARANTINED_CUA_SOURCE.split("/"),
+    );
+    assert.throws(
+      () => assertProductionCuaQuarantine(entryMutation),
+      (error) => error?.code === "PRODUCTION_CUA_ENTRYPOINT_INVALID",
+      "semantic negative: substituting the CUA-only source as the deploy entry must fail",
+    );
   },
 );
 
@@ -889,6 +1006,320 @@ function assertSourceMapReleasePolicy(config, files) {
   if (files.some((relative) => relative.endsWith(".map"))) {
     throw new Error("release output census must contain zero source maps");
   }
+}
+
+function assertProductionCuaQuarantine(metafile) {
+  if (!isRecord(metafile) || !isRecord(metafile.inputs) || !isRecord(metafile.outputs)) {
+    throw productionGraphError(
+      "PRODUCTION_OUTPUT_GRAPH_INVALID",
+      "production Wrangler metafile must contain input and output maps",
+    );
+  }
+  const inputNames = Object.keys(metafile.inputs);
+  if (inputNames.length === 0) {
+    throw productionGraphError(
+      "PRODUCTION_OUTPUT_GRAPH_INVALID",
+      "production Wrangler metafile input denominator is empty",
+    );
+  }
+  const entryOutputs = Object.values(metafile.outputs).filter(
+    (descriptor) => isRecord(descriptor) && typeof descriptor.entryPoint === "string",
+  );
+  if (
+    entryOutputs.length !== 1 ||
+    !sameMetafileInputIdentity(entryOutputs[0].entryPoint, PRODUCTION_ENTRYPOINT)
+  ) {
+    throw productionGraphError(
+      "PRODUCTION_CUA_ENTRYPOINT_INVALID",
+      `production output must have exactly one ${PRODUCTION_ENTRYPOINT} entry`,
+    );
+  }
+
+  const entryOutput = entryOutputs[0];
+  if (!isRecord(entryOutput.inputs) || Object.keys(entryOutput.inputs).length === 0) {
+    throw productionGraphError(
+      "PRODUCTION_OUTPUT_GRAPH_INVALID",
+      "production entry output must declare a nonempty input contribution map",
+    );
+  }
+  const reachable = collectMetafileInputClosure(metafile.inputs, PRODUCTION_ENTRYPOINT);
+  const outputInputs = new Set(Object.keys(entryOutput.inputs));
+  for (const inputName of outputInputs) {
+    findMetafileInputName(metafile.inputs, inputName);
+  }
+
+  const observedCuaPaths = new Set([
+    ...inputNames.filter(isQuarantinedCuaPath),
+    ...[...reachable].filter(isQuarantinedCuaPath),
+    ...[...outputInputs].filter(isQuarantinedCuaPath),
+  ]);
+  if (observedCuaPaths.size > 0) {
+    throw productionGraphError(
+      "PRODUCTION_CUA_QUARANTINE_BREACH",
+      `production output graph contains quarantined CUA input(s): ${[...observedCuaPaths].sort().join(", ")}`,
+    );
+  }
+  return Object.freeze({
+    inputCount: inputNames.length,
+    reachableCount: reachable.size,
+    outputInputCount: outputInputs.size,
+  });
+}
+
+function collectMetafileInputClosure(inputs, entrypoint) {
+  const reachable = new Set();
+  const pending = [findMetafileInputName(inputs, entrypoint)];
+  while (pending.length > 0) {
+    const inputName = pending.shift();
+    if (reachable.has(inputName)) continue;
+    const descriptor = inputs[inputName];
+    if (!isRecord(descriptor) || !Array.isArray(descriptor.imports)) {
+      throw productionGraphError(
+        "PRODUCTION_OUTPUT_GRAPH_INVALID",
+        `production input has no import list: ${inputName}`,
+      );
+    }
+    reachable.add(inputName);
+    for (const edge of descriptor.imports) {
+      if (!isRecord(edge) || typeof edge.path !== "string" || edge.path.length === 0) {
+        throw productionGraphError(
+          "PRODUCTION_OUTPUT_GRAPH_INVALID",
+          `production input has a malformed import edge: ${inputName}`,
+        );
+      }
+      if (edge.external === true) continue;
+      pending.push(findMetafileInputName(inputs, edge.path, inputName));
+    }
+  }
+  return reachable;
+}
+
+function isQuarantinedCuaPath(inputName) {
+  return sameMetafileInputIdentity(inputName, QUARANTINED_CUA_SOURCE);
+}
+
+function findMetafileInputName(inputs, candidate, importer) {
+  const matches = Object.keys(inputs).filter((inputName) =>
+    sameMetafileInputIdentity(inputName, candidate));
+  if (matches.length !== 1) {
+    const edge = importer === undefined ? candidate : `${importer} -> ${candidate}`;
+    throw productionGraphError(
+      "PRODUCTION_OUTPUT_GRAPH_INVALID",
+      `production input identity must resolve exactly once: ${edge}`,
+    );
+  }
+  return matches[0];
+}
+
+function sameMetafileInputIdentity(left, right) {
+  return samePath(resolveMetafileInputPath(left), resolveMetafileInputPath(right));
+}
+
+function resolveMetafileInputPath(inputName) {
+  if (typeof inputName !== "string" || inputName.length === 0) {
+    throw productionGraphError(
+      "PRODUCTION_OUTPUT_GRAPH_INVALID",
+      "production input identity must be a nonempty string",
+    );
+  }
+  const normalized = inputName.replaceAll(String.fromCharCode(92), "/");
+  return path.isAbsolute(normalized)
+    ? path.resolve(normalized)
+    : path.resolve(WORKER_ROOT, ...normalized.split("/"));
+}
+
+function productionGraphError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function assertProductionCuaConfigQuarantine(config) {
+  if (!isRecord(config) || !isRecord(config.vars)) {
+    throw productionGraphError(
+      "PRODUCTION_CUA_CONFIG_INVALID",
+      "production config and vars must be objects",
+    );
+  }
+  if (!Array.isArray(config.secrets_store_secrets)) {
+    throw productionGraphError(
+      "PRODUCTION_CUA_CONFIG_INVALID",
+      "production config must declare a Secrets Store binding array",
+    );
+  }
+
+  const directIdentifiers = collectDirectConfigIdentifiers(config);
+  const secretStoreIdentifiers = [];
+  for (const [index, secret] of config.secrets_store_secrets.entries()) {
+    if (
+      !isRecord(secret) ||
+      typeof secret.binding !== "string" ||
+      typeof secret.secret_name !== "string"
+    ) {
+      throw productionGraphError(
+        "PRODUCTION_CUA_CONFIG_INVALID",
+        `Secrets Store entry ${index} must declare string binding and secret_name`,
+      );
+    }
+    secretStoreIdentifiers.push(secret.binding, secret.secret_name);
+  }
+  const varsIdentifiers = Object.keys(config.vars);
+  for (const [surface, identifiers] of [
+    ["direct", directIdentifiers],
+    ["secrets-store", secretStoreIdentifiers],
+    ["vars", varsIdentifiers],
+  ]) {
+    if (identifiers.length === 0) {
+      throw productionGraphError(
+        "PRODUCTION_CUA_CONFIG_INVALID",
+        `${surface} config-key denominator is empty`,
+      );
+    }
+    const forbidden = identifiers.filter((identifier) =>
+      FORBIDDEN_CUA_CONFIG_NAME.test(identifier));
+    if (forbidden.length > 0) {
+      throw productionGraphError(
+        "PRODUCTION_CUA_CONFIG_BINDING",
+        `${surface} production config contains forbidden CUA/OpenAI key(s): ${[...new Set(forbidden)].sort().join(", ")}`,
+      );
+    }
+  }
+  return Object.freeze({
+    directCount: directIdentifiers.length,
+    secretStoreCount: secretStoreIdentifiers.length,
+    varsCount: varsIdentifiers.length,
+  });
+}
+
+function collectDirectConfigIdentifiers(config) {
+  const identifiers = [];
+  const pending = [{ location: "", value: config }];
+  while (pending.length > 0) {
+    const { location, value } = pending.pop();
+    for (const [key, child] of Object.entries(value)) {
+      if (
+        location === "" &&
+        (key === "vars" || key === "secrets_store_secrets")
+      ) continue;
+      identifiers.push(key);
+      if (key === "binding" && typeof child === "string") identifiers.push(child);
+      const childLocation = location === "" ? key : `${location}.${key}`;
+      if (isRecord(child)) {
+        pending.push({ location: childLocation, value: child });
+      } else if (Array.isArray(child)) {
+        for (const [index, item] of child.entries()) {
+          if (isRecord(item)) {
+            pending.push({ location: `${childLocation}[${index}]`, value: item });
+          }
+        }
+      }
+    }
+  }
+  return identifiers;
+}
+
+function parseProductionJsonc(source, label) {
+  const commentFree = stripProductionJsoncComments(source, label);
+  try {
+    return JSON.parse(stripProductionJsoncTrailingCommas(commentFree));
+  } catch (error) {
+    throw productionGraphError(
+      "PRODUCTION_CUA_CONFIG_INVALID",
+      `${label}: invalid JSONC (${error instanceof Error ? error.message : "parse error"})`,
+    );
+  }
+}
+
+function stripProductionJsoncComments(source, label) {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (inString) {
+      result += character;
+      if (escaped) {
+        escaped = false;
+      } else if (character.charCodeAt(0) === 92) {
+        escaped = true;
+      } else if (character.charCodeAt(0) === 34) {
+        inString = false;
+      }
+      continue;
+    }
+    if (character.charCodeAt(0) === 34) {
+      inString = true;
+      result += character;
+      continue;
+    }
+    if (character === "/" && next === "/") {
+      index += 2;
+      while (
+        index < source.length &&
+        source.charCodeAt(index) !== 10 &&
+        source.charCodeAt(index) !== 13
+      ) index += 1;
+      index -= 1;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      index += 2;
+      let closed = false;
+      while (index < source.length) {
+        if (source.charCodeAt(index) === 10 || source.charCodeAt(index) === 13) {
+          result += source[index];
+        }
+        if (source[index] === "*" && source[index + 1] === "/") {
+          index += 1;
+          closed = true;
+          break;
+        }
+        index += 1;
+      }
+      if (!closed) {
+        throw productionGraphError(
+          "PRODUCTION_CUA_CONFIG_INVALID",
+          `${label}: unterminated JSONC block comment`,
+        );
+      }
+      continue;
+    }
+    result += character;
+  }
+  return result;
+}
+
+function stripProductionJsoncTrailingCommas(source) {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (inString) {
+      result += character;
+      if (escaped) {
+        escaped = false;
+      } else if (character.charCodeAt(0) === 92) {
+        escaped = true;
+      } else if (character.charCodeAt(0) === 34) {
+        inString = false;
+      }
+      continue;
+    }
+    if (character.charCodeAt(0) === 34) {
+      inString = true;
+      result += character;
+      continue;
+    }
+    if (character === ",") {
+      let lookahead = index + 1;
+      while (/\s/u.test(source[lookahead] ?? "")) lookahead += 1;
+      if (source[lookahead] === "}" || source[lookahead] === "]") continue;
+    }
+    result += character;
+  }
+  return result;
 }
 
 function assertContentAddress({ modulePath, sourcePath, expectedBytes }) {
