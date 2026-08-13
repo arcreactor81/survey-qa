@@ -20,6 +20,11 @@
   "compatibility_date": "2026-06-01",
   "compatibility_flags": ["nodejs_compat"],
 
+  // Pinned Wrangler 4.106.0 emits zero maps in fresh strict outdirs with this exact false.
+  // Prior map-bearing audit outdirs predate this explicit policy and are superseded.
+  // https://developers.cloudflare.com/workers/observability/source-maps/
+  "upload_source_maps": false,
+
   // The report renderer in `pipeline/report/` is shared verbatim with the offline CLI
   // renderer, and it takes its stylesheet as a STRING argument. Bundling report.css as a
   // Text module is what lets the Worker call the same `renderReportHtml(view, { css })`

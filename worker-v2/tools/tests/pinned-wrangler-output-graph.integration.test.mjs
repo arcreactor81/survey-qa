@@ -90,6 +90,20 @@ test(
       roots,
     });
 
+    assert.throws(
+      () => assertSourceMapReleasePolicy(
+        { upload_source_maps: true },
+        baseline.releaseFiles,
+      ),
+      /must declare upload_source_maps as exact boolean false/u,
+      "negative evidence: enabling source-map upload must fail the pinned release audit",
+    );
+    assert.throws(
+      () => assertSourceMapReleasePolicy({}, baseline.releaseFiles),
+      /must declare upload_source_maps as exact boolean false/u,
+      "negative evidence: omitting source-map policy must fail the pinned release audit",
+    );
+
     assert.notEqual(
       mutation.externalSpecifier,
       baseline.externalSpecifier,
@@ -571,7 +585,7 @@ function runPinnedBuild({ pinnedWrangler, cssText, roots }) {
   assertPrivateLocalPath(root, REPOSITORY_ROOT, { directory: true });
 
   const sourceRoot = path.join(root, "source");
-  const entrySourcePath = path.join(sourceRoot, "worker", "tools", "entry.ts");
+  const entrySourcePath = path.join(sourceRoot, "worker", "tools", "index.ts");
   const transitiveSourcePath = path.join(sourceRoot, "worker", "src", "report", "render.ts");
   const cssSourcePath = path.join(sourceRoot, "assets", "report.css");
   // The depth is deliberate: if pinned Wrangler retained the source's ../../../ escape, the
@@ -580,10 +594,11 @@ function runPinnedBuild({ pinnedWrangler, cssText, roots }) {
   const outputDirectory = path.join(artifactRoot, "explicit-outdir");
   const metafilePath = path.join(artifactRoot, "wrangler-metafile.json");
   const logPath = path.join(artifactRoot, "wrangler.log");
-  // Wrangler materializes local metrics state even when transmission is disabled. Keep every
-  // such tool-owned path under the explicit output boundary so a new byproduct cannot escape.
-  const scratchDirectory = path.join(outputDirectory, ".scratch");
-  const userProfile = path.join(outputDirectory, ".user-profile");
+  // Wrangler materializes local metrics state even when transmission is disabled. Keep it in
+  // one separately censused tool-state sibling so the explicit outdir remains upload evidence.
+  const toolStateDirectory = path.join(artifactRoot, "tool-state");
+  const scratchDirectory = path.join(toolStateDirectory, "scratch");
+  const userProfile = path.join(toolStateDirectory, "user-profile");
   const appData = path.join(userProfile, "AppData", "Roaming");
   const localAppData = path.join(userProfile, "AppData", "Local");
   const configPath = path.join(root, "wrangler.jsonc");
@@ -614,15 +629,20 @@ function runPinnedBuild({ pinnedWrangler, cssText, roots }) {
   ].join("\n"), { encoding: "utf8", flag: "wx" });
   const cssBytes = Buffer.from(cssText, "utf8");
   writeFileSync(cssSourcePath, cssBytes, { flag: "wx" });
-  writeFileSync(configPath, `${JSON.stringify({
+  const wranglerConfig = {
     name: "survey-qa-pinned-wrangler-output-fixture",
     main: portableRelative(root, entrySourcePath),
     compatibility_date: "2026-08-01",
+    upload_source_maps: false,
     preserve_file_names: false,
     rules: [
       { type: "Text", globs: ["**/*.css"], fallthrough: false },
     ],
-  }, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  };
+  writeFileSync(configPath, `${JSON.stringify(wranglerConfig, null, 2)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+  });
 
   const before = inventoryFiles(root);
   const childEnvironment = buildPinnedDeployEnvironment({
@@ -671,7 +691,9 @@ function runPinnedBuild({ pinnedWrangler, cssText, roots }) {
   for (const relative of added) {
     const absolute = path.resolve(root, ...relative.split("/"));
     assert.equal(
-      allowedSiblingArtifacts.has(relative) || isWithin(absolute, outputDirectory),
+      allowedSiblingArtifacts.has(relative) ||
+        isWithin(absolute, outputDirectory) ||
+        isWithin(absolute, toolStateDirectory),
       true,
       `Wrangler materialized an undeclared file outside the explicit outdir: ${relative}`,
     );
@@ -787,6 +809,62 @@ function runPinnedBuild({ pinnedWrangler, cssText, roots }) {
     expectedBytes: cssBytes,
   });
 
+  const expectedReleaseFiles = [
+    "README.md",
+    portableRelative(outputDirectory, entryOutputPath),
+    portableRelative(outputDirectory, externalModulePath),
+  ].sort();
+  assert.deepEqual(
+    [...inventoryFiles(outputDirectory)].sort(),
+    expectedReleaseFiles,
+    "upload_source_maps:false must emit exactly the local JS/README/hashed-CSS audit set",
+  );
+  assertSourceMapReleasePolicy(wranglerConfig, expectedReleaseFiles);
+
+  const versionsOutputDirectory = path.join(artifactRoot, "versions-upload-outdir");
+  mkdirSync(versionsOutputDirectory, { recursive: false });
+  const versionsChild = spawnSync(pinnedWrangler.command, [
+    ...pinnedWrangler.argsPrefix,
+    "versions",
+    "upload",
+    "--dry-run",
+    "--strict",
+    "--outdir",
+    versionsOutputDirectory,
+    "--config",
+    configPath,
+  ], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 120_000,
+    maxBuffer: MAX_WRANGLER_OUTPUT_BYTES,
+    killSignal: "SIGTERM",
+    env: childEnvironment,
+  });
+  assert.equal(versionsChild.error, undefined, versionsChild.error?.message);
+  assert.equal(
+    versionsChild.signal,
+    null,
+    `Wrangler versions upload terminated by ${versionsChild.signal ?? "an unknown signal"}`,
+  );
+  assert.equal(versionsChild.status, 0, boundedFailureText(versionsChild));
+  const versionsFiles = [...inventoryFiles(versionsOutputDirectory)].sort();
+  assert.deepEqual(
+    versionsFiles,
+    expectedReleaseFiles,
+    "upload_source_maps:false must give deploy and versions-upload identical fresh censuses",
+  );
+  assertSourceMapReleasePolicy(wranglerConfig, versionsFiles);
+  assertWranglerReadme(path.join(versionsOutputDirectory, "README.md"));
+  for (const relative of expectedReleaseFiles.filter((candidate) => candidate !== "README.md")) {
+    assert.deepEqual(
+      readFileSync(path.join(versionsOutputDirectory, ...relative.split("/"))),
+      readFileSync(path.join(outputDirectory, ...relative.split("/"))),
+      relative,
+    );
+  }
+
   for (const relative of added) {
     const absolute = path.resolve(root, ...relative.split("/"));
     assertPrivateLocalPath(absolute, REPOSITORY_ROOT);
@@ -797,7 +875,20 @@ function runPinnedBuild({ pinnedWrangler, cssText, roots }) {
     cssSourcePath,
     externalModulePath,
     externalSpecifier,
+    releaseFiles: expectedReleaseFiles,
   };
+}
+
+function assertSourceMapReleasePolicy(config, files) {
+  if (!Object.hasOwn(config, "upload_source_maps") || config.upload_source_maps !== false) {
+    throw new Error("release config must declare upload_source_maps as exact boolean false");
+  }
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error("release output census must be nonempty");
+  }
+  if (files.some((relative) => relative.endsWith(".map"))) {
+    throw new Error("release output census must contain zero source maps");
+  }
 }
 
 function assertContentAddress({ modulePath, sourcePath, expectedBytes }) {

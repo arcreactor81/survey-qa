@@ -14,6 +14,7 @@ const CONFIG_FILES = [
   "wrangler.arm-cr.jsonc",
 ];
 const FLAG = "VISUAL_SHADOW_ENABLED";
+const SOURCE_MAP_UPLOAD_FLAG = "upload_source_maps";
 
 function stripJsoncComments(source, label) {
   let result = "";
@@ -116,6 +117,19 @@ function parseJsonc(source, label) {
   }
 }
 
+function auditLocalOnlySourceMaps(source, label) {
+  const { parsed, commentFree } = parseJsonc(source, label);
+  const declarationCount =
+    commentFree.match(/"upload_source_maps"\s*:/gu)?.length ?? 0;
+  if (declarationCount !== 1) {
+    throw new Error(`${label}: ${SOURCE_MAP_UPLOAD_FLAG} must be declared exactly once`);
+  }
+  if (parsed[SOURCE_MAP_UPLOAD_FLAG] !== false) {
+    throw new Error(`${label}: ${SOURCE_MAP_UPLOAD_FLAG} must be the exact boolean false`);
+  }
+  return parsed;
+}
+
 function auditDisabledVisualRollout(source, label) {
   const { parsed, commentFree } = parseJsonc(source, label);
   const declarationCount = commentFree.match(/"VISUAL_SHADOW_ENABLED"\s*:/gu)?.length ?? 0;
@@ -140,11 +154,76 @@ function auditDisabledVisualRollout(source, label) {
 const sources = new Map(
   CONFIG_FILES.map((file) => [file, readFileSync(path.join(WORKER_ROOT, file), "utf8")]),
 );
+const deployRunbook = readFileSync(path.join(WORKER_ROOT, "DEPLOY.md"), "utf8");
+
+function auditNoSourceMapCliOverride(source, label) {
+  const commands = source
+    .split(/\r?\n/u)
+    .map((line) => line.trimStart())
+    .filter((line) => line.startsWith("& $Node $Wrangler"));
+  if (commands.length === 0) throw new Error(`${label}: no Wrangler commands to audit`);
+  if (commands.some((line) => /(?:^|\s)--upload-source-maps(?:\s|$)/u.test(line))) {
+    throw new Error(`${label}: --upload-source-maps is forbidden in release commands`);
+  }
+  return commands;
+}
 
 test("all production and evaluation configs parse and explicitly disable visual purchases", () => {
   for (const [file, source] of sources) {
     auditDisabledVisualRollout(source, file);
   }
+});
+
+test("production config explicitly keeps source maps local-private", () => {
+  const main = auditLocalOnlySourceMaps(sources.get("wrangler.jsonc"), "wrangler.jsonc");
+  assert.equal(main.upload_source_maps, false);
+});
+
+test("missing, enabled, malformed, and duplicated source-map upload policy fail closed", () => {
+  const source = sources.get("wrangler.jsonc");
+  assert.ok(source);
+
+  const missing = source.replace(/^\s*"upload_source_maps": false,\r?\n/mu, "");
+  assert.notEqual(missing, source, "the missing-policy mutant must alter the fixture");
+  assert.throws(() => auditLocalOnlySourceMaps(missing, "missing"), /declared exactly once/u);
+
+  for (const replacement of ["true", '"false"', "null", "0"]) {
+    const mutated = source.replace(
+      '"upload_source_maps": false',
+      `"upload_source_maps": ${replacement}`,
+    );
+    assert.notEqual(mutated, source, `the ${replacement} mutant must alter the fixture`);
+    assert.throws(
+      () => auditLocalOnlySourceMaps(mutated, replacement),
+      /exact boolean false/u,
+    );
+  }
+
+  const duplicated = source.replace(
+    '"upload_source_maps": false,',
+    '"upload_source_maps": false,\n  "upload_source_maps": false,',
+  );
+  assert.notEqual(duplicated, source, "the duplicate-policy mutant must alter the fixture");
+  assert.throws(
+    () => auditLocalOnlySourceMaps(duplicated, "duplicated"),
+    /declared exactly once/u,
+  );
+});
+
+test("documented release commands forbid the source-map upload CLI override", () => {
+  const commands = auditNoSourceMapCliOverride(deployRunbook, "DEPLOY.md");
+  assert.ok(commands.some((line) => line.includes("versions upload")));
+  assert.ok(commands.some((line) => line.includes("versions deploy")));
+
+  const mutated = deployRunbook.replace(
+    /(& \$Node \$Wrangler versions upload[^\r\n]*)/u,
+    "$1 --upload-source-maps",
+  );
+  assert.notEqual(mutated, deployRunbook, "the CLI-override mutant must alter a release command");
+  assert.throws(
+    () => auditNoSourceMapCliOverride(mutated, "mutated DEPLOY.md"),
+    /--upload-source-maps is forbidden/u,
+  );
 });
 
 test("missing, enabled, malformed, duplicated, and hidden paid configuration fail the audit", () => {

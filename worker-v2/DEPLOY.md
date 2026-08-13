@@ -19,6 +19,7 @@ newer promotions and must not be edited until a real promotion completes.
 | Storage boundary | **EVIDENCE**, bucket **survey-qa-artifacts**, keys under **v2/**; runs use **v2r_** |
 | Standard source cap | exactly **$5** in the frozen config and authenticated policy |
 | Wall cap | exactly **14,400,000 ms** (4 hours) |
+| Source-map boundary | top-level `upload_source_maps` is exactly boolean `false`; fresh pinned-Wrangler outdirs contain zero maps and supersede prior map-bearing evidence |
 | Normal extraction topology | exact `grok-4.6` Pass A + `deepseek-v4-pro` Pass B |
 | Eligible Pass-A fallback | retained eligible typed Grok failure only -> `deepseek-v4-flash`; Flash+Pro is reduced same-provider independence and must not seal as normal corroboration |
 | Grok rate prerequisite | exact 16-field `survey-qa-grok-rate-binding/1.0.0` binding for `grok-4.6`: source `owner-dashboard-copy`; policy `max-known-text-tier/1.0.0`; observed **2026-08-13**; canonical SHA-256 `be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5`; 500K context; 200K long-context threshold; <=200K input/cached/output **$2/$0.50/$6 per Mtok**; >200K **$4/$1/$12 per Mtok**; max-known reservation **$4/$12 per Mtok** |
@@ -37,7 +38,7 @@ URL.
 
 Never use **wrangler deploy** for a release and never use relative **wrangler rollback**.
 Never add upload flags **--var**, **--env-file**, **--keep-vars**, **--secrets-file**, or
-**--preview-alias**. A past CLI variable override made config and live policy disagree; the
+**--preview-alias**, or **--upload-source-maps**. A past CLI variable override made config and live policy disagree; the
 reviewed config is now the only variable source.
 
 ## Known baseline and rollback target
@@ -146,6 +147,7 @@ const c=r.config, fail=m=>{throw new Error(m)}, eq=(a,b,m)=>{if(a!==b)fail(m)};
 const setEq=(a,b,m)=>{if(JSON.stringify([...a].sort())!==JSON.stringify([...b].sort()))fail(m)};
 eq(c.name,"survey-qa-v2","wrong Worker"); eq(c.main,"src/index.ts","wrong entrypoint");
 eq(c.workers_dev,false,"workers.dev enabled"); eq(c.preview_urls,false,"preview enabled");
+eq(c.upload_source_maps,false,"source-map upload must be explicitly false");
 if(!Array.isArray(c.routes)||c.routes.length!==1||c.routes[0].pattern!=="survey-qa-v2.wellshit.co.in"||c.routes[0].custom_domain!==true) fail("wrong route");
 eq(c.limits?.subrequests,100000,"wrong subrequest limit");
 setEq((c.workflows||[]).map(w=>[w.name,w.binding,w.class_name].join("|")),[
@@ -223,14 +225,36 @@ $Census = foreach ($root in @($AuditOut,$ReplayOut)) {
 }
 if (@($Census).Count -eq 0) { throw "Dry-run emitted no files" }
 $Census | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $Evidence "output-census.json") -Encoding utf8
-$Forbidden = @($Census | Where-Object { $_.relativePath -match "(?i)(^|[\\/])(\.dev\.vars|\.env|.*\.map|.*\.ts)$" })
-if ($Forbidden.Count -ne 0) { throw "Source, secret, or map in output" }
+$Forbidden = @($Census | Where-Object {
+  $_.relativePath -match "(?i)(^|[\\/])(\.dev\.vars(?:\..*)?|\.env(?:\..*)?|.*\.map|.*\.ts)$"
+})
+if ($Forbidden.Count -ne 0) { throw "Source, source map, or secret material in output" }
+foreach ($root in @($AuditOut,$ReplayOut)) {
+  $Paths = @($Census | Where-Object { $_.root -eq $root } | ForEach-Object { $_.relativePath })
+  if ($Paths.Count -ne 3 -or
+      @($Paths | Where-Object { $_ -eq "index.js" }).Count -ne 1 -or
+      @($Paths | Where-Object { $_ -eq "README.md" }).Count -ne 1 -or
+      @($Paths | Where-Object { $_ -match "^[0-9a-f]{40}-report\.css$" }).Count -ne 1) {
+    throw ("Unexpected strict outdir census: " + $root + " => " + ($Paths -join ", "))
+  }
+}
 Assert-Frozen
 ~~~
 
-A reviewer must reconcile every census entry with the metafile and expected assets. Unknown
-or missing output, source maps, source files, secret material, or an empty denominator is
-NO-GO. The replay flags must match live upload except **--dry-run** and **--outdir**.
+Cloudflare documents `--dry-run --outdir` as a way to inspect generated deployment output and,
+when generated, give a source map to an external service. Cloudflare source-map upload occurs
+when `upload_source_maps` is `true`:
+[Wrangler deploy options](https://developers.cloudflare.com/workers/wrangler/commands/workers/#deploy)
+and [source maps and stack traces](https://developers.cloudflare.com/workers/observability/source-maps/).
+Pinned Wrangler 4.106.0 with the explicit `false` setting emits no map in either strict dry-run.
+Any prior map-bearing outdir is superseded and must not be reused. A fresh `.map` is a NO-GO, as
+is any CLI override that enables maps; the exact config gate above proves the reviewed setting.
+
+A reviewer must reconcile every census entry with the metafile and expected assets. Each strict
+outdir must contain exactly `index.js`, Wrangler's generated `README.md`, and one 40-hex
+content-addressed `*-report.css`. Unknown or missing files, `.map`, `.ts`, `.env`, `.dev.vars`,
+other secret material, or an empty denominator is NO-GO. The replay flags must match live upload
+except **--dry-run** and **--outdir**.
 
 ## 5. Quiescence interlock
 
