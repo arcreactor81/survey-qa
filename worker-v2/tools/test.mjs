@@ -76,6 +76,7 @@ const FILES = [
   // window. It does not bite the small fixture, which is why it needed closing before a real
   // client questionnaire arrived. Evidence they can fail: `tools/mutate-passa.mjs`.
   "./tests/d22-passa-waves.test.mjs",
+  "./tests/passa-final-validity.test.mjs",
   // D23 — the verifier's structural floor may DEMOTE, but it may not author a VERDICT out of
   // the producer's own `error`/`contradiction` payload keys. Dormant until model-observations
   // land, at which point every failed model call would have become a defect claim about the

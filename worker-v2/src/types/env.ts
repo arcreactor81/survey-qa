@@ -229,6 +229,13 @@ export interface Env {
   /** Characters of source per pass-A window. A window is a WHOLE-DOCUMENT read when it fits. */
   EXTRACT_PASS_A_WINDOW_CHARS?: string;
   /**
+   * Blocks per pass-A window, enforced ALONGSIDE the character budget. A table-heavy
+   * questionnaire can pack more than a thousand short addressable cells below 90 KB; bounding
+   * both dimensions keeps one whole-document-method unit from timing out or truncating merely
+   * because its blocks are short.
+   */
+  EXTRACT_PASS_A_WINDOW_MAX_BLOCKS?: string;
+  /**
    * WALL CLOCK ONE PASS-A WAVE MAY SPEND ISSUING NEW MODEL CALLS.
    *
    * Pass A splits a document larger than EXTRACT_PASS_A_WINDOW_CHARS into SERIAL windows,

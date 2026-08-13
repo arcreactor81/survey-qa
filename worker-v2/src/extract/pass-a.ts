@@ -212,7 +212,11 @@ export async function runPassA(
   // Local, NOT module scope: one isolate serves many runs, and a module-level accumulator
   // would let two concurrent extractions read each other's cross-references.
   const crossRefs: CrossRef[] = [];
-  const windows = splitWindows(doc.blocks, num(env.EXTRACT_PASS_A_WINDOW_CHARS, 90_000));
+  const windows = splitWindows(
+    doc.blocks,
+    num(env.EXTRACT_PASS_A_WINDOW_CHARS, 90_000),
+    num(env.EXTRACT_PASS_A_WINDOW_MAX_BLOCKS, 250),
+  );
   const requirements: RawRequirement[] = [];
   const ambiguities: PassResult["ambiguities"] = [];
   const unverifiable: PassResult["unverifiable"] = [];
@@ -723,14 +727,22 @@ function settlementUsage(
   };
 }
 
-/** Split on block boundaries so a window never cuts a table cell in half. */
-function splitWindows(blocks: SourceBlock[], maxChars: number): SourceBlock[][] {
+/**
+ * Split on block boundaries so a window never cuts a table cell in half. Characters and
+ * blocks are independent ceilings: a table-heavy document can pack thousands of short cells
+ * below the character limit while still producing an oversized prompt and response. One
+ * indivisible block may exceed the character ceiling, but it always remains intact.
+ */
+function splitWindows(blocks: SourceBlock[], maxChars: number, maxBlocks: number): SourceBlock[][] {
   const windows: SourceBlock[][] = [];
   let current: SourceBlock[] = [];
   let size = 0;
+  const blockLimit = Math.max(1, Math.floor(maxBlocks));
   for (const b of blocks) {
     const cost = b.text.length + b.blockId.length + 16;
-    if (size + cost > maxChars && current.length > 0) {
+    const exceedsCharacterLimit = size + cost > maxChars;
+    const reachesBlockLimit = current.length >= blockLimit;
+    if ((exceedsCharacterLimit || reachesBlockLimit) && current.length > 0) {
       windows.push(current);
       current = [];
       size = 0;

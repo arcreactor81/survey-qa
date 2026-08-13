@@ -37,6 +37,7 @@ const BOUNDED = "a pass-A window that keeps FAILING is re-bought a bounded numbe
 const XREFS = "(c) CROSS-REFERENCES survive a resume — pass A's one output with no pass-B analogue";
 const DERIVED_TIMEOUT = "the pass-A step timeout always exceeds its own wave budget by at least one whole PURCHASE";
 const HALF_READ = "(a) the STAGE refuses to evaluate an unfinished pass A, and evaluates the finished one";
+const BLOCK_LIMIT = "dense pass-A windows stop at the exact block limit while the character limit stays independent";
 const FAILURE_REPORTS = "an UNCAUGHT step failure still produces a report — the failure path used to produce none";
 
 await runMutantSuite({
@@ -45,6 +46,15 @@ await runMutantSuite({
   // workflow's extraction branch, and collateral damage elsewhere is worth seeing.
   filter: "",
   mutants: [
+    {
+      name: "the pass-A block ceiling is off by one",
+      breaks:
+        "a dense 251-block document remains one oversized unit even though the configured ceiling is 250",
+      file: PASS_A,
+      find: "const reachesBlockLimit = current.length >= blockLimit;",
+      replace: "const reachesBlockLimit = current.length > blockLimit;",
+      kills: [BLOCK_LIMIT],
+    },
     {
       name: "the window walk goes back to ONE step",
       breaks:

@@ -284,6 +284,29 @@ export async function stagePassASlice(
     };
   }
 
+  if (result.failedUnits.length > 0) {
+    const first = result.failedUnits[0]!;
+    const failedBlockIds = [...new Set(result.failedUnits.flatMap((unit) => unit.blockIds))];
+    const blockSample = failedBlockIds.slice(0, 5);
+    throw new Error(
+      `PASS_A_WINDOW_FAILURES: extraction pass A could not complete a trustworthy whole-document reading because ` +
+        `${result.failedUnits.length} of ${result.slice.windowsTotal} window(s) failed, covering ` +
+        `${failedBlockIds.length} source block(s). Failed block sample: ${blockSample.join(', ') || 'none'}. ` +
+        `First failure: ${first.unit} — ${first.detail.slice(0, 400)}. The ${result.requirements.length} ` +
+        `requirement(s) returned by successful windows cannot substitute for source blocks that were not read. ` +
+        `No final pass-A payload was persisted or evaluated.`,
+    );
+  }
+
+  if (result.providerIndependence === "reduced-same-provider-fallback") {
+    throw new Error(
+      "REDUCED_PROVIDER_INDEPENDENCE: Grok pass A activated its receipted DeepSeek Flash substitute. " +
+        "Pass B is DeepSeek Pro, so buying it cannot restore the required provider-family independence. " +
+        "The per-window Pass-A evidence and charged usage are retained, but no final Pass-A payload was " +
+        "persisted and no Pass-B purchase was authorized.",
+    );
+  }
+
   const payload = { parserVersion: doc.parserVersion, promptVersion: PASS_A_VERSION, ...result };
   const body = JSON.stringify(payload, null, 2);
   await env.EVIDENCE.put(extractionPassKey(runId, "a"), body, {
@@ -291,13 +314,6 @@ export async function stagePassASlice(
   });
   const hash = `sha256:${await sha256Hex(body)}`;
 
-  if (result.requirements.length === 0 && result.failedUnits.length > 0) {
-    throw new Error(
-      `extraction pass A produced no requirements and ${result.failedUnits.length} unit(s) failed: ` +
-        `${result.failedUnits[0]!.detail}. An empty pass A is a claim that the document contains no ` +
-        `cross-cutting rules; this pass did not get far enough to make that claim.`,
-    );
-  }
   return {
     result: stageEvaluated(summarize(result, hash), proof("extract-pass-a", PASS_A_VERSION, hash)),
     slice: result.slice,
@@ -594,7 +610,9 @@ async function readPassPayload(
     if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;
     if (pass === "a" && (
       parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
-      validatePassAProviderState(parsed) === null
+      validatePassAProviderState(parsed) === null ||
+      !Array.isArray(parsed.failedUnits) ||
+      parsed.failedUnits.length > 0
     )) return null;
     if (pass === "b" && parsed.providerPlanIdentity !== deepseekPassBIdentity(env)) return null;
     if (!Array.isArray(parsed.requirements)) return null;
@@ -634,7 +652,9 @@ async function readPass(
     if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;
     if (pass === "a" && (
       parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
-      validatePassAProviderState(parsed) === null
+      validatePassAProviderState(parsed) === null ||
+      !Array.isArray(parsed.failedUnits) ||
+      parsed.failedUnits.length > 0
     )) return null;
     if (pass === "b" && parsed.providerPlanIdentity !== deepseekPassBIdentity(env)) return null;
     if (!Array.isArray(parsed.requirements)) return null;

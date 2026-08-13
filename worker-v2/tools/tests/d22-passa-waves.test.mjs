@@ -299,6 +299,58 @@ test("a document that fits ONE window is still one call — the fixture's shape 
   }
 });
 
+test("dense pass-A windows stop at the exact block limit while the character limit stays independent", async () => {
+  const m = await mod();
+  const { readFileSync } = await import("node:fs");
+  const releaseConfig = readFileSync(new URL("../../wrangler.jsonc", import.meta.url), "utf8");
+  assert(
+    releaseConfig.includes('"EXTRACT_PASS_A_WINDOW_MAX_BLOCKS": "250"'),
+    "the reviewed production config must declare the same 250-block ceiling the runtime defaults to",
+  );
+  const cases = [
+    {
+      label: "exactly the default 250-block boundary",
+      env: sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "999999" }),
+      document: docFor(250),
+      expectedBlockCounts: [250],
+    },
+    {
+      label: "one block beyond the default boundary",
+      env: sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "999999" }),
+      document: docFor(251),
+      expectedBlockCounts: [250, 1],
+    },
+    {
+      label: "the character bound fires below the block bound",
+      env: sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "10", EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "250" }),
+      document: docFor(2),
+      expectedBlockCounts: [1, 1],
+    },
+  ];
+
+  for (const [index, fixture] of cases.entries()) {
+    const provider = stubProvider();
+    try {
+      const result = await m.passA.runPassA(
+        fixture.env,
+        "run_d22_dense_boundary_" + index,
+        fixture.document,
+        "synthetic.docx",
+      );
+      const actualBlockCounts = provider.requests.map((request) => request.blockIds.length);
+      assertEq(actualBlockCounts.join(","), fixture.expectedBlockCounts.join(","), fixture.label);
+      assertEq(result.slice.windowsTotal, fixture.expectedBlockCounts.length, fixture.label + ": window count");
+      assertEq(
+        provider.requests.flatMap((request) => request.blockIds).join(","),
+        fixture.document.blocks.map((block) => block.blockId).join(","),
+        fixture.label + ": every block remains present exactly once and in document order",
+      );
+    } finally {
+      provider.restore();
+    }
+  }
+});
+
 });
 
 // ===========================================================================
@@ -358,6 +410,55 @@ test("(b) a HALF-finished pass-A re-issues only the windows that never landed", 
   } finally {
     provider.restore();
   }
+});
+
+test("changing the block limit refuses persisted windows whose exact block sets changed", async () => {
+  const m = await mod();
+  const shared = memoryR2();
+  const runId = "run_d22_block_policy_repartition";
+  const document = docFor(5);
+  const firstEnv = sliceEnv({
+    EVIDENCE: shared,
+    EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "2",
+  });
+  const provider = stubProvider();
+  try {
+    const first = await m.passA.runPassA(firstEnv, runId, document, "synthetic.docx");
+    assertEq(first.slice.windowsTotal, 3, "the first policy creates 2,2,1 block windows");
+    assertEq(provider.requests.map((request) => request.blockIds.length).join(","), "2,2,1");
+
+    provider.reset();
+    const repartitioned = await m.passA.runPassA(
+      { ...firstEnv, EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "3" },
+      runId,
+      document,
+      "synthetic.docx",
+    );
+    assertEq(repartitioned.slice.windowsTotal, 2, "the changed policy creates 3,2 block windows");
+    assertEq(
+      provider.requests.map((request) => request.blockIds.length).join(","),
+      "3,2",
+      "neither differently-owned artifact is adopted under the new partition",
+    );
+  } finally {
+    provider.restore();
+  }
+});
+
+test("the pass-A block window policy changes cross-run contract reuse identity", async () => {
+  const m = await mod();
+  const at250 = await m.contractReuse.extractionPolicyFingerprint(
+    sliceEnv({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "250" }),
+  );
+  const at251 = await m.contractReuse.extractionPolicyFingerprint(
+    sliceEnv({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "251" }),
+  );
+  assert(at250 !== at251, "a changed block partition must miss cross-run reuse, never adopt an old denominator");
+  assert(
+    m.contractReuse.EXTRACTION_POLICY_KEYS.includes("EXTRACT_PASS_A_WINDOW_MAX_BLOCKS"),
+    "the new output-affecting knob must remain in the explicit reuse-policy census",
+  );
 });
 
 test("(c) CROSS-REFERENCES survive a resume — pass A's one output with no pass-B analogue", async () => {

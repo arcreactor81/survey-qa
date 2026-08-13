@@ -308,7 +308,11 @@
     // output tokens on DeepSeek — one chunk, and the block ledger it owes grows with every
     // block in it. Fifteen blocks lands each call near a minute, which is what makes the
     // per-chunk persistence and the resume path useful rather than theoretical.
+    // Pass A has no per-block disposition ledger, but a dense table can still place more than
+    // a thousand short addressable cells below 90 KB. The second ceiling keeps that shape from
+    // becoming one 5-minute timeout/truncated-output unit; both limits split only between blocks.
     "EXTRACT_PASS_A_WINDOW_CHARS": "90000",
+    "EXTRACT_PASS_A_WINDOW_MAX_BLOCKS": "250",
     "EXTRACT_CHUNK_CHARS": "3000",
     "EXTRACT_CHUNK_MAX_BLOCKS": "15",
     "EXTRACT_CHUNK_CONCURRENCY": "5",
