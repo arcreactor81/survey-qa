@@ -269,6 +269,92 @@ foreach ($Candidate in $Outside) {
   return runPowerShell51(script);
 }
 
+function requiredSourceSegment(source, startToken, endToken, label) {
+  const start = source.indexOf(startToken);
+  assert.notEqual(start, -1, `${label}: start token is absent`);
+  assert.equal(source.indexOf(startToken, start + startToken.length), -1,
+    `${label}: start token is ambiguous`);
+  const end = source.indexOf(endToken, start + startToken.length);
+  assert.notEqual(end, -1, `${label}: end token is absent`);
+  return source.slice(start, end).trim();
+}
+
+function receiptEnvironmentCoherenceExpression(source) {
+  const needle = "$Receipt.environmentNames";
+  const needleOffset = source.indexOf(needle);
+  assert.notEqual(needleOffset, -1, "receipt environment coherence needle is absent");
+  const nextNeedle = source.indexOf(needle, needleOffset + needle.length);
+  assert.equal(nextNeedle, -1, "receipt environment coherence needle is ambiguous");
+  const start = source.lastIndexOf("@(Compare-Object", needleOffset);
+  assert.notEqual(start, -1, "receipt environment Compare-Object call is absent");
+  const endMarker = ").Count -ne 0 -or";
+  const end = source.indexOf(endMarker, needleOffset);
+  assert.notEqual(end, -1, "receipt environment Compare-Object call has no bounded end");
+  return source.slice(start, end + 1);
+}
+
+function closedEnvironmentPowerShellFixture(source) {
+  const setup = requiredSourceSegment(
+    source,
+    "$ClosedMutationEnvironmentNames = @(",
+    "function ConvertTo-PowerShellSingleQuotedLiteral",
+    "closed mutation environment setup",
+  );
+  const receiptValidator = requiredSourceSegment(
+    source,
+    "function Assert-MutationReceiptTypes {",
+    "$MutationWatchdogProperties = @(",
+    "mutation receipt type validator",
+  );
+  const coherence = receiptEnvironmentCoherenceExpression(source);
+  const expected = String.raw`@(
+  "MUTATION_CHILD_TIMEOUT_MS",
+  "OS",
+  "PATH",
+  "PSMODULEPATH",
+  "SYSTEMDRIVE",
+  "SYSTEMROOT",
+  "TEMP",
+  "TMP",
+  "WINDIR"
+)`;
+  const script = `$ErrorActionPreference = "Stop"
+${setup}
+$ExpectedEnvironmentNames = ${expected}
+if (@(Compare-Object -ReferenceObject $ExpectedEnvironmentNames -DifferenceObject $ClosedMutationEnvironmentNames -SyncWindow 0 -CaseSensitive).Count -ne 0) {
+  throw "closed mutation environment names differ from the exact release set"
+}
+function Assert-JsonExactTypes { }
+${receiptValidator}
+$ReceiptForTypeCheck = [pscustomobject]@{
+  environmentNames = $ClosedMutationEnvironmentNames
+  attestation = [pscustomobject]@{
+    head = "head"
+    v2Tree = "tree"
+    harness = "mutate-example.mjs"
+    harnessSha256 = ("a" * 64)
+    selector = "exact-union-of-declared-kills"
+    subjectIdentityVerified = $true
+  }
+}
+Assert-MutationReceiptTypes $ReceiptForTypeCheck
+$Receipt = [pscustomobject]@{ environmentNames = $ClosedMutationEnvironmentNames }
+if (${coherence}.Count -ne 0) { throw "an exact receipt environment was rejected" }
+$Receipt = [pscustomobject]@{ environmentNames = @($ClosedMutationEnvironmentNames[1..8]) }
+if (${coherence}.Count -eq 0) { throw "a short receipt environment was accepted" }
+$ReorderedEnvironmentNames = @($ClosedMutationEnvironmentNames)
+$FirstEnvironmentName = $ReorderedEnvironmentNames[0]
+$ReorderedEnvironmentNames[0] = $ReorderedEnvironmentNames[1]
+$ReorderedEnvironmentNames[1] = $FirstEnvironmentName
+$Receipt = [pscustomobject]@{ environmentNames = $ReorderedEnvironmentNames }
+if (${coherence}.Count -eq 0) { throw "a same-cardinality reordered receipt environment was accepted" }
+$CaseChangedEnvironmentNames = @($ClosedMutationEnvironmentNames)
+$CaseChangedEnvironmentNames[1] = $CaseChangedEnvironmentNames[1].ToLowerInvariant()
+$Receipt = [pscustomobject]@{ environmentNames = $CaseChangedEnvironmentNames }
+if (${coherence}.Count -eq 0) { throw "a case-only receipt environment mismatch was accepted" }`;
+  return { setup, script };
+}
+
 test("all production and evaluation configs parse and explicitly disable visual purchases", () => {
   for (const [file, source] of sources) {
     auditDisabledVisualRollout(source, file);
@@ -342,6 +428,7 @@ test("documented release commands are PS5-safe, boundary-checked, and forbid sou
   );
 
   const parsedBlocks = extractPowerShellBlocks(deployRunbook, "DEPLOY.md");
+  assert.equal(parsedBlocks.length, 9, "the release runbook must retain exactly nine PowerShell blocks");
   for (const [index, block] of parsedBlocks.entries()) {
     const parseScript = `$ErrorActionPreference = "Stop"
 $Source = [Console]::In.ReadToEnd()
@@ -368,6 +455,64 @@ $Source = [Console]::In.ReadToEnd()
     0,
     "a prefix-only helper must fail the sibling-prefix counterexample",
   );
+});
+
+test("DEPLOY closed-environment sort and receipt coherence execute under actual PowerShell 5.1", () => {
+  const fixture = closedEnvironmentPowerShellFixture(deployRunbook);
+  assertPowerShell51Success(
+    runPowerShell51(fixture.script),
+    "closed mutation environment and receipt coherence",
+  );
+
+  const continuationSites = [
+    ["Compare-Object `\n    -ReferenceObject $ClosedMutationEnvironmentNames `", 1],
+    ["Compare-Object `\n      -ReferenceObject $EnvironmentNames `", 1],
+    ["Compare-Object `\n        -ReferenceObject @($Receipt.environmentNames) `", 4],
+  ];
+  for (const [index, [site, expectedOccurrences]] of continuationSites.entries()) {
+    assert.equal(
+      fixture.script.split(site).length - 1,
+      expectedOccurrences,
+      `continuation site ${index + 1}/3 has the wrong exact occurrence count`,
+    );
+    const removedContinuation = site.replace("Compare-Object `\n", "Compare-Object\n");
+    const mutantScript = fixture.script.replaceAll(site, removedContinuation);
+    assert.notEqual(
+      mutantScript,
+      fixture.script,
+      `removed-continuation mutant ${index + 1}/3 must alter its exact call`,
+    );
+    const mutantRun = runPowerShell51(mutantScript);
+    assert.equal(mutantRun.error, undefined, mutantRun.error?.message);
+    assert.notEqual(
+      mutantRun.status,
+      0,
+      `removing continuation ${index + 1}/3 must fail under actual PowerShell 5.1`,
+    );
+  }
+
+  const coherenceTail =
+    "-DifferenceObject $ClosedMutationEnvironmentNames `\n        -SyncWindow 0 -CaseSensitive";
+  assert.equal(
+    fixture.script.split(coherenceTail).length - 1,
+    4,
+    "the receipt-coherence flags must occur once in each semantic counterexample",
+  );
+  const semanticMutants = [
+    ["missing -SyncWindow 0", coherenceTail.replace("-SyncWindow 0 ", "")],
+    ["missing -CaseSensitive", coherenceTail.replace(" -CaseSensitive", "")],
+  ];
+  for (const [label, mutantTail] of semanticMutants) {
+    const mutantScript = fixture.script.replaceAll(coherenceTail, mutantTail);
+    assert.notEqual(mutantScript, fixture.script, `${label} mutant must alter receipt coherence`);
+    const mutantRun = runPowerShell51(mutantScript);
+    assert.equal(mutantRun.error, undefined, mutantRun.error?.message);
+    assert.notEqual(
+      mutantRun.status,
+      0,
+      `${label} must fail a receipt-environment counterexample under actual PowerShell 5.1`,
+    );
+  }
 });
 
 test("missing, enabled, malformed, duplicated, and hidden paid configuration fail the audit", () => {

@@ -231,8 +231,9 @@ $ClosedMutationEnvironmentNames = @(
   "TMP",
   "WINDIR"
 )
-if (@(Compare-Object $ClosedMutationEnvironmentNames
-    @($ClosedMutationEnvironmentNames | Sort-Object -CaseSensitive)
+if (@(Compare-Object `
+    -ReferenceObject $ClosedMutationEnvironmentNames `
+    -DifferenceObject @($ClosedMutationEnvironmentNames | Sort-Object -CaseSensitive) `
     -SyncWindow 0 -CaseSensitive).Count -ne 0) {
   throw "Closed mutation environment names must be sorted"
 }
@@ -429,8 +430,9 @@ function Assert-MutationReceiptTypes {
     }).Count -ne 0 -or
     @($EnvironmentNames | Sort-Object -Unique -CaseSensitive).Count -ne
       $EnvironmentNames.Count -or
-    @(Compare-Object $EnvironmentNames
-      @($EnvironmentNames | Sort-Object -CaseSensitive)
+    @(Compare-Object `
+      -ReferenceObject $EnvironmentNames `
+      -DifferenceObject @($EnvironmentNames | Sort-Object -CaseSensitive) `
       -SyncWindow 0 -CaseSensitive).Count -ne 0) {
     throw "mutation supervisor receipt.environmentNames is not sorted unique canonical names"
   }
@@ -867,7 +869,9 @@ foreach ($Harness in $MutationHarnesses) {
       $Receipt.supervisorProcessId -ne $SupervisorPid -or
       $Receipt.supervisorProcessStartUtc -cne $SupervisorStartTimeUtc -or
       $Receipt.environmentMode -cne "replace" -or
-      @(Compare-Object @($Receipt.environmentNames) $ClosedMutationEnvironmentNames
+      @(Compare-Object `
+        -ReferenceObject @($Receipt.environmentNames) `
+        -DifferenceObject $ClosedMutationEnvironmentNames `
         -SyncWindow 0 -CaseSensitive).Count -ne 0 -or
       $Receipt.environmentBlockSha256 -cne $ExpectedEnvironmentBlockSha256 -or
       $Receipt.executablePath -cne $NodeResolved -or
