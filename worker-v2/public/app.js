@@ -46,6 +46,7 @@
   var dropText = document.getElementById("dropzoneText");
   var ack = document.getElementById("ackAuth");
   var profileSel = document.getElementById("profile");
+  var documentSemanticsSel = document.getElementById("documentSemanticsProfile");
   var profileHint = document.getElementById("profileHint");
   var modeCustom = document.getElementById("modeCustom");
   var modeSample = document.getElementById("modeSample");
@@ -284,6 +285,7 @@
       submission.set("surveyUrl", url);
       submission.set("docx", chosenFile, chosenFile.name);
       submission.set("profile", profileSel.value === "deep" ? "deep" : "standard");
+      submission.set("documentSemanticsProfile", documentSemanticsSel.value);
       submission.set("contractSource", "extract");
       var res = await fetch("/api/v2/runs", {
         method: "POST",

@@ -28,6 +28,8 @@ import { num } from "../../types/env";
 import { k } from "../../keys";
 import { mintAttemptId } from "../../ids";
 import { beat, updateCheckpoint, type Fence } from "../../store/checkpoint";
+import { canonicalHash, sha256Hex } from "../../store/hash";
+import { getBoundCatalogEntry, getVerifiedEvidence } from "../../store/evidence";
 import { browserUsage, pushUsage } from "../../store/usage";
 import type { ExecutionCursor } from "../../types/contracts";
 import {
@@ -50,6 +52,12 @@ import { walkPath, type PageLike } from "../../browser/driver";
 import type { CaptureContext } from "../../browser/capture";
 import type { PathObservation, StepObservation, WalkEnding } from "../../browser/types";
 import type { PlannedPath, PlannedDecision } from "./planner/plan-core.js";
+import type { SeedAlternative } from "./planner/seed-plan";
+import {
+  deriveCaseWitnessReceipt,
+  storedCaseWitnessReceiptFailures,
+  type CaseWitnessReceipt,
+} from "./planner/seed-receipt";
 
 export const execProgressKey = (runId: string) => k("runs", runId, "execution", "progress.json");
 
@@ -188,6 +196,8 @@ export interface WalkRecord {
   /** Total occurrences summed over screens. Counted by the walker, not recomputed here. */
   readerLimitationCount?: number;
   at: string;
+  /** Exact verified PathObservation catalogue identity; absent on legacy/projected rows. */
+  observationEvidenceId?: string;
 }
 
 export interface ExecProgress {
@@ -197,6 +207,9 @@ export interface ExecProgress {
   walks: WalkRecord[];
   floorDone: string[];
   explorationDone: string[];
+  seedDone?: string[];
+  caseWitnessReceipts?: CaseWitnessReceipt[];
+  seedReceiptRefusals?: Array<{ alternativeId: string; caseId: string; attemptId: string; reason: string }>;
   /** Set once a walk proves the site cannot load unshimmed. Later walks start shimmed. */
   shimRequired: boolean;
   /** Paths whose browser hung. A path here has had its one retry on a fresh session. */
@@ -214,6 +227,146 @@ export interface ExecProgress {
   totalEvidence: number;
 }
 
+export interface SeedCommitArtifact {
+  kind: "v2-seed-attempt-commit/1.0.0";
+  artifactHash: string;
+  receipt: CaseWitnessReceipt | null;
+  refusal: string | null;
+  observationEvidenceId: string;
+  observation: PathObservation;
+  walk: WalkRecord;
+}
+
+const seedCommitArtifactKey = (runId: string, attemptId: string): string =>
+  k("runs", runId, "execution", "seed-attempts", `${attemptId}.json`);
+
+async function verifiedPathObservation(
+  env: Env,
+  runId: string,
+  expected: Pick<PathObservation, "attemptId" | "pathId" | "observationEvidenceId">,
+): Promise<{ observation: PathObservation; evidenceId: string }> {
+  if (!expected.observationEvidenceId) throw new Error("W5 observation evidence pointer is absent");
+  const entry = await getBoundCatalogEntry(env, runId, expected.observationEvidenceId);
+  if (!entry || entry.sourceEvidenceId !== `EV-${expected.pathId}-observation` ||
+    entry.attemptId !== expected.attemptId || entry.routeId !== expected.pathId ||
+    entry.type !== "state" || entry.mediaType !== "application/json") {
+    throw new Error("W5 exact observation catalogue identity differs");
+  }
+  const verified = await getVerifiedEvidence(env, entry);
+  const observation = JSON.parse(new TextDecoder().decode(verified.bytes)) as PathObservation;
+  if (observation.attemptId !== expected.attemptId || observation.pathId !== expected.pathId) {
+    throw new Error("W5 verified observation bytes differ from catalogue identity");
+  }
+  return { observation, evidenceId: entry.evidenceId };
+}
+
+export async function seedCommitArtifact(
+  receipt: CaseWitnessReceipt | null,
+  refusal: string | null,
+  observationEvidenceId: string,
+  observation: PathObservation,
+  walk: WalkRecord,
+): Promise<SeedCommitArtifact> {
+  const body = { kind: "v2-seed-attempt-commit/1.0.0" as const, receipt, refusal, observationEvidenceId, observation, walk };
+  return { ...body, artifactHash: `sha256:${await canonicalHash(body)}` };
+}
+
+export async function seedCommitArtifactFailures(
+  env: Env,
+  runId: string,
+  artifact: SeedCommitArtifact,
+  alternative: SeedAlternative,
+): Promise<string[]> {
+  if (!artifact || artifact.kind !== "v2-seed-attempt-commit/1.0.0") return ["seed commit artifact kind differs"];
+  const body = { kind: artifact.kind, receipt: artifact.receipt, refusal: artifact.refusal, observationEvidenceId: artifact.observationEvidenceId, observation: artifact.observation, walk: artifact.walk };
+  const failures = artifact.artifactHash === `sha256:${await canonicalHash(body)}` ? [] : ["seed commit artifact hash differs"];
+  let retainedObservation: PathObservation | null = null;
+  try {
+    const observationEntry = await getBoundCatalogEntry(env, runId, artifact.observationEvidenceId);
+    if (!observationEntry || observationEntry.sourceEvidenceId !== `EV-${alternative.alternativeId}-observation` ||
+      observationEntry.attemptId !== artifact.observation.attemptId ||
+      observationEntry.routeId !== alternative.alternativeId || observationEntry.type !== "state" ||
+      observationEntry.mediaType !== "application/json") {
+      failures.push("cited exact PathObservation catalogue identity differs");
+    } else {
+      try {
+        const verified = await getVerifiedEvidence(env, observationEntry);
+        retainedObservation = JSON.parse(new TextDecoder().decode(verified.bytes)) as PathObservation;
+        if (await canonicalHash(retainedObservation) !== await canonicalHash(artifact.observation)) {
+          failures.push("embedded observation differs from cited verified PathObservation bytes");
+        }
+      } catch {
+        failures.push("cited PathObservation bytes are absent, corrupt, or unreadable");
+      }
+    }
+  } catch {
+    failures.push("cited exact PathObservation catalogue binding is absent or corrupt");
+  }
+  if (artifact.receipt && retainedObservation) {
+    const targetStep = retainedObservation.steps.find((step) =>
+      step.evidence.screenCaptures?.some((epoch) => epoch.screenJson.evidenceId === artifact.receipt!.beforeEvidenceId),
+    );
+    const required = [artifact.receipt.beforeEvidenceId, artifact.receipt.afterEvidenceId];
+    for (const [index, evidenceId] of required.entries()) {
+      let entry;
+      try {
+        entry = await getBoundCatalogEntry(env, runId, evidenceId);
+      } catch {
+        failures.push(`cited screen evidence ${evidenceId} binding is corrupt`);
+        continue;
+      }
+      if (!entry || entry.attemptId !== artifact.observation.attemptId ||
+        entry.routeId !== alternative.alternativeId || entry.type !== "dom-excerpt" ||
+        entry.mediaType !== "application/json") {
+        failures.push(`cited exact screen evidence ${evidenceId} identity differs`);
+        continue;
+      }
+      const slot = index === 0 ? "before" : "after-action";
+      const epoch = targetStep?.evidence.screenCaptures?.filter((row) => row.slot === slot && row.screenJson.evidenceId === evidenceId) ?? [];
+      if (epoch.length !== 1) failures.push(`cited ${slot} screen epoch identity differs`);
+      else {
+        const ref = epoch[0]!.screenJson;
+        if (entry.evidenceId !== ref.evidenceId || entry.sourceEvidenceId !== ref.sourceEvidenceId || entry.artifactRef !== ref.artifactRef ||
+          entry.contentHash !== ref.contentHash || entry.mediaType !== ref.mediaType || entry.size !== ref.size) {
+          failures.push(`cited ${slot} screen catalogue binding differs from epoch reference`);
+        } else {
+          try {
+            const verifiedScreen = await getVerifiedEvidence(env, entry);
+            const parsed = JSON.parse(new TextDecoder().decode(verifiedScreen.bytes)) as { screenSignature?: unknown };
+            // captureScreenJsonRef retains the raw RenderedScreen. Epoch/step/slot are bound by
+            // the canonical PathObservation and the full ScreenArtifactRef above; they are not
+            // fields in those screen bytes. The retained screen itself binds to that epoch by
+            // the same raw signature hash the capture producer records.
+            if (typeof parsed.screenSignature !== "string" ||
+              await sha256Hex(parsed.screenSignature) !== epoch[0]!.screenSignatureHash) {
+              failures.push(`cited ${slot} RenderedScreen signature differs from capture epoch`);
+            }
+            const retainedScreen = slot === "before" ? targetStep?.screenBefore : targetStep?.screenAfterAction;
+            if (!retainedScreen || await canonicalHash(parsed) !== await canonicalHash(retainedScreen)) {
+              failures.push(`cited ${slot} RenderedScreen bytes differ from the retained step screen`);
+            }
+          } catch {
+            failures.push(`cited ${slot} RenderedScreen bytes are absent, corrupt, or unreadable`);
+          }
+        }
+      }
+    }
+  }
+  const derived = retainedObservation
+    ? await deriveCaseWitnessReceipt(alternative, retainedObservation, artifact.observationEvidenceId)
+    : { ok: false as const, reason: "cited verified PathObservation is absent" };
+  if (artifact.receipt) {
+    if (!derived.ok || derived.receipt.receiptHash !== artifact.receipt.receiptHash) failures.push("receipt does not recompute from retained observation");
+    failures.push(...await storedCaseWitnessReceiptFailures(artifact.receipt, alternative));
+  } else if (derived.ok || artifact.refusal !== derived.reason) {
+    failures.push("receipt refusal does not recompute from retained observation");
+  }
+  const audit = assessExercised(retainedObservation ?? artifact.observation, alternative.path.decisions as PlannedDecision[]);
+  const expectedWalk = walkRecord(retainedObservation ?? artifact.observation, artifact.receipt ? [artifact.receipt.caseId] : [], audit, undefined, artifact.observationEvidenceId);
+  if (JSON.stringify(artifact.walk) !== JSON.stringify(expectedWalk)) failures.push("committed walk does not recompute from retained observation");
+  return failures;
+}
+
 const emptyProgress = (runId: string, planRevisionId: string): ExecProgress => ({
   kind: "v2-execution-progress/1.0.0",
   runId,
@@ -221,6 +374,9 @@ const emptyProgress = (runId: string, planRevisionId: string): ExecProgress => (
   walks: [],
   floorDone: [],
   explorationDone: [],
+  seedDone: [],
+  caseWitnessReceipts: [],
+  seedReceiptRefusals: [],
   shimRequired: false,
   shimEvidence: null,
   hungPaths: [],
@@ -229,21 +385,212 @@ const emptyProgress = (runId: string, planRevisionId: string): ExecProgress => (
   totalEvidence: 0,
 });
 
-export async function loadProgress(env: Env, runId: string, planRevisionId: string): Promise<ExecProgress> {
-  const obj = await env.EVIDENCE.get(execProgressKey(runId));
-  if (!obj) return emptyProgress(runId, planRevisionId);
-  try {
-    const p = (await obj.json()) as ExecProgress;
-    return p && p.kind === "v2-execution-progress/1.0.0" ? p : emptyProgress(runId, planRevisionId);
-  } catch {
-    return emptyProgress(runId, planRevisionId);
+export class ExecutionProgressCorruption extends Error {
+  constructor(detail: string) {
+    super(`execution-progress-corrupt: ${detail}`);
+    this.name = "ExecutionProgressCorruption";
   }
 }
 
-async function saveProgress(env: Env, p: ExecProgress): Promise<void> {
+const progressCorrupt = (detail: string): never => {
+  throw new ExecutionProgressCorruption(detail);
+};
+
+const progressObject = (value: unknown, path: string): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) progressCorrupt(`${path} is not an object`);
+  return value as Record<string, unknown>;
+};
+
+const progressStringArray = (value: unknown, path: string): string[] => {
+  if (!Array.isArray(value) || !value.every((row) => typeof row === "string")) {
+    progressCorrupt(`${path} is not an array of strings`);
+  }
+  return value as string[];
+};
+
+const progressCount = (value: unknown, path: string): number => {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) progressCorrupt(`${path} is not a non-negative safe integer`);
+  return Number(value);
+};
+
+/**
+ * Decode the durable execution ledger without inventing an empty run over unreadable bytes.
+ * Only an absent object means "not started". Once an object exists, identity, row counts and
+ * aggregate totals are authority and every contradiction is named corruption.
+ */
+export function decodeProgress(value: unknown, runId: string, planRevisionId: string): ExecProgress {
+  const root = progressObject(value, "$progress");
+  if (root.kind !== "v2-execution-progress/1.0.0") progressCorrupt("$.kind differs");
+  if (root.runId !== runId) progressCorrupt("$.runId differs from the requested run");
+  if (root.planRevisionId !== planRevisionId) progressCorrupt("$.planRevisionId differs from the requested plan");
+  if (!Array.isArray(root.walks)) progressCorrupt("$.walks is not an array");
+  const walks = root.walks as unknown[];
+  let summedSteps = 0;
+  let summedEvidence = 0;
+  for (let i = 0; i < walks.length; i += 1) {
+    const walk = progressObject(walks[i], `$.walks[${i}]`);
+    if (typeof walk.pathId !== "string" || walk.pathId.length === 0) progressCorrupt(`$.walks[${i}].pathId is absent`);
+    if (typeof walk.attemptId !== "string" || walk.attemptId.length === 0) progressCorrupt(`$.walks[${i}].attemptId is absent`);
+    if (walk.tier !== 1 && walk.tier !== 2) progressCorrupt(`$.walks[${i}].tier differs`);
+    if (!Array.isArray(walk.caseIds) || !walk.caseIds.every((row) => typeof row === "string")) {
+      progressCorrupt(`$.walks[${i}].caseIds is not an array of strings`);
+    }
+    summedSteps += progressCount(walk.steps, `$.walks[${i}].steps`);
+    summedEvidence += progressCount(walk.evidenceCount, `$.walks[${i}].evidenceCount`);
+  }
+  progressStringArray(root.floorDone, "$.floorDone");
+  progressStringArray(root.explorationDone, "$.explorationDone");
+  if (root.seedDone !== undefined) progressStringArray(root.seedDone, "$.seedDone");
+  if (root.hungPaths !== undefined) progressStringArray(root.hungPaths, "$.hungPaths");
+  if (typeof root.shimRequired !== "boolean") progressCorrupt("$.shimRequired is not boolean");
+  if (root.shimEvidence !== null && typeof root.shimEvidence !== "string") {
+    progressCorrupt("$.shimEvidence is neither null nor a string");
+  }
+  const totalSteps = progressCount(root.totalSteps, "$.totalSteps");
+  const totalEvidence = progressCount(root.totalEvidence, "$.totalEvidence");
+  if (totalSteps !== summedSteps) progressCorrupt(`$.totalSteps=${totalSteps} but walk rows sum to ${summedSteps}`);
+  if (totalEvidence !== summedEvidence) progressCorrupt(`$.totalEvidence=${totalEvidence} but walk rows sum to ${summedEvidence}`);
+  if (root.screenoutPivots !== undefined) {
+    const pivots = progressObject(root.screenoutPivots, "$.screenoutPivots");
+    for (const [pathId, count] of Object.entries(pivots)) {
+      if (pathId.length === 0) progressCorrupt("$.screenoutPivots has an empty path id");
+      progressCount(count, `$.screenoutPivots[${JSON.stringify(pathId)}]`);
+    }
+  }
+  return root as unknown as ExecProgress;
+}
+
+export async function loadProgress(env: Env, runId: string, planRevisionId: string): Promise<ExecProgress> {
+  const obj = await env.EVIDENCE.get(execProgressKey(runId));
+  if (!obj) return emptyProgress(runId, planRevisionId);
+  let parsed: unknown;
+  try {
+    parsed = await obj.json();
+  } catch (err) {
+    progressCorrupt(`stored JSON cannot be decoded: ${String(err).slice(0, 160)}`);
+  }
+  return decodeProgress(parsed, runId, planRevisionId);
+}
+
+export async function saveProgress(env: Env, p: ExecProgress): Promise<void> {
   await env.EVIDENCE.put(execProgressKey(p.runId), JSON.stringify(p), {
     httpMetadata: { contentType: "application/json" },
   });
+}
+
+export async function reconcileSeedProgress(
+  env: Env,
+  program: ExecutionProgram,
+  cursor: ExecutionCursor,
+  progress: ExecProgress,
+): Promise<boolean> {
+  const before = JSON.stringify({
+    seedDone: progress.seedDone, caseWitnessReceipts: progress.caseWitnessReceipts,
+    seedReceiptRefusals: progress.seedReceiptRefusals, walks: progress.walks,
+    totalSteps: progress.totalSteps, totalEvidence: progress.totalEvidence, hungPaths: progress.hungPaths,
+  });
+  const ledger = cursor.seedExecution;
+  if (!program.seedPlan) return false;
+  if (!ledger) throw new Error("W5 seed execution ledger is absent");
+  progress.seedDone = [...ledger.doneAlternativeIds];
+  const receipts: CaseWitnessReceipt[] = [];
+  const refusals: ExecProgress["seedReceiptRefusals"] = [];
+  const seedPathIds = new Set(program.seedPlan.alternatives.map((row) => row.alternativeId));
+  const walks = progress.walks.filter((walk) => !seedPathIds.has(walk.pathId));
+  const artifacts = new Map<string, SeedCommitArtifact>();
+  for (const pointer of ledger.attempts) {
+    const alternative = program.seedPlan.alternatives.find((row) => row.alternativeId === pointer.alternativeId);
+    if (!alternative) throw new Error(`W5 attempt ${pointer.attemptId} names an unknown alternative`);
+    const object = await env.EVIDENCE.get(pointer.artifactKey);
+    if (!object) throw new Error(`W5 attempt artifact ${pointer.artifactKey} is absent`);
+    const artifact = (await object.json()) as SeedCommitArtifact;
+    const failures = await seedCommitArtifactFailures(env, program.runId, artifact, alternative);
+    if (artifact.artifactHash !== pointer.artifactHash || artifact.observation.attemptId !== pointer.attemptId || failures.length > 0) {
+      throw new Error(`W5 attempt ${pointer.attemptId} refused: ${failures.join("; ") || "pointer differs"}`);
+    }
+    artifacts.set(pointer.attemptId, artifact);
+    walks.push(artifact.walk);
+    if (artifact.refusal) refusals.push({
+      alternativeId: pointer.alternativeId,
+      caseId: alternative.certificate.facetInstanceId,
+      attemptId: pointer.attemptId,
+      reason: artifact.refusal,
+    });
+  }
+  for (const pointer of ledger.receipts) {
+    const artifact = artifacts.get(pointer.attemptId);
+    const receipt = artifact?.receipt ?? null;
+    if (!receipt || receipt.receiptHash !== pointer.receiptHash || receipt.caseId !== pointer.caseId ||
+      artifact!.artifactHash !== pointer.commitArtifactHash) throw new Error(`W5 receipt pointer ${pointer.receiptHash} differs`);
+    receipts.push(receipt);
+  }
+  progress.caseWitnessReceipts = receipts;
+  progress.walks = walks;
+  progress.seedReceiptRefusals = refusals;
+  progress.totalSteps = walks.reduce((sum, walk) => sum + walk.steps, 0);
+  progress.totalEvidence = walks.reduce((sum, walk) => sum + walk.evidenceCount, 0);
+  progress.hungPaths = [...new Set([
+    ...(progress.hungPaths ?? []).filter((pathId) => !seedPathIds.has(pathId)),
+    ...walks.filter((walk) => seedPathIds.has(walk.pathId) && walk.outcome === "browser-hung").map((walk) => walk.pathId),
+  ])];
+  return before !== JSON.stringify({
+    seedDone: progress.seedDone, caseWitnessReceipts: progress.caseWitnessReceipts,
+    seedReceiptRefusals: progress.seedReceiptRefusals, walks: progress.walks,
+    totalSteps: progress.totalSteps, totalEvidence: progress.totalEvidence, hungPaths: progress.hungPaths,
+  });
+}
+
+async function recoverSeedReservation(
+  env: Env,
+  args: BatchArgs,
+  program: ExecutionProgram,
+  cursor: ExecutionCursor,
+): Promise<ExecutionCursor> {
+  const reservation = cursor.seedExecution?.reservation ?? null;
+  if (!reservation) return cursor;
+  const alternative = program.seedPlan?.alternatives.find((row) => row.alternativeId === reservation.alternativeId);
+  if (!alternative) throw new Error(`W5 reservation ${reservation.attemptId} names an unknown alternative`);
+  const artifactKey = seedCommitArtifactKey(args.runId, reservation.attemptId);
+  const object = await env.EVIDENCE.get(artifactKey);
+  const artifact = object ? (await object.json()) as SeedCommitArtifact : null;
+  if (artifact) {
+    const failures = await seedCommitArtifactFailures(env, args.runId, artifact, alternative);
+    if (failures.length > 0) throw new Error(`W5 orphan artifact ${reservation.attemptId} refused: ${failures.join("; ")}`);
+  }
+  const updated = await updateCheckpoint(env, args.runId, (d) => {
+    const execution = d.execution;
+    const current = execution?.seedExecution?.reservation;
+    if (!execution || !current || current.attemptId !== reservation.attemptId) return false;
+    let closed: string[] = [];
+    if (artifact) {
+      const receipt = artifact.receipt;
+      const result = applySeedAttemptCommit(execution, {
+        alternativeId: alternative.alternativeId,
+        expectedCaseId: alternative.certificate.facetInstanceId,
+        expectedCertificateHash: alternative.certificate.certificateHash,
+        attemptId: reservation.attemptId,
+        retryable: false,
+        attemptArtifact: { alternativeId: alternative.alternativeId, attemptId: reservation.attemptId, artifactHash: artifact.artifactHash, artifactKey },
+        receipt: receipt ? {
+          caseId: receipt.caseId, alternativeId: receipt.alternativeId, attemptId: receipt.attemptId,
+          receiptHash: receipt.receiptHash, seedCertificateHash: receipt.seedCertificateHash,
+          commitArtifactHash: artifact.artifactHash, artifactKey,
+        } : null,
+      });
+      closed = result.closed;
+    } else {
+      retireSeedReservationWithoutArtifact(execution, reservation);
+    }
+    execution.pendingCaseIds = execution.pendingCaseIds.filter((id) => !closed.includes(id));
+    execution.completedCaseIds.push(...closed);
+    d.counts.pending = Math.max(0, d.counts.pending - closed.length);
+    d.counts.exercised += closed.length;
+    d.attempts.started += 1;
+    if (artifact && artifact.observation.outcome !== "error") d.attempts.completed += 1;
+    d.currentAttempt = null;
+  }, { progressed: true, fence: args.fence });
+  if (!updated?.execution) throw new Error(`W5 reservation ${reservation.attemptId} could not be retired`);
+  return updated.execution;
 }
 
 export interface BatchArgs {
@@ -261,6 +608,74 @@ export interface BatchOutcome {
   pathsWalked: number;
   casesClosed: number;
   steps: number;
+}
+
+export function applySeedAttemptCommit(
+  cursor: ExecutionCursor,
+  args: {
+    alternativeId: string;
+    expectedCaseId: string;
+    expectedCertificateHash: string;
+    attemptId: string;
+    retryable: boolean;
+    attemptArtifact: { alternativeId: string; attemptId: string; artifactHash: string; artifactKey: string };
+    receipt: {
+      caseId: string;
+      alternativeId: string;
+      attemptId: string;
+      receiptHash: string;
+      seedCertificateHash: string;
+      commitArtifactHash: string;
+      artifactKey: string;
+    } | null;
+  },
+): { committed: boolean; closed: string[] } {
+  const ledger = cursor.seedExecution;
+  if (!ledger) throw new Error("W5 seed closure refused because the checkpoint ledger is absent");
+  if (ledger.committedAttemptIds.includes(args.attemptId)) return { committed: false, closed: [] };
+  if (args.attemptArtifact.alternativeId !== args.alternativeId || args.attemptArtifact.attemptId !== args.attemptId) {
+    throw new Error("W5 seed attempt artifact identity differs");
+  }
+  if (args.receipt && (
+    args.receipt.caseId !== args.expectedCaseId || args.receipt.seedCertificateHash !== args.expectedCertificateHash ||
+    args.receipt.alternativeId !== args.alternativeId ||
+    args.receipt.attemptId !== args.attemptId || args.receipt.commitArtifactHash !== args.attemptArtifact.artifactHash ||
+    args.receipt.artifactKey !== args.attemptArtifact.artifactKey
+  )) throw new Error("W5 seed receipt pointer differs from selected case or attempt artifact");
+  if (!ledger.reservation || ledger.reservation.alternativeId !== args.alternativeId || ledger.reservation.attemptId !== args.attemptId) {
+    throw new Error("W5 seed closure refused because its pre-effect reservation differs");
+  }
+  ledger.committedAttemptIds.push(args.attemptId);
+  ledger.reservation = null;
+  ledger.attempts.push(args.attemptArtifact);
+  if (!args.retryable && !ledger.doneAlternativeIds.includes(args.alternativeId)) {
+    ledger.doneAlternativeIds.push(args.alternativeId);
+  }
+  if (!args.receipt || ledger.receipts.some((row) => row.caseId === args.receipt!.caseId)) {
+    return { committed: true, closed: [] };
+  }
+  if (!cursor.pendingCaseIds.includes(args.receipt.caseId)) return { committed: true, closed: [] };
+  ledger.receipts.push(args.receipt);
+  return { committed: true, closed: [args.receipt.caseId] };
+}
+
+export function retireSeedReservationWithoutArtifact(
+  cursor: ExecutionCursor,
+  reservation: { alternativeId: string; attemptId: string },
+): void {
+  const ledger = cursor.seedExecution;
+  if (!ledger || !ledger.reservation || ledger.reservation.alternativeId !== reservation.alternativeId ||
+    ledger.reservation.attemptId !== reservation.attemptId) {
+    throw new Error("W5 orphan retirement refused because its reservation differs");
+  }
+  ledger.reservation = null;
+  if (!ledger.committedAttemptIds.includes(reservation.attemptId)) ledger.committedAttemptIds.push(reservation.attemptId);
+  if (!ledger.doneAlternativeIds.includes(reservation.alternativeId)) ledger.doneAlternativeIds.push(reservation.alternativeId);
+  ledger.refusals.push({
+    alternativeId: reservation.alternativeId,
+    attemptId: reservation.attemptId,
+    reason: "pre-effect reservation had no immutable attempt artifact; retired without re-actuation or coverage credit",
+  });
 }
 
 /** Acquire a browser session, retrying the known transient cold-start failure ONCE. */
@@ -330,6 +745,7 @@ interface WorkItem {
   path: PlannedPath;
   tier: 1 | 2;
   assignment: PathAssignment | null;
+  seedAlternative: SeedAlternative | null;
 }
 
 /**
@@ -358,11 +774,19 @@ export function selectWork(program: ExecutionProgram, progress: ExecProgress, ma
     if (floorDone.has(a.pathId) && executable) continue;
     pendingFloor += 1;
     if (!executable) continue;
-    out.push({ path: p, tier: 1, assignment: a });
+    out.push({ path: p, tier: 1, assignment: a, seedAlternative: null });
   }
   // FLOOR FIRST, ALWAYS. An unsupported floor path is still pending contractual work; do not
   // run optional exploration past it and make the run look further along than it is.
   if (pendingFloor > 0) return out;
+
+  const seedDone = new Set(progress.seedDone ?? []);
+  for (const alternative of program.seedPlan?.alternatives ?? []) {
+    if (seedDone.has(alternative.alternativeId)) continue;
+    out.push({ path: alternative.path, tier: 2, assignment: null, seedAlternative: alternative });
+  }
+  // Selected seeds are denominator-directed work. Finish them before optional risk probes.
+  if (out.length > 0) return out;
 
   const expDone = new Set(progress.explorationDone);
   // Old `explorationDone` rows for unsupported instructions prove only that one forward walk
@@ -375,7 +799,7 @@ export function selectWork(program: ExecutionProgram, progress: ExecProgress, ma
   for (const e of program.plan.exploration.queue) {
     if (expDone.has(e.id)) continue;
     if (!isExecutableProbePath(e)) continue;
-    out.push({ path: e as unknown as PlannedPath, tier: 2, assignment: null });
+    out.push({ path: e as unknown as PlannedPath, tier: 2, assignment: null, seedAlternative: null });
     if (out.length >= budget) break;
   }
   return out;
@@ -391,6 +815,8 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
     return { done: true, stopReason: EXEC_STOP_PLAN_MISSING, pathsWalked: 0, casesClosed: 0, steps: 0 };
   }
   const progress = await loadProgress(env, args.runId, args.planRevisionId);
+  args.cursor = await recoverSeedReservation(env, args, program, args.cursor);
+  if (await reconcileSeedProgress(env, program, args.cursor, progress)) await saveProgress(env, progress);
 
   const maxExploration = num((env as unknown as { EXEC_MAX_EXPLORATION?: string }).EXEC_MAX_EXPLORATION, 0);
   const work = selectWork(program, progress, maxExploration);
@@ -471,6 +897,16 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         env,
         args.runId,
         (d) => {
+          if (item.seedAlternative) {
+            const ledger = d.execution?.seedExecution;
+            if (!ledger) throw new Error("W5 seed actuation refused because the checkpoint ledger is absent");
+            if (ledger.reservation) {
+              throw new Error(
+                `W5 seed actuation refused: unresolved reservation ${ledger.reservation.attemptId} for ${ledger.reservation.alternativeId}`,
+              );
+            }
+            ledger.reservation = { alternativeId: item.seedAlternative.alternativeId, attemptId };
+          }
           d.currentAttempt = {
             attemptId,
             pathId: item.path.id,
@@ -593,15 +1029,45 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       // function so there is one place to read, one place to test and one place to break.
       const audit = assessExercised(obs, item.path.decisions as PlannedDecision[] | undefined);
       const exercised = audit.exercised;
-      const closed =
+      const seededCaseIds = new Set((program.seedPlan?.alternatives ?? []).map((row) => row.caseId));
+      const standardClosed =
         item.assignment && exercised
-          ? item.assignment.caseIds.filter((id) => !args.cursor.completedCaseIds.includes(id))
+          ? item.assignment.caseIds.filter((id) => !seededCaseIds.has(id) && !args.cursor.completedCaseIds.includes(id))
           : [];
+      let seedReceipt: CaseWitnessReceipt | null = null;
+      let seedCommit: SeedCommitArtifact | null = null;
+      let seedReceiptArtifactKey: string | null = null;
+      let seedReceiptRefusal: string | null = null;
+      progress.seedReceiptRefusals = progress.seedReceiptRefusals ?? [];
+      if (item.seedAlternative) {
+        const verified = await verifiedPathObservation(env, args.runId, obs);
+        const retainedObservation = verified.observation;
+        const retainedAudit = assessExercised(retainedObservation, item.path.decisions as PlannedDecision[] | undefined);
+        const receiptResult = await deriveCaseWitnessReceipt(item.seedAlternative, retainedObservation, verified.evidenceId);
+        if (receiptResult.ok) {
+          seedReceipt = receiptResult.receipt;
+        } else {
+          seedReceiptRefusal = receiptResult.reason;
+          progress.seedReceiptRefusals.push({
+            alternativeId: item.seedAlternative.alternativeId,
+            caseId: item.seedAlternative.caseId,
+            attemptId: obs.attemptId,
+            reason: receiptResult.reason,
+          });
+        }
+        seedCommit = await seedCommitArtifact(
+          seedReceipt,
+          seedReceiptRefusal,
+          verified.evidenceId,
+          retainedObservation,
+          walkRecord(retainedObservation, seedReceipt ? [seedReceipt.caseId] : [], retainedAudit, undefined, verified.evidenceId),
+        );
+        seedReceiptArtifactKey = seedCommitArtifactKey(args.runId, obs.attemptId);
+        await env.EVIDENCE.put(seedReceiptArtifactKey, JSON.stringify(seedCommit), {
+          httpMetadata: { contentType: "application/json", cacheControl: "no-store" },
+        });
+      }
       const walkedOk = obs.outcome !== "error";
-
-      progress.walks.push(walkRecord(obs, closed, audit));
-      progress.totalSteps += obs.steps.length;
-      progress.totalEvidence += obs.evidenceIds.length;
 
       // A WEDGED BROWSER GETS THE PATH ONE MORE CHANCE, ON A FRESH SESSION — AND ONLY ONE.
       // Marking a hung path "done" would discard a whole floor path over a transient
@@ -615,22 +1081,56 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       }
       const retryable = browserHung && !alreadyHung;
 
-      if (!retryable) {
-        if (item.tier === 1) {
-          if (!progress.floorDone.includes(item.path.id)) progress.floorDone.push(item.path.id);
-        } else if (!progress.explorationDone.includes(item.path.id)) {
-          progress.explorationDone.push(item.path.id);
+      // Ordinary paths keep the established progress-before-checkpoint protocol. Only W5
+      // seed attempts use checkpoint-first because their immutable attempt artifact makes the
+      // walk exactly reconstructible after a crash.
+      if (!item.seedAlternative) {
+        if (!retryable) {
+          if (item.tier === 1 && !progress.floorDone.includes(item.path.id)) progress.floorDone.push(item.path.id);
+          else if (item.tier !== 1 && !progress.explorationDone.includes(item.path.id)) progress.explorationDone.push(item.path.id);
         }
+        progress.walks.push(walkRecord(obs, standardClosed, audit));
+        progress.totalSteps += obs.steps.length;
+        progress.totalEvidence += obs.evidenceIds.length;
+        await saveProgress(env, progress);
       }
-      await saveProgress(env, progress);
 
-      // ---- COMMIT: one durable write per path ----
-      await updateCheckpoint(
+      let closed: string[] = [];
+      let committed = false;
+      const checkpointAfter = await updateCheckpoint(
         env,
         args.runId,
         (d) => {
           const c = d.execution;
           if (!c) return false;
+          if (item.seedAlternative) {
+            const result = applySeedAttemptCommit(c, {
+              alternativeId: item.seedAlternative.alternativeId,
+              expectedCaseId: item.seedAlternative.certificate.facetInstanceId,
+              expectedCertificateHash: item.seedAlternative.certificate.certificateHash,
+              attemptId: obs.attemptId,
+              retryable,
+              attemptArtifact: {
+                alternativeId: item.seedAlternative.alternativeId,
+                attemptId: obs.attemptId,
+                artifactHash: seedCommit!.artifactHash,
+                artifactKey: seedReceiptArtifactKey!,
+              },
+              receipt: seedReceipt && seedReceiptArtifactKey ? {
+                caseId: seedReceipt.caseId,
+                alternativeId: seedReceipt.alternativeId,
+                attemptId: seedReceipt.attemptId,
+                receiptHash: seedReceipt.receiptHash,
+                seedCertificateHash: seedReceipt.seedCertificateHash,
+                commitArtifactHash: seedCommit!.artifactHash,
+                artifactKey: seedReceiptArtifactKey,
+              } : null,
+            });
+            if (!result.committed) return false;
+            closed = result.closed;
+          } else {
+            closed = standardClosed.filter((id) => c.pendingCaseIds.includes(id));
+          }
           const next: ExecutionCursor = applySessionToCursor(
             {
               ...c,
@@ -646,16 +1146,35 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
           d.attempts.started += 1;
           if (walkedOk) d.attempts.completed += 1;
           d.currentAttempt = null;
+          committed = true;
           return true;
         },
         { progressed: true, fence: args.fence },
       );
 
+      if (!committed || !checkpointAfter?.execution) continue;
+      Object.assign(args.cursor, checkpointAfter.execution);
+      if (item.seedAlternative && !retryable) {
+        if (item.tier === 1) {
+          if (!progress.floorDone.includes(item.path.id)) progress.floorDone.push(item.path.id);
+        } else if (item.seedAlternative) {
+          progress.seedDone = [...(args.cursor.seedExecution?.doneAlternativeIds ?? [])];
+        } else if (!progress.explorationDone.includes(item.path.id)) {
+          progress.explorationDone.push(item.path.id);
+        }
+      }
+      if (seedReceipt && closed.length > 0) {
+        progress.caseWitnessReceipts = [...(progress.caseWitnessReceipts ?? []), seedReceipt];
+      }
+      if (item.seedAlternative) {
+        progress.walks.push(walkRecord(obs, closed, audit, undefined, seedCommit?.observationEvidenceId));
+        progress.totalSteps += obs.steps.length;
+        progress.totalEvidence += obs.evidenceIds.length;
+        await saveProgress(env, progress);
+      }
+
       // Keep the in-memory cursor in step with what we just committed, so a second path
       // in this same batch does not re-close cases the first one already closed.
-      args.cursor.completedCaseIds = [...args.cursor.completedCaseIds, ...closed];
-      args.cursor.pendingCaseIds = args.cursor.pendingCaseIds.filter((id) => !closed.includes(id));
-
       pathsWalked += 1;
       casesClosed += closed.length;
       steps += obs.steps.length;
@@ -680,6 +1199,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       // `assessExercised` gate as any walk, and the cursor filter above each closure list
       // is what stops a pivot from re-closing what attempt 0 already closed.
       while (
+        !item.seedAlternative &&
         screenoutRetryEligible({
           obs,
           path: item.path,
@@ -754,7 +1274,11 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         const retryAudit = assessExercised(obs, item.path.decisions as PlannedDecision[] | undefined);
         const retryClosed =
           item.assignment && retryAudit.exercised
-            ? item.assignment.caseIds.filter((id) => !args.cursor.completedCaseIds.includes(id))
+            ? item.assignment.caseIds.filter(
+                (id) =>
+                  !(program.seedPlan?.alternatives ?? []).some((alternative) => alternative.caseId === id) &&
+                  !args.cursor.completedCaseIds.includes(id),
+              )
             : [];
         const retryWalkedOk = obs.outcome !== "error";
 
@@ -1068,6 +1592,7 @@ export function screenoutRetryEligible(args: {
   if (!((obs.navigatorDefaultAnswerCount ?? 0) > 0)) return false;
   if (path.terminated_at != null) return false;
   if (Array.isArray(path.decisions) && path.decisions.some((d) => d && d.case_action !== undefined)) return false;
+  if (Array.isArray(path.decisions) && path.decisions.some((d) => typeof d?.seed_certificate_hash === "string")) return false;
   if ((path as { adjacency?: { side?: string } }).adjacency?.side === "just-triggers") return false;
   if ((args.pivots?.[path.id] ?? 0) >= SCREENOUT_PIVOT_CAP) return false;
   if (args.pathsWalked >= args.maxAttempts) return false;
@@ -1153,6 +1678,7 @@ export function walkRecord(
   audit: ExercisedAssessment = NOT_ASSESSED,
   /** BOUNDED SCREEN-OUT RETRY: set ONLY on a pivot walk. See `WalkRecord.pivot`. */
   pivot?: WalkRecord["pivot"],
+  observationEvidenceId?: string,
 ): WalkRecord {
   return {
     ...audit,
@@ -1175,6 +1701,9 @@ export function walkRecord(
     // retry — but it travels by the same opt-in spread: without it, `"pivot" in walk` would
     // read every ordinary walk as one that HAS a (undefined) pivot.
     ...(pivot !== undefined ? { pivot } : {}),
+    ...((observationEvidenceId ?? obs.observationEvidenceId) !== undefined
+      ? { observationEvidenceId: observationEvidenceId ?? obs.observationEvidenceId }
+      : {}),
     pathId: obs.pathId,
     tier: obs.tier,
     attemptId: obs.attemptId,

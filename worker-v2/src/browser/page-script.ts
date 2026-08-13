@@ -30,7 +30,11 @@
  * selector's document order, and the driver resolves the same selector to element handles
  * — so `controls[i]` and `handles[i]` are the same element. Change one, change both.
  */
-export const CONTROL_SELECTOR = "input, select, textarea, button, a[role=button], [role=radio], [role=checkbox]";
+export const CONTROL_SELECTOR =
+  'input, select, textarea, button, a[role=button], [role=radio], [role=checkbox], ' +
+  '[role=combobox], [role=listbox], [aria-haspopup="listbox"], ' +
+  '[draggable="true"], [aria-grabbed], [aria-dropeffect], ' +
+  '[aria-roledescription*="sortable" i], [aria-roledescription*="draggable" i]';
 
 /**
  * The ACTUATION selector, and its own order contract.
@@ -203,6 +207,10 @@ export const CLASSIFY_CONTROL_ROLE_SRC = `
 (function classifyControlRole(c) {
   var FORWARD = /^(next|continue|start|begin|submit|finish|finished|done|complete|completed|proceed|go on|siguiente|continuar|enviar|terminar|weiter|absenden|fertig|suivant|continuer|envoyer|terminer|avanti|invia)\\b/;
   var BACK = /^(back|previous|prev|return|go back|atr[a\\u00e1]s|anterior|zur[u\\u00fc]ck|pr[e\\u00e9]c[e\\u00e9]dent|indietro)\\b/;
+  // Direction-only navigation controls have no word to match. A left-pointing glyph is still
+  // evidence supplied by the control itself; naming it here is safer than allowing the driver's
+  // "sole forward candidate" fallback to turn a Back-only ending into an A<->B loop.
+  var BACK_SYMBOL = /^(?:<+|\\u2039|\\u00ab|\\u2190|\\u2b05|\\u25c0|\\u23ea)$/;
   // CJK prints no word boundaries, so those are substring tests, not \\b-anchored ones.
   var FORWARD_CJK = ['\\u6b21\\u3078', '\\u9032\\u3080', '\\u5b8c\\u4e86', '\\u9001\\u4fe1', '\\u958b\\u59cb', '\\u4e0b\\u4e00\\u6b65', '\\u4e0b\\u4e00\\u9801', '\\u4e0b\\u4e00\\u9875', '\\u7e7c\\u7e8c', '\\u7ee7\\u7eed', '\\u63d0\\u4ea4', '\\u5b8c\\u6210', '\\u5f00\\u59cb', '\\ub2e4\\uc74c', '\\uc81c\\ucd9c'];
   var BACK_CJK = ['\\u623b\\u308b', '\\u524d\\u3078', '\\u4e0a\\u4e00\\u6b65', '\\u4e0a\\u4e00\\u9801', '\\u4e0a\\u4e00\\u9875', '\\u8fd4\\u56de', '\\uc774\\uc804'];
@@ -211,6 +219,7 @@ export const CLASSIFY_CONTROL_ROLE_SRC = `
     var t = norm(v);
     if (!t) return null;
     var low = t.toLowerCase();
+    if (BACK_SYMBOL.test(t)) return 'back';
     if (FORWARD.test(low)) return 'next';
     if (BACK.test(low)) return 'back';
     for (var i = 0; i < FORWARD_CJK.length; i++) if (t.indexOf(FORWARD_CJK[i]) >= 0) return 'next';
@@ -233,6 +242,158 @@ export const CLASSIFY_CONTROL_ROLE_SRC = `
   // NOT "no button": "no field this reader consults named a direction". A caller must treat it
   // as unknown, never as evidence that the survey offers no way forward.
   return { role: 'other', via: null };
+})
+`;
+
+/**
+ * DOES A TABLE DESCRIBE A MATRIX, OR DOES IT MERELY LAY OUT ONE NATIVE CHOICE GROUP?
+ *
+ * HTML radio semantics provide a platform-neutral discriminator: radios with the same non-empty
+ * `name` and form owner are ONE single-choice group even if CSS/table rows draw each option on a
+ * different line. A real native-radio matrix needs at least two row groups, at least two choices
+ * in each row, one group name per row, and distinct group names between rows. Without that proof
+ * the reader leaves `grid` null and the ordinary option-group path selects at most one radio.
+ *
+ * Non-choice tables retain the established grid path (notably constant-sum number tables).
+ * Checkbox/mixed choice tables are not promoted: native names do not prove one-choice-per-row
+ * semantics for them, so the caller reports a named limitation instead of guessing.
+ *
+ * Held as source text for the same reason as the navigation classifier: the node negative and
+ * the in-page reader execute byte-identical logic.
+ */
+export const CLASSIFY_TABLE_GRID_SRC = `
+(function classifyTableGridRows(rows) {
+  var clean = (rows || []).map(function (row) {
+    return (row || []).map(function (input) {
+      return {
+        type: String(input && input.type || '').toLowerCase(),
+        name: String(input && input.name || '').trim(),
+      };
+    });
+  }).filter(function (row) { return row.length > 0; });
+  var choiceRows = clean.filter(function (row) {
+    return row.some(function (input) { return input.type === 'radio' || input.type === 'checkbox'; });
+  });
+  if (choiceRows.length === 0) return { isGrid: clean.length > 0, reason: 'no-native-choice-controls', limitation: false };
+  if (choiceRows.length !== clean.length || choiceRows.some(function (row) {
+    return row.some(function (input) { return input.type !== 'radio'; });
+  })) {
+    return {
+      isGrid: false,
+      reason: 'mixed-or-checkbox-table-choice-semantics-unresolved',
+      limitation: true,
+    };
+  }
+  var names = [];
+  for (var i = 0; i < choiceRows.length; i++) {
+    var row = choiceRows[i];
+    var rowNames = [];
+    for (var j = 0; j < row.length; j++) if (rowNames.indexOf(row[j].name) < 0) rowNames.push(row[j].name);
+    // One row (or one radio per row) is ordinary form layout, not enough evidence that the
+    // table means "answer every row". Empty/multiple names likewise cannot prove row ownership.
+    if (choiceRows.length < 2 || row.length < 2 || rowNames.length !== 1 || !rowNames[0]) {
+      return { isGrid: false, reason: 'single-native-radio-group-or-unproven-rows', limitation: false };
+    }
+    names.push(rowNames[0]);
+  }
+  for (var a = 0; a < names.length; a++) {
+    for (var b = a + 1; b < names.length; b++) {
+      if (names[a] === names[b]) {
+        return { isGrid: false, reason: 'single-native-radio-group-spans-table-rows', limitation: false };
+      }
+    }
+  }
+  return { isGrid: true, reason: 'distinct-native-radio-row-groups', limitation: false };
+})
+`;
+
+/**
+ * Group native radio/checkbox controls by the browser's own structural identity: exact type,
+ * exact name, and native form owner. Unnamed controls are singleton groups. The result keeps
+ * identity as closed fields, never a delimiter-concatenated string that two tuples can alias.
+ */
+export const GROUP_NATIVE_CHOICES_SRC = `
+(function groupNativeChoices(controls) {
+  var out = [];
+  (controls || []).forEach(function (c) {
+    var type = String(c && c.type || '').toLowerCase();
+    if (type !== 'radio' && type !== 'checkbox') return;
+    var rawName = c && c.name != null ? String(c.name) : '';
+    var name = rawName.length > 0 ? rawName : null;
+    var formOwner = Number.isSafeInteger(c && c.formOwner) && c.formOwner >= 0 ? c.formOwner : null;
+    var unnamedControlIdx = name === null ? c.idx : null;
+    var row = out.find(function (candidate) {
+      return candidate.identity.type === type &&
+        candidate.identity.name === name &&
+        candidate.identity.formOwner === formOwner &&
+        candidate.identity.unnamedControlIdx === unnamedControlIdx;
+    });
+    if (!row) {
+      row = {
+        identity: {
+          type: type,
+          name: name,
+          formOwner: formOwner,
+          unnamedControlIdx: unnamedControlIdx,
+        },
+        controlIdxs: [],
+      };
+      out.push(row);
+    }
+    row.controlIdxs.push(c.idx);
+  });
+  return out;
+})
+`;
+
+/**
+ * Reconcile DOM question-root candidates by the respondent controls they own. Exact duplicate
+ * wrappers collapse; a wrapper that is only the union of more-specific roots is discarded; any
+ * remaining overlaps collapse into one unresolved owner. The returned roots are disjoint.
+ */
+export const COLLAPSE_QUESTION_ROOTS_SRC = `
+(function collapseQuestionRoots(candidates) {
+  var unique = [];
+  (candidates || []).forEach(function (candidate) {
+    var ids = Array.from(new Set((candidate.controlIdxs || []).filter(Number.isSafeInteger))).sort(function (a, b) { return a - b; });
+    if (ids.length === 0) return;
+    var same = unique.find(function (row) {
+      return row.controlIdxs.length === ids.length && row.controlIdxs.every(function (v, i) { return v === ids[i]; });
+    });
+    if (same) {
+      if (candidate.label && !same.label) same.label = candidate.label;
+      same.via = same.via + '+' + candidate.via;
+    } else {
+      unique.push({ via: String(candidate.via || 'unknown'), label: candidate.label || null, controlIdxs: ids });
+    }
+  });
+  var minimal = unique.filter(function (row) {
+    var subsets = unique.filter(function (other) {
+      return other !== row && other.controlIdxs.length < row.controlIdxs.length &&
+        other.controlIdxs.every(function (idx) { return row.controlIdxs.indexOf(idx) >= 0; });
+    });
+    if (subsets.length === 0) return true;
+    var union = Array.from(new Set([].concat.apply([], subsets.map(function (x) { return x.controlIdxs; })))).sort(function (a, b) { return a - b; });
+    return !(union.length === row.controlIdxs.length && union.every(function (v, i) { return v === row.controlIdxs[i]; }));
+  });
+  var components = [];
+  minimal.forEach(function (row) {
+    var touching = components.filter(function (component) {
+      return component.controlIdxs.some(function (idx) { return row.controlIdxs.indexOf(idx) >= 0; });
+    });
+    if (touching.length === 0) {
+      components.push({ via: row.via, label: row.label, controlIdxs: row.controlIdxs.slice() });
+      return;
+    }
+    var merged = {
+      via: touching.map(function (x) { return x.via; }).concat([row.via]).join('+'),
+      label: touching.map(function (x) { return x.label; }).filter(Boolean)[0] || row.label || null,
+      controlIdxs: Array.from(new Set([].concat.apply([], touching.map(function (x) { return x.controlIdxs; })).concat(row.controlIdxs))).sort(function (a, b) { return a - b; }),
+    };
+    components = components.filter(function (component) { return touching.indexOf(component) < 0; });
+    components.push(merged);
+  });
+  return components.sort(function (a, b) { return a.controlIdxs[0] - b.controlIdxs[0]; });
 })
 `;
 
@@ -330,6 +491,9 @@ const READ_SCREEN_BODY = `
   const TEXT_ENTRY_TYPES = ${JSON.stringify(TEXT_ENTRY_TYPES)};
   const VALUE_ENTRY_TYPES = ${JSON.stringify(VALUE_ENTRY_TYPES)};
   const classifyControlRole = ${CLASSIFY_CONTROL_ROLE_SRC.trim()};
+  const classifyTableGridRows = ${CLASSIFY_TABLE_GRID_SRC.trim()};
+  const groupNativeChoices = ${GROUP_NATIVE_CHOICES_SRC.trim()};
+  const collapseQuestionRoots = ${COLLAPSE_QUESTION_ROOTS_SRC.trim()};
   const checkCountsAgainstInventory = ${CHECK_COUNTS_SRC.trim()};
   const vis = (el) => {
     if (!el || !el.getClientRects) return false;
@@ -448,13 +612,35 @@ const READ_SCREEN_BODY = `
   const nodes = Array.prototype.slice.call(document.querySelectorAll(SEL));
   const controls = nodes.map((el, idx) => {
     const tag = el.tagName.toLowerCase();
-    const type = tag === 'input' ? String(el.type || 'text').toLowerCase() : tag;
+    const role = String(attr(el, 'role') || '').toLowerCase().trim();
+    const roleDescription = String(attr(el, 'aria-roledescription') || '').toLowerCase();
+    const widgetKinds = [];
+    if (tag !== 'select' && (role === 'combobox' || attr(el, 'aria-haspopup') === 'listbox')) widgetKinds.push('combobox');
+    if (tag !== 'select' && role === 'listbox') widgetKinds.push('listbox');
+    if (attr(el, 'draggable') === 'true' || attr(el, 'aria-grabbed') !== null || roleDescription.indexOf('dragg') >= 0) widgetKinds.push('draggable');
+    if (roleDescription.indexOf('sort') >= 0) widgetKinds.push('sortable');
+    if (attr(el, 'aria-dropeffect') !== null) widgetKinds.push('drop-target');
+    const nativeType = tag === 'input' ? String(el.type || 'text').toLowerCase() : tag;
+    // A text input with role=combobox is NOT an ordinary text field. Recording the semantic
+    // widget type keeps the value filler from typing into it and pretending the popup was used.
+    const type = tag === 'select' ? 'select'
+      : widgetKinds.indexOf('combobox') >= 0 ? 'combobox'
+      : widgetKinds.indexOf('listbox') >= 0 ? 'listbox'
+      : widgetKinds.indexOf('sortable') >= 0 ? 'sortable'
+      : widgetKinds.indexOf('draggable') >= 0 ? 'draggable'
+      : widgetKinds.indexOf('drop-target') >= 0 ? 'drop-target'
+      : nativeType;
     const act = actuationOf(el, type);
     const c = {
       idx: idx,
       tag: tag,
       type: type,
       name: el.name || attr(el, 'name') || null,
+      // Native form owner by object identity in document.forms order. An author-controlled
+      // id/name is not identity, and external [form=x] controls correctly resolve to that form.
+      formOwner: el.form
+        ? Array.prototype.indexOf.call(document.forms || [], el.form)
+        : null,
       id: el.id || null,
       code: el.value !== undefined && type !== 'text' && type !== 'textarea' ? String(el.value) : null,
       label: labelFor(el).slice(0, 300),
@@ -466,7 +652,7 @@ const READ_SCREEN_BODY = `
       // value here is evidence of an answer only for the types whose empty state is the empty
       // string. \`valueIsUserSupplied\` below is the field that keeps those two apart, and the
       // driver's "skip a control that is already filled" rule reads THAT, never this.
-      value: VALUE_ENTRY_TYPES.indexOf(type) >= 0 ? String(el.value == null ? '' : el.value) : null,
+      value: VALUE_ENTRY_TYPES.indexOf(type) >= 0 || tag === 'select' ? String(el.value == null ? '' : el.value) : null,
       // Does a non-empty \`value\` on THIS control witness an answer? False for the types the
       // browser gives a default to (\`range\`, \`color\`): there, "has a value" is the initial
       // state of an untouched control and reading it as an answer would skip the question.
@@ -501,28 +687,135 @@ const READ_SCREEN_BODY = `
       // falls back to ancestor text and these do not. See CLASSIFY_CONTROL_ROLE_SRC.
       title: attr(el, 'title'),
       ariaLabel: attr(el, 'aria-label'),
+      widgetKinds: widgetKinds.length > 0 ? widgetKinds : undefined,
     };
     if (tag === 'select') {
+      c.multiple = !!el.multiple;
       c.options = Array.prototype.slice.call(el.options || []).map((o, i) => ({
-        order: i, code: String(o.value), label: txt(o), selected: !!o.selected, disabled: !!o.disabled,
+        order: i,
+        code: String(o.value),
+        label: String(o.label || txt(o)).replace(/\\s+/g, ' ').trim(),
+        selected: !!o.selected,
+        disabled: !!o.disabled || !!(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.disabled),
+        hidden: !!o.hidden || !!(o.parentElement && o.parentElement.tagName === 'OPTGROUP' && o.parentElement.hidden),
+        // HTML's placeholder-label option, not a guess based on words such as "Choose one".
+        placeholder: i === 0 && !!el.required && !el.multiple && Number(el.size || 0) <= 1 &&
+          String(o.value) === '' && o.parentElement === el,
       }));
     }
     return c;
   });
 
+  // ACCESSIBLE CUSTOM WIDGETS ARE DISCOVERED, BUT NOT SILENTLY PROMOTED TO NATIVE CONTROLS.
+  // The reader cannot yet prove the owned popup's complete option inventory or a drag's semantic
+  // source/target relation. Name that shortfall here; the driver separately names each visible
+  // widget as unfillable. These selectors are standards/ARIA signals, never vendor classes.
+  const customSelectionWidgets = controls.filter((c) => c.visible &&
+    (c.widgetKinds || []).some((k) => k === 'combobox' || k === 'listbox'));
+  if (customSelectionWidgets.length > 0) {
+    limit(
+      'custom-selection-widget-actuation-unsupported',
+      'found ' + customSelectionWidgets.length + ' visible accessible combobox/listbox widget(s), but this reader cannot yet certify a uniquely owned complete option inventory for them; they are recorded as unfillable, not answered',
+      customSelectionWidgets.length,
+    );
+  }
+  const dragWidgets = controls.filter((c) => c.visible &&
+    (c.widgetKinds || []).some((k) => k === 'draggable' || k === 'sortable' || k === 'drop-target'));
+  if (dragWidgets.length > 0) {
+    limit(
+      'drag-widget-actuation-unsupported',
+      'found ' + dragWidgets.length + ' visible draggable/sortable/drop-target widget(s), but this reader cannot yet certify their semantic source/target relation or post-drag order; they are recorded as unfillable, not moved',
+      dragWidgets.length,
+    );
+  }
+
+  // The selector can discover a widget through more than one semantic attribute, and nested
+  // descendants can describe the SAME composite widget. The driver names nodes it cannot safely
+  // actuate; this limitation makes the possible over-segmentation explicit instead of pretending
+  // node count equals respondent-facing widget count.
+  const semanticWidgetNodes = controls.filter((c) => c.visible && (c.widgetKinds || []).length > 0);
+  const semanticWidgetElements = semanticWidgetNodes.map((c) => nodes[c.idx]).filter(Boolean);
+  let nestedSemanticNodes = 0;
+  for (let i = 0; i < semanticWidgetElements.length; i++) {
+    for (let j = 0; j < semanticWidgetElements.length; j++) {
+      if (i !== j && semanticWidgetElements[j].contains(semanticWidgetElements[i])) {
+        nestedSemanticNodes += 1;
+        break;
+      }
+    }
+  }
+  if (nestedSemanticNodes > 0) {
+    limit(
+      'semantic-widget-nesting-unresolved',
+      nestedSemanticNodes + ' visible semantic widget node(s) are nested inside another discovered widget; the reader cannot yet prove whether they are distinct respondent controls, so node-level unfillable rows may over-segment the composite widget',
+      nestedSemanticNodes,
+    );
+  }
+
   // THE COMPLETE OPTION LIST, grouped as the respondent sees it. Order is DOM order,
   // which is the order that has to be compared against the document's option order.
-  const groups = {};
-  controls.forEach((c) => {
-    if (c.type !== 'radio' && c.type !== 'checkbox') return;
-    const key = c.name || '(unnamed)';
-    if (!groups[key]) groups[key] = { name: key, kind: c.type, options: [] };
-    groups[key].options.push({
-      order: groups[key].options.length, idx: c.idx, code: c.code, label: c.label,
-      checked: c.checked, disabled: c.disabled, visible: c.visible,
-      operable: c.operable, actuatedVia: c.actuatedVia, labelIndex: c.labelIndex,
+  const groupList = groupNativeChoices(controls).map((descriptor) => {
+    const options = descriptor.controlIdxs.map((idx, order) => {
+      const c = controls.find((candidate) => candidate.idx === idx);
+      return {
+        order: order, idx: c.idx, code: c.code, label: c.label,
+        checked: c.checked, disabled: c.disabled, visible: c.visible,
+        operable: c.operable, actuatedVia: c.actuatedVia, labelIndex: c.labelIndex,
+      };
     });
+    return {
+      name: descriptor.identity.name === null ? '(unnamed)' : descriptor.identity.name,
+      kind: descriptor.identity.type,
+      identity: descriptor.identity,
+      options: options,
+    };
   });
+
+  // DISTINCT QUESTION OWNERS, derived from semantic/container roots and the respondent
+  // controls they actually own. Heading count is deliberately irrelevant: one question often
+  // has a page heading, a legend, and a hidden accessibility copy. Exact duplicate/nested
+  // wrappers collapse by owned control set. Two disjoint roots are a multi-question screen,
+  // which the generic walker cannot safely bind or actuate as one question.
+  const isRespondentControl = (c) => {
+    if (!c || c.disabled || c.readOnly) return false;
+    if (!(c.operable == null ? c.visible : c.operable)) return false;
+    if (c.type === 'hidden' || c.type === 'button' || c.type === 'submit' || c.type === 'reset') return false;
+    if (c.tag === 'button' || c.tag === 'a') return false;
+    return c.type === 'radio' || c.type === 'checkbox' || c.type === 'select' ||
+      VALUE_ENTRY_TYPES.indexOf(c.type) >= 0 || c.type === 'password' || c.type === 'file' ||
+      (c.widgetKinds || []).length > 0;
+  };
+  const rootNodes = Array.prototype.slice.call(document.querySelectorAll(
+    'fieldset, [role=group], [role=radiogroup], .question, [class*=question], [data-question]'
+  )).filter(vis);
+  const rootCandidates = rootNodes.map((root) => {
+    const controlIdxs = controls.filter((c) => isRespondentControl(c) && nodes[c.idx] && root.contains(nodes[c.idx]))
+      .map((c) => c.idx);
+    if (controlIdxs.length === 0) return null;
+    const role = String(attr(root, 'role') || '').toLowerCase();
+    const labelledBy = attr(root, 'aria-labelledby');
+    const labelledNode = labelledBy ? document.getElementById(labelledBy.split(/\\s+/)[0]) : null;
+    const ownHeading = root.querySelector ? root.querySelector('legend, h1, h2, h3, [role=heading]') : null;
+    const label = (attr(root, 'aria-label') || txt(labelledNode) || txt(ownHeading) || '').slice(0, 300) || null;
+    const via = String(root.tagName || '').toLowerCase() === 'fieldset'
+      ? 'fieldset'
+      : role === 'group' || role === 'radiogroup'
+        ? 'aria-' + role
+        : attr(root, 'data-question') !== null
+          ? 'data-question'
+          : 'question-container';
+    return { via: via, label: label, controlIdxs: controlIdxs };
+  }).filter(Boolean);
+  const questionRoots = collapseQuestionRoots(rootCandidates);
+  if (questionRoots.length >= 2) {
+    limit(
+      'multi-question-screen-actuation-unsupported',
+      'found ' + questionRoots.length + ' distinct visible question root(s) owning disjoint respondent-control sets (' +
+        questionRoots.map((root) => root.via + ':' + root.controlIdxs.join(',')).join('; ') +
+        '); the generic walker cannot bind one planned decision or one default answer across multiple question owners, so it must capture this screen without actuating it',
+      questionRoots.length,
+    );
+  }
 
   // A grid/matrix screen: a table whose rows each carry one input group.
   //
@@ -548,6 +841,10 @@ const READ_SCREEN_BODY = `
   if (table) {
     const allRows = Array.prototype.slice.call(table.querySelectorAll('tr'));
     const inputsIn = (tr) => Array.prototype.slice.call(tr.querySelectorAll('input, select'));
+    const tableSemantics = classifyTableGridRows(allRows.map((tr) => inputsIn(tr).map((input) => ({
+      type: String(input.type || input.tagName || '').toLowerCase(),
+      name: input.name || attr(input, 'name') || '',
+    }))));
     // The header row: <th>s and NO inputs. A row carrying inputs is a DATA row wherever it
     // sits, and its <th> is that row's label.
     let headerRow = null;
@@ -635,7 +932,7 @@ const READ_SCREEN_BODY = `
       };
     }).filter(Boolean);
 
-    if (rows.length) {
+    if (rows.length && tableSemantics.isGrid) {
       grid = { columns: columns, rows: rows };
       if (geometryRows > 0) {
         limit(
@@ -657,6 +954,13 @@ const READ_SCREEN_BODY = `
           unlabelledCells,
         );
       }
+    } else if (rows.length && tableSemantics.limitation) {
+      limit(
+        'table-choice-grid-semantics-unresolved',
+        'a table contains native choice controls but does not prove distinct one-choice-per-row groups (' +
+        tableSemantics.reason + '), so it was retained as ordinary controls rather than guessed to be a matrix',
+        rows.length,
+      );
     }
   }
 
@@ -816,7 +1120,6 @@ const READ_SCREEN_BODY = `
   // "did this survey render?" test reads that count. One list now (TEXT_ENTRY_TYPES), and the
   // numbers are re-counted from the inventory below so a future drift is REPORTED rather than
   // shipped. See CHECK_COUNTS_SRC.
-  const groupList = Object.keys(groups).map((k) => groups[k]);
   const counts = {
     controls: controls.length,
     optionGroups: groupList.length,
@@ -831,6 +1134,7 @@ const READ_SCREEN_BODY = `
     // label, a honeypot, an alternate layout the media query switched off. Counted so that
     // "the screen had 12 options" and "11 of them were answerable" stay distinguishable.
     optionsNotOperable: groupList.reduce((n, g) => n + g.options.filter((o) => !o.operable).length, 0),
+    customWidgets: controls.filter((c) => c.visible && (c.widgetKinds || []).length > 0).length,
     readerLimitations: 0,
   };
   const countDisagreements = checkCountsAgainstInventory(counts, controls, groupList, TEXT_ENTRY_TYPES, VALUE_ENTRY_TYPES);
@@ -846,8 +1150,18 @@ const READ_SCREEN_BODY = `
   // Counted LAST so the number includes every limitation raised above it, this one included.
   counts.readerLimitations = limitations.length;
 
-  const optionSig = Object.keys(groups).sort().map((k) =>
-    k + ':' + groups[k].options.map((o) => (o.code || '') + '=' + o.label).join('|')
+  const optionSig = groupList.map((group) => JSON.stringify([
+    group.identity,
+    group.options.map((o) => [(o.code || ''), o.label]),
+  ])).join('||');
+  const selectSig = controls.filter((c) => c.tag === 'select').map((c) => JSON.stringify([
+    c.idx,
+    c.label,
+    !!c.multiple,
+    (c.options || []).map((o) => [o.order, o.code, o.label]),
+  ])).join('||');
+  const selectStateSig = controls.filter((c) => c.tag === 'select').map((c) =>
+    c.idx + ':' + (c.options || []).filter((o) => o.selected).map((o) => o.order + '=' + o.code + '=' + o.label).join('|')
   ).join('||');
 
   return {
@@ -863,6 +1177,7 @@ const READ_SCREEN_BODY = `
     bracketedInstructionsVisible: bracketed,
     controls: controls,
     optionGroups: groupList,
+    questionRoots: questionRoots,
     grid: grid,
     // What this read could NOT do properly, named and counted. An EMPTY ARRAY is a claim
     // ("we looked and found none"); the field being ABSENT is an older reader that never
@@ -872,9 +1187,18 @@ const READ_SCREEN_BODY = `
     progress: progress,
     validationMessages: errEls,
     counts: counts,
+    // ANSWER STATE IS NOT SCREEN IDENTITY. A select changing from its placeholder to an answer
+    // must be observable, but putting that bit into screenSignature makes a blocked submit look
+    // like navigation: the before/after signatures differ solely because the harness answered.
+    selectStateSignature: selectStateSig,
+    // An OCCURRENCE HINT, not screen identity. Some instruments push history for roster/review
+    // occurrences without changing their template; the cycle guard consumes this when present
+    // alongside URL/progress/action history and never treats it as sufficient on its own.
+    historyLength: window.history && Number.isFinite(Number(window.history.length))
+      ? Number(window.history.length) : null,
     // Cheap stable identity for "did the screen change?" — question text plus the exact
     // option inventory. Deliberately NOT the URL: single-page surveys never change it.
-    screenSignature: (qEl ? txt(qEl) : bodyText.slice(0, 200)) + '#' + optionSig,
+    screenSignature: (qEl ? txt(qEl) : bodyText.slice(0, 200)) + '#' + optionSig + '##' + selectSig,
   };
 })()
 `;
@@ -947,6 +1271,73 @@ export const setValueScript = (idx: number, value: string): string => `
   // with what it actually holds, so "we set it" can never be recorded for a control that
   // refused the value.
   return { ok: got === ${JSON.stringify(value)}, reason: got === ${JSON.stringify(value)} ? null : 'value-rejected-by-control', got: got };
+})()
+`;
+
+/**
+ * Select one option from ONE native <select>, then read the selected option back from that same
+ * element. The option is addressed by the reader's exact order+code+label triple. No global
+ * option query exists here: a same-labelled option in another select (or a portal popup) cannot
+ * receive the act by accident.
+ */
+export const selectOptionScript = (
+  idx: number,
+  expected: { order: number; code: string; label: string },
+): string => `
+(() => {
+  /* W4_NATIVE_SELECT_SCOPED_READBACK */
+  const SEL = ${JSON.stringify(CONTROL_SELECTOR)};
+  const expectedOrder = ${JSON.stringify(expected.order)};
+  const expectedCode = ${JSON.stringify(expected.code)};
+  const expectedLabel = ${JSON.stringify(expected.label)};
+  const el = document.querySelectorAll(SEL)[${idx}];
+  const clean = (s) => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim();
+  if (!el) return { ok: false, reason: 'no-control-at-index', got: null };
+  if (String(el.tagName || '').toLowerCase() !== 'select') {
+    return { ok: false, reason: 'control-at-index-is-not-select', got: null };
+  }
+  if (el.disabled || el.getAttribute('aria-disabled') === 'true') {
+    return { ok: false, reason: 'select-disabled', got: null };
+  }
+  if (el.multiple) return { ok: false, reason: 'multiple-select-unsupported', got: null };
+  const options = Array.prototype.slice.call(el.options || []);
+  const option = options[expectedOrder];
+  if (!option) return { ok: false, reason: 'no-option-at-reader-order', got: null };
+  const optionCode = String(option.value);
+  const optionLabel = clean(option.label || option.textContent || '');
+  if (optionCode !== expectedCode || optionLabel !== expectedLabel) {
+    return {
+      ok: false,
+      reason: 'option-inventory-changed-before-actuation',
+      got: { order: options.indexOf(option), code: optionCode, label: optionLabel },
+    };
+  }
+  const inheritedDisabled = !!(option.parentElement && option.parentElement.tagName === 'OPTGROUP' && option.parentElement.disabled);
+  const placeholder = expectedOrder === 0 && !!el.required && !el.multiple && Number(el.size || 0) <= 1 &&
+    optionCode === '' && option.parentElement === el;
+  const inheritedHidden = !!(option.parentElement && option.parentElement.tagName === 'OPTGROUP' && option.parentElement.hidden);
+  if (option.disabled || inheritedDisabled || option.hidden || inheritedHidden || placeholder) {
+    return { ok: false, reason: 'target-option-not-usable', got: { order: expectedOrder, code: optionCode, label: optionLabel } };
+  }
+  const before = Number(el.selectedIndex);
+  try { el.focus(); } catch (_) { /* focus is a courtesy, not the mechanism */ }
+  try {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'selectedIndex');
+    if (setter && setter.set) setter.set.call(el, expectedOrder);
+    else el.selectedIndex = expectedOrder;
+  } catch (_) {
+    el.selectedIndex = expectedOrder;
+  }
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  const selected = el.options && el.options[el.selectedIndex] ? el.options[el.selectedIndex] : null;
+  const got = selected ? {
+    order: Number(el.selectedIndex),
+    code: String(selected.value),
+    label: clean(selected.label || selected.textContent || ''),
+  } : null;
+  const ok = !!got && got.order === expectedOrder && got.code === expectedCode && got.label === expectedLabel;
+  return { ok: ok, reason: ok ? null : 'select-readback-mismatch', got: got, changed: before !== Number(el.selectedIndex) };
 })()
 `;
 

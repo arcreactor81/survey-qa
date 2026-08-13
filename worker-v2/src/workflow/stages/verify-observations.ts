@@ -398,7 +398,7 @@ import type { QuestionWordingIndex } from "./plan";
  *
  * 1.3.0 — the boundary outcome became four-valued and screen identity gained provenance.
  */
-export const VERIFIER_VERSION = "v2-structural-verifier/1.8.1";
+export const VERIFIER_VERSION = "v2-structural-verifier/1.9.0";
 
 /** What a predicate may return. Never prose, never a score. */
 export type PredicateOutcome = "satisfied" | "violated" | "insufficient" | "no-observation" | "error";
@@ -590,6 +590,14 @@ export const VERIFIER_REASON = Object.freeze({
    * inventory.
    */
   OPTION_INVENTORY_CONTROL_SCOPED_NOT_GROUPED: "OPTION_INVENTORY_CONTROL_SCOPED_NOT_GROUPED",
+  /** A current native-select read must attest select mode and every option's hidden/placeholder state. */
+  OPTION_SELECT_INVENTORY_NOT_ATTESTED: "OPTION_SELECT_INVENTORY_NOT_ATTESTED",
+  /** Multiple-selection needs a different action and comparison contract from a single select. */
+  OPTION_SELECT_MULTIPLE_NOT_SUPPORTED: "OPTION_SELECT_MULTIPLE_NOT_SUPPORTED",
+  /** More than one target-attributed selection inventory exists, so choosing one would borrow evidence. */
+  OPTION_INVENTORY_TARGET_AMBIGUOUS: "OPTION_INVENTORY_TARGET_AMBIGUOUS",
+  /** The target-attributed select is not a respondent-operable control at this viewport. */
+  OPTION_SELECT_CONTROL_NOT_OPERABLE: "OPTION_SELECT_CONTROL_NOT_OPERABLE",
   /**
    * The screen offers a NEAR VARIANT of the documented label and no exact match. A document and
    * a site may word one option two ways ("18-24" / "18 to 24"), so this is the refusal that
@@ -1482,7 +1490,7 @@ const routeDestination: Predicate = {
     // THE STEP MUST BE THIS CASE'S OWN STEP. Selecting it by the answer alone reads whichever
     // earlier question happened to be answered "Yes" too — see the D19 header.
     const selection = selectCaseStep(this.id, walk, ctx, {
-      performed: (s) => selectedAnswer(s, answer.code, answer.label),
+      performed: (s) => selectedAnswer(s, answer.code, answer.label, ctx.targetQuestionId ?? ""),
       describe: `the documented answer (code=${answer.code ?? "-"}, label=${answer.label ?? "-"})`,
       notPerformed: VERIFIER_REASON.ROUTE_ANSWER_NOT_SELECTED,
       notPerformedDetail:
@@ -1852,14 +1860,59 @@ function terminalDestination(
   };
 }
 
-/** Did this step actually click the documented answer? Exact code, or exact label. */
-function selectedAnswer(step: StepObservation, code: string | null, label: string | null): boolean {
+const controlAttributesTarget = (control: RenderedScreen["controls"][number], target: string): boolean => {
+  if (!target) return false;
+  if (control.name === target) return true;
+  const prefix = typeof control.id === "string" ? control.id.split(/[_\-.:$[\]]/)[0] : "";
+  return prefix === target;
+};
+
+/**
+ * Did this step actually select the documented answer? A native select earns that statement
+ * only through a successful receipt whose readback exactly matches both the action and the
+ * option inventory of the one target-attributed, respondent-operable select.
+ */
+function selectedAnswer(
+  step: StepObservation,
+  code: string | null,
+  label: string | null,
+  target: string,
+): boolean {
   return step.actions.some(
-    (a) =>
-      a.kind === "click-option" &&
-      a.ok &&
-      ((code !== null && a.targetCode === code) ||
-        (label !== null && a.targetLabel !== null && norm(a.targetLabel) === norm(label))),
+    (a) => {
+      const requested =
+        (code !== null && a.targetCode === code) ||
+        (label !== null && a.targetLabel !== null && norm(a.targetLabel) === norm(label));
+      if (!a.ok || !requested) return false;
+      if (a.kind === "click-option") return true;
+      if (a.kind !== "select-option" || !a.selectReadback || !Number.isSafeInteger(a.targetIdx)) return false;
+      const readback = a.selectReadback;
+      if (
+        !Number.isSafeInteger(readback.order) ||
+        readback.order < 0 ||
+        a.targetCode !== readback.code ||
+        a.value !== readback.code ||
+        a.targetLabel === null ||
+        norm(a.targetLabel) !== norm(readback.label)
+      ) return false;
+      const control = (step.screenBefore?.controls ?? []).find((c) => c.idx === a.targetIdx);
+      if (
+        !control ||
+        (control.tag !== "select" && control.type !== "select") ||
+        !controlAttributesTarget(control, target) ||
+        control.visible !== true ||
+        control.disabled ||
+        control.multiple !== false ||
+        !Array.isArray(control.options)
+      ) return false;
+      const option = control.options.find((o) => o.order === readback.order);
+      return !!option &&
+        option.code === readback.code &&
+        norm(option.label) === norm(readback.label) &&
+        !option.disabled &&
+        option.hidden === false &&
+        option.placeholder === false;
+    },
   );
 }
 
@@ -2244,7 +2297,12 @@ function nearVariantLabel(a: string, b: string): boolean {
   return shared / (ta.size + tb.size - shared) >= 0.5;
 }
 
-type ScreenOption = RenderedScreen["optionGroups"][number]["options"][number];
+interface ScreenOption {
+  code: string | null;
+  label: string;
+  visible?: boolean;
+  operable?: boolean;
+}
 
 /**
  * WHICH OPTION GROUP ON THIS SCREEN IS THE TARGET QUESTION'S?
@@ -2400,6 +2458,82 @@ function targetOptionGroup(
 }
 
 /**
+ * Extend the long-standing radio/checkbox attribution contract to a current native `<select>`.
+ * The wrapper intercepts only a select explicitly attributed to the target; every group-only
+ * shape continues through `targetOptionGroup` unchanged.
+ */
+function targetOptionInventory(
+  screen: RenderedScreen,
+  target: string,
+):
+  | { options: ScreenOption[]; attribution: "named" | "only-answerable"; source: "option-group" | "native-select" }
+  | { why: string; reason: VerifierReason } {
+  const targetSelects = (screen.controls ?? []).filter(
+    (c) => (c?.tag === "select" || c?.type === "select") && controlAttributesTarget(c, target),
+  );
+  const namedGroups = (screen.optionGroups ?? []).filter((g) => {
+    if (!Array.isArray(g?.options) || g.options.length === 0) return false;
+    if (typeof g.name === "string" && g.name === target) return true;
+    const prefix = typeof g.name === "string" ? g.name.split(/[_\-.:$[\]]/)[0] : "";
+    return prefix === target;
+  });
+  if (targetSelects.length > 1 || (targetSelects.length === 1 && namedGroups.length > 0)) {
+    return {
+      reason: VERIFIER_REASON.OPTION_INVENTORY_TARGET_AMBIGUOUS,
+      why:
+        `${target} attributes to ${targetSelects.length} native select(s) and ${namedGroups.length} option ` +
+        `group(s) on this screen; more than one inventory claims the target and choosing one would borrow evidence`,
+    };
+  }
+  if (targetSelects.length === 1) {
+    const control = targetSelects[0]!;
+    if (control.visible !== true || control.disabled) {
+      return {
+        reason: VERIFIER_REASON.OPTION_SELECT_CONTROL_NOT_OPERABLE,
+        why:
+          `the one native select attributed to ${target} is ${control.visible !== true ? "not rendered" : "disabled"} ` +
+          `at this viewport, so its markup is not a respondent-facing option offer`,
+      };
+    }
+    if (control.multiple === true) {
+      return {
+        reason: VERIFIER_REASON.OPTION_SELECT_MULTIPLE_NOT_SUPPORTED,
+        why:
+          `the one native select attributed to ${target} permits multiple selections; this verifier has no ` +
+          `certified comparison/action contract for that widget mode`,
+      };
+    }
+    if (
+      control.multiple !== false ||
+      !Array.isArray(control.options) ||
+      !control.options.every((o) => typeof o.hidden === "boolean" && typeof o.placeholder === "boolean")
+    ) {
+      return {
+        reason: VERIFIER_REASON.OPTION_SELECT_INVENTORY_NOT_ATTESTED,
+        why:
+          `the native select attributed to ${target} lacks a current complete select-mode/hidden/placeholder ` +
+          `attestation. Absence of those fields means this reader did not look, not that no option was hidden or ` +
+          `a placeholder, so the control-scoped inventory cannot support a verdict`,
+      };
+    }
+    const options: ScreenOption[] = control.options
+      // HTML's placeholder-label option is an unselectable prompt, not an answer the site offers.
+      .filter((o) => o.placeholder !== true)
+      .map((o) => ({
+        code: o.code,
+        label: o.label,
+        visible: o.hidden !== true,
+        operable: o.hidden !== true && !o.disabled,
+      }));
+    return { options, attribution: "named", source: "native-select" };
+  }
+
+  const group = targetOptionGroup(screen, target);
+  if ("why" in group) return group;
+  return { options: group.group.options, attribution: group.attribution, source: "option-group" };
+}
+
+/**
  * IS THE SITE'S ANSWER-CODE VOCABULARY THE SAME ONE THE DOCUMENT USES?
  *
  * Witnessed, not assumed: some OTHER option of this same question, stated by the document with
@@ -2430,7 +2564,11 @@ const optionSetOffered: Predicate = {
     // screen presented an answer-option inventory", because an option requirement is exercised
     // by the screen RENDERING, not by anything the driver did to it.
     const selection = selectCaseStep(this.id, walk, ctx, {
-      performed: (s) => (s.screenBefore?.optionGroups ?? []).some((g) => (g?.options?.length ?? 0) > 0),
+      performed: (s) =>
+        (s.screenBefore?.optionGroups ?? []).some((g) => (g?.options?.length ?? 0) > 0) ||
+        (s.screenBefore?.controls ?? []).some(
+          (c) => (c?.tag === "select" || c?.type === "select") && Array.isArray(c.options),
+        ),
       describe: "presented an answer-option inventory",
       notPerformed: VERIFIER_REASON.OPTION_INVENTORY_NOT_CAPTURED,
       notPerformedDetail:
@@ -2459,13 +2597,13 @@ const optionSetOffered: Predicate = {
       );
     }
 
-    const attributed = targetOptionGroup(screen, ctx.targetQuestionId ?? "");
+    const attributed = targetOptionInventory(screen, ctx.targetQuestionId ?? "");
     if ("why" in attributed) {
       // 1.7.0 — the refusal now names its cause: an unattributable group and a control-scoped
       // (select) inventory are different repairs, so `targetOptionGroup` picks the reason.
       return insufficient(this.id, attributed.reason, attributed.why);
     }
-    const offered = attributed.group.options;
+    const offered = attributed.options;
 
     // THE READ MUST HAVE SAID IT WENT WELL, AND SAYING NOTHING IS NOT SAYING IT WENT WELL.
     // `readerLimitations` is an EMPTY ARRAY when the reader looked and found none, and ABSENT

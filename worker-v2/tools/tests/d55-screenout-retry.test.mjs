@@ -166,6 +166,13 @@ function fakePage(reads) {
         set.push({ value });
         return { ok: true, reason: null, got: value };
       }
+      // A successful Puppeteer click is not sufficient evidence that a native radio kept the
+      // requested state. Mirror the real scoped receipt so these route tests exercise the
+      // production exact-readback contract rather than the retired transport-click convention.
+      if (script.includes("W4_NATIVE_CHOICE_SCOPED_READBACK")) {
+        const idx = Number(/const expectedIdx = (\d+);/.exec(script)?.[1]);
+        return { idx, type: "radio", name: null, checked: true, checkedGroupIdxs: [idx] };
+      }
       return { ok: true };
     },
     async evaluateOnNewDocument() {},

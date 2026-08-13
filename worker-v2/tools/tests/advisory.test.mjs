@@ -100,9 +100,13 @@ suite("advisory — the outbound-URL policy", () => {
 });
 
 suite("advisory — submission limits", () => {
-  test("an oversized declared body is refused before parsing", async () => {
+  test("API AUTHORITY: an oversized declared body is refused before parsing", async () => {
     const mod = await worker();
-    const env = testEnv({ MAX_SUBMISSION_BYTES: "32" });
+    let createCalls = 0;
+    const env = testEnv({
+      MAX_SUBMISSION_BYTES: "32",
+      V2_RUN_WORKFLOW: { async create() { createCalls += 1; } },
+    });
     const req = new Request("https://x/api/v2/runs", {
       method: "POST",
       headers: {
@@ -116,6 +120,7 @@ suite("advisory — submission limits", () => {
     assertEq(res.status, 413);
     assertEq((await res.json()).error.code, "SUBMISSION_TOO_LARGE");
     assertEq(env.EVIDENCE._store.size, 0, "the preflight must not write submission artifacts");
+    assertEq(createCalls, 0, "the preflight must not create a Workflow");
   });
 
   test("a malformed declared length is refused rather than trusted", async () => {
@@ -132,6 +137,85 @@ suite("advisory — submission limits", () => {
     const res = await mod.apiRuns.submitRun(req, env);
     assertEq(res.status, 400);
     assertEq((await res.json()).error.code, "INVALID_CONTENT_LENGTH");
+  });
+
+  test("API AUTHORITY: a missing Content-Length is byte-counted and an over-cap stream writes and starts nothing", async () => {
+    const mod = await worker();
+    let createCalls = 0;
+    const env = testEnv({
+      MAX_SUBMISSION_BYTES: "32",
+      V2_RUN_WORKFLOW: { async create() { createCalls += 1; } },
+    });
+    const req = new Request("https://x/api/v2/runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(20));
+          controller.enqueue(new Uint8Array(20));
+          controller.close();
+        },
+      }),
+      duplex: "half",
+    });
+    assertEq(req.headers.get("content-length"), null, "the negative must really exercise absent length");
+    const res = await mod.apiRuns.submitRun(req, env);
+    assertEq(res.status, 413);
+    assertEq((await res.json()).error.code, "SUBMISSION_TOO_LARGE");
+    assertEq(env.EVIDENCE._store.size, 0, "stream overflow must precede every durable write");
+    assertEq(createCalls, 0, "stream overflow must precede Workflow creation");
+  });
+
+  test("API AUTHORITY: a forged-low Content-Length cannot bypass the streamed byte ceiling", async () => {
+    const mod = await worker();
+    let createCalls = 0;
+    const env = testEnv({
+      MAX_SUBMISSION_BYTES: "32",
+      V2_RUN_WORKFLOW: { async create() { createCalls += 1; } },
+    });
+    const req = new Request("https://x/api/v2/runs", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": "4",
+      },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("x".repeat(48)));
+          controller.close();
+        },
+      }),
+      duplex: "half",
+    });
+    const res = await mod.apiRuns.submitRun(req, env);
+    assertEq(res.status, 413);
+    assertEq((await res.json()).error.code, "SUBMISSION_TOO_LARGE");
+    assertEq(env.EVIDENCE._store.size, 0, "a forged header must authorize no storage");
+    assertEq(createCalls, 0, "a forged header must authorize no Workflow");
+  });
+
+  test("API AUTHORITY: browser multipart without Content-Length survives bounded reconstruction", async () => {
+    const mod = await worker();
+    let workflowSubmission = null;
+    const env = testEnv({
+      MAX_SUBMISSION_BYTES: "4096",
+      V2_RUN_WORKFLOW: { async create(input) { workflowSubmission = input; } },
+    });
+    const form = new FormData();
+    form.set("surveyUrl", "https://survey.example.com/x");
+    form.set(
+      "docx",
+      new Blob([docxBytes()], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+      "fixture.docx",
+    );
+    const req = new Request("https://x/api/v2/runs", { method: "POST", body: form });
+    assertEq(req.headers.get("content-length"), null, "browser-style FormData has no trusted length here");
+    const res = await mod.apiRuns.submitRun(req, env);
+    assertEq(res.status, 202, await res.clone().text());
+    assert(workflowSubmission, "bounded multipart parsing must still create a valid run");
+    assertEq(workflowSubmission.params.documentKey.endsWith("/input/document.docx"), true);
   });
 
   test("invalid byte-limit configuration fails loudly before parsing", async () => {

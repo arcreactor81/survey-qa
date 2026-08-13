@@ -169,6 +169,61 @@ const SLIDER_ONLY = surveyPage(
   `<label>0 to 10 <input type="range" name="nps" min="0" max="10"></label>`,
 );
 
+/** Native selects: duplicate labels prove selection stays inside the owning <select>. */
+const NATIVE_SELECTS = surveyPage(
+  "Q1. Choose one option from each list",
+  [
+    `<label>First list <select name="first" required><option value="" selected>Choose one</option><option value="first-a">Shared label</option><option value="first-b">First only</option></select></label>`,
+    `<label>Second list <select name="second" required><option value="" selected>Choose one</option><option value="second-a">Shared label</option><option value="second-b">Second only</option></select></label>`,
+  ].join("\n"),
+);
+
+/** Unsupported but discoverable semantic widgets: nothing here may be clicked or dragged. */
+const CUSTOM_WIDGETS = `<!doctype html><html><head><title>Q1. Custom widgets</title></head><body>
+<h2>Q1. Choose and arrange</h2>
+<div role="combobox" aria-label="Brand" aria-expanded="false" aria-controls="brands">Choose a brand</div>
+<div id="brands" role="listbox" style="display:none"><div role="option">Alpha</div></div>
+<ol aria-roledescription="sortable list"><li draggable="true">First item</li><li draggable="true">Second item</li></ol>
+<button type="button" disabled>Next</button>
+</body></html>`;
+
+/**
+ * Generic live-regression shape: ONE Boolean radio group laid out as one option per table row.
+ * The terminal page exposes only a direction-glyph Back control. A correct walk selects exactly
+ * one native radio, proves what the browser retained, advances once, and never presses Back.
+ */
+const TABLE_RADIO_AND_BACK_ONLY_END = `<!doctype html><html><head><title>Agreement</title></head><body>
+<div id="root">
+  <h2>Please choose one response</h2>
+  <table><tbody>
+    <tr><td><label><input type="radio" name="agreement" value="1" required> Agree</label></td></tr>
+    <tr><td><label><input type="radio" name="agreement" value="0"> Do not agree</label></td></tr>
+  </tbody></table>
+  <button id="next" type="button" disabled>Next</button>
+</div>
+<div id="end" style="display:none">
+  <h2>Thank you for completing the questionnaire.</h2>
+  <input id="back" type="button" value="&lt;&lt;" title="&lt;&lt;">
+  <input id="hidden-forward" type="button" value="Continue" style="display:none">
+</div>
+<script>
+  var root = document.getElementById('root');
+  var next = document.getElementById('next');
+  var choices = Array.prototype.slice.call(document.querySelectorAll('input[name="agreement"]'));
+  function sync() { next.disabled = !choices.some(function (choice) { return choice.checked; }); }
+  choices.forEach(function (choice) { choice.addEventListener('change', sync); });
+  next.addEventListener('click', function () {
+    root.remove();
+    document.getElementById('end').style.display = '';
+    document.title = 'done';
+  });
+  document.getElementById('back').addEventListener('click', function () {
+    document.body.setAttribute('data-back-clicked', 'true');
+  });
+  sync();
+</script>
+</body></html>`;
+
 /**
  * THE CONSTANT-SUM WALL, fleet-faithful (see targets/fleet …/engine.js `renderInputs`): a
  * table, one BARE `<input type=number>` per row (no name, no min/max — the group is only
@@ -179,6 +234,35 @@ const SLIDER_ONLY = surveyPage(
  * The gate is the site's own constant-sum rule: Next is disabled until every row holds a
  * whole number and the rows sum to exactly 100. The ENGINE arbitrates the advance.
  */
+const P0_MULTI_QUESTION = [
+  '<!doctype html><html><body><h1>Survey</h1><form>',
+  '<fieldset><legend>Q1?</legend><label><input type="radio" name="q1" value="y">Yes</label><label><input type="radio" name="q1" value="n">No</label></fieldset>',
+  '<fieldset><legend>Q2?</legend><label><input type="radio" name="q2" value="a">A</label><label><input type="radio" name="q2" value="b">B</label></fieldset>',
+  '<button type="button">Next</button></form></body></html>',
+].join('');
+
+const P0_NATIVE_FORM_GROUPS = [
+  '<!doctype html><html><body><h2>Choose in both forms</h2>',
+  '<form id="form-a"><label><input type="radio" name="x" value="a1">A1</label><label><input type="radio" name="x" value="a2">A2</label></form>',
+  '<form id="form-b"><label><input type="radio" name="x" value="b1">B1</label><label><input type="radio" name="x" value="b2">B2</label></form>',
+  '<label><input type="radio" form="form-a" name="x" value="a3">A3 external</label>',
+  '<button type="button">Next</button></body></html>',
+].join('');
+
+const P0_AMBIGUOUS_FORWARD = [
+  '<!doctype html><html><body><h2>Question?</h2>',
+  '<button type="button">Continue</button><button type="button">Submit</button>',
+  '</body></html>',
+].join('');
+
+const P0_IDENTICAL_TEMPLATE_PROGRESS = [
+  '<!doctype html><html><body><h2 id="q">Repeated roster item</h2>',
+  '<progress id="p" value="1" max="3"></progress>',
+  '<button id="next" type="button">Next</button>',
+  '<script>document.getElementById("next").onclick=function(){var p=document.getElementById("p");p.value+=1;if(p.value>=3){this.remove();document.getElementById("q").textContent="Thank you for completing the survey.";}};</script>',
+  '</body></html>',
+].join('');
+
 const ALLOCATION = `<!doctype html>
 <html><head><title>Q6. Allocate points</title></head><body>
 <div id="root">
@@ -275,7 +359,7 @@ const ALLOCATION_STEPPED = `<!doctype html>
 function cdpPage(sess) {
   const { cdp, sessionId: sid } = sess;
   const listeners = new Map();
-  cdp.ws.on("message", (data) => {
+  const onMessage = (data) => {
     let m;
     try {
       m = JSON.parse(String(data));
@@ -286,7 +370,8 @@ function cdpPage(sess) {
       const d = m.params?.exceptionDetails;
       for (const h of listeners.get("pageerror") ?? []) h({ message: d?.exception?.description ?? d?.text ?? "page error" });
     }
-  });
+  };
+  cdp.ws.on("message", onMessage);
   const clickAt = async (selector, idx) => {
     const pt = await evaluate(
       cdp,
@@ -351,20 +436,25 @@ function cdpPage(sess) {
       if (!listeners.has(event)) listeners.set(event, []);
       listeners.get(event).push(handler);
     },
-    async close() {},
+    async close() {
+      cdp.ws.off("message", onMessage);
+    },
     async reload() {},
   };
 }
 
+let sharedProbeSession = null;
+
 async function walkHtml(mod, html) {
-  const sess = await open("local-chromium");
+  const sess = sharedProbeSession;
+  if (!sess) throw new Error("local Chrome probe session was not opened");
+  const { cdp, sessionId: sid } = sess;
+  await cdp.send("Page.enable", {}, sid);
+  await cdp.send("Runtime.enable", {}, sid);
+  const page = cdpPage(sess);
+  const runId = mod.ids.mintRunId();
   try {
-    const { cdp, sessionId: sid } = sess;
-    await cdp.send("Page.enable", {}, sid);
-    await cdp.send("Runtime.enable", {}, sid);
-    const page = cdpPage(sess);
-    const runId = mod.ids.mintRunId();
-    const obs = await mod.driver.walkPath(
+    return await mod.driver.walkPath(
       page,
       { id: `probe_${Math.random().toString(36).slice(2, 8)}`, decisions: [], witnesses: [] },
       {
@@ -381,9 +471,8 @@ async function walkHtml(mod, html) {
       },
       { env: { EVIDENCE: memoryR2() }, runId, attemptId: "att_probe0001", pathId: "path_probe0001", witnesses: [] },
     );
-    return obs;
   } finally {
-    await sess.close();
+    await page.close();
   }
 }
 
@@ -396,6 +485,8 @@ const check = (name, ok, detail) => {
 };
 
 const mod = await loadDriver();
+sharedProbeSession = await open("local-chromium");
+try {
 
 /* ---- 1. every type ---- */
 process.stdout.write("\nFIXTURE 1 — every control a respondent can answer, behind a validity-gated Next\n");
@@ -500,8 +591,52 @@ process.stdout.write("\nFIXTURE 3 — a screen whose only question is a slider\n
   check("the walk advanced off it", obs.steps[0]?.advanced === true, `outcome=${obs.outcome}`);
 }
 
-/* ---- 4. THE CONSTANT-SUM WALL ---- */
-process.stdout.write("\nFIXTURE 4 — the allocation grid: Next enabled only by the engine's own sum-to-100 check\n");
+/* ---- 4. native selects ---- */
+process.stdout.write("\nFIXTURE 4 — two native selects with a duplicate label, each validity-gated\n");
+{
+  const obs = await walkHtml(mod, NATIVE_SELECTS);
+  const step0 = obs.steps[0] ?? null;
+  const selected = (step0?.actions ?? []).filter((a) => a.kind === "select-option");
+  const selects = (step0?.screenAfterAction?.controls ?? []).filter((c) => c.tag === "select");
+  check("the walk ADVANCED only after both native selects became valid", step0?.advanced === true, `advanced=${step0?.advanced} outcome=${obs.outcome}`);
+  check("one explicit select-option receipt exists per owning select", selected.length === 2, JSON.stringify(selected));
+  check(
+    "every successful receipt carries exact order/code/label readback",
+    selected.every((a) => a.ok && a.selectReadback && a.selectReadback.code === a.targetCode && a.selectReadback.label === a.targetLabel),
+    JSON.stringify(selected),
+  );
+  check(
+    "the duplicate label did not trigger a global lookup: scoped defaults selected first-a AND second-a",
+    selects.map((c) => c.value).join(",") === "first-a,second-a",
+    JSON.stringify(selects.map((c) => [c.name, c.value, c.options?.find((o) => o.selected)])),
+  );
+  check("both invented selections are counted as navigator-defaults", obs.navigatorDefaultAnswerCount === 2, String(obs.navigatorDefaultAnswerCount));
+  check("no native select was silently left unanswered", (obs.unfillableControls ?? []).length === 0, JSON.stringify(obs.unfillableControls));
+}
+
+/* ---- 5. unsupported semantic widget floor ---- */
+process.stdout.write("\nFIXTURE 5 — accessible custom selection and sortable widgets are named, not guessed at\n");
+{
+  const obs = await walkHtml(mod, CUSTOM_WIDGETS);
+  const before = obs.steps[0]?.screenBefore ?? null;
+  const named = obs.steps[0]?.unfillableControls ?? [];
+  check("visible semantic widgets are counted as rendered", (before?.counts.customWidgets ?? 0) >= 3, JSON.stringify(before?.counts));
+  check(
+    "custom selection and drag limitations are named and counted by the reader",
+    (before?.readerLimitations ?? []).some((x) => x.kind === "custom-selection-widget-actuation-unsupported") &&
+      (before?.readerLimitations ?? []).some((x) => x.kind === "drag-widget-actuation-unsupported"),
+    JSON.stringify(before?.readerLimitations),
+  );
+  check("the driver names every visible semantic node it cannot actuate", named.length >= 3 && named.every((x) => x.reason === "unsupported-widget"), JSON.stringify(named));
+  check(
+    "no custom selection or drag action was falsely claimed",
+    (obs.steps[0]?.actions ?? []).every((a) => a.kind !== "select-option" && a.kind !== "click-option" && a.kind !== "select-grid-cell"),
+    JSON.stringify(obs.steps[0]?.actions),
+  );
+}
+
+/* ---- 6. THE CONSTANT-SUM WALL ---- */
+process.stdout.write("\nFIXTURE 6 — the allocation grid: Next enabled only by the engine's own sum-to-100 check\n");
 {
   const obs = await walkHtml(mod, ALLOCATION);
   const step0 = obs.steps[0] ?? null;
@@ -543,8 +678,8 @@ process.stdout.write("\nFIXTURE 4 — the allocation grid: Next enabled only by 
   );
 }
 
-/* ---- 5. THE STEP-CONSTRAINED ALLOCATION ---- */
-process.stdout.write("\nFIXTURE 5 — the review counterexample: step grids arbitrated by the form's own checkValidity()\n");
+/* ---- 7. THE STEP-CONSTRAINED ALLOCATION ---- */
+process.stdout.write("\nFIXTURE 7 — the review counterexample: step grids arbitrated by the form's own checkValidity()\n");
 {
   const obs = await walkHtml(mod, ALLOCATION_STEPPED);
   const step0 = obs.steps[0] ?? null;
@@ -574,6 +709,76 @@ process.stdout.write("\nFIXTURE 5 — the review counterexample: step grids arbi
     JSON.stringify(held),
   );
   check("the ending is typed `completed`", obs.ending?.kind === "completed", JSON.stringify(obs.ending));
+}
+
+/* ---- 8. THE LIVE TABLE-RADIO / BACK-ONLY REGRESSION ---- */
+process.stdout.write("\nFIXTURE 8 — one radio group across table rows, followed by a Back-only ending\n");
+{
+  const obs = await walkHtml(mod, TABLE_RADIO_AND_BACK_ONLY_END);
+  const step0 = obs.steps[0] ?? null;
+  const choices = (step0?.actions ?? []).filter((a) => a.kind === "click-option");
+  const gridActs = (step0?.actions ?? []).filter((a) => a.kind === "select-grid-cell");
+  const held = (step0?.screenAfterAction?.controls ?? []).filter((c) => c.type === "radio" && c.checked);
+  const advances = obs.steps.flatMap((step) => step.actions ?? []).filter((a) => a.kind === "click-next");
+
+  check("the reader kept one native option group and did NOT promote table layout to a matrix", step0?.screenBefore?.grid === null && step0?.screenBefore?.optionGroups?.length === 1, JSON.stringify({ grid: step0?.screenBefore?.grid, groups: step0?.screenBefore?.optionGroups }));
+  check("exactly one radio action was emitted — never one grid action per table row", choices.length === 1 && gridActs.length === 0, JSON.stringify(step0?.actions));
+  check(
+    "the action carries exact retained-state receipt scoped to that one native radio group",
+    choices[0]?.choiceReadback?.checked === true && choices[0]?.choiceReadback?.idx === choices[0]?.targetIdx &&
+      choices[0]?.choiceReadback?.checkedGroupIdxs?.length === 1 && choices[0]?.choiceReadback?.checkedGroupIdxs?.[0] === choices[0]?.targetIdx,
+    JSON.stringify(choices[0]),
+  );
+  check("the browser itself retained exactly one checked radio", held.length === 1 && held[0]?.idx === choices[0]?.targetIdx, JSON.stringify(held.map((c) => [c.idx, c.code, c.checked])));
+  check("the validity-gated screen advanced", step0?.advanced === true, `advanced=${step0?.advanced} outcome=${obs.outcome}`);
+  check("the terminal << control was never emitted as click-next", !advances.some((a) => a.targetLabel === "<<"), JSON.stringify(advances));
+  check("the walk stopped on the terminal page instead of cycling", obs.outcome === "no-advance-control" && obs.ending?.kind === "completed", JSON.stringify({ outcome: obs.outcome, ending: obs.ending, steps: obs.steps.length }));
+}
+
+/* ---- 9. P0: disjoint visible question ownership ---- */
+process.stdout.write("\nFIXTURE 9 - two disjoint fieldset questions fail closed before actuation\n");
+{
+  const obs = await walkHtml(mod, P0_MULTI_QUESTION);
+  const step0 = obs.steps[0] ?? null;
+  check("multi-question ownership is named", obs.outcome === "multi-question-screen-actuation-unsupported", JSON.stringify({ outcome: obs.outcome, detail: obs.outcomeDetail }));
+  check("the two fieldset roots are counted", step0?.screenBefore?.questionRoots?.length === 2 && obs.readerLimitationCount === 2, JSON.stringify({ roots: step0?.screenBefore?.questionRoots, limitations: obs.readerLimitations }));
+  check("no response or forward act was emitted", (step0?.actions ?? []).length === 0, JSON.stringify(step0?.actions));
+}
+
+/* ---- 10. P0: native form-scoped choice identity ---- */
+process.stdout.write("\nFIXTURE 10 - same-name radios in two forms remain two native groups\n");
+{
+  const obs = await walkHtml(mod, P0_NATIVE_FORM_GROUPS);
+  const step0 = obs.steps[0] ?? null;
+  const groups = step0?.screenBefore?.optionGroups ?? [];
+  const choices = (step0?.actions ?? []).filter((row) => row.kind === "click-option");
+  check("same-name radios split by native form owner", groups.length === 2 && groups[0]?.identity?.formOwner !== groups[1]?.identity?.formOwner, JSON.stringify(groups));
+  check("external form-owned radio joins form A", groups.some((group) => group.identity?.formOwner === 0 && group.options.length === 3), JSON.stringify(groups));
+  check("one exact retained-state receipt exists per form group", choices.length === 2 && choices.every((row) => row.ok && row.choiceReadback?.checkedGroupIdxs?.length === 1), JSON.stringify(choices));
+}
+
+/* ---- 11. P0: duplicate forward ambiguity ---- */
+process.stdout.write("\nFIXTURE 11 - duplicate visible forward controls are never DOM-first\n");
+{
+  const obs = await walkHtml(mod, P0_AMBIGUOUS_FORWARD);
+  const step0 = obs.steps[0] ?? null;
+  check("forward ambiguity is named", obs.outcome === "navigation-forward-ambiguous" && step0?.blockedReason === "navigation-forward-ambiguous", JSON.stringify({ outcome: obs.outcome, step: step0 }));
+  check("neither forward candidate was clicked", !(step0?.actions ?? []).some((row) => row.kind === "click-next"), JSON.stringify(step0?.actions));
+}
+
+/* ---- 12. P0: identical-template advancement ---- */
+process.stdout.write("\nFIXTURE 12 - identical template advances on numeric progress only\n");
+{
+  const obs = await walkHtml(mod, P0_IDENTICAL_TEMPLATE_PROGRESS);
+  const step0 = obs.steps[0] ?? null;
+  const click = (step0?.actions ?? []).find((row) => row.kind === "click-next");
+  check("unchanged screenSignature still advances when progress increases", step0?.advanced === true && step0?.screenBefore?.screenSignature === step0?.screenAfterAdvance?.screenSignature, JSON.stringify({ before: step0?.screenBefore?.screenSignature, after: step0?.screenAfterAdvance?.screenSignature, advanced: step0?.advanced }));
+  check("the persisted click receipt names numeric progress as proof", /advance-proof:progress-value-increased/.test(click?.detail ?? ""), JSON.stringify(click));
+}
+
+} finally {
+  await sharedProbeSession.close();
+  sharedProbeSession = null;
 }
 
 const failed = results.filter((r) => !r.ok);

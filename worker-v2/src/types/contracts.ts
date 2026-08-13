@@ -217,6 +217,8 @@ export const unavailableContract = (): CheckpointContract => ({
 /** Exact calculated model-call telemetry; the strict core ledger meters it conservatively. */
 export interface ModelCallUsageEvent {
   kind: "model-call";
+  /** Optional on legacy/pass-A events; pass-B uses it for atomic retry deduplication. */
+  eventId?: string;
   model: string;
   inputTokens: number;
   outputTokens: number;
@@ -331,6 +333,33 @@ export interface ExecutionCursor {
   /** Cases the executor has committed observations for. */
   completedCaseIds: string[];
   planRevisionId: string | null;
+  /**
+   * W5's single durable authority. Receipt bytes are immutable artifacts written before the
+   * fenced checkpoint CAS; only pointers committed here can close a seeded case. Progress.json
+   * is a derived reader surface and can never authorize closure.
+   */
+  seedExecution?: {
+    programHash: string;
+    doneAlternativeIds: string[];
+    committedAttemptIds: string[];
+    reservation: { alternativeId: string; attemptId: string } | null;
+    attempts: Array<{
+      alternativeId: string;
+      attemptId: string;
+      artifactHash: string;
+      artifactKey: string;
+    }>;
+    refusals: Array<{ alternativeId: string; attemptId: string; reason: string }>;
+    receipts: Array<{
+      caseId: string;
+      alternativeId: string;
+      attemptId: string;
+      receiptHash: string;
+      seedCertificateHash: string;
+      commitArtifactHash: string;
+      artifactKey: string;
+    }>;
+  };
 }
 
 /**

@@ -30,6 +30,7 @@ import { sealContract } from "../../store/contract-revision";
 import { ENVELOPE_KIND, ENVELOPE_SCHEMA, EXPECTATION_GAP, type ContractRevision, type FacetInstance, type RunEnvelopeV2, type ScopedRequirement } from "../../types/record";
 import { gatePass, type GateProof } from "../gates";
 import { sha256Hex } from "../../store/hash";
+import { DOCUMENT_SEMANTICS_NONE } from "../../extract/document-semantics";
 
 interface DriveBody {
   surveyUrl?: string;
@@ -187,6 +188,7 @@ export async function devDrive(req: Request, env: Env): Promise<Response> {
       targetBuildId: env.DEFAULT_TARGET_BUILD_ID ?? null,
       locale: "en",
       viewports: ["desktop"],
+      documentSemanticsProfile: DOCUMENT_SEMANTICS_NONE,
     },
     profile: "standard",
     contractRevisionId,
@@ -231,6 +233,7 @@ export async function devDrive(req: Request, env: Env): Promise<Response> {
       profile: "standard",
       locale: "en",
       viewports: ["desktop"],
+      documentSemanticsProfile: DOCUMENT_SEMANTICS_NONE,
     },
   });
 

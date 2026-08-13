@@ -21,6 +21,12 @@ export interface ControlState {
   tag: string;
   type: string;
   name: string | null;
+  /**
+   * Native form-owner identity in `document.forms` order. `null` means the control has no
+   * native form owner. This is structural identity, not an author-controlled form id/name.
+   * Optional only for captures made before form-scoped native-choice grouping existed.
+   */
+  formOwner?: number | null;
   id: string | null;
   /** The submitted value — the OPTION CODE. Never renumbered, never inferred. */
   code: string | null;
@@ -97,12 +103,27 @@ export interface ControlState {
    */
   title?: string | null;
   ariaLabel?: string | null;
-  options?: Array<{ order: number; code: string; label: string; selected: boolean; disabled: boolean }>;
+  /** Native <select> mode. Absent on older reads and on every non-select control. */
+  multiple?: boolean;
+  options?: Array<{ order: number; code: string; label: string; selected: boolean; disabled: boolean; hidden?: boolean; placeholder?: boolean }>;
+  /** Semantic widget signals. Presence is observation, not an actuation claim. */
+  widgetKinds?: Array<"combobox" | "listbox" | "draggable" | "sortable" | "drop-target">;
 }
 
 export interface OptionGroupState {
   name: string;
   kind: "radio" | "checkbox";
+  /**
+   * The exact native grouping tuple. Named choices group only when type, exact name and native
+   * form owner all agree; an unnamed native choice is a singleton identified by its own index.
+   * This is deliberately structured rather than delimiter-concatenated.
+   */
+  identity?: {
+    type: "radio" | "checkbox";
+    name: string | null;
+    formOwner: number | null;
+    unnamedControlIdx: number | null;
+  };
   /** COMPLETE, in DOM order. A subset here would make every absence claim unfalsifiable. */
   options: Array<{
     order: number;
@@ -352,6 +373,15 @@ export interface RenderedScreen {
   bracketedInstructionsVisible: string[];
   controls: ControlState[];
   optionGroups: OptionGroupState[];
+  /**
+   * Distinct visible question roots after exact-duplicate/nested-wrapper reconciliation. Two
+   * or more roots owning disjoint respondent-control sets make generic actuation unsafe.
+   */
+  questionRoots?: Array<{
+    via: string;
+    label: string | null;
+    controlIdxs: number[];
+  }>;
   grid: {
     columns: string[];
     rows: Array<{ label: string; name: string | null; cells: Array<{ column: string | null; code: string; checked: boolean; idx: number }> }>;
@@ -406,8 +436,17 @@ export interface RenderedScreen {
     valueInputs?: number;
     /** Options no respondent could reach at this viewport. Optional on purpose. */
     optionsNotOperable?: number;
+    /** Accessible custom selection/drag widgets detected but not necessarily actuated. */
+    customWidgets?: number;
     readerLimitations?: number;
   };
+  /**
+   * Native-select response state, separate from `screenSignature`. Changing an answer must be
+   * observable, but must not masquerade as navigation when `walkPath` compares screen identity.
+   */
+  selectStateSignature?: string;
+  /** Browser history length when readable; an occurrence hint, never sufficient screen identity. */
+  historyLength?: number | null;
   screenSignature: string;
 }
 
@@ -442,7 +481,20 @@ export interface RenderedScreen {
  * OPTIONAL ON PURPOSE. Walk artifacts written before this field existed re-read without it, and
  * every consumer must degrade to `insufficient` rather than to a guess when it is absent.
  */
-export type BlockedReason = "validation-visible" | "control-disabled" | "advance-timeout" | "no-advance-control";
+export type BlockedReason =
+  | "validation-visible"
+  | "control-disabled"
+  | "advance-timeout"
+  | "no-advance-control"
+  | "multi-question-screen-actuation-unsupported"
+  | "navigation-forward-ambiguous";
+
+/** Which post-click observation proved that the survey moved. Answer state is excluded. */
+export type AdvanceSignal =
+  | "screen-signature-changed"
+  | "url-changed"
+  | "history-length-changed"
+  | "progress-value-increased";
 
 /**
  * A DECISION THE DRIVER DECLINED TO BIND TO THE SCREEN IN FRONT OF IT.
@@ -532,6 +584,7 @@ export interface BindingRefusal {
 export interface PerformedAction {
   kind:
     | "click-option"
+    | "select-option"
     | "type-text"
     | "set-value"
     | "refuse-fill"
@@ -546,6 +599,22 @@ export interface PerformedAction {
   value: string | null;
   ok: boolean;
   detail: string | null;
+  /** Exact state retained after a native select actuation; null when readback failed. */
+  selectReadback?: { order: number; code: string; label: string } | null;
+  /**
+   * Exact checked state read after a native radio/checkbox click. `checkedGroupIdxs` is scoped
+   * to the target's native type, name, and form owner; for a radio success it contains exactly
+   * `idx`. Null means the click transport returned but retained selection could not be read.
+   */
+  choiceReadback?: {
+    idx: number;
+    type: "radio" | "checkbox";
+    name: string | null;
+    formOwner?: number | null;
+    unnamedControlIdx?: number | null;
+    checked: boolean;
+    checkedGroupIdxs: number[];
+  } | null;
 }
 
 /**
@@ -574,7 +643,16 @@ export interface UnfillableControl {
   type: string;
   label: string;
   required: boolean;
-  reason: "refused-by-policy" | "cannot-be-satisfied" | "no-derivation" | "value-rejected";
+  reason:
+    | "refused-by-policy"
+    | "cannot-be-satisfied"
+    | "no-derivation"
+    | "value-rejected"
+    | "control-disabled"
+    | "control-not-operable"
+    | "no-usable-option"
+    | "selection-ambiguous"
+    | "unsupported-widget";
   detail: string;
 }
 
@@ -736,6 +814,12 @@ export interface PathObservation {
   /** Named capture shortfalls lifted to the walk; absent is legacy, `[]` is checked-and-clean. */
   captureFailures?: ScreenCaptureFailure[];
   captureFailureCount?: number;
+  /**
+   * Runtime-only identity of this PathObservation's verified catalogue entry. The driver sets
+   * it only after serializing/capturing the observation, so it cannot recursively appear in
+   * its own bytes. Legacy/deserialized observations omit it.
+   */
+  observationEvidenceId?: string;
   evidenceIds: string[];
   viewport: { width: number; height: number };
 }

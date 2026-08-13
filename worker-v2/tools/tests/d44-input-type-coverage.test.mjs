@@ -59,8 +59,9 @@
  * Evidence these can fail: `tools/mutate-input-coverage.mjs`.
  */
 
-import { assert, assertEq, suite, test } from "../testkit.mjs";
+import { assert, assertEq, assertThrows, suite, test } from "../testkit.mjs";
 import { testEnv, worker } from "./_helpers.mjs";
+import { READ_SCREEN } from "../../src/browser/page-script.ts";
 
 const ATTEMPT_ID = "att_d44000000001";
 const PATH_ID = "path_d44000000001";
@@ -94,9 +95,26 @@ const control = (idx, { type = "text", name = null, id = null, label = "", ...re
   ...rest,
 });
 
+const selectControl = (idx, label, options, rest = {}) => ({
+  ...control(idx, { type: "select", label }),
+  tag: "select",
+  multiple: false,
+  value: options.find((o) => o.selected)?.code ?? "",
+  options: options.map((o, order) => ({
+    order,
+    code: String(o.code),
+    label: String(o.label),
+    selected: !!o.selected,
+    disabled: !!o.disabled,
+    hidden: !!o.hidden,
+    placeholder: !!o.placeholder,
+  })),
+  ...rest,
+});
+
 const nextBtn = (idx) => ({ idx, label: "Next", role: "next", roleVia: "text:Next", disabled: false, visible: true });
 
-const screen = (text, { controls = [], buttons, signature } = {}) => ({
+const screen = (text, { controls = [], optionGroups = [], buttons, signature } = {}) => ({
   at: "2026-08-09T00:05:00.000Z",
   url: "https://fixture.invalid/survey",
   title: null,
@@ -107,7 +125,7 @@ const screen = (text, { controls = [], buttons, signature } = {}) => ({
   visibleTextTruncated: false,
   bracketedInstructionsVisible: [],
   controls,
-  optionGroups: [],
+  optionGroups,
   grid: null,
   readerLimitations: [],
   buttons: buttons === undefined ? [nextBtn(controls.length)] : buttons,
@@ -115,8 +133,8 @@ const screen = (text, { controls = [], buttons, signature } = {}) => ({
   validationMessages: [],
   counts: {
     controls: controls.length,
-    optionGroups: 0,
-    options: 0,
+    optionGroups: optionGroups.length,
+    options: optionGroups.reduce((n, g) => n + g.options.length, 0),
     textInputs: 0,
     valueInputs: controls.length,
     optionsNotOperable: 0,
@@ -133,12 +151,13 @@ const screen = (text, { controls = [], buttons, signature } = {}) => ({
  * `setRejects` makes the page refuse the assignment, which is how a real `<input type=date>`
  * behaves when handed a value it cannot parse.
  */
-function fakePage(reads, { setRejects = false } = {}) {
+function fakePage(reads, { setRejects = false, selectReadback = "exact", choiceReadback = "exact" } = {}) {
   const queue = [...reads];
   let last = reads[0] ?? null;
   const typed = [];
   const set = [];
   const clicks = [];
+  const selections = [];
   const handle = (selector, index) => ({
     async click() {
       clicks.push({ selector, index });
@@ -152,6 +171,7 @@ function fakePage(reads, { setRejects = false } = {}) {
     typed,
     set,
     clicks,
+    selections,
     async goto() {},
     async evaluate(script) {
       if (typeof script !== "string") return { ok: true };
@@ -168,6 +188,26 @@ function fakePage(reads, { setRejects = false } = {}) {
         return setRejects
           ? { ok: false, reason: "value-rejected-by-control", got: "" }
           : { ok: true, reason: null, got: value };
+      }
+      if (script.includes("W4_NATIVE_SELECT_SCOPED_READBACK")) {
+        const idx = Number(/document\.querySelectorAll\(SEL\)\[(\d+)\]/.exec(script)?.[1]);
+        const order = JSON.parse(/const expectedOrder = ([^;]+);/.exec(script)?.[1] ?? "null");
+        const code = JSON.parse(/const expectedCode = ([^;]+);/.exec(script)?.[1] ?? "null");
+        const label = JSON.parse(/const expectedLabel = ([^;]+);/.exec(script)?.[1] ?? "null");
+        selections.push({ idx, order, code, label });
+        if (selectReadback === "missing") return { ok: true, reason: null, got: null, changed: true };
+        if (selectReadback === "foreign") {
+          return { ok: true, reason: null, got: { order, code: `foreign:${code}`, label }, changed: true };
+        }
+        return { ok: true, reason: null, got: { order, code, label }, changed: true };
+      }
+      if (script.includes("W4_NATIVE_CHOICE_SCOPED_READBACK")) {
+        const idx = Number(/const expectedIdx = (\d+);/.exec(script)?.[1]);
+        if (choiceReadback === "missing") return null;
+        if (choiceReadback === "foreign") {
+          return { idx, type: "radio", name: "agreement", checked: false, checkedGroupIdxs: [] };
+        }
+        return { idx, type: "radio", name: "agreement", checked: true, checkedGroupIdxs: [idx] };
       }
       return { ok: true };
     },
@@ -209,6 +249,57 @@ async function walk(mod, env, reads, decisions = [], pageOpts = {}) {
 }
 
 const actionsOf = (obs, kind) => (obs.steps[0]?.actions ?? []).filter((a) => a.kind === kind);
+
+function readScreenInTinyDom({ hiddenWidget = false, secondSelected = false } = {}) {
+  class FakeNode {
+    constructor(tag, attrs = {}, text = "") {
+      this.tagName = tag.toUpperCase();
+      this.attrs = attrs;
+      this.textContent = text;
+      this.parentElement = null;
+      this.children = [];
+      this.id = attrs.id ?? "";
+      this.name = attrs.name ?? "";
+      this.type = attrs.type ?? tag;
+      this.value = attrs.value ?? "";
+      this.disabled = !!attrs.disabled;
+      this.required = !!attrs.required;
+      this.readOnly = false;
+      this.multiple = false;
+      this.size = 0;
+    }
+    getAttribute(name) { return Object.hasOwn(this.attrs, name) ? String(this.attrs[name]) : null; }
+    getClientRects() { return hiddenWidget && this.attrs.role === "combobox" ? [] : [1]; }
+    getBoundingClientRect() { return this.getClientRects().length ? { width: 100, height: 20, left: 0, top: 0, right: 100, bottom: 20 } : { width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 }; }
+    contains(node) { return node === this || this.children.includes(node); }
+    closest() { return this; }
+  }
+  const heading = new FakeNode("h2", {}, "Question");
+  const select = new FakeNode("select", { name: "q", required: true });
+  select.options = [
+    Object.assign(new FakeNode("option", { value: "" }, "Choose"), { label: "Choose", value: "", selected: !secondSelected, hidden: false, disabled: false }),
+    Object.assign(new FakeNode("option", { value: "b" }, "Beta"), { label: "Beta", value: "b", selected: secondSelected, hidden: false, disabled: false }),
+  ];
+  for (const option of select.options) option.parentElement = select;
+  const combo = new FakeNode("div", { role: "combobox", "aria-label": "Hidden combo" }, "Hidden combo");
+  const nodes = [select, combo];
+  const document = {
+    title: "fixture",
+    body: Object.assign(new FakeNode("body", {}, "Question Choose Beta"), { innerText: "Question Choose Beta" }),
+    documentElement: { clientWidth: 1000, clientHeight: 800 },
+    querySelectorAll(selector) {
+      if (selector === "label") return [];
+      if (selector.includes("input, select")) return nodes;
+      if (selector.includes("h1, h2")) return [heading];
+      return [];
+    },
+    querySelector() { return null; },
+    getElementById() { return null; },
+    elementFromPoint() { return select; },
+  };
+  const window = { innerWidth: 1000, innerHeight: 800, getComputedStyle() { return { display: "block", visibility: "visible", opacity: "1" }; }, __qaErrors: [] };
+  return Function("window", "document", "location", `return (${READ_SCREEN})`)(window, document, { href: "https://fixture.invalid" });
+}
 
 /**
  * A read sequence in which the survey ACTUALLY ADVANCES, so the walk applies the screen once.
@@ -498,6 +589,345 @@ suite("D44 — a control the walker will not answer STILL STALLS THE WALK, and s
     assertEq((obs.unfillableControls ?? null)?.length, 0, JSON.stringify(obs.unfillableControls));
     assertEq(obs.unfillableControlCount, 0);
     assert(!/UNANSWERED/.test(obs.outcomeDetail ?? ""), `a clean walk claimed a refusal: ${obs.outcomeDetail}`);
+  });
+});
+
+suite("D44 / W4 — native selects are scoped, read back, and never silently skipped", () => {
+  test("a single native radio group spread across table rows is layout, never a matrix", async () => {
+    const mod = await worker();
+    const classify = (0, eval)(mod.pageScript.CLASSIFY_TABLE_GRID_SRC);
+    const splitOneGroup = classify([
+      [{ type: "radio", name: "agreement" }],
+      [{ type: "radio", name: "agreement" }],
+    ]);
+    assertEq(splitOneGroup.isGrid, false, JSON.stringify(splitOneGroup));
+    assertEq(splitOneGroup.reason, "single-native-radio-group-or-unproven-rows");
+
+    const realMatrix = classify([
+      [{ type: "radio", name: "row_a" }, { type: "radio", name: "row_a" }],
+      [{ type: "radio", name: "row_b" }, { type: "radio", name: "row_b" }],
+    ]);
+    assertEq(realMatrix.isGrid, true, JSON.stringify(realMatrix));
+    // The existing constant-sum convention remains explicit and unchanged.
+    assertEq(classify([[{ type: "number", name: "" }], [{ type: "number", name: "" }]]).isGrid, true);
+  });
+
+  test("the table-laid Boolean group selects exactly one radio and carries exact retained-state receipt", async () => {
+    const mod = await worker();
+    const radios = [
+      control(0, { type: "radio", name: "agreement", code: "1", label: "Agree", checked: false }),
+      control(1, { type: "radio", name: "agreement", code: "0", label: "Do not agree", checked: false }),
+    ];
+    const s = screen("Please choose one", {
+      controls: radios,
+      optionGroups: [{
+        name: "agreement",
+        kind: "radio",
+        options: radios.map((r, order) => ({
+          order, idx: r.idx, code: r.code, label: r.label, checked: false,
+          disabled: false, visible: true, operable: true, actuatedVia: "self", labelIndex: null,
+        })),
+      }],
+    });
+    const { obs } = await walk(mod, testEnv(), advancing(s));
+    const optionActions = actionsOf(obs, "click-option");
+    assertEq(actionsOf(obs, "select-grid-cell").length, 0, JSON.stringify(obs.steps[0].actions));
+    assertEq(optionActions.length, 1, JSON.stringify(obs.steps[0].actions));
+    assertEq(optionActions[0].targetIdx, 0);
+    assertEq(optionActions[0].choiceReadback?.idx, 0, JSON.stringify(optionActions[0]));
+    assertEq(optionActions[0].choiceReadback?.checked, true, JSON.stringify(optionActions[0]));
+    assertEq(optionActions[0].choiceReadback?.checkedGroupIdxs?.join(","), "0", JSON.stringify(optionActions[0]));
+    assert(/exact-choice-readback/.test(optionActions[0].detail ?? ""), optionActions[0].detail);
+    assertEq(obs.steps[0].advanced, true, JSON.stringify(obs.steps[0]));
+  });
+
+  test("a native radio click WITHOUT exact retained-state readback is not recorded as success", async () => {
+    const mod = await worker();
+    const radio = control(0, { type: "radio", name: "agreement", code: "1", label: "Agree", checked: false });
+    const s = screen("Please choose one", {
+      controls: [radio],
+      optionGroups: [{
+        name: "agreement", kind: "radio",
+        options: [{ order: 0, idx: 0, code: "1", label: "Agree", checked: false, disabled: false, visible: true, operable: true }],
+      }],
+    });
+    const { obs } = await walk(mod, testEnv(), advancing(s), [], { choiceReadback: "missing" });
+    const action = actionsOf(obs, "click-option")[0];
+    assert(action, JSON.stringify(obs.steps[0].actions));
+    assertEq(action.ok, false, JSON.stringify(action));
+    assertEq(action.choiceReadback, null, JSON.stringify(action));
+    assert(/choice-readback-unavailable-or-mismatched/.test(action.detail ?? ""), action.detail);
+    assertEq(obs.navigatorDefaultAnswerCount, 0, "an unproved click was counted as an invented answer");
+  });
+
+  const options = () => [
+    { code: "", label: "Choose one", selected: true, placeholder: true },
+    { code: "alpha-code", label: "Alpha" },
+    { code: "beta-code", label: "Beta" },
+  ];
+
+  test("a planned exact LABEL selects inside its owning select and records exact readback", async () => {
+    const mod = await worker();
+    const s = screen("Q1. Pick a treatment", {
+      controls: [selectControl(0, "Treatment", options(), { name: "Q1", id: "Q1", required: true })],
+    });
+    const decision = { question: "Q1", question_wording: "Pick a treatment", select: ["Beta"] };
+    const { obs, page } = await walk(mod, testEnv(), advancing(s), [decision]);
+    const selected = actionsOf(obs, "select-option");
+    assertEq(selected.length, 1, JSON.stringify(obs.steps[0].actions));
+    assertEq(selected[0].ok, true, JSON.stringify(selected[0]));
+    assertEq(selected[0].targetCode, "beta-code");
+    assertEq(selected[0].selectReadback?.order, 2);
+    assertEq(selected[0].selectReadback?.code, "beta-code");
+    assertEq(page.selections[0]?.idx, 0, "the action escaped its owning select");
+    assert(!/navigator-default/.test(selected[0].detail ?? ""), selected[0].detail);
+    assertEq(obs.navigatorDefaultAnswerCount, 0);
+    assertEq((obs.unfillableControls ?? []).length, 0, JSON.stringify(obs.unfillableControls));
+  });
+
+  test("persisted successful select receipts require exact action/readback/owning-inventory agreement", async () => {
+    const mod = await worker();
+    const s = screen("Q1. Pick a treatment", {
+      controls: [selectControl(0, "Treatment", options(), { name: "Q1", id: "Q1", required: true })],
+    });
+    const decision = { question: "Q1", question_wording: "Pick a treatment", select: ["Beta"] };
+    const { obs } = await walk(mod, testEnv(), advancing(s), [decision]);
+    const encode = (value) => new TextEncoder().encode(JSON.stringify(value));
+    mod.visualWork.validatePathObservationBytes(encode(obs));
+
+    const badPointer = structuredClone(obs);
+    badPointer.observationEvidenceId = "not-an-evidence-id";
+    await assertThrows(
+      () => mod.visualWork.validatePathObservationBytes(encode(badPointer)),
+      "observationEvidenceId: has an invalid identity format",
+      "the additive runtime pointer must not weaken the strict persisted envelope",
+    );
+    const unboundPointer = structuredClone(obs);
+    unboundPointer.evidenceIds = unboundPointer.evidenceIds.filter((id) => id !== unboundPointer.observationEvidenceId);
+    await assertThrows(
+      () => mod.visualWork.validatePathObservationBytes(encode(unboundPointer)),
+      "observationEvidenceId: must also occur in evidenceIds",
+      "a syntactically valid pointer outside the walk's evidence set is not a binding",
+    );
+    const widened = { ...structuredClone(obs), unrelatedFutureField: true };
+    await assertThrows(
+      () => mod.visualWork.validatePathObservationBytes(encode(widened)),
+      "unrelatedFutureField: unknown field",
+      "allowing one additive pointer must not turn the strict envelope into an open object",
+    );
+
+    const forged = structuredClone(obs);
+    forged.steps[0].actions.find((a) => a.kind === "select-option").selectReadback.code = "foreign-code";
+    let rejected = false;
+    try { mod.visualWork.validatePathObservationBytes(encode(forged)); } catch (error) {
+      rejected = /target\/value fields must exactly equal/.test(String(error));
+    }
+    assert(rejected, "a successful select receipt with foreign readback crossed the persisted validation boundary");
+  });
+
+  test("a planned exact CODE is accepted without treating a label substring as exact", async () => {
+    const mod = await worker();
+    const s = screen("Q1. Pick", {
+      controls: [selectControl(0, "Treatment", options(), { name: "Q1", id: "Q1", required: true })],
+    });
+    const decision = { question: "Q1", question_wording: "Pick", select: ["alpha-code"] };
+    const { obs } = await walk(mod, testEnv(), advancing(s), [decision]);
+    const selected = actionsOf(obs, "select-option")[0];
+    assertEq(selected.targetLabel, "Alpha");
+    assert(/planned:exact-option-code/.test(selected.detail ?? ""), selected.detail);
+  });
+
+  test("no plan falls back to the first USABLE non-placeholder option and counts provenance", async () => {
+    const mod = await worker();
+    const s = screen("Pick one", { controls: [selectControl(0, "Treatment", options(), { required: true })] });
+    const { obs } = await walk(mod, testEnv(), advancing(s));
+    const selected = actionsOf(obs, "select-option")[0];
+    assertEq(selected.targetLabel, "Alpha");
+    assert(/navigator-default:first-usable-native-option/.test(selected.detail ?? ""), selected.detail);
+    assertEq(obs.navigatorDefaultAnswerCount, 1);
+  });
+
+  test("a label shared by TWO selects is ambiguous; neither foreign/global option is selected", async () => {
+    const mod = await worker();
+    const s = screen("Q1. Pick each", {
+      controls: [
+        selectControl(0, "First", options(), { name: "Q1", id: "Q1", required: true }),
+        selectControl(1, "Second", options(), { required: true }),
+      ],
+    });
+    const decision = { question: "Q1", question_wording: "Pick each", select: ["Beta"] };
+    const { obs, page } = await walk(mod, testEnv(), [s, s, s], [decision]);
+    assertEq(page.selections.length, 0, JSON.stringify(page.selections));
+    assertEq(actionsOf(obs, "select-option").length, 0, JSON.stringify(obs.steps[0].actions));
+    const named = obs.steps[0].unfillableControls ?? [];
+    assertEq(named.filter((u) => u.reason === "selection-ambiguous").length, 2, JSON.stringify(named));
+  });
+
+  test("a requested native select on a MIXED screen does not invent an unrelated radio default first", async () => {
+    const mod = await worker();
+    const radio = control(0, {
+      type: "radio",
+      tag: "input",
+      name: "unrelated",
+      label: "Unrelated first radio",
+      code: "radio-1",
+      checked: false,
+    });
+    const s = screen("Q1. Mixed controls", {
+      controls: [radio, selectControl(1, "Treatment", options(), { name: "Q1", id: "Q1", required: true })],
+      optionGroups: [{
+        name: "unrelated",
+        kind: "radio",
+        options: [{
+          order: 0,
+          idx: 0,
+          code: "radio-1",
+          label: "Unrelated first radio",
+          checked: false,
+          disabled: false,
+          visible: true,
+          operable: true,
+          actuatedVia: "self",
+        }],
+      }],
+    });
+    const decision = { question: "Q1", question_wording: "Mixed controls", select: ["Beta"] };
+    const { obs, page } = await walk(mod, testEnv(), advancing(s), [decision]);
+    assertEq(actionsOf(obs, "select-option").length, 1, JSON.stringify(obs.steps[0].actions));
+    assertEq(actionsOf(obs, "click-option").length, 0, JSON.stringify(obs.steps[0].actions));
+    assertEq(page.clicks.filter((x) => x.index === 0).length, 0, JSON.stringify(page.clicks));
+  });
+
+  test("an exact token shared by a radio and a select is NAMED ambiguous and actuates neither", async () => {
+    const mod = await worker();
+    const radio = control(0, { type: "radio", tag: "input", name: "other", label: "Beta", code: "radio-beta", checked: false });
+    const s = screen("Q1. Mixed exact collision", {
+      controls: [radio, selectControl(1, "Treatment", options(), { name: "Q1", id: "Q1", required: true })],
+      optionGroups: [{
+        name: "other", kind: "radio",
+        options: [{ order: 0, idx: 0, code: "radio-beta", label: "Beta", checked: false, disabled: false, visible: true, operable: true }],
+      }],
+    });
+    const decision = { question: "Q1", question_wording: "Mixed exact collision", select: ["Beta"] };
+    const { obs, page } = await walk(mod, testEnv(), [s, s, s], [decision]);
+    assertEq(page.selections.length, 0, JSON.stringify(page.selections));
+    assertEq(page.clicks.filter((x) => x.index === 0).length, 0, JSON.stringify(page.clicks));
+    assertEq(actionsOf(obs, "select-option").length, 0, JSON.stringify(obs.steps[0].actions));
+    assertEq(actionsOf(obs, "click-option").length, 0, JSON.stringify(obs.steps[0].actions));
+    const named = obs.steps[0].unfillableControls ?? [];
+    assertEq(named.filter((u) => u.reason === "selection-ambiguous").length, 2, JSON.stringify(named));
+  });
+
+  test("success WITHOUT exact post-action readback is a failed receipt and named unfillable", async () => {
+    const mod = await worker();
+    const s = screen("Pick one", { controls: [selectControl(0, "Treatment", options(), { required: true })] });
+    const { obs } = await walk(mod, testEnv(), [s, s, s], [], { selectReadback: "missing" });
+    const selected = actionsOf(obs, "select-option")[0];
+    assertEq(selected.ok, false, JSON.stringify(selected));
+    assertEq(selected.selectReadback, null);
+    assert(/exact post-action readback/.test(selected.detail ?? ""), selected.detail);
+    assertEq(obs.steps[0].unfillableControls?.[0]?.reason, "value-rejected");
+  });
+
+  test("a mismatched FOREIGN readback is rejected even when the page adapter says ok:true", async () => {
+    const mod = await worker();
+    const s = screen("Pick one", { controls: [selectControl(0, "Treatment", options(), { required: true })] });
+    const { obs } = await walk(mod, testEnv(), [s, s, s], [], { selectReadback: "foreign" });
+    const selected = actionsOf(obs, "select-option")[0];
+    assertEq(selected.ok, false, JSON.stringify(selected));
+    assert(/foreign:alpha-code/.test(selected.selectReadback?.code ?? ""), JSON.stringify(selected));
+    assertEq(obs.steps[0].unfillableControls?.[0]?.reason, "value-rejected");
+  });
+
+  test("disabled and placeholder-only visible selects are BOTH named, never silently skipped", async () => {
+    const mod = await worker();
+    const s = screen("Pick one", {
+      controls: [
+        selectControl(0, "Disabled", options(), { required: true, disabled: true }),
+        selectControl(1, "Placeholder only", [{ code: "", label: "Choose", selected: true, placeholder: true }], { required: true }),
+      ],
+    });
+    const { obs, page } = await walk(mod, testEnv(), [s, s, s]);
+    assertEq(page.selections.length, 0, JSON.stringify(page.selections));
+    const named = obs.steps[0].unfillableControls ?? [];
+    assertEq(named.length, 2, JSON.stringify(named));
+    assert(named.some((u) => u.reason === "control-disabled"), JSON.stringify(named));
+    assert(named.some((u) => u.reason === "no-usable-option"), JSON.stringify(named));
+  });
+
+  test("a hidden native select is named non-operable instead of silently assumed to back a widget", async () => {
+    const mod = await worker();
+    const s = screen("Visible prose", {
+      controls: [selectControl(0, "Hidden alternate", options(), { visible: false, required: true })],
+    });
+    const { obs, page } = await walk(mod, testEnv(), [s, s, s]);
+    assertEq(page.selections.length, 0, JSON.stringify(page.selections));
+    assertEq(obs.steps[0].unfillableControls?.[0]?.reason, "control-not-operable", JSON.stringify(obs.steps[0].unfillableControls));
+    assertEq(obs.steps[0].unfillableControls?.length, 1, JSON.stringify(obs.steps[0].unfillableControls));
+    assert((obs.unfillableControls ?? []).every((u) => u.reason === "control-not-operable"), JSON.stringify(obs.unfillableControls));
+  });
+
+  test("a select-only page counts as rendered even when no heading heuristic recognizes it", async () => {
+    const mod = await worker();
+    const bare = screen("", {
+      controls: [selectControl(0, "Treatment", options(), { required: true })],
+    });
+    bare.questionText = null;
+    bare.visibleText = "";
+    bare.collectedErrors = [{ kind: "error", message: "fixture load error", at: "2026-08-09T00:05:00.000Z" }];
+    bare.counts.options = 0;
+    bare.counts.valueInputs = 0;
+    const { obs } = await walk(mod, testEnv(), [bare, bare, bare]);
+    assert(!/rendered no interactive controls/.test(obs.outcomeDetail ?? ""), obs.outcomeDetail);
+    assertEq(actionsOf(obs, "select-option").length, 1, JSON.stringify(obs.steps[0]?.actions));
+  });
+
+  test("an already-selected usable option is observed but NOT re-actuated or counted as invented", async () => {
+    const mod = await worker();
+    const held = options().map((o) => ({ ...o, selected: o.code === "beta-code" }));
+    const s = screen("Pick one", { controls: [selectControl(0, "Treatment", held, { required: true })] });
+    const { obs, page } = await walk(mod, testEnv(), advancing(s));
+    assertEq(page.selections.length, 0, JSON.stringify(page.selections));
+    assertEq(actionsOf(obs, "select-option").length, 0, JSON.stringify(obs.steps[0].actions));
+    assertEq(obs.navigatorDefaultAnswerCount, 0);
+  });
+
+  test("accessible combobox and drag semantics are discovered but explicitly unsupported", async () => {
+    const mod = await worker();
+    const s = screen("Arrange and choose", {
+      controls: [
+        control(0, { type: "combobox", tag: "div", label: "Brand", widgetKinds: ["combobox"] }),
+        control(1, { type: "sortable", tag: "li", label: "First item", widgetKinds: ["draggable", "sortable"] }),
+      ],
+    });
+    const { obs, page } = await walk(mod, testEnv(), [s, s, s]);
+    assertEq(page.selections.length, 0);
+    assertEq(page.typed.length, 0);
+    const named = obs.steps[0].unfillableControls ?? [];
+    assertEq(named.length, 2, JSON.stringify(named));
+    assert(named.every((u) => u.reason === "unsupported-widget"), JSON.stringify(named));
+  });
+
+  test("the reader count includes only VISIBLE custom widgets", () => {
+    const read = readScreenInTinyDom({ hiddenWidget: true });
+    assertEq(read.controls.filter((c) => c.widgetKinds?.includes("combobox")).length, 1, JSON.stringify(read.controls));
+    assertEq(read.counts.customWidgets, 0, JSON.stringify(read.counts));
+  });
+
+  test("native select state changes an explicit state signal WITHOUT masquerading as navigation", () => {
+    const before = readScreenInTinyDom({ secondSelected: false });
+    const after = readScreenInTinyDom({ secondSelected: true });
+    assert(before.selectStateSignature !== after.selectStateSignature, `${before.selectStateSignature} === ${after.selectStateSignature}`);
+    assertEq(before.screenSignature, after.screenSignature, "answering a control changed screen identity and can fake navigation");
+  });
+
+  test("two select screens with the same options but different accessible labels have different identity", () => {
+    const first = readScreenInTinyDom({ secondSelected: false });
+    const second = structuredClone(first);
+    second.controls[0].label = "A different respondent question";
+    const expected = JSON.stringify([0, second.controls[0].label, false, second.controls[0].options.map((o) => [o.order, o.code, o.label])]);
+    second.screenSignature = `${String(second.screenSignature).split("##")[0]}##${expected}`;
+    assert(first.screenSignature !== second.screenSignature, `${first.screenSignature} === ${second.screenSignature}`);
   });
 });
 

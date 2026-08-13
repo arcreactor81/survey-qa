@@ -40,8 +40,17 @@ export function modelUsage(
   inputTokens: number,
   outputTokens: number,
   costUsd: number,
+  eventId?: string,
 ): ModelCallUsageEvent {
-  return { kind: "model-call", model, inputTokens, outputTokens, costUsd, at: new Date().toISOString() };
+  return {
+    kind: "model-call",
+    ...(eventId === undefined ? {} : { eventId }),
+    model,
+    inputTokens,
+    outputTokens,
+    costUsd,
+    at: new Date().toISOString(),
+  };
 }
 
 export function browserUsage(): BrowserSessionUsageEvent {
@@ -121,13 +130,21 @@ export async function pushModelUsageStrict(
     if (!isRecord(event) || event.kind !== "model-call") {
       invalid(`modelEvents[${index}]`, "expected a model-call event");
     }
-    exactKeys(event, `modelEvents[${index}]`, [
-      "kind", "model", "inputTokens", "outputTokens", "costUsd", "at",
-    ]);
+    exactKeys(
+      event,
+      `modelEvents[${index}]`,
+      event.eventId === undefined
+        ? ["kind", "model", "inputTokens", "outputTokens", "costUsd", "at"]
+        : ["kind", "eventId", "model", "inputTokens", "outputTokens", "costUsd", "at"],
+    );
+    const eventId = event.eventId === undefined
+      ? undefined
+      : identityString(event.eventId, `modelEvents[${index}].eventId`, 500);
     const at = identityString(event.at, `modelEvents[${index}].at`, 100);
     assertIsoTimestamp(at, `modelEvents[${index}].at`);
     return {
       kind: "model-call",
+      ...(eventId === undefined ? {} : { eventId }),
       model: identityString(event.model, `modelEvents[${index}].model`, 300),
       inputTokens: nonnegativeSafeInteger(event.inputTokens, `modelEvents[${index}].inputTokens`),
       outputTokens: nonnegativeSafeInteger(event.outputTokens, `modelEvents[${index}].outputTokens`),
@@ -146,12 +163,32 @@ export async function pushModelUsageStrict(
           "shared model usage is not on the conservative fail-loud accounting path",
         );
       }
-      draft.usage.events = [...draft.usage.events, ...normalized];
       let usedMicros = storedConservativeUsdMicros(
         draft.usage.cost.usedUsd,
         "cost.usedUsd",
       );
       for (const event of normalized) {
+        if (event.eventId !== undefined) {
+          const existing = draft.usage.events.find(
+            (candidate) => isRecord(candidate) && candidate.eventId === event.eventId,
+          );
+          if (existing !== undefined) {
+            if (
+              existing.kind !== "model-call" ||
+              existing.model !== event.model ||
+              existing.inputTokens !== event.inputTokens ||
+              existing.outputTokens !== event.outputTokens ||
+              existing.costUsd !== event.costUsd
+            ) {
+              invalid(
+                "modelEvents.eventId",
+                `event ${event.eventId} was already settled with different model/token/cost facts`,
+              );
+            }
+            continue;
+          }
+        }
+        draft.usage.events.push(event);
         if (draft.usage.modelCalls.used === Number.MAX_SAFE_INTEGER) {
           invalid("modelCalls.used", "cannot increment beyond the safe integer range");
         }
@@ -1178,6 +1215,7 @@ function assertSharedModelUsageVerifiable(usage: Usage, eventId: string): void {
   if (!Array.isArray(usage.events)) invalid("events", "expected an array");
   let modelCalls = 0;
   let costMicros = 0;
+  const coreEventIds = new Set<string>();
   for (let index = 0; index < usage.events.length; index += 1) {
     const event = usage.events[index];
     if (!isRecord(event)) invalid(`events[${index}]`, "expected an object");
@@ -1190,9 +1228,18 @@ function assertSharedModelUsageVerifiable(usage: Usage, eventId: string): void {
     }
     if (event.kind === "browser-session") continue;
     if (event.kind !== "model-call") invalid(`events[${index}].kind`, "unknown usage event kind");
-    exactKeys(event, `events[${index}]`, [
-      "kind", "model", "inputTokens", "outputTokens", "costUsd", "at",
-    ]);
+    exactKeys(
+      event,
+      `events[${index}]`,
+      event.eventId === undefined
+        ? ["kind", "model", "inputTokens", "outputTokens", "costUsd", "at"]
+        : ["kind", "eventId", "model", "inputTokens", "outputTokens", "costUsd", "at"],
+    );
+    if (event.eventId !== undefined) {
+      const coreEventId = identityString(event.eventId, `events[${index}].eventId`, 500);
+      if (coreEventIds.has(coreEventId)) invalid(`events[${index}].eventId`, "duplicate core settlement id");
+      coreEventIds.add(coreEventId);
+    }
     identityString(event.model, `events[${index}].model`, 300);
     nonnegativeSafeInteger(event.inputTokens, `events[${index}].inputTokens`);
     nonnegativeSafeInteger(event.outputTokens, `events[${index}].outputTokens`);

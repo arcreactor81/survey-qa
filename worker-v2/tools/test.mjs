@@ -413,6 +413,28 @@ const FILES = [
   // and visual/AX disagreement all suppress facts with named limitations. The output is positive
   // visible membership only and has no inventory-closure or verdict surface.
   "./tests/d49-vision-reconcile.test.mjs",
+  // W6 — direct DOCX formatting is neutral provenance. The explicit, versioned shop profile
+  // maps only proven grey run/paragraph/cell backgrounds to programming-logic blocks; option
+  // labels exclude only exact cited programming bytes with computed counts, while route and
+  // terminate evidence remains intact. Evidence: tools/mutate-grey-programming-logic.mjs.
+  "./tests/w6-grey-programming-logic.test.mjs",
+  // W5 — sealed positive seed authority, exact alternatives census, occurrence/history
+  // identity, selected alternative execution and receipt-only per-case closure.
+  // Evidence these can fail: tools/mutate-w5-seeded-traversal.mjs.
+  "./tests/w5-seeded-traversal.test.mjs",
+  // Same-provider continuity for pass B: Flash primary, separately receipted Pro fallback,
+  // exact per-model rates, bounded attempts, and plan-bound artifact/contract reuse.
+  // Neither leg can impersonate the independent Grok method.
+  // Evidence these can fail: tools/mutate-provider-continuity.mjs.
+  "./tests/provider-continuity.test.mjs",
+  // Exact grok-4.6 owner-dashboard tier binding. Production has a flat ledger, so it
+  // conservatively charges max(base,long), and every malformed/zero/mixed binding refuses
+  // before Secrets Store or network I/O. Evidence: tools/mutate-grok-cost-policy.mjs.
+  "./tests/grok-cost-policy.test.mjs",
+  // The only authority allowed to attach a price to exact grok-4.6: a fixed, authenticated,
+  // no-inference catalogue GET with a closed sanitised receipt.  It is deliberately not a
+  // production config writer; operator review is a separate step.
+  "./tests/grok-rate-attestation.test.mjs",
   // THE .DOCX READER — the first thing in the pipeline, and until now the only stage with no
   // test at all. `test-suite/docx-robustness/` (20 hostile documents, 99 probes) was a one-off
   // hand-run measurement: v1 = 77, Cloudflare toMarkdown = 78, deployed v2 = 87. A number
@@ -429,6 +451,15 @@ const FILES = [
   // comment block while withholding author/initials and counting that omission. Removing
   // the output projection makes the sentinel appear in stdout and turns this test red.
   "./tests/source-block-output-privacy.test.mjs",
+  // The live watch page now exposes committed browser activity without turning transitions
+  // into pages or QA coverage. The pinned loop is 44 changes across two stable screens with
+  // zero credited walks; privacy sentinels cover URL userinfo/path/query/fragment, raw screen
+  // and action text, errors, and W5 receipt content. A corrupt total is the negative fixture.
+  "./tests/execution-activity-api.test.mjs",
+  // P0 fail-closed browser/progress honesty blockers: disjoint multi-question ownership,
+  // occurrence-aware advancement, structural native-choice groups, ambiguous forward controls,
+  // and corrupt durable progress that must never reset to empty.
+  "./tests/p0-honesty-blockers.test.mjs",
 ];
 
 for (const f of FILES) await import(f);

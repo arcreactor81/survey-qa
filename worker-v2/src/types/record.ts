@@ -18,6 +18,7 @@
 
 import type { GateOutcome } from "../workflow/gates";
 import type { DocumentCoverage } from "../extract/types";
+import type { DocumentSemanticsProfile } from "../extract/document-semantics";
 
 // ---------------------------------------------------------------------------
 // Run envelope — v2's answer to prod's RunEnvelope (src/store.ts)
@@ -64,6 +65,8 @@ export interface RunEnvelopeV2 {
     targetBuildId: string | null;
     locale: string;
     viewports: string[];
+    /** Optional only for legacy envelopes; absence normalizes to neutral. */
+    documentSemanticsProfile?: DocumentSemanticsProfile;
     contractSource?: ContractSourceInput;
   };
   profile: "standard" | "deep";
@@ -980,7 +983,21 @@ export interface RunRecordV2 {
   blockers: RunBlocker[];
   itemResults: ItemResult[];
   /** Plan hash + per-kind counts. Exploration may ADD findings, never change the denominator. */
-  exploration: { planHash: string | null; perKindCounts: Record<string, number>; testComplete: boolean };
+  exploration: {
+    planHash: string | null;
+    perKindCounts: Record<string, number>;
+    testComplete: boolean;
+    seedExecution?: {
+      programHash: string;
+      doneAlternativeIds: string[];
+      attempts: Array<{ alternativeId: string; attemptId: string; artifactHash: string; artifactKey: string }>;
+      refusals: Array<{ alternativeId: string; attemptId: string; reason: string }>;
+      receipts: Array<{
+        caseId: string; alternativeId: string; attemptId: string; receiptHash: string;
+        seedCertificateHash: string; commitArtifactHash: string; artifactKey: string;
+      }>;
+    } | null;
+  };
   evidence: EvidenceCatalogEntry[];
   /**
    * RESOURCE SHAPE IS SHARED WITH THE RENDERER, NOT PARALLEL TO IT.

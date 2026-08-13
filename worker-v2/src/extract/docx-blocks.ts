@@ -38,7 +38,20 @@
  */
 
 import { unzipSync, type UnzipFileInfo } from "fflate";
-import type { DocumentCoverage, ParsedDocument, SourceBlock } from "./types";
+import type {
+  DocumentCoverage,
+  ParsedDocument,
+  SourceBlock,
+  SourceBackgroundFormatting,
+  SourceFormattingEvidence,
+  SourceRunFormatting,
+} from "./types";
+import {
+  DOCUMENT_SEMANTICS_NONE,
+  GREY_PROGRAMMING_PROFILE,
+  normalizeDocumentSemanticsProfile,
+  type DocumentSemanticsProfile,
+} from "./document-semantics";
 
 /**
  * Load-bearing parser semantics. Persisted model work records this value and must not be
@@ -47,17 +60,36 @@ import type { DocumentCoverage, ParsedDocument, SourceBlock } from "./types";
 // 1.3.0 — table-hosted combo-box/ruby blocks inherit their host cell's structural
 // coordinates, and a table banner starts even when an empty first cell emits only a lifted
 // origin-bearing block. Persisted 1.2.0 output cannot identify that host cell after merge.
-export const DOCX_BLOCKS_VERSION = "v2-docx-blocks/1.3.0" as const;
+// 1.4.0 — neutral direct run/paragraph/cell formatting evidence is retained. The explicit
+// shop profile below derives addressable programming spans from proven grey only, so the
+// profile identity is part of parser/reuse identity and cannot drift under cached work.
+// 1.5.0 — the selected document-semantics profile is explicit across API, workflow, recovery,
+// human validation and cache identity; missing legacy selection normalizes to neutral.
+// 1.6.0 — note/table identities are part-scoped, auxiliary origins remain visible to the
+// extraction passes, and unresolved theme/nil shading fails closed instead of inheriting grey.
+// 1.7.0: relationship-discovered auxiliary parts, structural subroles, and fail-closed
+// formatting specificity. This changes durable parser/cache identity.
+export const DOCX_BLOCKS_BASE_VERSION = "v2-docx-blocks/1.7.0" as const;
+export const docxBlocksVersion = (profile: DocumentSemanticsProfile): string =>
+  `${DOCX_BLOCKS_BASE_VERSION}+profile=${profile}`;
+/** Backwards-compatible constant for neutral/legacy callers. */
+export const DOCX_BLOCKS_VERSION = docxBlocksVersion(DOCUMENT_SEMANTICS_NONE);
+export { DOCUMENT_SEMANTICS_NONE, GREY_PROGRAMMING_PROFILE } from "./document-semantics";
 
 const PACKAGE_RELS = "_rels/.rels";
 /** What `partsRead` calls a flat Word 2003 XML document, which has no parts at all. */
 const FLAT_WORDML_PART = "(flat WordprocessingML)";
 const DOCUMENT_XML = "word/document.xml";
-const FOOTNOTES_XML = "word/footnotes.xml";
-const ENDNOTES_XML = "word/endnotes.xml";
-const COMMENTS_XML = "word/comments.xml";
 const COMMENTS_EXT_XML = "word/commentsExtended.xml";
-const HEADER_FOOTER_RE = /^word\/(header|footer)\d+\.xml$/;
+
+type AuxiliaryKind = "footnote" | "endnote" | "comment" | "header" | "footer";
+const AUXILIARY_RELATIONSHIP_SUFFIX: Record<AuxiliaryKind, RegExp> = {
+  footnote: /\/footnotes$/i,
+  endnote: /\/endnotes$/i,
+  comment: /\/comments$/i,
+  header: /\/header$/i,
+  footer: /\/footer$/i,
+};
 
 const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_PART_BYTES = 50 * 1024 * 1024;
@@ -238,7 +270,8 @@ function rubyReadingCount(body: string, s: Syntax): number {
   return body.match(new RegExp(`<${p}ruby(?=[\\s>])`, "g"))?.length ?? 0;
 }
 
-function paragraphText(body: string, s: Syntax): string {
+/** Read visible text tokens without assigning formatting semantics. */
+function textTokens(body: string, s: Syntax): string {
   const parts: string[] = [];
   const tokenRe = new RegExp(s.runTokenSrc, "g");
   const tabTag = `<${s.prefix}tab`;
@@ -261,6 +294,213 @@ function paragraphText(body: string, s: Syntax): string {
     else if (captured !== undefined) parts.push(decodeXmlEntities(captured));
   }
   return parts.join("");
+}
+
+type ParagraphSegment = {
+  text: string;
+  formatting: SourceFormattingEvidence;
+  programmingLogic: boolean;
+};
+
+const emptyFormatting = (): SourceFormattingEvidence => ({
+  runs: [],
+  paragraphBackground: null,
+  cellBackground: null,
+  roleBoundarySplit: false,
+  unresolvedBackground: [],
+});
+
+const explicitAchromaticGrey = (fill: string | null): boolean => {
+  const value = fill?.trim() ?? "";
+  if (!/^[0-9a-f]{6}$/i.test(value)) return false;
+  const r = Number.parseInt(value.slice(0, 2), 16);
+  const g = Number.parseInt(value.slice(2, 4), 16);
+  const b = Number.parseInt(value.slice(4, 6), 16);
+  return r === g && g === b && r > 0 && r < 255;
+};
+
+/** Ancestor shading is semantic evidence only when every direct colour input is resolved. */
+const backgroundGreyProgramming = (background: SourceBackgroundFormatting | null): boolean => {
+  if (background === null || background.themeFill !== null) return false;
+  if ((background.shadingVal?.trim().toLowerCase() ?? null) === "nil") return false;
+  return explicitAchromaticGrey(background.shadingFill);
+};
+
+/** A coloured direct highlight or explicit non-grey run fill counterweights a grey ancestor. */
+function directGreyProgramming(
+  run: SourceRunFormatting,
+  paragraphBackground: SourceBackgroundFormatting | null,
+  cellBackground: SourceBackgroundFormatting | null,
+): boolean {
+  const highlight = run.highlight?.trim().toLowerCase() ?? null;
+  // Specificity is strict. Once a higher level declares formatting, an unresolved or
+  // non-grey value MUST NOT fall through to a lower grey ancestor.
+  if (highlight !== null) return highlight === "lightgray" || highlight === "darkgray";
+  if (run.runStyle !== null) return false;
+  if (run.shadingPresent === true || run.shadingFill !== null || run.shadingVal != null || run.themeFill !== null) {
+    if (run.themeFill !== null || (run.shadingVal?.trim().toLowerCase() ?? null) === "nil") return false;
+    return explicitAchromaticGrey(run.shadingFill);
+  }
+  if (run.paragraphStyle !== null) return false;
+  if (paragraphBackground !== null) return backgroundGreyProgramming(paragraphBackground);
+  return backgroundGreyProgramming(cellBackground);
+}
+
+function directRunFormatting(runXml: string, s: Syntax, text: string, paragraphStyle: string | null): {
+  evidence: SourceRunFormatting;
+  unresolved: string[];
+} {
+  const p = escapeRegExp(s.prefix);
+  // rPr is an immediate first child by the WordprocessingML grammar. Anchoring avoids
+  // borrowing a nested ruby base/reading run's properties as the outer run's evidence.
+  const rPr = new RegExp(
+    `^\\s*(<${p}rPr(?=[\\s>])[^>]*>[\\s\\S]*?<\\/${p}rPr>|<${p}rPr(?=[\\s/>])[^>]*\\/>)`,
+  ).exec(runXml)?.[1] ?? "";
+  const highlight = xmlAttribute(propertyElement(rPr, s, "highlight"), "val") ?? null;
+  const shading = propertyElement(rPr, s, "shd");
+  const shadingFill = xmlAttribute(shading, "fill") ?? null;
+  const shadingVal = xmlAttribute(shading, "val") ?? null;
+  const themeFill = xmlAttribute(shading, "themeFill") ?? null;
+  const runStyle = xmlAttribute(propertyElement(rPr, s, "rStyle"), "val") ?? null;
+  const unresolved: string[] = [];
+  if (paragraphStyle !== null) unresolved.push(`paragraph-style:${paragraphStyle}`);
+  if (runStyle !== null) unresolved.push(`run-style:${runStyle}`);
+  if (themeFill !== null) unresolved.push(`theme-fill:${themeFill}`);
+  if (shading.length > 0 && shadingFill === null && themeFill === null) unresolved.push("run-shading-unresolved");
+  if (shadingVal?.trim().toLowerCase() === "nil") unresolved.push("run-shading-value:nil");
+  if (shadingFill?.trim().toLowerCase() === "auto") unresolved.push("automatic-shading-fill");
+  return {
+    evidence: {
+      visibleCharacters: text.length, highlight, shadingFill, shadingPresent: shading.length > 0,
+      shadingVal, themeFill, runStyle, paragraphStyle,
+    },
+    unresolved,
+  };
+}
+
+/**
+ * Preserve direct run evidence and split only when the explicit shop profile changes role.
+ * Ordinary run fragmentation is reassembled exactly as before.
+ */
+function paragraphSegments(
+  body: string,
+  s: Syntax,
+  cellBackground: SourceBackgroundFormatting | null = null,
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
+): ParagraphSegment[] {
+  const visibleBody = stripRubyReadings(body, s);
+  const paragraphStyle = xmlAttribute(propertyElement(visibleBody, s, "pStyle"), "val") ?? null;
+  const paragraphShading = propertyElement(propertyElement(visibleBody, s, "pPr"), s, "shd");
+  const paragraphBackground: SourceBackgroundFormatting | null = paragraphShading.length > 0
+    ? {
+        shadingFill: xmlAttribute(paragraphShading, "fill") ?? null,
+        shadingVal: xmlAttribute(paragraphShading, "val") ?? null,
+        themeFill: xmlAttribute(paragraphShading, "themeFill") ?? null,
+      }
+    : null;
+  const ancestorUnresolved = [
+    ...(paragraphStyle ? [`paragraph-style:${paragraphStyle}`] : []),
+    ...(paragraphBackground?.themeFill ? [`paragraph-theme-fill:${paragraphBackground.themeFill}`] : []),
+    ...(cellBackground?.themeFill ? [`cell-theme-fill:${cellBackground.themeFill}`] : []),
+    ...(paragraphBackground?.shadingVal?.trim().toLowerCase() === "nil" ? ["paragraph-shading-value:nil"] : []),
+    ...(cellBackground?.shadingVal?.trim().toLowerCase() === "nil" ? ["cell-shading-value:nil"] : []),
+    ...(paragraphBackground?.shadingFill?.trim().toLowerCase() === "auto" ? ["automatic-paragraph-shading-fill"] : []),
+    ...(cellBackground?.shadingFill?.trim().toLowerCase() === "auto" ? ["automatic-cell-shading-fill"] : []),
+  ];
+  const runs = topLevelSpans(visibleBody, s.prefix, "r");
+  if (runs === null) {
+    const text = textTokens(visibleBody, s);
+    return text.length === 0
+      ? []
+      : [{
+          text,
+          formatting: {
+            runs: [{ visibleCharacters: text.length, highlight: null, shadingFill: null, themeFill: null, runStyle: null, paragraphStyle }],
+            paragraphBackground,
+            cellBackground,
+            roleBoundarySplit: false,
+            unresolvedBackground: ["unbalanced-run-markup", ...ancestorUnresolved],
+          },
+          // A direct coloured highlight may be hidden in the unbalanced run markup, so do not
+          // let a grey ancestor classify this text without proving the counterweight absent.
+          programmingLogic: false,
+        }];
+  }
+
+  const raw: ParagraphSegment[] = [];
+  const push = (text: string, formatting: SourceFormattingEvidence, programmingLogic: boolean) => {
+    if (text.length === 0) return;
+    const prior = raw[raw.length - 1];
+    if (prior && prior.programmingLogic === programmingLogic) {
+      prior.text += text;
+      prior.formatting.runs.push(...formatting.runs);
+      prior.formatting.unresolvedBackground = [
+        ...new Set([...prior.formatting.unresolvedBackground, ...formatting.unresolvedBackground]),
+      ];
+      return;
+    }
+    raw.push({ text, formatting, programmingLogic });
+  };
+
+  let cursor = 0;
+  for (const run of runs) {
+    const gap = textTokens(visibleBody.slice(cursor, run.start), s);
+    if (gap.length > 0) {
+      const evidence: SourceRunFormatting = {
+        visibleCharacters: gap.length,
+        highlight: null,
+        shadingFill: null,
+        themeFill: null,
+        runStyle: null,
+        paragraphStyle,
+      };
+      push(
+        gap,
+        { runs: [evidence], paragraphBackground, cellBackground, roleBoundarySplit: false, unresolvedBackground: ancestorUnresolved },
+        documentSemanticsProfile === GREY_PROGRAMMING_PROFILE &&
+          directGreyProgramming(evidence, paragraphBackground, cellBackground),
+      );
+    }
+    const text = textTokens(run.inner, s);
+    if (text.length > 0) {
+      const { evidence, unresolved } = directRunFormatting(run.inner, s, text, paragraphStyle);
+      push(
+        text,
+        {
+          runs: [evidence],
+          paragraphBackground,
+          cellBackground,
+          roleBoundarySplit: false,
+          unresolvedBackground: [...new Set([...unresolved, ...ancestorUnresolved])],
+        },
+        documentSemanticsProfile === GREY_PROGRAMMING_PROFILE &&
+          directGreyProgramming(evidence, paragraphBackground, cellBackground),
+      );
+    }
+    cursor = run.end;
+  }
+  const tail = textTokens(visibleBody.slice(cursor), s);
+  if (tail.length > 0) {
+    const evidence: SourceRunFormatting = {
+      visibleCharacters: tail.length,
+      highlight: null,
+      shadingFill: null,
+      themeFill: null,
+      runStyle: null,
+      paragraphStyle,
+    };
+    push(
+      tail,
+      { runs: [evidence], paragraphBackground, cellBackground, roleBoundarySplit: false, unresolvedBackground: ancestorUnresolved },
+      documentSemanticsProfile === GREY_PROGRAMMING_PROFILE &&
+        directGreyProgramming(evidence, paragraphBackground, cellBackground),
+    );
+  }
+  return raw;
+}
+
+function paragraphText(body: string, s: Syntax): string {
+  return paragraphSegments(body, s).map((segment) => segment.text).join("");
 }
 
 /** Heading level from the paragraph's own properties. 0 means "not a heading". */
@@ -369,13 +609,15 @@ function resolveMainPart(entries: Record<string, Uint8Array>, partNames: string[
   const rels = entries[PACKAGE_RELS];
   if (rels) {
     const xml = decodePart(rels);
-    const re = /<Relationship[^>]*>/g;
+    const re = /<(?:[A-Za-z_][\w.-]*:)?Relationship(?=[\s/>])[^>]*\/?>/gi;
     for (const tag of xml.match(re) ?? []) {
-      if (!/Type\s*=\s*"[^"]*\/officeDocument"/.test(tag)) continue;
-      const target = /Target\s*=\s*"([^"]+)"/.exec(tag)?.[1];
+      const type = xmlAttribute(tag, "Type") ?? "";
+      if (!/\/officeDocument$/i.test(type)) continue;
+      if ((xmlAttribute(tag, "TargetMode") ?? "").toLowerCase() === "external") continue;
+      const target = xmlAttribute(tag, "Target");
       if (!target) continue;
-      const normalized = target.replace(/^\.?\//, "");
-      if (entries[normalized]) return normalized;
+      const normalized = resolveRelationshipTarget(null, target);
+      if (normalized !== null) return normalized;
     }
   }
   if (entries[DOCUMENT_XML]) return DOCUMENT_XML;
@@ -383,7 +625,97 @@ function resolveMainPart(entries: Record<string, Uint8Array>, partNames: string[
   return candidate ?? DOCUMENT_XML;
 }
 
-export function parseDocxBlocks(data: ArrayBuffer | Uint8Array): ParsedDocument {
+type PackageRelationship = {
+  id: string | null;
+  type: string;
+  target: string | null;
+  external: boolean;
+};
+
+function relationshipPartName(sourcePart: string): string {
+  const slash = sourcePart.lastIndexOf("/");
+  const dir = slash < 0 ? "" : sourcePart.slice(0, slash + 1);
+  const file = slash < 0 ? sourcePart : sourcePart.slice(slash + 1);
+  return `${dir}_rels/${file}.rels`;
+}
+
+/** Resolve an OPC internal Target against its source part without filesystem semantics. */
+function resolveRelationshipTarget(sourcePart: string | null, rawTarget: string): string | null {
+  const target = decodeXmlEntities(rawTarget).split("#", 1)[0]!.replace(/\\/g, "/");
+  const absolute = target.startsWith("/");
+  const base = absolute || sourcePart === null ? [] : sourcePart.split("/").slice(0, -1);
+  const parts = [...base];
+  for (const segment of target.replace(/^\/+/, "").split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (parts.length === 0) return null;
+      parts.pop();
+    } else {
+      parts.push(segment);
+    }
+  }
+  return parts.length > 0 ? parts.join("/") : null;
+}
+
+function relationshipsFor(entries: Record<string, Uint8Array>, sourcePart: string): {
+  relPart: string;
+  present: boolean;
+  relationships: PackageRelationship[];
+} {
+  const relPart = relationshipPartName(sourcePart);
+  const raw = entries[relPart];
+  if (!raw) return { relPart, present: false, relationships: [] };
+  const xml = decodePart(raw);
+  const tags = xml.match(/<(?:[A-Za-z_][\w.-]*:)?Relationship(?=[\s/>])[^>]*\/?>/gi) ?? [];
+  return {
+    relPart,
+    present: true,
+    relationships: tags.map((tag) => {
+      const external = (xmlAttribute(tag, "TargetMode") ?? "").trim().toLowerCase() === "external";
+      const rawTarget = xmlAttribute(tag, "Target");
+      return {
+        id: xmlAttribute(tag, "Id") ?? null,
+        type: xmlAttribute(tag, "Type") ?? "",
+        target: external || rawTarget === undefined ? null : resolveRelationshipTarget(sourcePart, rawTarget),
+        external,
+      };
+    }),
+  };
+}
+
+function auxiliaryKind(type: string): AuxiliaryKind | null {
+  for (const [kind, suffix] of Object.entries(AUXILIARY_RELATIONSHIP_SUFFIX) as Array<[AuxiliaryKind, RegExp]>) {
+    if (suffix.test(type)) return kind;
+  }
+  return null;
+}
+
+function referencedIds(xml: string, s: Syntax, names: string[]): Set<string> {
+  const p = escapeRegExp(s.prefix);
+  const out = new Set<string>();
+  for (const name of names) {
+    const n = escapeRegExp(name);
+    const re = new RegExp(`<${p}${n}(?=[\\s/>])([^>]*)/?>`, "g");
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(xml)) !== null) {
+      const id = xmlAttribute(match[1] ?? "", "id")?.trim();
+      if (id) out.add(id);
+    }
+  }
+  return out;
+}
+
+export interface ParseDocxBlocksOptions {
+  /** Missing means neutral for legacy callers. Unknown values are refused, never guessed. */
+  documentSemanticsProfile?: DocumentSemanticsProfile;
+}
+
+export function parseDocxBlocks(
+  data: ArrayBuffer | Uint8Array,
+  options: ParseDocxBlocksOptions = {},
+): ParsedDocument {
+  const documentSemanticsProfile = normalizeDocumentSemanticsProfile(options.documentSemanticsProfile);
+  const parserVersion = docxBlocksVersion(documentSemanticsProfile);
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   if (bytes.byteLength > MAX_ARCHIVE_BYTES) {
     throw new Error(`parseDocxBlocks: archive is ${bytes.byteLength} bytes, above the ${MAX_ARCHIVE_BYTES} limit`);
@@ -411,13 +743,7 @@ export function parseDocxBlocks(data: ArrayBuffer | Uint8Array): ParsedDocument 
           // package relationships say which one it is, and they can only be consulted
           // after the archive is open — so the filter must not have thrown the answer
           // away by then. The extra parts are small (styles, numbering, settings).
-          /^word\/[^/]+\.xml$/.test(info.name) ||
-          info.name === DOCUMENT_XML ||
-          info.name === FOOTNOTES_XML ||
-          info.name === ENDNOTES_XML ||
-          info.name === COMMENTS_XML ||
-          info.name === COMMENTS_EXT_XML ||
-          HEADER_FOOTER_RE.test(info.name);
+          /(?:\.xml|\.rels)$/i.test(info.name);
         return wanted && Math.max(info.size, info.originalSize) <= MAX_PART_BYTES;
       },
     });
@@ -465,12 +791,12 @@ export function parseDocxBlocks(data: ArrayBuffer | Uint8Array): ParsedDocument 
 
   const xml = decodePart(documentXml);
   let syntax = buildSyntax("w:");
-  let blocks = scanBody(xml, syntax, coverage, "body");
+  let blocks = scanBody(xml, syntax, coverage, "body", documentSemanticsProfile);
   if (blocks.length === 0) {
     const detected = detectPrefix(xml);
     if (detected !== null && detected !== "w:") {
       syntax = buildSyntax(detected);
-      blocks = scanBody(xml, syntax, coverage, "body");
+      blocks = scanBody(xml, syntax, coverage, "body", documentSemanticsProfile);
     }
   }
   if (blocks.length === 0) {
@@ -481,69 +807,113 @@ export function parseDocxBlocks(data: ArrayBuffer | Uint8Array): ParsedDocument 
   }
   coverage.partsRead.push(partNames[0] === FLAT_WORDML_PART ? FLAT_WORDML_PART : mainPart);
 
-  // --- footnotes / endnotes ---------------------------------------------------------
-  for (const [part, label] of [
-    [FOOTNOTES_XML, "footnote"],
-    [ENDNOTES_XML, "endnote"],
-  ] as const) {
-    const raw = entries[part];
-    if (!raw) continue;
+  // Auxiliary content is discovered only through the main part's OPC relationships.
+  const bodyReferences: Record<"footnote" | "endnote" | "comment", Set<string>> = {
+    footnote: referencedIds(xml, syntax, ["footnoteReference"]),
+    endnote: referencedIds(xml, syntax, ["endnoteReference"]),
+    comment: referencedIds(xml, syntax, ["commentReference", "commentRangeStart", "commentRangeEnd"]),
+  };
+  const mainRelationships = relationshipsFor(entries, mainPart);
+  if (mainRelationships.present) coverage.partsRead.push(mainRelationships.relPart);
+  else if ([...Object.values(bodyReferences)].some((ids) => ids.size > 0)) {
+    coverage.problems.push(
+      `AUXILIARY_RELATIONSHIPS_MISSING: ${mainRelationships.relPart} is absent while the main document ` +
+        `references annotations. Referenced content is retained below as unreadable placeholders.`,
+    );
+  }
+  const auxiliary = mainRelationships.relationships
+    .map((relationship) => ({ relationship, kind: auxiliaryKind(relationship.type) }))
+    .filter((item): item is { relationship: PackageRelationship; kind: AuxiliaryKind } => item.kind !== null);
+  const annotationIds: Record<"footnote" | "endnote" | "comment", Set<string>> = {
+    footnote: new Set(), endnote: new Set(), comment: new Set(),
+  };
+
+  for (const { relationship, kind } of auxiliary) {
+    const diagnosticPart = relationship.target ?? `relationship:${relationship.id ?? "(missing-id)"}`;
+    if (relationship.external || relationship.target === null) {
+      coverage.partsSkipped.push({ part: diagnosticPart, reason: `${kind} relationship is external or has an invalid/missing Target` });
+      coverage.problems.push(`AUXILIARY_RELATIONSHIP_UNREADABLE: ${kind} relationship ${relationship.id ?? "(missing-id)"} has no safe internal target.`);
+      continue;
+    }
+    const raw = entries[relationship.target];
+    if (!raw) {
+      const presentButFiltered = partNames.includes(relationship.target);
+      coverage.partsSkipped.push({
+        part: relationship.target,
+        reason: presentButFiltered ? "relationship target is too large to inflate safely" : "relationship target is absent from the package",
+      });
+      coverage.problems.push(
+        `AUXILIARY_RELATIONSHIP_TARGET_MISSING: ${kind} relationship ${relationship.id ?? "(missing-id)"} targets ` +
+          `${relationship.target}, but its bytes are unavailable. Referenced annotations remain counted placeholders.`,
+      );
+      continue;
+    }
     const partXml = decodePart(raw);
-    const s = partSyntax(partXml, syntax);
-    const notes = scanNotes(partXml, s, label);
-    blocks.push(...notes);
-    coverage.partsRead.push(part);
-    if (notes.length > 0) {
-      coverage.problems.push(
-        `${notes.length} ${label}(s) were read from ${part} and are labelled as such — questionnaires park conditional exceptions there, so weigh them as requirements, not decoration.`,
+    const partS = partSyntax(partXml, syntax);
+    const origin = `${kind} [part=${relationship.target}]`;
+    if (kind === "footnote" || kind === "endnote") {
+      const seen = annotationIds[kind];
+      const notes = scanNotes(partXml, partS, kind, relationship.target, coverage, documentSemanticsProfile, seen);
+      blocks.push(...notes);
+      if (notes.length > 0) {
+        coverage.problems.push(
+          `${seen.size} ${kind}(s) produced ${notes.length} addressable block(s) read from ${relationship.target}; ` +
+            `they remain independently originated source, not decoration.`,
+        );
+      }
+    } else if (kind === "header" || kind === "footer") {
+      const drafts = scanBody(partXml, partS, coverage, origin, documentSemanticsProfile, origin)
+        .map((draft): Draft => ({
+          ...draft,
+          origin: draft.origin === origin
+            ? origin
+            : `${origin}; lifted=${draft.sourceSubrole ?? "origin-bearing-source"}`,
+        }))
+        .filter((draft) => clean(draft.text).length > 0);
+      blocks.push(...drafts);
+      if (drafts.length > 0) {
+        coverage.problems.push(
+          `${drafts.length} addressable block(s) came from ${relationship.target}; identical text in another ` +
+            `${kind} part remains distinct because part identity is source evidence.`,
+        );
+      }
+    } else {
+      const comments = scanComments(
+        partXml, partS, entries[COMMENTS_EXT_XML] !== undefined, coverage, relationship.target,
+        annotationIds.comment,
       );
+      blocks.push(...comments);
+      if (comments.length > 0) {
+        coverage.problems.push(
+          `COMMENT_FORMATTING_NOT_PRESERVED: ${comments.length} Word comment block(s) retain visible text, ` +
+            `but comment formatting proves no document semantics. Comments remain labelled proposals.`,
+        );
+      }
+    }
+    coverage.partsRead.push(relationship.target);
+  }
+
+  for (const kind of ["footnote", "endnote", "comment"] as const) {
+    for (const id of bodyReferences[kind]) {
+      if (annotationIds[kind].has(id)) continue;
+      const origin = `${kind} ${id} [part=unavailable]`;
+      coverage.problems.push(
+        `REFERENCED_AUXILIARY_CONTENT_UNREADABLE: main-document ${kind} reference ${id} has no readable ` +
+          `relationship-backed declaration; a placeholder remains in the denominator.`,
+      );
+      blocks.push(kind === "comment"
+        ? {
+            kind: "paragraph", text: "[comment text unreadable]", section: null, coords: null, tableId: null,
+            origin: `${origin}  PROPOSAL, resolution unknown`, sourceSubrole: "comment-proposal",
+            formatting: emptyFormatting(), semanticSpans: [],
+          }
+        : {
+            kind: "footnote", text: "[note text unreadable]", section: null, coords: null, tableId: null,
+            origin, sourceSubrole: null, formatting: emptyFormatting(), semanticSpans: [],
+          });
     }
   }
 
-  // --- headers / footers ------------------------------------------------------------
-  const seenHeaderText = new Set<string>();
-  for (const part of Object.keys(entries)) {
-    if (!HEADER_FOOTER_RE.test(part)) continue;
-    const partXml = decodePart(entries[part]!);
-    const s = partSyntax(partXml, syntax);
-    const label = part.includes("header") ? "header" : "footer";
-    let added = 0;
-    for (const d of scanBody(partXml, s, coverage, label)) {
-      const key = `${label}|${clean(d.text)}`;
-      if (clean(d.text).length === 0 || seenHeaderText.has(key)) continue;
-      seenHeaderText.add(key);
-      blocks.push({ ...d, kind: "paragraph", origin: label });
-      added += 1;
-    }
-    coverage.partsRead.push(part);
-    if (added > 0) {
-      coverage.problems.push(
-        `${added} line(s) came from ${part}: a document stamped "DRAFT — NOT FOR FIELD" in its header is a different document from the one it looks like.`,
-      );
-    }
-  }
-
-  // --- comments (PROPOSALS, not spec) -----------------------------------------------
-  const commentsRaw = entries[COMMENTS_XML];
-  if (commentsRaw) {
-    const partXml = decodePart(commentsRaw);
-    const s = partSyntax(partXml, syntax);
-    const resolvedKnown = entries[COMMENTS_EXT_XML] !== undefined;
-    const comments = scanComments(partXml, s, resolvedKnown);
-    blocks.push(...comments);
-    coverage.partsRead.push(COMMENTS_XML);
-    if (comments.length > 0) {
-      coverage.problems.push(
-        `${comments.length} Word comment(s) are present. A comment is a PROPOSAL, not the specification: they are labelled "comment" and the block pass may not turn one into an obligation on its own.`,
-      );
-    }
-  }
-
-  for (const p of [FOOTNOTES_XML, ENDNOTES_XML, COMMENTS_XML]) {
-    if (partNames.includes(p) && !coverage.partsRead.includes(p)) {
-      coverage.partsSkipped.push({ part: p, reason: "present in the archive but too large to inflate safely" });
-    }
-  }
   for (const p of partNames) {
     if (
       !coverage.partsRead.includes(p) &&
@@ -560,11 +930,24 @@ export function parseDocxBlocks(data: ArrayBuffer | Uint8Array): ParsedDocument 
   const finished: SourceBlock[] = [];
   let n = 0;
   for (const b of blocks) {
-    const text = clean(b.text);
-    if (text.length === 0) continue;
+    const text = b.formatting.roleBoundarySplit ? b.text.replace(/[ \t]+\n/g, "\n") : clean(b.text);
+    if (clean(text).length === 0) continue;
     if (b.kind === "heading" && b.origin === "body") section = text;
+    const bodyScoped =
+      b.origin === "body" ||
+      b.origin === "combo-box-suggestion" ||
+      b.origin === "image-alt" ||
+      (b.origin.startsWith("ruby-reading") && b.origin.includes('source="body"'));
     n += 1;
-    finished.push({ ...b, text, blockId: `b${String(n).padStart(4, "0")}`, section });
+    finished.push({
+      ...b,
+      text,
+      blockId: `b${String(n).padStart(4, "0")}`,
+      sourceSubrole: b.sourceSubrole ?? null,
+      // Notes/comments/headers/footers are independent document parts. Assigning the last
+      // body heading to them would invent scope the DOCX never expressed.
+      section: bodyScoped ? section : b.section,
+    });
   }
 
   const counts = {
@@ -574,6 +957,58 @@ export function parseDocxBlocks(data: ArrayBuffer | Uint8Array): ParsedDocument 
     headings: finished.filter((b) => b.kind === "heading").length,
     listItems: finished.filter((b) => b.kind === "list-item").length,
   };
+
+  const programmingBlocks = finished.filter((b) =>
+    b.semanticSpans.some((span) => span.role === "programming-logic"),
+  );
+  const programmingRuns = programmingBlocks.reduce(
+    (count, block) => count + block.semanticSpans.reduce((n2, span) => n2 + span.runSpans, 0),
+    0,
+  );
+  const programmingCharacters = programmingBlocks.reduce((count, block) => count + block.text.length, 0);
+  if (programmingBlocks.length > 0) {
+    coverage.problems.push(
+      `GREY_PROGRAMMING_PROFILE_APPLIED: explicitly bound parser profile ${GREY_PROGRAMMING_PROFILE} classified ` +
+        `${programmingBlocks.length} addressable block(s), ${programmingRuns} direct run span(s), and ` +
+        `${programmingCharacters} character(s) as programming logic. Only direct lightGray/darkGray highlights and explicit six-digit ` +
+        `achromatic grey fills on runs, paragraphs, or table cells (excluding black/white) qualify; a coloured ` +
+        `direct run highlight counterweights a grey ancestor. This is an assumption, not a universal Word convention.`,
+    );
+  }
+  const greyEvidenceRuns = finished.reduce(
+    (count, block) => count + block.formatting.runs.filter((run) =>
+      directGreyProgramming(run, block.formatting.paragraphBackground, block.formatting.cellBackground),
+    ).length,
+    0,
+  );
+  if (documentSemanticsProfile === DOCUMENT_SEMANTICS_NONE && greyEvidenceRuns > 0) {
+    coverage.problems.push(
+      `GREY_FORMATTING_PRESENT_UNCLASSIFIED: ${greyEvidenceRuns} direct run span(s) carry proven achromatic grey ` +
+        `formatting, but documentSemanticsProfile=${DOCUMENT_SEMANTICS_NONE} assigns it no programming meaning. ` +
+        `Formatting and text were retained; no option-label bytes were subtracted. Select an explicit declared ` +
+        `document convention only when the questionnaire author confirms it.`,
+    );
+  }
+  const unresolvedFormatting = finished.filter((b) => b.formatting.unresolvedBackground.length > 0);
+  const packageFormattingReasons = [
+    ...(partNames.includes("word/styles.xml") ? ["style-inheritance:word/styles.xml"] : []),
+    ...partNames.filter((part) => /^word\/theme\/.*\.xml$/i.test(part)).map((part) => `theme-resolution:${part}`),
+  ];
+  if (unresolvedFormatting.length > 0 || packageFormattingReasons.length > 0) {
+    const reasons = [
+      ...new Set([
+        ...packageFormattingReasons,
+        ...unresolvedFormatting.flatMap((b) => b.formatting.unresolvedBackground),
+      ]),
+    ];
+    coverage.problems.push(
+      `GREY_PROGRAMMING_FORMATTING_UNRESOLVED: ${unresolvedFormatting.length} block(s) carry style-, theme-, ` +
+        `automatic-, malformed-run, inherited-style, or package-theme background evidence this parser does not resolve ` +
+        `(${reasons.slice(0, 12).join(", ")}` +
+        `${reasons.length > 12 ? `; ${reasons.length - 12} additional reason(s)` : ""}). No programming role was ` +
+        `inferred from those unresolved sources.`,
+    );
+  }
 
   if (coverage.images > coverage.imagesWithAltText) {
     coverage.problems.push(
@@ -591,7 +1026,14 @@ export function parseDocxBlocks(data: ArrayBuffer | Uint8Array): ParsedDocument 
     );
   }
 
-  return { blocks: finished, annotatedText: annotate(finished), counts, coverage };
+  return {
+    parserVersion,
+    documentSemanticsProfile,
+    blocks: finished,
+    annotatedText: annotate(finished),
+    counts,
+    coverage,
+  };
 }
 
 const partSyntax = (partXml: string, fallback: Syntax): Syntax => {
@@ -615,9 +1057,18 @@ export function annotate(blocks: SourceBlock[]): string {
       lastTable = null;
     }
     const inlineText = b.text.replace(/\n/g, " ⏎ ");
-    if (b.origin === "combo-box-suggestion") {
+    // SourceBlock requires semanticSpans, but annotate is also an exported boundary used by
+    // versioned/synthetic parsed-document fixtures. Missing legacy provenance means
+    // "unclassified", never a crash that prevents the source bytes reaching the model.
+    const semanticSpans = b.semanticSpans ?? [];
+    if (semanticSpans.some((span) => span.role === "programming-logic")) {
+      const spans = semanticSpans.reduce((count, span) => count + span.runSpans, 0);
+      out.push(
+        `[${b.blockId}] ${describe(b)}[programming logic; profile=${GREY_PROGRAMMING_PROFILE}; direct-grey-runs=${spans}: ${inlineText}]`,
+      );
+    } else if (b.sourceSubrole === "combo-box-suggestion") {
       out.push(`[${b.blockId}] [combo-box suggestion — OPEN, NOT EXHAUSTIVE: ${inlineText}]`);
-    } else if (b.origin.startsWith("ruby-reading")) {
+    } else if (b.sourceSubrole === "ruby-reading") {
       out.push(`[${b.blockId}] [${b.origin}: ${inlineText}]`);
     } else {
       out.push(`[${b.blockId}] ${describe(b)}${inlineText}`);
@@ -745,6 +1196,8 @@ function dropdownDrafts(body: string, s: Syntax, origin: string): Draft[] {
     coords: null,
     tableId: null,
     origin,
+    formatting: emptyFormatting(),
+    semanticSpans: [],
   }));
 }
 
@@ -756,6 +1209,9 @@ function comboBoxDrafts(body: string, s: Syntax): Draft[] {
     coords: null,
     tableId: null,
     origin: "combo-box-suggestion",
+    sourceSubrole: "combo-box-suggestion",
+    formatting: emptyFormatting(),
+    semanticSpans: [],
   }));
 }
 
@@ -783,12 +1239,22 @@ function rubyDrafts(body: string, s: Syntax, origin: string): Draft[] {
       coords: null,
       tableId: null,
       origin: `ruby-reading; base=${JSON.stringify(base)}; source=${JSON.stringify(origin)}`,
+      sourceSubrole: "ruby-reading",
+      formatting: emptyFormatting(),
+      semanticSpans: [],
     });
   }
   return drafts;
 }
 
-function scanBody(xmlRaw: string, s: Syntax, coverage: DocumentCoverage, origin: string): Draft[] {
+function scanBody(
+  xmlRaw: string,
+  s: Syntax,
+  coverage: DocumentCoverage,
+  origin: string,
+  documentSemanticsProfile: DocumentSemanticsProfile,
+  tableNamespace: string | null = origin === "body" ? null : origin,
+): Draft[] {
   const xml = neutralizeTextBoxes(acceptedViewXml(stripFallback(xmlRaw), s, origin, coverage), s);
   const unreached = dropdownsOutsideParagraphs(xml, s);
   if (unreached > 0) {
@@ -817,35 +1283,49 @@ function scanBody(xmlRaw: string, s: Syntax, coverage: DocumentCoverage, origin:
         `Cells are still captured as paragraphs where possible, but row/column pairing — which is what makes a ` +
         `routing matrix mean anything — is not available.`,
     );
-    return scanParagraphRange(xml, s, coverage, origin);
+    return scanParagraphRange(xml, s, coverage, origin, documentSemanticsProfile);
   }
 
   const out: Draft[] = [];
   let cursor = 0;
   let tableN = 0;
   for (const span of tableSpans) {
-    out.push(...scanParagraphRange(xml.slice(cursor, span.start), s, coverage, origin));
+    out.push(...scanParagraphRange(xml.slice(cursor, span.start), s, coverage, origin, documentSemanticsProfile));
     tableN += 1;
-    out.push(...scanTable(span.inner, s, `t${tableN}`, coverage, origin));
+    const tableId = tableNamespace === null ? `t${tableN}` : `${tableNamespace}:t${tableN}`;
+    out.push(...scanTable(span.inner, s, tableId, coverage, origin, documentSemanticsProfile));
     cursor = span.end;
   }
-  out.push(...scanParagraphRange(xml.slice(cursor), s, coverage, origin));
+  out.push(...scanParagraphRange(xml.slice(cursor), s, coverage, origin, documentSemanticsProfile));
   return out;
 }
 
-function scanParagraphRange(xml: string, s: Syntax, coverage: DocumentCoverage, origin: string): Draft[] {
+function scanParagraphRange(
+  xml: string,
+  s: Syntax,
+  coverage: DocumentCoverage,
+  origin: string,
+  documentSemanticsProfile: DocumentSemanticsProfile,
+): Draft[] {
   const out: Draft[] = [];
   const paraRe = new RegExp(s.paragraphSrc, "g");
   let m: RegExpExecArray | null;
   while ((m = paraRe.exec(xml)) !== null) {
     const body: string | undefined = m[1];
     if (body === undefined) continue;
-    out.push(...paragraphDrafts(body, s, coverage, origin));
+    out.push(...paragraphDrafts(body, s, coverage, origin, null, documentSemanticsProfile));
   }
   return out;
 }
 
-function paragraphDrafts(body: string, s: Syntax, coverage: DocumentCoverage, origin: string): Draft[] {
+function paragraphDrafts(
+  body: string,
+  s: Syntax,
+  coverage: DocumentCoverage,
+  origin: string,
+  cellBackground: SourceBackgroundFormatting | null = null,
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
+): Draft[] {
   const out: Draft[] = [];
   countInlineArtifacts(body, s, coverage);
 
@@ -861,24 +1341,45 @@ function paragraphDrafts(body: string, s: Syntax, coverage: DocumentCoverage, or
     );
   }
 
-  let text = paragraphText(body, s);
+  const segments = paragraphSegments(body, s, cellBackground, documentSemanticsProfile);
+  if (segments.length > 1) {
+    for (const segment of segments) segment.formatting.roleBoundarySplit = true;
+  }
+  const fullText = segments.map((segment) => segment.text).join("");
   const numbered = hasNumbering(body, s);
-  if (numbered && clean(text).length > 0 && !ALREADY_NUMBERED.test(text)) {
+  if (numbered && clean(fullText).length > 0 && !ALREADY_NUMBERED.test(fullText)) {
     // The identifier a reader sees ("Q1.", "a)") is generated at render time from
     // numbering.xml and exists nowhere in this XML. A visible unknown is recoverable.
-    text = `[#] ${text}`;
+    const first = segments.find((segment) => clean(segment.text).length > 0);
+    if (first) first.text = `[#] ${first.text}`;
     coverage.autoNumberedParagraphs += 1;
   }
 
-  if (clean(text).length > 0) {
-    const level = headingLevel(body, s);
+  const level = headingLevel(body, s);
+  for (const segment of segments) {
+    const text = segment.formatting.roleBoundarySplit
+      ? segment.text.replace(/[ \t]+\n/g, "\n")
+      : clean(segment.text);
+    if (clean(text).length === 0) continue;
+    const programming = segment.programmingLogic;
     const kind: SourceBlock["kind"] =
-      origin === "body" && (level > 0 || SECTION_TEXT_RE.test(clean(text)))
+      !programming && origin === "body" && (level > 0 || SECTION_TEXT_RE.test(text))
         ? "heading"
-        : numbered
+        : !programming && numbered
           ? "list-item"
           : "paragraph";
-    out.push({ kind, text, section: null, coords: null, tableId: null, origin });
+    out.push({
+      kind,
+      text,
+      section: null,
+      coords: null,
+      tableId: null,
+      origin,
+      formatting: segment.formatting,
+      semanticSpans: programming
+        ? [{ role: "programming-logic", profile: GREY_PROGRAMMING_PROFILE, runSpans: segment.formatting.runs.length }]
+        : [],
+    });
   }
 
   // One block per option is an interface contract with parseDocumentedOptions: a joined
@@ -898,6 +1399,9 @@ function paragraphDrafts(body: string, s: Syntax, coverage: DocumentCoverage, or
       coords: null,
       tableId: null,
       origin: "image-alt",
+      sourceSubrole: "image-alt",
+      formatting: emptyFormatting(),
+      semanticSpans: [],
     });
   }
   return out;
@@ -931,6 +1435,7 @@ type VerticalMerge = "restart" | "continue" | null;
 
 interface TableCell {
   text: string;
+  formatting: SourceFormattingEvidence;
   /** One-based OOXML table-grid column, not the cell's array position. */
   gridCol: number;
   span: number;
@@ -1015,13 +1520,20 @@ function tableGridInteger(
  * than silently scrambling the parent's row pairing. WordprocessingML has no semantic
  * equivalent of HTML th/scope, so rowHeader/colHeader remain null instead of guessing.
  */
-function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: DocumentCoverage, origin: string): Draft[] {
+function scanTable(
+  tableXml: string,
+  s: Syntax,
+  tableId: string,
+  coverage: DocumentCoverage,
+  origin: string,
+  documentSemanticsProfile: DocumentSemanticsProfile,
+): Draft[] {
   const nested = topLevelSpans(tableXml, s.prefix, "tbl");
   let body = tableXml;
   const nestedDrafts: Draft[] = [];
   if (nested === null) {
     coverage.problems.push(`${tableId}: nested <${s.prefix}tbl> tags do not balance; this table was read as flat paragraphs.`);
-    return scanParagraphRange(tableXml, s, coverage, origin);
+    return scanParagraphRange(tableXml, s, coverage, origin, documentSemanticsProfile);
   }
   if (nested.length > 0) {
     // Lift the nested tables OUT before scanning rows, so the parent's <w:tr> scan cannot
@@ -1032,7 +1544,7 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
     for (const span of nested) {
       sliced += tableXml.slice(cursor, span.start);
       n += 1;
-      nestedDrafts.push(...scanTable(span.inner, s, `${tableId}.${n}`, coverage, origin));
+      nestedDrafts.push(...scanTable(span.inner, s, `${tableId}.${n}`, coverage, origin, documentSemanticsProfile));
       cursor = span.end;
     }
     sliced += tableXml.slice(cursor);
@@ -1058,6 +1570,14 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
     while ((cellMatch = cellRe.exec(rowXml)) !== null) {
       const cellXml = cellMatch[1] ?? "";
       const props = propertyElement(cellXml, s, "tcPr");
+      const cellShading = propertyElement(props, s, "shd");
+      const cellBackground: SourceBackgroundFormatting | null = cellShading.length > 0
+        ? {
+            shadingFill: xmlAttribute(cellShading, "fill") ?? null,
+            shadingVal: xmlAttribute(cellShading, "val") ?? null,
+            themeFill: xmlAttribute(cellShading, "themeFill") ?? null,
+          }
+        : null;
       const span = tableGridInteger(props, s, "gridSpan", 1, 1, tableId, coverage);
       const vMergeTag = vMergeRe.exec(props)?.[0] ?? "";
       const vMergeValue = xmlAttribute(vMergeTag, "val")?.toLowerCase();
@@ -1074,31 +1594,69 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
       }
 
       const parts: string[] = [];
+      const cellFormatting = emptyFormatting();
+      cellFormatting.cellBackground = cellBackground;
       const cellDrafts: Draft[] = [];
+      const paragraphPieces: Draft[] = [];
       const paraRe = new RegExp(s.paragraphSrc, "g");
       let paraMatch: RegExpExecArray | null;
       while ((paraMatch = paraRe.exec(cellXml)) !== null) {
         if (paraMatch[1] === undefined) continue;
-        for (const d of paragraphDrafts(paraMatch[1], s, coverage, origin)) {
-          if (d.origin === "image-alt") parts.push(d.text);
+        paragraphPieces.push(
+          ...paragraphDrafts(paraMatch[1], s, coverage, origin, cellBackground, documentSemanticsProfile),
+        );
+      }
+      const hasProgrammingPieces = paragraphPieces.some((d) => d.semanticSpans.length > 0);
+      if (hasProgrammingPieces) {
+        // A mixed cell is emitted in exact paragraph/run order. Folding its ordinary pieces
+        // into one host cell and appending programming drafts afterwards would reorder
+        // A / GREY / B into A+B / GREY. Ordinary pieces keep table-cell kind; programming
+        // pieces are lifted paragraphs so row accounting cannot silently absorb them.
+        for (const d of paragraphPieces) {
+          if (clean(d.text).length === 0) continue;
+          cellDrafts.push({
+            ...d,
+            kind: d.semanticSpans.length > 0 || d.origin !== origin ? "paragraph" : "table-cell",
+            tableId,
+            coords: { row: rows.length + 1, col: gridCol, rowHeader: null, colHeader: null },
+          });
+        }
+      } else {
+        for (const d of paragraphPieces) {
+          if (d.sourceSubrole != null) {
+            cellDrafts.push({
+              ...d,
+              kind: "paragraph",
+              tableId,
+              coords: { row: rows.length + 1, col: gridCol, rowHeader: null, colHeader: null },
+            });
+          }
           // An origin-bearing draft (combo-box suggestion, ruby reading) keeps its origin as
           // its own block instead of being folded into cell text: the origin is the ONLY
           // thing that stops an open suggestion sealing as an exhaustive answer list.
           // Drafts carrying the part origin itself (the paragraph's own text, dropdown
           // items) still fold, unchanged.
-          else if (d.origin !== origin) {
+          else if (d.origin !== origin || d.semanticSpans.length > 0) {
             // The draft remains a paragraph so its origin continues to control authority, but
             // its host cell is still exact source provenance. `rows.length + 1` is the current
             // one-based row because this row has not yet been appended to `rows`.
             cellDrafts.push({
               ...d,
+              kind: d.semanticSpans.length > 0 ? "paragraph" : d.kind,
               tableId,
               coords: { row: rows.length + 1, col: gridCol, rowHeader: null, colHeader: null },
             });
-          } else if (clean(d.text).length > 0) parts.push(clean(d.text));
+          } else if (clean(d.text).length > 0) {
+            parts.push(clean(d.text));
+            cellFormatting.runs.push(...d.formatting.runs);
+            cellFormatting.paragraphBackground ??= d.formatting.paragraphBackground;
+            cellFormatting.unresolvedBackground = [
+              ...new Set([...cellFormatting.unresolvedBackground, ...d.formatting.unresolvedBackground]),
+            ];
+          }
         }
       }
-      cells.push({ text: parts.join("\n"), gridCol, span, vMerge, drafts: cellDrafts });
+      cells.push({ text: parts.join("\n"), formatting: cellFormatting, gridCol, span, vMerge, drafts: cellDrafts });
       gridCol = Math.min(MAX_GRID_COLUMNS + 1, gridCol + span);
     }
     rows.push({ cells, repeatHeader: onOffProperty(tblHeaderRe.exec(trPr)?.[0] ?? "") });
@@ -1123,7 +1681,10 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
     );
   }
   const nonEmptyCells = rows.reduce(
-    (count, row) => count + row.cells.filter((cell) => clean(cell.text).length > 0).length,
+    (count, row) =>
+      count + row.cells.filter((cell) =>
+        clean(cell.text).length > 0 || cell.drafts.some((draft) => clean(draft.text).length > 0),
+      ).length,
     0,
   );
   coverage.problems.push(
@@ -1175,6 +1736,8 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
         section: null,
         tableId,
         origin,
+        formatting: c.formatting,
+        semanticSpans: [],
         coords: {
           row: r + 1,
           col: c.gridCol,
@@ -1191,10 +1754,19 @@ function scanTable(tableXml: string, s: Syntax, tableId: string, coverage: Docum
 }
 
 /** Footnote/endnote parts carry separator pseudo-notes; those are not document content. */
-function scanNotes(xml: string, s: Syntax, label: "footnote" | "endnote"): Draft[] {
+function scanNotes(
+  xml: string,
+  s: Syntax,
+  label: "footnote" | "endnote",
+  partName: string,
+  coverage: DocumentCoverage,
+  documentSemanticsProfile: DocumentSemanticsProfile,
+  declaredIds: Set<string>,
+): Draft[] {
   const p = escapeRegExp(s.prefix);
+  const element = label;
   const noteRe = new RegExp(
-    `<${p}(?:footnote|endnote)(?=[\\s>])([^>]*)>([\\s\\S]*?)<\\/${p}(?:footnote|endnote)>`,
+    `<${p}${element}(?=[\\s/>])([^>]*?)(?:\\/>|>([\\s\\S]*?)<\\/${p}${element}>)`,
     "g",
   );
   const out: Draft[] = [];
@@ -1202,56 +1774,104 @@ function scanNotes(xml: string, s: Syntax, label: "footnote" | "endnote"): Draft
   let n = 0;
   while ((m = noteRe.exec(xml)) !== null) {
     const attrs = m[1] ?? "";
-    if (/type="(separator|continuationSeparator|continuationNotice)"/.test(attrs)) continue;
-    const paraRe = new RegExp(s.paragraphSrc, "g");
-    const parts: string[] = [];
-    let pm: RegExpExecArray | null;
-    while ((pm = paraRe.exec(m[2] ?? "")) !== null) {
-      const t = paragraphText(pm[1] ?? "", s);
-      if (clean(t).length > 0) parts.push(clean(t));
-    }
-    if (parts.length === 0) continue;
+    const noteType = xmlAttribute(attrs, "type")?.trim().toLowerCase() ?? null;
+    if (noteType === "separator" || noteType === "continuationseparator" || noteType === "continuationnotice") continue;
     n += 1;
-    out.push({
-      kind: "footnote",
-      text: parts.join("\n"),
-      section: null,
-      coords: null,
-      tableId: null,
-      origin: `${label} ${n}`,
-    });
+    const declaredId = xmlAttribute(attrs, "id")?.trim();
+    const id = declaredId && declaredId.length > 0 ? declaredId : String(n);
+    declaredIds.add(id);
+    const origin = `${label} ${id} [part=${partName}]`;
+    const drafts = scanBody(m[2] ?? "", s, coverage, origin, documentSemanticsProfile, origin)
+      .filter((draft) => clean(draft.text).length > 0)
+      .map((draft): Draft => ({
+        ...draft,
+        kind: draft.kind === "table-cell" ? "table-cell" : "footnote",
+        origin: draft.origin === origin
+          ? origin
+          : `${origin}; lifted=${draft.sourceSubrole ?? "origin-bearing-source"}`,
+      }));
+    if (drafts.length === 0) {
+      coverage.problems.push(
+        `NOTE_TEXT_UNREADABLE: ${origin} was declared but yielded no visible addressable text; ` +
+          `a placeholder is retained and no semantic role is inferred.`,
+      );
+      out.push({
+        kind: "footnote", text: "[note text unreadable]", section: null, coords: null, tableId: null,
+        origin, sourceSubrole: null, formatting: emptyFormatting(), semanticSpans: [],
+      });
+    } else {
+      out.push(...drafts);
+    }
   }
   return out;
 }
 
 /** Word comments: labelled proposals, never body text. */
-function scanComments(xml: string, s: Syntax, resolutionKnown: boolean): Draft[] {
+function scanComments(
+  xml: string,
+  s: Syntax,
+  resolutionKnown: boolean,
+  coverage: DocumentCoverage,
+  partName: string,
+  declaredIds: Set<string>,
+): Draft[] {
   const p = escapeRegExp(s.prefix);
-  const re = new RegExp(`<${p}comment(?=[\\s>])([^>]*)>([\\s\\S]*?)<\\/${p}comment>`, "g");
+  const re = new RegExp(
+    `<${p}comment(?=[\\s/>])([^>]*?)(?:\\/>|>([\\s\\S]*?)<\\/${p}comment>)`,
+    "g",
+  );
   const out: Draft[] = [];
   let m: RegExpExecArray | null;
+  let declared = 0;
+  let unreadable = 0;
+  let flattenedTables = 0;
   while ((m = re.exec(xml)) !== null) {
+    declared += 1;
     const attrs = m[1] ?? "";
-    const author = /author="([^"]*)"/.exec(attrs)?.[1] ?? "unknown";
-    const initials = /initials="([^"]*)"/.exec(attrs)?.[1] ?? "";
+    const id = xmlAttribute(attrs, "id")?.trim() || String(declared);
+    declaredIds.add(id);
+    const author = xmlAttribute(attrs, "author") ?? "unknown";
+    const initials = xmlAttribute(attrs, "initials") ?? "";
+    const commentBody = m[2] ?? "";
+    flattenedTables += commentBody.match(new RegExp(`<${p}tbl(?=[\\s>])`, "g"))?.length ?? 0;
     const paraRe = new RegExp(s.paragraphSrc, "g");
     const parts: string[] = [];
     let pm: RegExpExecArray | null;
-    while ((pm = paraRe.exec(m[2] ?? "")) !== null) {
+    while ((pm = paraRe.exec(commentBody)) !== null) {
       const t = paragraphText(pm[1] ?? "", s);
       if (clean(t).length > 0) parts.push(clean(t));
     }
-    if (parts.length === 0) continue;
+    if (parts.length === 0) {
+      unreadable += 1;
+      parts.push("[comment text unreadable]");
+    }
     out.push({
       kind: "paragraph",
       text: parts.join("\n"),
       section: null,
       coords: null,
       tableId: null,
-      origin: `comment by ${decodeXmlEntities(author)}${initials ? ` (${initials})` : ""} — PROPOSAL, resolution ${
+      origin: `comment ${id} [part=${partName}] by ${decodeXmlEntities(author)}${initials ? ` (${initials})` : ""}  PROPOSAL, resolution ${
         resolutionKnown ? "recorded in the document but not read here" : "unknown"
       }`,
+      // A comment's authority is established by its OPC relationship, not the human-readable
+      // origin string. This survives renamed parts and arbitrary reviewer metadata.
+      sourceSubrole: "comment-proposal",
+      formatting: emptyFormatting(),
+      semanticSpans: [],
     });
+  }
+  if (declared > 0) {
+    coverage.problems.push(
+      `COMMENT_COVERAGE: ${declared} declared comment(s): ${declared - unreadable} readable and ${unreadable} ` +
+        `unreadable/empty placeholder(s). Every declared comment remains counted and labelled as a proposal.`,
+    );
+  }
+  if (flattenedTables > 0) {
+    coverage.problems.push(
+      `COMMENT_TABLE_STRUCTURE_NOT_PRESERVED: ${flattenedTables} table(s) inside Word comments retain visible ` +
+        `paragraph text only; row/column relationships are not available and cannot prove a requirement.`,
+    );
   }
   return out;
 }

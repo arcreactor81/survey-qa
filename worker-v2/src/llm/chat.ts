@@ -29,14 +29,32 @@ export interface ProviderSpec {
   apiKey: string;
   inputUsdPerMTok: number;
   outputUsdPerMTok: number;
+  /**
+   * Highest prevalidated rate among models this provider plan may buy. Used only
+   * when a paid response does not bind its usage to the requested model identity.
+   */
+  unboundModelRateCeiling?: { inputUsdPerMTok: number; outputUsdPerMTok: number };
   /** Provider-specific body fields (thinking / reasoning_effort). */
   extraBody: Record<string, unknown>;
 }
+
+export type ModelFailureKind =
+  | "timeout-or-network"
+  | "rate-limited"
+  | "provider-unavailable"
+  | "invalid-content"
+  | "authentication"
+  | "insufficient-balance"
+  | "invalid-request"
+  | "nonretryable-http";
 
 export class ModelCallError extends Error {
   constructor(
     message: string,
     readonly usage: CallUsage,
+    /** Final attempt's failure class. Existing callers may continue reading only usage. */
+    readonly failureKind: ModelFailureKind = "timeout-or-network",
+    readonly httpStatus: number | null = null,
   ) {
     super(message);
     this.name = "ModelCallError";
@@ -130,19 +148,57 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
       { role: "user", content: opts.user },
     ],
   };
+  const bodyText = JSON.stringify(body);
+  // A byte cannot encode fewer than zero tokens, and treating every request byte as one
+  // token is a conservative ceiling for the provider tokenizers used here. max_tokens is
+  // already the provider-enforced completion ceiling.
+  const unknownInputTokenCeiling = new TextEncoder().encode(bodyText).byteLength;
+  const unknownOutputTokenCeiling = Math.max(0, Math.ceil(opts.maxTokens));
 
   const maxAttempts = Math.max(1, opts.maxAttempts ?? 2);
   let inputTokens = 0;
   let outputTokens = 0;
   let lastDetail = "no attempt was made";
+  let lastFailureKind: ModelFailureKind = "timeout-or-network";
+  let lastHttpStatus: number | null = null;
+  let usedConservativeCeiling = false;
+  let usedUnboundModelRateCeiling = false;
+  let unverifiedReportedModel: string | null = null;
+  let attemptsMade = 0;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    attemptsMade = attempt;
     const startedAt = Date.now();
+    let usageAccounted = false;
+    const accountUsage = (usage: ChatResponse["usage"] | undefined): void => {
+      if (usageAccounted) return;
+      usageAccounted = true;
+      const input = usage?.prompt_tokens;
+      const output = usage?.completion_tokens;
+      if (
+        typeof input === "number" &&
+        Number.isSafeInteger(input) &&
+        input >= 0 &&
+        typeof output === "number" &&
+        Number.isSafeInteger(output) &&
+        output >= 0
+      ) {
+        inputTokens += input;
+        outputTokens += output;
+        return;
+      }
+      // A timeout/error may still be billed even when no response usage exists. Zero
+      // would create fictional budget headroom, so retain and charge the request/output
+      // ceilings instead. The receipt names this source explicitly.
+      inputTokens += unknownInputTokenCeiling;
+      outputTokens += unknownOutputTokenCeiling;
+      usedConservativeCeiling = true;
+    };
     try {
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers,
-        body: JSON.stringify(body),
+        body: bodyText,
         // MEASURED: a 25-block chunk on DeepSeek has been observed at 190 s, and the cap
         // that used to sit at 240 s aborted a chunk twice and cost the run its seal. The
         // ceiling is configuration now, because "how long may one call take" is a property
@@ -151,36 +207,65 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
       });
       const rawBody = await res.text();
       const latencyMs = Date.now() - startedAt;
-
-      if (!res.ok) {
-        lastDetail = `HTTP ${res.status}: ${rawBody.slice(0, 300)}`;
-        if (attempt === maxAttempts) break;
-        continue;
-      }
-
-      let data: ChatResponse;
+      let data: ChatResponse | null = null;
       try {
         data = JSON.parse(rawBody) as ChatResponse;
       } catch {
+        // Account below from a conservative ceiling; content handling still names the
+        // non-JSON response separately.
+      }
+      if (!res.ok) {
+        accountUsage(data?.usage);
+        lastDetail = `HTTP ${res.status}: ${rawBody.slice(0, 300)}`;
+        lastHttpStatus = res.status;
+        lastFailureKind = failureKindForHttpStatus(res.status);
+        // Auth, balance and invalid requests are properties shared by every retry.
+        // Re-sending them cannot succeed and only multiplies a doomed purchase.
+        if (attempt === maxAttempts || !retryableFailure(lastFailureKind)) break;
+        continue;
+      }
+      lastHttpStatus = null;
+
+      if (data === null) {
+        accountUsage(undefined);
         lastDetail = `non-JSON transport body: ${rawBody.slice(0, 200)}`;
+        lastFailureKind = "invalid-content";
         if (attempt === maxAttempts) break;
         continue;
       }
 
-      // Usage accrues even when the CONTENT is unusable: a truncated call was still paid
-      // for, and a cost ledger that only counts successes understates every run.
-      inputTokens += data.usage?.prompt_tokens ?? 0;
-      outputTokens += data.usage?.completion_tokens ?? 0;
+      // Model identity and price identity are one contract. A missing model is not
+      // permission to infer the requested SKU, and another model cannot be charged at
+      // this requested model's rate. No alias convention is assumed: success requires
+      // the exact, nonempty requested model or this attempt is unusable.
+      const reportedModel = typeof data.model === "string" && data.model.length > 0 ? data.model : null;
+      if (reportedModel !== spec.model) {
+        // Even a token count in this response is not price-bound to the requested SKU.
+        // Retain the paid attempt using request/output ceilings rather than laundering
+        // the unbound fields into a provider-reported receipt.
+        accountUsage(undefined);
+        usedUnboundModelRateCeiling = true;
+        unverifiedReportedModel = reportedModel;
+        lastDetail =
+          `response model identity mismatch: requested ${JSON.stringify(spec.model)}, ` +
+          `reported ${JSON.stringify(reportedModel)}`;
+        lastFailureKind = "invalid-content";
+        if (attempt === maxAttempts) break;
+        continue;
+      }
+      accountUsage(data.usage);
 
       const content = data.choices?.[0]?.message?.content ?? "";
       const finish = data.choices?.[0]?.finish_reason ?? null;
       if (finish === "length") {
         lastDetail = `truncated at max_tokens (${opts.maxTokens}); the JSON is incomplete`;
+        lastFailureKind = "invalid-content";
         if (attempt === maxAttempts) break;
         continue;
       }
       if (content.trim().length === 0) {
         lastDetail = "empty content";
+        lastFailureKind = "invalid-content";
         if (attempt === maxAttempts) break;
         continue;
       }
@@ -188,6 +273,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
       const parsed = parseJsonObject(content);
       if (parsed === null) {
         lastDetail = `unparseable JSON: ${content.slice(0, 200)}`;
+        lastFailureKind = "invalid-content";
         if (attempt === maxAttempts) break;
         continue;
       }
@@ -198,17 +284,32 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
           callId: opts.callId,
           role: opts.role,
           provider: spec.provider,
-          model: data.model ?? spec.model,
+          model: usedUnboundModelRateCeiling
+            ? unverifiedModelLabel(spec.model, unverifiedReportedModel)
+            : spec.model,
           status: "ok",
           inputTokens,
           outputTokens,
-          costUsd: costOf(spec, inputTokens, outputTokens),
+          costUsd: costOf(spec, inputTokens, outputTokens, usedUnboundModelRateCeiling),
           latencyMs,
           attempts: attempt,
+          usageSource: usedUnboundModelRateCeiling
+            ? "unverified-model-rate-ceiling"
+            : usedConservativeCeiling
+              ? "conservative-ceiling"
+              : "provider-reported",
+          detail: usedConservativeCeiling
+            ? usedUnboundModelRateCeiling
+              ? "model identity unverified; usage and rates conservatively ceilinged"
+              : "usage conservatively ceilinged because one or more attempts returned no valid token receipt"
+            : undefined,
         },
       };
     } catch (err) {
+      accountUsage(undefined);
       lastDetail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      lastFailureKind = "timeout-or-network";
+      lastHttpStatus = null;
       if (attempt === maxAttempts) break;
     }
   }
@@ -217,15 +318,45 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
     callId: opts.callId,
     role: opts.role,
     provider: spec.provider,
-    model: spec.model,
+    model: usedUnboundModelRateCeiling
+      ? unverifiedModelLabel(spec.model, unverifiedReportedModel)
+      : spec.model,
     status: "error",
     inputTokens,
     outputTokens,
-    costUsd: costOf(spec, inputTokens, outputTokens),
+    costUsd: costOf(spec, inputTokens, outputTokens, usedUnboundModelRateCeiling),
     latencyMs: 0,
-    attempts: maxAttempts,
-    detail: lastDetail.slice(0, 400),
-  });
+    attempts: attemptsMade,
+    usageSource: usedUnboundModelRateCeiling
+      ? "unverified-model-rate-ceiling"
+      : usedConservativeCeiling
+        ? "conservative-ceiling"
+        : "provider-reported",
+    detail: (
+      usedConservativeCeiling
+        ? `usage conservatively ceilinged because at least one attempt returned no valid token receipt; ${lastDetail}`
+        : lastDetail
+    ).slice(0, 400),
+  }, lastFailureKind, lastHttpStatus);
+}
+
+function failureKindForHttpStatus(status: number): ModelFailureKind {
+  if (status === 408) return "timeout-or-network";
+  if (status === 429) return "rate-limited";
+  if (status >= 500 && status <= 599) return "provider-unavailable";
+  if (status === 401 || status === 403) return "authentication";
+  if (status === 402) return "insufficient-balance";
+  if (status === 400 || status === 404 || status === 409 || status === 422) return "invalid-request";
+  return "nonretryable-http";
+}
+
+function retryableFailure(kind: ModelFailureKind): boolean {
+  return (
+    kind === "timeout-or-network" ||
+    kind === "rate-limited" ||
+    kind === "provider-unavailable" ||
+    kind === "invalid-content"
+  );
 }
 
 /**
@@ -233,8 +364,29 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
  * micro-dollar ceiling; rounding at the transport boundary would erase sub-micro tails before
  * the cap could account for them.
  */
-export const costOf = (spec: ProviderSpec, inTok: number, outTok: number): number =>
-  (inTok / 1e6) * spec.inputUsdPerMTok + (outTok / 1e6) * spec.outputUsdPerMTok;
+export const costOf = (
+  spec: ProviderSpec,
+  inTok: number,
+  outTok: number,
+  useUnboundModelRateCeiling = false,
+): number => {
+  const rates = useUnboundModelRateCeiling
+    ? spec.unboundModelRateCeiling ?? {
+        inputUsdPerMTok: spec.inputUsdPerMTok,
+        outputUsdPerMTok: spec.outputUsdPerMTok,
+      }
+    : spec;
+  return (inTok / 1e6) * rates.inputUsdPerMTok + (outTok / 1e6) * rates.outputUsdPerMTok;
+};
+
+function unverifiedModelLabel(requested: string, reported: string | null): string {
+  // JSON quoting escapes provider-controlled control characters before the label enters
+  // the strict usage ledger. Truncation affects only display; full identities remain in
+  // the error detail and no extraction result from this attempt is accepted.
+  const requestedLabel = JSON.stringify(requested).slice(0, 120);
+  const reportedLabel = (reported === null ? "<missing>" : JSON.stringify(reported)).slice(0, 120);
+  return `unverified-model:requested=${requestedLabel};reported=${reportedLabel}`.slice(0, 300);
+}
 
 /** Lenient parse: strip fences, then fall back to the outermost {...} span. */
 export function parseJsonObject(content: string): Record<string, unknown> | null {

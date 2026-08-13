@@ -56,8 +56,9 @@
 import type { Env } from "../types/env";
 import { k } from "../keys";
 import { sha256Hex } from "./hash";
+import type { DocumentSemanticsProfile } from "../extract/document-semantics";
 
-export const CONTRACT_REUSE_VERSION = "v2-contract-reuse/1.3.0";
+export const CONTRACT_REUSE_VERSION = "v2-contract-reuse/1.7.0";
 
 /**
  * Configuration read by extraction/model calls that can change rows, source coverage, or
@@ -65,8 +66,34 @@ export const CONTRACT_REUSE_VERSION = "v2-contract-reuse/1.3.0";
  * explicit default may cause a safe cache miss, never an unsafe cross-policy adoption.
  */
 export const EXTRACTION_POLICY_KEYS = [
+  "GROK_MODEL",
   "GROK_REASONING_EFFORT",
+  "GROK_RATE_BINDING_SCHEMA",
+  "GROK_RATE_POLICY",
+  "GROK_RATE_SOURCE",
+  "GROK_RATE_ATTESTED_MODEL",
+  "GROK_RATE_ATTESTED_AT",
+  "GROK_RATE_RECEIPT_SHA256",
+  "GROK_CONTEXT_WINDOW_TOKENS",
+  "GROK_INPUT_USD_PER_MTOK",
+  "GROK_CACHED_INPUT_USD_PER_MTOK",
+  "GROK_OUTPUT_USD_PER_MTOK",
+  "GROK_LONG_CONTEXT_THRESHOLD_TOKENS",
+  "GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK",
+  "GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK",
+  "GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK",
+  "GROK_MAX_INPUT_USD_PER_MTOK",
+  "GROK_MAX_OUTPUT_USD_PER_MTOK",
+  "DEEPSEEK_MODEL",
   "DEEPSEEK_REASONING_EFFORT",
+  "DEEPSEEK_INPUT_USD_PER_MTOK",
+  "DEEPSEEK_OUTPUT_USD_PER_MTOK",
+  "DEEPSEEK_FALLBACK_MODE",
+  "DEEPSEEK_FALLBACK_MODEL",
+  "DEEPSEEK_FALLBACK_REASONING_EFFORT",
+  "DEEPSEEK_FALLBACK_MAX_ATTEMPTS",
+  "DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK",
+  "DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK",
   "LLM_TIMEOUT_MS",
   "EXTRACT_MAX_ATTEMPTS",
   "EXTRACT_MAX_OUTPUT_TOKENS",
@@ -94,6 +121,7 @@ export async function extractionPolicyFingerprint(env: Env): Promise<string> {
 export interface ExtractionInputs {
   documentSha256: string;
   docxParserVersion: string;
+  documentSemanticsProfile: DocumentSemanticsProfile;
   promptVersionA: string;
   promptVersionB: string;
   modelA: string;
@@ -130,6 +158,7 @@ export async function extractionInputsDigest(inputs: ExtractionInputs): Promise<
     CONTRACT_REUSE_VERSION,
     `document:${String(inputs.documentSha256).replace(/^sha256:/, "")}`,
     `docxParser:${inputs.docxParserVersion}`,
+    `documentSemantics:${inputs.documentSemanticsProfile}`,
     `promptA:${inputs.promptVersionA}`,
     `promptB:${inputs.promptVersionB}`,
     `modelA:${inputs.modelA}`,
@@ -158,6 +187,10 @@ export async function lookupReusableContract(env: Env, digest: string): Promise<
     // DOCX block semantics produced its denominator. Missing identity is therefore a miss,
     // never an invitation to treat the old parser as the current one.
     if (typeof entry.inputs?.docxParserVersion !== "string" || entry.inputs.docxParserVersion.length === 0) return null;
+    if (
+      entry.inputs.documentSemanticsProfile !== "none/1.0.0" &&
+      entry.inputs.documentSemanticsProfile !== "shop-direct-grey-programming/1.0.0"
+    ) return null;
     if (await extractionInputsDigest(entry.inputs) !== digest) return null;
     if (typeof entry.contractRevisionId !== "string" || entry.contractRevisionId.length === 0) return null;
     if (typeof entry.contractHash !== "string" || entry.contractHash.length === 0) return null;

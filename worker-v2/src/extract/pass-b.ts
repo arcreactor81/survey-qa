@@ -38,15 +38,10 @@
  *      is still in flight. THAT is what deletes the duplicate spend: a killed in-flight call
  *      was billed and never persisted, so the retry bought it again.
  *
- *      A PURCHASE IS NOT AN ATTEMPT. `llm/chat.ts` retries inside a single `deepseekJson`
- *      call: every attempt gets its own `AbortSignal.timeout(LLM_TIMEOUT_MS)` and token
- *      usage accrues across all of them, so ONE billed purchase can occupy
- *      `EXTRACT_MAX_ATTEMPTS × LLM_TIMEOUT_MS` of wall clock. EXTRACT_MAX_ATTEMPTS is now
- *      DECLARED in `wrangler.jsonc` at 2, matching chat.ts's own default; it used to be
- *      undeclared, which is exactly how a step timeout that budgeted a single attempt looked
- *      correct while the live value was 2 — the axe could still fall on a call that had
- *      already been billed twice, which is precisely the case this invariant exists to
- *      delete. So `passBCallCeilingMs` is derived from BOTH knobs.
+ *      A LOGICAL UNIT IS NOT ONE ATTEMPT. Normal Pass B is one DeepSeek Pro purchase with a
+ *      bounded number of transport attempts. Every attempt gets its own AbortSignal timeout and
+ *      every purchase keeps its own usage receipt. `passBCallCeilingMs` covers that bounded
+ *      attempt plan before a Workflow step may time out; it does not imply a cross-model fallback.
  *
  *   2. A SLICE ALWAYS MAKES PROGRESS. Even at a budget of zero it issues at least one call,
  *      so a wave loop over slices cannot livelock, and the number of waves a document needs
@@ -62,7 +57,11 @@
 
 import type { Env } from "../types/env";
 import { num } from "../types/env";
-import { deepseekJson } from "../llm/deepseek";
+import {
+  deepseekPassBAttemptCeiling,
+  deepseekPassBIdentity,
+  deepseekPassBJson,
+} from "../llm/deepseek";
 import { ModelCallError } from "../llm/chat";
 import { PROMPT_VERSION_B, SYSTEM_B, userMessageB, userMessageSweep } from "./prompts";
 import { annotate, DOCX_BLOCKS_VERSION } from "./docx-blocks";
@@ -121,6 +120,8 @@ export interface PassBSliceOptions {
 }
 
 export type PassBResult = PassResult & {
+  /** Exact same-provider model plan that every persisted unit must match. */
+  providerPlanIdentity: string;
   slice: PassBSlice;
   /**
    * The calls this slice ACTUALLY BOUGHT, as opposed to `calls`, which also carries the
@@ -129,6 +130,8 @@ export type PassBResult = PassResult & {
    * reused chunk once per wave would trip CAP_MODEL_CALLS on phantom spend.
    */
   issuedCalls: CallUsage[];
+  /** All persisted receipts offered to the idempotent core settlement CAS. */
+  accountingCalls: CallUsage[];
 };
 
 /** Slack over and above the budget and one whole purchase: R2 I/O, parsing, scheduling. */
@@ -140,16 +143,14 @@ export function passBWaveBudgetMs(env: Env): number {
 }
 
 /**
- * THE WORST-CASE WALL CLOCK OF ONE PURCHASE — not of one HTTP attempt.
+ * THE WORST-CASE WALL CLOCK OF ONE LOGICAL UNIT — not of one HTTP attempt.
  *
- * `llm/chat.ts` retries inside a single `deepseekJson` call: each attempt gets its own
- * `AbortSignal.timeout(LLM_TIMEOUT_MS)` and token usage accrues across all of them, so a
- * purchase that retries is billed for every attempt and occupies the sum of their ceilings.
- * Mirrors chat.ts's own `Math.max(1, maxAttempts ?? 2)` clamp exactly, so a zero or negative
- * knob cannot make this number smaller than the code it is describing.
+ * Pass B's one DeepSeek Pro purchase has bounded transport attempts. The pass-B client owns
+ * that clamp, and this timeout derives from the same plan so the step axe cannot kill a paid
+ * request before its artifact and usage receipt are persisted.
  */
 export function passBCallCeilingMs(env: Env): number {
-  return Math.max(1, num(env.EXTRACT_MAX_ATTEMPTS, 2)) * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));
+  return deepseekPassBAttemptCeiling(env) * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));
 }
 
 /**
@@ -174,6 +175,10 @@ export async function runPassB(
   onProgress?: (msg: string) => Promise<void>,
   options?: PassBSliceOptions,
 ): Promise<PassBResult> {
+  const parserVersion = doc.parserVersion ?? DOCX_BLOCKS_VERSION;
+  // Compute once before reading or buying anything. Stored units from another model
+  // plan are not answers to this run, even when their block ids happen to match.
+  const providerPlanIdentity = deepseekPassBIdentity(env);
   const chunks = chunkBlocks(doc.blocks, num(env.EXTRACT_CHUNK_CHARS, 5_000), num(env.EXTRACT_CHUNK_MAX_BLOCKS, 45));
   const contextBlocks = globalContextBlocks(doc.blocks, num(env.EXTRACT_CONTEXT_CHARS, 4_000));
   const contextIds = new Set(contextBlocks.map((b) => b.blockId));
@@ -186,6 +191,7 @@ export async function runPassB(
   const failedUnits: PassResult["failedUnits"] = [];
   const calls: CallUsage[] = [];
   const issuedCalls: CallUsage[] = [];
+  const accountingCalls: CallUsage[] = [];
 
   // THE DEADLINE, AND THE ONE EXCEPTION TO IT. `issued === 0` keeps the first call of every
   // slice unconditional: a slice that issues nothing makes no progress, and a wave loop over
@@ -220,11 +226,12 @@ export async function runPassB(
   // -------------------------------------------------------------------------
   const todo: Chunk[] = [];
   const priorAttemptsByChunk = new Map<number, number>();
+  const priorUsagesByChunk = new Map<number, CallUsage[]>();
   let landed = 0;
   for (const chunk of chunks) {
     const blockIds = chunk.blocks.map((b) => b.blockId);
     const allowed = new Set(blockIds);
-    const existing = await readChunk(env, runId, chunk.n, allowed);
+    const existing = await readChunk(env, runId, chunk.n, allowed, parserVersion);
 
     if (existing === null) {
       todo.push(chunk);
@@ -232,12 +239,17 @@ export async function runPassB(
     }
 
     if (existing.kind === "failed") {
+      accountingCalls.push(...existing.usages);
+      for (const usage of existing.usages) {
+        calls.push({ ...usage, detail: "reused: prior failed chunk purchase", costUsd: 0 });
+      }
       // A FAILED CHUNK IS RE-ISSUED A BOUNDED NUMBER OF TIMES, ACROSS THE WHOLE RUN — the
       // artifact carries the count, so waves and recovery instances share one budget rather
       // than each getting a fresh one. Unbounded re-issue is how one chunk id came to be
       // billed 21–24 times during a recovery storm.
       if (existing.attempts < maxIssues) {
         priorAttemptsByChunk.set(chunk.n, existing.attempts);
+        priorUsagesByChunk.set(chunk.n, existing.usages);
         todo.push(chunk);
         continue;
       }
@@ -248,14 +260,15 @@ export async function runPassB(
     }
 
     landed += 1;
+    accountingCalls.push(...existing.usages);
     requirements.push(...existing.obligations);
     dispositions.push(...existing.dispositions);
     constructs.push(...existing.constructs);
     ambiguities.push(...existing.ambiguities);
     unverifiable.push(...existing.unverifiable);
-    if (existing.usage) {
+    for (const usage of existing.usages) {
       calls.push({
-        ...existing.usage,
+        ...usage,
         detail: "reused: this chunk was already persisted by an earlier attempt",
         costUsd: 0,
       });
@@ -301,9 +314,10 @@ export async function runPassB(
     // phase 1. A second, weaker read used to let a stale parser/prompt failure consume the
     // current retry budget even after `readChunk` had rejected it.
     const priorAttempts = priorAttemptsByChunk.get(chunk.n) ?? 0;
+    const priorUsages = priorUsagesByChunk.get(chunk.n) ?? [];
 
     try {
-      const { value, usage } = await deepseekJson(env, {
+      const outcome = await deepseekPassBJson(env, {
         system: SYSTEM_B,
         user: userMessageB(documentName, chunk.id, annotate(chunk.blocks), context, blockIds),
         maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
@@ -311,8 +325,11 @@ export async function runPassB(
         callId: `call_b_${chunk.n}`,
         maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
       });
-      calls.push(usage);
-      issuedCalls.push(usage);
+      const { value } = outcome;
+      const purchasedUsages = settlementUsages(runId, chunk.id, priorAttempts + 1, [outcome.usage]);
+      calls.push(...purchasedUsages);
+      issuedCalls.push(...purchasedUsages);
+      accountingCalls.push(...purchasedUsages);
 
       const chunkReqs: RawRequirement[] = [];
       for (const raw of asArray(value["obligations"])) {
@@ -331,9 +348,10 @@ export async function runPassB(
           {
             chunkId: chunk.id,
             blockIds,
-            parserVersion: DOCX_BLOCKS_VERSION,
+            parserVersion,
             promptVersion: PROMPT_VERSION_B,
-            usage,
+            providerPlanIdentity,
+            usages: [...priorUsages, ...purchasedUsages],
             obligations: chunkReqs,
             dispositions: chunkDisps,
             constructs: chunkConstructs,
@@ -368,10 +386,12 @@ export async function runPassB(
         `pass B ${chunk.id}: ${chunkReqs.length} obligations, ${chunkDisps.length}/${blockIds.length} blocks dispositioned`,
       );
     } catch (err) {
-      if (err instanceof ModelCallError) {
-        calls.push(err.usage);
-        issuedCalls.push(err.usage);
-      }
+      const failureUsages = err instanceof ModelCallError
+        ? settlementUsages(runId, chunk.id, priorAttempts + 1, [err.usage])
+        : [];
+      calls.push(...failureUsages);
+      issuedCalls.push(...failureUsages);
+      accountingCalls.push(...failureUsages);
       const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
       const attempts = priorAttempts + 1;
       failedUnits.push({ unit: chunk.id, blockIds, detail });
@@ -382,10 +402,12 @@ export async function runPassB(
           {
             chunkId: chunk.id,
             blockIds,
-            parserVersion: DOCX_BLOCKS_VERSION,
+            parserVersion,
             promptVersion: PROMPT_VERSION_B,
+            providerPlanIdentity,
             status: "failed",
             attempts,
+            usages: [...priorUsages, ...failureUsages],
             detail,
           },
           null,
@@ -474,14 +496,21 @@ export async function runPassB(
 
       // RESUME, symmetric with the chunks. These artifacts were written and never read, so
       // every step retry re-bought all three sweep calls at full price.
-      const existing = await readSweep(env, runId, i, allowed);
+      const existing = await readSweep(env, runId, i, allowed, parserVersion);
       if (existing && existing.kind === "ok") {
-        if (existing.usage) {
-          calls.push({ ...existing.usage, detail: "reused: this sweep call was already persisted", costUsd: 0 });
+        accountingCalls.push(...existing.usages);
+        for (const usage of existing.usages) {
+          calls.push({ ...usage, detail: "reused: this sweep call was already persisted", costUsd: 0 });
         }
         absorb(existing.obligations, existing.dispositions, existing.ambiguities, existing.unverifiable);
         await onProgress?.(`pass B ${sweepId}: reused a previously persisted sweep call`);
         continue;
+      }
+      if (existing && existing.kind === "failed") {
+        accountingCalls.push(...existing.usages);
+        for (const usage of existing.usages) {
+          calls.push({ ...usage, detail: "reused: prior failed sweep purchase", costUsd: 0 });
+        }
       }
       if (existing && existing.kind === "failed" && existing.attempts >= maxIssues) {
         failedUnits.push({ unit: sweepId, blockIds: [...allowed], detail: existing.detail });
@@ -494,9 +523,10 @@ export async function runPassB(
       issued += 1;
       sweepCallsIssued += 1;
       const priorAttempts = existing && existing.kind === "failed" ? existing.attempts : 0;
+      const priorUsages = existing && existing.kind === "failed" ? existing.usages : [];
 
       try {
-        const { value, usage } = await deepseekJson(env, {
+        const outcome = await deepseekPassBJson(env, {
           system: SYSTEM_B,
           user: userMessageSweep(
             documentName,
@@ -510,8 +540,11 @@ export async function runPassB(
           callId: `call_b_sweep_${i + 1}`,
           maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
         });
-        calls.push(usage);
-        issuedCalls.push(usage);
+        const { value } = outcome;
+        const purchasedUsages = settlementUsages(runId, sweepId, priorAttempts + 1, [outcome.usage]);
+        calls.push(...purchasedUsages);
+        issuedCalls.push(...purchasedUsages);
+        accountingCalls.push(...purchasedUsages);
         const sweptReqs: RawRequirement[] = [];
         for (const raw of asArray(value["obligations"])) {
           const req = coerceRequirement(raw, "B", sweepId, "survey");
@@ -526,9 +559,10 @@ export async function runPassB(
             {
               sweepId,
               blockIds: [...allowed],
-              parserVersion: DOCX_BLOCKS_VERSION,
+              parserVersion,
               promptVersion: PROMPT_VERSION_B,
-              usage,
+              providerPlanIdentity,
+              usages: [...priorUsages, ...purchasedUsages],
               obligations: sweptReqs,
               dispositions: sweptDisps,
               ambiguities: sweptAmb,
@@ -544,10 +578,12 @@ export async function runPassB(
           `pass B ${sweepId}: accounted for ${sweptDisps.length}/${allowed.size} previously unaccounted blocks (+${sweptReqs.length} obligations)`,
         );
       } catch (err) {
-        if (err instanceof ModelCallError) {
-          calls.push(err.usage);
-          issuedCalls.push(err.usage);
-        }
+        const failureUsages = err instanceof ModelCallError
+          ? settlementUsages(runId, sweepId, priorAttempts + 1, [err.usage])
+          : [];
+        calls.push(...failureUsages);
+        issuedCalls.push(...failureUsages);
+        accountingCalls.push(...failureUsages);
         const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
         const attempts = priorAttempts + 1;
         failedUnits.push({ unit: sweepId, blockIds: [...allowed], detail });
@@ -559,10 +595,12 @@ export async function runPassB(
             {
               sweepId,
               blockIds: [...allowed],
-              parserVersion: DOCX_BLOCKS_VERSION,
+              parserVersion,
               promptVersion: PROMPT_VERSION_B,
+              providerPlanIdentity,
               status: "failed",
               attempts,
+              usages: [...priorUsages, ...failureUsages],
               detail,
             },
             null,
@@ -598,7 +636,8 @@ export async function runPassB(
   return {
     pass: "B",
     provider: "deepseek",
-    model: env.DEEPSEEK_MODEL ?? "deepseek-v4-pro",
+    model: providerPlanIdentity,
+    providerPlanIdentity,
     requirements,
     ambiguities,
     unverifiable,
@@ -608,6 +647,7 @@ export async function runPassB(
     calls,
     slice,
     issuedCalls,
+    accountingCalls,
   };
 }
 
@@ -656,13 +696,14 @@ interface PersistedChunk {
   constructs: PassResult["constructs"];
   ambiguities: PassResult["ambiguities"];
   unverifiable: PassResult["unverifiable"];
-  usage: CallUsage | null;
+  usages: CallUsage[];
 }
 
 interface FailedUnitArtifact {
   kind: "failed";
   attempts: number;
   detail: string;
+  usages: CallUsage[];
 }
 
 /**
@@ -679,8 +720,9 @@ async function readChunk(
   runId: string,
   n: number,
   allowed: Set<string>,
+  parserVersion: string,
 ): Promise<PersistedChunk | FailedUnitArtifact | null> {
-  return readUnit(env, chunkKey(runId, n), allowed);
+  return readUnit(env, chunkKey(runId, n), allowed, parserVersion);
 }
 
 async function readSweep(
@@ -688,28 +730,34 @@ async function readSweep(
   runId: string,
   i: number,
   allowed: Set<string>,
+  parserVersion: string,
 ): Promise<PersistedChunk | FailedUnitArtifact | null> {
-  return readUnit(env, sweepKey(runId, i), allowed);
+  return readUnit(env, sweepKey(runId, i), allowed, parserVersion);
 }
 
 async function readUnit(
   env: Env,
   key: string,
   allowed: Set<string>,
+  parserVersion: string,
 ): Promise<PersistedChunk | FailedUnitArtifact | null> {
   const obj = await env.EVIDENCE.get(key);
   if (!obj) return null;
   try {
     const parsed = JSON.parse(await obj.text()) as Record<string, unknown>;
-    if (parsed["parserVersion"] !== DOCX_BLOCKS_VERSION || parsed["promptVersion"] !== PROMPT_VERSION_B) {
+    if (parsed["parserVersion"] !== parserVersion || parsed["promptVersion"] !== PROMPT_VERSION_B) {
       return null;
     }
+    if (parsed["providerPlanIdentity"] !== deepseekPassBIdentity(env)) return null;
     const blockIds = Array.isArray(parsed["blockIds"]) ? (parsed["blockIds"] as string[]) : [];
     if (blockIds.length !== allowed.size || blockIds.some((id) => !allowed.has(id))) return null;
+    const usages = Array.isArray(parsed["usages"]) ? parsed["usages"] : null;
+    if (usages === null || !usages.every(isCallUsage)) return null;
     if (parsed["status"] === "failed") {
-      const attempts = typeof parsed["attempts"] === "number" ? parsed["attempts"] : 1;
+      const attempts = parsed["attempts"];
+      if (!Number.isSafeInteger(attempts) || (attempts as number) < 1) return null;
       const detail = typeof parsed["detail"] === "string" ? parsed["detail"] : "no detail recorded";
-      return { kind: "failed", attempts, detail };
+      return { kind: "failed", attempts: attempts as number, detail, usages: usages as CallUsage[] };
     }
     if (!Array.isArray(parsed["obligations"])) return null;
     return {
@@ -719,11 +767,53 @@ async function readUnit(
       constructs: (parsed["constructs"] ?? []) as PassResult["constructs"],
       ambiguities: (parsed["ambiguities"] ?? []) as PassResult["ambiguities"],
       unverifiable: (parsed["unverifiable"] ?? []) as PassResult["unverifiable"],
-      usage: (parsed["usage"] ?? null) as CallUsage | null,
+      usages: usages as CallUsage[],
     };
   } catch {
     return null;
   }
+}
+
+function isCallUsage(value: unknown): value is CallUsage {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const row = value as Partial<CallUsage>;
+  const finiteNonNegative = (n: unknown): n is number =>
+    typeof n === "number" && Number.isFinite(n) && n >= 0;
+  return (
+    typeof row.eventId === "string" &&
+    row.eventId.startsWith("core-model-call/pass-b/") &&
+    typeof row.callId === "string" &&
+    row.callId.length > 0 &&
+    typeof row.role === "string" &&
+    row.role.length > 0 &&
+    row.provider === "deepseek" &&
+    typeof row.model === "string" &&
+    row.model.length > 0 &&
+    (row.status === "ok" || row.status === "parse-failed" || row.status === "error") &&
+    finiteNonNegative(row.inputTokens) &&
+    finiteNonNegative(row.outputTokens) &&
+    finiteNonNegative(row.costUsd) &&
+    finiteNonNegative(row.latencyMs) &&
+    Number.isSafeInteger(row.attempts) &&
+    (row.attempts ?? 0) >= 1 &&
+    (
+      row.usageSource === "provider-reported" ||
+      row.usageSource === "conservative-ceiling" ||
+      row.usageSource === "unverified-model-rate-ceiling"
+    )
+  );
+}
+
+function settlementUsages(
+  runId: string,
+  unitId: string,
+  issue: number,
+  usages: CallUsage[],
+): CallUsage[] {
+  return usages.map((usage, index) => ({
+    ...usage,
+    eventId: `core-model-call/pass-b/${runId}/${unitId}/issue-${issue}/receipt-${index + 1}`,
+  }));
 }
 
 /**

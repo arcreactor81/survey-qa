@@ -9,9 +9,9 @@
  * and the Worker never sees an unauthenticated request. Re-implementing a check inside
  * the Worker would create a second, weaker gate that could disagree with the real one —
  * and the failure mode of the weaker gate agreeing when it should not is silent. The
- * corollary is a deploy-order constraint, not a code one: the route must not exist before
- * the Access application does, which is why `wrangler.jsonc` ships with `routes`
- * commented out and `workers_dev: false`.
+ * corollary is a deploy-order constraint, not a code one: `wrangler.jsonc` now carries
+ * the live custom-domain route, so every release must re-attest Access before promotion
+ * and immediately after it. `workers_dev` and preview URLs remain disabled.
  */
 
 import type { Env } from "./types/env";

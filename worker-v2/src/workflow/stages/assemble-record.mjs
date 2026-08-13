@@ -803,6 +803,18 @@ export function assembleRunRecordV2({
     itemResults: arr(itemResults),
     exploration: {
       planHash,
+      // W5 authority is checkpoint-native, so these exact immutable-artifact pointers and
+      // certificate/receipt relations enter the signed RunRecord rather than remaining in a
+      // mutable progress projection. Absence means this record predates W5 checkpointing.
+      seedExecution: checkpoint?.execution?.seedExecution
+        ? {
+            programHash: checkpoint.execution.seedExecution.programHash,
+            doneAlternativeIds: arr(checkpoint.execution.seedExecution.doneAlternativeIds),
+            attempts: arr(checkpoint.execution.seedExecution.attempts),
+            refusals: arr(checkpoint.execution.seedExecution.refusals),
+            receipts: arr(checkpoint.execution.seedExecution.receipts),
+          }
+        : null,
       perKindCounts: perKindCounts(revision),
       // NOT a restatement of "the workflow finished". `testComplete` is a claim about
       // COVERAGE, so it is true only when every case reached a terminal disposition that a

@@ -584,3 +584,25 @@ suite("D30 — the invocation boundary before judging", () => {
     assert(!step.calls.includes("yield-before-judging"), "a sleep is a boundary, not a step; it must not enter `calls`");
   });
 });
+
+suite("D30 - live wall-clock enforcement", () => {
+  test("a stale stored counter cannot buy another browser batch after elapsed time reaches the cap", async () => {
+    const mod = await worker();
+    const usage = {
+      cost: { usedUsd: 0, maxUsd: 10, verificationReserveUsd: 1, reportReserveUsd: 1 },
+      modelCalls: { used: 0, max: 100 },
+      toolCalls: { used: 0, max: 100 },
+      wallClock: { usedMilliseconds: 0, maxMilliseconds: 3_600_000, startedAtMs: 1_000 },
+    };
+
+    assertEq(mod.workflow.capExceeded(usage, 3_600_999), null, "one millisecond of budget remains");
+    assertEq(mod.workflow.capExceeded(usage, 3_601_000), "wall-clock-cap", "live elapsed time reaches the cap");
+
+    usage.wallClock.usedMilliseconds = 3_600_000;
+    assertEq(
+      mod.workflow.capExceeded(usage, 2_000),
+      "wall-clock-cap",
+      "the persisted high-water mark still refuses work if a supplied clock moves backwards",
+    );
+  });
+});

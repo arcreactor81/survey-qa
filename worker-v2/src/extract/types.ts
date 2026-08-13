@@ -8,6 +8,58 @@
  * merge rather than contributing an empty list.
  */
 
+/** Direct formatting carried by one visible Word run; source evidence, not semantics. */
+import type { DocumentSemanticsProfile } from "./document-semantics";
+
+export interface SourceRunFormatting {
+  /** Visible UTF-16 code units contributed by this run; block text owns the bytes. */
+  visibleCharacters: number;
+  highlight: string | null;
+  shadingFill: string | null;
+  /** Whether a direct w:shd element exists, including an empty/unresolved declaration. */
+  shadingPresent?: boolean;
+  /** Direct w:shd value. `nil`/`clear` means the fill is not rendered as a proven background. */
+  shadingVal?: string | null;
+  themeFill: string | null;
+  runStyle: string | null;
+  paragraphStyle: string | null;
+}
+
+export interface SourceBackgroundFormatting {
+  shadingFill: string | null;
+  /** Direct w:shd value; optional only for legacy/synthetic provenance fixtures. */
+  shadingVal?: string | null;
+  themeFill: string | null;
+}
+
+export interface SourceFormattingEvidence {
+  runs: SourceRunFormatting[];
+  paragraphBackground: SourceBackgroundFormatting | null;
+  cellBackground: SourceBackgroundFormatting | null;
+  /** True when adjacent blocks are the lossless pieces of one mixed-role paragraph. */
+  roleBoundarySplit: boolean;
+  unresolvedBackground: string[];
+}
+
+export interface SourceSemanticSpan {
+  role: "programming-logic";
+  profile: "shop-direct-grey-programming/1.0.0";
+  runSpans: number;
+}
+
+/**
+ * A parser-proven semantic subrole, independent of the archive-part origin label.
+ * Optional only so old persisted/synthetic blocks deserialize as ordinary source; the
+ * current DOCX parser always writes either a member of this union or null.
+ */
+export type SourceSubrole =
+  | "combo-box-suggestion"
+  | "ruby-reading"
+  | "image-alt"
+  /** A relationship-backed Word review comment: visible evidence, never source authority. */
+  | "comment-proposal"
+  | null;
+
 /** One addressable unit of the source document. Every one of these must be dispositioned. */
 export interface SourceBlock {
   /** Stable within a document parse: `b0001`, `b0002`, ... in document order. */
@@ -24,6 +76,7 @@ export interface SourceBlock {
    * said nothing, so a reviewer could not tell a document had been half-read.
    */
   origin: string;
+  sourceSubrole?: SourceSubrole;
   /** Nearest preceding heading, or null before the first one. */
   section: string | null;
   /**
@@ -33,6 +86,10 @@ export interface SourceBlock {
    */
   coords: { row: number; col: number; rowHeader: string | null; colHeader: string | null } | null;
   tableId: string | null;
+  /** Neutral direct-format evidence, retained even when it has no semantic interpretation. */
+  formatting: SourceFormattingEvidence;
+  /** Profile-derived semantics. Empty means the formatting did not prove a semantic role. */
+  semanticSpans: SourceSemanticSpan[];
 }
 
 /**
@@ -56,6 +113,10 @@ export interface DocumentCoverage {
 }
 
 export interface ParsedDocument {
+  /** Exact deterministic reader + declared semantics profile used for this parse. */
+  parserVersion: string;
+  /** Durable interpretation seam. Legacy callers normalize absence to `none/1.0.0`. */
+  documentSemanticsProfile: DocumentSemanticsProfile;
   blocks: SourceBlock[];
   /** Plain reading text, block ids inline, as handed to pass A. */
   annotatedText: string;
@@ -141,6 +202,8 @@ export interface ConstructVerdict {
 
 /** One model call's telemetry. Cost is computed from configured per-Mtok prices. */
 export interface CallUsage {
+  /** Stable settlement identity when the call is durably persisted before accounting. */
+  eventId?: string;
   callId: string;
   role: string;
   provider: string;
@@ -151,6 +214,8 @@ export interface CallUsage {
   costUsd: number;
   latencyMs: number;
   attempts: number;
+  /** Provider receipt, or a conservative token ceiling when no receipt was available. */
+  usageSource?: "provider-reported" | "conservative-ceiling" | "unverified-model-rate-ceiling";
   detail?: string;
 }
 

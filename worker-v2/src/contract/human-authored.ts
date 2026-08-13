@@ -21,6 +21,10 @@ import type {
 } from "../types/record";
 import type { DocumentCoverage, ParsedDocument, RawExpansion, SourceBlock } from "../extract/types";
 import { parseDocxBlocks } from "../extract/docx-blocks";
+import {
+  DOCUMENT_SEMANTICS_NONE,
+  type DocumentSemanticsProfile,
+} from "../extract/document-semantics";
 import { deriveRequirementIdentity, type IdentitySeed } from "../extract/merge";
 import { sourceAtomRole } from "../extract/source-role";
 import { EXPANDER_VERSION, expandFloor, type ExpandableRequirementRow } from "../extract/expand";
@@ -581,6 +585,7 @@ export async function stageValidateHumanRequirements(
   expectedDocumentSha256: string,
   humanRequirementsKey: string,
   expectedHumanRequirementsSha256: string,
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
 ): Promise<HumanValidationSummary> {
   const [documentObject, humanObject] = await Promise.all([
     env.EVIDENCE.get(documentKey),
@@ -604,7 +609,7 @@ export async function stageValidateHumanRequirements(
   if (input.documentSha256 !== actualDocumentSha256) {
     invalid("DOCUMENT_HASH_MISMATCH", "the human requirements file is bound to different document bytes");
   }
-  const doc = parseDocxBlocks(documentBytes);
+  const doc = parseDocxBlocks(documentBytes, { documentSemanticsProfile });
   const rows = await deriveUniqueRows(input, doc);
   const normalizedForHash = {
     schemaVersion: HUMAN_REQUIREMENTS_SCHEMA,
@@ -642,6 +647,8 @@ export async function stageValidateHumanRequirements(
     normalizedInputHash,
     requirementCount: rows.length,
     sourceSpanCount: input.requirements.reduce((sum, row) => sum + row.sourceSpans.length, 0),
+    parserVersion: doc.parserVersion,
+    documentSemanticsProfile: doc.documentSemanticsProfile,
     parserCoverage: doc.coverage,
     limitations,
   };
@@ -690,6 +697,7 @@ export async function stageExpandHumanRequirements(
   viewports: string[],
   validationHash: string,
   expectedNormalizedArtifactHash: string,
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
 ): Promise<HumanExpansionSummary> {
   const [normalizedObject, validationObject] = await Promise.all([
     env.EVIDENCE.get(humanRequirementsNormalizedKey(runId)),
@@ -782,7 +790,10 @@ export async function stageExpandHumanRequirements(
   if (
     validation!.schemaVersion !== "v2-human-requirements-validation/1.0.0" ||
     validation!.valid !== true ||
-    validation!.normalizedInputHash !== normalized.normalizedInputHash
+    validation!.normalizedInputHash !== normalized.normalizedInputHash ||
+    validation!.documentSemanticsProfile !== documentSemanticsProfile ||
+    typeof validation!.parserVersion !== "string" ||
+    !validation!.parserVersion.endsWith(`+profile=${documentSemanticsProfile}`)
   ) {
     invalid("VALIDATION_ARTIFACT_INVALID", "the validation artifact does not describe the normalized requirements being expanded");
   }

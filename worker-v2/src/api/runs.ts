@@ -1,10 +1,11 @@
 /**
  * Run submission, status and coverage.
  *
- * The two GET handlers are deliberately dumb: they load ONE checkpoint object and project
- * it. They compute nothing. If the UI needs a number, the number is put into the
- * checkpoint by the step that learned it — because a value computed at read time cannot
- * be reconciled against the durable state it claims to describe.
+ * Status and coverage deliberately load ONE checkpoint object and project it. They compute
+ * nothing. Browser activity is the one documented exception: it reconciles the execution
+ * ledger with the immutable walk-artifact index and verified PathObservation bytes, because
+ * transitions and unique stable screens are different grains and only the artifact can prove
+ * the latter. That join is bounded, privacy-projected, and names every uninspected row.
  */
 
 import type { Env } from "../types/env";
@@ -38,9 +39,18 @@ import { sha256Hex } from "../store/hash";
 import { HumanRequirementsError, parseHumanRequirementsInput } from "../contract/human-authored";
 import { isVisualStatusCorruption, projectVisualStatus } from "./visual-status-projection";
 import {
+  isExecutionActivityCorruption,
+  projectExecutionActivity,
+} from "./execution-activity-projection";
+import {
   LIVE_CANARY_ACCEPTANCE_SCHEMA,
   LIVE_CANARY_PLANNED_RUN_ID_HEADER,
 } from "./canary-internal";
+import {
+  DOCUMENT_SEMANTICS_NONE,
+  isDocumentSemanticsProfile,
+  type DocumentSemanticsProfile,
+} from "../extract/document-semantics";
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
@@ -52,10 +62,96 @@ interface SubmitBody {
   profile?: "standard" | "deep";
   locale?: string;
   viewports?: string[];
+  /** Explicit document-format convention. Missing means neutral. */
+  documentSemanticsProfile?: DocumentSemanticsProfile;
   /** Explicit denominator source. Omitted means the backwards-compatible extract path. */
   contractSource?: "extract" | "human-authored";
   /** base64 UTF-8 JSON, required when contractSource is human-authored. */
   humanRequirementsBase64?: string;
+}
+
+type BoundedSubmissionRead =
+  | { ok: true; request: Request; bytesRead: number }
+  | { ok: false; code: "SUBMISSION_TOO_LARGE" | "SUBMISSION_STREAM_UNREADABLE"; message: string };
+
+/**
+ * Read the HTTP entity through an exact byte ceiling BEFORE any parser is allowed to
+ * buffer it. Content-Length is useful for an early refusal, but it is caller-supplied and
+ * therefore cannot be the authority: a missing or forged-low header still flows through
+ * this counter. Only the bounded copy is handed to formData()/json() below.
+ */
+async function boundedSubmissionRequest(req: Request, maxBytes: number): Promise<BoundedSubmissionRead> {
+  const reader = req.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  if (reader) {
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        const chunk = next.value;
+        if (!(chunk instanceof Uint8Array)) {
+          try {
+            await reader.cancel("submission stream yielded a non-byte chunk");
+          } catch {
+            // The named refusal below is authoritative even if cancellation also fails.
+          }
+          return {
+            ok: false,
+            code: "SUBMISSION_STREAM_UNREADABLE",
+            message: "the request body stream yielded a non-byte chunk and was refused before parsing",
+          };
+        }
+        if (chunk.byteLength > maxBytes - total) {
+          try {
+            await reader.cancel("submission byte limit exceeded");
+          } catch {
+            // Cancellation is cleanup, not evidence that the oversized body became safe.
+          }
+          return {
+            ok: false,
+            code: "SUBMISSION_TOO_LARGE",
+            message: `the request body exceeds the ${maxBytes}-byte submission limit`,
+          };
+        }
+        total += chunk.byteLength;
+        chunks.push(chunk);
+      }
+    } catch (err) {
+      try {
+        await reader.cancel("submission stream read failed");
+      } catch {
+        // Preserve the first failure.
+      }
+      return {
+        ok: false,
+        code: "SUBMISSION_STREAM_UNREADABLE",
+        message: `the request body stream could not be read within its byte limit: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  const bodyBytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bodyBytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+
+  // A forged Content-Length must not survive onto the bounded copy: parsers receive the
+  // bytes we counted, while Content-Type (including the multipart boundary) is preserved.
+  const headers = new Headers(req.headers);
+  headers.delete("content-length");
+  return {
+    ok: true,
+    request: new Request(req.url, {
+      method: req.method,
+      headers,
+      body: bodyBytes,
+    }),
+    bytesRead: total,
+  };
 }
 
 /**
@@ -99,6 +195,14 @@ async function readSubmission(req: Request): Promise<
     const profile = str("profile");
     const viewportsRaw = str("viewports");
     const contractSource = str("contractSource");
+    const documentSemanticsProfile = str("documentSemanticsProfile");
+    if (documentSemanticsProfile !== undefined && !isDocumentSemanticsProfile(documentSemanticsProfile)) {
+      return {
+        ok: false,
+        code: "INVALID_DOCUMENT_SEMANTICS_PROFILE",
+        message: "documentSemanticsProfile must be none/1.0.0 or shop-direct-grey-programming/1.0.0",
+      };
+    }
     if (contractSource !== undefined && contractSource !== "extract" && contractSource !== "human-authored") {
       return { ok: false, code: "INVALID_CONTRACT_SOURCE", message: "contractSource must be extract or human-authored" };
     }
@@ -110,6 +214,7 @@ async function readSubmission(req: Request): Promise<
         profile: profile === "deep" ? "deep" : profile === "standard" ? "standard" : undefined,
         locale: str("locale"),
         viewports: viewportsRaw ? viewportsRaw.split(",").map((v) => v.trim()).filter(Boolean) : undefined,
+        documentSemanticsProfile: documentSemanticsProfile as DocumentSemanticsProfile | undefined,
         contractSource:
           contractSource === "extract" || contractSource === "human-authored" ? contractSource : undefined,
       },
@@ -153,9 +258,8 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
     );
     // JSON/base64 is the largest accepted spelling: base64 is 4*ceil(n/3), then the
     // envelope still needs room for field names, URL, locale and future bounded metadata.
-    // Multipart normally stays below this derived ceiling. The guard is deliberately
-    // advisory: an absent Content-Length is reported as an ingestion limitation, not
-    // silently treated as proof that the body was bounded before parsing.
+    // Multipart normally stays below this derived ceiling. Content-Length supplies an
+    // early refusal only; the stream itself is always counted before any body parser runs.
     const derivedSubmissionLimit =
       4 * Math.ceil(maxDocumentBytes / 3)
       + 4 * Math.ceil(maxHumanRequirementsBytes / 3)
@@ -187,7 +291,12 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
     }
   }
 
-  const read = await readSubmission(req);
+  const bounded = await boundedSubmissionRequest(req, maxSubmissionBytes);
+  if (!bounded.ok) {
+    return fail(bounded.code === "SUBMISSION_TOO_LARGE" ? 413 : 400, bounded.code, bounded.message);
+  }
+
+  const read = await readSubmission(bounded.request);
   if (!read.ok) return fail(400, read.code, read.message);
   const { body, bytes, humanBytes } = read;
 
@@ -227,6 +336,14 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
   }
 
   const contractSourceMode = body.contractSource ?? "extract";
+  if (body.documentSemanticsProfile !== undefined && !isDocumentSemanticsProfile(body.documentSemanticsProfile)) {
+    return fail(
+      400,
+      "INVALID_DOCUMENT_SEMANTICS_PROFILE",
+      "documentSemanticsProfile must be none/1.0.0 or shop-direct-grey-programming/1.0.0",
+    );
+  }
+  const documentSemanticsProfile = body.documentSemanticsProfile ?? DOCUMENT_SEMANTICS_NONE;
   if (body.contractSource !== undefined && body.contractSource !== "extract" && body.contractSource !== "human-authored") {
     return fail(400, "INVALID_CONTRACT_SOURCE", "contractSource must be extract or human-authored");
   }
@@ -353,6 +470,7 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
       targetBuildId: (env.DEFAULT_TARGET_BUILD_ID ?? "").trim() || null,
       locale,
       viewports,
+      documentSemanticsProfile,
       contractSource,
     },
     profile: policy.profile,
@@ -389,6 +507,7 @@ export async function submitRun(req: Request, env: Env): Promise<Response> {
         profile: policy.profile,
         locale: envelope.input.locale,
         viewports: envelope.input.viewports,
+        documentSemanticsProfile,
         contractSource,
       },
     });
@@ -724,6 +843,42 @@ export async function getCoverage(req: Request, env: Env, runId: string): Promis
     // The ledger did not reconcile. Serving it would make the progress UI lie about a
     // denominator, which is the one thing the coverage contract exists to prevent.
     return fail(500, "COVERAGE_LEDGER_INCONSISTENT", err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * GET /api/v2/runs/:id/execution-activity — browser activity, explicitly not QA coverage.
+ *
+ * Unlike `/coverage`, this projection necessarily joins the mutable execution ledger to the
+ * immutable walk-artifact index and verified PathObservation bytes. The join is bounded and
+ * every unread/uninspected row stays counted. No raw page text, full URL, action target, or
+ * error string is returned; the projection module owns that privacy boundary whole.
+ */
+export async function getExecutionActivity(req: Request, env: Env, runId: string): Promise<Response> {
+  if (!isV2RunId(runId)) return notV2(runId);
+  const loaded = await loadCheckpoint(env, runId);
+  if (!loaded) return fail(404, "RUN_NOT_FOUND", `no v2 run ${runId}`);
+  try {
+    const body = await projectExecutionActivity(env, loaded.checkpoint, `sha256:${loaded.bytesHash}`);
+    // The execution ledger can advance immediately before its matching checkpoint write. Hash
+    // the actual privacy-safe response as well as carrying the checkpoint revision, so a crash
+    // in that narrow window cannot make If-None-Match hide durable browser activity.
+    const bodyHash = await sha256Hex(JSON.stringify(body));
+    return snapshot(req, body, `a${loaded.checkpoint.revision}-${bodyHash.slice(0, 24)}`);
+  } catch (error) {
+    if (isExecutionActivityCorruption(error)) {
+      return fail(
+        500,
+        "EXECUTION_ACTIVITY_CORRUPT",
+        error instanceof Error ? error.message.slice(0, 1_000) : "execution activity failed strict validation",
+      );
+    }
+    console.error(`execution activity read failed for ${runId}`);
+    return fail(
+      503,
+      "EXECUTION_ACTIVITY_READ_FAILED",
+      "the execution activity sources could not be completely inspected; no partial projection was returned",
+    );
   }
 }
 

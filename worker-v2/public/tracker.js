@@ -1181,6 +1181,246 @@
     })]);
   }
 
+  // ---------------------------------------------------------------- browser activity
+  // This panel uses a separate server projection because attempts, screen changes, stable
+  // screens and sealed-case credit have different grains. None is derived from another.
+  function activityMetric(label, value, explanation) {
+    return el("div", { cls: "activity-metric" }, [
+      el("div", { cls: "activity-metric__label", text: label }),
+      el("div", { cls: "activity-metric__value num", text: value }),
+      el("div", { cls: "activity-metric__explain", text: explanation })
+    ]);
+  }
+
+  function activityOutcome(value) {
+    var words = {
+      completed: "Step loop finished",
+      "no-advance-control": "No forward control found",
+      blocked: "Survey did not advance",
+      "blocked-after-probe": "Probe did not advance",
+      "step-cap": "Stopped at the step limit",
+      "time-cap": "Stopped at the walk time limit",
+      "load-crash": "Page crashed while loading",
+      "browser-hung": "Browser stopped responding",
+      "cycle-detected": "Repeated transition cycle detected",
+      error: "Walker error",
+      unrecognized: "Unrecognised recorded outcome"
+    };
+    return words[value] || words.unrecognized;
+  }
+
+  function artifactStateWords(state) {
+    var words = {
+      inspected: "artifact checked",
+      "not-yet-indexed": "artifact not indexed yet",
+      unresolved: "artifact binding unresolved",
+      "not-inspected-limit": "outside this view's inspection limit",
+      "catalog-missing": "catalogue row missing",
+      "binding-mismatch": "artifact binding did not match",
+      "artifact-unreadable": "artifact could not be read",
+      "artifact-corrupt": "artifact failed validation",
+      "artifact-identity-mismatch": "artifact identity did not match"
+    };
+    return words[state] || "artifact state not recognised";
+  }
+
+  function renderActivityWalks(execution) {
+    var rows = Array.isArray(execution.walks) ? execution.walks : [];
+    var d = el("details", { cls: "activity-walks" });
+    d.appendChild(el("summary", { text: "Show each recorded walk attempt (" + rows.length + ")" }));
+    if (!rows.length) {
+      d.appendChild(el("p", { cls: "detail-note", text: "No walk rows were returned in this snapshot." }));
+      return d;
+    }
+    var table = el("table", { cls: "activity-table" });
+    var head = el("tr");
+    ["Walk", "Recorded outcome", "Screen changes", "Unique screens seen", "QA credit", "Known shortfalls"].forEach(function (label) {
+      head.appendChild(el("th", { text: label, attrs: { scope: "col" } }));
+    });
+    table.appendChild(el("thead", {}, [head]));
+    var body = el("tbody");
+    rows.forEach(function (walk) {
+      var artifact = walk.artifact || {};
+      var unique = artifact.uniqueStableScreensObserved;
+      var shortfalls = [];
+      if (typeof walk.unboundPlannedDecisions === "number" && walk.unboundPlannedDecisions > 0) {
+        shortfalls.push(walk.unboundPlannedDecisions + " planned decisions unbound");
+      }
+      if (typeof walk.bindingRefusals === "number" && walk.bindingRefusals > 0) {
+        shortfalls.push(walk.bindingRefusals + " binding refusals");
+      }
+      if (artifact.state !== "inspected") shortfalls.push(artifactStateWords(artifact.state));
+      if (!shortfalls.length) shortfalls.push("none recorded in this projection");
+      var tr = el("tr");
+      [
+        String(walk.ordinal),
+        activityOutcome(walk.outcome),
+        intOr(walk.screenChanges, "not recorded"),
+        typeof unique === "number" ? String(unique) : "not available",
+        walk.creditedToCoverage ? intOr(walk.executionCasesCredited, "0") + " case(s)" : "activity only",
+        shortfalls.join(" · ")
+      ].forEach(function (textValue) { tr.appendChild(el("td", { text: textValue })); });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    d.appendChild(el("div", { cls: "activity-table-wrap" }, [table]));
+    if (execution.walkRowsOmitted > 0) {
+      d.appendChild(el("p", {
+        cls: "detail-note",
+        text: execution.walkRowsOmitted + " older walk row(s) are counted above but omitted from this bounded table."
+      }));
+    }
+    return d;
+  }
+
+  function renderActivityOrigins(execution) {
+    var totals = execution.totals || {};
+    var origins = Array.isArray(totals.visitedOrigins) ? totals.visitedOrigins : [];
+    var kids = [el("h3", { text: "Websites visited" })];
+    if (origins.length) {
+      kids.push(el("ul", { cls: "origin-list" }, origins.map(function (origin) {
+        return el("li", {}, [machine(origin)]);
+      })));
+    } else {
+      kids.push(el("p", { text: "No website origin could be read from the inspected walk artifacts." }));
+    }
+    kids.push(el("p", {
+      cls: "detail-note",
+      text: (totals.visitedOriginsExact ? "All recorded walk artifacts were inspected. " : "This list may be partial. ") +
+        "Only the website origin is shown; paths, query tokens, fragments and page text are excluded."
+    }));
+    return el("div", { cls: "activity-origins" }, kids);
+  }
+
+  function renderActivityLimitations(execution) {
+    var l = execution.limitations || {};
+    var items = [];
+    function add(value, label) {
+      if (typeof value === "number" && value > 0) items.push(value + " " + label);
+    }
+    add(l.unboundPlannedDecisions, "planned decisions never bound to a screen");
+    add(l.bindingRefusals, "screen-to-plan bindings refused");
+    add(l.readerLimitationOccurrences, "reader limitation occurrences");
+    add(l.captureFailureOccurrencesObserved, "capture failure occurrences observed");
+    add(l.unfillableControlsObserved, "controls the walker could not fill");
+    add(l.pageErrorOccurrencesObserved, "page error occurrences observed");
+    add(l.consoleErrorOccurrencesObserved, "console error occurrences observed");
+    add(l.walksWithoutUnboundDecisionCount, "walks without an unbound-decision count");
+    add(l.walksWithoutBindingRefusalCount, "walks without a binding-refusal count");
+    add(l.walksWithoutReaderLimitationCount, "walks without a reader-limitation count");
+    add(l.walksWithoutBlockedStepCount, "walks without a blocked-step count");
+    if (!items.length) items.push("No named shortfall was recorded in the fields this projection can safely show.");
+    return el("div", { cls: "activity-limitations" }, [
+      el("h3", { text: "Recorded limitations" }),
+      el("ul", {}, items.map(function (itemText) { return el("li", { text: itemText }); })),
+      el("p", {
+        cls: "detail-note",
+        text: l.artifactDerivedCountsExact
+          ? "Artifact-derived counts cover every recorded walk."
+          : "Artifact-derived counts are a lower bound; the inspection denominator is shown below."
+      })
+    ]);
+  }
+
+  function renderBrowserActivity(view) {
+    var execution = view.execution;
+    var feed = view.executionFeed || { state: "unknown" };
+    var coverageAttempts = view.coverage && view.coverage.attempts;
+    var shouldExist = coverageAttempts && coverageAttempts.started > 0;
+
+    if (!execution) {
+      if (!shouldExist && feed.state !== "invalid" && feed.state !== "unavailable") return null;
+      var unavailableTitle = feed.state === "invalid"
+        ? "The browser activity ledger did not reconcile."
+        : "Browser activity details are not available at this update.";
+      var unavailableBody = feed.state === "invalid"
+        ? "The service refused to turn inconsistent saved data into a plausible-looking page count."
+        : "This is a failed activity-feed read, not evidence that the browser did no work.";
+      var emptyCard = el("section", { cls: "activity-card" }, [
+        el("p", { cls: "kicker", text: "Browser activity · not QA coverage" }),
+        el("h2", { text: unavailableTitle }),
+        el("p", { text: unavailableBody })
+      ]);
+      if (feed.code) emptyCard.appendChild(machineRow("Reference code:", feed.code));
+      return emptyCard;
+    }
+
+    var totals = execution.totals || {};
+    var inspection = execution.artifactInspection || {};
+    var card = el("section", { cls: "activity-card", attrs: { "data-activity-state": execution.ledger && execution.ledger.state } });
+    card.appendChild(el("div", { cls: "activity-card__head" }, [
+      el("div", {}, [
+        el("p", { cls: "kicker", text: "Browser activity · not QA coverage" }),
+        el("h2", { text: "What the browser recorded so far" })
+      ]),
+      el("span", {
+        cls: "activity-inspection",
+        text: intOr(inspection.walksInspected, "0") + " / " + intOr(totals.walkAttemptsRecorded, "0") + " walk artifacts inspected"
+      })
+    ]));
+    card.appendChild(el("p", {
+      cls: "activity-card__lead",
+      text: "These numbers describe browser movement. They do not say a questionnaire check passed, failed, or was even exercised. " +
+        "Only completed, durably saved walk attempts appear here; an in-flight attempt remains in the run card until it is committed."
+    }));
+
+    if (execution.ledger && execution.ledger.state === "absent") {
+      card.appendChild(el("div", { cls: "empty-state" }, [
+        el("strong", { text: "No browser walk ledger has been committed yet." }),
+        el("p", { text: "A zero is not shown as progress: this surface is waiting for the first durable walk attempt." })
+      ]));
+      return card;
+    }
+
+    var unique = totals.uniqueStableScreensObserved;
+    var uniqueValue = typeof unique === "number"
+      ? (totals.uniqueStableScreensExact ? String(unique) : "at least " + unique)
+      : "not available";
+    card.appendChild(el("div", { cls: "activity-metrics" }, [
+      activityMetric("Recorded walk attempts", intOr(totals.walkAttemptsRecorded, "0"),
+        "One durable row per browser drive or retry."),
+      activityMetric("Screen changes", intOr(totals.screenChanges, "0"),
+        "A stable screen identity changed after advancing. This is not a unique-page count."),
+      activityMetric("Unique stable screens observed", uniqueValue,
+        totals.uniqueStableScreensExact
+          ? "Deduplicated across every indexed walk artifact."
+          : "Deduplicated only across the inspected artifacts; the true number may be higher."),
+      activityMetric("Walks credited to QA coverage",
+        intOr(totals.walksCreditedToCoverage, "0") + " / " + intOr(totals.walkAttemptsRecorded, "0"),
+        "A walk gets credit only when it closes at least one sealed execution case.")
+    ]));
+
+    if (typeof totals.returnScreenChangesObserved === "number" && totals.returnScreenChangesObserved > 0) {
+      card.appendChild(note("warn",
+        totals.returnScreenChangesObserved + " screen change(s) returned to a stable screen already seen earlier in the same walk.",
+        "Repeated movement can be a navigation loop. It is activity, not extra page or QA coverage."));
+    }
+    if (totals.activityOnlyWalks > 0) {
+      card.appendChild(note("info",
+        totals.activityOnlyWalks + " walk attempt(s) recorded activity but closed no sealed execution case.",
+        "Their captures remain available for diagnosis; they do not move the checked-case count."));
+    }
+    if (feed.state === "unavailable") {
+      card.appendChild(note("warn", "The latest activity-feed refresh failed.",
+        "The figures below are the last confirmed snapshot, not a claim that nothing changed."));
+    }
+
+    card.appendChild(el("div", { cls: "activity-support" }, [
+      renderActivityOrigins(execution),
+      renderActivityLimitations(execution)
+    ]));
+    card.appendChild(renderActivityWalks(execution));
+    card.appendChild(el("p", {
+      cls: "detail-meta",
+      text: "Activity update " + intOr(execution.revision) + " · " +
+        intOr(inspection.walksInspected, "0") + " inspected, " +
+        intOr(inspection.unresolvedWalks, "0") + " unresolved, " +
+        intOr(inspection.unreadableOrMismatchedWalks, "0") + " unreadable or mismatched, " +
+        intOr(inspection.walksNotInspectedBecauseOfLimit, "0") + " outside the inspection limit."
+    }));
+    return card;
+  }
+
   function detailWork(view) {
     var cov = view.coverage;
     if (!cov) {
@@ -1573,6 +1813,12 @@
     if (actions) card.appendChild(actions);
 
     root.appendChild(card);
+
+    // Browser movement is a first-class, default-visible surface. It stays OUTSIDE the run
+    // card and OUTSIDE the coverage details because a transition is neither a unique page nor
+    // a checked case; placing these numbers in one progress meter would erase that distinction.
+    var activity = renderBrowserActivity(view);
+    if (activity) root.appendChild(activity);
 
     if (view.status || view.coverage) root.appendChild(renderDetails(view));
 

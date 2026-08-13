@@ -78,9 +78,9 @@ const control = (idx, { type = "radio", name = null, id = null, code = null, lab
   ...rest,
 });
 
-const screen = (text, { controls = [], optionGroups = [], buttons, progress, visibleText } = {}) => ({
+const screen = (text, { controls = [], optionGroups = [], buttons, progress, visibleText, signature, url, historyLength } = {}) => ({
   at: "2026-08-08T00:05:00.000Z",
-  url: "https://fixture.invalid/survey",
+  url: url ?? "https://fixture.invalid/survey",
   title: null,
   collectedErrors: [],
   questionText: text,
@@ -101,7 +101,8 @@ const screen = (text, { controls = [], optionGroups = [], buttons, progress, vis
     options: optionGroups.reduce((n, g) => n + g.options.length, 0),
     textInputs: controls.filter((c) => ["text", "textarea", "number", "email"].includes(c.type)).length,
   },
-  screenSignature: `sig:${text}`,
+  historyLength: historyLength ?? null,
+  screenSignature: signature ?? `sig:${text}`,
 });
 
 const nextBtn = (idx = 9) => ({ idx, label: "Next", labelSource: "code", role: "next", roleVia: "code:Next", disabled: false, visible: true });
@@ -250,6 +251,74 @@ suite("D42 — a Next chosen by ELIMINATION is recorded differently from one cho
     const clickNext = (obs.steps[0].actions ?? []).find((a) => a.kind === "click-next");
     assert(/role:next/.test(clickNext.detail ?? ""), clickNext.detail);
     assert(!/sole-forward-candidate/.test(clickNext.detail ?? ""), clickNext.detail);
+  });
+});
+
+suite("W4 / table-radio live regression — Back-only endings and cycles are bounded", () => {
+  test("a direction-only << control is Back, never the sole forward candidate", async () => {
+    const mod = await worker();
+    const classify = (0, eval)(mod.pageScript.CLASSIFY_CONTROL_ROLE_SRC);
+    const classified = classify({ text: "", label: "", code: "<<", title: null, ariaLabel: null });
+    assertEq(classified.role, "back", JSON.stringify(classified));
+
+    const start = screen("Start the questionnaire", { buttons: [nextBtn(0)] });
+    // role=other reproduces an artifact written by the older reader. The driver's independent
+    // glyph guard must still prevent the fallback from relabelling this control as forward.
+    const end = screen("Thank you for completing the questionnaire.", {
+      buttons: [
+        { idx: 0, label: "<<", labelSource: "code", role: "other", roleVia: null, disabled: false, visible: true },
+        // Hidden markup is inventory, not a respondent-facing forward affordance.
+        { idx: 1, label: "Continue", labelSource: "code", role: "next", roleVia: "code:Continue", disabled: false, visible: false },
+      ],
+    });
+    const { obs } = await walk(mod, testEnv(), [start, start, end, end, end], { maxSteps: 5 });
+    const advances = obs.steps.flatMap((s) => s.actions).filter((a) => a.kind === "click-next");
+    assertEq(advances.length, 1, JSON.stringify(obs.steps.map((s) => s.actions)));
+    assert(!advances.some((a) => a.targetLabel === "<<"), JSON.stringify(advances));
+    assertEq(obs.outcome, "no-advance-control", JSON.stringify({ outcome: obs.outcome, detail: obs.outcomeDetail }));
+    assertEq(obs.ending?.kind, "completed", JSON.stringify(obs.ending));
+  });
+
+  test("the same directed transition traversed twice stops as a named cycle before the screen cap", async () => {
+    const mod = await worker();
+    const a = screen("State A", { buttons: [nextBtn(0)] });
+    const b = screen("State B", { buttons: [nextBtn(0)] });
+    const { obs } = await walk(
+      mod,
+      testEnv(),
+      [a, a, b, b, b, a, a, a, b, b, b, a, a, a, b],
+      { maxSteps: 10 },
+    );
+    assertEq(obs.outcome, "cycle-detected", JSON.stringify({ outcome: obs.outcome, detail: obs.outcomeDetail }));
+    assertEq(obs.steps.length, 5, JSON.stringify(obs.steps.map((s) => [s.screenBefore?.questionText, s.screenAfterAdvance?.questionText])));
+    assert(/repeating the exact screen transition/.test(obs.outcomeDetail ?? ""), obs.outcomeDetail);
+    assertEq(obs.ending?.kind, "stalled", JSON.stringify(obs.ending));
+  });
+
+  test("reused templates with changed answer receipts or occurrence history do NOT collapse into a cycle", async () => {
+    const mod = await worker();
+    const b = screen("Roster bridge", { buttons: [nextBtn(0)], signature: "sig:bridge" });
+    const occurrence = (idx, historyLength) => {
+      const c = control(idx, { name: "row_answer", code: String(idx), label: `Choice ${idx}` });
+      return screen("Repeated roster template", {
+        controls: [c],
+        optionGroups: [{
+          name: "row_answer", kind: "radio",
+          options: [{ order: 0, idx, code: String(idx), label: `Choice ${idx}`, checked: false, disabled: false, visible: true, operable: true }],
+        }],
+        buttons: [nextBtn(8)],
+        signature: "sig:reused-template",
+        historyLength,
+      });
+    };
+    const sequence = (a1, a2, a3) => [a1, a1, b, b, b, a2, a2, a2, b, b, b, a3, a3, a3, b];
+    const changedAnswer = await walk(mod, testEnv(), sequence(occurrence(0, 1), occurrence(1, 1), occurrence(2, 1)), { maxSteps: 5 });
+    assertEq(changedAnswer.obs.outcome, "step-cap", JSON.stringify(changedAnswer.obs.outcomeDetail));
+    assertEq(changedAnswer.obs.steps.length, 5);
+
+    const changedHistory = await walk(mod, testEnv(), sequence(occurrence(0, 1), occurrence(0, 2), occurrence(0, 3)), { maxSteps: 5 });
+    assertEq(changedHistory.obs.outcome, "step-cap", JSON.stringify(changedHistory.obs.outcomeDetail));
+    assertEq(changedHistory.obs.steps.length, 5);
   });
 });
 

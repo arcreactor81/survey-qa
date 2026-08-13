@@ -30,7 +30,9 @@
 import type { Env } from "../../types/env";
 import { num } from "../../types/env";
 import { planKey, plannerSidecarKey } from "../../keys";
-import { getContractRevision } from "../../store/contract-revision";
+import { getContractRevision, revisionIdentity } from "../../store/contract-revision";
+import { loadCheckpoint } from "../../store/checkpoint";
+import { canonicalHash } from "../../store/hash";
 import type { ContractRevision, FacetInstance, ScopedRequirement } from "../../types/record";
 import { hashContract, planFromContract, pathSignature } from "./planner/plan-core.js";
 /**
@@ -48,6 +50,18 @@ import type {
   PlannerContract,
   PlannerObligation,
 } from "./planner/plan-core.js";
+import {
+  buildSealedSeedPlan,
+  stampPlannedOccurrenceIdentity,
+  type SeedPlan,
+} from "./planner/seed-plan";
+export {
+  buildSealedSeedPlan,
+  sealedSeedCertificateFailures,
+  stampPlannedOccurrenceIdentity,
+} from "./planner/seed-plan";
+export { deriveCaseWitnessReceipt, retainFirstCaseWitnessReceipt, storedCaseWitnessReceiptFailures } from "./planner/seed-receipt";
+import { sealedSeedCertificateFailures } from "./planner/seed-plan";
 
 /**
  * NOT BUMPED, AND THE CHECK IS THE POINT. Everything this stage gained is ADDITIVE —
@@ -58,7 +72,8 @@ import type {
  * tests that are testing something else entirely. A version is a promise about a shape a
  * READER depends on; nothing here changed a field a reader depends on.
  */
-export const EXECUTION_PROGRAM_KIND = "v2-execution-program/2.0.0" as const;
+export const LEGACY_EXECUTION_PROGRAM_KIND = "v2-execution-program/2.0.0" as const;
+export const EXECUTION_PROGRAM_KIND = "v2-execution-program/2.1.0" as const;
 
 /**
  * A NAMED SHORTFALL IN THE PLAN — computed, counted, and carried on the artifact.
@@ -127,6 +142,9 @@ export const PLAN_LIMITATION_CODES = {
   backNavigationUnsupported: "planned-back-navigation-not-executable",
   /** Multi-session evidence the current one-walk-per-path executor cannot produce. */
   repeatedSessionsUnsupported: "planned-independent-session-repeats-not-executable",
+  seedAuthorityWithheld: "sealed-positive-seed-authority-withheld",
+  seedCardinalityWithheld: "seed-combinations-without-sealed-cardinality",
+  seedBudgetExhausted: "seed-budget-exhausted",
 } as const;
 
 type ProbeCarrier = Partial<PlannedPath> & {
@@ -269,7 +287,7 @@ export interface PathAssignment {
 }
 
 export interface ExecutionProgram {
-  kind: typeof EXECUTION_PROGRAM_KIND;
+  kind: typeof EXECUTION_PROGRAM_KIND | typeof LEGACY_EXECUTION_PROGRAM_KIND;
   runId: string;
   planRevisionId: string;
   contractRevisionId: string;
@@ -284,6 +302,8 @@ export interface ExecutionProgram {
   caseOrder: string[];
   /** Cases no floor path witnesses. Never removed from the denominator. */
   unassignedCaseIds: string[];
+  /** Alternatives for unchanged sealed cases. They are exploration until an exact receipt closes one. */
+  seedPlan?: SeedPlan;
   /**
    * NAMED, COUNTED SHORTFALLS. Always present on a plan this stage built; optional on the
    * TYPE because programs written before it existed re-read without it and must not be
@@ -303,6 +323,8 @@ export interface ExecutionProgram {
 
 export interface PlanStageResult {
   planRevisionId: string;
+  /** Hash of the exact immutable program bytes, independently sealed by the checkpoint. */
+  programHash: string;
   program: ExecutionProgram;
   caseIds: string[];
   floorPaths: number;
@@ -334,6 +356,52 @@ export function programLimitations(program: ExecutionProgram | null | undefined)
     ];
   }
   return program.limitations;
+}
+
+/** Bind W5's complete program bytes to a separately committed checkpoint hash. */
+export async function w5ProgramAuthorityFailures(
+  program: ExecutionProgram,
+  checkpointProgramHash: string | null,
+): Promise<string[]> {
+  if (program.kind === LEGACY_EXECUTION_PROGRAM_KIND) {
+    return program.seedPlan ? ["legacy execution program cannot carry W5 seed authority"] : [];
+  }
+  const failures: string[] = [];
+  if (!program.seedPlan) failures.push("W5 execution program omits its required seed plan and census");
+  const actualHash = `sha256:${await canonicalHash(program)}`;
+  if (!checkpointProgramHash || checkpointProgramHash !== actualHash) {
+    failures.push("W5 execution program is not exactly bound by the authoritative checkpoint");
+  }
+  return failures;
+}
+
+export const executionProgramHash = async (program: ExecutionProgram): Promise<string> =>
+  `sha256:${await canonicalHash(program)}`;
+
+export async function regeneratedSeedPlanFailures(
+  program: ExecutionProgram,
+  revision: ContractRevision,
+  contractHash: string,
+): Promise<string[]> {
+  if (!program.seedPlan) return ["W5 seed plan is absent"];
+  const floorPaths = JSON.parse(JSON.stringify(program.plan.floor.paths)) as PlannedPath[];
+  for (const path of floorPaths) for (const decision of path.decisions) {
+    delete decision.occurrence_id;
+    delete decision.occurrence_index;
+    delete decision.history_digest;
+  }
+  const expected = await buildSealedSeedPlan({
+    revision,
+    contractHash,
+    floorPaths,
+    witnessMap: (program.plan.floor.coverage.witness_map ?? {}) as Record<string, string>,
+    baselineFloorSteps: program.plan.floor.paths.reduce((sum, path) => sum + path.steps, 0),
+    limits: program.seedPlan.census.budget,
+  });
+  await stampPlannedOccurrenceIdentity(expected.alternatives.map((alternative) => alternative.path));
+  return JSON.stringify(expected) === JSON.stringify(program.seedPlan)
+    ? []
+    : ["W5 seed plan and census do not exactly regenerate from sealed revision, floor, witness map, and persisted budget"];
 }
 
 /**
@@ -933,6 +1001,36 @@ export async function planStage(
   const floor = materialized.assignments;
   const unassigned = materialized.unassignedCaseIds;
 
+  // ---- W5 seeds: alternatives for the SAME sealed cases, never new denominator rows ----
+  const sealedIdentity = await revisionIdentity(revision);
+  const seedCfg = env as unknown as {
+    SEED_CANDIDATE_CAP?: string;
+    SEED_PER_QUESTION_CAP?: string;
+    SEED_PER_BASE_PATH_CAP?: string;
+    SEED_ATTEMPT_CAP?: string;
+    SEED_STEP_CAP?: string;
+  };
+  const baselineFloorSteps = plan.floor.paths.reduce((sum, path) => sum + path.steps, 0);
+  const seedPlan = await buildSealedSeedPlan({
+    revision,
+    contractHash: sealedIdentity.contractHash,
+    floorPaths: plan.floor.paths,
+    witnessMap,
+    baselineFloorSteps,
+    limits: {
+      candidateCap: num(seedCfg.SEED_CANDIDATE_CAP, 256),
+      perQuestionCap: num(seedCfg.SEED_PER_QUESTION_CAP, 8),
+      perBasePathCap: num(seedCfg.SEED_PER_BASE_PATH_CAP, 6),
+      attemptCap: num(seedCfg.SEED_ATTEMPT_CAP, 32),
+      stepCap: num(seedCfg.SEED_STEP_CAP, Math.min(640, 2 * baselineFloorSteps)),
+    },
+  });
+  await stampPlannedOccurrenceIdentity([
+    ...plan.floor.paths,
+    ...plan.exploration.queue,
+    ...seedPlan.alternatives.map((alternative) => alternative.path),
+  ]);
+
   // ---- report what the typed-case materialization above compiled ----
   //
   // `materializeCasePaths` is the ONLY place typed cases reach a decision. It clones the
@@ -1008,6 +1106,34 @@ export async function planStage(
       count: survival.unstampable.length,
       questionIds: survival.unstampable.map((u) => `${u.terminal}${u.question ? ` (${u.question})` : ""} — ${u.why}`),
     },
+    {
+      code: PLAN_LIMITATION_CODES.seedAuthorityWithheld,
+      what:
+        `${seedPlan.census.withheldRows} of ${seedPlan.census.authorityRows} sealed option-set case(s) could not ` +
+        `authorize a seed. Only an entailed typed case's own asserted payload is authority; siblings, planner-model ` +
+        `labels, ambiguous/negative rows and document-silent values are never used.`,
+      count: seedPlan.census.withheldRows,
+      caseIds: seedPlan.census.withheld.map((row) => row.caseId),
+    },
+    {
+      code: PLAN_LIMITATION_CODES.seedCardinalityWithheld,
+      what:
+        `${seedPlan.census.withheldCombinationCount} pairwise option combination(s) were withheld because positive ` +
+        `option membership does not state that the control accepts multiple selections. These combinations remain ` +
+        `ineligible until extraction seals cardinality/multiselect semantics.`,
+      count: seedPlan.census.withheldCombinationCount,
+    },
+    {
+      code: PLAN_LIMITATION_CODES.seedBudgetExhausted,
+      what:
+        `${seedPlan.census.droppedCount} of ${seedPlan.census.candidateCount} authorized singleton seed candidate(s) ` +
+        `were not selected under the persisted caps; ${seedPlan.census.selectedCount} were selected and ` +
+        `${seedPlan.census.residualCaseIds.length} option-set case(s) retain no selected alternative. The sealed ` +
+        `case denominator is unchanged.`,
+      count: seedPlan.census.droppedCount,
+      caseIds: seedPlan.census.residualCaseIds,
+      pathIds: seedPlan.census.dropped.map((row) => row.alternativeId),
+    },
     // THE FOUR CAUSES BEHIND `unassignedCases`, counted apart. The aggregate row above says how
     // many walks are missing; these say what to fix, and each is emitted at zero so a cause that
     // did not bite stays distinguishable from a cause nobody checked for.
@@ -1049,6 +1175,7 @@ export async function planStage(
     })),
     caseOrder,
     unassignedCaseIds: unassigned,
+    seedPlan,
     limitations,
     coverage: {
       obligations: plan.floor.coverage.obligations,
@@ -1070,17 +1197,20 @@ export async function planStage(
     plan,
   };
 
-  await env.EVIDENCE.put(planKey(args.runId, args.planRevisionId), JSON.stringify(program), {
+  const programBytes = JSON.stringify(program);
+  const programHash = await executionProgramHash(program);
+  await env.EVIDENCE.put(planKey(args.runId, args.planRevisionId), programBytes, {
     httpMetadata: { contentType: "application/json" },
   });
 
   return {
     planRevisionId: args.planRevisionId,
+    programHash,
     program,
     caseIds: caseOrder,
     floorPaths: floor.length,
-    explorationEntries: program.exploration.length,
-    plannedSteps: plan.estimate?.total?.steps ?? 0,
+    explorationEntries: program.exploration.length + seedPlan.census.selectedCount,
+    plannedSteps: (plan.estimate?.total?.steps ?? 0) + seedPlan.census.selectedEstimatedSteps,
     status: plan.status,
     limitations,
   };
@@ -1096,6 +1226,32 @@ export async function loadProgram(env: Env, runId: string, planRevisionId: strin
     if (failures.length > 0) throw new Error(failures.join("; "));
     const revision = await getContractRevision(env, parsed.contractRevisionId);
     if (!revision) throw new Error(`sealed contract revision ${parsed.contractRevisionId} is missing`);
+    const identity = await revisionIdentity(revision);
+    const loaded = await loadCheckpoint(env, runId);
+    const authorityFailures = await w5ProgramAuthorityFailures(
+      parsed,
+      loaded?.checkpoint.execution?.seedExecution?.programHash ?? null,
+    );
+    if (authorityFailures.length > 0) throw new Error(authorityFailures.join("; "));
+    if (parsed.kind === EXECUTION_PROGRAM_KIND) {
+      const regenerationFailures = await regeneratedSeedPlanFailures(parsed, revision, identity.contractHash);
+      if (regenerationFailures.length > 0) throw new Error(regenerationFailures.join("; "));
+    }
+    for (const alternative of parsed.seedPlan?.alternatives ?? []) {
+      const certificateFailures = await sealedSeedCertificateFailures(alternative.certificate, revision, identity.contractHash);
+      if (certificateFailures.length > 0) {
+        throw new Error(`seed alternative ${alternative.alternativeId} certificate refused: ${certificateFailures.join("; ")}`);
+      }
+      const selectedLabels = alternative.certificate.selectedOrdinals.map(
+        (ordinal) => alternative.certificate.assertedOptions[ordinal]?.label,
+      );
+      const decisions = alternative.path.decisions.filter(
+        (decision) => decision.seed_certificate_hash === alternative.certificate.certificateHash,
+      );
+      if (decisions.length !== 1 || JSON.stringify(decisions[0]!.select) !== JSON.stringify(selectedLabels)) {
+        throw new Error(`seed alternative ${alternative.alternativeId} decision does not equal its certified selection`);
+      }
+    }
     const sealedIds = revision.facetInstances.map((fi) => fi.facetInstanceId);
     assertExactCasePermutation(sealedIds, parsed.caseOrder, "caseOrder");
     assertExactCasePermutation(
@@ -1584,7 +1740,7 @@ export function executionProgramFailures(
   const p = program as Partial<ExecutionProgram> | null;
   if (!p || typeof p !== "object") return ["payload is not an object"];
   const failures: string[] = [];
-  if (p.kind !== EXECUTION_PROGRAM_KIND) failures.push(`kind is ${String(p.kind)}`);
+  if (p.kind !== EXECUTION_PROGRAM_KIND && p.kind !== LEGACY_EXECUTION_PROGRAM_KIND) failures.push(`kind is ${String(p.kind)}`);
   if (p.runId !== expectedRunId) failures.push(`runId is ${String(p.runId)}`);
   if (p.planRevisionId !== expectedPlanRevisionId) failures.push(`planRevisionId is ${String(p.planRevisionId)}`);
   if (!Array.isArray(p.floor)) failures.push("floor is not an array");
@@ -1598,6 +1754,20 @@ export function executionProgramFailures(
   if (new Set(p.caseOrder!).size !== p.caseOrder!.length) failures.push("caseOrder contains duplicates");
   const planPathIds = new Set((p.plan?.floor?.paths ?? []).map((path) => path.id));
   for (const pathId of pathIds) if (!planPathIds.has(pathId)) failures.push(`assignment names missing plan path ${pathId}`);
+  if (p.seedPlan) {
+    const alternatives = p.seedPlan.alternatives ?? [];
+    const ids = alternatives.map((row) => row.alternativeId);
+    if (new Set(ids).size !== ids.length) failures.push("seed alternative ids are duplicated");
+    for (const row of alternatives) {
+      if (!p.caseOrder!.includes(row.caseId)) failures.push(`seed alternative names non-denominator case ${row.caseId}`);
+      if (row.caseId !== row.certificate.facetInstanceId) failures.push(`seed alternative ${row.alternativeId} case differs from certificate`);
+      if (row.path.id !== row.alternativeId) failures.push(`seed alternative ${row.alternativeId} path id differs`);
+    }
+    const census = p.seedPlan.census;
+    if (census.selectedCount !== alternatives.length) failures.push("seed selected census differs from alternatives");
+    if (census.droppedCount !== census.candidateCount - census.selectedCount) failures.push("seed dropped census is not candidate minus selected");
+    if (census.materializedCandidateCount + census.omittedCandidateCount !== census.candidateCount) failures.push("seed candidate census does not reconcile");
+  }
   return failures;
 }
 

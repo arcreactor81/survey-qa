@@ -94,7 +94,12 @@ import {
   type ScopedRequirement,
 } from "../types/record";
 import type { RawExpansion, RawRequirement } from "./types";
-import { isNonAnswerOptionSourceRole } from "./source-role";
+import {
+  isExactlyExcludedProgrammingLogicSourceRole,
+  isNonAnswerOptionSourceRole,
+  isProgrammingLogicSourceRole,
+  programmingLogicRunSpans,
+} from "./source-role";
 
 /**
  * The expander consumes a sealed-shape requirement plus document-stated expansion hints.
@@ -161,8 +166,12 @@ const expansionOf = (row: ExpansionInputRow): RawExpansion | null =>
  * parsed >= 2. A real numeral or NUMBER_WORD entry that disagrees with the parsed option
  * count still refuses, unchanged. Residual edge, named rather than absorbed: a number word
  * beyond the table ("thirteen") is word-shaped under this rule and therefore states no count.
+ *
+ * 1.10.0 refuses unresolved programming-source bytes as option authority and counts every
+ * exact option-label exclusion by case, source atom, and direct run span. Programming source
+ * atoms never corroborate a sibling option inventory.
  */
-export const EXPANDER_VERSION = "v2-floor-expander/1.9.0";
+export const EXPANDER_VERSION = "v2-floor-expander/1.10.0";
 
 /**
  * The producer's own classification of a requirement facet. It decides which requirements
@@ -608,6 +617,23 @@ export interface OptionSetBinding {
 const nonAnswerOptionSourceRoles = (r: ScopedRequirement): string[] =>
   [...new Set((r.sourceAtoms ?? []).map((atom) => atom.role).filter(isNonAnswerOptionSourceRole))].sort();
 
+const unresolvedProgrammingOptionSourceRoles = (r: ScopedRequirement): string[] =>
+  [...new Set(
+    (r.sourceAtoms ?? [])
+      .map((atom) => atom.role)
+      .filter((role) => isProgrammingLogicSourceRole(role) && !isExactlyExcludedProgrammingLogicSourceRole(role)),
+  )].sort();
+
+const programmingOptionExclusion = (r: ScopedRequirement): { sourceAtoms: number; runSpans: number } => {
+  const roles = (r.sourceAtoms ?? [])
+    .map((atom) => atom.role)
+    .filter(isExactlyExcludedProgrammingLogicSourceRole);
+  return {
+    sourceAtoms: roles.length,
+    runSpans: roles.reduce((count, role) => count + programmingLogicRunSpans(role), 0),
+  };
+};
+
 /**
  * DOES THE ROW'S STATEMENT NAME ANOTHER QUESTION THE DOCUMENT KNOWS? Shared by
  * `mintOptionSet`'s OPTION_SET_QUESTION_AMBIGUOUS refusal and the sibling inventory in
@@ -658,6 +684,20 @@ export function mintOptionSet(
           `An open combo-box suggestion does not close the accepted answer vocabulary, and a ruby reading is a ` +
           `visible phonetic annotation rather than an answer. The source remains in the denominator, but the ` +
           `answer-option predicate may not reinterpret it`,
+      ),
+    };
+  }
+
+  const unresolvedProgramming = unresolvedProgrammingOptionSourceRoles(r);
+  if (unresolvedProgramming.length > 0) {
+    return {
+      optionSet: null,
+      expectationGap: gap(
+        EXPECTATION_GAP.OPTION_SET_SOURCE_NOT_AN_ANSWER_LIST,
+        `the option requirement cites ${unresolvedProgramming.length} programming-logic source role(s), but the ` +
+          `merge could not prove one exact occurrence of each source block in the document quote. Those blocks remain ` +
+          `addressable and normative for routing/termination, but no option label may be minted by guessing which ` +
+          `bytes to exclude`,
       ),
     };
   }
@@ -794,6 +834,12 @@ export interface ExpansionCoverage {
     unavailableBecauseCaseUntyped: number;
     byCode: Record<string, number>;
   };
+  /** Exact, parser-proven programming spans removed only from respondent option labels. */
+  programmingLogicOptionExclusions: {
+    cases: number;
+    sourceAtoms: number;
+    runSpans: number;
+  };
 }
 
 export interface ExpansionOutput {
@@ -811,6 +857,7 @@ export async function expandFloor(
   const facetInstances: FacetInstance[] = [];
   const preview: ExpansionPreviewEntry[] = [];
   const unpreviewed: string[] = [];
+  const programmingLogicOptionExclusions = { cases: 0, sourceAtoms: 0, runSpans: 0 };
   const vocabulary = questionVocabulary(rows);
 
   // THE DOCUMENT'S OWN OPTION LINES, PER QUESTION, BUILT ONCE. Corroboration material for the
@@ -830,6 +877,9 @@ export async function expandFloor(
     // A source unsafe as an assertion is equally unsafe as sibling corroboration, where it
     // could otherwise license a code-keyed label accusation in a different requirement.
     if (nonAnswerOptionSourceRoles(r).length > 0) continue;
+    // Programming blocks are routing/termination authority, not sibling option authority,
+    // even after their exact bytes were safely removed from this row's respondent quote.
+    if ((r.sourceAtoms ?? []).some((atom) => isProgrammingLogicSourceRole(atom.role))) continue;
     const q = questionOf(r);
     if (!q) continue;
     // 1.5.0 — a row `mintOptionSet` refuses as OPTION_SET_QUESTION_AMBIGUOUS has two readings
@@ -993,6 +1043,12 @@ export async function expandFloor(
       // case here, minted or refused. The denominator is pinned per document (D10) and a new
       // predicate is not allowed to move it.
       const bound = mintOptionSet(r, vocabulary, siblingsFor);
+      const excluded = programmingOptionExclusion(r);
+      if (excluded.sourceAtoms > 0) {
+        programmingLogicOptionExclusions.cases += 1;
+        programmingLogicOptionExclusions.sourceAtoms += excluded.sourceAtoms;
+        programmingLogicOptionExclusions.runSpans += excluded.runSpans;
+      }
       drafts.push({
         case: {
           ...emptyCase("option-set"),
@@ -1006,7 +1062,10 @@ export async function expandFloor(
           `question, read from its own quote and corroborated by the requirement's statement` +
           (bound.optionSet.exhaustive
             ? ", and closes the set"
-            : `; closure coverage: ${bound.optionSet.closureAssessment.code}`)
+            : `; closure coverage: ${bound.optionSet.closureAssessment.code}`) +
+          (excluded.sourceAtoms > 0
+            ? `; excluded ${excluded.sourceAtoms} exact programming source atom(s) / ${excluded.runSpans} run span(s) from respondent option labels only`
+            : "")
         : `one option-set case, carrying no expectation: ${bound.expectationGap?.code}`;
     } else {
       const kind = FACET_TO_CASE_KIND[r.facet] ?? "rendered-state";
@@ -1074,7 +1133,12 @@ export async function expandFloor(
     if (!previewed.has(row.requirement.requirementLineageId)) unpreviewed.push(row.requirement.requirementLineageId);
   }
 
-  return { facetInstances, preview, unpreviewed, coverage: coverageOf(rows.length, preview, facetInstances) };
+  return {
+    facetInstances,
+    preview,
+    unpreviewed,
+    coverage: coverageOf(rows.length, preview, facetInstances, programmingLogicOptionExclusions),
+  };
 }
 
 /**
@@ -1139,6 +1203,7 @@ function coverageOf(
   requirements: number,
   preview: ExpansionPreviewEntry[],
   facetInstances: FacetInstance[],
+  programmingLogicOptionExclusions: ExpansionCoverage["programmingLogicOptionExclusions"],
 ): ExpansionCoverage {
   const byGap: Record<string, number> = {};
   const byKind: Record<string, { cases: number; typed: number }> = {};
@@ -1184,6 +1249,7 @@ function coverageOf(
     byGap,
     byKind,
     optionSetClosure,
+    programmingLogicOptionExclusions,
   };
 }
 

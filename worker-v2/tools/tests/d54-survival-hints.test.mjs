@@ -155,6 +155,13 @@ function fakePage(reads) {
         set.push({ value });
         return { ok: true, reason: null, got: value };
       }
+      // A click transport succeeding is not proof that a native radio retained the intended
+      // state. Mirror the production scoped readback so this PageLike fixture exercises the
+      // exact W4 receipt contract, as the repaired D32/D55 fixtures do.
+      if (script.includes("W4_NATIVE_CHOICE_SCOPED_READBACK")) {
+        const idx = Number(/const expectedIdx = (\d+);/.exec(script)?.[1]);
+        return { idx, type: "radio", name: null, checked: true, checkedGroupIdxs: [idx] };
+      }
       return { ok: true };
     },
     async evaluateOnNewDocument() {},

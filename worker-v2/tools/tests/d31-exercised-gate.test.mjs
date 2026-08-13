@@ -37,7 +37,7 @@
  * Evidence these can fail: `tools/mutate-exercised-gate.mjs`.
  */
 
-import { assert, assertEq, suite, test } from "../testkit.mjs";
+import { assert, assertEq, assertThrows, suite, test } from "../testkit.mjs";
 import { testEnv, worker } from "./_helpers.mjs";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -663,5 +663,42 @@ suite("D31 — the LIVE executor: a healthy survey is never accused", () => {
     assert(progress.walks[0].blockedSteps > 0, `the walker recorded the refusal: ${JSON.stringify(progress.walks[0])}`);
     assertEq(out.casesClosed, 0, "a walk that never reached the end closes nothing");
     assertEq(out.stopReason, "walks-blocked-by-site", "and THIS is when the accusation is honest");
+  });
+});
+
+suite("D31 - corrupt execution progress is refused before browser acquisition", () => {
+  test("a stored wrong-kind ledger neither launches a browser nor overwrites its bytes", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const bed = await liveBed(mod, env);
+    const key = mod.executeBatch.execProgressKey(bed.runId);
+    await env.EVIDENCE.put(key, JSON.stringify({
+      kind: "wrong-kind",
+      runId: bed.runId,
+      planRevisionId: bed.planRevisionId,
+    }));
+    const putsBefore = env.EVIDENCE._log.filter((row) => row.op === "put").length;
+    let browserAcquisitions = 0;
+    globalThis.__V2_TEST_BROWSER__ = {
+      async launch() { browserAcquisitions += 1; throw new Error("must not launch"); },
+      async connect() { browserAcquisitions += 1; throw new Error("must not connect"); },
+    };
+    try {
+      await assertThrows(
+        () => mod.executeBatch.executeBatch(env, {
+          runId: bed.runId,
+          batch: 0,
+          fence: bed.fence,
+          cursor: bed.cursor,
+          surveyUrl: "https://fixture.invalid/survey",
+          planRevisionId: bed.planRevisionId,
+        }),
+        "execution-progress-corrupt",
+      );
+    } finally {
+      delete globalThis.__V2_TEST_BROWSER__;
+    }
+    assertEq(browserAcquisitions, 0, "browser acquisition happened before progress authority was validated");
+    assertEq(env.EVIDENCE._log.filter((row) => row.op === "put").length, putsBefore, "corrupt progress was overwritten");
   });
 });

@@ -37,7 +37,8 @@
  *      the unreachable-dropdown detector firing on a document where nothing IS unreachable
  *      (a warning that always warns is not a warning), and the collateral profile — the whole
  *      corpus's extracted text must be byte-identical to the pre-change parser except on the
- *      four documents these fixes are about.
+ *      named documents these fixes are about. W6 later adds three deliberate auxiliary-part
+ *      discoveries; those are listed with their exact coverage receipts below.
  *
  * The parser module comes from the suite's own esbuild bundle of `src/**`, not from
  * `test-suite/docx-robustness/build-v2/`, so this gate cannot score a stale artifact and a
@@ -444,13 +445,28 @@ suite("DOCX READER — the counterweights", () => {
     }
   });
 
-  test("THE COLLATERAL PROFILE: only the six named public fixtures read differently from the pre-change parser", async () => {
+  test("THE COLLATERAL PROFILE: only the named public fixtures change, and auxiliary discovery has exact receipts", async () => {
     // Byte-for-byte, against extraction output captured from the parser as it was BEFORE this
     // work (test-suite/docx-robustness/out-v2-prechange/). A merged-cell rewrite that also
     // moved an unrelated document would pass every test above and be invisible.
     const { parseDocxBlocks, annotate } = await parser();
     const run = scoreSuite(await parser(), SUITES.find((s) => s.id === "corpus"), { write: false });
     const changed = [];
+    const auxiliaryReceipts = {};
+    const expectedAuxiliaryReceipts = {
+      "02-comments.docx": [
+        "COMMENT_COVERAGE: 3 declared comment(s): 3 readable and 0 unreadable/empty placeholder(s). Every declared comment remains counted and labelled as a proposal.",
+        "COMMENT_FORMATTING_NOT_PRESERVED: 3 Word comment block(s) retain visible text, but comment formatting proves no document semantics. Comments remain labelled proposals.",
+      ],
+      "04-footnote-endnote-rule.docx": [
+        "2 footnote(s) produced 2 addressable block(s) read from word/footnotes.xml; they remain independently originated source, not decoration.",
+        "1 endnote(s) produced 1 addressable block(s) read from word/endnotes.xml; they remain independently originated source, not decoration.",
+      ],
+      "07-header-footer-watermark.docx": [
+        "2 addressable block(s) came from word/header1.xml; identical text in another header part remains distinct because part identity is source evidence.",
+        "1 addressable block(s) came from word/footer1.xml; identical text in another footer part remains distinct because part identity is source evidence.",
+      ],
+    };
     for (const r of run.results) {
       if (r.error !== null) continue;
       let before;
@@ -462,13 +478,24 @@ suite("DOCX READER — the counterweights", () => {
       } catch {
         throw new Error(`no pre-change capture for ${r.file}; the collateral profile cannot be checked`);
       }
-      const now = annotate(parseDocxBlocks(fixture(CORPUS, r.file)).blocks);
+      const doc = parseDocxBlocks(fixture(CORPUS, r.file));
+      const now = annotate(doc.blocks);
       if (now !== before) changed.push(r.file);
+      const expected = expectedAuxiliaryReceipts[r.file];
+      if (expected) {
+        const prefix = r.file === "02-comments.docx" ? /^COMMENT_/ :
+          r.file === "04-footnote-endnote-rule.docx" ? /^(?:\d+ footnote|\d+ endnote)/ :
+          /^\d+ addressable block\(s\) came from word\/(?:header|footer)1\.xml/;
+        auxiliaryReceipts[r.file] = doc.coverage.problems.filter((problem) => prefix.test(problem));
+      }
     }
     assertEq(
       JSON.stringify(changed),
       JSON.stringify([
+        "02-comments.docx",
         "03-routing-matrix-table.docx",
+        "04-footnote-endnote-rule.docx",
+        "07-header-footer-watermark.docx",
         "08-unicode-punctuation.docx",
         "11-textbox-content-control.docx",
         "15-nested-table.docx",
@@ -476,6 +503,11 @@ suite("DOCX READER — the counterweights", () => {
         "17-default-namespace.docx",
       ]),
       "the set of documents whose extraction changed is not the set these fixes are about",
+    );
+    assertEq(
+      JSON.stringify(auxiliaryReceipts),
+      JSON.stringify(expectedAuxiliaryReceipts),
+      "auxiliary-part discovery changed without its exact named coverage receipts",
     );
   });
 });

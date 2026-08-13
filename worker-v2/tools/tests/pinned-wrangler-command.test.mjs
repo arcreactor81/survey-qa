@@ -25,6 +25,9 @@ import {
   EXPECTED_NODE_TEST_RUNNER_EXEC_ARGV_COUNT,
   EXPECTED_NODE_TEST_RUNNER_EXEC_ARGV_SHA256,
   EXPECTED_NODE_TEST_RUNNER_EXEC_ARGV_SHA256_SET,
+  EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_DIRECT_EXEC_ARGV_SHA256,
+  EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_EXEC_ARGV_COUNT,
+  EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_SERIAL_EXEC_ARGV_SHA256,
   EXPECTED_NODE_TEST_RUNNER_SERIAL_EXEC_ARGV_SHA256,
   EXPECTED_NODE_TEST_RUNNER_VECTORS,
   EXPECTED_NODE_VERSION,
@@ -369,6 +372,8 @@ test("ambient Node injection and unsupported platforms fail before inventory wor
   assert.deepEqual(EXPECTED_NODE_TEST_RUNNER_EXEC_ARGV_SHA256_SET, [
     EXPECTED_NODE_TEST_RUNNER_DIRECT_EXEC_ARGV_SHA256,
     EXPECTED_NODE_TEST_RUNNER_SERIAL_EXEC_ARGV_SHA256,
+    EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_DIRECT_EXEC_ARGV_SHA256,
+    EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_SERIAL_EXEC_ARGV_SHA256,
   ]);
   assert.deepEqual(EXPECTED_NODE_TEST_RUNNER_VECTORS, [
     {
@@ -377,6 +382,7 @@ test("ambient Node injection and unsupported platforms fail before inventory wor
       context: EXPECTED_NODE_TEST_RUNNER_CONTEXT,
       execArgvCount: EXPECTED_NODE_TEST_RUNNER_EXEC_ARGV_COUNT,
       testConcurrencyFlag: "--test-concurrency=0",
+      testForceExitCount: 0,
       execArgvSha256: EXPECTED_NODE_TEST_RUNNER_DIRECT_EXEC_ARGV_SHA256,
     },
     {
@@ -385,22 +391,42 @@ test("ambient Node injection and unsupported platforms fail before inventory wor
       context: EXPECTED_NODE_TEST_RUNNER_CONTEXT,
       execArgvCount: EXPECTED_NODE_TEST_RUNNER_EXEC_ARGV_COUNT,
       testConcurrencyFlag: "--test-concurrency=1",
+      testForceExitCount: 0,
       execArgvSha256: EXPECTED_NODE_TEST_RUNNER_SERIAL_EXEC_ARGV_SHA256,
+    },
+    {
+      id: "direct-node-test-force-exit",
+      parentInvocation: "node --test --test-force-exit",
+      context: EXPECTED_NODE_TEST_RUNNER_CONTEXT,
+      execArgvCount: EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_EXEC_ARGV_COUNT,
+      testConcurrencyFlag: "--test-concurrency=0",
+      testForceExitCount: 2,
+      execArgvSha256: EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_DIRECT_EXEC_ARGV_SHA256,
+    },
+    {
+      id: "visual-manifest-serial-force-exit",
+      parentInvocation: "node --test --test-concurrency=1 --test-force-exit",
+      context: EXPECTED_NODE_TEST_RUNNER_CONTEXT,
+      execArgvCount: EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_EXEC_ARGV_COUNT,
+      testConcurrencyFlag: "--test-concurrency=1",
+      testForceExitCount: 2,
+      execArgvSha256: EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_SERIAL_EXEC_ARGV_SHA256,
     },
   ]);
   assert.equal(Object.isFrozen(EXPECTED_NODE_TEST_RUNNER_VECTORS), true);
   assert.equal(EXPECTED_NODE_TEST_RUNNER_VECTORS.every((vector) => Object.isFrozen(vector)), true);
   assert.equal(process.env.NODE_TEST_CONTEXT, EXPECTED_NODE_TEST_RUNNER_CONTEXT);
-  assert.equal(process.execArgv.length, EXPECTED_NODE_TEST_RUNNER_EXEC_ARGV_COUNT);
   const currentExecArgvSha256 = sha256(Buffer.from(JSON.stringify(process.execArgv), "utf8"));
   const currentVector = EXPECTED_NODE_TEST_RUNNER_VECTORS.find(
     (vector) => vector.execArgvSha256 === currentExecArgvSha256,
   );
   assert.notEqual(currentVector, undefined, "the executing test child must be one reviewed vector");
+  assert.equal(process.execArgv.length, currentVector.execArgvCount);
   assert.equal(process.execArgv.filter((value) => value === currentVector.testConcurrencyFlag).length, 1);
+  assert.equal(process.execArgv.filter((value) => value === "--test-force-exit").length, currentVector.testForceExitCount);
 
   const exactVectors = EXPECTED_NODE_TEST_RUNNER_VECTORS.map((vector) => {
-    const execArgv = replaceTestConcurrencyFlag(process.execArgv, vector.testConcurrencyFlag);
+    const execArgv = projectTestRunnerVector(process.execArgv, vector);
     assert.equal(execArgv.length, vector.execArgvCount, `${vector.id} argument count`);
     assert.equal(
       sha256(Buffer.from(JSON.stringify(execArgv), "utf8")),
@@ -481,13 +507,18 @@ test("ambient Node injection and unsupported platforms fail before inventory wor
   );
 });
 
-function replaceTestConcurrencyFlag(execArgv, replacement) {
-  const indices = execArgv
+function projectTestRunnerVector(execArgv, vector) {
+  const withoutForceExit = execArgv.filter((value) => value !== "--test-force-exit");
+  const indices = withoutForceExit
     .map((value, index) => /^--test-concurrency=\d+$/u.test(value) ? index : -1)
     .filter((index) => index !== -1);
   assert.equal(indices.length, 1, "Node test child must expose exactly one concurrency flag");
-  const replaced = [...execArgv];
-  replaced[indices[0]] = replacement;
+  const replaced = [...withoutForceExit];
+  replaced[indices[0]] = vector.testConcurrencyFlag;
+  if (vector.testForceExitCount === 2) {
+    replaced.splice(indices[0] + 1, 0, "--test-force-exit");
+    replaced.push("--test-force-exit");
+  }
   return replaced;
 }
 

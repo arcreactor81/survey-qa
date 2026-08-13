@@ -23,6 +23,7 @@ export function parseArguments(argv) {
     surveyUrl: null,
     docx: null,
     expectedDocumentSha256: null,
+    documentSemanticsProfile: "none/1.0.0",
     outputDir: null,
     expectVisual: "either",
     expectedVisualProvider: null,
@@ -39,6 +40,7 @@ export function parseArguments(argv) {
     "--survey-url",
     "--docx",
     "--expected-document-sha256",
+    "--document-semantics-profile",
     "--output-dir",
     "--expect-visual",
     "--expected-visual-provider",
@@ -73,6 +75,7 @@ export function parseArguments(argv) {
     if (flag === "--survey-url") result.surveyUrl = value;
     if (flag === "--docx") result.docx = value;
     if (flag === "--expected-document-sha256") result.expectedDocumentSha256 = value;
+    if (flag === "--document-semantics-profile") result.documentSemanticsProfile = value;
     if (flag === "--output-dir") result.outputDir = value;
     if (flag === "--expect-visual") result.expectVisual = value;
     if (flag === "--expected-visual-provider") result.expectedVisualProvider = value;
@@ -96,6 +99,12 @@ export function parseArguments(argv) {
     throw new LiveCanaryError("AUTH_MODE_CONFLICT", "choose either --env-file or --canary-token-file, not both");
   }
   if (result.mode === "execute") {
+    if (!["none/1.0.0", "shop-direct-grey-programming/1.0.0"].includes(result.documentSemanticsProfile)) {
+      throw new LiveCanaryError(
+        "ARGUMENT_INVALID",
+        "--document-semantics-profile must be none/1.0.0 or shop-direct-grey-programming/1.0.0",
+      );
+    }
     for (const [flag, value] of [
       ["--survey-url", result.surveyUrl],
       ["--docx", result.docx],
@@ -178,6 +187,7 @@ export function usage() {
     "",
     "Execution options:",
     "  --expected-document-sha256 SHA256 (required; checked before credentials, output, or POST)",
+    "  --document-semantics-profile none/1.0.0|shop-direct-grey-programming/1.0.0 (default: none/1.0.0)",
     "  --expect-visual enabled|disabled|either",
     `  --expected-visual-provider ${CANARY_VISUAL_PROVIDERS.join("|")} (required when visual is enabled)`,
     `  --poll-interval-ms N   default ${DEFAULT_POLL_INTERVAL_MS}`,

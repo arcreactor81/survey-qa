@@ -64,6 +64,7 @@ import { claimOwnership, loadCheckpoint, readHeartbeat, updateCheckpoint } from 
 import { planRetention, writeRetentionReport } from "./store/retention";
 import { isTerminalTest } from "./types/contracts";
 import type { RunParamsV2 } from "./workflow/run-workflow";
+import { normalizeDocumentSemanticsProfile } from "./extract/document-semantics";
 
 const MIN_AGE_MS = 15 * 60 * 1000;
 /** No heartbeat AND no durable progress for this long: the instance is gone. */
@@ -634,6 +635,18 @@ async function runLadder(
   // Rung (b): recreate from params reconstructed out of the envelope.
   const envelope = await getEnvelope(env, runId);
   if (!envelope) return "envelope-vanished";
+  let documentSemanticsProfile;
+  try {
+    documentSemanticsProfile = normalizeDocumentSemanticsProfile(envelope.input.documentSemanticsProfile);
+  } catch (err) {
+    return failRun(
+      env,
+      runId,
+      `persisted document-semantics profile is invalid; cannot recreate: ${err instanceof Error ? err.message : String(err)}`,
+      "workflow-input-invalid",
+      attempt,
+    );
+  }
 
   // FENCE THE ORIGINAL BEFORE THE REPLACEMENT EXISTS.
   //
@@ -662,6 +675,7 @@ async function runLadder(
     profile: envelope.profile,
     locale: envelope.input.locale,
     viewports: envelope.input.viewports,
+    documentSemanticsProfile,
     contractSource: envelope.input.contractSource ?? { mode: "extract" },
     recoveryAttempt: attempt,
   };

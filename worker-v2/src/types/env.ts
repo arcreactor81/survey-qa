@@ -141,14 +141,13 @@ export interface Env {
    */
   ARM_BUILD_IDENTITY?: string;
 
-  // --- submission limits (advisory hardening; each keeps its own name) ---
+  // --- submission limits (enforced hardening; each keeps its own name) ---
   MAX_DOCUMENT_BYTES?: string;
   /** Maximum raw JSON bytes accepted for the explicitly human-authored contract path. */
   MAX_HUMAN_REQUIREMENTS_BYTES?: string;
   /**
-   * Maximum declared HTTP request-body bytes. This is an early rejection guard, not a
-   * streaming parser: requests without a trustworthy Content-Length are still bounded by
-   * the platform request limit and by the post-parse document/requirements limits.
+   * Maximum HTTP request-body bytes. Content-Length is only an early rejection hint; every
+   * body is counted through a bounded stream before multipart or JSON parsing begins.
    */
   MAX_SUBMISSION_BYTES?: string;
   /**
@@ -180,12 +179,42 @@ export interface Env {
   // --- extraction models, prices and effort (each leg keeps its own name) ---
   GROK_MODEL?: string;
   GROK_REASONING_EFFORT?: string;
+  /** Reviewed base text-input tier; the ledger does not consume this field directly. */
   GROK_INPUT_USD_PER_MTOK?: string;
+  /** Reviewed base cached-input tier; retained even though usage receipts lack cache tokens. */
+  GROK_CACHED_INPUT_USD_PER_MTOK?: string;
+  /** Reviewed base text-output tier; the ledger does not consume this field directly. */
   GROK_OUTPUT_USD_PER_MTOK?: string;
+  /** Closed production binding and conservative flat-ledger policy. */
+  GROK_RATE_BINDING_SCHEMA?: string;
+  GROK_RATE_POLICY?: string;
+  /** Evidence channel is explicit; an owner dashboard copy is not called a catalogue receipt. */
+  GROK_RATE_SOURCE?: string;
+  GROK_RATE_ATTESTED_MODEL?: string;
+  GROK_RATE_ATTESTED_AT?: string;
+  GROK_RATE_RECEIPT_SHA256?: string;
+  GROK_CONTEXT_WINDOW_TOKENS?: string;
+  GROK_LONG_CONTEXT_THRESHOLD_TOKENS?: string;
+  GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK?: string;
+  GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK?: string;
+  GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK?: string;
+  /** Must exactly equal max(base,long) per axis; these are the rates the flat ledger uses. */
+  GROK_MAX_INPUT_USD_PER_MTOK?: string;
+  GROK_MAX_OUTPUT_USD_PER_MTOK?: string;
   DEEPSEEK_MODEL?: string;
   DEEPSEEK_REASONING_EFFORT?: string;
   DEEPSEEK_INPUT_USD_PER_MTOK?: string;
   DEEPSEEK_OUTPUT_USD_PER_MTOK?: string;
+  /**
+   * Same-provider pass-B continuity. Flash and Pro remain ONE DeepSeek method and
+   * never count as the independent Grok pass.
+   */
+  DEEPSEEK_FALLBACK_MODE?: string;
+  DEEPSEEK_FALLBACK_MODEL?: string;
+  DEEPSEEK_FALLBACK_REASONING_EFFORT?: string;
+  DEEPSEEK_FALLBACK_MAX_ATTEMPTS?: string;
+  DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK?: string;
+  DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK?: string;
   /** Characters of source per pass-B chunk. Smaller = more calls, less truncation risk. */
   EXTRACT_CHUNK_CHARS?: string;
   /**
@@ -366,7 +395,7 @@ export function effectivePolicy(env: Env, requested: "standard" | "deep", deepAu
       reportReserveUsd: round2(maxUsd * saneR),
       maxModelCalls: num(env.CAP_MODEL_CALLS, 400),
       maxToolCalls: num(env.CAP_TOOL_CALLS, 4000),
-      maxWallClockMs: num(env.CAP_WALL_CLOCK_MS, 3_600_000),
+      maxWallClockMs: num(env.CAP_WALL_CLOCK_MS, 14_400_000),
     },
     humanReviewMode: env.HUMAN_REVIEW_MODE === "always" ? "always" : "high-risk-only",
     oracleGapPolicy: env.ORACLE_GAP_POLICY === "strict-fp" ? "strict-fp" : "neutral-blocking",

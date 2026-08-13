@@ -32,9 +32,23 @@ import type {
   SourceBlock,
 } from "./types";
 import { dropCounts } from "./coerce";
-import { sourceAtomRole } from "./source-role";
+import { annotate } from "./docx-blocks";
+import {
+  isProgrammingLogicSourceRole,
+  sourceAtomRole,
+  withExactProgrammingLogicOptionExclusion,
+} from "./source-role";
 
-export { NON_ANSWER_OPTION_SOURCE_ROLE, isNonAnswerOptionSourceRole, sourceAtomRole } from "./source-role";
+export {
+  NON_ANSWER_OPTION_SOURCE_ROLE,
+  PROGRAMMING_LOGIC_SOURCE_ROLE_PREFIX,
+  isExactlyExcludedProgrammingLogicSourceRole,
+  isNonAnswerOptionSourceRole,
+  isProgrammingLogicSourceRole,
+  programmingLogicRunSpans,
+  sourceAtomRole,
+  withExactProgrammingLogicOptionExclusion,
+} from "./source-role";
 
 /**
  * 1.1.0 makes two parser-origin facts survive into the sealed source atoms. A revision
@@ -46,8 +60,17 @@ export { NON_ANSWER_OPTION_SOURCE_ROLE, isNonAnswerOptionSourceRole, sourceAtomR
  * absorbed behind a cited sibling cell, and citing one no longer accounts its row's real
  * cells. A 1.1.0 merge could silently swallow an uncited open suggestion in a cited row —
  * a coverage hole the ledger never named (Codex review, blocker 3).
+ *
+ * 1.3.0 projects exact, uniquely occurring programming-source bytes out of option quotes
+ * only. The source atoms retain the profile and counted span identity; unresolved/repeated
+ * bytes fail closed in the expander, and non-option requirements remain byte-identical.
+ *
+ * 1.4.0 binds every SourceAtom digest to that exact source block's canonical text. Earlier
+ * builds copied the stitched display-quote digest onto every atom, so a programming block
+ * removed from an option label cryptographically claimed the respondent quote that remained.
+ * Missing source blocks now refuse the merge rather than fabricating provenance.
  */
-export const MERGE_VERSION = "v2-extract-merge/1.2.0";
+export const MERGE_VERSION = "v2-extract-merge/1.4.0";
 // v2-source-ledger/1.1.0 — `accountedVia` is granted only to true table-cell blocks; a
 // lifted origin-bearing block now appears as its own entry (cited, or named unexplained),
 // never row-absorbed. A 1.0.0 ledger may under-report unexplainedNormativeBlocks.
@@ -251,6 +274,71 @@ export async function deriveRequirementIdentity(
   };
 }
 
+interface OptionQuoteProjection {
+  quote: string;
+  exactProgrammingBlockIds: Set<string>;
+}
+
+const exactOccurrenceCount = (haystack: string, needle: string): number => {
+  if (needle.length === 0) return 0;
+  let count = 0;
+  let at = 0;
+  while ((at = haystack.indexOf(needle, at)) >= 0) {
+    count += 1;
+    // Overlapping occurrences are still ambiguous: "AA" occurs twice in "AAA". Advancing
+    // by the whole needle would falsely certify that as one exact source span.
+    at += 1;
+  }
+  return count;
+};
+
+/** Remove the proven bytes and, only for a whole-line span, its own one line separator. */
+const removeExactSpan = (text: string, needle: string): string => {
+  const start = text.indexOf(needle);
+  const end = start + needle.length;
+  const startsLine = start === 0 || text[start - 1] === "\n";
+  const endsLine = end === text.length || text[end] === "\n" || text.slice(end, end + 2) === "\r\n";
+  if (startsLine && endsLine) {
+    if (text.slice(end, end + 2) === "\r\n") return text.slice(0, start) + text.slice(end + 2);
+    if (text[end] === "\n") return text.slice(0, start) + text.slice(end + 1);
+    if (start >= 2 && text.slice(start - 2, start) === "\r\n") return text.slice(0, start - 2) + text.slice(end);
+    if (start >= 1 && text[start - 1] === "\n") return text.slice(0, start - 1) + text.slice(end);
+  }
+  return text.slice(0, start) + text.slice(end);
+};
+
+/**
+ * Project an option quote without programming-only blocks, but only by exact source bytes.
+ * A missing or repeated occurrence remains unresolved in its SourceAtom role; the expander
+ * then refuses the option case rather than guessing which occurrence to remove.
+ */
+function projectOptionQuote(
+  primary: RawRequirement,
+  blocks: Map<string, SourceBlock>,
+): OptionQuoteProjection {
+  if (primary.construct !== "option-list" && primary.construct !== "option-set") {
+    return { quote: primary.docQuote, exactProgrammingBlockIds: new Set() };
+  }
+  let quote = primary.docQuote;
+  const exactProgrammingBlockIds = new Set<string>();
+  for (const id of [...new Set(primary.blockIds)]) {
+    const block = blocks.get(id);
+    if (!block) continue;
+    const role = sourceAtomRole(block, primary.construct);
+    if (!isProgrammingLogicSourceRole(role)) continue;
+    const annotatedLine = annotate([block]).split("\n").at(-1) ?? "";
+    if (annotatedLine.length > 0 && exactOccurrenceCount(quote, annotatedLine) === 1) {
+      quote = removeExactSpan(quote, annotatedLine);
+    } else if (exactOccurrenceCount(quote, block.text) === 1) {
+      quote = removeExactSpan(quote, block.text);
+    } else {
+      continue;
+    }
+    exactProgrammingBlockIds.add(id);
+  }
+  return { quote, exactProgrammingBlockIds };
+}
+
 /** Normalize one raw item into a sealed-contract requirement row. */
 async function toRequirement(
   raws: RawRequirement[],
@@ -264,10 +352,12 @@ async function toRequirement(
     (x, y) => y.blockIds.length - x.blockIds.length || y.confidence - x.confidence,
   )[0]!;
 
+  const optionQuote = projectOptionQuote(primary, blocks);
+
   const identity = await deriveRequirementIdentity(
     {
       statement: primary.statement,
-      docQuote: primary.docQuote,
+      docQuote: optionQuote.quote,
       scope: primary.scope,
       quantifier: primary.quantifier,
       construct: primary.construct,
@@ -276,7 +366,7 @@ async function toRequirement(
     },
     identityLevel,
   );
-  const quoteHash = await sha256Hex(primary.docQuote);
+  const quoteHash = await sha256Hex(optionQuote.quote);
 
   const atoms: SourceAtom[] = [];
   const seen = new Set<string>();
@@ -285,12 +375,23 @@ async function toRequirement(
       if (seen.has(id)) continue;
       seen.add(id);
       const b = blocks.get(id) ?? null;
+      if (b === null) {
+        throw new Error(
+          `MERGE_SOURCE_ATOM_MISSING: requirement ${JSON.stringify(primary.id)} references source block ` +
+            `${JSON.stringify(id)}, but that block is absent from the parsed document. The requirement cannot ` +
+            `be sealed with fabricated provenance.`,
+        );
+      }
+      const rawRole = sourceAtomRole(b, primary.construct);
       atoms.push({
         blockId: id,
-        kind: b?.kind === "heading" || b?.kind === "list-item" ? b.kind : (b?.kind ?? "paragraph"),
-        coords: b?.coords ?? null,
-        role: sourceAtomRole(b, primary.construct),
-        atomTextHash: `sha256:${quoteHash}`,
+        kind: b.kind,
+        coords: b.coords,
+        role:
+          optionQuote.exactProgrammingBlockIds.has(id) && isProgrammingLogicSourceRole(rawRole)
+            ? withExactProgrammingLogicOptionExclusion(rawRole)
+            : rawRole,
+        atomTextHash: `sha256:${await sha256Hex(b.text)}`,
       });
     }
   }
@@ -317,7 +418,7 @@ async function toRequirement(
     sourceAtoms: atoms,
     composition: null,
     normativeStatement: primary.statement,
-    displayQuote: primary.docQuote,
+    displayQuote: optionQuote.quote,
     displayQuoteHash: `sha256:${quoteHash}`,
     retiredAt: null,
   };

@@ -31,12 +31,20 @@ import { extractionDiffKey, extractionPassKey, k, sourceLedgerKey } from "../../
 import { sha256Hex } from "../../store/hash";
 import { type Fence } from "../../store/checkpoint";
 import { pushModelUsageStrict, modelUsage } from "../../store/usage";
-import { DOCX_BLOCKS_VERSION, parseDocxBlocks } from "../../extract/docx-blocks";
+import { docxBlocksVersion, parseDocxBlocks } from "../../extract/docx-blocks";
+import {
+  DOCUMENT_SEMANTICS_NONE,
+  type DocumentSemanticsProfile,
+} from "../../extract/document-semantics";
 import { keyFor, MissingCredential } from "../../llm/chat";
+import { deepseekPassBIdentity } from "../../llm/deepseek";
+import { grokFlashRouteIdentity, grokRateAttestation } from "../../llm/grok";
 import {
   runPassA,
   PASS_A_VERSION,
+  validatePassAProviderState,
   type CrossRef,
+  type PassAProviderIndependence,
   type PassASlice,
   type PassASliceOptions,
 } from "../../extract/pass-a";
@@ -61,6 +69,8 @@ export interface PassSummary {
   failedUnits: number;
   provider: string;
   model: string;
+  /** Null for pass B; pass A names whether the two-provider reading remained independent. */
+  providerIndependence: PassAProviderIndependence | null;
 }
 
 export interface ConsolidationSummary {
@@ -107,7 +117,11 @@ const proof = (evaluatorId: string, evaluatorVersion: string, inputHash: string)
 });
 
 /** Read the submitted .docx from R2 and parse it into addressable blocks. */
-export async function loadDocument(env: Env, documentKey: string): Promise<ParsedDocument> {
+export async function loadDocument(
+  env: Env,
+  documentKey: string,
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
+): Promise<ParsedDocument> {
   const obj = await env.EVIDENCE.get(documentKey);
   if (!obj) {
     throw new Error(
@@ -115,7 +129,7 @@ export async function loadDocument(env: Env, documentKey: string): Promise<Parse
         `and an extraction with no document would produce a denominator out of nothing.`,
     );
   }
-  return parseDocxBlocks(await obj.arrayBuffer());
+  return parseDocxBlocks(await obj.arrayBuffer(), { documentSemanticsProfile });
 }
 
 /**
@@ -135,7 +149,7 @@ async function chargeUsage(env: Env, runId: string, calls: CallUsage[], fence: F
     env,
     runId,
     fence,
-    calls.map((c) => modelUsage(c.model, c.inputTokens, c.outputTokens, c.costUsd)),
+    calls.map((c) => modelUsage(c.model, c.inputTokens, c.outputTokens, c.costUsd, c.eventId)),
   );
 }
 
@@ -149,6 +163,10 @@ const summarize = (result: PassResult, hash: string): PassSummary => ({
   failedUnits: result.failedUnits.length,
   provider: result.provider,
   model: result.model,
+  providerIndependence:
+    "providerIndependence" in result
+      ? (result as PassResult & { providerIndependence: PassAProviderIndependence }).providerIndependence
+      : null,
 });
 
 /**
@@ -164,8 +182,18 @@ export async function stagePassA(
   documentKey: string,
   documentName: string,
   fence: Fence,
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
 ): Promise<StageResult<PassSummary>> {
-  const { result } = await stagePassASlice(env, runId, documentKey, documentName, fence, async () => {}, {});
+  const { result } = await stagePassASlice(
+    env,
+    runId,
+    documentKey,
+    documentName,
+    fence,
+    async () => {},
+    {},
+    documentSemanticsProfile,
+  );
   return result;
 }
 
@@ -205,6 +233,7 @@ export async function stagePassASlice(
   fence: Fence,
   beat: (msg: string) => Promise<void>,
   options: PassASliceOptions,
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
 ): Promise<PassASliceOutcome> {
   const settled = (result: StageResult<PassSummary>): PassASliceOutcome => ({
     result,
@@ -215,11 +244,22 @@ export async function stagePassASlice(
 
   // RESUME AT THE PASS, NOT ONLY AT THE WINDOW. If a previous attempt already landed the
   // whole payload, re-reading it is strictly better than re-walking the windows.
-  const already = await readPassPayload(env, runId, "a");
+  const expectedParserVersion = docxBlocksVersion(documentSemanticsProfile);
+  const already = await readPassPayload(env, runId, "a", expectedParserVersion);
   if (already) return settled(already);
 
   resetDrops();
-  const doc = await loadDocument(env, documentKey);
+  const doc = await loadDocument(env, documentKey, documentSemanticsProfile);
+  try {
+    await grokRateAttestation(env);
+  } catch (err) {
+    return settled(stageNotEvaluated<PassSummary>(
+      "GROK_RATE_UNATTESTED",
+      `${err instanceof Error ? err.message : String(err)}. No Grok request was issued.`,
+    ));
+  }
+  // Validate the closed cost policy before Secrets Store get(). A missing or malformed
+  // price binding is a zero-I/O configuration refusal, not permission to touch a credential.
   const credential = await credentialCheck(env, "grok");
   if (credential) return settled(credential as StageResult<PassSummary>);
 
@@ -228,8 +268,7 @@ export async function stagePassASlice(
   // those carry a telemetry row with cost zeroed so the payload keeps its provenance, and
   // charging them once per wave would walk a large document into CAP_MODEL_CALLS on calls
   // nobody ever made.
-  const purchased = result.issuedCalls;
-  await chargeUsage(env, runId, purchased, fence);
+  await chargeUsage(env, runId, result.accountingCalls, fence);
 
   const wholeDocumentRead = result.slice.done;
   if (!wholeDocumentRead) {
@@ -245,7 +284,7 @@ export async function stagePassASlice(
     };
   }
 
-  const payload = { parserVersion: DOCX_BLOCKS_VERSION, promptVersion: PASS_A_VERSION, ...result };
+  const payload = { parserVersion: doc.parserVersion, promptVersion: PASS_A_VERSION, ...result };
   const body = JSON.stringify(payload, null, 2);
   await env.EVIDENCE.put(extractionPassKey(runId, "a"), body, {
     httpMetadata: { contentType: "application/json" },
@@ -279,8 +318,18 @@ export async function stagePassB(
   documentName: string,
   fence: Fence,
   beat: (msg: string) => Promise<void>,
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
 ): Promise<StageResult<PassSummary>> {
-  const { result } = await stagePassBSlice(env, runId, documentKey, documentName, fence, beat, {});
+  const { result } = await stagePassBSlice(
+    env,
+    runId,
+    documentKey,
+    documentName,
+    fence,
+    beat,
+    {},
+    documentSemanticsProfile,
+  );
   return result;
 }
 
@@ -316,6 +365,7 @@ export async function stagePassBSlice(
   fence: Fence,
   beat: (msg: string) => Promise<void>,
   options: PassBSliceOptions,
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
 ): Promise<PassBSliceOutcome> {
   const settled = (result: StageResult<PassSummary>): PassBSliceOutcome => ({
     result,
@@ -336,16 +386,20 @@ export async function stagePassBSlice(
   // RESUME AT THE PASS, NOT ONLY AT THE CHUNK. Pass A has had this since it was written;
   // pass B did not, so a wave that re-entered after the pass had already finished re-read
   // every chunk from R2 and re-bought all three ledger-sweep calls at full price.
-  const already = await readPassPayload(env, runId, "b");
+  const expectedParserVersion = docxBlocksVersion(documentSemanticsProfile);
+  const already = await readPassPayload(env, runId, "b", expectedParserVersion);
   if (already) return settled(already);
 
   resetDrops();
-  const doc = await loadDocument(env, documentKey);
+  const doc = await loadDocument(env, documentKey, documentSemanticsProfile);
   const credential = await credentialCheck(env, "deepseek");
   if (credential) return settled(credential as StageResult<PassSummary>);
 
   const result = await runPassB(env, runId, doc, documentName, beat, options);
-  await chargeUsage(env, runId, result.issuedCalls, fence);
+  // Offer every persisted pass-B receipt to the checkpoint CAS. Stable event ids
+  // make this exact across both crash windows: artifact-before-accounting settles
+  // on restart, while accounting-before-step-commit dedupes on restart.
+  await chargeUsage(env, runId, result.accountingCalls, fence);
 
   if (!result.slice.done) {
     return {
@@ -360,7 +414,7 @@ export async function stagePassBSlice(
     };
   }
 
-  const payload = { parserVersion: DOCX_BLOCKS_VERSION, promptVersion: PASS_B_VERSION, ...result };
+  const payload = { parserVersion: doc.parserVersion, promptVersion: PASS_B_VERSION, ...result };
   const body = JSON.stringify(payload, null, 2);
   await env.EVIDENCE.put(extractionPassKey(runId, "b"), body, {
     httpMetadata: { contentType: "application/json" },
@@ -388,10 +442,11 @@ export async function stageConsolidate(
   documentSha256: string,
   locale: string,
   viewports: string[],
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
 ): Promise<StageResult<ConsolidationSummary>> {
-  const doc = await loadDocument(env, documentKey);
-  const passA = await readPass(env, runId, "a");
-  const passB = await readPass(env, runId, "b");
+  const doc = await loadDocument(env, documentKey, documentSemanticsProfile);
+  const passA = await readPass(env, runId, "a", doc.parserVersion);
+  const passB = await readPass(env, runId, "b", doc.parserVersion);
   // A pass with no payload never ran. Consolidating over it would produce a ONE-pass
   // contract wearing a two-pass label — the exact claim the diff exists to make impossible
   // — so the merge does not happen and the gates are told why, in the words the report
@@ -402,6 +457,14 @@ export async function stageConsolidate(
       "MISSING_PASS",
       `extraction pass ${missing.join(" and ")} left no payload, so there is nothing to consolidate. ` +
         `A contract sealed from one pass would claim an agreement that was never tested.`,
+    );
+  }
+  if (passA.providerIndependence === "reduced-same-provider-fallback") {
+    return stageNotEvaluated(
+      "REDUCED_PROVIDER_INDEPENDENCE",
+      "Grok pass A activated its receipted DeepSeek Flash substitute. Pass B is DeepSeek Pro, so both readings " +
+        "came from one provider family. The extracted payloads are retained, but they cannot be presented as the " +
+        "ordinary two-provider corroboration required to seal a contract.",
     );
   }
   const crossRefs = (passA.crossRefs ?? []) as CrossRef[];
@@ -431,7 +494,7 @@ export async function stageConsolidate(
     ledger,
     constructs: { dispositioned, undispositioned: [...undispositioned] },
     versions: {
-      parser: DOCX_BLOCKS_VERSION,
+      parser: doc.parserVersion,
       passA: PASS_A_VERSION,
       passB: PASS_B_VERSION,
       merge: MERGE_VERSION,
@@ -510,14 +573,30 @@ export async function loadMerged(
 }
 
 /** A completed pass already in storage, re-summarized without a model call. */
-async function readPassPayload(env: Env, runId: string, pass: "a" | "b"): Promise<StageResult<PassSummary> | null> {
+async function readPassPayload(
+  env: Env,
+  runId: string,
+  pass: "a" | "b",
+  expectedParserVersion: string,
+): Promise<StageResult<PassSummary> | null> {
   const obj = await env.EVIDENCE.get(extractionPassKey(runId, pass));
   if (!obj) return null;
   const body = await obj.text();
   try {
-    const parsed = JSON.parse(body) as PassResult & { parserVersion?: unknown; promptVersion?: unknown };
+    const parsed = JSON.parse(body) as PassResult & {
+      parserVersion?: unknown;
+      promptVersion?: unknown;
+      providerPlanIdentity?: unknown;
+      providerRouteIdentity?: unknown;
+      providerIndependence?: unknown;
+    };
     const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;
-    if (parsed.parserVersion !== DOCX_BLOCKS_VERSION || parsed.promptVersion !== expectedPrompt) return null;
+    if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;
+    if (pass === "a" && (
+      parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
+      validatePassAProviderState(parsed) === null
+    )) return null;
+    if (pass === "b" && parsed.providerPlanIdentity !== deepseekPassBIdentity(env)) return null;
     if (!Array.isArray(parsed.requirements)) return null;
     const hash = `sha256:${await sha256Hex(body)}`;
     // costUsd is zeroed deliberately: this attempt did not spend it, and charging a run
@@ -535,7 +614,11 @@ async function readPass(
   env: Env,
   runId: string,
   pass: "a" | "b",
-): Promise<(PassResult & { crossRefs?: CrossRef[] }) | null> {
+  expectedParserVersion: string,
+): Promise<(PassResult & {
+  crossRefs?: CrossRef[];
+  providerIndependence?: PassAProviderIndependence;
+}) | null> {
   const obj = await env.EVIDENCE.get(extractionPassKey(runId, pass));
   if (!obj) return null;
   try {
@@ -543,11 +626,22 @@ async function readPass(
       crossRefs?: CrossRef[];
       parserVersion?: unknown;
       promptVersion?: unknown;
+      providerPlanIdentity?: unknown;
+      providerRouteIdentity?: unknown;
+      providerIndependence?: unknown;
     };
     const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;
-    if (parsed.parserVersion !== DOCX_BLOCKS_VERSION || parsed.promptVersion !== expectedPrompt) return null;
+    if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;
+    if (pass === "a" && (
+      parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
+      validatePassAProviderState(parsed) === null
+    )) return null;
+    if (pass === "b" && parsed.providerPlanIdentity !== deepseekPassBIdentity(env)) return null;
     if (!Array.isArray(parsed.requirements)) return null;
-    return parsed;
+    return parsed as PassResult & {
+      crossRefs?: CrossRef[];
+      providerIndependence?: PassAProviderIndependence;
+    };
   } catch {
     return null;
   }

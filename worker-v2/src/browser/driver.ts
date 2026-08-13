@@ -54,11 +54,13 @@ import {
   fillRefusalFor,
   isTextEntry,
   isValueEntry,
+  selectOptionScript,
   setValueScript,
 } from "./page-script";
 import type {
   AccessibilitySnapshotArtifact,
   AccessibilitySnapshotNode,
+  AdvanceSignal,
   BindingRefusal,
   BlockedReason,
   ControlState,
@@ -1250,6 +1252,94 @@ async function readValueAt(page: PageLike, idx: number): Promise<string | null> 
 }
 
 /**
+ * Read the native choice state the page RETAINED after a click. The group is scoped by native
+ * type, exact name, and form owner; a same-named radio in another form is not this receipt.
+ * Null is counter-evidence (the click transport returned but the state could not be observed),
+ * never an inferred success.
+ */
+async function readChoiceAt(
+  page: PageLike,
+  idx: number,
+): Promise<NonNullable<PerformedAction["choiceReadback"]> | null> {
+  try {
+    const out = await page.evaluate(
+      `(() => { /* W4_NATIVE_CHOICE_SCOPED_READBACK */ ` +
+        `const SEL = ${JSON.stringify(CONTROL_SELECTOR)}; const expectedIdx = ${JSON.stringify(idx)}; ` +
+        `const nodes = Array.from(document.querySelectorAll(SEL)); const el = nodes[expectedIdx]; ` +
+        `if (!el) return null; const type = String(el.type || '').toLowerCase(); ` +
+        `if (type !== 'radio' && type !== 'checkbox') return null; ` +
+        `const name = String(el.name || ''); const same = name ? nodes.filter((candidate) => ` +
+        `String(candidate.type || '').toLowerCase() === type && String(candidate.name || '') === name && ` +
+        `candidate.form === el.form) : [el]; ` +
+        `const formOwner = el.form ? Array.prototype.indexOf.call(document.forms || [], el.form) : null; ` +
+        `return { idx: expectedIdx, type, name: name || null, formOwner: formOwner >= 0 ? formOwner : null, ` +
+        `unnamedControlIdx: name ? null : expectedIdx, checked: !!el.checked, ` +
+        `checkedGroupIdxs: same.map((candidate) => nodes.indexOf(candidate)).filter((ownIdx) => ownIdx >= 0 && !!nodes[ownIdx].checked) }; })()`,
+    );
+    if (!out || typeof out !== "object" || Array.isArray(out)) return null;
+    const got = out as Record<string, unknown>;
+    if (got.idx !== idx || (got.type !== "radio" && got.type !== "checkbox") || typeof got.checked !== "boolean") return null;
+    if (got.name !== null && typeof got.name !== "string") return null;
+    if (got.formOwner !== undefined && got.formOwner !== null && !Number.isSafeInteger(got.formOwner)) return null;
+    if (got.unnamedControlIdx !== undefined && got.unnamedControlIdx !== null && !Number.isSafeInteger(got.unnamedControlIdx)) return null;
+    if (!Array.isArray(got.checkedGroupIdxs) || !got.checkedGroupIdxs.every((v) => Number.isSafeInteger(v) && Number(v) >= 0)) return null;
+    return {
+      idx,
+      type: got.type,
+      name: got.name as string | null,
+      formOwner: (got.formOwner ?? null) as number | null,
+      unnamedControlIdx: (got.unnamedControlIdx ?? null) as number | null,
+      checked: got.checked,
+      checkedGroupIdxs: [...new Set(got.checkedGroupIdxs as number[])],
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function exactChoiceReadback(
+  idx: number,
+  type: string,
+  got: PerformedAction["choiceReadback"],
+  expected?: {
+    name?: string | null;
+    formOwner?: number | null;
+    identity?: {
+      type: "radio" | "checkbox";
+      name: string | null;
+      formOwner: number | null;
+      unnamedControlIdx: number | null;
+    };
+  } | null,
+): boolean {
+  if (!got || got.idx !== idx || got.type !== type || !got.checked || !got.checkedGroupIdxs.includes(idx)) return false;
+  const identity = expected?.identity ?? (expected && Object.prototype.hasOwnProperty.call(expected, "formOwner")
+    ? {
+        type: type as "radio" | "checkbox",
+        name: expected.name ?? null,
+        formOwner: expected.formOwner ?? null,
+        unnamedControlIdx: (expected.name ?? null) === null ? idx : null,
+      }
+    : null);
+  if (identity && (
+    got.type !== identity.type ||
+    got.name !== identity.name ||
+    got.formOwner !== identity.formOwner ||
+    got.unnamedControlIdx !== identity.unnamedControlIdx
+  )) return false;
+  return type !== "radio" || (got.checkedGroupIdxs.length === 1 && got.checkedGroupIdxs[0] === idx);
+}
+
+const choiceReceiptDetail = (
+  detail: string,
+  idx: number,
+  type: string,
+  got: PerformedAction["choiceReadback"],
+  expected?: Parameters<typeof exactChoiceReadback>[3],
+): string =>
+  `${detail}; ${exactChoiceReadback(idx, type, got, expected) ? "exact-choice-readback" : "choice-readback-unavailable-or-mismatched"}`;
+
+/**
  * Set a value on a control that cannot be typed into — see `page-script.ts#setValueScript` for
  * why a slider and a date picker need this route and keystrokes will not do.
  */
@@ -1272,6 +1362,71 @@ async function setIdx(
     };
   } catch (err) {
     return { ok: false, detail: String(err).slice(0, 200) };
+  }
+}
+
+type NativeSelectOption = NonNullable<ControlState["options"]>[number];
+
+/** Exact means exact code, or exact rendered label after whitespace folding. No containment. */
+function exactSelectOptionMatch(option: NativeSelectOption, requested: string): boolean {
+  const wanted = String(requested);
+  const clean = (s: string): string => s.replace(/\s+/g, " ").trim();
+  return option.code === wanted || clean(option.label) === clean(wanted);
+}
+
+function usableSelectOption(option: NativeSelectOption): boolean {
+  return !option.disabled && option.hidden !== true && option.placeholder !== true;
+}
+
+/**
+ * Actuate one native select by its reader index and retain the exact post-action state.
+ * `out.ok` is not trusted on its own: missing or mismatched readback is a failed action.
+ */
+async function selectOptionIdx(
+  page: PageLike,
+  control: ControlState,
+  option: NativeSelectOption,
+): Promise<{
+  ok: boolean;
+  detail: string;
+  readback: { order: number; code: string; label: string } | null;
+}> {
+  try {
+    const out = (await page.evaluate(selectOptionScript(control.idx, option))) as
+      | {
+          ok?: boolean;
+          reason?: string | null;
+          changed?: boolean;
+          got?: { order?: unknown; code?: unknown; label?: unknown } | null;
+        }
+      | null;
+    const got =
+      out && out.got && typeof out.got === "object" && Number.isInteger(out.got.order) &&
+      typeof out.got.code === "string" && typeof out.got.label === "string"
+        ? { order: Number(out.got.order), code: out.got.code, label: out.got.label }
+        : null;
+    const exact =
+      out?.ok === true &&
+      got !== null &&
+      got.order === option.order &&
+      got.code === option.code &&
+      got.label === option.label;
+    if (!exact) {
+      return {
+        ok: false,
+        detail:
+          `native-select failed exact post-action readback (${out?.reason ?? "missing-readback"})` +
+          (got ? ` — got order=${got.order} code=${JSON.stringify(got.code)} label=${JSON.stringify(got.label)}` : ""),
+        readback: got,
+      };
+    }
+    return {
+      ok: true,
+      detail: `${out?.changed === false ? "already-selected" : "native-selected-index"}+input+change+exact-readback`,
+      readback: got,
+    };
+  } catch (err) {
+    return { ok: false, detail: `native-select threw: ${String(err).slice(0, 180)}`, readback: null };
   }
 }
 
@@ -2089,12 +2244,47 @@ async function applyDecision(
   const notOffered: string[] = [];
   /** Controls met on this screen and NOT answered, each with the reason. See UnfillableControl. */
   const unfillable: UnfillableControl[] = [];
+  const namedUnfillable = new Set<string>();
   const wanted = decision && Array.isArray(decision.select) ? decision.select : [];
   const strategy = String(decision?.strategy ?? "");
   const probeAction = String(decision?.action ?? "");
   /** How the reader said THIS control is actuated. Grid cells carry only an index. */
   const actuation = (idx: number) => screen.controls.find((c) => c.idx === idx) ?? null;
+  const nameUnfillableControl = (
+    c: ControlState,
+    reason: UnfillableControl["reason"],
+    detail: string,
+  ): void => {
+    const identity = `${c.idx}:${reason}`;
+    if (namedUnfillable.has(identity)) return;
+    namedUnfillable.add(identity);
+    unfillable.push({ idx: c.idx, type: c.type, label: c.label, required: !!c.required, reason, detail });
+    actions.push({
+      kind: "refuse-fill",
+      targetIdx: c.idx,
+      targetLabel: c.label,
+      targetCode: c.code,
+      value: null,
+      ok: false,
+      detail,
+    });
+  };
   const wantsBlank = probeAction === "leave-blank-and-continue" || decision?.text_entry?.value === "";
+  // Selection ownership is computed BEFORE either native selects or option groups act. A token
+  // that exactly identifies a native option cannot first drift through the older, containment-
+  // tolerant radio matcher; an exact radio/select collision is named and neither receives it.
+  const nativeSelects = screen.controls.filter((c) => c.tag === 'select' || c.type === 'select');
+  const cleanExact = (s: string): string => String(s).replace(/\s+/g, ' ').trim();
+  const selectOwners = wanted.map((request) => ({
+    request,
+    controlIdxs: nativeSelects
+      .filter((c) => c.visible && (c.options ?? []).some((o) => exactSelectOptionMatch(o, request)))
+      .map((c) => c.idx),
+    alsoOptionGroup: screen.optionGroups.some((g) =>
+      g.options.some((o) => o.code === request || cleanExact(o.label) === cleanExact(request)),
+    ),
+  }));
+  const hasRequestedNativeSelectMatch = selectOwners.some((owner) => owner.controlIdxs.length > 0);
   // ---- survival hints in force here: consumed ONLY by the option default below ----
   // Computed once, up front, so the ONE-consumer rule is auditable: `avoid` appears in the
   // option default and nowhere else. See `survivalAvoidLabels` for the evidence boundary.
@@ -2197,7 +2387,16 @@ async function applyDecision(
       // cell is not an answer and must not be recorded as one. Same shape as the option-group
       // skip below.
       if (allocationClaimed.has(cell.idx)) continue;
-      const r = await clickIdx(page, cell.idx, actuation(cell.idx));
+      const targetControl = actuation(cell.idx);
+      const r = await clickIdx(page, cell.idx, targetControl);
+      const choiceReadback =
+        r.ok && (targetControl?.type === "radio" || targetControl?.type === "checkbox")
+          ? await readChoiceAt(page, cell.idx)
+          : undefined;
+      const choiceSuccess =
+        targetControl?.type === "radio" || targetControl?.type === "checkbox"
+          ? r.ok && exactChoiceReadback(cell.idx, targetControl.type, choiceReadback, targetControl)
+          : r.ok;
       // THE FALLBACK IS NAMED. Taking cells[0] because no column matched is a DIFFERENT act
       // from answering the documented column, and it used to be recorded identically — which
       // is how a shifted column parse produced wrong answers that read like right ones.
@@ -2212,60 +2411,98 @@ async function applyDecision(
         targetLabel: `${row.label} / ${cell.column ?? "col?"}`,
         targetCode: cell.code,
         value: null,
-        ok: r.ok,
-        detail: how ? `${how} (${r.detail})` : r.detail,
+        ok: choiceSuccess,
+        detail:
+          targetControl?.type === "radio" || targetControl?.type === "checkbox"
+            ? choiceReceiptDetail(how ? `${how} (${r.detail})` : r.detail, cell.idx, targetControl.type, choiceReadback, targetControl)
+            : how ? `${how} (${r.detail})` : r.detail,
+        choiceReadback,
       });
     }
   }
 
   // ---- option groups ----
+  // An exact token offered by BOTH a native select and a radio/checkbox is not owned by either.
+  // Name the group-side controls now; the native loop below names its own side.
+  for (const owner of selectOwners.filter((candidate) => candidate.controlIdxs.length > 0 && candidate.alsoOptionGroup)) {
+    for (const g of screen.optionGroups) {
+      for (const o of g.options.filter(
+        (option) => option.code === owner.request || cleanExact(option.label) === cleanExact(owner.request),
+      )) {
+        const c = actuation(o.idx);
+        if (c) {
+          nameUnfillableControl(
+            c,
+            'selection-ambiguous',
+            `requested ${JSON.stringify(owner.request)} exactly identifies both a native select option and this ${g.kind} option; neither control was chosen`,
+          );
+        }
+      }
+    }
+  }
   for (const g of screen.optionGroups) {
     if (screen.grid && screen.grid.rows.some((r) => r.name && r.name === g.name)) continue; // handled above
     const matches = wanted
+      // Any exact native owner beats this match's containment heuristic. Exact group collisions
+      // were named above; a merely similar group is unrelated and must not receive the token.
+      .filter((w) => !selectOwners.some((owner) => owner.request === w && owner.controlIdxs.length > 0))
       .map((w) => ({ w, opt: g.options.find((o) => labelMatches(o.label, w)) }))
       .filter((x) => x.opt);
     if (matches.length === 0) continue;
     for (const { w, opt } of matches) {
       if (!opt) continue;
       if (opt.checked) {
+        const checkedGroupIdxs = g.options.filter((candidate) => candidate.checked).map((candidate) => candidate.idx);
+        const choiceReadback: NonNullable<PerformedAction["choiceReadback"]> = {
+          idx: opt.idx,
+          type: g.kind,
+          name: g.identity?.name ?? (g.name === "(unnamed)" ? null : g.name),
+          formOwner: g.identity?.formOwner ?? null,
+          unnamedControlIdx: g.identity?.unnamedControlIdx ?? null,
+          checked: true,
+          checkedGroupIdxs,
+        };
         actions.push({
           kind: "click-option",
           targetIdx: opt.idx,
           targetLabel: opt.label,
           targetCode: opt.code,
           value: null,
-          ok: true,
-          detail: "already-selected",
+          ok: exactChoiceReadback(opt.idx, g.kind, choiceReadback, g),
+          detail: choiceReceiptDetail("already-selected", opt.idx, g.kind, choiceReadback, g),
+          choiceReadback,
         });
         continue;
       }
       const r = await clickIdx(page, opt.idx, opt);
+      const choiceReadback = r.ok ? await readChoiceAt(page, opt.idx) : null;
       actions.push({
         kind: "click-option",
         targetIdx: opt.idx,
         targetLabel: opt.label,
         targetCode: opt.code,
         value: w,
-        ok: r.ok,
+        ok: r.ok && exactChoiceReadback(opt.idx, g.kind, choiceReadback, g),
         // A requested label that lands on a control NO RESPONDENT COULD REACH is still
         // clicked — the plan asked for it, and refusing here would silently drop a documented
         // answer — but it is never recorded as an ordinary click. A responsive site renders
         // its grid twice (a table and a `display:none` stacked list), and both copies offer
         // the same labels; this is what tells the two apart afterwards.
-        detail: (opt.operable ?? true) ? r.detail : `not-operable:${opt.actuatedVia ?? "unknown"} (${r.detail})`,
+        detail: choiceReceiptDetail(
+          (opt.operable ?? true) ? r.detail : `not-operable:${opt.actuatedVia ?? "unknown"} (${r.detail})`,
+          opt.idx,
+          g.kind,
+          choiceReadback,
+          g,
+        ),
+        choiceReadback,
       });
     }
   }
 
-  // Requested answers the screen never offered. Recorded; NOT judged.
-  for (const w of wanted) {
-    const offered = screen.optionGroups.some((g) => g.options.some((o) => labelMatches(o.label, w)));
-    if (!offered) notOffered.push(w);
-  }
-
   // ---- default: nothing requested matched, so answer enough to advance ----
   const answeredSomething = actions.some((a) => a.ok && a.kind !== "type-text");
-  if (!answeredSomething && !screen.grid) {
+  if (!answeredSomething && !screen.grid && !hasRequestedNativeSelectMatch) {
     for (const g of screen.optionGroups) {
       if (g.options.some((o) => o.checked)) continue;
       // `answerable`, NOT `visible` — see the comment on answerable(). This is the line that
@@ -2294,16 +2531,19 @@ async function applyDecision(
         const pick = Math.min(variant, eligible.length - 1);
         const alt = eligible[pick]!;
         const rv = await clickIdx(page, alt.idx, alt);
+        const choiceReadback = rv.ok ? await readChoiceAt(page, alt.idx) : null;
         actions.push({
           kind: "click-option",
           targetIdx: alt.idx,
           targetLabel: alt.label,
           targetCode: alt.code,
           value: null,
-          ok: rv.ok,
+          ok: rv.ok && exactChoiceReadback(alt.idx, g.kind, choiceReadback, g),
           detail:
             `navigator-default:retry-${variant}:option-${pick + 1}-of-${eligible.length}-eligible` +
-            `${avoid.length > 0 ? "-after-hint-filtering" : ""} (${rv.detail})`,
+            `${avoid.length > 0 ? "-after-hint-filtering" : ""} (` +
+            choiceReceiptDetail(rv.detail, alt.idx, g.kind, choiceReadback, g) + `)`,
+          choiceReadback,
         });
         if (g.kind === "radio") continue;
         break;
@@ -2320,23 +2560,179 @@ async function applyDecision(
         }
       }
       const r = await clickIdx(page, chosen.idx, chosen);
+      const choiceReadback = r.ok ? await readChoiceAt(page, chosen.idx) : null;
       actions.push({
         kind: "click-option",
         targetIdx: chosen.idx,
         targetLabel: chosen.label,
         targetCode: chosen.code,
         value: null,
-        ok: r.ok,
+        ok: r.ok && exactChoiceReadback(chosen.idx, g.kind, choiceReadback, g),
         // BOTH shapes keep the `navigator-default:` prefix — countDefaults and the ending's
         // provenance line key off it, and a hint-steered filler is still an invented answer.
         detail:
           avoided.length > 0
-            ? `navigator-default:first-non-flagged-option(avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}) (${r.detail})`
-            : `navigator-default:first-option (${r.detail})`,
+            ? `navigator-default:first-non-flagged-option(avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}) (` +
+              choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`
+            : `navigator-default:first-option (` + choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`,
+        choiceReadback,
       });
       if (g.kind === "radio") continue;
       break;
     }
+  }
+
+  // ---- native <select>: one scoped element, one exact option, one exact readback ----
+  //
+  // Select options do NOT join optionGroups. Keeping them separate preserves the complete native
+  // inventory and prevents a global `role=option`/text lookup from clicking a same-labelled option
+  // belonging to another widget. A requested token owns a select only when it identifies exactly
+  // one visible select and does not also identify a radio/checkbox option on this screen.
+  for (const c of nativeSelects) {
+    // A hidden native select MAY back a custom widget, an alternate responsive layout, or a
+    // honeypot. The DOM alone does not identify which convention applies. Never actuate it and
+    // never silently erase it: retain the control as a named, counted non-actuation.
+    if (!c.visible) {
+      nameUnfillableControl(
+        c,
+        'control-not-operable',
+        'native select is not rendered at this viewport; it may be backing, alternate-layout, or non-respondent markup, so no safe respondent act is available',
+      );
+      continue;
+    }
+    if (c.disabled) {
+      nameUnfillableControl(c, "control-disabled", "visible native select is disabled and cannot be actuated");
+      continue;
+    }
+    if (c.multiple) {
+      nameUnfillableControl(
+        c,
+        "unsupported-widget",
+        "native select[multiple] was inventoried, but this slice has no certified multi-option actuation/readback contract",
+      );
+      continue;
+    }
+    if (!Array.isArray(c.options)) {
+      nameUnfillableControl(
+        c,
+        "no-usable-option",
+        "native select was discovered but its complete option inventory is absent, so no scoped selection is safe",
+      );
+      continue;
+    }
+
+    const ownedRequests = selectOwners.filter((owner) => owner.controlIdxs.includes(c.idx));
+    const ambiguousRequests = ownedRequests.filter(
+      (owner) => owner.controlIdxs.length !== 1 || owner.alsoOptionGroup,
+    );
+    const uniqueRequests = ownedRequests.filter(
+      (owner) => owner.controlIdxs.length === 1 && !owner.alsoOptionGroup,
+    );
+    if (ambiguousRequests.length > 0 && uniqueRequests.length === 0) {
+      nameUnfillableControl(
+        c,
+        "selection-ambiguous",
+        `requested ${ambiguousRequests.map((x) => JSON.stringify(x.request)).join(", ")} matches more than one visible selection control; no global/foreign option was chosen`,
+      );
+      continue;
+    }
+
+    const plannedOptions = uniqueRequests
+      .flatMap((owner) => c.options!.filter((o) => exactSelectOptionMatch(o, owner.request)))
+      .filter((option, index, all) => all.findIndex((x) => x.order === option.order) === index);
+    if (plannedOptions.length > 1) {
+      nameUnfillableControl(
+        c,
+        "selection-ambiguous",
+        `the planned tokens identify ${plannedOptions.length} different options inside this single-select; choosing one would invent precedence`,
+      );
+      continue;
+    }
+
+    let chosen: NativeSelectOption | undefined = plannedOptions[0];
+    let provenance: string;
+    if (chosen) {
+      if (!usableSelectOption(chosen)) {
+        nameUnfillableControl(
+          c,
+          "no-usable-option",
+          `the exact requested option ${JSON.stringify(chosen.label)} (code ${JSON.stringify(chosen.code)}) is disabled, hidden, or the select's placeholder-label option`,
+        );
+        continue;
+      }
+      const source = uniqueRequests.find((owner) => exactSelectOptionMatch(chosen!, owner.request));
+      provenance = chosen.code === source?.request ? "planned:exact-option-code" : "planned:exact-option-label";
+    } else {
+      const usable = c.options.filter(usableSelectOption);
+      const already = usable.find((o) => o.selected);
+      // A rerun must not dispatch input/change on a value already held by the page. The selected
+      // state is observed in the inventory; no performed action or invented-answer count is due.
+      if (already) continue;
+      const pick = usable.length > 0 ? Math.min(variant, usable.length - 1) : -1;
+      chosen = pick >= 0 ? usable[pick] : undefined;
+      if (!chosen) {
+        const placeholderCount = c.options.filter((o) => o.placeholder).length;
+        nameUnfillableControl(
+          c,
+          "no-usable-option",
+          `native select has ${c.options.length} inventoried option(s), but none is enabled, visible and non-placeholder` +
+            (placeholderCount > 0 ? ` (${placeholderCount} HTML placeholder-label option)` : ""),
+        );
+        continue;
+      }
+      provenance =
+        variant > 0
+          ? `navigator-default:retry-${variant}:native-option-${pick + 1}-of-${usable.length}-usable`
+          : "navigator-default:first-usable-native-option";
+    }
+
+    const selected = await selectOptionIdx(page, c, chosen);
+    actions.push({
+      kind: "select-option",
+      targetIdx: c.idx,
+      targetLabel: chosen.label,
+      targetCode: chosen.code,
+      value: chosen.code,
+      ok: selected.ok,
+      detail: `${provenance} (${selected.detail})`,
+      selectReadback: selected.readback,
+    });
+    if (!selected.ok) {
+      unfillable.push({
+        idx: c.idx,
+        type: c.type,
+        label: c.label,
+        required: !!c.required,
+        reason: "value-rejected",
+        detail: `native select did not retain the exact scoped option ${JSON.stringify(chosen.label)} / ${JSON.stringify(chosen.code)}: ${selected.detail}`,
+      });
+    }
+  }
+
+  // Accessible custom selection and drag widgets are RECOGNISED but not guessed at. Each visible
+  // node is named here, while the reader's aggregate limitation records that complete option or
+  // source/target semantics were unavailable. Platform adapters can replace this refusal later.
+  for (const c of screen.controls.filter(
+    (control) => control.tag !== "select" && control.visible && (control.widgetKinds ?? []).length > 0,
+  )) {
+    const kinds = (c.widgetKinds ?? []).join(",");
+    nameUnfillableControl(
+      c,
+      c.disabled ? "control-disabled" : "unsupported-widget",
+      c.disabled
+        ? `visible semantic widget (${kinds}) is disabled and cannot be actuated`
+        : `visible semantic widget (${kinds}) was inventoried, but generic actuation and post-action proof are not implemented; it was not answered`,
+    );
+  }
+
+  // Requested answers the screen never offered. Native options count only inside their owning,
+  // visible select; a document-wide option text match is deliberately impossible here.
+  for (const w of wanted) {
+    const offeredByGroup = screen.optionGroups.some((g) => g.options.some((o) => labelMatches(o.label, w)));
+    const offeredBySelect = nativeSelects.some(
+      (c) => c.visible && (c.options ?? []).some((o) => o.hidden !== true && exactSelectOptionMatch(o, w)),
+    );
+    if (!offeredByGroup && !offeredBySelect) notOffered.push(w);
   }
 
   // ---- values: everything a respondent supplies rather than picks ----
@@ -2461,21 +2857,114 @@ async function applyDecision(
  * now says so in the record, because a press chosen by elimination and a press chosen by
  * identity are different acts and were previously indistinguishable afterwards.
  */
-function nextButton(screen: RenderedScreen): { idx: number; label: string; via: string } | null {
+export type AdvanceControlResolution =
+  | { kind: "none"; candidates: [] }
+  | { kind: "unique"; control: { idx: number; label: string; via: string }; candidates: Array<{ idx: number; label: string; via: string }> }
+  | { kind: "ambiguous"; candidates: Array<{ idx: number; label: string; via: string }> };
+
+export function resolveAdvanceControl(screen: RenderedScreen): AdvanceControlResolution {
   const cands = screen.buttons.filter((b) => b.visible && !b.disabled);
-  const next = cands.find((b) => b.role === "next");
-  if (next) {
-    return { idx: next.idx, label: next.label, via: `role:next(${next.roleVia ?? "unrecorded"})` };
+  const explicit = cands.filter((b) => b.role === "next").map((b) => ({
+    idx: b.idx,
+    label: b.label,
+    via: `role:next(${b.roleVia ?? "unrecorded"})`,
+  }));
+  if (explicit.length > 1) return { kind: "ambiguous", candidates: explicit };
+  if (explicit.length === 1 && explicit[0]) {
+    return { kind: "unique", control: explicit[0], candidates: explicit };
   }
-  const only = cands.filter((b) => b.role !== "back");
+  // Defense in depth for artifacts read before the page classifier learned direction-only
+  // glyphs: `<<`/left-arrow is Back evidence, never an unknown button eligible to become the
+  // sole-forward candidate. This is a generic direction convention, not a platform selector.
+  const symbolicBack = (label: string): boolean => /^(?:<+|‹|«|←|⬅|◀|⏪)$/u.test(label.trim());
+  const only = cands.filter((b) => b.role !== "back" && !symbolicBack(b.label)).map((b) => ({
+    idx: b.idx,
+    label: b.label,
+    via: "sole-forward-candidate - no control on this screen NAMED itself as advancing, and exactly one was not a back control",
+  }));
   if (only.length === 1 && only[0]) {
-    return {
+    return { kind: "unique", control: {
       idx: only[0].idx,
       label: only[0].label,
       via: "sole-forward-candidate — no control on this screen NAMED itself as advancing, and exactly one was not a back control",
-    };
+    }, candidates: only };
   }
-  return null;
+  if (only.length > 1) return { kind: "ambiguous", candidates: only };
+  return { kind: "none", candidates: [] };
+}
+
+/** Return the unique advance control for call sites that only need one-or-none. */
+function nextButton(screen: RenderedScreen): { idx: number; label: string; via: string } | null {
+  const resolution = resolveAdvanceControl(screen);
+  return resolution.kind === "unique" ? resolution.control : null;
+}
+
+/**
+ * Movement evidence relative to the POST-ACTION baseline. Select/radio answer state is
+ * deliberately absent: an answer can change state without navigation. Progress is accepted
+ * only when its numeric value increases.
+ */
+export function advanceSignals(before: RenderedScreen, after: RenderedScreen): AdvanceSignal[] {
+  const out: AdvanceSignal[] = [];
+  if (after.screenSignature !== before.screenSignature) out.push("screen-signature-changed");
+  if (after.url !== before.url) out.push("url-changed");
+  if (
+    before.historyLength !== null && before.historyLength !== undefined &&
+    after.historyLength !== null && after.historyLength !== undefined &&
+    after.historyLength !== before.historyLength
+  ) out.push("history-length-changed");
+  if (
+    before.progress?.present && after.progress?.present &&
+    typeof before.progress.now === "number" && Number.isFinite(before.progress.now) &&
+    typeof after.progress.now === "number" && Number.isFinite(after.progress.now) &&
+    after.progress.now > before.progress.now
+  ) out.push("progress-value-increased");
+  return out;
+}
+
+export const MULTI_QUESTION_ACTUATION_UNSUPPORTED = "multi-question-screen-actuation-unsupported";
+export const NAVIGATION_FORWARD_AMBIGUOUS = "navigation-forward-ambiguous";
+
+/** Current readers expose roots and the counted limitation; either is sufficient to fail shut. */
+export function multiQuestionRootCount(screen: RenderedScreen): number {
+  const roots = Array.isArray(screen.questionRoots) ? screen.questionRoots.length : 0;
+  const named = (screen.readerLimitations ?? [])
+    .filter((row) => row.kind === MULTI_QUESTION_ACTUATION_UNSUPPORTED)
+    .reduce((max, row) => Math.max(max, Number.isFinite(row.count) ? row.count : 0), 0);
+  return Math.max(roots, named);
+}
+
+/** Answer semantics that distinguish two traversals of the same visual template. */
+function transitionActionFingerprint(actions: PerformedAction[]): string {
+  return JSON.stringify(
+    actions
+      .filter((action) => action.kind !== "click-next" && action.kind !== "click-back" && action.kind !== "open")
+      .map((action) => ({
+        kind: action.kind,
+        targetIdx: action.targetIdx,
+        targetCode: action.targetCode,
+        value: action.value,
+        ok: action.ok,
+        selectReadback: action.selectReadback ?? null,
+        choiceReadback: action.choiceReadback ?? null,
+      })),
+  );
+}
+
+/**
+ * Signals that may distinguish repeated roster/review occurrences. None is sufficient alone;
+ * the cycle key combines all of them with screen identity, answer receipt, and bounded history.
+ */
+function screenOccurrenceFingerprint(screen: RenderedScreen): string {
+  return JSON.stringify({
+    url: screen.url,
+    title: screen.title,
+    historyLength: screen.historyLength ?? null,
+    progress: screen.progress?.present
+      ? { kind: screen.progress.kind, now: screen.progress.now, max: screen.progress.max, text: screen.progress.text }
+      : null,
+    selectState: screen.selectStateSignature ?? null,
+  });
 }
 
 const normMsg = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
@@ -2819,6 +3308,11 @@ export async function walkPath(
   await sleep(400);
 
   let stepIndex = 0;
+  // Repeating the same directed transition is only a cycle when its semantic answer receipt,
+  // occurrence hints, and bounded incoming history repeat too. Template/roster screens may share
+  // a screenSignature, and revisits may answer them differently; neither is collapsed here.
+  const traversedTransitions = new Map<string, number>();
+  const recentTransitionBases: string[] = [];
   let remaining: PlannedDecision[] = Array.isArray(path.decisions) ? [...path.decisions] : [];
   // EVERY question on this walk, including the ones already answered. A screen naming a
   // question whose decision has been used is evidence about which screen this is NOT, and the
@@ -2836,6 +3330,10 @@ export async function walkPath(
   // buried in screen 7's payload is a limitation nobody reads. Summed as well as listed,
   // because "we looked and found none" (0) and "nobody looked" (absent) are different claims.
   const readerLimitations: Array<{ stepIndex: number; kind: string; detail: string; count: number }> = [];
+  const recordReaderLimitation = (kind: string, detail: string, count: number): void => {
+    if (readerLimitations.some((row) => row.stepIndex === stepIndex && row.kind === kind)) return;
+    readerLimitations.push({ stepIndex, kind, detail, count });
+  };
   // AND WHAT THE WALKER COULD NOT ANSWER, lifted the same way and for the same reason. A
   // password field refused on screen 4 and left in screen 4's payload is a refusal nobody reads,
   // while the walk's own outcome says only "this screen offered no enabled control that advances
@@ -2849,7 +3347,7 @@ export async function walkPath(
   /** The refusals raised on THIS screen, phrased for an `outcomeDetail`. */
   const nameUnfilled = (list: UnfillableControl[]): string =>
     list
-      .map((u) => `<input type="${u.type}">${u.label ? ` "${u.label.slice(0, 60)}"` : ""}${u.required ? " (required)" : ""} — ${u.detail}`)
+      .map((u) => `<control type="${u.type}">${u.label ? ` "${u.label.slice(0, 60)}"` : ""}${u.required ? " (required)" : ""} — ${u.detail}`)
       .join("; ");
 
   while (stepIndex < opts.maxSteps && Date.now() < opts.deadline && outcome !== "error") {
@@ -2904,6 +3402,8 @@ export async function walkPath(
     const rendered =
       before.counts.options > 0 ||
       (before.counts.valueInputs ?? before.counts.textInputs) > 0 ||
+      (before.counts.customWidgets ?? 0) > 0 ||
+      before.controls.some((c) => c.visible && (c.tag === "select" || c.type === "select")) ||
       (before.questionText !== null && before.questionText.length > 0) ||
       before.grid !== null;
     if (stepIndex === 0 && !rendered && pageErrors.length > 0) {
@@ -2937,6 +3437,56 @@ export async function walkPath(
     );
     const beforeEv = beforeCapture.screenJson.evidenceId;
 
+    // A generic one-question binder cannot safely choose an owner on a screen with multiple
+    // disjoint visible question roots. Likewise it cannot choose DOM-first between multiple
+    // usable forward controls. Capture first, then stop without binding, filling, defaulting,
+    // or clicking; the pending decision stays pending and the walk cannot earn coverage.
+    const rootCount = multiQuestionRootCount(before);
+    const initialNavigation = resolveAdvanceControl(before);
+    const initialStop =
+      rootCount >= 2
+        ? {
+            kind: MULTI_QUESTION_ACTUATION_UNSUPPORTED,
+            count: rootCount,
+            detail: `screen ${stepIndex} exposes ${rootCount} distinct visible question roots; generic one-question actuation is unsupported`,
+          }
+        : initialNavigation.kind === "ambiguous"
+          ? {
+              kind: NAVIGATION_FORWARD_AMBIGUOUS,
+              count: initialNavigation.candidates.length,
+              detail:
+                `screen ${stepIndex} exposes ${initialNavigation.candidates.length} usable forward candidates: ` +
+                initialNavigation.candidates.map((row) => `#${row.idx} ${JSON.stringify(row.label)} via ${row.via}`).join("; "),
+            }
+          : null;
+    if (initialStop) {
+      recordReaderLimitation(initialStop.kind, initialStop.detail, initialStop.count);
+      steps.push({
+        stepIndex,
+        decisionQuestion: null,
+        decisionSource: "navigator-default",
+        bindingVia: null,
+        bindingRefusals: [],
+        requested: null,
+        screenBefore: before,
+        screenAfterAction: null,
+        screenAfterAdvance: null,
+        actions: [],
+        requestedButNotOffered: [],
+        unfillableControls: [],
+        advanced: false,
+        blocked: false,
+        blockedReason: initialStop.kind as BlockedReason,
+        pageErrors: pageErrors.slice(errAt),
+        consoleErrors: consoleErrors.slice(),
+        evidence: stepEvidence(beforeEv, null, [beforeCapture]),
+        wallMs: Date.now() - stepT0,
+      });
+      outcome = initialStop.kind;
+      outcomeDetail = initialStop.detail;
+      break;
+    }
+
     // A REFUSED DECISION IS NOT CONSUMED. `splice` runs only on an actual binding, so a
     // decision this screen could not be identified as stays pending and is offered to every
     // later screen — which is the whole repair: the Q7 decision that used to be eaten by an
@@ -2968,19 +3518,54 @@ export async function walkPath(
       afterAction = null;
     }
 
-    const nb = nextButton(afterAction ?? before);
+    const navigation = resolveAdvanceControl(afterAction ?? before);
+    const nb = navigation.kind === "unique" ? navigation.control : null;
     const afterActionCapture = afterAction
       ? recordEpoch(
           await captureScreenEpoch(
             page,
             cap,
             afterAction,
-            nb ? "after-action" : "final",
+            navigation.kind === "none" ? "final" : "after-action",
             stepIndex,
             opts.viewport,
           ),
         )
       : null;
+    if (navigation.kind === "ambiguous") {
+      const detail =
+        `screen ${stepIndex} exposes ${navigation.candidates.length} usable forward candidates after answers were applied: ` +
+        navigation.candidates.map((row) => `#${row.idx} ${JSON.stringify(row.label)} via ${row.via}`).join("; ");
+      recordReaderLimitation(NAVIGATION_FORWARD_AMBIGUOUS, detail, navigation.candidates.length);
+      const afterEv = afterActionCapture?.screenJson.evidenceId ?? null;
+      const stepCaptures = [beforeCapture, ...(afterActionCapture ? [afterActionCapture] : [])];
+      steps.push({
+        stepIndex,
+        decisionQuestion: decision ? String(decision.question ?? "") : null,
+        decisionSource: decision ? (decision.action ? "probe" : "plan") : "navigator-default",
+        bindingVia: matched?.via ?? null,
+        bindingRefusals: binding.refusals,
+        requested: decision
+          ? { select: decision.select ?? [], textEntry: decision.text_entry?.value ?? null, action: decision.action ?? null }
+          : null,
+        screenBefore: before,
+        screenAfterAction: afterAction,
+        screenAfterAdvance: null,
+        actions,
+        requestedButNotOffered: notOffered,
+        unfillableControls: unfillable,
+        advanced: false,
+        blocked: false,
+        blockedReason: NAVIGATION_FORWARD_AMBIGUOUS,
+        pageErrors: pageErrors.slice(errAt),
+        consoleErrors: consoleErrors.slice(),
+        evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
+        wallMs: Date.now() - stepT0,
+      });
+      outcome = NAVIGATION_FORWARD_AMBIGUOUS;
+      outcomeDetail = detail;
+      break;
+    }
     if (!nb) {
       // No control advances the survey: either the end, or a dead end. Both are recorded
       // as what they are — the absence of an advance control on THIS complete screen.
@@ -3047,12 +3632,14 @@ export async function walkPath(
       detail: `${clickRes.detail} via ${nb.via}`,
     });
 
-    // Did the survey move? Poll the screen signature rather than waiting on navigation:
-    // a single-page survey never navigates, and `waitForNavigation` would time out on
-    // every screen of one.
-    const sigBefore = (afterAction ?? before).screenSignature;
+    // Did the survey move? The baseline is AFTER answers were applied, so answer-only state
+    // cannot fake navigation. Identical templates may still move by URL, history occurrence,
+    // or numeric progress; every signal that proves movement is persisted on the step.
+    const advanceBaseline = afterAction ?? before;
+    const sigBefore = advanceBaseline.screenSignature;
     let after: RenderedScreen | null = null;
     let advanced = false;
+    let movementSignals: AdvanceSignal[] = [];
     let pollReadFailureCount = 0;
     let lastPollReadFailure: unknown = null;
     const waitUntil = Date.now() + opts.advanceTimeoutMs;
@@ -3066,7 +3653,8 @@ export async function walkPath(
         after = null;
         continue;
       }
-      if (after.screenSignature !== sigBefore) {
+      movementSignals = advanceSignals(advanceBaseline, after);
+      if (movementSignals.length > 0) {
         advanced = true;
         break;
       }
@@ -3084,6 +3672,10 @@ export async function walkPath(
       );
       stepReadFailures.push(failure);
     }
+    if (advanced) {
+      const receipt = [...actions].reverse().find((action) => action.kind === "click-next");
+      if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${movementSignals.join("+")}`;
+    }
     const afterWasRead = after !== null;
     if (!after) after = afterAction;
 
@@ -3100,6 +3692,28 @@ export async function walkPath(
       ...(afterActionCapture ? [afterActionCapture] : []),
       ...(afterCapture ? [afterCapture] : []),
     ];
+
+    let repeatedTransition: { firstStep: number; from: string; to: string } | null = null;
+    if (advanced && after) {
+      const transitionBase = JSON.stringify([
+        sigBefore,
+        screenOccurrenceFingerprint(afterAction ?? before),
+        transitionActionFingerprint(actions),
+        nb.idx,
+        nb.label,
+        after.screenSignature,
+        screenOccurrenceFingerprint(after),
+      ]);
+      // Two incoming edges are enough to disambiguate a single legitimate revisit while still
+      // bounding a deterministic A<->B loop. The context itself is bounded and cannot grow the
+      // walk artifact or key without limit.
+      const transitionKey = JSON.stringify([transitionBase, recentTransitionBases.slice(-2)]);
+      const firstStep = traversedTransitions.get(transitionKey);
+      if (firstStep === undefined) traversedTransitions.set(transitionKey, stepIndex);
+      else repeatedTransition = { firstStep, from: sigBefore, to: after.screenSignature };
+      recentTransitionBases.push(transitionBase);
+      if (recentTransitionBases.length > 2) recentTransitionBases.shift();
+    }
 
     steps.push({
       stepIndex,
@@ -3128,6 +3742,16 @@ export async function walkPath(
       evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
       wallMs: Date.now() - stepT0,
     });
+
+    if (repeatedTransition) {
+      outcome = "cycle-detected";
+      outcomeDetail =
+        `walk stopped after repeating the exact screen transition first traversed at step ` +
+        `${repeatedTransition.firstStep}: ${JSON.stringify(repeatedTransition.from).slice(0, 180)} -> ` +
+        `${JSON.stringify(repeatedTransition.to).slice(0, 180)} through control #${nb.idx} ` +
+        `${JSON.stringify(nb.label)}. Repeated traversal is bounded evidence of a cycle, not a new observation.`;
+      break;
+    }
 
     if (!advanced) {
       // A BLOCKED SUBMIT IS THE POINT OF A BOUNDARY PROBE. Record it, then recover by
@@ -3164,18 +3788,41 @@ export async function walkPath(
         pathHints,
         fillerVariant,
       );
-      const again = await clickIdx(page, nb.idx);
-      recovery.actions.push({
-        kind: "click-next",
-        targetIdx: nb.idx,
-        targetLabel: nb.label,
-        targetCode: null,
-        value: null,
-        ok: again.ok,
-        detail: `recovery-after-block (${again.detail})`,
-      });
-      await sleep(600);
       const recoveryReadFailures: ScreenCaptureFailure[] = [];
+      let recoveryBaseline: RenderedScreen | null = null;
+      try {
+        recoveryBaseline = await read(page);
+      } catch (err) {
+        recoveryReadFailures.push(recordCaptureFailure(
+          captureFailureRow(
+            "screen-read-failed",
+            `screen JSON read failed after recovery answers on step ${stepIndex}: ${errorText(err)}`,
+            stepIndex,
+            "recovery-after-action",
+          ),
+        ));
+      }
+      const recoveryNavigation = recoveryBaseline ? resolveAdvanceControl(recoveryBaseline) : { kind: "none" as const, candidates: [] };
+      const recoveryAmbiguity = recoveryNavigation.kind === "ambiguous"
+        ? `screen ${stepIndex} exposes ${recoveryNavigation.candidates.length} usable forward candidates after recovery answers`
+        : null;
+      let recoveryClicked = false;
+      if (recoveryNavigation.kind === "unique") {
+        const again = await clickIdx(page, recoveryNavigation.control.idx);
+        recoveryClicked = again.ok;
+        recovery.actions.push({
+          kind: "click-next",
+          targetIdx: recoveryNavigation.control.idx,
+          targetLabel: recoveryNavigation.control.label,
+          targetCode: null,
+          value: null,
+          ok: again.ok,
+          detail: `recovery-after-block (${again.detail}) via ${recoveryNavigation.control.via}`,
+        });
+      } else if (recoveryAmbiguity) {
+        recordReaderLimitation(NAVIGATION_FORWARD_AMBIGUOUS, recoveryAmbiguity, recoveryNavigation.candidates.length);
+      }
+      if (recoveryClicked) await sleep(600);
       let recovered: RenderedScreen | null = null;
       try {
         recovered = await read(page);
@@ -3197,6 +3844,12 @@ export async function walkPath(
           )
         : null;
       const recoveredEv = recoveredCapture?.screenJson.evidenceId ?? null;
+      const recoveryMovement =
+        recoveryClicked && recoveryBaseline && recovered ? advanceSignals(recoveryBaseline, recovered) : [];
+      if (recoveryMovement.length > 0) {
+        const receipt = [...recovery.actions].reverse().find((action) => action.kind === "click-next");
+        if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${recoveryMovement.join("+")}`;
+      }
       const recoveryBeforeCapture = afterCapture ?? afterActionCapture ?? beforeCapture;
       const recoveryCaptures = [recoveryBeforeCapture, ...(recoveredCapture ? [recoveredCapture] : [])];
       steps.push({
@@ -3207,16 +3860,18 @@ export async function walkPath(
         // each takes its own per-type navigator default, and the actions record what each got.
         requested: { select: decision?.select ?? [], textEntry: null, action: "recover-after-block" },
         screenBefore: after ?? before,
-        screenAfterAction: null,
+        screenAfterAction: recoveryBaseline,
         screenAfterAdvance: recovered,
         actions: recovery.actions,
         requestedButNotOffered: recovery.notOffered,
         unfillableControls: recovery.unfillable,
-        advanced: !!recovered && recovered.screenSignature !== (after ?? before).screenSignature,
-        blocked: !!recovered && recovered.screenSignature === (after ?? before).screenSignature,
+        advanced: recoveryMovement.length > 0,
+        blocked: recoveryClicked && recoveryMovement.length === 0,
         blockedReason:
-          !!recovered && recovered.screenSignature === (after ?? before).screenSignature
-            ? whyBlocked(after ?? before, null, recovered)
+          recoveryAmbiguity
+            ? NAVIGATION_FORWARD_AMBIGUOUS
+            : recoveryClicked && recoveryMovement.length === 0
+              ? whyBlocked(recoveryBaseline, recoveryBaseline, recovered)
             : null,
         pageErrors: pageErrors.slice(errAt),
         consoleErrors: [],
@@ -3224,7 +3879,12 @@ export async function walkPath(
         wallMs: 0,
       });
       for (const u of recovery.unfillable) unfillableControls.push({ ...u, stepIndex: stepIndex + 0.5 });
-      if (recovered && recovered.screenSignature === (after ?? before).screenSignature) {
+      if (recoveryAmbiguity) {
+        outcome = NAVIGATION_FORWARD_AMBIGUOUS;
+        outcomeDetail = recoveryAmbiguity;
+        break;
+      }
+      if (!recoveryClicked || recoveryMovement.length === 0) {
         outcome = wasProbe ? "blocked-after-probe" : "blocked";
         // SAME RULE AS ABOVE, and it matters more here: "the survey did not advance even after a
         // valid answer" is a claim that the answer WAS valid. If the walker left a control on
@@ -3316,5 +3976,6 @@ export async function walkPath(
 
   const obsEv = await capturePathObservation(cap, obs);
   obs.evidenceIds = [...evidenceIds, obsEv];
+  obs.observationEvidenceId = obsEv;
   return obs;
 }

@@ -10,7 +10,7 @@
 
 import { strToU8, zipSync } from "fflate";
 import { assert, assertEq, assertThrows, fakeStep, suite, test } from "../testkit.mjs";
-import { testEnv, worker } from "./_helpers.mjs";
+import { seedRun, testEnv, worker } from "./_helpers.mjs";
 
 const enc = new TextEncoder();
 const AUTHORED_AT = "2026-08-09T06:00:00.000Z";
@@ -942,6 +942,83 @@ suite("D46 — production submission/workflow seam", () => {
     );
     assertEq(oversized.status, 413);
     assert((await oversized.text()).includes("HUMAN_REQUIREMENTS_TOO_LARGE"));
+  });
+
+  test("API AUTHORITY: contract-source decoding refuses unknown fields and incomplete human authority", async () => {
+    const mod = await worker();
+    assertEq(mod.workflow.normalizeContractSourceInput(undefined).mode, "extract");
+    for (const [value, message] of [
+      [{ mode: "unknown" }, "unsupported contract source mode"],
+      [{ mode: "extract", guessed: true }, "unsupported field(s)"],
+      [{ mode: "human-authored", humanRequirementsSha256: "a".repeat(64) }, "non-empty artifact key"],
+      [{ mode: "human-authored", humanRequirementsKey: "v2/example.json" }, "SHA-256 digest"],
+      [{
+        mode: "human-authored",
+        humanRequirementsKey: "v2/example.json",
+        humanRequirementsSha256: `sha256:${"a".repeat(64)}`,
+      }, "unprefixed lowercase SHA-256 digest"],
+    ]) {
+      await assertThrows(() => mod.workflow.normalizeContractSourceInput(value), message);
+    }
+  });
+
+  test("API AUTHORITY: workflow payload cannot change the envelope's contract source before resume or reuse", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const seeded = await seedRun(mod, env, { testCompletion: "running" });
+    await mod.envelope.updateEnvelope(env, seeded.runId, (value) => {
+      value.input.contractSource = {
+        mode: "human-authored",
+        humanRequirementsKey: mod.keys.inputHumanRequirementsKey(seeded.runId),
+        humanRequirementsSha256: "b".repeat(64),
+      };
+    });
+
+    const step = fakeStep();
+    const wf = new mod.workflow.SurveyRunWorkflowV2({}, env);
+    await assertThrows(
+      () => wf.run({
+        payload: {
+          runId: seeded.runId,
+          surveyUrl: "https://fixture.invalid/s",
+          documentKey: mod.keys.inputDocumentKey(seeded.runId),
+          documentSha256: "a".repeat(64),
+          profile: "standard",
+          locale: "en",
+          viewports: ["desktop"],
+          contractSource: { mode: "extract" },
+        },
+      }, step),
+      "CONTRACT_SOURCE_MISMATCH",
+    );
+    assert(step.calls.includes("bind-contract-source"), step.calls.join(", "));
+    assert(!step.calls.includes("resume-durable-state"), "a mismatched source may not reach resume");
+    assert(!step.calls.includes("snapshot-contract-reuse-inputs"), "a mismatched source may not reach reuse");
+    assert(!step.calls.includes("validate-human-requirements"), "a mismatched source may not reach extraction");
+  });
+
+  test("API AUTHORITY: legacy absence on payload and envelope binds to extract before resume", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const seeded = await seedRun(mod, env, { testCompletion: "running" });
+    const step = fakeStep({ throwOn: { "resume-durable-state": new Error("legacy-source-bound") } });
+    const wf = new mod.workflow.SurveyRunWorkflowV2({}, env);
+    await assertThrows(
+      () => wf.run({
+        payload: {
+          runId: seeded.runId,
+          surveyUrl: "https://fixture.invalid/s",
+          documentKey: mod.keys.inputDocumentKey(seeded.runId),
+          documentSha256: "a".repeat(64),
+          profile: "standard",
+          locale: "en",
+          viewports: ["desktop"],
+        },
+      }, step),
+      "legacy-source-bound",
+    );
+    assert(step.calls.includes("bind-contract-source"), step.calls.join(", "));
+    assert(step.calls.includes("resume-durable-state"), "legacy extract authority must pass binding");
   });
 });
 

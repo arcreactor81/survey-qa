@@ -320,6 +320,15 @@ test("THE FIRST HOP: `walkRecord` carried outcome and dropped the ending that di
   assert(/classified screened-out/.test(row.ending.evidence[0]), JSON.stringify(row.ending.evidence));
 });
 
+test("walkRecord carries the driver's runtime-only exact observation evidence identity", async () => {
+  const mod = await worker();
+  const obs = walkArtifact("v2r_d43", { observationEvidenceId: "ev_exact_observation" });
+  const row = mod.executeBatch.walkRecord(obs, ["fi_out_q7"], AUDIT);
+  assertEq(row.observationEvidenceId, "ev_exact_observation");
+  const explicit = mod.executeBatch.walkRecord(obs, ["fi_out_q7"], AUDIT, undefined, "ev_reverified");
+  assertEq(explicit.observationEvidenceId, "ev_reverified");
+});
+
 test("A DIFFERENT ENDING IS A DIFFERENT VALUE — all four states survive the hop distinctly", async () => {
   const mod = await worker();
   const seen = new Map();
@@ -630,7 +639,9 @@ async function seedExecutedRun(mod, env, { ending = ended("screened-out"), paylo
       hungPaths: [],
       shimEvidence: null,
       totalSteps: 2,
-      totalEvidence: 1,
+      // walkRecord derives evidenceCount from the observation's evidenceIds. This fixture's
+      // separately catalogued observation artifact is its container, not an entry in that list.
+      totalEvidence: 0,
     }),
     { httpMetadata: { contentType: "application/json" } },
   );

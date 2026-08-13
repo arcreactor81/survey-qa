@@ -191,12 +191,16 @@ export async function loadWorker() {
       `export * as passA from ${p("src/extract/pass-a.ts")};`,
       `export * as passB from ${p("src/extract/pass-b.ts")};`,
       `export * as chat from ${p("src/llm/chat.ts")};`,
+      `export * as grok from ${p("src/llm/grok.ts")};`,
+      `export * as deepseek from ${p("src/llm/deepseek.ts")};`,
       `export * as extractStage from ${p("src/workflow/stages/extract.ts")};`,
       `export * as gates from ${p("src/workflow/gates.ts")};`,
       `export * as plan from ${p("src/workflow/stages/plan.ts")};`,
       `export * as workflow from ${p("src/workflow/run-workflow.ts")};`,
       `export * as visualShadowWorkflow from ${p("src/workflow/visual-shadow-workflow.ts")};`,
       `export * as visualWorkflow from ${p("src/workflow/visual-shadow-workflow.ts")};`,
+      `export * as visualWork from ${p("src/store/visual-work.ts")};`,
+      `export * as walkArtifactIndex from ${p("src/store/walk-artifact-index.ts")};`,
       `export * as projectObservations from ${p("src/workflow/stages/project-observations.ts")};`,
       `export * as verifyObservations from ${p("src/workflow/stages/verify-observations.ts")};`,
       `export * as runInputs from ${p("src/workflow/stages/run-inputs.ts")};`,
@@ -231,6 +235,13 @@ export async function loadWorker() {
       `export * as humanContract from ${p("src/contract/human-authored.ts")};`,
       `export * as structure from ${p("src/structure/index.ts")};`,
       `export * as visionReconcile from ${p("src/vision/reconcile.ts")};`,
+      // The rate attestation is an intentionally quarantined operator Worker.  Tests import its
+      // parser from source so a mutation cannot be scored over a stale standalone bundle.
+      `export * as grokRateAttestation from ${p("tools/grok-rate-attestation-core.ts")};`,
+      `export * as grokRateAttestationWorker from ${p("tools/grok-rate-attestation-worker.ts")};`,
+      // Operator-source projection is in a standalone CLI module. Export it through this
+      // same bundle so privacy mutants are scored against rewritten code, not a disk import.
+      `export * as sourceBlockOutput from ${p("tools/source-block-output.mjs")};`,
       `export * as env from ${p("src/types/env.ts")};`,
     ].join("\n"),
     "utf8",

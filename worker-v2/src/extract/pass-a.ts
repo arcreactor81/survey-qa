@@ -66,8 +66,14 @@
 
 import type { Env } from "../types/env";
 import { num } from "../types/env";
-import { grokJson } from "../llm/grok";
-import { ModelCallError } from "../llm/chat";
+import {
+  DEFAULT_GROK_MODEL,
+  grokFlashFallbackEligible,
+  grokFlashRouteIdentity,
+  grokJson,
+} from "../llm/grok";
+import { deepseekGrokFallbackJson } from "../llm/deepseek";
+import { ModelCallError, type ModelFailureKind } from "../llm/chat";
 import { PROMPT_VERSION_A, SYSTEM_A, userMessageA } from "./prompts";
 import type { CallUsage, ParsedDocument, PassResult, RawRequirement, SourceBlock } from "./types";
 import { annotate, DOCX_BLOCKS_VERSION } from "./docx-blocks";
@@ -75,6 +81,23 @@ import { asArray, coerceRequirement, coerceAmbiguities, coerceUnverifiable } fro
 import { k } from "../keys";
 
 export const PASS_A_VERSION = PROMPT_VERSION_A;
+export const GROK_FALLBACK_TRIGGER_VERSION = "grok-flash-fallback-trigger/1.0.0";
+
+export type PassAProviderIndependence = "independent" | "reduced-same-provider-fallback";
+
+export interface GrokFallbackTrigger {
+  kind: typeof GROK_FALLBACK_TRIGGER_VERSION;
+  failureKind: ModelFailureKind;
+  httpStatus: number | null;
+  grokModel: typeof DEFAULT_GROK_MODEL;
+  grokUsageEventId: string;
+  detail: string;
+}
+
+export interface PassARouteReceipt {
+  selected: "grok-4.6" | "deepseek-v4-flash";
+  trigger: GrokFallbackTrigger | null;
+}
 
 /** Where each window lands the instant it returns. The unit of resume for this pass. */
 const windowKey = (runId: string, n: number) =>
@@ -122,6 +145,10 @@ export interface PassASliceOptions {
 }
 
 export type PassAResult = PassResult & {
+  providerRouteIdentity: string;
+  providerIndependence: PassAProviderIndependence;
+  routeReceipts: PassARouteReceipt[];
+  fallbackTriggers: GrokFallbackTrigger[];
   crossRefs: CrossRef[];
   slice: PassASlice;
   /**
@@ -131,6 +158,8 @@ export type PassAResult = PassResult & {
    * reclaimed window once per wave would trip CAP_MODEL_CALLS on phantom spend.
    */
   issuedCalls: CallUsage[];
+  /** Persisted receipts re-offered to the idempotent usage CAS after any restart. */
+  accountingCalls: CallUsage[];
 };
 
 /** Slack over and above the budget and one whole purchase: R2 I/O, parsing, scheduling. */
@@ -151,7 +180,9 @@ export function passAWaveBudgetMs(env: Env): number {
  * knob cannot make this number smaller than the code it is describing.
  */
 export function passACallCeilingMs(env: Env): number {
-  return Math.max(1, num(env.EXTRACT_MAX_ATTEMPTS, 2)) * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));
+  // Worst case is one exhausted/non-responsive Grok purchase followed by one Flash
+  // substitute purchase. The eligible Grok receipt is persisted between them.
+  return 2 * Math.max(1, num(env.EXTRACT_MAX_ATTEMPTS, 2)) * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));
 }
 
 /**
@@ -176,6 +207,8 @@ export async function runPassA(
   onProgress?: (msg: string) => Promise<void>,
   options?: PassASliceOptions,
 ): Promise<PassAResult> {
+  const parserVersion = doc.parserVersion ?? DOCX_BLOCKS_VERSION;
+  const providerRouteIdentity = grokFlashRouteIdentity(env);
   // Local, NOT module scope: one isolate serves many runs, and a module-level accumulator
   // would let two concurrent extractions read each other's cross-references.
   const crossRefs: CrossRef[] = [];
@@ -186,7 +219,11 @@ export async function runPassA(
   const failedUnits: PassResult["failedUnits"] = [];
   const calls: CallUsage[] = [];
   const issuedCalls: CallUsage[] = [];
-  const model = env.GROK_MODEL ?? "grok-4.3";
+  const accountingCalls: CallUsage[] = [];
+  const routeReceipts: PassARouteReceipt[] = [];
+  const fallbackTriggers: GrokFallbackTrigger[] = [];
+  let providerIndependence: PassAProviderIndependence = "independent";
+  const model = DEFAULT_GROK_MODEL;
 
   // THE DEADLINE, AND THE ONE EXCEPTION TO IT. `issued === 0` keeps the first call of every
   // slice unconditional: a slice that issues nothing makes no progress, and a wave loop over
@@ -238,20 +275,38 @@ export async function runPassA(
     // same answer twice — and because each artifact names the blocks it owns, a reclaimed
     // window is exactly as accountable as a fresh one.
     // -----------------------------------------------------------------------
-    const existing = await readWindow(env, runId, n, allowed);
+    const existing = await readWindow(env, runId, n, allowed, parserVersion);
 
     if (existing && existing.kind === "ok") {
       landed += 1;
-      if (existing.usage) {
+      accountingCalls.push(...existing.usages);
+      for (const usage of existing.usages) {
         calls.push({
-          ...existing.usage,
+          ...usage,
           detail: "reused: this window was already persisted by an earlier attempt",
           costUsd: 0,
         });
       }
+      routeReceipts.push(existing.routeReceipt);
+      if (existing.routeReceipt.trigger !== null) {
+        fallbackTriggers.push(existing.routeReceipt.trigger);
+        providerIndependence = "reduced-same-provider-fallback";
+      }
       absorb(existing);
       await onProgress?.(`pass A ${origin}: reused a previously persisted window`);
       continue;
+    }
+
+    const priorUsages = existing && existing.kind === "failed" ? existing.usages : [];
+    if (existing && existing.kind === "failed") {
+      accountingCalls.push(...existing.usages);
+      for (const usage of existing.usages) {
+        calls.push({ ...usage, detail: "reused: prior failed pass-A purchase", costUsd: 0 });
+      }
+      if (existing.fallbackTrigger !== null) {
+        fallbackTriggers.push(existing.fallbackTrigger);
+        providerIndependence = "reduced-same-provider-fallback";
+      }
     }
 
     // A FAILED WINDOW IS RE-ISSUED A BOUNDED NUMBER OF TIMES, ACROSS THE WHOLE RUN — the
@@ -259,7 +314,10 @@ export async function runPassA(
     // than each getting a fresh one. Unbounded re-issue is how one pass-B chunk id came to
     // be billed 21–24 times during a recovery storm; the same arithmetic applies here, on a
     // call that costs far more.
-    if (existing && existing.kind === "failed" && existing.attempts >= maxIssues) {
+    const pendingFlash = existing && existing.kind === "failed" &&
+      existing.fallbackTrigger !== null &&
+      !existing.usages.some((usage) => usage.provider === "deepseek");
+    if (existing && existing.kind === "failed" && existing.attempts >= maxIssues && !pendingFlash) {
       landed += 1;
       failedUnits.push({
         unit: origin,
@@ -277,17 +335,92 @@ export async function runPassA(
     }
     issued += 1;
 
+    const purchasedUsages: CallUsage[] = [];
+    let fallbackTrigger = existing && existing.kind === "failed" ? existing.fallbackTrigger : null;
+    const priorHadFlash = priorUsages.some((usage) => usage.provider === "deepseek");
+    const issue = pendingFlash ? Math.max(1, priorAttempts) : priorAttempts + 1;
+    const optionsForCall = {
+      system: SYSTEM_A,
+      user: userMessageA(documentName, annotate(w), label),
+      maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
+      role: `extract-pass-a${label ? `-w${n}` : ""}`,
+      callId: `call_a_${n}`,
+      maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
+    };
+
     try {
-      const { value, usage } = await grokJson(env, {
-        system: SYSTEM_A,
-        user: userMessageA(documentName, annotate(w), label),
-        maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
-        role: `extract-pass-a${label ? `-w${n}` : ""}`,
-        callId: `call_a_${n}`,
-        maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
-      });
-      calls.push(usage);
-      issuedCalls.push(usage);
+      let value: Record<string, unknown> | null = null;
+      let routeReceipt: PassARouteReceipt | null = null;
+
+      if (fallbackTrigger === null) {
+        try {
+          const outcome = await grokJson(env, optionsForCall);
+          const usage = settlementUsage(runId, origin, issue, 1, outcome.usage);
+          purchasedUsages.push(usage);
+          calls.push(usage);
+          issuedCalls.push(usage);
+          accountingCalls.push(usage);
+          value = outcome.value;
+          routeReceipt = { selected: "grok-4.6", trigger: null };
+        } catch (err) {
+          if (!(err instanceof ModelCallError) || !grokFlashFallbackEligible(err)) throw err;
+          const usage = settlementUsage(runId, origin, issue, 1, err.usage);
+          purchasedUsages.push(usage);
+          calls.push(usage);
+          issuedCalls.push(usage);
+          accountingCalls.push(usage);
+          fallbackTrigger = {
+            kind: GROK_FALLBACK_TRIGGER_VERSION,
+            failureKind: err.failureKind,
+            httpStatus: err.httpStatus,
+            grokModel: DEFAULT_GROK_MODEL,
+            grokUsageEventId: usage.eventId!,
+            detail: err.message.slice(0, 400),
+          };
+          fallbackTriggers.push(fallbackTrigger);
+          providerIndependence = "reduced-same-provider-fallback";
+
+          // COMMIT AUTHORITY BEFORE EFFECT. If the isolate dies after this put, the next
+          // invocation sees the exact paid Grok receipt and calls Flash directly. It cannot
+          // retry Grok and erase the condition that authorized another provider purchase.
+          await env.EVIDENCE.put(
+            windowKey(runId, n),
+            JSON.stringify({
+              windowId: origin,
+              windowNumber: n,
+              blockIds,
+              parserVersion,
+              promptVersion: PROMPT_VERSION_A,
+              providerRouteIdentity,
+              status: "failed",
+              attempts: issue,
+              usages: [...priorUsages, ...purchasedUsages],
+              fallbackTrigger,
+              detail: `Flash fallback authorized but not yet landed: ${fallbackTrigger.detail}`,
+            }, null, 2),
+            { httpMetadata: { contentType: "application/json" } },
+          );
+        }
+      }
+
+      if (fallbackTrigger !== null) {
+        providerIndependence = "reduced-same-provider-fallback";
+        const outcome = await deepseekGrokFallbackJson(env, {
+          ...optionsForCall,
+          callId: `${optionsForCall.callId}:grok-fallback`,
+        });
+        const receiptIndex = priorHadFlash ? 1 : 2;
+        const usage = settlementUsage(runId, origin, issue, receiptIndex, outcome.usage);
+        purchasedUsages.push(usage);
+        calls.push(usage);
+        issuedCalls.push(usage);
+        accountingCalls.push(usage);
+        value = outcome.value;
+        routeReceipt = { selected: "deepseek-v4-flash", trigger: fallbackTrigger };
+      }
+      if (value === null || routeReceipt === null) {
+        throw new Error("pass-A provider route produced neither a primary nor a fallback outcome");
+      }
 
       const windowRules: RawRequirement[] = [];
       for (const raw of asArray(value["global_rules"])) {
@@ -325,7 +458,8 @@ export async function runPassA(
         crossRefs: windowXrefs,
         ambiguities: windowAmb,
         unverifiable: windowUnv,
-        usage,
+        usages: [...priorUsages, ...purchasedUsages],
+        routeReceipt,
       };
 
       // PERSIST FIRST, ACCUMULATE SECOND. A window that is on disk cannot be lost by
@@ -338,8 +472,9 @@ export async function runPassA(
             windowId: origin,
             windowNumber: n,
             blockIds,
-            parserVersion: DOCX_BLOCKS_VERSION,
+            parserVersion,
             promptVersion: PROMPT_VERSION_A,
+            providerRouteIdentity,
             ...landedWindow,
           },
           null,
@@ -349,6 +484,7 @@ export async function runPassA(
       );
 
       landed += 1;
+      routeReceipts.push(routeReceipt);
       absorb(landedWindow);
       await onProgress?.(
         `pass A ${origin}: ${windowRules.length} cross-cutting rule(s), ${windowXrefs.length} cross-reference(s) ` +
@@ -356,8 +492,12 @@ export async function runPassA(
       );
     } catch (err) {
       if (err instanceof ModelCallError) {
-        calls.push(err.usage);
-        issuedCalls.push(err.usage);
+        const receiptIndex = fallbackTrigger !== null && !priorHadFlash ? 2 : 1;
+        const usage = settlementUsage(runId, origin, issue, receiptIndex, err.usage);
+        purchasedUsages.push(usage);
+        calls.push(usage);
+        issuedCalls.push(usage);
+        accountingCalls.push(usage);
       }
       const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
       const attempts = priorAttempts + 1;
@@ -371,10 +511,13 @@ export async function runPassA(
             windowId: origin,
             windowNumber: n,
             blockIds,
-            parserVersion: DOCX_BLOCKS_VERSION,
+            parserVersion,
             promptVersion: PROMPT_VERSION_A,
+            providerRouteIdentity,
             status: "failed",
-            attempts,
+            attempts: Math.max(attempts, issue),
+            usages: [...priorUsages, ...purchasedUsages],
+            fallbackTrigger,
             detail,
           },
           null,
@@ -399,8 +542,12 @@ export async function runPassA(
 
   return {
     pass: "A",
-    provider: "grok",
+    provider: "grok-primary/deepseek-flash-fallback",
     model,
+    providerRouteIdentity,
+    providerIndependence,
+    routeReceipts,
+    fallbackTriggers,
     requirements,
     ambiguities,
     unverifiable,
@@ -413,6 +560,7 @@ export async function runPassA(
     crossRefs,
     slice,
     issuedCalls,
+    accountingCalls,
   };
 }
 
@@ -422,13 +570,16 @@ interface PersistedWindow {
   crossRefs: CrossRef[];
   ambiguities: PassResult["ambiguities"];
   unverifiable: PassResult["unverifiable"];
-  usage: CallUsage | null;
+  usages: CallUsage[];
+  routeReceipt: PassARouteReceipt;
 }
 
 interface FailedWindowArtifact {
   kind: "failed";
   attempts: number;
   detail: string;
+  usages: CallUsage[];
+  fallbackTrigger: GrokFallbackTrigger | null;
 }
 
 /**
@@ -445,22 +596,33 @@ async function readWindow(
   runId: string,
   n: number,
   allowed: Set<string>,
+  parserVersion: string,
 ): Promise<PersistedWindow | FailedWindowArtifact | null> {
   const obj = await env.EVIDENCE.get(windowKey(runId, n));
   if (!obj) return null;
   try {
     const parsed = JSON.parse(await obj.text()) as Record<string, unknown>;
-    if (parsed["parserVersion"] !== DOCX_BLOCKS_VERSION || parsed["promptVersion"] !== PROMPT_VERSION_A) {
+    if (parsed["parserVersion"] !== parserVersion || parsed["promptVersion"] !== PROMPT_VERSION_A) {
       return null;
     }
+    if (parsed["providerRouteIdentity"] !== grokFlashRouteIdentity(env)) return null;
     const blockIds = Array.isArray(parsed["blockIds"]) ? (parsed["blockIds"] as string[]) : [];
     if (blockIds.length !== allowed.size || blockIds.some((id) => !allowed.has(id))) return null;
+    const usages = Array.isArray(parsed["usages"]) ? parsed["usages"] : null;
+    if (usages === null || !usages.every(isCallUsage)) return null;
     if (parsed["status"] === "failed") {
-      const attempts = typeof parsed["attempts"] === "number" ? parsed["attempts"] : 1;
+      const attempts = parsed["attempts"];
+      if (!Number.isSafeInteger(attempts) || (attempts as number) < 1) return null;
       const detail = typeof parsed["detail"] === "string" ? parsed["detail"] : "no detail recorded";
-      return { kind: "failed", attempts, detail };
+      const fallbackTrigger = parsed["fallbackTrigger"] === null
+        ? null
+        : parseFallbackTrigger(parsed["fallbackTrigger"], usages as CallUsage[]);
+      if (parsed["fallbackTrigger"] !== null && fallbackTrigger === null) return null;
+      return { kind: "failed", attempts: attempts as number, detail, usages: usages as CallUsage[], fallbackTrigger };
     }
     if (!Array.isArray(parsed["globalRules"])) return null;
+    const routeReceipt = parseRouteReceipt(parsed["routeReceipt"], usages as CallUsage[]);
+    if (routeReceipt === null) return null;
     return {
       kind: "ok",
       globalRules: parsed["globalRules"] as RawRequirement[],
@@ -469,11 +631,96 @@ async function readWindow(
       crossRefs: (parsed["crossRefs"] ?? []) as CrossRef[],
       ambiguities: (parsed["ambiguities"] ?? []) as PassResult["ambiguities"],
       unverifiable: (parsed["unverifiable"] ?? []) as PassResult["unverifiable"],
-      usage: (parsed["usage"] ?? null) as CallUsage | null,
+      usages: usages as CallUsage[],
+      routeReceipt,
     };
   } catch {
     return null;
   }
+}
+
+function isCallUsage(value: unknown): value is CallUsage {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const row = value as Partial<CallUsage>;
+  const finiteNonNegative = (n: unknown): n is number =>
+    typeof n === "number" && Number.isFinite(n) && n >= 0;
+  return (
+    typeof row.eventId === "string" && row.eventId.startsWith("core-model-call/pass-a/") &&
+    typeof row.callId === "string" && row.callId.length > 0 &&
+    typeof row.role === "string" && row.role.length > 0 &&
+    (row.provider === "grok" || row.provider === "deepseek") &&
+    typeof row.model === "string" && row.model.length > 0 &&
+    (row.status === "ok" || row.status === "parse-failed" || row.status === "error") &&
+    finiteNonNegative(row.inputTokens) && finiteNonNegative(row.outputTokens) &&
+    finiteNonNegative(row.costUsd) && finiteNonNegative(row.latencyMs) &&
+    Number.isSafeInteger(row.attempts) && (row.attempts ?? 0) >= 1 &&
+    (row.usageSource === "provider-reported" || row.usageSource === "conservative-ceiling" ||
+      row.usageSource === "unverified-model-rate-ceiling")
+  );
+}
+
+function parseFallbackTrigger(value: unknown, usages: CallUsage[]): GrokFallbackTrigger | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const row = value as Partial<GrokFallbackTrigger>;
+  const eligible = new Set<ModelFailureKind>([
+    "rate-limited", "insufficient-balance", "timeout-or-network", "provider-unavailable", "invalid-content",
+  ]);
+  if (
+    row.kind !== GROK_FALLBACK_TRIGGER_VERSION || !row.failureKind || !eligible.has(row.failureKind) ||
+    (row.httpStatus !== null && (!Number.isSafeInteger(row.httpStatus) || (row.httpStatus ?? 0) < 100)) ||
+    row.grokModel !== DEFAULT_GROK_MODEL || typeof row.grokUsageEventId !== "string" ||
+    typeof row.detail !== "string" || row.detail.length === 0
+  ) return null;
+  const bound = usages.find((usage) => usage.eventId === row.grokUsageEventId);
+  if (!bound || bound.provider !== "grok" || bound.status !== "error" || bound.model !== DEFAULT_GROK_MODEL) return null;
+  return row as GrokFallbackTrigger;
+}
+
+function parseRouteReceipt(value: unknown, usages: CallUsage[]): PassARouteReceipt | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const row = value as Partial<PassARouteReceipt>;
+  if (row.selected === "grok-4.6" && row.trigger === null) {
+    return usages.some((usage) => usage.provider === "deepseek") ? null : { selected: row.selected, trigger: null };
+  }
+  if (row.selected !== "deepseek-v4-flash") return null;
+  const trigger = parseFallbackTrigger(row.trigger, usages);
+  if (trigger === null || !usages.some((usage) => usage.provider === "deepseek" && usage.model === "deepseek-v4-flash")) {
+    return null;
+  }
+  return { selected: row.selected, trigger };
+}
+
+/** Strict completed-pass decoder used before reuse or consolidation. */
+export function validatePassAProviderState(value: unknown): PassAProviderIndependence | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const calls = Array.isArray(row["calls"]) ? row["calls"] : null;
+  const rawTriggers = Array.isArray(row["fallbackTriggers"]) ? row["fallbackTriggers"] : null;
+  const rawReceipts = Array.isArray(row["routeReceipts"]) ? row["routeReceipts"] : null;
+  if (calls === null || !calls.every(isCallUsage) || rawTriggers === null || rawReceipts === null) return null;
+  const usages = calls as CallUsage[];
+  const triggers = rawTriggers.map((trigger) => parseFallbackTrigger(trigger, usages));
+  if (triggers.some((trigger) => trigger === null)) return null;
+  const triggerIds = triggers.map((trigger) => trigger!.grokUsageEventId);
+  if (new Set(triggerIds).size !== triggerIds.length) return null;
+  if (rawReceipts.some((receipt) => parseRouteReceipt(receipt, usages) === null)) return null;
+  const derived: PassAProviderIndependence = triggers.length > 0
+    ? "reduced-same-provider-fallback"
+    : "independent";
+  return row["providerIndependence"] === derived ? derived : null;
+}
+
+function settlementUsage(
+  runId: string,
+  unitId: string,
+  issue: number,
+  receipt: number,
+  usage: CallUsage,
+): CallUsage {
+  return {
+    ...usage,
+    eventId: `core-model-call/pass-a/${runId}/${unitId}/issue-${issue}/receipt-${receipt}`,
+  };
 }
 
 /** Split on block boundaries so a window never cuts a table cell in half. */

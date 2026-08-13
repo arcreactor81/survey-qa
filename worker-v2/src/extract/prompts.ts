@@ -17,14 +17,18 @@
 
 import { CONSTRUCT_CLASSES } from "./types";
 
-export const PROMPT_VERSION_A = "v2-extract-pass-a/1.1.0";
-// v2-extract-pass-b/1.2.0 — PROMPT TEXT UNCHANGED. This constant is also the version gate
+// 1.2.0 — both passes now receive the explicit programming-source ground rule. A persisted
+// 1.1.0 pass-A read could have turned a grey instruction into respondent option text.
+export const PROMPT_VERSION_A = "v2-extract-pass-a/1.2.0";
+// v2-extract-pass-b/1.2.0 — This constant is also the version gate
 // on every persisted pass-B artifact (chunks, sweeps, the whole-pass payload), so it covers
 // what pass B COMPUTES from a parse, not just the words it sends: 1.2.0 restricts the
 // unaccounted-sweep's row accounting to `kind === "table-cell"`, so a lifted combo-box
 // suggestion or ruby reading in a cited row is SWEPT instead of silently absorbed. A 1.1.0
 // artifact may have skipped exactly those blocks and must not be reused.
-export const PROMPT_VERSION_B = "v2-extract-pass-b/1.2.0";
+// 1.3.0 — the explicit programming-source ground rule keeps those addressable blocks as
+// routing/termination authority while withholding them from respondent option labels.
+export const PROMPT_VERSION_B = "v2-extract-pass-b/1.3.0";
 
 const SHARED_GROUND_RULES = `BINDING GROUND RULE
 The questionnaire document is the SOLE source of truth. You have never seen the implemented
@@ -60,6 +64,16 @@ Origins change what a block can oblige:
   never evidence that the answer vocabulary is closed.
 - "[ruby-reading; …]" preserves a visible phonetic guide separately from its base text. It
   may support a copy/rendering observation, but is not another answer option.
+- "[programming logic; profile=shop-direct-grey-programming/1.0.0; direct-grey-runs=N: ...]"
+  is an addressable source block whose direct run formatting matched the currently selected
+  shop profile. This profile is an explicit temporary assumption, not a universal Word rule.
+  Keep its text as normative source for routing, termination, validation, display suppression,
+  and other programming behavior. It is NOT respondent-visible answer-label text. When an
+  option-list obligation cites both ordinary option text and such a programming block, cite
+  every supporting block and keep every cited span verbatim in doc_quote; the deterministic
+  merge removes only programming spans it can match exactly and counts that exclusion. Never
+  remove bracket-shaped non-grey text by resemblance: without formatting evidence it remains
+  ordinary document text and may be a real answer label.
 - Table-cell annotations carry structural row/column coordinates only. WordprocessingML does
   not declare semantic row/column header scope, so never infer it from the first row, first
   column, a repeat-on-page flag, or visual convention. Surface the ambiguity when meaning

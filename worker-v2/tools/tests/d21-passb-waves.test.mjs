@@ -141,7 +141,9 @@ function stubProvider({ failUnit = () => false, citeBlocks = true } = {}) {
 
     return new Response(
       JSON.stringify({
-        model: "stub-model",
+        // The transport contract now requires the provider to attest the exact
+        // requested SKU; an unrelated fixture label correctly fails closed.
+        model: body.model,
         usage: { prompt_tokens: 1000, completion_tokens: 500 },
         choices: [{ message: { content: JSON.stringify(payload) }, finish_reason: "stop" }],
       }),
@@ -167,12 +169,32 @@ function sliceEnv(overrides = {}) {
     EVIDENCE: memoryR2(),
     V2_PREFIX: "v2/",
     DEEPSEEK_API_KEY: "test-deepseek-key",
+    // D21 isolates slicing/resume for one exact pass-B Pro purchase. Provider activation
+    // and the Grok -> Flash substitution are exercised by the dedicated provider suite.
+    DEEPSEEK_FALLBACK_MODE: "disabled",
     // Gateway config is part of the production posture: llm/chat.ts refuses a direct,
     // unmetered provider call without it. Tests stub globalThis.fetch, so they exercise
     // the same gateway URL production builds.
     CF_AIG_ACCOUNT_ID: "fixture-account",
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key",
+    GROK_MODEL: "grok-4.6",
+    GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
+    GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
+    GROK_RATE_SOURCE: "owner-dashboard-copy",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
+    GROK_RATE_ATTESTED_AT: "2026-08-13",
+    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_CONTEXT_WINDOW_TOKENS: "500000",
+    GROK_INPUT_USD_PER_MTOK: "2",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_OUTPUT_USD_PER_MTOK: "6",
+    GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
+    GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
+    GROK_MAX_INPUT_USD_PER_MTOK: "4",
+    GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
     EXTRACT_CHUNK_MAX_BLOCKS: "1",
     EXTRACT_CHUNK_CHARS: "10",
     EXTRACT_MAX_ATTEMPTS: "1",
@@ -285,12 +307,29 @@ function d51AssertVersions(m, value, promptVersion, label) {
   assertEq(value.promptVersion, promptVersion, `${label} prompt version`);
 }
 
-const d51CurrentChunk = (m) => ({
+const d51CurrentChunk = (m, env) => ({
   chunkId: "C01-b0001",
   blockIds: ["b0001"],
   parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
   promptVersion: m.passB.PASS_B_VERSION,
-  usage: null,
+  // A pass-B artifact is reusable only under the exact Pro extraction leg, never under
+  // the unrelated same-provider continuity plan. Keep every non-version identity current
+  // here so the stale parser/prompt assertions exercise the field named by the test.
+  providerPlanIdentity: m.deepseek.deepseekPassBIdentity(env),
+  usages: [{
+    eventId: "core-model-call/pass-b/d51/C01-b0001/issue-1/receipt-1",
+    callId: "d51-current-chunk",
+    role: "extract-pass-b-C01-b0001",
+    provider: "deepseek",
+    model: m.deepseek.deepseekContinuityPlan(env).primary.model,
+    status: "ok",
+    inputTokens: 1,
+    outputTokens: 1,
+    costUsd: 0.000001,
+    latencyMs: 1,
+    attempts: 1,
+    usageSource: "provider-reported",
+  }],
   obligations: [],
   dispositions: [{ blockId: "b0001", disposition: "normative", reason: "requires the ledger sweep" }],
   constructs: [],
@@ -307,7 +346,7 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
     const env = sliceEnv();
     const runId = "run_d51_b_success";
     await d51Put(env, d51ChunkKey(m, runId), {
-      ...d51CurrentChunk(m),
+      ...d51CurrentChunk(m, env),
       parserVersion: "stale-parser/0",
       obligations: [{ id: "B-STALE" }],
     });
@@ -352,7 +391,7 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
   {
     const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "1" });
     const runId = "run_d51_sweep_success";
-    await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m));
+    await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m, env));
     await d51Put(env, d51SweepKey(m, runId), {
       sweepId: "SWEEP01",
       blockIds: ["b0001"],
@@ -379,7 +418,7 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
   {
     const env = sliceEnv({ EXTRACT_CHUNK_MAX_ISSUES: "2", EXTRACT_SWEEP_MAX_CALLS: "1" });
     const runId = "run_d51_sweep_failure";
-    await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m));
+    await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m, env));
     await d51Put(env, d51SweepKey(m, runId), {
       sweepId: "SWEEP01",
       blockIds: ["b0001"],
@@ -476,7 +515,16 @@ test("D51-e consolidation refuses stale pass A or pass B payloads", async () => 
     constructs: [],
     failedUnits: [],
     calls: [],
-    ...(name === "A" ? { crossRefs: [] } : {}),
+    ...(name === "B" ? { providerPlanIdentity: m.deepseek.deepseekPassBIdentity(env) } : {}),
+    ...(name === "A" ? {
+      // This is the normal route: Grok 4.6, no fallback. The stale parser check below
+      // must not pass merely because an old fixture omitted the new route receipt fields.
+      providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
+      providerIndependence: "independent",
+      fallbackTriggers: [],
+      routeReceipts: [],
+      crossRefs: [],
+    } : {}),
   });
   const aKey = m.keys.extractionPassKey(runId, "a");
   const bKey = m.keys.extractionPassKey(runId, "b");
@@ -654,8 +702,9 @@ test("the pass-B step timeout always exceeds its own wave budget by at least one
     const budget = m.passB.passBWaveBudgetMs(env);
     const ceiling = m.passB.passBCallCeilingMs(env);
     const timeout = m.passB.passBStepTimeoutMs(env);
-    // Exactly chat.ts's own clamps, so this cannot drift from the transport it describes.
-    const attempts = Math.max(1, m.env.num(env.EXTRACT_MAX_ATTEMPTS, 2));
+    // Exactly the pass-B Pro leg's transport-attempt clamp. Flash is a substitution for
+    // the Grok leg, not an additional retry inside a pass-B purchase.
+    const attempts = m.deepseek.deepseekPassBAttemptCeiling(env);
     const attemptMs = Math.max(0, m.env.num(env.LLM_TIMEOUT_MS, 300_000));
 
     assert(budget >= 0, `the wave budget must never be negative for ${JSON.stringify(env)}, got ${budget}`);

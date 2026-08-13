@@ -23,6 +23,7 @@
 
 import type { Env } from "../../types/env";
 import { effectivePolicy } from "../../types/env";
+import { deepseekContinuityIdentity } from "../../llm/deepseek";
 import { isV2RunId, mintRunId } from "../../ids";
 import {
   extractionDiffKey,
@@ -40,12 +41,18 @@ import { ENVELOPE_KIND, ENVELOPE_SCHEMA, type ContractRevision, type RunEnvelope
 import { describeGates, unmetGates } from "../gates";
 import { deriveGates, projectConstructs, projectDiff, projectExpansion, projectLedger } from "../run-workflow";
 import { loadMerged, mergedKey, previewKey, stageConsolidate, stagePassA, stagePassB } from "./extract";
+import {
+  DOCUMENT_SEMANTICS_NONE,
+  isDocumentSemanticsProfile,
+  type DocumentSemanticsProfile,
+} from "../../extract/document-semantics";
 
 interface ExtractBody {
   documentBase64?: string;
   documentName?: string;
   surveyUrl?: string;
   locale?: string;
+  documentSemanticsProfile?: DocumentSemanticsProfile;
   /** Override the Grok model for THIS call only — the A/B knob. */
   grokModel?: string;
   /** Run pass A only. Used for model comparison; never seals anything. */
@@ -95,6 +102,10 @@ export async function devExtract(req: Request, env: Env, ctx?: ExecutionContext)
   const documentSha256 = await sha256Hex(bytes);
   const documentName = body.documentName ?? "questionnaire.docx";
   const locale = body.locale ?? "en";
+  if (body.documentSemanticsProfile !== undefined && !isDocumentSemanticsProfile(body.documentSemanticsProfile)) {
+    return json({ error: "unsupported documentSemanticsProfile" }, 400);
+  }
+  const documentSemanticsProfile = body.documentSemanticsProfile ?? DOCUMENT_SEMANTICS_NONE;
   // The Grok override travels as an env overlay, so the leg reads it exactly the way it
   // reads the deployed configuration — no second code path for the A/B.
   const runEnv: Env = body.grokModel ? { ...env, GROK_MODEL: body.grokModel } : env;
@@ -121,6 +132,7 @@ export async function devExtract(req: Request, env: Env, ctx?: ExecutionContext)
       targetBuildId: env.DEFAULT_TARGET_BUILD_ID ?? null,
       locale,
       viewports: ["desktop"],
+      documentSemanticsProfile,
     },
     profile: "standard",
     contractRevisionId: null,
@@ -214,13 +226,21 @@ async function runExtraction(
   emit: (event: Record<string, unknown>) => Promise<void>,
 ): Promise<Response> {
   const fence = await claimOwnership(env, runId, runId, 0);
+  const documentSemanticsProfile = envelope.input.documentSemanticsProfile ?? DOCUMENT_SEMANTICS_NONE;
   try {
     const passA =
       body.passOnly === "B"
         ? null
         : await (async () => {
             await emit({ event: "pass-A", state: "started", model: body.grokModel ?? env.GROK_MODEL ?? "grok-4.3" });
-            const r = await stagePassA(runEnv, runId, envelope.input.documentKey, label, fence);
+            const r = await stagePassA(
+              runEnv,
+              runId,
+              envelope.input.documentKey,
+              label,
+              fence,
+              documentSemanticsProfile,
+            );
             await emit({ event: "pass-A", state: "finished", summary: r });
             return r;
           })();
@@ -235,10 +255,18 @@ async function runExtraction(
       });
     }
 
-    await emit({ event: "pass-B", state: "started", model: env.DEEPSEEK_MODEL ?? "deepseek-v4-pro" });
-    const passB = await stagePassB(runEnv, runId, envelope.input.documentKey, label, fence, async (note: string) => {
-      await emit({ event: "pass-B", state: "progress", note });
-    });
+    await emit({ event: "pass-B", state: "started", model: deepseekContinuityIdentity(runEnv) });
+    const passB = await stagePassB(
+      runEnv,
+      runId,
+      envelope.input.documentKey,
+      label,
+      fence,
+      async (note: string) => {
+        await emit({ event: "pass-B", state: "progress", note });
+      },
+      documentSemanticsProfile,
+    );
     await emit({ event: "pass-B", state: "finished", summary: passB });
     if (body.passOnly === "B") {
       return await persist(env, runId, { runId, mode: "pass-B-only", elapsedMs: Date.now() - startedAt, passB });
@@ -252,6 +280,7 @@ async function runExtraction(
       documentSha256,
       locale,
       ["desktop"],
+      documentSemanticsProfile,
     );
 
     await emit({ event: "consolidate", state: "finished", summary: consolidated });

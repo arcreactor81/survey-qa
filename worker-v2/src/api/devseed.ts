@@ -30,6 +30,7 @@ import { sealContract } from "../store/contract-revision";
 import { ENVELOPE_KIND, ENVELOPE_SCHEMA, type EvidenceCatalogEntry, type RunEnvelopeV2 } from "../types/record";
 import { buildAndStoreReport } from "../report/build";
 import { writeRunChecklist } from "../workflow/stages/checklist-store";
+import { DOCUMENT_SEMANTICS_NONE } from "../extract/document-semantics";
 
 export const devSeedEnabled = (env: Env): boolean => env.DEV_SEED === "enabled";
 
@@ -119,6 +120,7 @@ export async function devSeed(req: Request, env: Env): Promise<Response> {
       targetBuildId: body.targetBuildId ?? null,
       locale: "en",
       viewports: ["desktop"],
+      documentSemanticsProfile: DOCUMENT_SEMANTICS_NONE,
       ...(body.envelope ?? {}),
     },
     profile: "standard",

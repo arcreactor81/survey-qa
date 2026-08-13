@@ -29,6 +29,10 @@ const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 const MAX_JSON_RESPONSE_BYTES = 64 * 1024 * 1024;
 const RUN_ID = /^v2r_[0-9a-hjkmnp-tv-z]{26}$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
+const DOCUMENT_SEMANTICS_PROFILES = Object.freeze([
+  "none/1.0.0",
+  "shop-direct-grey-programming/1.0.0",
+]);
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const VISUAL_STATUS_SCHEMA_VERSION = "survey-qa-visual-status/1.0.0";
 const RUN_STATUS_SCHEMA_VERSION = "run-status/2.0.0";
@@ -231,6 +235,7 @@ export async function executeLiveCanary(options, dependencies = {}) {
       locale: "en",
       viewports: ["desktop"],
       contractSource: "extract",
+      documentSemanticsProfile: validated.documentSemanticsProfile,
     },
     expectedVisualConfiguration: validated.expectVisual,
     expectedVisualProvider: validated.expectedVisualProvider,
@@ -250,6 +255,7 @@ export async function executeLiveCanary(options, dependencies = {}) {
     surveyUrl: validated.surveyUrl,
     documentBytes,
     documentName: path.basename(validated.docx),
+    documentSemanticsProfile: validated.documentSemanticsProfile,
   });
   const submissionHeaders = { "content-type": "application/json; charset=utf-8" };
   if (validated.submissionRuntimeIdentity !== null) {
@@ -342,7 +348,15 @@ export async function executeLiveCanary(options, dependencies = {}) {
 }
 
 /** Canonical field order for the canary's exact-byte idempotency fingerprint. */
-export function buildLiveCanarySubmissionBody({ surveyUrl, documentBytes, documentName }) {
+export function buildLiveCanarySubmissionBody({
+  surveyUrl,
+  documentBytes,
+  documentName,
+  documentSemanticsProfile = "none/1.0.0",
+}) {
+  if (!DOCUMENT_SEMANTICS_PROFILES.includes(documentSemanticsProfile)) {
+    throw new LiveCanaryError("ARGUMENT_INVALID", "unsupported documentSemanticsProfile");
+  }
   const bytes = Buffer.isBuffer(documentBytes) ? documentBytes : Buffer.from(documentBytes);
   return JSON.stringify({
     surveyUrl: requireText(surveyUrl, "surveyUrl"),
@@ -352,6 +366,7 @@ export function buildLiveCanarySubmissionBody({ surveyUrl, documentBytes, docume
     locale: "en",
     viewports: ["desktop"],
     contractSource: "extract",
+    documentSemanticsProfile,
   });
 }
 
@@ -660,6 +675,10 @@ async function validateExecutionOptions(options) {
     options?.submissionRuntimeIdentity,
     expectedVisual,
   );
+  const documentSemanticsProfile = options?.documentSemanticsProfile ?? "none/1.0.0";
+  if (!DOCUMENT_SEMANTICS_PROFILES.includes(documentSemanticsProfile)) {
+    throw new LiveCanaryError("ARGUMENT_INVALID", "unsupported documentSemanticsProfile");
+  }
   return {
     baseUrl,
     surveyUrl: survey.href,
@@ -668,6 +687,7 @@ async function validateExecutionOptions(options) {
       options?.expectedDocumentSha256,
       "expectedDocumentSha256",
     ),
+    documentSemanticsProfile,
     outputDir: path.resolve(requireText(options?.outputDir, "outputDir")),
     envFile: options?.canaryTokenFile ? undefined : path.resolve(options?.envFile ?? DEFAULT_ACCESS_ENV_FILE),
     canaryTokenFile: options?.canaryTokenFile ? path.resolve(options.canaryTokenFile) : undefined,

@@ -117,7 +117,7 @@ await runMutantSuite({
         "protect — and EXTRACT_MAX_ATTEMPTS is undeclared in wrangler.jsonc, so the LIVE value " +
         "is chat.ts's own default of 2",
       file: PASS_B,
-      find: "return Math.max(1, num(env.EXTRACT_MAX_ATTEMPTS, 2)) * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));",
+      find: "return deepseekContinuityAttemptCeiling(env) * Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));",
       replace: "return Math.max(0, num(env.LLM_TIMEOUT_MS, 300_000));",
       kills: [DERIVED_TIMEOUT],
     },

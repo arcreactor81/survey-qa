@@ -27,7 +27,9 @@ const COVERAGE = {
   problems: [],
 };
 
-const block = (blockId, text, origin) => ({
+// `sourceSubrole` is the parser's structural fact. `origin` remains human-readable
+// provenance only, so a phrase that happens to look special cannot change authority.
+const block = (blockId, text, origin, sourceSubrole = undefined) => ({
   blockId,
   kind: "paragraph",
   text,
@@ -35,6 +37,7 @@ const block = (blockId, text, origin) => ({
   section: null,
   coords: null,
   tableId: null,
+  sourceSubrole,
 });
 
 const raw = (id, blockId, code, label) => ({
@@ -81,9 +84,10 @@ suite("D50 — DOCX source roles block option-set fabrication", () => {
       {
         blocks: [
           block("b0001", "1) Ordinary answer", "body"),
-          block("b0002", "2) Suggested answer", "combo-box-suggestion"),
-          // Real parser origins carry the base text after this stable prefix.
-          block("b0003", "3) phonetic reading", 'ruby-reading for base "Base" — NOT A BODY REQUIREMENT (body)'),
+          block("b0002", "2) Suggested answer", "combo-box-suggestion", "combo-box-suggestion"),
+          // The real parser retains readable provenance, but the structural subrole—not
+          // its wording—carries refusal authority.
+          block("b0003", "3) phonetic reading", 'ruby-reading for base "Base" — NOT A BODY REQUIREMENT (body)', "ruby-reading"),
         ],
         coverage: COVERAGE,
       },
@@ -116,21 +120,25 @@ suite("D50 — DOCX source roles block option-set fabrication", () => {
     );
   });
 
-  test("origin mapper: exact combo and every ruby-reading prefix map; lookalikes do not", async () => {
+  test("structural mapper: declared subroles map; origin text alone never changes authority", async () => {
     const { merge } = await worker();
     assertEq(
-      merge.sourceAtomRole({ origin: "combo-box-suggestion" }, "option-list"),
+      merge.sourceAtomRole({ origin: "body", sourceSubrole: "combo-box-suggestion" }, "option-list"),
       "source-origin:combo-box-suggestion",
     );
-    assertEq(merge.sourceAtomRole({ origin: "ruby-reading" }, "option-list"), "source-origin:ruby-reading");
     assertEq(
-      merge.sourceAtomRole({ origin: 'ruby-reading for base "電気" — NOT A BODY REQUIREMENT (body)' }, "option-list"),
+      merge.sourceAtomRole({ origin: 'ruby-reading for base "電気" — NOT A BODY REQUIREMENT (body)', sourceSubrole: "ruby-reading" }, "option-list"),
       "source-origin:ruby-reading",
     );
     assertEq(
-      merge.sourceAtomRole({ origin: "body text mentioning ruby-reading" }, "option-list"),
+      merge.sourceAtomRole({ origin: "combo-box-suggestion" }, "option-list"),
       "option-list",
-      "only a declared origin prefix may change authority",
+      "a stale or forged origin label must not change authority",
+    );
+    assertEq(
+      merge.sourceAtomRole({ origin: 'ruby-reading for base "電気" — NOT A BODY REQUIREMENT (body)' }, "option-list"),
+      "option-list",
+      "human-readable provenance must not reintroduce prefix inference",
     );
   });
 
@@ -637,7 +645,7 @@ suite("D50 — row accounting never absorbs lifted origin-bearing blocks (blocke
       };
       return new Response(
         JSON.stringify({
-          model: "stub-model",
+          model: body.model,
           usage: { prompt_tokens: 100, completion_tokens: 50 },
           choices: [{ message: { content: JSON.stringify(payload) }, finish_reason: "stop" }],
         }),

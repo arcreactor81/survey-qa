@@ -44,10 +44,15 @@ export const EXPECTED_NODE_EXECUTABLE_SHA256 =
   "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de";
 export const EXPECTED_NODE_TEST_RUNNER_CONTEXT = "child-v8";
 export const EXPECTED_NODE_TEST_RUNNER_EXEC_ARGV_COUNT = 23;
+export const EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_EXEC_ARGV_COUNT = 25;
 export const EXPECTED_NODE_TEST_RUNNER_DIRECT_EXEC_ARGV_SHA256 =
   "4b07dbf6a928cc41b38408c4ba66ddb24de4b734274ce03f7e207df756eeec98";
 export const EXPECTED_NODE_TEST_RUNNER_SERIAL_EXEC_ARGV_SHA256 =
   "e08ebfd6e96f60193ed7c886b14517320be5546b38b4364915da7f9a8758b3c7";
+export const EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_DIRECT_EXEC_ARGV_SHA256 =
+  "2b7f156a2556c7a60ae59a554cdb2bfb94a9fbcbcf037cefe687a319b0d3bbd7";
+export const EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_SERIAL_EXEC_ARGV_SHA256 =
+  "244d4d08e28016f93c80cb015f42518f749fbf8487cf86b75d89412519205773";
 export const EXPECTED_NODE_TEST_RUNNER_VECTORS = Object.freeze([
   Object.freeze({
     id: "direct-node-test",
@@ -55,6 +60,7 @@ export const EXPECTED_NODE_TEST_RUNNER_VECTORS = Object.freeze([
     context: EXPECTED_NODE_TEST_RUNNER_CONTEXT,
     execArgvCount: EXPECTED_NODE_TEST_RUNNER_EXEC_ARGV_COUNT,
     testConcurrencyFlag: "--test-concurrency=0",
+    testForceExitCount: 0,
     execArgvSha256: EXPECTED_NODE_TEST_RUNNER_DIRECT_EXEC_ARGV_SHA256,
   }),
   Object.freeze({
@@ -63,7 +69,26 @@ export const EXPECTED_NODE_TEST_RUNNER_VECTORS = Object.freeze([
     context: EXPECTED_NODE_TEST_RUNNER_CONTEXT,
     execArgvCount: EXPECTED_NODE_TEST_RUNNER_EXEC_ARGV_COUNT,
     testConcurrencyFlag: "--test-concurrency=1",
+    testForceExitCount: 0,
     execArgvSha256: EXPECTED_NODE_TEST_RUNNER_SERIAL_EXEC_ARGV_SHA256,
+  }),
+  Object.freeze({
+    id: "direct-node-test-force-exit",
+    parentInvocation: "node --test --test-force-exit",
+    context: EXPECTED_NODE_TEST_RUNNER_CONTEXT,
+    execArgvCount: EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_EXEC_ARGV_COUNT,
+    testConcurrencyFlag: "--test-concurrency=0",
+    testForceExitCount: 2,
+    execArgvSha256: EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_DIRECT_EXEC_ARGV_SHA256,
+  }),
+  Object.freeze({
+    id: "visual-manifest-serial-force-exit",
+    parentInvocation: "node --test --test-concurrency=1 --test-force-exit",
+    context: EXPECTED_NODE_TEST_RUNNER_CONTEXT,
+    execArgvCount: EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_EXEC_ARGV_COUNT,
+    testConcurrencyFlag: "--test-concurrency=1",
+    testForceExitCount: 2,
+    execArgvSha256: EXPECTED_NODE_TEST_RUNNER_FORCE_EXIT_SERIAL_EXEC_ARGV_SHA256,
   }),
 ]);
 // Backward-compatible aliases for existing audit readers. The named vector descriptors above are
@@ -615,6 +640,7 @@ export function assertPinnedTypeScriptImportRuntime(runtime = currentRuntime()) 
     testContext[0] === vector.context &&
     runtime.execArgv.length === vector.execArgvCount &&
     runtime.execArgv.filter((value) => value === vector.testConcurrencyFlag).length === 1 &&
+    runtime.execArgv.filter((value) => value === "--test-force-exit").length === vector.testForceExitCount &&
     execArgvSha256 === vector.execArgvSha256
   );
   if (reviewedVector === undefined) {

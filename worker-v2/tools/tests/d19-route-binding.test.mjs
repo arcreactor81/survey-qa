@@ -238,6 +238,35 @@ const clickStep = (index, { on, code = "1", label = "Yes", reached, advanced = t
     advanced,
   });
 
+/** A step that selects one exact option inside a target-attributed native select. */
+const selectStep = (index, { on, reached, readback = "exact", selectName = "Q7" }) => {
+  const before = screen(on);
+  const options = [
+    { order: 0, code: "", label: "Choose", selected: true, disabled: false, hidden: false, placeholder: true },
+    { order: 1, code: "1", label: "Yes", selected: false, disabled: false, hidden: false, placeholder: false },
+    { order: 2, code: "2", label: "No", selected: false, disabled: false, hidden: false, placeholder: false },
+  ];
+  before.controls = [{
+    idx: 0, tag: "select", type: "select", name: selectName, id: selectName, code: null,
+    label: on, text: "", checked: null, value: "", disabled: false, required: true,
+    visible: true, placeholder: null, maxlength: null, readOnly: false, multiple: false, options,
+  }];
+  before.counts = { controls: 1, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0 };
+  const got = readback === "missing" ? null : readback === "foreign"
+    ? { order: 2, code: "2", label: "No" }
+    : { order: 1, code: "1", label: "Yes" };
+  return stepBase(index, on, {
+    requested: { select: ["Yes"], textEntry: null, action: null },
+    screenBefore: before,
+    screenAfterAdvance: screen(reached),
+    actions: [{
+      kind: "select-option", targetIdx: 0, targetLabel: "Yes", targetCode: "1", value: "1",
+      ok: true, detail: "planned:exact-option-label (exact-readback)", selectReadback: got,
+    }],
+    advanced: true,
+  });
+};
+
 /** A step that TYPES `value` on the screen `on`. `rejected` = the survey refused it. */
 const typeStep = (index, { on, value = "151", rejected = false, reached = "Q13. Anything else?" }) =>
   stepBase(index, on, {
@@ -420,6 +449,32 @@ suite("D19 — the verifier reads the case's own step, not the first matching on
     assertEq(result.value.contradicted, 0, `Q4 accepting 151 says nothing about Q12: ${JSON.stringify(result.value.byReason)}`);
     assertEq(row.verifier.decision, "verified");
     assertEq(row.verifier.reason, "BOUNDARY_REJECTED_AS_DOCUMENTED");
+  });
+});
+
+suite("W4 / native-select route receipts reach deterministic verdicts only with exact proof", () => {
+  test("an exact target-scoped native-select receipt exercises the documented route", async () => {
+    const mod = await worker();
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_route_q7",
+      steps: [selectStep(0, { on: "Q7. Would you buy it again?", reached: "Q9. Which brands do you buy?" })],
+    });
+    assertEq(result.value.verified, 1, JSON.stringify(result.value.byReason));
+    assertEq(row.verifier.decision, "verified", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "ROUTE_DESTINATION_REACHED");
+  });
+
+  test("missing, foreign, or non-target select readback never exercises a route", async () => {
+    const mod = await worker();
+    for (const [readback, selectName] of [["missing", "Q7"], ["foreign", "Q7"], ["exact", "Q8"]]) {
+      const { result, row } = await verifyCase(mod, testEnv(), {
+        caseId: "fi_route_q7",
+        steps: [selectStep(0, { on: "Q7. Would you buy it again?", reached: "Q9. Which brands do you buy?", readback, selectName })],
+      });
+      assertEq(result.value.verified, 0, `${readback}/${selectName}: ${JSON.stringify(row.verifier)}`);
+      assertEq(result.value.contradicted, 0, `${readback}/${selectName}: ${JSON.stringify(row.verifier)}`);
+      assertEq(row.verifier.reason, "ROUTE_ANSWER_NOT_SELECTED", `${readback}/${selectName}: ${JSON.stringify(row.verifier)}`);
+    }
   });
 });
 

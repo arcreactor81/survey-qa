@@ -72,7 +72,7 @@ import {
   updateCheckpoint,
   type Fence,
 } from "../store/checkpoint";
-import { clearActive, updateEnvelope } from "../store/envelope";
+import { clearActive, getEnvelope, updateEnvelope } from "../store/envelope";
 import { ensureRecordedTargetIdentity } from "../store/target-build";
 import { tickWallClock } from "../store/usage";
 import { denominators, getContractRevision, sealContract } from "../store/contract-revision";
@@ -123,6 +123,8 @@ import {
 } from "./stages/extract";
 import { passAStepTimeoutMs, passAWaveBudgetMs, type PassASlice } from "../extract/pass-a";
 import { passBStepTimeoutMs, passBWaveBudgetMs, type PassBSlice } from "../extract/pass-b";
+import { deepseekPassBIdentity } from "../llm/deepseek";
+import { grokFlashRouteIdentity } from "../llm/grok";
 import { projectObservations } from "./stages/project-observations";
 import { launchVisualShadowWorkflow } from "./visual-shadow-workflow";
 import { verifyObservations } from "./stages/verify-observations";
@@ -138,7 +140,11 @@ import {
   type ExtractionInputs,
 } from "../store/contract-reuse";
 import { PROMPT_VERSION_A, PROMPT_VERSION_B } from "../extract/prompts";
-import { DOCX_BLOCKS_VERSION } from "../extract/docx-blocks";
+import { docxBlocksVersion } from "../extract/docx-blocks";
+import {
+  normalizeDocumentSemanticsProfile,
+  type DocumentSemanticsProfile,
+} from "../extract/document-semantics";
 import { EXPANDER_VERSION } from "../extract/expand";
 import { MERGE_VERSION } from "../extract/merge";
 import {
@@ -159,10 +165,65 @@ export interface RunParamsV2 {
   profile: "standard" | "deep";
   locale: string;
   viewports: string[];
+  /** Optional only for legacy workflow instances. Absence normalizes to neutral. */
+  documentSemanticsProfile?: DocumentSemanticsProfile;
   /** Optional only for pre-discriminator runs. Absence means the historical extract path. */
   contractSource?: ContractSourceInput;
   /** Set by the sweeper on a recreate so the new instance knows it is a continuation. */
   recoveryAttempt?: number;
+}
+
+const CONTRACT_SOURCE_SHA256 = /^[0-9a-f]{64}$/;
+
+/**
+ * Canonicalize the denominator authority carried across the Workflow boundary. Absence is
+ * the one legacy spelling and means extract. Every present object is closed-world: unknown
+ * fields, modes, or incomplete human artifact bindings are refusals rather than guesses.
+ */
+export function normalizeContractSourceInput(value: unknown): ContractSourceInput {
+  if (value === undefined) return { mode: "extract" };
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("contractSource must be an object with an explicit supported mode");
+  }
+
+  const source = value as Record<string, unknown>;
+  if (source.mode !== "extract" && source.mode !== "human-authored") {
+    throw new Error(`unsupported contract source mode ${JSON.stringify(source.mode)}`);
+  }
+
+  const allowed = source.mode === "human-authored"
+    ? ["humanRequirementsKey", "humanRequirementsSha256", "mode"]
+    : ["mode"];
+  const extras = Object.keys(source).filter((key) => !allowed.includes(key));
+  if (extras.length > 0) {
+    throw new Error(`unsupported field(s) [${extras.sort().join(", ")}]`);
+  }
+
+  if (source.mode === "extract") return { mode: "extract" };
+  if (
+    typeof source.humanRequirementsKey !== "string" ||
+    source.humanRequirementsKey.trim().length === 0 ||
+    typeof source.humanRequirementsSha256 !== "string" ||
+    !CONTRACT_SOURCE_SHA256.test(source.humanRequirementsSha256)
+  ) {
+    throw new Error(
+      "human-authored mode requires a non-empty artifact key and an unprefixed lowercase SHA-256 digest",
+    );
+  }
+  return {
+    mode: "human-authored",
+    humanRequirementsKey: source.humanRequirementsKey,
+    humanRequirementsSha256: source.humanRequirementsSha256,
+  };
+}
+
+function sameContractSource(left: ContractSourceInput, right: ContractSourceInput): boolean {
+  if (left.mode !== right.mode) return false;
+  if (left.mode === "extract" || right.mode === "extract") return true;
+  return (
+    left.humanRequirementsKey === right.humanRequirementsKey &&
+    left.humanRequirementsSha256 === right.humanRequirementsSha256
+  );
 }
 
 /**
@@ -475,6 +536,75 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       });
       reportingFence = fence;
 
+      // Bind the document-format convention to both durable authorities before reading or
+      // reusing any extraction artifact. Legacy absence is neutral; an unknown spelling or
+      // an envelope/payload mismatch is a named refusal, never an invitation to guess.
+      const documentSemanticsProfile = await step.do("bind-document-semantics-profile", async () => {
+        let requested: DocumentSemanticsProfile;
+        try {
+          requested = normalizeDocumentSemanticsProfile(p.documentSemanticsProfile);
+        } catch (err) {
+          throw new Error(
+            `WORKFLOW_INPUT_INVALID[DOCUMENT_SEMANTICS_PROFILE]: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        const envelope = await getEnvelope(this.env, runId);
+        if (!envelope) {
+          throw new Error(
+            "WORKFLOW_INPUT_INVALID[DOCUMENT_SEMANTICS_PROFILE]: run envelope is missing; profile binding cannot be verified",
+          );
+        }
+        let durable: DocumentSemanticsProfile;
+        try {
+          durable = normalizeDocumentSemanticsProfile(envelope.input.documentSemanticsProfile);
+        } catch (err) {
+          throw new Error(
+            `WORKFLOW_INPUT_INVALID[DOCUMENT_SEMANTICS_PROFILE]: persisted envelope is invalid: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        if (requested !== durable) {
+          throw new Error(
+            `WORKFLOW_INPUT_INVALID[DOCUMENT_SEMANTICS_PROFILE_MISMATCH]: workflow requested ${requested} but envelope binds ${durable}`,
+          );
+        }
+        return durable;
+      });
+
+      // Bind the denominator source to the durable run envelope before resume, extraction,
+      // or reuse can observe it. The Workflow payload is transport, not authority. A legacy
+      // absence on both sides means extract; a human artifact is accepted only when its mode,
+      // key, and hash exactly match the persisted envelope.
+      const contractSource = await step.do("bind-contract-source", async () => {
+        let requested: ContractSourceInput;
+        try {
+          requested = normalizeContractSourceInput(p.contractSource as unknown);
+        } catch (err) {
+          throw new Error(
+            `WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        const envelope = await getEnvelope(this.env, runId);
+        if (!envelope) {
+          throw new Error(
+            "WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: run envelope is missing; source binding cannot be verified",
+          );
+        }
+        let durable: ContractSourceInput;
+        try {
+          durable = normalizeContractSourceInput(envelope.input.contractSource as unknown);
+        } catch (err) {
+          throw new Error(
+            `WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: persisted envelope is invalid: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        if (!sameContractSource(requested, durable)) {
+          throw new Error(
+            "WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE_MISMATCH]: workflow contractSource does not exactly match the run envelope",
+          );
+        }
+        return durable;
+      });
+
       // ---------------------------------------------------------------------
       // RESUME. A replacement instance must continue the run, not restart it: the
       // contract is already sealed (and sealing is one-way), the plan is minted, the
@@ -550,45 +680,6 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       //  see a row that was never proposed")
       // ---------------------------------------------------------------------
       let sealed: { contractRevisionId: string; contractHash: string; executionCases: number } | null = null;
-      const suppliedContractSource = p.contractSource as unknown;
-      if (
-        suppliedContractSource !== undefined &&
-        (!suppliedContractSource || typeof suppliedContractSource !== "object" || Array.isArray(suppliedContractSource))
-      ) {
-        throw new Error(
-          "WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: contractSource must be an object with an explicit supported mode",
-        );
-      }
-      const sourceObject = suppliedContractSource as Record<string, unknown> | undefined;
-      if (sourceObject !== undefined && sourceObject.mode !== "extract" && sourceObject.mode !== "human-authored") {
-        throw new Error(
-          `WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: unsupported contract source mode ${JSON.stringify(sourceObject.mode)}`,
-        );
-      }
-      if (sourceObject !== undefined) {
-        const allowed = sourceObject.mode === "human-authored"
-          ? ["humanRequirementsKey", "humanRequirementsSha256", "mode"]
-          : ["mode"];
-        const extras = Object.keys(sourceObject).filter((key) => !allowed.includes(key));
-        if (extras.length > 0) {
-          throw new Error(
-            `WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: unsupported field(s) [${extras.sort().join(", ")}]`,
-          );
-        }
-      }
-      if (
-        sourceObject?.mode === "human-authored" &&
-        (typeof sourceObject.humanRequirementsKey !== "string" ||
-          sourceObject.humanRequirementsKey.trim().length === 0 ||
-          typeof sourceObject.humanRequirementsSha256 !== "string" ||
-          !/^(?:sha256:)?[0-9a-f]{64}$/.test(sourceObject.humanRequirementsSha256))
-      ) {
-        throw new Error(
-          "WORKFLOW_INPUT_INVALID[CONTRACT_SOURCE]: human-authored mode requires a non-empty artifact key and SHA-256 digest",
-        );
-      }
-      const contractSource: ContractSourceInput =
-        sourceObject === undefined ? { mode: "extract" } : (sourceObject as ContractSourceInput);
 
       // THE EXTRACTION INPUTS, IN ONE PLACE. Every field that could change what a
       // re-extraction of these bytes would produce — see `store/contract-reuse.ts` for why each
@@ -597,11 +688,15 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         if (contractSource.mode !== "extract") return null;
         const inputs: ExtractionInputs = {
           documentSha256: p.documentSha256,
-          docxParserVersion: DOCX_BLOCKS_VERSION,
+          docxParserVersion: docxBlocksVersion(documentSemanticsProfile),
+          documentSemanticsProfile,
           promptVersionA: PROMPT_VERSION_A,
           promptVersionB: PROMPT_VERSION_B,
-          modelA: this.env.GROK_MODEL ?? "grok-4.3",
-          modelB: this.env.DEEPSEEK_MODEL ?? "deepseek-v4-pro",
+          // Full route identity, not only a model label. Successful Grok never calls Flash;
+          // an eligible Grok failure activates Flash and is retained as reduced independence.
+          modelA: grokFlashRouteIdentity(this.env),
+          // Pass B is independently DeepSeek Pro. It is never conflated with Pass A's Flash fallback.
+          modelB: deepseekPassBIdentity(this.env),
           mergeVersion: MERGE_VERSION,
           expanderVersion: EXPANDER_VERSION,
           locale: p.locale,
@@ -675,6 +770,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             p.documentSha256,
             contractSource.humanRequirementsKey,
             contractSource.humanRequirementsSha256,
+            documentSemanticsProfile,
           );
         });
 
@@ -688,6 +784,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             p.viewports,
             humanValidation.validationHash,
             humanValidation.normalizedArtifactHash,
+            documentSemanticsProfile,
           );
         });
 
@@ -882,6 +979,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 await beat(this.env, runId, msg, `extract-a-${wave}`);
               },
               { budgetMs: passAWaveBudget },
+              documentSemanticsProfile,
             );
           });
           passA = outcome.result;
@@ -969,6 +1067,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 await beat(this.env, runId, msg, `extract-b-${wave}`);
               },
               { budgetMs: waveBudgetMs },
+              documentSemanticsProfile,
             );
           });
           passB = outcome.result;
@@ -1026,6 +1125,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             p.documentSha256,
             p.locale,
             p.viewports,
+            documentSemanticsProfile,
           );
           if (result.state === "evaluated") {
             for (const line of result.value.diffSummary) console.log(`v2 ${runId} diff: ${line}`);
@@ -1320,6 +1420,15 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                   pendingCaseIds: caseIds,
                   completedCaseIds: [],
                   planRevisionId,
+                  seedExecution: {
+                    programHash: planned.programHash,
+                    doneAlternativeIds: [],
+                    committedAttemptIds: [],
+                    reservation: null,
+                    attempts: [],
+                    refusals: [],
+                    receipts: [],
+                  },
                 };
                 setPhase(d, "planning", "complete");
               },
@@ -1385,8 +1494,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           //
           // THE WALL-CLOCK CAP GETS ITS COUNTER HERE. `tickWallClock` is the ONLY writer of
           // `usage.wallClock.usedMilliseconds`; without it the cap read a number nothing
-          // ever incremented and could never fire. Await it so the check below compares
-          // the live elapsed time, not a stale checkpoint value.
+          // ever incremented and could never fire. Await it so reporting retains the live
+          // elapsed time. `capExceeded` also recomputes elapsed time from the immutable
+          // start instant: `cp` predates this write, and a stale snapshot must not buy one
+          // extra browser batch after the deadline.
           await tickWallClock(this.env, runId, fence);
           const capStop = capExceeded(cp.usage);
           if (capStop) return { done: true, stopReason: capStop };
@@ -2722,19 +2833,25 @@ function assertOwner(runId: string, cp: RunCheckpoint, fence: Fence): void {
   }
 }
 
-function capExceeded(usage: {
+export function capExceeded(usage: {
   cost: { usedUsd: number; maxUsd: number; verificationReserveUsd: number; reportReserveUsd: number };
   modelCalls: { used: number; max: number };
   toolCalls: { used: number; max: number };
-  wallClock: { usedMilliseconds: number; maxMilliseconds: number };
-}): string | null {
+  wallClock: { usedMilliseconds: number; maxMilliseconds: number; startedAtMs?: number };
+}, nowMs = Date.now()): string | null {
   // Reserves are PROTECTED: execution may not spend into the money set aside for
   // verification and reporting, or a run ends with observations and no report.
   const spendable = usage.cost.maxUsd - usage.cost.verificationReserveUsd - usage.cost.reportReserveUsd;
   if (usage.cost.usedUsd >= spendable) return "cost-cap";
   if (usage.modelCalls.used >= usage.modelCalls.max) return "model-call-cap";
   if (usage.toolCalls.used >= usage.toolCalls.max) return "tool-call-cap";
-  if (usage.wallClock.usedMilliseconds >= usage.wallClock.maxMilliseconds) return "wall-clock-cap";
+  const startedAtMs = usage.wallClock.startedAtMs;
+  const liveElapsed =
+    typeof startedAtMs === "number" && Number.isSafeInteger(startedAtMs) && startedAtMs > 0 && nowMs >= startedAtMs
+      ? nowMs - startedAtMs
+      : 0;
+  const wallClockUsed = Math.max(usage.wallClock.usedMilliseconds, liveElapsed);
+  if (wallClockUsed >= usage.wallClock.maxMilliseconds) return "wall-clock-cap";
   return null;
 }
 

@@ -93,7 +93,7 @@ function stubProvider({ failUnit = () => false, emitRules = true, emitCrossRefs 
     const windowed = user.match(/window (\d+) of (\d+)/);
     const unit = windowed ? `A-w${windowed[1]}` : "A";
     const blockIds = [...new Set([...user.matchAll(/\[(b\d{4})\]/g)].map((m) => m[1]))];
-    requests.push({ url: String(url), unit, blockIds });
+    requests.push({ url: String(url), unit, blockIds, model: body.model });
 
     if (failUnit(unit, requests.length)) {
       return new Response("upstream exploded", { status: 502 });
@@ -136,7 +136,7 @@ function stubProvider({ failUnit = () => false, emitRules = true, emitCrossRefs 
 
     return new Response(
       JSON.stringify({
-        model: "stub-model",
+        model: body.model,
         usage: { prompt_tokens: 1000, completion_tokens: 500 },
         choices: [
           {
@@ -180,6 +180,23 @@ function sliceEnv(overrides = {}) {
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key",
     DEEPSEEK_API_KEY: "test-deepseek-key",
+    GROK_MODEL: "grok-4.6",
+    GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
+    GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
+    GROK_RATE_SOURCE: "owner-dashboard-copy",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
+    GROK_RATE_ATTESTED_AT: "2026-08-13",
+    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_CONTEXT_WINDOW_TOKENS: "500000",
+    GROK_INPUT_USD_PER_MTOK: "2",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_OUTPUT_USD_PER_MTOK: "6",
+    GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
+    GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
+    GROK_MAX_INPUT_USD_PER_MTOK: "4",
+    GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
     EXTRACT_PASS_A_WINDOW_CHARS: "10",
     EXTRACT_MAX_ATTEMPTS: "1",
     ...overrides,
@@ -394,9 +411,14 @@ test("a pass-A window that keeps FAILING is re-bought a bounded number of times,
 
     assertEq(
       provider.countFor(doomed),
-      2,
-      `the failing window must be bought EXACTLY twice, was bought ${provider.countFor(doomed)}`,
+      3,
+      `the failing window may buy Grok once and bounded Flash twice, was bought ${provider.countFor(doomed)}`,
     );
+    const doomedRequests = provider.requests.filter((request) => request.unit === doomed);
+    assertEq(doomedRequests.filter((request) => request.model === "grok-4.6").length, 1,
+      "a retained trigger prevents Grok from being re-bought across waves");
+    assertEq(doomedRequests.filter((request) => request.model === "deepseek-v4-flash").length, 2,
+      "only the bounded substitute retry budget is spent after Grok authorizes fallback");
     assertEq(last.slice.done, true, "the pass still terminates rather than looping on a window nobody can answer");
     assert(
       last.failedUnits.some((f) => f.unit === doomed),
@@ -449,15 +471,16 @@ test("the pass-A step timeout always exceeds its own wave budget by at least one
     const budget = m.passA.passAWaveBudgetMs(env);
     const ceiling = m.passA.passACallCeilingMs(env);
     const timeout = m.passA.passAStepTimeoutMs(env);
-    // Exactly chat.ts's own clamps, so this cannot drift from the transport it describes.
+    // Each eligible logical unit may occupy the bounded Grok purchase and then the bounded
+    // Flash substitute purchase, so the step must cover both before either receipt can be lost.
     const attempts = Math.max(1, m.env.num(env.EXTRACT_MAX_ATTEMPTS, 2));
     const attemptMs = Math.max(0, m.env.num(env.LLM_TIMEOUT_MS, 300_000));
 
     assert(budget >= 0, `the wave budget must never be negative for ${JSON.stringify(env)}, got ${budget}`);
     assertEq(
       ceiling,
-      attempts * attemptMs,
-      `the purchase ceiling must cover EVERY attempt chat.ts may make for ${JSON.stringify(env)}`,
+      2 * attempts * attemptMs,
+      `the purchase ceiling must cover bounded Grok plus Flash attempts for ${JSON.stringify(env)}`,
     );
     assert(
       ceiling >= attemptMs,
@@ -790,11 +813,13 @@ test("D51-a pass A rejects stale window success and terminal failure artifacts",
       blockIds: ["b0001"],
       parserVersion: "stale-parser/0",
       promptVersion: m.passA.PASS_A_VERSION,
+      providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
       globalRules: [{ id: "A-STALE" }],
       crossRefs: [],
       ambiguities: [],
       unverifiable: [],
-      usage: null,
+      usages: [],
+      routeReceipt: { selected: "grok-4.6", trigger: null },
     });
     const provider = stubProvider();
     try {
@@ -818,15 +843,26 @@ test("D51-a pass A rejects stale window success and terminal failure artifacts",
       blockIds: ["b0001"],
       parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
       promptVersion: "stale-prompt/0",
+      providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
       status: "failed",
       attempts: 99,
+      usages: [],
+      fallbackTrigger: null,
       detail: "the old prompt exhausted its budget",
     });
     const provider = stubProvider({ failUnit: () => true });
     try {
       await m.passA.runPassA(env, runId, document, "synthetic.docx");
       const fresh = await d51Read(env, d51WindowKey(m, runId));
-      assertEq(provider.requests.length, 1, "stale terminal failure cannot suppress the current prompt's first call");
+      // The normal topology buys Grok 4.6 first. Its eligible 502 then authorizes exactly
+      // one Flash fallback; the stale terminal artifact must not suppress either current
+      // route leg or leak its old 99-attempt ceiling into this prompt version.
+      assertEq(provider.requests.length, 2, "stale terminal failure cannot suppress the current Grok then Flash route");
+      assertEq(
+        provider.requests.map((request) => request.model).join(","),
+        "grok-4.6,deepseek-v4-flash",
+        "the reissued current route is exact Grok 4.6 followed by the eligible Flash fallback",
+      );
       assertEq(fresh.attempts, 1, "the current pass-A version restarts attempts at one");
       d51AssertVersions(m, fresh, m.passA.PASS_A_VERSION, "fresh window failure");
     } finally {

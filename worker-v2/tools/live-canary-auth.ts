@@ -73,6 +73,7 @@ const LIVE_CANARY_SUBMISSION_KEYS = Object.freeze([
   "contractSource",
   "documentBase64",
   "documentName",
+  "documentSemanticsProfile",
   "locale",
   "profile",
   "surveyUrl",
@@ -913,6 +914,8 @@ function closedCanaryDocumentBytes(value: unknown): Uint8Array | null {
     typeof record.documentName !== "string" ||
     record.documentName.length === 0 ||
     record.documentName.length > 1_024 ||
+    (record.documentSemanticsProfile !== "none/1.0.0" &&
+      record.documentSemanticsProfile !== "shop-direct-grey-programming/1.0.0") ||
     record.profile !== "standard" ||
     record.locale !== "en" ||
     !Array.isArray(record.viewports) ||

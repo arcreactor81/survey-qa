@@ -69,7 +69,7 @@ import { stageNotEvaluated, type StageResult } from "../gates";
 import type { EvidenceCatalogEntry, Observation } from "../../types/record";
 import type { WalkEnding } from "../../browser/types";
 import { loadProgram, type ExecutionProgram } from "./plan";
-import { loadProgress, type ExecProgress, type WalkRecord } from "./execute-batch";
+import { loadProgress, reconcileSeedProgress, saveProgress, type ExecProgress, type WalkRecord } from "./execute-batch";
 
 export const PROJECTION_VERSION = "v2-observation-projection/1.0.0";
 
@@ -218,6 +218,9 @@ export async function projectObservations(env: Env, runId: string): Promise<Stag
   }
 
   const progress = await loadProgress(env, runId, planRevisionId);
+  if (loaded?.checkpoint.execution) {
+    if (await reconcileSeedProgress(env, program, loaded.checkpoint.execution, progress)) await saveProgress(env, progress);
+  }
   const catalog = await listCatalog(env, runId);
   // THE EXECUTION LEDGER IS THE DENOMINATOR. Index every walk before projecting the subset
   // that closed cases. The same in-memory catalogue list drives both operations; no second

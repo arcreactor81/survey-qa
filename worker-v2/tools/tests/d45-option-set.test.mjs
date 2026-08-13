@@ -258,6 +258,33 @@ const q3Screen = (labels, over = {}) =>
 const CLEAN_Q3 = () => q3Screen(BIOLOGICS);
 const FLAWED_Q3 = () => q3Screen(BIOLOGICS.filter(([c]) => c !== "5"));
 
+const attestedSelectControl = (entries = BIOLOGICS, over = {}) => ({
+  idx: over.idx ?? 0,
+  tag: "select",
+  type: "select",
+  name: over.name ?? "Q3",
+  id: over.id ?? "Q3",
+  code: null,
+  label: Q3_WORDING,
+  text: "",
+  checked: null,
+  value: "",
+  disabled: over.disabled ?? false,
+  required: true,
+  visible: over.visible ?? true,
+  placeholder: null,
+  maxlength: null,
+  readOnly: false,
+  multiple: over.multiple ?? false,
+  options: [
+    { order: 0, code: "", label: "Choose a therapy", selected: true, disabled: false, hidden: false, placeholder: true },
+    ...entries.map(([code, label], index) => ({
+      order: index + 1, code, label, selected: false, disabled: false,
+      hidden: over.hiddenCode === code, placeholder: false,
+    })),
+  ],
+});
+
 const step = (index, before) => ({
   stepIndex: index,
   // The producer's own guess, deliberately wrong: it is never a binder.
@@ -379,6 +406,60 @@ async function verifyCase(
 const bimzelxCase = (over = {}) => [
   facet("fi_d45_bimzelx", { target: "Q3", kind: "option-set", lineage: "req_d45opt5", optionSet: membership("5", "BIMZELX", over) }),
 ];
+
+suite("W4 / native-select inventories reach option-set verdicts only when fully attested", () => {
+  const dropdownScreen = (control) => screen(Q3_WORDING, { optionGroups: [], controls: [control] });
+
+  test("a complete current native-select inventory verifies and its HTML placeholder is not an extra", async () => {
+    const mod = await worker();
+    const base = bimzelxCase()[0];
+    const closed = [{
+      ...base,
+      facetInstanceId: "fi_d45_select_closed",
+      caseVersionId: "cv_fi_d45_select_closed",
+      case: {
+        ...base.case,
+        optionSet: { asserted: BIOLOGICS.map(([code, label]) => documented(code, label)), siblings: [], exhaustive: true },
+      },
+    }];
+    const { row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_select_closed",
+      cases: closed,
+      steps: [step(0, dropdownScreen(attestedSelectControl()))],
+    });
+    assertEq(row.verifier.decision, "verified", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_SET_AS_DOCUMENTED");
+  });
+
+  test("a fully attested dropdown missing a documented option produces the real OPTION_MISSING claim", async () => {
+    const mod = await worker();
+    const { result, row } = await verifyCase(mod, testEnv(), {
+      caseId: "fi_d45_bimzelx",
+      cases: bimzelxCase(),
+      steps: [step(0, dropdownScreen(attestedSelectControl(BIOLOGICS.filter(([code]) => code !== "5"))))],
+    });
+    assertEq(row.verifier.decision, "contradicted", JSON.stringify(row.verifier));
+    assertEq(row.verifier.reason, "OPTION_MISSING");
+    assertEq(result.value.contradicted, 1);
+  });
+
+  test("hidden documented options, multiple selects, and competing target inventories stay named insufficient", async () => {
+    const mod = await worker();
+    const fixtures = [
+      [dropdownScreen(attestedSelectControl(BIOLOGICS, { hiddenCode: "5" })), "OPTION_PRESENT_BUT_NOT_OPERABLE"],
+      [dropdownScreen(attestedSelectControl(BIOLOGICS, { multiple: true })), "OPTION_SELECT_MULTIPLE_NOT_SUPPORTED"],
+      [screen(Q3_WORDING, { optionGroups: [], controls: [attestedSelectControl(), attestedSelectControl(BIOLOGICS, { idx: 1, id: "Q3_second" })] }), "OPTION_INVENTORY_TARGET_AMBIGUOUS"],
+    ];
+    for (const [site, reason] of fixtures) {
+      const { result, row } = await verifyCase(mod, testEnv(), {
+        caseId: "fi_d45_bimzelx", cases: bimzelxCase(), steps: [step(0, site)],
+      });
+      assertEq(row.verifier.decision, "insufficient", `${reason}: ${JSON.stringify(row.verifier)}`);
+      assertEq(row.verifier.reason, reason, JSON.stringify(row.verifier));
+      assertEq(result.value.contradicted, 0);
+    }
+  });
+});
 
 // ===========================================================================
 suite("D45 — the half that matters: a correct option set is NEVER accused", () => {
@@ -1694,7 +1775,7 @@ suite("D45 — FIX C1/C2: a borrowed inventory and a hidden extra are refusals, 
       steps: [step(0, dropdown)],
     });
     assertEq(row.verifier.decision, "insufficient", JSON.stringify(row.verifier));
-    assertEq(row.verifier.reason, "OPTION_INVENTORY_CONTROL_SCOPED_NOT_GROUPED");
+    assertEq(row.verifier.reason, "OPTION_SELECT_INVENTORY_NOT_ATTESTED");
     assertEq(result.value.contradicted, 0, "a complete dropdown must never be accused of missing its options");
   });
 

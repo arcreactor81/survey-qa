@@ -30,6 +30,7 @@ import { loadProgram, probeCapabilityLimitations, type PlanLimitation } from "./
 // prettier-ignore
 // @ts-ignore -- untyped ESM, shared with the offline pipeline
 import { assembleRunRecordV2, deriveBlockers, recordHashOf, rejectModelDerivedVerdicts, rejectUnaccountedFailures, supersedeRunRecord, ASSEMBLER_ID, SUPERSEDER_ID } from "./assemble-record.mjs";
+export { assembleRunRecordV2 };
 // @ts-ignore -- untyped ESM
 import { signRecordWithProducerKey, usablePrivateKey } from "./judge-runtime.mjs";
 

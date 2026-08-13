@@ -35,6 +35,31 @@ const SIGNING_GENERATOR = path.join(WORKER_ROOT, "tools/generate-live-canary-sig
 const CONFIG_GENERATOR = path.join(WORKER_ROOT, "tools/generate-live-canary-config.mjs");
 const bundleDir = mkdtempSync(path.join(tmpdir(), "live-canary-gate-test-"));
 const cleanupDirectories = new Set();
+let cleanupComplete = false;
+async function cleanupSuite() {
+  if (cleanupComplete) return;
+  cleanupComplete = true;
+  try {
+    cleanupBundle();
+    rmSync(bundleDir, { recursive: true, force: true });
+    for (const directory of cleanupDirectories) rmSync(directory, { recursive: true, force: true });
+  } finally {
+    // esbuild.build() owns a referenced service process. Without the explicit stop, a
+    // completed node:test file never reports completion to its parent manifest runner.
+    await esbuild.stop();
+  }
+}
+async function buildOrCleanup(options) {
+  try {
+    return await esbuild.build(options);
+  } catch (error) {
+    // Top-level build failure occurs before test assertions run. Close the same resources
+    // before rethrowing so the failed isolated test process also terminates promptly.
+    await cleanupSuite();
+    throw error;
+  }
+}
+after(cleanupSuite);
 const CANONICAL_DOCUMENT_BASE64 = "UEsDBA==";
 const EXPECTED_DOCUMENT_SHA256 = createHash("sha256")
   .update(Buffer.from(CANONICAL_DOCUMENT_BASE64, "base64"))
@@ -43,7 +68,7 @@ const WORKERS_AI_GEMMA4_CONFIGURATION_SHA256 = createHash("sha256")
   .update(canonicalize(WORKERS_AI_GEMMA4_CONFIGURATION), "utf8")
   .digest("hex");
 
-await esbuild.build({
+await buildOrCleanup({
   entryPoints: [path.join(WORKER_ROOT, "tools/live-canary-auth.ts")],
   outfile: path.join(bundleDir, "auth.mjs"),
   bundle: true,
@@ -118,7 +143,7 @@ const wrapperStubPlugin = {
   },
 };
 
-await esbuild.build({
+await buildOrCleanup({
   entryPoints: [path.join(WORKER_ROOT, "tools/live-canary-worker.ts")],
   outfile: path.join(bundleDir, "wrapper.mjs"),
   bundle: true,
@@ -143,11 +168,21 @@ const privateOutput = await import(
   pathToFileURL(path.join(WORKER_ROOT, "tools/private-local-output.mjs")).href
 );
 const REUSABLE_SIGNING_BUNDLE = signing.createCanarySigningBundle();
-after(() => {
-  cleanupBundle();
-  rmSync(bundleDir, { recursive: true, force: true });
-  for (const directory of cleanupDirectories) rmSync(directory, { recursive: true, force: true });
-});
+
+async function boundedTestWait(promise, label, timeoutMs = 5_000) {
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`TEST_WAIT_TIMEOUT: ${label}`)), timeoutMs);
+        timeout.unref?.();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 test("live canary gate fails closed, strips private headers, and exposes an exact read allowlist", async () => {
   const token = "correct-token-material-that-is-long-enough-123456";
@@ -468,7 +503,7 @@ test("one atomic claim serializes concurrency and makes an accepted submission e
     },
     options,
   );
-  await started;
+  await boundedTestWait(started, "first canary submission did not reach the forward seam");
 
   const concurrent = await auth.handleLiveCanarySubmission(
     canarySubmissionRequest(body, token),
@@ -557,7 +592,7 @@ test("an ambiguous first response is recovered from its pending pre-minted run w
     },
     options,
   );
-  await durable;
+  await boundedTestWait(durable, "first canary submission did not write its durable receipt");
 
   const recovered = await auth.handleLiveCanarySubmission(
     canarySubmissionRequest(body, token),
@@ -825,6 +860,7 @@ test("the production submit seam accepts only a configured wrapper-planned id an
     surveyUrl: "https://survey.example.com/example",
     documentBase64: "UEsDBAA=",
     documentName: "questionnaire.docx",
+    documentSemanticsProfile: "none/1.0.0",
     profile: "standard",
     locale: "en",
     viewports: ["desktop"],
@@ -1056,7 +1092,16 @@ test("generated config isolates every mutable Cloudflare identity and freezes sp
   assert.equal(config.vars.EXEC_MAX_EXPLORATION, "0");
   assert.equal(config.vars.CAP_STANDARD_MAX_USD, "2");
   assert.equal(config.vars.CAP_STANDARD_MIN_USD, "0.5");
-  assert.equal(config.vars.CAP_WALL_CLOCK_MS, "7200000");
+  assert.equal(config.vars.CAP_WALL_CLOCK_MS, "14400000");
+  assert.equal(config.vars.DEEPSEEK_MODEL, "deepseek-v4-flash");
+  assert.equal(config.vars.DEEPSEEK_INPUT_USD_PER_MTOK, "0.14");
+  assert.equal(config.vars.DEEPSEEK_OUTPUT_USD_PER_MTOK, "0.28");
+  assert.equal(config.vars.DEEPSEEK_FALLBACK_MODE, "on-error");
+  assert.equal(config.vars.DEEPSEEK_FALLBACK_MODEL, "deepseek-v4-pro");
+  assert.equal(config.vars.DEEPSEEK_FALLBACK_REASONING_EFFORT, "medium");
+  assert.equal(config.vars.DEEPSEEK_FALLBACK_MAX_ATTEMPTS, "1");
+  assert.equal(config.vars.DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK, "0.435");
+  assert.equal(config.vars.DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK, "0.87");
   assert.equal(config.vars.VISUAL_SHADOW_ENABLED, "true");
   assert.equal(config.vars.VISUAL_PROVIDER, "cloudflare-gateway-gemini");
   assert.equal(config.vars.VISUAL_MAX_CALLS, "100");
@@ -1655,6 +1700,7 @@ function canarySubmissionBody(overrides = {}) {
     surveyUrl: "https://survey.example.com/canary",
     documentBase64: CANONICAL_DOCUMENT_BASE64,
     documentName: "questionnaire.docx",
+    documentSemanticsProfile: "none/1.0.0",
     profile: "standard",
     locale: "en",
     viewports: ["desktop"],

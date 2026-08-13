@@ -213,6 +213,18 @@
             </div>
 
             <div class="field field-full">
+              <label for="documentSemanticsProfile">Questionnaire formatting convention</label>
+              <select id="documentSemanticsProfile" name="documentSemanticsProfile">
+                <option value="none/1.0.0" selected>No formatting semantics (safe default)</option>
+                <option value="shop-direct-grey-programming/1.0.0">Grey shading marks programming instructions</option>
+              </select>
+              <p class="hint">Grey has no universal meaning in Word. Keep the safe default unless the
+              questionnaire author confirms that direct grey highlighting or shading identifies
+              programming logic. Formatting is always retained; this choice controls whether grey
+              text may be excluded from respondent option labels while remaining routing evidence.</p>
+            </div>
+
+            <div class="field field-full">
               <label for="profile">Run profile</label>
               <select id="profile" name="profile" disabled>
                 <option value="standard" selected>Standard</option>

@@ -20,6 +20,12 @@
 
   var POLL_VISIBLE_MS = 5000;
   var POLL_HIDDEN_MS = 30000;
+  // Execution progress is committed per WALK, while the checkpoint revision may move only at
+  // the surrounding Workflow boundary. Refreshing activity only on revision changes therefore
+  // hid exactly the partial work this feed exists to show. Poll it on its own bounded cadence
+  // while browser execution is active; hidden tabs stay six times quieter.
+  var ACTIVITY_VISIBLE_MS = 15000;
+  var ACTIVITY_HIDDEN_MS = 90000;
   var MAX_POLL_FAILS = 24; // ~2 minutes at the visible cadence
   // 1s, because the elapsed clock is a REAL clock (v1 behaviour) and a real clock that
   // jumps in five-second steps reads as broken. It is still only ever now-minus-a-real-
@@ -41,6 +47,8 @@
     policy: null,
     status: null,
     coverage: null,
+    execution: null,
+    executionFeed: { state: "unknown", code: null, lastConfirmedAt: null },
     transport: { state: "in-flight", failStreak: 0, maxFails: MAX_POLL_FAILS, lastConfirmedAt: null },
     integrity: { state: "unknown", code: null, detail: null },
     // Whether a technical record exists to link to. "unknown" until something is ASKED —
@@ -57,6 +65,25 @@
   var lastRevision = -1;
   var attestationProbed = false;
   var recordProbed = false;
+  var lastActivityAttemptsStarted = null;
+  var lastActivityFetchMs = 0;
+
+  function browserExecutionActive(status) {
+    if (!status || !Array.isArray(status.phases)) return false;
+    for (var i = 0; i < status.phases.length; i++) {
+      if (status.phases[i] && status.phases[i].name === "executing" && status.phases[i].state === "active") return true;
+    }
+    return false;
+  }
+
+  function activityRefreshDue(status, attemptsStarted) {
+    if (view.execution === null) return true;
+    if (attemptsStarted !== lastActivityAttemptsStarted) return true;
+    if (SurveyQATracker.isTerminal(view)) return true;
+    if (!browserExecutionActive(status)) return false;
+    var cadence = document.hidden ? ACTIVITY_HIDDEN_MS : ACTIVITY_VISIBLE_MS;
+    return Date.now() - lastActivityFetchMs >= cadence;
+  }
 
   function resolveRunId() {
     var m = /^\/runs\/([^/?#]+)/.exec(location.pathname);
@@ -72,7 +99,7 @@
   // can move between snapshots anyway — that is the honesty rule, and here it also buys
   // stable focus for free.
   function signature() {
-    var s = view.status, c = view.coverage;
+    var s = view.status, c = view.coverage, e = view.execution;
     return [
       s ? s.progressRevision : "-",
       s && s.completion ? s.completion.test + "/" + s.completion.report : "-",
@@ -92,6 +119,16 @@
         ? "lim:" + (s.planLimitations || s.limitations).length
         : "-",
       c ? c.revision : "-",
+      e
+        ? [
+            e.revision,
+            e.totals && e.totals.walkAttemptsRecorded,
+            e.totals && e.totals.screenChanges,
+            e.totals && e.totals.uniqueStableScreensObserved,
+            e.artifactInspection && e.artifactInspection.walksInspected
+          ].join(":")
+        : "-",
+      view.executionFeed ? view.executionFeed.state + ":" + String(view.executionFeed.code) : "-",
       view.integrity.state,
       view.record ? view.record.state : "-",
       // "in-flight" and "ok" are the SAME token on purpose. They are the two halves of one
@@ -247,6 +284,17 @@
         await fetchCoverage();
       }
 
+      var attempts = view.coverage && view.coverage.attempts;
+      var attemptsStarted = attempts && typeof attempts.started === "number" ? attempts.started : null;
+      // This feed verifies a bounded tail of walk artifacts, so it is intentionally slower
+      // than the five-second liveness poll. Its cadence is independent of checkpoint revision:
+      // execution/progress.json is durable per completed walk and can advance between revisions.
+      if (activityRefreshDue(status, attemptsStarted)) {
+        lastActivityFetchMs = Date.now();
+        await fetchExecutionActivity();
+        lastActivityAttemptsStarted = attemptsStarted;
+      }
+
       if (status.reportAvailable && !attestationProbed) {
         attestationProbed = true;
         await probeAttestation();
@@ -313,6 +361,39 @@
       view.coverage = snap;
       if (snap.contract && snap.contract.contractRevisionId) view.contractRevisionId = snap.contract.contractRevisionId;
     } catch (err) { /* leave the last confirmed coverage in place; the badge reports the miss */ }
+  }
+
+  async function fetchExecutionActivity() {
+    try {
+      var res = await fetch("/api/v2/runs/" + encodeURIComponent(runId) + "/execution-activity", {
+        headers: { accept: "application/json" },
+        cache: "no-store"
+      });
+      if (!res.ok) {
+        var body = await res.json().catch(function () { return null; });
+        var code = body && body.error && body.error.code ? body.error.code : "HTTP_" + res.status;
+        if (res.status === 500) view.execution = null;
+        view.executionFeed = {
+          state: res.status === 500 ? "invalid" : "unavailable",
+          code: code,
+          lastConfirmedAt: view.executionFeed && view.executionFeed.lastConfirmedAt
+        };
+        return;
+      }
+      var snapshot = await res.json();
+      if (view.execution && typeof snapshot.revision === "number" &&
+          typeof view.execution.revision === "number" && snapshot.revision < view.execution.revision) {
+        return;
+      }
+      view.execution = snapshot;
+      view.executionFeed = { state: "ok", code: null, lastConfirmedAt: new Date().toISOString() };
+    } catch (err) {
+      view.executionFeed = {
+        state: "unavailable",
+        code: null,
+        lastConfirmedAt: view.executionFeed && view.executionFeed.lastConfirmedAt
+      };
+    }
   }
 
   async function probeAttestation() {

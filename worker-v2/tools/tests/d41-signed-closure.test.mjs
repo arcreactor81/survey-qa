@@ -905,23 +905,35 @@ suite("D41 — the fields the record declared empty while the data sat in its in
  * ADOPTION tests about adoption; the digest-sensitivity test below still varies the field
  * explicitly, which is where a version's effect on the key belongs.
  */
-const reuseInputs = async (mod, env = testEnv()) => ({
-  documentSha256: "e".repeat(64),
-  docxParserVersion: mod.docxBlocks.DOCX_BLOCKS_VERSION,
-  promptVersionA: mod.passA.PASS_A_VERSION,
-  promptVersionB: mod.passB.PASS_B_VERSION,
-  modelA: "grok-4.3",
-  modelB: "deepseek-v4-pro",
-  mergeVersion: mod.merge.MERGE_VERSION,
-  expanderVersion: mod.expand.EXPANDER_VERSION,
-  locale: "en",
-  viewports: ["desktop"],
-  reviewMode: "high-risk-only",
-  policyFingerprint: await mod.contractReuse.extractionPolicyFingerprint(env),
-});
+const reuseInputs = async (mod, env = testEnv()) => {
+  const documentSemanticsProfile = mod.docxBlocks.DOCUMENT_SEMANTICS_NONE;
+  return {
+    documentSha256: "e".repeat(64),
+    docxParserVersion: mod.docxBlocks.docxBlocksVersion(documentSemanticsProfile),
+    documentSemanticsProfile,
+    promptVersionA: mod.passA.PASS_A_VERSION,
+    promptVersionB: mod.passB.PASS_B_VERSION,
+    // These are the complete output-affecting routes used by run-workflow, not provider
+    // labels. Pass A includes the dormant Grok -> Flash fallback; pass B is the independent
+    // DeepSeek Pro route. A topology change must buy a fresh denominator.
+    modelA: mod.grok.grokFlashRouteIdentity(env),
+    modelB: mod.deepseek.deepseekPassBIdentity(env),
+    mergeVersion: mod.merge.MERGE_VERSION,
+    expanderVersion: mod.expand.EXPANDER_VERSION,
+    locale: "en",
+    viewports: ["desktop"],
+    reviewMode: "high-risk-only",
+    policyFingerprint: await mod.contractReuse.extractionPolicyFingerprint(env),
+  };
+};
 
 /** A run with NO sealed contract of its own, beside an index entry that has one. */
-async function seedReusableRun(mod, env, inputs, { pointAt = null, pointHash = null } = {}) {
+async function seedReusableRun(
+  mod,
+  env,
+  inputs,
+  { pointAt = null, pointHash = null, runInputs = inputs } = {},
+) {
   const runId = mod.ids.mintRunId();
   const digest = await mod.contractReuse.extractionInputsDigest(inputs);
   const { contractRevisionId, contractHash, revision } = await mod.contractRevision.sealContract(
@@ -939,11 +951,12 @@ async function seedReusableRun(mod, env, inputs, { pointAt = null, pointHash = n
     input: {
       surveyUrl: "https://fixture.invalid/survey",
       documentKey: mod.keys.inputDocumentKey(runId),
-      documentSha256: inputs.documentSha256,
+      documentSha256: runInputs.documentSha256,
       documentName: "d41-reuse.docx",
       targetBuildId: null,
-      locale: inputs.locale,
-      viewports: inputs.viewports,
+      locale: runInputs.locale,
+      viewports: runInputs.viewports,
+      documentSemanticsProfile: runInputs.documentSemanticsProfile,
     },
     profile: "standard",
     // NOT sealed for THIS run — the whole point is that it has no denominator yet.
@@ -974,6 +987,7 @@ const reusePayload = (runId, inputs) => ({
     profile: "standard",
     locale: inputs.locale,
     viewports: inputs.viewports,
+    documentSemanticsProfile: inputs.documentSemanticsProfile,
   },
 });
 
@@ -987,6 +1001,7 @@ suite("D41 — a contract sealed over identical inputs is reused, not re-bought"
     const variants = {
       documentSha256: "f".repeat(64),
       docxParserVersion: `${mod.docxBlocks.DOCX_BLOCKS_VERSION}-not`,
+      documentSemanticsProfile: mod.docxBlocks.GREY_PROGRAMMING_PROFILE,
       promptVersionA: `${mod.passA.PASS_A_VERSION}-not`,
       promptVersionB: `${mod.passB.PASS_B_VERSION}-not`,
       modelA: "grok-4.4",
@@ -1025,6 +1040,7 @@ suite("D41 — a contract sealed over identical inputs is reused, not re-bought"
       promptVersionB: RI.promptVersionB,
       promptVersionA: RI.promptVersionA,
       docxParserVersion: RI.docxParserVersion,
+      documentSemanticsProfile: RI.documentSemanticsProfile,
       documentSha256: `sha256:${RI.documentSha256}`,
     });
     assertEq(reordered, base, "key order and a sha256: prefix must not split one configuration into two keys");
@@ -1044,6 +1060,27 @@ suite("D41 — a contract sealed over identical inputs is reused, not re-bought"
     assert(
       policyA !== policyB,
       "changing a model reasoning policy must invalidate reuse even when document, model name, and prompts are unchanged",
+    );
+
+    // Counterproofs for the provider topology integration: derive changed identities through
+    // the same canonical helpers as the workflow, then hold every OTHER reuse input fixed.
+    // These assertions fail if the digest regresses to a provider/model label.
+    const grokRouteChanged = mod.grok.grokFlashRouteIdentity(
+      testEnv({ GROK_REASONING_EFFORT: "d41-different-grok-route" }),
+    );
+    assert(grokRouteChanged !== RI.modelA, "the Grok route counterexample must actually differ");
+    assert(
+      (await mod.contractReuse.extractionInputsDigest({ ...RI, modelA: grokRouteChanged })) !== base,
+      "changing the complete Grok -> Flash route identity must invalidate reuse",
+    );
+
+    const passBRouteChanged = mod.deepseek.deepseekPassBIdentity(
+      testEnv({ DEEPSEEK_FALLBACK_REASONING_EFFORT: "d41-different-pass-b-route" }),
+    );
+    assert(passBRouteChanged !== RI.modelB, "the Pass-B route counterexample must actually differ");
+    assert(
+      (await mod.contractReuse.extractionInputsDigest({ ...RI, modelB: passBRouteChanged })) !== base,
+      "changing the complete independent Pass-B route identity must invalidate reuse",
     );
   });
 
@@ -1071,6 +1108,33 @@ suite("D41 — a contract sealed over identical inputs is reused, not re-bought"
       await mod.contractReuse.lookupReusableContract(env, legacyDigest),
       null,
       "an entry that cannot name its DOCX parser must never become a denominator under current code",
+    );
+  });
+
+  test("MISSING DOCUMENT-SEMANTICS IDENTITY CANNOT ADOPT: legacy formatting assumptions are a miss", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const current = await reuseInputs(mod, env);
+    const { documentSemanticsProfile: _missing, ...legacyInputs } = current;
+    const legacyDigest = await mod.contractReuse.extractionInputsDigest(legacyInputs);
+
+    await env.EVIDENCE.put(
+      mod.contractReuse.contractReuseKey(legacyDigest),
+      JSON.stringify({
+        kind: mod.contractReuse.CONTRACT_REUSE_VERSION,
+        inputsDigest: legacyDigest,
+        contractRevisionId: "rev_legacy_document_semantics_unknown",
+        contractHash: "hash_legacy_document_semantics_unknown",
+        inputs: legacyInputs,
+        sealedByRunId: "run_legacy_document_semantics_unknown",
+        sealedAt: "2026-08-08T00:00:00.000Z",
+      }),
+    );
+
+    assertEq(
+      await mod.contractReuse.lookupReusableContract(env, legacyDigest),
+      null,
+      "an entry that cannot name its document-format semantics must never become a denominator",
     );
   });
 
@@ -1177,6 +1241,83 @@ suite("D41 — a contract sealed over identical inputs is reused, not re-bought"
       cp.contract.contractRevisionId !== seeded.contractRevisionId,
       "a revision expanded for one viewport set must not be adopted by a run asking for another",
     );
+  });
+
+  test("A DIFFERENT DOCUMENT-SEMANTICS PROFILE MISSES: grey programming cannot reuse a neutral denominator", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const neutral = await reuseInputs(mod, env);
+    const grey = {
+      ...neutral,
+      documentSemanticsProfile: mod.docxBlocks.GREY_PROGRAMMING_PROFILE,
+      docxParserVersion: mod.docxBlocks.docxBlocksVersion(mod.docxBlocks.GREY_PROGRAMMING_PROFILE),
+    };
+    const seeded = await seedReusableRun(mod, env, neutral, { runInputs: grey });
+
+    const wf = new mod.workflow.SurveyRunWorkflowV2({}, env);
+    const step = fakeStep();
+    await wf.run(reusePayload(seeded.runId, grey), step).catch(() => {});
+
+    assert(step.calls.includes("adopt-reusable-contract"), "the grey-profile run must look before missing");
+    assert(
+      step.calls.includes("extract-pass-a-wave-0"),
+      "a profile miss must fall through to extraction, steps: " + step.calls.join(", "),
+    );
+    const cp = (await mod.checkpoint.loadCheckpoint(env, seeded.runId)).checkpoint;
+    assert(
+      cp.contract.contractRevisionId !== seeded.contractRevisionId,
+      "a run that treats grey as programming must not adopt a neutral-format denominator",
+    );
+  });
+
+  test("A DIFFERENT GROK -> FLASH ROUTE MISSES even when every non-route input is identical", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const current = await reuseInputs(mod, env);
+    const indexed = {
+      ...current,
+      modelA: mod.grok.grokFlashRouteIdentity(
+        testEnv({ GROK_REASONING_EFFORT: "d41-indexed-other-grok-route" }),
+      ),
+    };
+    assert(indexed.modelA !== current.modelA, "the indexed Grok route counterexample must differ");
+    const seeded = await seedReusableRun(mod, env, indexed, { runInputs: current });
+
+    const wf = new mod.workflow.SurveyRunWorkflowV2({}, env);
+    const step = fakeStep();
+    await wf.run(reusePayload(seeded.runId, current), step).catch(() => {});
+
+    assert(
+      step.calls.includes("extract-pass-a-wave-0"),
+      "a Grok route miss must fall through to extraction, steps: " + step.calls.join(", "),
+    );
+    const cp = (await mod.checkpoint.loadCheckpoint(env, seeded.runId)).checkpoint;
+    assert(cp.contract.contractRevisionId !== seeded.contractRevisionId);
+  });
+
+  test("A DIFFERENT PASS-B ROUTE MISSES even when every non-route input is identical", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const current = await reuseInputs(mod, env);
+    const indexed = {
+      ...current,
+      modelB: mod.deepseek.deepseekPassBIdentity(
+        testEnv({ DEEPSEEK_FALLBACK_REASONING_EFFORT: "d41-indexed-other-pass-b-route" }),
+      ),
+    };
+    assert(indexed.modelB !== current.modelB, "the indexed Pass-B route counterexample must differ");
+    const seeded = await seedReusableRun(mod, env, indexed, { runInputs: current });
+
+    const wf = new mod.workflow.SurveyRunWorkflowV2({}, env);
+    const step = fakeStep();
+    await wf.run(reusePayload(seeded.runId, current), step).catch(() => {});
+
+    assert(
+      step.calls.includes("extract-pass-a-wave-0"),
+      "a Pass-B route miss must fall through to extraction, steps: " + step.calls.join(", "),
+    );
+    const cp = (await mod.checkpoint.loadCheckpoint(env, seeded.runId)).checkpoint;
+    assert(cp.contract.contractRevisionId !== seeded.contractRevisionId);
   });
 
   test("A STALE INDEX ENTRY IS NOT AN AUTHORITY: an unresolvable id makes the run extract", async () => {

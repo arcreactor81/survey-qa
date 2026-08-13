@@ -268,7 +268,7 @@ function fakePage(reads) {
   const queue = [...reads];
   let last = reads[0] ?? null;
   const clicked = [];
-  const handle = (idx) => ({
+  const handle = (selector, idx) => ({
     async click() {
       clicked.push(idx);
     },
@@ -283,11 +283,18 @@ function fakePage(reads) {
         if (queue.length > 0) last = queue.shift();
         return last;
       }
+      // Production no longer treats a transport-level click as proof that a native choice
+      // retained the intended state. This PageLike fixture therefore emulates the exact
+      // post-click readback that a real radio control returns.
+      if (typeof script === "string" && script.includes("W4_NATIVE_CHOICE_SCOPED_READBACK")) {
+        const idx = Number(/const expectedIdx = (\d+);/.exec(script)?.[1]);
+        return { idx, type: "radio", name: null, checked: true, checkedGroupIdxs: [idx] };
+      }
       return { ok: true };
     },
     async evaluateOnNewDocument() {},
-    async $$() {
-      return Array.from({ length: 16 }, (_, i) => handle(i));
+    async $$(selector) {
+      return Array.from({ length: 16 }, (_, i) => handle(selector, i));
     },
     async screenshot() {
       throw new Error("no screenshot in this harness");

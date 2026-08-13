@@ -14,7 +14,7 @@ import { resolve } from "node:path";
 import process from "node:process";
 import { build } from "esbuild";
 import {
-  isIdentityBearingCommentOrigin,
+  isCommentProposalSourceBlock,
   operatorSourceBlock,
 } from "./source-block-output.mjs";
 
@@ -54,7 +54,7 @@ const { parseDocxBlocks } = await import(moduleUrl);
 const parsed = parseDocxBlocks(new Uint8Array(bytes));
 const documentSha256 = createHash("sha256").update(bytes).digest("hex");
 const commentReviewerIdentitiesWithheld = parsed.blocks.filter((block) =>
-  isIdentityBearingCommentOrigin(block.origin),
+  isCommentProposalSourceBlock(block),
 ).length;
 
 process.stdout.write(

@@ -952,6 +952,7 @@ const PATH_OBSERVATION_KEYS = [
   "captureFailures",
   "captureFailureCount",
   "evidenceIds",
+  "observationEvidenceId",
   "viewport",
 ] as const;
 
@@ -1001,7 +1002,20 @@ function parsePathObservation(bytes: Uint8Array): ParsedPathObservation {
   booleanValue(root.shimmed, "$artifact.shimmed");
   nullableString(root.shimNote, "$artifact.shimNote", MAX_TEXT);
   validateLoadFailure(root.loadFailure, "$artifact.loadFailure");
-  stringArray(root.evidenceIds, "$artifact.evidenceIds", MAX_EPOCHS * 3 + 100_000, 1_000);
+  const evidenceIds = stringArray(root.evidenceIds, "$artifact.evidenceIds", MAX_EPOCHS * 3 + 100_000, 1_000);
+  // The producer learns this content-addressed pointer only after the immutable observation
+  // bytes land, so stored legacy/self bytes may omit it. A returned/runtime observation may
+  // carry it, but it must be an exact catalogue identity already present in its evidence list.
+  if (hasOwn(root, "observationEvidenceId")) {
+    const observationEvidenceId = patterned(
+      root.observationEvidenceId,
+      /^ev_[0-9a-hjkmnp-tv-z]{12}$/,
+      "$artifact.observationEvidenceId",
+    );
+    if (!evidenceIds.includes(observationEvidenceId)) {
+      invalid("$artifact.observationEvidenceId", "must also occur in evidenceIds");
+    }
+  }
   validateViewport(root.viewport, "$artifact.viewport");
   validateOptionalPathFields(root);
 
@@ -1063,6 +1077,11 @@ function parsePathObservation(bytes: Uint8Array): ParsedPathObservation {
     walkCaptureFailures: failures === null ? [] : residual.extra,
     countIssues: [...new Set(countIssues)].sort(),
   };
+}
+
+/** Strict walk-envelope validation at the same boundary visual-work ingestion uses. */
+export function validatePathObservationBytes(bytes: Uint8Array): void {
+  parsePathObservation(bytes);
 }
 
 function parseCaptureEpoch(value: unknown, path: string): { epoch: ScreenCaptureEpoch; countIssues: string[] } {
@@ -1135,6 +1154,69 @@ function parseCaptureEpoch(value: unknown, path: string): { epoch: ScreenCapture
   };
 }
 
+function validateSelectActions(value: unknown, screenBefore: Record<string, unknown>, path: string): void {
+  const actions = arrayValue(value, path, 1_000_000);
+  for (let index = 0; index < actions.length; index += 1) {
+    const raw = actions[index];
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const candidate = plainObject(raw, `${path}[${index}]`);
+    if (candidate.kind !== "select-option") continue;
+    const actionPath = `${path}[${index}]`;
+    const action = object(
+      candidate,
+      actionPath,
+      ["kind", "targetIdx", "targetLabel", "targetCode", "value", "ok", "detail", "selectReadback"],
+    );
+    literal(action.kind, "select-option", `${actionPath}.kind`);
+    const targetIdx = nonnegativeInteger(action.targetIdx, `${actionPath}.targetIdx`, 1_000_000);
+    const targetLabel = stringValue(action.targetLabel, `${actionPath}.targetLabel`, MAX_TEXT);
+    const targetCode = stringValue(action.targetCode, `${actionPath}.targetCode`, MAX_TEXT);
+    const selectedValue = stringValue(action.value, `${actionPath}.value`, MAX_TEXT);
+    const ok = booleanValue(action.ok, `${actionPath}.ok`);
+    nonempty(action.detail, `${actionPath}.detail`, MAX_TEXT);
+    let readback: { order: number; code: string; label: string } | null = null;
+    if (action.selectReadback !== null) {
+      const got = object(action.selectReadback, `${actionPath}.selectReadback`, ["order", "code", "label"]);
+      readback = {
+        order: nonnegativeInteger(got.order, `${actionPath}.selectReadback.order`, 1_000_000),
+        code: stringValue(got.code, `${actionPath}.selectReadback.code`, MAX_TEXT),
+        label: stringValue(got.label, `${actionPath}.selectReadback.label`, MAX_TEXT),
+      };
+    }
+    // Failed attempts retain whatever the page returned as counter-evidence. A SUCCESS is the
+    // stronger claim and therefore needs the exact receipt bound back to the pre-action select.
+    if (!ok) continue;
+    if (!readback) invalid(`${actionPath}.selectReadback`, "a successful select action requires exact readback");
+    if (targetCode !== readback.code || selectedValue !== readback.code || targetLabel !== readback.label) {
+      invalid(actionPath, "successful select target/value fields must exactly equal its readback");
+    }
+    const controls = arrayValue(screenBefore.controls, `${path.replace(/\.actions$/, ".screenBefore")}.controls`, 1_000_000);
+    const control = controls
+      .filter((row) => row !== null && typeof row === "object" && !Array.isArray(row))
+      .map((row, controlIndex) => plainObject(row, `${path}.screenBefore.controls[${controlIndex}]`))
+      .find((row) => row.idx === targetIdx);
+    if (!control || (control.tag !== "select" && control.type !== "select")) {
+      invalid(actionPath, "successful select receipt does not target a native select in screenBefore");
+    }
+    if (control.visible !== true || control.disabled !== false || control.multiple !== false) {
+      invalid(actionPath, "successful select receipt targets a hidden, disabled, legacy-unattested, or multiple select");
+    }
+    const options = arrayValue(control.options, `${actionPath}.screenBefore.target.options`, 1_000_000)
+      .map((row, optionIndex) => plainObject(row, `${actionPath}.screenBefore.target.options[${optionIndex}]`));
+    const option = options.find((row) => row.order === readback!.order);
+    if (
+      !option ||
+      option.code !== readback.code ||
+      option.label !== readback.label ||
+      option.disabled !== false ||
+      option.hidden !== false ||
+      option.placeholder !== false
+    ) {
+      invalid(actionPath, "successful select receipt is not the exact usable option inventoried on its owning select");
+    }
+  }
+}
+
 function validateStepsEnvelope(value: unknown, path: string): void {
   const steps = arrayValue(value, path, MAX_EPOCHS);
   for (let index = 0; index < steps.length; index += 1) {
@@ -1187,10 +1269,10 @@ function validateStepsEnvelope(value: unknown, path: string): void {
     nullableString(step.decisionQuestion, `${stepPath}.decisionQuestion`, 1_000);
     oneOf(step.decisionSource, ["plan", "navigator-default", "probe", "recovery"] as const, `${stepPath}.decisionSource`);
     if (hasOwn(step, "bindingVia")) nullableString(step.bindingVia, `${stepPath}.bindingVia`, MAX_TEXT);
-    plainObject(step.screenBefore, `${stepPath}.screenBefore`);
+    const screenBefore = plainObject(step.screenBefore, `${stepPath}.screenBefore`);
     if (step.screenAfterAction !== null) plainObject(step.screenAfterAction, `${stepPath}.screenAfterAction`);
     if (step.screenAfterAdvance !== null) plainObject(step.screenAfterAdvance, `${stepPath}.screenAfterAdvance`);
-    arrayValue(step.actions, `${stepPath}.actions`, 1_000_000);
+    validateSelectActions(step.actions, screenBefore, `${stepPath}.actions`);
     stringArray(step.requestedButNotOffered, `${stepPath}.requestedButNotOffered`, 1_000_000, MAX_TEXT);
     booleanValue(step.advanced, `${stepPath}.advanced`);
     booleanValue(step.blocked, `${stepPath}.blocked`);
@@ -1245,7 +1327,17 @@ function validateOptionalPathFields(root: Record<string, unknown>): void {
       booleanValue(row.required, `${path}.required`);
       oneOf(
         row.reason,
-        ["refused-by-policy", "cannot-be-satisfied", "no-derivation", "value-rejected"] as const,
+        [
+          "refused-by-policy",
+          "cannot-be-satisfied",
+          "no-derivation",
+          "value-rejected",
+          "control-disabled",
+          "control-not-operable",
+          "no-usable-option",
+          "selection-ambiguous",
+          "unsupported-widget",
+        ] as const,
         `${path}.reason`,
       );
       nonempty(row.detail, `${path}.detail`, MAX_TEXT);

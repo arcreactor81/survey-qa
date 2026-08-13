@@ -1,16 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   CUSTOM_REGISTRY_VISUAL_EXCLUSIONS,
   REQUIRED_VISUAL_NODE_TESTS,
+  WORKER_ROOT,
   runVisualVerification,
   verifyVisualTestManifest,
 } from "../test-visual.mjs";
 
 const NATIVE_TEST = `import test from "node:test";\ntest("fixture", () => {});\n`;
+const REFERENCED_HANDLE_TEST =
+  `import test from "node:test";\n` +
+  `test("fixture completes", () => {});\n` +
+  `setInterval(() => {}, 60_000);\n`;
 const CUSTOM_TEST = `import { suite, test } from "../testkit.mjs";\nsuite("fixture", () => test("case", () => {}));\n`;
 
 // Minimal dispatcher manifest fixture. Since the review ledger-claims fix, verifyVisualTestManifest
@@ -26,11 +32,12 @@ function dispatcherSource(entries = ["./tests/d49-vision-reconcile.test.mjs"]) {
   ].join("\n");
 }
 
-test("closed production manifest includes both Mistral suites and no custom-registry suite", () => {
-  assert.equal(REQUIRED_VISUAL_NODE_TESTS.length, 33);
+test("closed production manifest includes provider and CUA suites with no custom-registry suite", () => {
+  assert.equal(REQUIRED_VISUAL_NODE_TESTS.length, 34);
   assert.equal(new Set(REQUIRED_VISUAL_NODE_TESTS).size, REQUIRED_VISUAL_NODE_TESTS.length);
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/mistral-medium35-client.test.mjs"));
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/mistral-ocr4-client.test.mjs"));
+  assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/openai-computer-use.test.mjs"));
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/test-visual-runner.test.mjs"));
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/private-local-output.test.mjs"));
   assert.ok(REQUIRED_VISUAL_NODE_TESTS.includes("tools/tests/live-canary-remote-secret-audit.test.mjs"));
@@ -260,6 +267,7 @@ test("child nonzero exit is forwarded exactly by the shared runner", (t) => {
   assert.deepEqual(calls[0].args, [
     "--test",
     "--test-concurrency=1",
+    "--test-force-exit",
     path.join("tools", "tests", "visual-native.test.mjs"),
   ]);
   assert.deepEqual(calls[0].options, {
@@ -267,6 +275,65 @@ test("child nonzero exit is forwarded exactly by the shared runner", (t) => {
     stdio: "inherit",
     windowsHide: true,
   });
+});
+
+test("a completed manifest file with a referenced handle cannot hang the runner", (t) => {
+  const root = fixtureRoot(t, {
+    "tools/tests/visual-open-handle.test.mjs": REFERENCED_HANDLE_TEST,
+  });
+  const processLike = { execPath: process.execPath, exitCode: null };
+  const errors = [];
+  let child;
+  const startedAt = Date.now();
+  const exitCode = runVisualVerification({
+    workerRoot: root,
+    requiredFiles: ["tools/tests/visual-open-handle.test.mjs"],
+    customRegistryExclusions: [],
+    processLike,
+    stderr: { write: (value) => errors.push(value) },
+    spawnSyncImpl(command, args, options) {
+      const { NODE_TEST_CONTEXT: _parentTestContext, ...cleanEnvironment } = process.env;
+      const firstFile = args.findIndex((arg) => !arg.startsWith("--"));
+      const directArguments = [
+        ...args.slice(0, firstFile),
+        // Keep the deliberately referenced handle in this one bounded child. If the
+        // force-exit flag is removed, the timeout kills that child without orphaning an
+        // additional node:test isolation process.
+        "--test-isolation=none",
+        ...args.slice(firstFile),
+      ];
+      child = spawnSync(command, directArguments, {
+        ...options,
+        env: cleanEnvironment,
+        timeout: 5_000,
+      });
+      return child;
+    },
+  });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.equal(child?.error, undefined, `child exceeded the 5 s lifecycle bound: ${child?.error}`);
+  assert.equal(exitCode, 0);
+  assert.equal(processLike.exitCode, 0);
+  assert.deepEqual(errors, []);
+  assert.ok(elapsedMs < 5_000, `referenced handle kept the runner alive for ${elapsedMs} ms`);
+});
+
+test("the documented release-integrity bundle has the same force-exit lifecycle closure", () => {
+  const releaseFiles = [
+    "tools\\tests\\hardened-canary-deploy.test.mjs",
+    "tools\\tests\\pinned-wrangler-command.test.mjs",
+    "tools\\tests\\pinned-wrangler-output-graph.integration.test.mjs",
+    "tools\\tests\\live-canary-workflow-gate.test.mjs",
+    "tools\\tests\\live-canary-deploy.test.mjs",
+    "tools\\tests\\canary-post-deploy-attestation.test.mjs",
+    "tools\\tests\\live-canary-remote-secret-audit.test.mjs",
+  ];
+  const expected = `& $Node --test --test-force-exit ${releaseFiles.join(" ")}`;
+  const commands = readFileSync(path.join(WORKER_ROOT, "DEPLOY.md"), "utf8")
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("& $Node --test"));
+  assert.deepEqual(commands, [expected]);
 });
 
 test("a thrown child-process launch error fails closed", (t) => {

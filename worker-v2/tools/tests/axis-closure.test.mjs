@@ -50,19 +50,21 @@ async function freshRun(mod, env) {
  */
 async function seedAdoptableContract(mod, env) {
   const documentSha256 = "b".repeat(64);
+  const documentSemanticsProfile = mod.docxBlocks.DOCUMENT_SEMANTICS_NONE;
   const inputs = {
     documentSha256,
-    docxParserVersion: "docx-blocks-test/1.0.0",
-    promptVersionA: "pass-a-test/1",
-    promptVersionB: "pass-b-test/1",
-    modelA: "model-a-test",
-    modelB: "model-b-test",
-    mergeVersion: "merge-test/1",
-    expanderVersion: "expander-test/1",
+    docxParserVersion: mod.docxBlocks.docxBlocksVersion(documentSemanticsProfile),
+    documentSemanticsProfile,
+    promptVersionA: mod.passA.PASS_A_VERSION,
+    promptVersionB: mod.passB.PASS_B_VERSION,
+    modelA: mod.grok.grokFlashRouteIdentity(env),
+    modelB: mod.deepseek.deepseekPassBIdentity(env),
+    mergeVersion: mod.merge.MERGE_VERSION,
+    expanderVersion: mod.expand.EXPANDER_VERSION,
     locale: "en",
     viewports: ["desktop"],
     reviewMode: "high-risk-only",
-    policyFingerprint: "f".repeat(64),
+    policyFingerprint: await mod.contractReuse.extractionPolicyFingerprint(env),
   };
   const digest = await mod.contractReuse.extractionInputsDigest(inputs);
   const body = contractBody({ documentSha256 });

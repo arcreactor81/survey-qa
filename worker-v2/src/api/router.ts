@@ -7,7 +7,14 @@
 import type { Env } from "../types/env";
 import { fail, json } from "./http";
 import { effectivePolicy } from "../types/env";
-import { getCoverage, getRunSummary, getStatus, getVisualStatus, submitRun } from "./runs";
+import {
+  getCoverage,
+  getExecutionActivity,
+  getRunSummary,
+  getStatus,
+  getVisualStatus,
+  submitRun,
+} from "./runs";
 import { getExport, getRecord, getReport, getReportData } from "./report";
 import { getEvidenceContent, listEvidence } from "./evidence";
 import { devSeed } from "./devseed";
@@ -43,6 +50,7 @@ export async function route(req: Request, env: Env, ctx?: ExecutionContext): Pro
         contracts: [
           "run-status/2.0.0",
           "coverage-snapshot/1.0.0",
+          "survey-qa-execution-activity/1.0.0",
           "run-record/2.0.0",
           "survey-qa-visual-status/1.0.0",
         ],
@@ -84,6 +92,7 @@ export async function route(req: Request, env: Env, ctx?: ExecutionContext): Pro
       if (rest === "") return getRunSummary(req, env, runId);
       if (rest === "status") return getStatus(req, env, runId);
       if (rest === "coverage") return getCoverage(req, env, runId);
+      if (rest === "execution-activity") return getExecutionActivity(req, env, runId);
       if (rest === "visual-status") return getVisualStatus(req, env, runId);
       if (rest === "report") return getReport(req, env, runId);
       if (rest === "report-data") return getReportData(req, env, runId);

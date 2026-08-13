@@ -21,6 +21,9 @@ export const WORKER_ROOT = path.resolve(HERE, "..");
  */
 export const REQUIRED_VISUAL_NODE_TESTS = Object.freeze([
   "tools/tests/test-visual-runner.test.mjs",
+  // Quarantined local computer-use transport/actuation adapter. Despite this runner's
+  // historical name, its mutual-closure check owns every native node:test suite.
+  "tools/tests/openai-computer-use.test.mjs",
   "tools/tests/vision-provider-clients.test.mjs",
   "tools/tests/mistral-medium35-client.test.mjs",
   "tools/tests/mistral-ocr4-client.test.mjs",
@@ -313,6 +316,11 @@ export function runVisualVerification({
   const childArguments = [
     "--test",
     "--test-concurrency=1",
+    // A completed isolated node:test file can otherwise retain a referenced helper handle
+    // (esbuild's long-lived service is the observed case) and prevent the parent from ever
+    // advancing to the rest of this closed manifest. Node still waits for every registered
+    // test and after-hook before force-exit applies; this closes process lifecycle only.
+    "--test-force-exit",
     ...resolvedFiles.map((absolutePath) => path.relative(root, absolutePath)),
   ];
   let child;
