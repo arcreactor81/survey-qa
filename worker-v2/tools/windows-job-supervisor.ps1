@@ -8,6 +8,16 @@ param(
   [string] $TrustedSubjectBoundaryPath,
   [Parameter(Mandatory = $true)]
   [string] $TrustedIoBoundaryPath,
+  [Parameter(Mandatory = $true)]
+  [string] $TrustedSupervisorScriptPath,
+  [Parameter(Mandatory = $true)]
+  [string] $TrustedSupervisorScriptSha256,
+  [Parameter(Mandatory = $true)]
+  [string] $TrustedPowerShellPath,
+  [Parameter(Mandatory = $true)]
+  [string] $TrustedPowerShellSha256,
+  [Parameter(Mandatory = $true)]
+  [string] $TrustedEnvironmentBlockSha256,
   [Parameter(Mandatory = $false)]
   [ValidateSet("none", "exact-union-of-declared-kills", "cua-model-identity-exact-named-guard")]
   [string] $TrustedSelector = "none"
@@ -286,6 +296,32 @@ function Get-Sha256Hex {
   }
 }
 
+function Get-PinnedStreamSha256 {
+  param([IO.FileStream] $Stream, [string] $Label)
+  if ($Stream.Length -lt 1 -or $Stream.Length -gt 1048576) {
+    Throw-SupervisorError "SUPERVISOR_SCRIPT_INVALID" ($Label + " size is outside 1..1048576")
+  }
+  $Stream.Position = 0
+  $Hasher = [Security.Cryptography.SHA256]::Create()
+  try {
+    $Buffer = [byte[]]::new(65536)
+    $Remaining = [long] $Stream.Length
+    while ($Remaining -gt 0) {
+      $Requested = [int] [Math]::Min([long] $Buffer.Length, $Remaining)
+      $Read = $Stream.Read($Buffer, 0, $Requested)
+      if ($Read -le 0) {
+        Throw-SupervisorError "SUPERVISOR_SCRIPT_INVALID" ($Label + " ended during pinned hash")
+      }
+      [void] $Hasher.TransformBlock($Buffer, 0, $Read, $null, 0)
+      $Remaining -= $Read
+    }
+    [void] $Hasher.TransformFinalBlock([byte[]]::new(0), 0, 0)
+    return ([BitConverter]::ToString($Hasher.Hash)).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $Hasher.Dispose()
+  }
+}
+
 function Assert-NewOutputPath {
   param([string] $PathValue, [string] $Boundary, [string] $Label)
   Assert-WithinBoundary $PathValue $Boundary $Label
@@ -303,28 +339,69 @@ function New-ClosedEmptyFile {
   try { $Stream.Flush($true) } finally { $Stream.Dispose() }
 }
 
-function Write-AtomicNewUtf8File {
-  param([string] $PathValue, [string] $Text)
-  $Parent = [IO.Path]::GetDirectoryName($PathValue)
-  $Temporary = Join-Path $Parent (([IO.Path]::GetFileName($PathValue)) + ".tmp-" +
-    [Guid]::NewGuid().ToString("N"))
-  $Stream = $null
+function Complete-OwnedUtf8Receipt {
+  param([IO.FileStream] $Stream, [string] $Text)
+  if ($null -eq $Stream -or -not $Stream.CanWrite -or $Stream.Length -ne 0 -or
+      $Stream.Position -ne 0) {
+    Throw-SupervisorError "RECEIPT_OWNERSHIP_LOST" `
+      "reserved receipt handle is not the original empty writable stream"
+  }
+  $Encoding = [Text.UTF8Encoding]::new($false)
+  $Bytes = $Encoding.GetBytes($Text)
   try {
-    $Stream = [IO.File]::Open($Temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write,
-      [IO.FileShare]::Read)
-    $Encoding = [Text.UTF8Encoding]::new($false)
-    $Bytes = $Encoding.GetBytes($Text)
     $Stream.Write($Bytes, 0, $Bytes.Length)
     $Stream.Flush($true)
-    $Stream.Dispose()
-    $Stream = $null
-    [IO.File]::Move($Temporary, $PathValue)
-  } finally {
-    if ($null -ne $Stream) { $Stream.Dispose() }
-    if (Test-Path -LiteralPath $Temporary) {
-      Remove-Item -LiteralPath $Temporary -Force -ErrorAction Stop
-    }
+  } catch {
+    try {
+      $Stream.Position = 0
+      $Stream.SetLength(0)
+      $Stream.Flush($true)
+    } catch {}
+    try { $Stream.Dispose() } catch {}
+    Throw-SupervisorError "RECEIPT_WRITE_FAILED" "owned receipt could not be durably written"
   }
+  try {
+    $Stream.Dispose()
+  } catch {
+    Throw-SupervisorError "RECEIPT_CLOSE_FAILED" "owned receipt handle could not be closed"
+  }
+}
+
+$TrustedSupervisorScript =
+  Get-CanonicalAbsolutePath $TrustedSupervisorScriptPath "trustedSupervisorScriptPath"
+$TrustedPowerShell =
+  Get-CanonicalAbsolutePath $TrustedPowerShellPath "trustedPowerShellPath"
+if ($TrustedSupervisorScriptSha256 -notmatch "^[0-9a-f]{64}$" -or
+    $TrustedPowerShellSha256 -notmatch "^[0-9a-f]{64}$" -or
+    $TrustedEnvironmentBlockSha256 -notmatch "^[0-9a-f]{64}$") {
+  Throw-SupervisorError "SUPERVISOR_TRUST_INVALID" "trusted host/script hashes must be lowercase SHA-256"
+}
+Assert-ExistingRegularFile $TrustedSupervisorScript "trustedSupervisorScriptPath"
+Assert-ExistingRegularFile $TrustedPowerShell "trustedPowerShellPath"
+$SupervisorHostProcess = [Diagnostics.Process]::GetCurrentProcess()
+try {
+  $SupervisorHostPath =
+    Get-CanonicalAbsolutePath $SupervisorHostProcess.MainModule.FileName "runningPowerShellPath"
+  $SupervisorProcessId = [int] $SupervisorHostProcess.Id
+  $SupervisorProcessStartUtc = $SupervisorHostProcess.StartTime.ToUniversalTime().ToString("o")
+} finally {
+  $SupervisorHostProcess.Dispose()
+}
+Assert-SameCanonicalPath $SupervisorHostPath $TrustedPowerShell "runningPowerShellPath"
+$SupervisorScriptPin = [IO.File]::Open(
+  $TrustedSupervisorScript,
+  [IO.FileMode]::Open,
+  [IO.FileAccess]::Read,
+  [IO.FileShare]::Read
+)
+$SupervisorScriptSha256 = Get-PinnedStreamSha256 $SupervisorScriptPin "supervisor script"
+$SupervisorHostSha256 =
+  (Get-FileHash -LiteralPath $TrustedPowerShell -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($SupervisorScriptSha256 -cne $TrustedSupervisorScriptSha256) {
+  Throw-SupervisorError "SUPERVISOR_SCRIPT_HASH_MISMATCH" "supervisor script differs before request actuation"
+}
+if ($SupervisorHostSha256 -cne $TrustedPowerShellSha256) {
+  Throw-SupervisorError "SUPERVISOR_HOST_HASH_MISMATCH" "PowerShell host differs before request actuation"
 }
 
 $TrustedExecutable = Get-CanonicalAbsolutePath $TrustedExecutablePath "trustedExecutablePath"
@@ -374,19 +451,27 @@ try {
 }
 
 $RequestProperties = @(
-  "schema", "executablePath", "subjectPath", "executableArguments", "arguments", "workingDirectory",
+  "schema", "supervisorScriptPath", "supervisorScriptSha256", "supervisorHostPath",
+  "supervisorHostSha256", "executablePath", "subjectPath", "executableArguments", "arguments", "workingDirectory",
   "subjectBoundaryPath", "ioBoundaryPath", "stdinPath", "stdoutPath", "stderrPath",
   "receiptPath", "timeoutMs", "innerTimeoutMs", "drainGraceMs", "transcriptLimitBytes", "environment", "attestation"
 )
 Assert-ExactProperties $Request $RequestProperties "request"
 Assert-String $Request.schema "schema"
-if ($Request.schema -cne "survey-qa-windows-job-supervisor-request/1.0.0") {
+if ($Request.schema -cne "survey-qa-windows-job-supervisor-request/2.0.0") {
   Throw-SupervisorError "REQUEST_SCHEMA_INVALID" "request schema is unsupported"
 }
 foreach ($PathProperty in @(
-    "executablePath", "subjectPath", "workingDirectory", "subjectBoundaryPath",
+    "supervisorScriptPath", "supervisorHostPath", "executablePath", "subjectPath",
+    "workingDirectory", "subjectBoundaryPath",
     "ioBoundaryPath", "stdoutPath", "stderrPath", "receiptPath")) {
   Assert-String $Request.$PathProperty $PathProperty
+}
+foreach ($HashProperty in @("supervisorScriptSha256", "supervisorHostSha256")) {
+  Assert-String $Request.$HashProperty $HashProperty
+  if ($Request.$HashProperty -notmatch "^[0-9a-f]{64}$") {
+    Throw-SupervisorError "REQUEST_SCHEMA_INVALID" ($HashProperty + " must be lowercase SHA-256")
+  }
 }
 if ($null -ne $Request.stdinPath) {
   Assert-String $Request.stdinPath "stdinPath"
@@ -399,6 +484,10 @@ if ($null -ne $Request.attestation -and $Request.attestation -isnot [pscustomobj
 }
 
 $ExecutablePath = Get-CanonicalAbsolutePath $Request.executablePath "executablePath"
+$RequestedSupervisorScript =
+  Get-CanonicalAbsolutePath $Request.supervisorScriptPath "supervisorScriptPath"
+$RequestedSupervisorHost =
+  Get-CanonicalAbsolutePath $Request.supervisorHostPath "supervisorHostPath"
 $SubjectPath = Get-CanonicalAbsolutePath $Request.subjectPath "subjectPath"
 $WorkingDirectory = Get-CanonicalAbsolutePath $Request.workingDirectory "workingDirectory"
 $SubjectBoundary = Get-CanonicalAbsolutePath $Request.subjectBoundaryPath "subjectBoundaryPath"
@@ -413,6 +502,12 @@ $StdinPath = if ($null -eq $Request.stdinPath) {
 }
 
 Assert-ExistingRegularFile $ExecutablePath "executablePath"
+Assert-SameCanonicalPath $RequestedSupervisorScript $TrustedSupervisorScript "supervisorScriptPath"
+Assert-SameCanonicalPath $RequestedSupervisorHost $TrustedPowerShell "supervisorHostPath"
+if ($Request.supervisorScriptSha256 -cne $TrustedSupervisorScriptSha256 -or
+    $Request.supervisorHostSha256 -cne $TrustedPowerShellSha256) {
+  Throw-SupervisorError "SUPERVISOR_TRUST_MISMATCH" "request host/script identities differ from trusted CLI controls"
+}
 Assert-ExistingDirectory $SubjectBoundary "subjectBoundaryPath"
 Assert-ExistingDirectory $IoBoundary "ioBoundaryPath"
 Assert-SameCanonicalPath $ExecutablePath $TrustedExecutable "executablePath"
@@ -508,20 +603,22 @@ if ($TranscriptLimitBytes -ne 67108864) {
   Throw-SupervisorError "TRANSCRIPT_LIMIT_INVALID" "transcriptLimitBytes must equal the trusted 64 MiB release limit"
 }
 
-Assert-ExactProperties $Request.environment @("set", "remove") "environment"
-if ($Request.environment.set -isnot [pscustomobject] -or $Request.environment.remove -isnot [Array]) {
-  Throw-SupervisorError "REQUEST_SCHEMA_INVALID" "environment.set must be an object and remove an array"
+Assert-ExactProperties $Request.environment @("mode", "entries") "environment"
+Assert-String $Request.environment.mode "environment.mode"
+if ($Request.environment.mode -cne "replace" -or
+    $Request.environment.entries -isnot [pscustomobject]) {
+  Throw-SupervisorError "REQUEST_SCHEMA_INVALID" "environment must be replace mode with an entries object"
 }
 $EnvironmentSetNames = @()
 $EnvironmentSetValues = @()
 $EnvironmentSeen = @{}
-foreach ($Property in @($Request.environment.set.PSObject.Properties)) {
+foreach ($Property in @($Request.environment.entries.PSObject.Properties)) {
   $Name = [string] $Property.Name
   $Value = $Property.Value
-  Assert-String $Name "environment.set name"
-  Assert-String $Value ("environment.set." + $Name) $true
-  if ($Name.Contains("=")) {
-    Throw-SupervisorError "ENVIRONMENT_NAME_INVALID" "environment names must not contain '='"
+  Assert-String $Name "environment.entries name"
+  Assert-String $Value ("environment.entries." + $Name) $true
+  if ($Name -notmatch "^[A-Z][A-Z0-9_]*$") {
+    Throw-SupervisorError "ENVIRONMENT_NAME_INVALID" "environment names must be canonical uppercase identifiers"
   }
   $Folded = $Name.ToUpperInvariant()
   if ($EnvironmentSeen.ContainsKey($Folded)) {
@@ -531,19 +628,26 @@ foreach ($Property in @($Request.environment.set.PSObject.Properties)) {
   $EnvironmentSetNames += $Name
   $EnvironmentSetValues += [string] $Value
 }
-$EnvironmentRemove = @()
-foreach ($NameValue in @($Request.environment.remove)) {
-  Assert-String $NameValue "environment.remove entry"
-  $Name = [string] $NameValue
-  if ($Name.Contains("=")) {
-    Throw-SupervisorError "ENVIRONMENT_NAME_INVALID" "environment names must not contain '='"
-  }
-  $Folded = $Name.ToUpperInvariant()
-  if ($EnvironmentSeen.ContainsKey($Folded)) {
-    Throw-SupervisorError "ENVIRONMENT_DUPLICATE" "environment delta contains a duplicate name"
-  }
-  $EnvironmentSeen[$Folded] = $true
-  $EnvironmentRemove += $Name
+if ($EnvironmentSetNames.Count -lt 1 -or $EnvironmentSetNames.Count -gt 32) {
+  Throw-SupervisorError "ENVIRONMENT_COUNT_INVALID" "closed environment must contain 1..32 entries"
+}
+$EnvironmentOrder = @($EnvironmentSetNames | Sort-Object -CaseSensitive)
+if (@(Compare-Object $EnvironmentSetNames $EnvironmentOrder -SyncWindow 0 -CaseSensitive).Count -ne 0) {
+  Throw-SupervisorError "ENVIRONMENT_ORDER_INVALID" "closed environment names must be sorted"
+}
+$EnvironmentBlockBuilder = [Text.StringBuilder]::new()
+for ($EnvironmentIndex = 0; $EnvironmentIndex -lt $EnvironmentSetNames.Count; $EnvironmentIndex += 1) {
+  [void] $EnvironmentBlockBuilder.Append($EnvironmentSetNames[$EnvironmentIndex])
+  [void] $EnvironmentBlockBuilder.Append("=")
+  [void] $EnvironmentBlockBuilder.Append($EnvironmentSetValues[$EnvironmentIndex])
+  [void] $EnvironmentBlockBuilder.Append([char]0)
+}
+[void] $EnvironmentBlockBuilder.Append([char]0)
+$EnvironmentBlockSha256 = Get-Sha256Hex (
+  [Text.Encoding]::Unicode.GetBytes($EnvironmentBlockBuilder.ToString()))
+if ($EnvironmentBlockSha256 -cne $TrustedEnvironmentBlockSha256) {
+  Throw-SupervisorError "ENVIRONMENT_BLOCK_HASH_MISMATCH" `
+    "request environment differs from the trusted caller control"
 }
 
 $Attestation = $null
@@ -751,6 +855,7 @@ public static class SurveyQaWindowsJobSupervisor
         public int PointerSize;
         public string ExecutableSha256;
         public string SubjectSha256;
+        public string EnvironmentBlockSha256;
         public long? StdoutBytes;
         public string StdoutSha256;
         public long? StderrBytes;
@@ -853,13 +958,6 @@ public static class SurveyQaWindowsJobSupervisor
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileSizeEx(IntPtr fileHandle, out long fileSize);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr GetEnvironmentStringsW();
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool FreeEnvironmentStringsW(IntPtr environmentBlock);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -1052,32 +1150,10 @@ public static class SurveyQaWindowsJobSupervisor
     }
 
     private static IntPtr BuildEnvironment(
-        string[] setNames, string[] setValues, string[] removeNames)
+        string[] setNames, string[] setValues, out string environmentBlockSha256)
     {
         SortedDictionary<string, string> values =
             new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        IntPtr inherited = GetEnvironmentStringsW();
-        if (inherited == IntPtr.Zero) throw NativeError("GetEnvironmentStringsW");
-        try
-        {
-            IntPtr cursor = inherited;
-            while (true)
-            {
-                string entry = Marshal.PtrToStringUni(cursor);
-                if (String.IsNullOrEmpty(entry)) break;
-                int separator = entry[0] == '=' ? entry.IndexOf('=', 1) : entry.IndexOf('=');
-                if (separator > 0)
-                    values[entry.Substring(0, separator)] = entry.Substring(separator + 1);
-                cursor = IntPtr.Add(cursor, checked((entry.Length + 1) * 2));
-            }
-        }
-        finally
-        {
-            if (!FreeEnvironmentStringsW(inherited))
-                throw NativeError("FreeEnvironmentStringsW");
-        }
-        for (int index = 0; index < removeNames.Length; index += 1)
-            values.Remove(removeNames[index]);
         for (int index = 0; index < setNames.Length; index += 1)
             values[setNames[index]] = setValues[index];
 
@@ -1094,6 +1170,9 @@ public static class SurveyQaWindowsJobSupervisor
         if (block.Length > 32767)
             throw new InvalidOperationException("ENVIRONMENT_BLOCK_TOO_LARGE");
         byte[] bytes = Encoding.Unicode.GetBytes(block.ToString());
+        using (SHA256 hasher = SHA256.Create())
+            environmentBlockSha256 = BitConverter.ToString(hasher.ComputeHash(bytes))
+                .Replace("-", "").ToLowerInvariant();
         IntPtr result = Marshal.AllocHGlobal(bytes.Length);
         Marshal.Copy(bytes, 0, result, bytes.Length);
         return result;
@@ -1318,12 +1397,12 @@ public static class SurveyQaWindowsJobSupervisor
         string stdinPath, string stdoutPath, string stderrPath, int timeoutMs, int drainGraceMs,
         long transcriptLimitBytes,
         string expectedExecutableSha256, string expectedSubjectSha256,
-        string[] environmentSetNames, string[] environmentSetValues,
-        string[] environmentRemoveNames)
+        string expectedEnvironmentBlockSha256,
+        string[] environmentSetNames, string[] environmentSetValues)
     {
         RunResult result = new RunResult();
         result.ContainmentScope =
-            "win32-job-membership; brokered process creation outside job inheritance is excluded";
+            "win32-job-membership and pathname-handle integrity; brokered process creation and same-user PROCESS_DUP_HANDLE/process-memory tampering are excluded";
         result.TranscriptLimitBytes = transcriptLimitBytes;
         Stopwatch stopwatch = Stopwatch.StartNew();
         IntPtr job = IntPtr.Zero;
@@ -1422,8 +1501,13 @@ public static class SurveyQaWindowsJobSupervisor
                 new IntPtr(IntPtr.Size), IntPtr.Zero, IntPtr.Zero))
                 throw NativeError("UpdateProcThreadAttribute(JOB_LIST)");
 
-            environment = BuildEnvironment(environmentSetNames, environmentSetValues,
-                environmentRemoveNames);
+            string actualEnvironmentBlockSha256;
+            environment = BuildEnvironment(
+                environmentSetNames, environmentSetValues, out actualEnvironmentBlockSha256);
+            result.EnvironmentBlockSha256 = actualEnvironmentBlockSha256;
+            if (!String.Equals(actualEnvironmentBlockSha256, expectedEnvironmentBlockSha256,
+                    StringComparison.Ordinal))
+                throw new InvalidOperationException("ENVIRONMENT_BLOCK_HASH_MISMATCH");
             List<string> commandArguments = new List<string>();
             commandArguments.Add(executablePath);
             commandArguments.AddRange(executableArguments);
@@ -1716,6 +1800,19 @@ if ($null -eq ("SurveyQaWindowsJobSupervisor" -as [type])) {
   Add-Type -TypeDefinition $NativeSource -Language CSharp -ErrorAction Stop
 }
 
+$ReceiptReservation = $null
+try {
+  $ReceiptReservation = [IO.File]::Open(
+    $ReceiptPath,
+    [IO.FileMode]::CreateNew,
+    [IO.FileAccess]::Write,
+    [IO.FileShare]::None
+  )
+} catch {
+  Throw-SupervisorError "RECEIPT_RESERVATION_FAILED" `
+    "receipt path could not be exclusively reserved before subject actuation"
+}
+
 $StartedUtc = (Get-Date).ToUniversalTime()
 $Result = [SurveyQaWindowsJobSupervisor]::Run(
   $ExecutablePath,
@@ -1731,11 +1828,17 @@ $Result = [SurveyQaWindowsJobSupervisor]::Run(
   $TranscriptLimitBytes,
   $ExecutableSha256Expected,
   $SubjectSha256Expected,
+  $TrustedEnvironmentBlockSha256,
   [string[]] $EnvironmentSetNames,
-  [string[]] $EnvironmentSetValues,
-  [string[]] $EnvironmentRemove
+  [string[]] $EnvironmentSetValues
 )
 $EndedUtc = (Get-Date).ToUniversalTime()
+if ($null -eq $ReceiptReservation -or -not $ReceiptReservation.CanWrite -or
+    $ReceiptReservation.Length -ne 0 -or $ReceiptReservation.Position -ne 0) {
+  Throw-SupervisorError "RECEIPT_OWNERSHIP_LOST" `
+    "receipt reservation changed before supervised Job closure"
+}
+$ReceiptOwnedThroughRun = $true
 $RequestPin.Dispose()
 $RequestPinnedThroughRun = $true
 
@@ -1766,6 +1869,8 @@ if (-not $Result.StderrCreated) {
 
 $ExecutableSha256After = $null
 $SubjectSha256After = $null
+$SupervisorScriptSha256After = $null
+$SupervisorHostSha256After = $null
 $StdoutSha256After = $null
 $StderrSha256After = $null
 try {
@@ -1773,15 +1878,26 @@ try {
     (Get-FileHash -LiteralPath $ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant()
   $SubjectSha256After =
     (Get-FileHash -LiteralPath $SubjectPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $SupervisorScriptSha256After = Get-PinnedStreamSha256 $SupervisorScriptPin "supervisor script"
+  $SupervisorHostSha256After =
+    (Get-FileHash -LiteralPath $TrustedPowerShell -Algorithm SHA256).Hash.ToLowerInvariant()
   if ($ExecutableSha256After -cne $Result.ExecutableSha256) {
     Add-PostRunError "EXECUTABLE_HASH_CHANGED_AFTER_RUN"
   }
   if ($SubjectSha256After -cne $Result.SubjectSha256) {
     Add-PostRunError "SUBJECT_HASH_CHANGED_AFTER_RUN"
   }
+  if ($SupervisorScriptSha256After -cne $SupervisorScriptSha256) {
+    Add-PostRunError "SUPERVISOR_SCRIPT_HASH_CHANGED_AFTER_RUN"
+  }
+  if ($SupervisorHostSha256After -cne $SupervisorHostSha256) {
+    Add-PostRunError "SUPERVISOR_HOST_HASH_CHANGED_AFTER_RUN"
+  }
 } catch {
   Add-PostRunError ("INPUT_REHASH_FAILED: " + $_.Exception.GetType().FullName)
 }
+$SupervisorScriptPin.Dispose()
+$SupervisorScriptPinnedThroughRun = $true
 if (Test-Path -LiteralPath $StdoutPath -PathType Leaf) {
   try {
     $StdoutSha256After =
@@ -1836,9 +1952,22 @@ $PostRunErrorType = if ($PostRunErrors.Count -eq 0) {
   $PostRunErrors -join " | "
 }
 $Receipt = [ordered]@{
-  schema = "survey-qa-windows-job-supervisor-receipt/1.0.0"
+  schema = "survey-qa-windows-job-supervisor-receipt/2.0.0"
   requestSha256 = $RequestSha256
   requestPinnedThroughRun = $RequestPinnedThroughRun
+  receiptOwnedThroughRun = $ReceiptOwnedThroughRun
+  supervisorScriptPath = $TrustedSupervisorScript
+  supervisorScriptSha256 = $SupervisorScriptSha256
+  supervisorScriptSha256After = $SupervisorScriptSha256After
+  supervisorScriptPinnedThroughRun = $SupervisorScriptPinnedThroughRun
+  supervisorHostPath = $TrustedPowerShell
+  supervisorHostSha256 = $SupervisorHostSha256
+  supervisorHostSha256After = $SupervisorHostSha256After
+  supervisorProcessId = $SupervisorProcessId
+  supervisorProcessStartUtc = $SupervisorProcessStartUtc
+  environmentMode = "replace"
+  environmentNames = @($EnvironmentSetNames)
+  environmentBlockSha256 = $Result.EnvironmentBlockSha256
   executablePath = $ExecutablePath
   executableSha256 = $Result.ExecutableSha256
   executableSha256After = $ExecutableSha256After
@@ -1887,11 +2016,10 @@ $Receipt = [ordered]@{
   attestation = $VerifiedAttestation
 }
 $ReceiptJson = $Receipt | ConvertTo-Json -Depth 5
-Write-AtomicNewUtf8File $ReceiptPath ($ReceiptJson + [Environment]::NewLine)
-Write-Output $ReceiptPath
-
+Complete-OwnedUtf8Receipt $ReceiptReservation ($ReceiptJson + [Environment]::NewLine)
+$ReceiptReservation = $null
 if ($Result.TranscriptLimitExceeded) { exit 125 }
 if ($null -ne $Result.LaunchErrorType -or $null -ne $PostRunErrorType) { exit 125 }
 if ($Result.TimedOut) { exit 124 }
 if ($null -eq $Result.ExitCode) { exit 125 }
-exit ([int] $Result.ExitCode)
+exit 0

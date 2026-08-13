@@ -183,6 +183,14 @@ if ($MutationCensusDiff.Count -ne 0) {
 
 $MutationEvidence = Join-Path $Evidence "mutations"
 New-Item -ItemType Directory -Path $MutationEvidence -ErrorAction Stop | Out-Null
+
+# Evidence trust boundary: only a coherent v2 receipt emitted by the outer Windows Job supervisor
+# can credit a mutation harness. Direct/unwrapped Node or harness output is never release evidence.
+# The raw host watchdog's Kill proves at most that the exact PowerShell host exited; any watchdog
+# firing aborts the campaign and receives no child/descendant closure or mutation credit.
+# The pathname locks below deny ordinary child write/delete/reopen attacks. Windows same-user
+# process isolation and default process-object ACLs remain the reviewed OS boundary; deliberate
+# PROCESS_DUP_HANDLE or process-memory tampering against the supervisor is outside this evidence model.
 $MutationTimeoutMs = 7200000
 $MutationChildTimeoutMs = 120000
 $MutationDrainGraceMs = 30000
@@ -198,6 +206,8 @@ $NodeSha256 =
   (Get-FileHash -LiteralPath $NodeResolved -Algorithm SHA256).Hash.ToLowerInvariant()
 $MutationSupervisor =
   (Resolve-Path -LiteralPath (Join-Path $V2 "tools\windows-job-supervisor.ps1")).Path
+$MutationSupervisorSha256 =
+  (Get-FileHash -LiteralPath $MutationSupervisor -Algorithm SHA256).Hash.ToLowerInvariant()
 $WindowsDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)
 $PowerShellResolved = (Resolve-Path -LiteralPath (
   Join-Path $WindowsDirectory "System32\WindowsPowerShell\v1.0\powershell.exe")).Path
@@ -205,6 +215,26 @@ $PowerShellItem = Get-Item -LiteralPath $PowerShellResolved -Force -ErrorAction 
 if ($PowerShellItem.PSIsContainer -or
     ($PowerShellItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
   throw "Pinned Windows PowerShell is not a regular non-reparse file"
+}
+$PowerShellSha256 =
+  (Get-FileHash -LiteralPath $PowerShellResolved -Algorithm SHA256).Hash.ToLowerInvariant()
+# Windows system-directory ACLs are the reviewed host boundary: ProcessStartInfo maps by path,
+# so a privileged exact executable swap-and-restore cannot be eliminated by PowerShell 5.1.
+$ClosedMutationEnvironmentNames = @(
+  "MUTATION_CHILD_TIMEOUT_MS",
+  "OS",
+  "PATH",
+  "PSMODULEPATH",
+  "SYSTEMDRIVE",
+  "SYSTEMROOT",
+  "TEMP",
+  "TMP",
+  "WINDIR"
+)
+if (@(Compare-Object $ClosedMutationEnvironmentNames
+    @($ClosedMutationEnvironmentNames | Sort-Object -CaseSensitive)
+    -SyncWindow 0 -CaseSensitive).Count -ne 0) {
+  throw "Closed mutation environment names must be sorted"
 }
 
 function ConvertTo-PowerShellSingleQuotedLiteral {
@@ -220,7 +250,8 @@ function Read-CanonicalClosedJson {
     [string] $PathValue,
     [string[]] $ExpectedProperties,
     [int] $Depth,
-    [string] $Label
+    [string] $Label,
+    [bool] $IncludeEvidence = $false
   )
   $Stream = [IO.File]::Open(
     $PathValue, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
@@ -259,6 +290,16 @@ function Read-CanonicalClosedJson {
     (($Parsed | ConvertTo-Json -Depth $Depth) + [Environment]::NewLine))
   if (-not [Linq.Enumerable]::SequenceEqual([byte[]] $Bytes, [byte[]] $CanonicalBytes)) {
     throw ($Label + " JSON is noncanonical or contains duplicate keys")
+  }
+  if ($IncludeEvidence) {
+    $Hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+      $Hash = ([BitConverter]::ToString($Hasher.ComputeHash($Bytes))).
+        Replace("-", "").ToLowerInvariant()
+    } finally {
+      $Hasher.Dispose()
+    }
+    return [pscustomobject]@{ value = $Parsed; length = $Length; sha256 = $Hash }
   }
   return $Parsed
 }
@@ -360,14 +401,18 @@ function Assert-MutationWatchdogTypes {
 function Assert-MutationReceiptTypes {
   param([object] $Value)
   Assert-JsonExactTypes $Value `
-    @("schema", "requestSha256", "executablePath", "executableSha256",
+    @("schema", "requestSha256", "supervisorScriptPath", "supervisorScriptSha256",
+      "supervisorScriptSha256After", "supervisorHostPath", "supervisorHostSha256",
+      "supervisorHostSha256After", "supervisorProcessStartUtc", "environmentMode",
+      "environmentBlockSha256", "executablePath", "executableSha256",
       "executableSha256After", "subjectPath", "subjectSha256", "subjectSha256After",
       "workingDirectory", "startedUtc", "endedUtc", "containmentScope", "stdoutLog", "stderrLog") `
-    @("requestPinnedThroughRun", "transcriptLimitExceeded", "timedOut", "jobAssigned",
+    @("requestPinnedThroughRun", "receiptOwnedThroughRun", "supervisorScriptPinnedThroughRun",
+      "transcriptLimitExceeded", "timedOut", "jobAssigned",
       "processResumed", "assignmentBeforeResume", "membershipVerified", "terminationIssued",
       "handlesClosed", "abiValidated", "inputPinsHeldThroughRun", "emptyStdinPipe",
       "outputHashesCapturedBeforeClose") `
-    @("argumentCount", "executableArgumentCount", "timeoutMs", "drainGraceMs",
+    @("supervisorProcessId", "argumentCount", "executableArgumentCount", "timeoutMs", "drainGraceMs",
       "transcriptLimitBytes", "durationMs", "pointerSize") `
     @("completionIssue", "launchErrorType", "postRunErrorType", "stdoutSha256",
       "stdoutSha256After", "stderrSha256", "stderrSha256After") `
@@ -375,6 +420,20 @@ function Assert-MutationReceiptTypes {
     @("innerTimeoutMs", "exitCode", "processId", "initialActiveProcesses",
       "finalActiveProcesses", "stdoutBytes", "stderrBytes") `
     "mutation supervisor receipt"
+  if ($Value.environmentNames -isnot [Array] -or $Value.environmentNames.Count -lt 1) {
+    throw "mutation supervisor receipt.environmentNames must be a nonempty array"
+  }
+  $EnvironmentNames = @($Value.environmentNames)
+  if (@($EnvironmentNames | Where-Object {
+      $_ -isnot [string] -or $_ -notmatch "^[A-Z][A-Z0-9_]*$"
+    }).Count -ne 0 -or
+    @($EnvironmentNames | Sort-Object -Unique -CaseSensitive).Count -ne
+      $EnvironmentNames.Count -or
+    @(Compare-Object $EnvironmentNames
+      @($EnvironmentNames | Sort-Object -CaseSensitive)
+      -SyncWindow 0 -CaseSensitive).Count -ne 0) {
+    throw "mutation supervisor receipt.environmentNames is not sorted unique canonical names"
+  }
   if ($Value.attestation -isnot [pscustomobject]) {
     throw "mutation supervisor receipt.attestation must be a JSON object"
   }
@@ -401,7 +460,12 @@ $MutationWatchdogProperties = @(
   "exitedAfterKill", "exitCode", "controlError", "endedUtc"
 )
 $MutationReceiptProperties = @(
-  "schema", "requestSha256", "requestPinnedThroughRun", "executablePath",
+  "schema", "requestSha256", "requestPinnedThroughRun", "receiptOwnedThroughRun",
+  "supervisorScriptPath",
+  "supervisorScriptSha256", "supervisorScriptSha256After",
+  "supervisorScriptPinnedThroughRun", "supervisorHostPath", "supervisorHostSha256",
+  "supervisorHostSha256After", "supervisorProcessId", "supervisorProcessStartUtc",
+  "environmentMode", "environmentNames", "environmentBlockSha256", "executablePath",
   "executableSha256", "executableSha256After", "subjectPath", "subjectSha256",
   "subjectSha256After", "workingDirectory", "argumentCount", "executableArgumentCount",
   "timeoutMs", "innerTimeoutMs", "drainGraceMs", "transcriptLimitBytes",
@@ -438,7 +502,11 @@ foreach ($Harness in $MutationHarnesses) {
   $HarnessSha256 =
     (Get-FileHash -LiteralPath $HarnessPath -Algorithm SHA256).Hash.ToLowerInvariant()
   $MutationRequest = [ordered]@{
-    schema = "survey-qa-windows-job-supervisor-request/1.0.0"
+    schema = "survey-qa-windows-job-supervisor-request/2.0.0"
+    supervisorScriptPath = $MutationSupervisor
+    supervisorScriptSha256 = $MutationSupervisorSha256
+    supervisorHostPath = $PowerShellResolved
+    supervisorHostSha256 = $PowerShellSha256
     executablePath = $NodeResolved
     subjectPath = $HarnessPath
     executableArguments = @()
@@ -455,8 +523,18 @@ foreach ($Harness in $MutationHarnesses) {
     drainGraceMs = $MutationDrainGraceMs
     transcriptLimitBytes = $MutationTranscriptLimitBytes
     environment = [ordered]@{
-      set = [ordered]@{ MUTATION_CHILD_TIMEOUT_MS = [string] $MutationChildTimeoutMs }
-      remove = @("MUTANT_FILE", "MUTANT_FIND", "MUTANT_REPLACE")
+      mode = "replace"
+      entries = [ordered]@{
+        MUTATION_CHILD_TIMEOUT_MS = [string] $MutationChildTimeoutMs
+        OS = "Windows_NT"
+        PATH = ""
+        PSMODULEPATH = ""
+        SYSTEMDRIVE = $WindowsDirectory.Substring(0, 2)
+        SYSTEMROOT = $WindowsDirectory
+        TEMP = $MutationEvidence
+        TMP = $MutationEvidence
+        WINDIR = $WindowsDirectory
+      }
     }
     attestation = [ordered]@{
       head = $Head
@@ -478,18 +556,64 @@ foreach ($Harness in $MutationHarnesses) {
   }
   $RequestSha256 =
     (Get-FileHash -LiteralPath $RequestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $EnvironmentBlockBuilder = [Text.StringBuilder]::new()
+  foreach ($EnvironmentName in $ClosedMutationEnvironmentNames) {
+    [void] $EnvironmentBlockBuilder.Append($EnvironmentName)
+    [void] $EnvironmentBlockBuilder.Append("=")
+    [void] $EnvironmentBlockBuilder.Append(
+      [string] $MutationRequest.environment.entries.$EnvironmentName)
+    [void] $EnvironmentBlockBuilder.Append([char] 0)
+  }
+  [void] $EnvironmentBlockBuilder.Append([char] 0)
+  $EnvironmentHasher = [Security.Cryptography.SHA256]::Create()
+  try {
+    $ExpectedEnvironmentBlockSha256 = ([BitConverter]::ToString(
+      $EnvironmentHasher.ComputeHash(
+        [Text.Encoding]::Unicode.GetBytes($EnvironmentBlockBuilder.ToString())))).
+      Replace("-", "").ToLowerInvariant()
+  } finally {
+    $EnvironmentHasher.Dispose()
+  }
 
   $SupervisorCommand =
-    '$ErrorActionPreference = "Stop"; try { & ' +
+    '$ErrorActionPreference = "Stop"; try { $Expected = ' +
+    (ConvertTo-PowerShellSingleQuotedLiteral $MutationSupervisorSha256) +
+    '; $ScriptPath = ' +
     (ConvertTo-PowerShellSingleQuotedLiteral $MutationSupervisor) +
+    '; $Stream = [IO.File]::Open($ScriptPath, [IO.FileMode]::Open, ' +
+    '[IO.FileAccess]::Read, [IO.FileShare]::Read); try { ' +
+    'if ($Stream.Length -lt 1 -or $Stream.Length -gt 1048576) { ' +
+    'throw "SUPERVISOR_SCRIPT_SIZE_INVALID" }; ' +
+    '$Bytes = [byte[]]::new([int] $Stream.Length); $Offset = 0; ' +
+    'while ($Offset -lt $Bytes.Length) { ' +
+    '$Read = $Stream.Read($Bytes, $Offset, $Bytes.Length - $Offset); ' +
+    'if ($Read -le 0) { throw "SUPERVISOR_SCRIPT_READ_INCOMPLETE" }; $Offset += $Read }; ' +
+    '$Sha = [Security.Cryptography.SHA256]::Create(); try { ' +
+    '$Actual = ([BitConverter]::ToString($Sha.ComputeHash($Bytes))).Replace("-", "").ToLowerInvariant() ' +
+    '} finally { $Sha.Dispose() }; if ($Actual -cne $Expected) { ' +
+    'throw "SUPERVISOR_SCRIPT_HASH_MISMATCH" }; ' +
+    '$Text = [Text.UTF8Encoding]::new($false, $true).GetString($Bytes); ' +
+    'if ($Text.Length -gt 0 -and $Text[0] -eq [char] 0xFEFF) { $Text = $Text.Substring(1) }; ' +
+    '$Block = [ScriptBlock]::Create($Text); & $Block ' +
     ' -RequestPath ' + (ConvertTo-PowerShellSingleQuotedLiteral $RequestPath) +
     ' -TrustedExecutablePath ' + (ConvertTo-PowerShellSingleQuotedLiteral $NodeResolved) +
     ' -TrustedSubjectBoundaryPath ' + (ConvertTo-PowerShellSingleQuotedLiteral $V2) +
     ' -TrustedIoBoundaryPath ' +
     (ConvertTo-PowerShellSingleQuotedLiteral $MutationEvidence) +
+    ' -TrustedSupervisorScriptPath ' +
+    (ConvertTo-PowerShellSingleQuotedLiteral $MutationSupervisor) +
+    ' -TrustedSupervisorScriptSha256 ' +
+    (ConvertTo-PowerShellSingleQuotedLiteral $MutationSupervisorSha256) +
+    ' -TrustedPowerShellPath ' +
+    (ConvertTo-PowerShellSingleQuotedLiteral $PowerShellResolved) +
+    ' -TrustedPowerShellSha256 ' +
+    (ConvertTo-PowerShellSingleQuotedLiteral $PowerShellSha256) +
+    ' -TrustedEnvironmentBlockSha256 ' +
+    (ConvertTo-PowerShellSingleQuotedLiteral $ExpectedEnvironmentBlockSha256) +
     ' -TrustedSelector ' + (ConvertTo-PowerShellSingleQuotedLiteral $MutationSelector) +
-    '; if ($null -eq $LASTEXITCODE) { exit 0 }; exit $LASTEXITCODE } catch { ' +
-    '[Console]::Error.WriteLine($_.Exception.ToString()); exit 1 }'
+    '; if ($null -eq $LASTEXITCODE) { exit 0 }; exit $LASTEXITCODE ' +
+    '} finally { $Stream.Dispose() } } catch { ' +
+    '[Console]::Error.WriteLine("SUPERVISOR_CONTROL_FAILURE"); exit 126 }'
   $SupervisorEncodedCommand = [Convert]::ToBase64String(
     [Text.Encoding]::Unicode.GetBytes($SupervisorCommand))
   $SupervisorStartInfo = [Diagnostics.ProcessStartInfo]::new()
@@ -499,6 +623,11 @@ foreach ($Harness in $MutationHarnesses) {
     $SupervisorEncodedCommand
   $SupervisorStartInfo.WorkingDirectory = $V2
   $SupervisorStartInfo.UseShellExecute = $false
+  $SupervisorStartInfo.EnvironmentVariables.Clear()
+  foreach ($EnvironmentName in $ClosedMutationEnvironmentNames) {
+    $EnvironmentValue = [string] $MutationRequest.environment.entries.$EnvironmentName
+    $SupervisorStartInfo.EnvironmentVariables.Add($EnvironmentName, $EnvironmentValue)
+  }
   $SupervisorStartInfo.CreateNoWindow = $true
   $SupervisorStartInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
   $SupervisorProcess = [Diagnostics.Process]::new()
@@ -532,13 +661,13 @@ foreach ($Harness in $MutationHarnesses) {
       $SupervisorKillAttempted = $true
       try {
         $SupervisorProcess.Kill()
-        $SupervisorKillSucceeded = $true
       } catch {
         $SupervisorKillError =
           $_.Exception.GetType().FullName + ": " + $_.Exception.Message
       }
       $SupervisorExitedAfterKill =
         $SupervisorProcess.WaitForExit($MutationDrainGraceMs)
+      $SupervisorKillSucceeded = $SupervisorExitedAfterKill -eq $true
     }
     if ($SupervisorProcess.HasExited) {
       $SupervisorExit = $SupervisorProcess.ExitCode
@@ -551,7 +680,6 @@ foreach ($Harness in $MutationHarnesses) {
       $SupervisorKillAttempted = $true
       try {
         $SupervisorProcess.Kill()
-        $SupervisorKillSucceeded = $true
       } catch {
         $SupervisorKillError =
           $_.Exception.GetType().FullName + ": " + $_.Exception.Message
@@ -559,6 +687,7 @@ foreach ($Harness in $MutationHarnesses) {
       try {
         $SupervisorExitedAfterKill =
           $SupervisorProcess.WaitForExit($MutationDrainGraceMs)
+        $SupervisorKillSucceeded = $SupervisorExitedAfterKill -eq $true
       } catch {
         $SupervisorControlError +=
           "; cleanup wait: " + $_.Exception.GetType().FullName + ": " + $_.Exception.Message
@@ -669,11 +798,20 @@ foreach ($Harness in $MutationHarnesses) {
     throw ("Mutation supervisor process control failed: " + $Harness + "; " +
       $SupervisorControlError)
   }
+  if ($SupervisorExit -ne 0) {
+    throw ("Mutation supervisor control protocol failed: " + $Harness +
+      " (host exit " + $SupervisorExit + ")")
+  }
   if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
     throw ("Mutation supervisor emitted no receipt: " + $Harness)
   }
-  $Receipt = Read-CanonicalClosedJson `
-    $ReceiptPath $MutationReceiptProperties 5 "mutation supervisor receipt"
+  $ReceiptClosed = Read-CanonicalClosedJson `
+    $ReceiptPath $MutationReceiptProperties 5 "mutation supervisor receipt" $true
+  $Receipt = $ReceiptClosed.value
+  if ($ReceiptClosed.length -lt 1 -or $ReceiptClosed.length -gt 65536 -or
+      $ReceiptClosed.sha256 -notmatch "^[0-9a-f]{64}$") {
+    throw ("Mutation supervisor receipt byte identity is invalid: " + $Harness)
+  }
   Assert-MutationReceiptTypes $Receipt
   $ReceiptStartedUtc = [DateTimeOffset]::MinValue
   $ReceiptEndedUtc = [DateTimeOffset]::MinValue
@@ -692,6 +830,9 @@ foreach ($Harness in $MutationHarnesses) {
     throw ("Mutation supervisor receipt timestamps are incoherent: " + $Harness)
   }
   foreach ($HashValue in @(
+      $Receipt.supervisorScriptSha256, $Receipt.supervisorScriptSha256After,
+      $Receipt.supervisorHostSha256, $Receipt.supervisorHostSha256After,
+      $Receipt.environmentBlockSha256,
       $Receipt.requestSha256, $Receipt.executableSha256, $Receipt.executableSha256After,
       $Receipt.subjectSha256, $Receipt.subjectSha256After, $Receipt.stdoutSha256,
       $Receipt.stdoutSha256After, $Receipt.stderrSha256, $Receipt.stderrSha256After)) {
@@ -711,10 +852,24 @@ foreach ($Harness in $MutationHarnesses) {
   }
   $StdoutSha256 = $StdoutClosed.sha256
   $StderrSha256 = $StderrClosed.sha256
-  if ($Receipt.schema -cne "survey-qa-windows-job-supervisor-receipt/1.0.0" -or
+  if ($Receipt.schema -cne "survey-qa-windows-job-supervisor-receipt/2.0.0" -or
       $Receipt.requestSha256 -cne $RequestSha256 -or
       $RequestSha256After -cne $RequestSha256 -or
       -not $Receipt.requestPinnedThroughRun -or
+      -not $Receipt.receiptOwnedThroughRun -or
+      $Receipt.supervisorScriptPath -cne $MutationSupervisor -or
+      $Receipt.supervisorScriptSha256 -cne $MutationSupervisorSha256 -or
+      $Receipt.supervisorScriptSha256After -cne $MutationSupervisorSha256 -or
+      -not $Receipt.supervisorScriptPinnedThroughRun -or
+      $Receipt.supervisorHostPath -cne $PowerShellResolved -or
+      $Receipt.supervisorHostSha256 -cne $PowerShellSha256 -or
+      $Receipt.supervisorHostSha256After -cne $PowerShellSha256 -or
+      $Receipt.supervisorProcessId -ne $SupervisorPid -or
+      $Receipt.supervisorProcessStartUtc -cne $SupervisorStartTimeUtc -or
+      $Receipt.environmentMode -cne "replace" -or
+      @(Compare-Object @($Receipt.environmentNames) $ClosedMutationEnvironmentNames
+        -SyncWindow 0 -CaseSensitive).Count -ne 0 -or
+      $Receipt.environmentBlockSha256 -cne $ExpectedEnvironmentBlockSha256 -or
       $Receipt.executablePath -cne $NodeResolved -or
       $Receipt.executableSha256 -cne $NodeSha256 -or
       $Receipt.executableSha256After -cne $NodeSha256 -or
@@ -748,10 +903,9 @@ foreach ($Harness in $MutationHarnesses) {
       $Receipt.transcriptLimitExceeded -ne $false -or
       $Receipt.completionIssue -ne $null -or
       $Receipt.containmentScope -cne
-        "win32-job-membership; brokered process creation outside job inheritance is excluded" -or
+        "win32-job-membership and pathname-handle integrity; brokered process creation and same-user PROCESS_DUP_HANDLE/process-memory tampering are excluded" -or
       $Receipt.timedOut -ne $false -or
       $Receipt.exitCode -ne 0 -or
-      $Receipt.exitCode -ne $SupervisorExit -or
       $Receipt.terminationIssued -ne $false -or
       $Receipt.processId -le 0 -or
       $Receipt.durationMs -lt 0 -or
@@ -812,8 +966,9 @@ foreach ($Harness in $MutationHarnesses) {
       throw ("Shared mutation result disagrees with its exact text denominator: " + $Harness)
     }
   }
-  Write-Host ("mutation {0}: exit={1} timeout={2} durationMs={3}" -f
-    $Harness, $Receipt.exitCode, $Receipt.timedOut, $Receipt.durationMs)
+  Write-Host ("mutation {0}: exit={1} timeout={2} durationMs={3} receiptBytes={4} receiptSha256={5}" -f
+    $Harness, $Receipt.exitCode, $Receipt.timedOut, $Receipt.durationMs,
+    $ReceiptClosed.length, $ReceiptClosed.sha256)
 
   if ($SupervisorExit -ne 0) {
     throw ("Mutation gate failed: " + $Harness + " (supervisor exit " + $SupervisorExit + ")")

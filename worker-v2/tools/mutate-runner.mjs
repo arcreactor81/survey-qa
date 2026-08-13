@@ -41,10 +41,12 @@ import {
   closeSync,
   existsSync,
   fstatSync,
+  lstatSync,
   mkdtempSync,
   openSync,
   readSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeSync,
@@ -53,10 +55,38 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  resolvePinnedWindowsPowerShellExecutable,
+} from "./private-local-output.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKER_ROOT = path.resolve(HERE, "..");
 const SUPERVISOR_PATH = path.join(HERE, "windows-job-supervisor.ps1");
+const TRUSTED_SUPERVISOR_SHA256 =
+  hashStableFile(SUPERVISOR_PATH, "trusted supervisor script");
+const MUTATION_ENVIRONMENT_NAMES = Object.freeze([
+  "JOB_SUPERVISOR_FIXTURE_PATH",
+  "JOB_SUPERVISOR_FORBIDDEN_PATH",
+  "JOB_SUPERVISOR_SEVERED_PATH",
+  "JOB_SUPERVISOR_STARTED_PATH",
+  "MUTANT_FILE",
+  "MUTANT_FIND",
+  "MUTANT_REPLACE",
+  "OS",
+  "PATH",
+  "PSMODULEPATH",
+  "SYSTEMDRIVE",
+  "SYSTEMROOT",
+  "TEMP",
+  "TMP",
+  "WINDIR",
+]);
+const ADDITIONAL_MUTATION_ENVIRONMENT_NAMES = Object.freeze([
+  "JOB_SUPERVISOR_FIXTURE_PATH",
+  "JOB_SUPERVISOR_FORBIDDEN_PATH",
+  "JOB_SUPERVISOR_SEVERED_PATH",
+  "JOB_SUPERVISOR_STARTED_PATH",
+]);
 const SUPERVISOR_DRAIN_GRACE_MS = 30_000;
 const SUPERVISOR_STARTUP_GRACE_MS = 120_000;
 const SUPERVISOR_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
@@ -75,6 +105,13 @@ const TEST_ONLY_OUTPUT_FLOOD_SUBJECT = path.join(
   "fixtures",
   "windows-job-output-flood.mjs",
 );
+const TEST_ONLY_ENVIRONMENT_CENSUS_SUBJECT = path.join(
+  WORKER_ROOT,
+  "tools",
+  "tests",
+  "fixtures",
+  "windows-job-environment-census.mjs",
+);
 
 const FAIL_LINE = /^ {2}FAIL {2}(.+)$/gm;
 const SUMMARY = /^(\d+)\/(\d+) passed, (\d+) failed$/gm;
@@ -83,10 +120,15 @@ export const DEFAULT_MUTATION_CHILD_TIMEOUT_MS = 120_000;
 export const MAX_MUTATION_CHILD_TIMEOUT_MS = 600_000;
 export const MUTATION_TRANSCRIPT_LIMIT_BYTES = 67_108_864;
 export const WINDOWS_JOB_CONTAINMENT_SCOPE =
-  "win32-job-membership; brokered process creation outside job inheritance is excluded";
+  "win32-job-membership and pathname-handle integrity; brokered process creation and same-user PROCESS_DUP_HANDLE/process-memory tampering are excluded";
 const SUPERVISOR_RECEIPT_LIMIT_BYTES = 64 * 1024;
 const SUPERVISOR_RECEIPT_PROPERTIES = Object.freeze([
-  "schema", "requestSha256", "requestPinnedThroughRun", "executablePath",
+  "schema", "requestSha256", "requestPinnedThroughRun", "receiptOwnedThroughRun",
+  "supervisorScriptPath",
+  "supervisorScriptSha256", "supervisorScriptSha256After",
+  "supervisorScriptPinnedThroughRun", "supervisorHostPath", "supervisorHostSha256",
+  "supervisorHostSha256After", "supervisorProcessId", "supervisorProcessStartUtc",
+  "environmentMode", "environmentNames", "environmentBlockSha256", "executablePath",
   "executableSha256", "executableSha256After", "subjectPath", "subjectSha256",
   "subjectSha256After", "workingDirectory", "argumentCount", "executableArgumentCount",
   "timeoutMs", "innerTimeoutMs", "drainGraceMs", "transcriptLimitBytes",
@@ -100,19 +142,23 @@ const SUPERVISOR_RECEIPT_PROPERTIES = Object.freeze([
   "stderrSha256After", "attestation",
 ]);
 const SUPERVISOR_RECEIPT_STRING_PROPERTIES = Object.freeze([
-  "schema", "requestSha256", "executablePath", "executableSha256",
+  "schema", "requestSha256", "supervisorScriptPath", "supervisorScriptSha256",
+  "supervisorScriptSha256After", "supervisorHostPath", "supervisorHostSha256",
+  "supervisorHostSha256After", "supervisorProcessStartUtc", "environmentMode",
+  "environmentBlockSha256", "executablePath", "executableSha256",
   "executableSha256After", "subjectPath", "subjectSha256", "subjectSha256After",
   "workingDirectory", "startedUtc", "endedUtc", "containmentScope", "stdoutLog",
   "stderrLog",
 ]);
 const SUPERVISOR_RECEIPT_BOOLEAN_PROPERTIES = Object.freeze([
-  "requestPinnedThroughRun", "transcriptLimitExceeded", "timedOut", "jobAssigned",
+  "requestPinnedThroughRun", "receiptOwnedThroughRun", "supervisorScriptPinnedThroughRun",
+  "transcriptLimitExceeded", "timedOut", "jobAssigned",
   "processResumed", "assignmentBeforeResume", "membershipVerified", "terminationIssued",
   "handlesClosed", "abiValidated", "inputPinsHeldThroughRun", "emptyStdinPipe",
   "outputHashesCapturedBeforeClose",
 ]);
 const SUPERVISOR_RECEIPT_INTEGER_PROPERTIES = Object.freeze([
-  "argumentCount", "executableArgumentCount", "timeoutMs", "drainGraceMs",
+  "supervisorProcessId", "argumentCount", "executableArgumentCount", "timeoutMs", "drainGraceMs",
   "transcriptLimitBytes", "durationMs", "pointerSize",
 ]);
 const SUPERVISOR_RECEIPT_NULLABLE_STRING_PROPERTIES = Object.freeze([
@@ -386,31 +432,87 @@ function boundedSupervisorControlDiagnostic(supervisor) {
     : combined.slice(-SUPERVISOR_ERROR_MESSAGE_LIMIT);
 }
 
-function resolvePowerShellPath() {
+function assertOrdinaryNonReparseFile(filePath, label) {
+  const resolved = path.resolve(filePath);
+  const parsed = path.parse(resolved);
+  let cursor = parsed.root;
+  for (const part of resolved.slice(parsed.root.length).split(/[\\/]+/u).filter(Boolean)) {
+    cursor = path.join(cursor, part);
+    let item;
+    try {
+      item = lstatSync(cursor);
+    } catch {
+      throw mutationError("SUPERVISOR_TRUST_INVALID", `${label} is absent`);
+    }
+    if (item.isSymbolicLink()) {
+      throw mutationError("SUPERVISOR_TRUST_INVALID", `${label} traverses a reparse point`);
+    }
+  }
+  const leaf = lstatSync(resolved);
+  if (!leaf.isFile() || leaf.isSymbolicLink()) {
+    throw mutationError("SUPERVISOR_TRUST_INVALID", `${label} is not an ordinary file`);
+  }
+  let physical;
+  try {
+    physical = realpathSync.native(resolved);
+  } catch {
+    throw mutationError("SUPERVISOR_TRUST_INVALID", `${label} cannot be resolved physically`);
+  }
+  if (path.resolve(physical).toLowerCase() !== resolved.toLowerCase()) {
+    throw mutationError("SUPERVISOR_TRUST_INVALID", `${label} is redirected`);
+  }
+}
+
+function resolveSupervisorTrust() {
   if (process.platform !== "win32") {
     throw mutationError(
       "WINDOWS_JOB_SUPERVISOR_REQUIRED",
       "mutation execution requires Windows Job Objects",
     );
   }
-  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
-  if (typeof systemRoot !== "string" || !path.isAbsolute(systemRoot)) {
-    throw mutationError("SYSTEM_ROOT_INVALID", "SystemRoot is unavailable or not absolute");
+  let descriptor;
+  try {
+    descriptor = resolvePinnedWindowsPowerShellExecutable();
+  } catch (error) {
+    throw mutationError(
+      "SUPERVISOR_TRUST_INVALID",
+      `reviewed PowerShell identity refused: ${error?.code ?? error?.message ?? "unknown"}`,
+    );
   }
-  const candidate = path.join(
-    systemRoot,
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe",
+  const powershellPath = descriptor.executablePath;
+  const powershellSha256 = descriptor.executableSha256;
+  const supervisorPath = SUPERVISOR_PATH;
+  assertOrdinaryNonReparseFile(supervisorPath, "trusted supervisor script");
+  const supervisorSha256 = hashStableFile(supervisorPath, "trusted supervisor script");
+  if (supervisorSha256 !== TRUSTED_SUPERVISOR_SHA256) {
+    throw mutationError(
+      "SUPERVISOR_TRUST_MISMATCH",
+      "supervisor script differs from the identity captured at runner initialization",
+    );
+  }
+  const windowsDirectory = path.resolve(path.dirname(powershellPath), "..", "..", "..");
+  const reconstructed = path.join(
+    windowsDirectory, "System32", "WindowsPowerShell", "v1.0", "powershell.exe",
   );
-  if (!existsSync(candidate)) {
-    throw mutationError("POWERSHELL_NOT_FOUND", `pinned Windows PowerShell is absent: ${candidate}`);
+  if (reconstructed.toLowerCase() !== path.resolve(powershellPath).toLowerCase()) {
+    throw mutationError("SUPERVISOR_TRUST_INVALID", "trusted PowerShell path is noncanonical");
   }
-  return candidate;
+  return Object.freeze({
+    powershellPath,
+    powershellSha256,
+    supervisorPath,
+    supervisorSha256,
+    windowsDirectory,
+  });
 }
 
-function normalizeEnvironmentDelta(mutant, additionalEnvironment) {
+function environmentBlockSha256(entries) {
+  const names = Object.keys(entries).sort();
+  const block = `${names.map((name) => `${name}=${entries[name]}\0`).join("")}\0`;
+  return createHash("sha256").update(Buffer.from(block, "utf16le")).digest("hex");
+}
+
+function normalizeEnvironmentReplacement(mutant, additionalEnvironment, trust, runRoot) {
   if (
     additionalEnvironment === null ||
     typeof additionalEnvironment !== "object" ||
@@ -421,7 +523,7 @@ function normalizeEnvironmentDelta(mutant, additionalEnvironment) {
       "additional mutation environment must be an object",
     );
   }
-  const set = Object.create(null);
+  const values = Object.create(null);
   const seen = new Set();
   const add = (name, value, label) => {
     if (
@@ -442,9 +544,16 @@ function normalizeEnvironmentDelta(mutant, additionalEnvironment) {
       );
     }
     seen.add(folded);
-    set[name] = value;
+    values[folded] = value;
   };
+  const allowedAdditional = new Set(ADDITIONAL_MUTATION_ENVIRONMENT_NAMES);
   for (const [name, value] of Object.entries(additionalEnvironment)) {
+    if (!allowedAdditional.has(name)) {
+      throw mutationError(
+        "MUTATION_ENVIRONMENT_UNTRUSTED",
+        `additional mutation environment name is not allowlisted: ${name}`,
+      );
+    }
     add(name, value, `additionalEnvironment.${name}`);
   }
   if (mutant !== null) {
@@ -455,12 +564,79 @@ function normalizeEnvironmentDelta(mutant, additionalEnvironment) {
     add("MUTANT_FIND", mutant.find, "mutant.find");
     add("MUTANT_REPLACE", mutant.replace, "mutant.replace");
   }
-  const remove = ["MUTANT_FILE", "MUTANT_FIND", "MUTANT_REPLACE"]
-    .filter((name) => !seen.has(name));
-  return { set, remove };
+  const windowsDirectory = trust.windowsDirectory;
+  const platform = {
+    OS: "Windows_NT",
+    PATH: "",
+    PSMODULEPATH: "",
+    SYSTEMDRIVE: path.parse(windowsDirectory).root.replace(/[\\/]$/u, ""),
+    SYSTEMROOT: windowsDirectory,
+    TEMP: runRoot,
+    TMP: runRoot,
+    WINDIR: windowsDirectory,
+  };
+  for (const [name, value] of Object.entries(platform)) add(name, value, `platform.${name}`);
+  const names = Object.keys(values).sort();
+  if (names.some((name) => !MUTATION_ENVIRONMENT_NAMES.includes(name))) {
+    throw mutationError("MUTATION_ENVIRONMENT_UNTRUSTED", "closed environment contains an unknown name");
+  }
+  const entries = Object.fromEntries(names.map((name) => [name, values[name]]));
+  return Object.freeze({
+    mode: "replace",
+    entries: Object.freeze(entries),
+    names: Object.freeze(names),
+    blockSha256: environmentBlockSha256(entries),
+  });
 }
 
-function spawnSupervisor(command, args, watchdogMs) {
+function powerShellSingleQuotedLiteral(value) {
+  if (typeof value !== "string" || value.includes("\0")) {
+    throw mutationError("SUPERVISOR_TRUST_INVALID", "PowerShell bootstrap value is invalid");
+  }
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function supervisorBootstrapCommand(trust, requestPath, runRoot, environmentBlockSha256) {
+  const argumentsByName = {
+    RequestPath: requestPath,
+    TrustedExecutablePath: process.execPath,
+    TrustedSubjectBoundaryPath: WORKER_ROOT,
+    TrustedIoBoundaryPath: runRoot,
+    TrustedSupervisorScriptPath: trust.supervisorPath,
+    TrustedSupervisorScriptSha256: trust.supervisorSha256,
+    TrustedPowerShellPath: trust.powershellPath,
+    TrustedPowerShellSha256: trust.powershellSha256,
+    TrustedEnvironmentBlockSha256: environmentBlockSha256,
+  };
+  const invocation = Object.entries(argumentsByName)
+    .map(([name, value]) => `-${name} ${powerShellSingleQuotedLiteral(value)}`)
+    .join(" ");
+  return [
+    "$ErrorActionPreference='Stop'",
+    "try {",
+    `$expected=${powerShellSingleQuotedLiteral(trust.supervisorSha256)}`,
+    `$scriptPath=${powerShellSingleQuotedLiteral(trust.supervisorPath)}`,
+    "$stream=[IO.File]::Open($scriptPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)",
+    "try {",
+    "if($stream.Length -lt 1 -or $stream.Length -gt 1048576){throw 'SUPERVISOR_SCRIPT_SIZE_INVALID'}",
+    "$bytes=[byte[]]::new([int]$stream.Length)",
+    "$offset=0",
+    "while($offset -lt $bytes.Length){$n=$stream.Read($bytes,$offset,$bytes.Length-$offset);if($n -le 0){throw 'SUPERVISOR_SCRIPT_READ_INCOMPLETE'};$offset+=$n}",
+    "$sha=[Security.Cryptography.SHA256]::Create()",
+    "try{$actual=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}",
+    "if($actual -cne $expected){throw 'SUPERVISOR_SCRIPT_HASH_MISMATCH'}",
+    "$utf8=[Text.UTF8Encoding]::new($false,$true)",
+    "$text=$utf8.GetString($bytes)",
+    "if($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF){$text=$text.Substring(1)}",
+    "$block=[ScriptBlock]::Create($text)",
+    `& $block ${invocation}`,
+    "if($null -eq $LASTEXITCODE){exit 0}else{exit $LASTEXITCODE}",
+    "} finally {$stream.Dispose()}",
+    "} catch {[Console]::Error.WriteLine('SUPERVISOR_CONTROL_FAILURE');exit 126}",
+  ].join(";");
+}
+
+function spawnSupervisor(command, args, watchdogMs, controlEnvironment) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -468,6 +644,7 @@ function spawnSupervisor(command, args, watchdogMs) {
         cwd: WORKER_ROOT,
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
+        env: controlEnvironment,
       });
     } catch (error) {
       resolve({
@@ -482,6 +659,7 @@ function spawnSupervisor(command, args, watchdogMs) {
         killAttempts: 0,
         lastKillReturned: null,
         lastKillError: null,
+        processId: null,
       });
       return;
     }
@@ -497,6 +675,7 @@ function spawnSupervisor(command, args, watchdogMs) {
     let killAttempts = 0;
     let lastKillReturned = null;
     let lastKillError = null;
+    const processId = child.pid;
     let killRetry = null;
     let closeGrace = null;
 
@@ -569,6 +748,7 @@ function spawnSupervisor(command, args, watchdogMs) {
         killAttempts,
         lastKillReturned,
         lastKillError,
+        processId,
       });
     });
   });
@@ -875,6 +1055,17 @@ function assertSupervisorReceiptPrimitiveTypes(receipt) {
       invalid(property, "null or an Int32 JSON integer");
     }
   }
+  if (
+    !Array.isArray(receipt.environmentNames) ||
+    receipt.environmentNames.length < 1 ||
+    receipt.environmentNames.some((name) =>
+      typeof name !== "string" || !/^[A-Z][A-Z0-9_]*$/u.test(name)) ||
+    new Set(receipt.environmentNames).size !== receipt.environmentNames.length ||
+    JSON.stringify(receipt.environmentNames) !==
+      JSON.stringify([...receipt.environmentNames].sort())
+  ) {
+    invalid("environmentNames", "a nonempty sorted unique array of canonical names");
+  }
   if (receipt.attestation !== null &&
       (typeof receipt.attestation !== "object" || Array.isArray(receipt.attestation))) {
     invalid("attestation", "null or a JSON object");
@@ -928,7 +1119,11 @@ function readStrictSupervisorReceipt(filePath) {
         fstatSync(descriptor).size !== initialSize) {
       throw mutationError("SUPERVISOR_RECEIPT_INVALID", "receipt changed during read");
     }
-    return decodeSupervisorReceiptBytes(bytes);
+    return Object.freeze({
+      value: decodeSupervisorReceiptBytes(bytes),
+      bytes: initialSize,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
   } finally {
     closeSync(descriptor);
   }
@@ -938,12 +1133,14 @@ export function validateSupervisorReceiptCoherence(receipt, supervisorStatus, ex
   if (
     receipt === null ||
     typeof receipt !== "object" ||
-    receipt.schema !== "survey-qa-windows-job-supervisor-receipt/1.0.0"
+    receipt.schema !== "survey-qa-windows-job-supervisor-receipt/2.0.0"
   ) {
     throw mutationError("SUPERVISOR_RECEIPT_INVALID", "supervisor receipt schema is invalid");
   }
   const requiredTruth = [
     "requestPinnedThroughRun",
+    "receiptOwnedThroughRun",
+    "supervisorScriptPinnedThroughRun",
     "jobAssigned",
     "processResumed",
     "assignmentBeforeResume",
@@ -965,6 +1162,15 @@ export function validateSupervisorReceiptCoherence(receipt, supervisorStatus, ex
   }
   const exactBindings = [
     ["requestSha256", expected.requestSha256],
+    ["supervisorScriptPath", expected.trust.supervisorPath],
+    ["supervisorScriptSha256", expected.trust.supervisorSha256],
+    ["supervisorScriptSha256After", expected.trust.supervisorSha256],
+    ["supervisorHostPath", expected.trust.powershellPath],
+    ["supervisorHostSha256", expected.trust.powershellSha256],
+    ["supervisorHostSha256After", expected.trust.powershellSha256],
+    ["supervisorProcessId", expected.supervisorProcessId],
+    ["environmentMode", "replace"],
+    ["environmentBlockSha256", expected.environment.blockSha256],
     ["executablePath", process.execPath],
     ["subjectPath", expected.request.subjectPath],
     ["workingDirectory", WORKER_ROOT],
@@ -978,6 +1184,12 @@ export function validateSupervisorReceiptCoherence(receipt, supervisorStatus, ex
   ];
   for (const [property, value] of exactBindings) {
     if (receipt[property] !== value) mismatch(property);
+  }
+  if (
+    JSON.stringify(receipt.environmentNames) !==
+      JSON.stringify(expected.environment.names)
+  ) {
+    mismatch("environmentNames");
   }
   if (receipt.attestation !== null) mismatch("attestation");
   if (receipt.executableSha256 !== expected.executableSha256) mismatch("executableSha256");
@@ -1004,6 +1216,9 @@ export function validateSupervisorReceiptCoherence(receipt, supervisorStatus, ex
     return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1] &&
       hour <= 23 && minute <= 59 && second <= 59;
   };
+  if (!exactUtcTimestamp(receipt.supervisorProcessStartUtc)) {
+    mismatch("supervisorProcessStartUtc");
+  }
   if (!exactUtcTimestamp(receipt.startedUtc)) {
     mismatch("startedUtc");
   }
@@ -1068,10 +1283,47 @@ export function validateSupervisorReceiptCoherence(receipt, supervisorStatus, ex
   if (receipt.timedOut !== false) mismatch("timedOut");
   if (receipt.terminationIssued !== false) mismatch("terminationIssued");
   if (receipt.launchErrorType !== null) mismatch("launchErrorType");
-  if (!Number.isInteger(receipt.exitCode) || supervisorStatus !== receipt.exitCode) {
+  if (!Number.isInteger(receipt.exitCode) || supervisorStatus !== 0) {
     mismatch("exitCode");
   }
   return "completed";
+}
+
+export function projectValidatedSupervisorReceiptEvidence(
+  receipt,
+  receiptClosed,
+  receiptValidated,
+) {
+  if (receiptValidated !== true) return null;
+  return Object.freeze({
+    receiptOwnedThroughRun: receipt.receiptOwnedThroughRun,
+    receiptBytes: receiptClosed.bytes,
+    receiptSha256: receiptClosed.sha256,
+    supervisorScriptSha256: receipt.supervisorScriptSha256,
+    supervisorScriptSha256After: receipt.supervisorScriptSha256After,
+    supervisorScriptPinnedThroughRun: receipt.supervisorScriptPinnedThroughRun,
+    supervisorHostSha256: receipt.supervisorHostSha256,
+    supervisorHostSha256After: receipt.supervisorHostSha256After,
+    supervisorProcessId: receipt.supervisorProcessId,
+    supervisorProcessStartUtc: receipt.supervisorProcessStartUtc,
+    environmentMode: receipt.environmentMode,
+    environmentNames: Object.freeze([...receipt.environmentNames]),
+    environmentBlockSha256: receipt.environmentBlockSha256,
+    transcriptLimitBytes: receipt.transcriptLimitBytes,
+    transcriptLimitExceeded: receipt.transcriptLimitExceeded,
+    completionIssue: receipt.completionIssue,
+    timedOut: receipt.timedOut,
+    terminationIssued: receipt.terminationIssued,
+    finalActiveProcesses: receipt.finalActiveProcesses,
+    handlesClosed: receipt.handlesClosed,
+    outputHashesCapturedBeforeClose: receipt.outputHashesCapturedBeforeClose,
+    stdoutBytes: receipt.stdoutBytes,
+    stderrBytes: receipt.stderrBytes,
+    stdoutSha256: receipt.stdoutSha256,
+    stdoutSha256After: receipt.stdoutSha256After,
+    stderrSha256: receipt.stderrSha256,
+    stderrSha256After: receipt.stderrSha256After,
+  });
 }
 
 /**
@@ -1095,8 +1347,15 @@ export async function runSuite({
       `mutation child timeout must be 1..${MAX_MUTATION_CHILD_TIMEOUT_MS}`,
     );
   }
-  const environment = normalizeEnvironmentDelta(mutant, additionalEnvironment);
+  const trust = resolveSupervisorTrust();
   const runRoot = mkdtempSync(path.join(os.tmpdir(), "survey-qa-mutation-child-"));
+  let environment;
+  try {
+    environment = normalizeEnvironmentReplacement(mutant, additionalEnvironment, trust, runRoot);
+  } catch (error) {
+    rmSync(runRoot, { recursive: true, force: true, maxRetries: 2 });
+    throw error;
+  }
   const stdinPath = _containedNodeSubject === null
     ? path.join(runRoot, "exact-test-names.json")
     : null;
@@ -1107,6 +1366,8 @@ export async function runSuite({
   const testPath = _containedNodeSubject?.subjectPath ?? path.join(HERE, "test.mjs");
   let supervisor = null;
   let receipt = null;
+  let receiptClosed = null;
+  let receiptValidated = false;
   let stdout = "";
   let stderr = "";
   let executionError = null;
@@ -1118,7 +1379,11 @@ export async function runSuite({
     const executableSha256 = trustedNodeExecutableSha256();
     const subjectSha256 = hashStableFile(testPath, "contained subject");
     const request = {
-      schema: "survey-qa-windows-job-supervisor-request/1.0.0",
+      schema: "survey-qa-windows-job-supervisor-request/2.0.0",
+      supervisorScriptPath: trust.supervisorPath,
+      supervisorScriptSha256: trust.supervisorSha256,
+      supervisorHostPath: trust.powershellPath,
+      supervisorHostSha256: trust.powershellSha256,
       executablePath: process.execPath,
       subjectPath: testPath,
       executableArguments: _containedNodeSubject?.executableArguments ?? [],
@@ -1134,33 +1399,35 @@ export async function runSuite({
       innerTimeoutMs: null,
       drainGraceMs: SUPERVISOR_DRAIN_GRACE_MS,
       transcriptLimitBytes: MUTATION_TRANSCRIPT_LIMIT_BYTES,
-      environment,
+      environment: {
+        mode: environment.mode,
+        entries: environment.entries,
+      },
       attestation: null,
     };
     const requestText = JSON.stringify(request);
     const requestSha256 = createHash("sha256").update(requestText, "utf8").digest("hex");
     writeFileSync(requestPath, requestText, { encoding: "utf8", flag: "wx" });
-    const powershell = resolvePowerShellPath();
+    const bootstrap = supervisorBootstrapCommand(
+      trust,
+      requestPath,
+      runRoot,
+      environment.blockSha256,
+    );
+    const encodedBootstrap = Buffer.from(bootstrap, "utf16le").toString("base64");
     supervisor = await spawnSupervisor(
-      powershell,
+      trust.powershellPath,
       [
         "-NoLogo",
         "-NoProfile",
         "-NonInteractive",
         "-ExecutionPolicy",
         "Bypass",
-        "-File",
-        SUPERVISOR_PATH,
-        "-RequestPath",
-        requestPath,
-        "-TrustedExecutablePath",
-        process.execPath,
-        "-TrustedSubjectBoundaryPath",
-        WORKER_ROOT,
-        "-TrustedIoBoundaryPath",
-        runRoot,
+        "-EncodedCommand",
+        encodedBootstrap,
       ],
       timeoutMs + SUPERVISOR_DRAIN_GRACE_MS + SUPERVISOR_STARTUP_GRACE_MS,
+      environment.entries,
     );
 
     if (supervisor.watchdogFired) {
@@ -1176,6 +1443,12 @@ export async function runSuite({
       );
     }
     if (supervisor.error !== null) throw supervisor.error;
+    if (![0, 124, 125].includes(supervisor.status)) {
+      throw mutationError(
+        "SUPERVISOR_CONTROL_FAILURE",
+        `Windows Job supervisor control protocol failed (exit ${String(supervisor.status)})`,
+      );
+    }
     if (!existsSync(receiptPath)) {
       throw mutationError(
         "SUPERVISOR_RECEIPT_MISSING",
@@ -1183,33 +1456,60 @@ export async function runSuite({
           boundedSupervisorControlDiagnostic(supervisor),
       );
     }
-    receipt = readStrictSupervisorReceipt(receiptPath);
+    receiptClosed = readStrictSupervisorReceipt(receiptPath);
+    receipt = receiptClosed.value;
     const receiptState = validateSupervisorReceiptCoherence(
       receipt,
       supervisor.status,
-      { request, requestSha256, executableSha256, subjectSha256 },
+      {
+        request,
+        requestSha256,
+        executableSha256,
+        subjectSha256,
+        trust,
+        environment,
+        supervisorProcessId: supervisor.processId,
+      },
     );
     validateClosedTranscriptMetadata(receipt, stdoutPath, stderrPath);
     if (receiptState === "transcript-limit") {
       hashClosedTranscript(stdoutPath, receipt.stdoutBytes, receipt.stdoutSha256, "stdout");
       hashClosedTranscript(stderrPath, receipt.stderrBytes, receipt.stderrSha256, "stderr");
+    } else {
+      stdout = readClosedTranscript(
+        stdoutPath,
+        receipt.stdoutBytes,
+        receipt.stdoutSha256,
+        "stdout",
+      );
+      stderr = readClosedTranscript(
+        stderrPath,
+        receipt.stderrBytes,
+        receipt.stderrSha256,
+        "stderr",
+      );
+    }
+    const trustAfter = resolveSupervisorTrust();
+    for (const property of [
+      "powershellPath",
+      "powershellSha256",
+      "supervisorPath",
+      "supervisorSha256",
+    ]) {
+      if (trustAfter[property] !== trust[property]) {
+        throw mutationError(
+          "SUPERVISOR_TRUST_MISMATCH",
+          `authenticated supervisor identity changed after close: ${property}`,
+        );
+      }
+    }
+    receiptValidated = true;
+    if (receiptState === "transcript-limit") {
       throw mutationError(
         "TRANSCRIPT_LIMIT_EXCEEDED",
         "contained test process exceeded the combined transcript limit",
       );
     }
-    stdout = readClosedTranscript(
-      stdoutPath,
-      receipt.stdoutBytes,
-      receipt.stdoutSha256,
-      "stdout",
-    );
-    stderr = readClosedTranscript(
-      stderrPath,
-      receipt.stderrBytes,
-      receipt.stderrSha256,
-      "stderr",
-    );
     if (receipt.timedOut) {
       executionError = mutationError("ETIMEDOUT", "contained test process exceeded its timeout");
     }
@@ -1222,22 +1522,11 @@ export async function runSuite({
     if (stderr === "") stderr = readBoundedDiagnosticTranscript(stderrPath);
   }
 
-  const receiptEvidence = receipt === null ? null : Object.freeze({
-    transcriptLimitBytes: receipt.transcriptLimitBytes,
-    transcriptLimitExceeded: receipt.transcriptLimitExceeded,
-    completionIssue: receipt.completionIssue,
-    timedOut: receipt.timedOut,
-    terminationIssued: receipt.terminationIssued,
-    finalActiveProcesses: receipt.finalActiveProcesses,
-    handlesClosed: receipt.handlesClosed,
-    outputHashesCapturedBeforeClose: receipt.outputHashesCapturedBeforeClose,
-    stdoutBytes: receipt.stdoutBytes,
-    stderrBytes: receipt.stderrBytes,
-    stdoutSha256: receipt.stdoutSha256,
-    stdoutSha256After: receipt.stdoutSha256After,
-    stderrSha256: receipt.stderrSha256,
-    stderrSha256After: receipt.stderrSha256After,
-  });
+  const receiptEvidence = projectValidatedSupervisorReceiptEvidence(
+    receipt,
+    receiptClosed,
+    receiptValidated,
+  );
 
   let cleanupError = null;
   try {
@@ -1254,7 +1543,7 @@ export async function runSuite({
     stdout,
     stderr,
     status:
-      executionError === null && receipt !== null && Number.isInteger(receipt.exitCode)
+      executionError === null && receiptValidated && Number.isInteger(receipt.exitCode)
         ? receipt.exitCode
         : null,
     signal: supervisor?.signal ?? null,
@@ -1269,8 +1558,8 @@ export async function runSuite({
     error: executionError,
     timeoutMs,
     supervisorStatus: supervisor?.status ?? null,
-    containmentScope: receipt?.containmentScope ?? null,
-    finalActiveProcesses: receipt?.finalActiveProcesses ?? null,
+    containmentScope: receiptValidated ? receipt.containmentScope : null,
+    finalActiveProcesses: receiptValidated ? receipt.finalActiveProcesses : null,
     receiptEvidence,
   };
 }
@@ -1285,11 +1574,14 @@ export async function runContainedNodeSubject({ subjectPath, arguments: nodeArgu
   const isTestOnlyOutputFlood =
     resolvedSubject.toLowerCase() === TEST_ONLY_OUTPUT_FLOOD_SUBJECT.toLowerCase() &&
     resolvedSubject === TEST_ONLY_OUTPUT_FLOOD_SUBJECT;
+  const isTestOnlyEnvironmentCensus =
+    resolvedSubject.toLowerCase() === TEST_ONLY_ENVIRONMENT_CENSUS_SUBJECT.toLowerCase() &&
+    resolvedSubject === TEST_ONLY_ENVIRONMENT_CENSUS_SUBJECT;
   if ((allowedSubject === undefined || resolvedSubject !== allowedSubject) &&
-      !isTestOnlyOutputFlood) {
+      !isTestOnlyOutputFlood && !isTestOnlyEnvironmentCensus) {
     throw mutationError("CONTAINED_SUBJECT_UNTRUSTED", "contained subject is not allowlisted");
   }
-  const expectedArguments = isTestOnlyOutputFlood
+  const expectedArguments = isTestOnlyOutputFlood || isTestOnlyEnvironmentCensus
     ? [resolvedSubject]
     : ["--test", "--test-reporter=tap", resolvedSubject];
   if (!Array.isArray(nodeArguments) ||
@@ -1302,7 +1594,10 @@ export async function runContainedNodeSubject({ subjectPath, arguments: nodeArgu
     additionalEnvironment: {},
     _containedNodeSubject: {
       subjectPath: resolvedSubject,
-      executableArguments: isTestOnlyOutputFlood ? [] : expectedArguments.slice(0, 2),
+      executableArguments:
+        isTestOnlyOutputFlood || isTestOnlyEnvironmentCensus
+          ? []
+          : expectedArguments.slice(0, 2),
       subjectArguments: [],
     },
   });
@@ -1311,7 +1606,7 @@ export async function runContainedNodeSubject({ subjectPath, arguments: nodeArgu
     Number.isInteger(result.status) &&
     (result.status === 0 || result.status === 1) &&
     result.signal === null &&
-    result.supervisorStatus === result.status &&
+    result.supervisorStatus === 0 &&
     result.finalActiveProcesses === 0;
   return Object.freeze({
     stdout: result.stdout,
