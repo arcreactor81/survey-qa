@@ -20,10 +20,8 @@ await runMutantSuite({
       breaks: "stale success or terminal failure can suppress current pass-A work",
       file: PASS_A,
       find:
-        '    if (parsed["parserVersion"] !== parserVersion || parsed["promptVersion"] !== PROMPT_VERSION_A) {\n' +
-        "      return null;\n" +
-        "    }",
-      replace: "    if (false) {\n      return null;\n    }",
+        '    if (parsed["parserVersion"] !== parserVersion || parsed["promptVersion"] !== PROMPT_VERSION_A) return null;',
+      replace: "    if (false) return null;",
       kills: ["D51-a pass A rejects stale window success and terminal failure artifacts"],
     },
     {
@@ -64,39 +62,16 @@ await runMutantSuite({
         "      providerIndependence?: unknown;\n" +
         "    };\n" +
         '    const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;\n' +
-        "    if (false) return null;",
+        "    parsed.parserVersion = expectedParserVersion; parsed.promptVersion = expectedPrompt;",
       kills: [
-        "D51-d whole-pass A stale payload cannot take early reuse",
+        "D51-d occupied stale whole-pass A is immutable terminal authority",
         "D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and resets attempts",
       ],
     },
-    {
-      name: "consolidation merges stale pass payloads",
-      breaks: "the source ledger can seal a denominator produced under another parser or prompt",
-      file: STAGE,
-      find:
-        "    const parsed = JSON.parse(await obj.text()) as PassResult & {\n" +
-        "      crossRefs?: CrossRef[];\n" +
-        "      parserVersion?: unknown;\n" +
-        "      promptVersion?: unknown;\n" +
-        "      providerPlanIdentity?: unknown;\n" +
-        "      providerRouteIdentity?: unknown;\n" +
-        "      providerIndependence?: unknown;\n" +
-        "    };\n" +
-        '    const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;\n' +
-        "    if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;",
-      replace:
-        "    const parsed = JSON.parse(await obj.text()) as PassResult & {\n" +
-        "      crossRefs?: CrossRef[];\n" +
-        "      parserVersion?: unknown;\n" +
-        "      promptVersion?: unknown;\n" +
-        "      providerPlanIdentity?: unknown;\n" +
-        "      providerRouteIdentity?: unknown;\n" +
-        "      providerIndependence?: unknown;\n" +
-        "    };\n" +
-        '    const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;\n' +
-        "    if (false) return null;",
-      kills: ["D51-e consolidation refuses stale pass A or pass B payloads"],
-    },
+    // `stageConsolidate` now validates each completion through readPassPayload before it
+    // calls the inner readPass decoder. Mutating only readPass's duplicate identity check
+    // is therefore equivalent: the continuation gate has already refused the stale bytes.
+    // The load-bearing whole-pass mutation above launders identity through readPassPayload's
+    // explicit check AND its independent projection equality, and is killed for both A and B.
   ],
 });

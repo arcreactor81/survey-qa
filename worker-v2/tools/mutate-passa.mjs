@@ -545,11 +545,11 @@ await runMutantSuite({
         "CAP_MODEL_CALLS on calls nobody ever made",
       file: STAGE,
       find:
-        "await chargeUsage(env, runId, result.accountingCalls, fence);\n\n" +
-        '  if (result.providerIndependence === "reduced-same-provider-fallback") {',
+        "  // nobody ever made.\r\n" +
+        "  await chargeUsage(env, runId, result.accountingCalls, fence);",
       replace:
-        "await chargeUsage(env, runId, result.calls, fence);\n\n" +
-        '  if (result.providerIndependence === "reduced-same-provider-fallback") {',
+        "  // nobody ever made.\r\n" +
+        "  await chargeUsage(env, runId, result.calls, fence);",
       kills: [HALF_READ],
     },
     {

@@ -763,24 +763,29 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
     const documentSha256 = await m.hash.sha256Hex(documentBytes);
     await env.EVIDENCE.put(documentKey, documentBytes);
     const passAHash = await d51CompletePassA(m, env, runId, documentKey, documentSha256, fence);
-    const staleWhole = {
-      // Discriminating fixture: the exact current Pro-plan identity is held constant, so
-      // only the stale prompt can reject this payload. Provider-plan mismatch refusal is
-      // independently guarded in provider-continuity.test.mjs.
-      parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
-      promptVersion: "v2-extract-pass-b/1.3.0",
-      providerPlanIdentity: m.deepseek.deepseekPassBIdentity(env),
-      pass: "B",
-      provider: "deepseek",
-      model: m.deepseek.deepseekPassBIdentity(env),
-      requirements: [],
-      ambiguities: [],
-      unverifiable: [],
-      dispositions: [],
-      constructs: [],
-      failedUnits: [],
-      calls: [],
-    };
+    const seedProvider = stubProvider();
+    let staleWhole;
+    try {
+      const seeded = await m.extractStage.stagePassBSlice(
+        env,
+        runId,
+        documentKey,
+        "questionnaire.docx",
+        fence,
+        async () => {},
+        {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+        passAHash,
+        documentSha256,
+      );
+      assertEq(seeded.result.state, "evaluated", "the D51 fixture first seals exact current Pass-B authority");
+      staleWhole = await d51Read(env, m.keys.extractionPassKey(runId, "b"));
+    } finally {
+      seedProvider.restore();
+    }
+    // Every completion field and subordinate chunk/sweep artifact is current. Only the
+    // prompt identity is stale, so deleting that one guard cannot hide behind shape validation.
+    staleWhole.promptVersion = "v2-extract-pass-b/1.3.0";
     await d51Put(env, m.keys.extractionPassKey(runId, "b"), staleWhole);
     const provider = stubProvider();
     try {

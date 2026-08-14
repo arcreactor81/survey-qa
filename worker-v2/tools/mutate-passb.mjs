@@ -420,11 +420,11 @@ await runMutantSuite({
         "on calls nobody ever made",
       file: STAGE,
       find:
-        "await chargeUsage(env, runId, result.accountingCalls, fence);\n\n" +
-        "  if (result.slice.terminalFailure || result.failedUnits.length > 0) {",
+        "  // on restart, while accounting-before-step-commit dedupes on restart.\n" +
+        "  await chargeUsage(env, runId, result.accountingCalls, fence);",
       replace:
-        "await chargeUsage(env, runId, result.calls, fence);\n\n" +
-        "  if (result.slice.terminalFailure || result.failedUnits.length > 0) {",
+        "  // on restart, while accounting-before-step-commit dedupes on restart.\n" +
+        "  await chargeUsage(env, runId, result.calls, fence);",
       kills: ["(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the finished one"],
     },
     {

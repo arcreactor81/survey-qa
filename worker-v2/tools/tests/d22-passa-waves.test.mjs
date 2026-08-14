@@ -1072,6 +1072,20 @@ async function d51Read(env, key) {
   return JSON.parse(await obj.text());
 }
 
+async function d51CurrentWindowArtifact(m, document, runId, providerOptions = {}) {
+  const env = sliceEnv({
+    EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2",
+  });
+  const provider = stubProvider(providerOptions);
+  try {
+    await m.passA.runPassA(env, runId, document, "synthetic.docx");
+    return await d51Read(env, d51WindowKey(m, runId));
+  } finally {
+    provider.restore();
+  }
+}
+
 function d51AssertVersions(m, value, promptVersion, label) {
   assertEq(value.parserVersion, m.docxBlocks.DOCX_BLOCKS_VERSION, `${label} parser version`);
   assertEq(value.promptVersion, promptVersion, `${label} prompt version`);
@@ -1086,20 +1100,9 @@ test("D51-a pass A rejects stale window success and terminal failure artifacts",
   {
     const env = sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "999999", EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2" });
     const runId = "run_d51_a_success";
-    await d51Put(env, d51WindowKey(m, runId), {
-      windowId: "A",
-      windowNumber: 1,
-      blockIds: ["b0001"],
-      parserVersion: "stale-parser/0",
-      promptVersion: m.passA.PASS_A_VERSION,
-      providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
-      globalRules: [{ id: "A-STALE" }],
-      crossRefs: [],
-      ambiguities: [],
-      unverifiable: [],
-      usages: [],
-      routeReceipt: { selected: "grok-4.6", trigger: null },
-    });
+    const staleSuccess = await d51CurrentWindowArtifact(m, document, runId);
+    staleSuccess.parserVersion = "stale-parser/0";
+    await d51Put(env, d51WindowKey(m, runId), staleSuccess);
     const canonicalKey = d51WindowKey(m, runId);
     const staleBytes = await env.EVIDENCE.get(canonicalKey).then((object) => object.text());
     const provider = stubProvider();
@@ -1144,19 +1147,14 @@ test("D51-a pass A rejects stale window success and terminal failure artifacts",
   {
     const env = sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "999999", EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2" });
     const runId = "run_d51_a_failure";
-    await d51Put(env, d51WindowKey(m, runId), {
-      windowId: "A",
-      windowNumber: 1,
-      blockIds: ["b0001"],
-      parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
-      promptVersion: "stale-prompt/0",
-      providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
-      status: "failed",
-      attempts: 99,
-      usages: [],
-      fallbackTrigger: null,
-      detail: "the old prompt exhausted its budget",
-    });
+    const staleFailure = await d51CurrentWindowArtifact(
+      m,
+      document,
+      runId,
+      { failUnit: () => true },
+    );
+    staleFailure.promptVersion = "stale-prompt/0";
+    await d51Put(env, d51WindowKey(m, runId), staleFailure);
     const canonicalKey = d51WindowKey(m, runId);
     const staleBytes = await env.EVIDENCE.get(canonicalKey).then((object) => object.text());
     const provider = stubProvider({ failUnit: () => true });
@@ -1214,28 +1212,28 @@ test("D51-d occupied stale whole-pass A is immutable terminal authority", async 
   const documentBytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
   const documentSha256 = await m.hash.sha256Hex(documentBytes);
   await env.EVIDENCE.put(documentKey, documentBytes);
-  const stale = {
-    // Discriminating fixture: every provider-route dimension is current and internally
-    // coherent, so only the stale parser can make this payload ineligible. Provider-route
-    // mismatches retain their own counterweights in provider-continuity.test.mjs.
-    parserVersion: "stale-parser/0",
-    promptVersion: m.passA.PASS_A_VERSION,
-    providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
-    providerIndependence: "independent",
-    pass: "A",
-    provider: "grok",
-    model: "grok-4.6",
-    requirements: [],
-    ambiguities: [],
-    unverifiable: [],
-    dispositions: [],
-    constructs: [],
-    failedUnits: [],
-    calls: [],
-    crossRefs: [],
-    fallbackTriggers: [],
-    routeReceipts: [],
-  };
+  const seedProvider = stubProvider();
+  let stale;
+  try {
+    const seeded = await m.extractStage.stagePassASlice(
+      env,
+      runId,
+      documentKey,
+      "questionnaire.docx",
+      fence,
+      async () => {},
+      {},
+      m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+      documentSha256,
+    );
+    assertEq(seeded.result.state, "evaluated", "the D51 fixture first seals exact current Pass-A authority");
+    stale = await d51Read(env, m.keys.extractionPassKey(runId, "a"));
+  } finally {
+    seedProvider.restore();
+  }
+  // Every completion field and subordinate window/synthesis artifact is current. Only the
+  // parser identity is stale, so deleting that one guard cannot hide behind shape validation.
+  stale.parserVersion = "stale-parser/0";
   await d51Put(env, m.keys.extractionPassKey(runId, "a"), stale);
   const staleBytes = JSON.stringify(stale);
 
