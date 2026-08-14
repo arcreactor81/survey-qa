@@ -16,6 +16,7 @@
 import { assertV2Key } from "../keys";
 import type {
   AccessibilityCapture,
+  PdfCapture,
   ScreenArtifactRef,
   ScreenCaptureEpoch,
   ScreenCaptureFailure,
@@ -23,6 +24,7 @@ import type {
   ScreenCaptureScope,
   ScreenshotCapture,
 } from "../browser/types";
+import { isPdfCaptureFailureKind } from "../browser/types";
 import type { Env } from "../types/env";
 import type { EvidenceCatalogEntry } from "../types/record";
 import { getBoundCatalogEntry, getVerifiedEvidence } from "./evidence";
@@ -1084,25 +1086,87 @@ export function validatePathObservationBytes(bytes: Uint8Array): void {
   parsePathObservation(bytes);
 }
 
+/**
+ * The read-only screen-capture projection that `screens.ts` uses to project epochs.
+ * Named distinctly from the internal `ParsedPathObservation` so the API import is
+ * explicit about which subset it consumes.
+ */
+export interface DecodedPathObservationScreenCaptures {
+  runId: string;
+  pathId: string;
+  attemptId: string;
+  planRevisionId: string;
+  screenCapturesFieldPresent: boolean;
+  screenCaptures: ScreenCaptureEpoch[];
+  walkCaptureFailures: ScreenCaptureFailure[];
+  countIssues: string[];
+}
+
+/**
+ * Strict decode of a PathObservation's screen capture epochs for the screens API.
+ * Returns the same validated parse as `validatePathObservationBytes`, projected into
+ * the shape `screens.ts` consumes.
+ */
+export function decodePathObservationScreenCaptures(bytes: Uint8Array): DecodedPathObservationScreenCaptures {
+  const parsed = parsePathObservation(bytes);
+  return {
+    runId: parsed.runId,
+    pathId: parsed.pathId,
+    attemptId: parsed.attemptId,
+    planRevisionId: parsed.planRevisionId,
+    screenCapturesFieldPresent: parsed.captureFieldPresent,
+    screenCaptures: parsed.epochs,
+    walkCaptureFailures: parsed.walkCaptureFailures,
+    countIssues: parsed.countIssues,
+  };
+}
+
+function validatePdf(value: unknown, path: string, stepIndex: number, slot: string): PdfCapture {
+  const root = plainObject(value, path);
+  const status = oneOf(root.status, ["captured", "failed"] as const, `${path}.status`);
+  if (status === "captured") {
+    exactKeys(root, path, ["status", "ref"]);
+    return { status, ref: validateArtifactRef(root.ref, `${path}.ref`, "rendered-pdf") };
+  }
+  exactKeys(root, path, ["status", "failure"]);
+  const failure = validateFailure(root.failure, `${path}.failure`, stepIndex, slot);
+  if (!isPdfCaptureFailureKind(failure.kind)) {
+    invalid(`${path}.failure.kind`, "must be a PDF capture failure kind");
+  }
+  return { status, failure: failure as ScreenCaptureFailure & { kind: typeof failure.kind } } as PdfCapture;
+}
+
+const EPOCH_V1_KEYS = [
+  "kind",
+  "epochId",
+  "stepIndex",
+  "slot",
+  "scope",
+  "startedAt",
+  "endedAt",
+  "screenReadAt",
+  "screenSignatureHash",
+  "geometry",
+  "screenJson",
+  "screenshot",
+  "accessibility",
+  "captureFailures",
+  "captureFailureCount",
+] as const;
+
+const EPOCH_V1_1_KEYS = [...EPOCH_V1_KEYS, "pdf"] as const;
+
 function parseCaptureEpoch(value: unknown, path: string): { epoch: ScreenCaptureEpoch; countIssues: string[] } {
-  const root = object(value, path, [
-    "kind",
-    "epochId",
-    "stepIndex",
-    "slot",
-    "scope",
-    "startedAt",
-    "endedAt",
-    "screenReadAt",
-    "screenSignatureHash",
-    "geometry",
-    "screenJson",
-    "screenshot",
-    "accessibility",
-    "captureFailures",
-    "captureFailureCount",
-  ]);
-  literal(root.kind, "v2-screen-capture-epoch/1.0.0", `${path}.kind`);
+  // Peek at the kind to decide which key set is valid.
+  const peeked = plainObject(value, path);
+  const kind = oneOf(
+    peeked.kind,
+    ["v2-screen-capture-epoch/1.0.0", "v2-screen-capture-epoch/1.1.0"] as const,
+    `${path}.kind`,
+  );
+  const isV1_1 = kind === "v2-screen-capture-epoch/1.1.0";
+  const allowedKeys = isV1_1 ? [...EPOCH_V1_1_KEYS] : [...EPOCH_V1_KEYS];
+  const root = object(value, path, allowedKeys);
   const epochId = nonempty(root.epochId, `${path}.epochId`, 500);
   const stepIndex = nonnegativeInteger(root.stepIndex, `${path}.stepIndex`, 1_000_000);
   const slot = nonempty(root.slot, `${path}.slot`, 200);
@@ -1132,6 +1196,37 @@ function parseCaptureEpoch(value: unknown, path: string): { epoch: ScreenCapture
       break;
     }
   }
+
+  if (isV1_1) {
+    const pdf = validatePdf(root.pdf, `${path}.pdf`, stepIndex, slot);
+    if (pdf.status === "failed") {
+      if (!captureFailures.some((candidate) => canonicalJson(candidate) === canonicalJson(pdf.failure))) {
+        countIssues.push("captureFailures:missing-modality-failure");
+      }
+    }
+    return {
+      epoch: {
+        kind: "v2-screen-capture-epoch/1.1.0",
+        epochId,
+        stepIndex,
+        slot,
+        scope,
+        startedAt,
+        endedAt,
+        screenReadAt,
+        screenSignatureHash,
+        geometry,
+        screenJson,
+        screenshot,
+        pdf,
+        accessibility,
+        captureFailures,
+        captureFailureCount,
+      },
+      countIssues,
+    };
+  }
+
   return {
     epoch: {
       kind: "v2-screen-capture-epoch/1.0.0",
@@ -1418,7 +1513,11 @@ function validateArtifactRef<K extends ScreenArtifactRef["kind"]>(
     "size",
   ]);
   literal(root.kind, expectedKind, `${path}.kind`);
-  const expectedMedia = expectedKind === "screenshot" ? "image/png" : "application/json";
+  const expectedMedia = expectedKind === "screenshot"
+    ? "image/png"
+    : expectedKind === "rendered-pdf"
+      ? "application/pdf"
+      : "application/json";
   literal(root.mediaType, expectedMedia, `${path}.mediaType`);
   return {
     kind: expectedKind,
@@ -1487,6 +1586,13 @@ const FAILURE_KINDS = [
   "screenshot-capture-failed",
   "screenshot-capture-empty",
   "screenshot-evidence-write-failed",
+  "pdf-api-unavailable",
+  "pdf-capture-timeout",
+  "pdf-capture-failed",
+  "pdf-capture-empty",
+  "pdf-capture-size-limit",
+  "pdf-capture-dimension-limit",
+  "pdf-evidence-write-failed",
   "accessibility-api-unavailable",
   "accessibility-snapshot-failed",
   "accessibility-snapshot-empty",

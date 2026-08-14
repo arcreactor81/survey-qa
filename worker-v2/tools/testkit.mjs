@@ -177,6 +177,7 @@ export async function loadWorker() {
       `export * as apiEvidence from ${p("src/api/evidence.ts")};`,
       `export * as apiReport from ${p("src/api/report.ts")};`,
       `export * as apiRuns from ${p("src/api/runs.ts")};`,
+      `export * as apiScreens from ${p("src/api/screens.ts")};`,
       `export * as router from ${p("src/api/router.ts")};`,
       `export * as expand from ${p("src/extract/expand.ts")};`,
       // THE .DOCX READER ITSELF. It was already inside the bundle's import graph (pass-a and
