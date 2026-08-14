@@ -74,6 +74,11 @@ import {
   PassBOutputInvalid,
 } from "./pass-b-decode";
 import { k } from "../keys";
+import {
+  publicExtractionFailureDetail,
+  sourceContextForUnit,
+  type DocumentReadingUnitStartObserver,
+} from "../observability/document-reading";
 
 export { decodePassBOutput, PASS_B_DECODER_VERSION, PassBOutputInvalid };
 
@@ -178,7 +183,14 @@ export type PassBAuthorityReconstruction =
       /** SHA-256 of body, bound into continuation/consolidation state. */
       hash: string;
     }
-  | { kind: "invalid"; detail: string; accountingCalls: CallUsage[]; slice: PassBSlice };
+  | {
+      kind: "invalid";
+      detail: string;
+      accountingCalls: CallUsage[];
+      slice: PassBSlice;
+      /** Exact durable unit when reconstruction can identify one. */
+      failedUnit: PassResult["failedUnits"][number] | null;
+    };
 
 export const PASS_B_COMPLETION_KEYS = [
   "parserVersion", "promptVersion", "pass", "provider", "model", "providerPlanIdentity",
@@ -243,6 +255,7 @@ export async function runPassB(
   documentName: string,
   onProgress?: (msg: string) => Promise<void>,
   options?: PassBSliceOptions,
+  onUnitStart?: DocumentReadingUnitStartObserver,
 ): Promise<PassBResult> {
   const parserVersion = doc.parserVersion ?? DOCX_BLOCKS_VERSION;
   // Compute once before reading or buying anything. Stored units from another model
@@ -307,6 +320,25 @@ export async function runPassB(
   let landed = 0;
   for (const chunk of chunks) {
     const blockIds = chunk.blocks.map((b) => b.blockId);
+    if (onUnitStart) {
+      await onUnitStart({
+        stage: "secondary-chunks",
+        unit: {
+          kind: "chunk",
+          name: chunk.id,
+          ordinal: chunk.n,
+          total: chunks.length,
+          sourceContext: sourceContextForUnit(doc.blocks, blockIds),
+        },
+        primary: null,
+        secondary: {
+          total: chunks.length,
+          landed,
+          remaining: chunks.length - landed,
+          sweepRemaining: null,
+        },
+      });
+    }
     const includesContext = !blockIds.some((id) => contextIds.has(id)) && contextBlocks.length > 0;
     const existing = await readChunk(
       env, runId, chunk.n, chunk.blocks, evidenceBlocksFor(chunk.blocks, includesContext), parserVersion,
@@ -381,9 +413,14 @@ export async function runPassB(
    * can never become a loop.
    */
   let retriableFailures = 0;
+  // Per invocation/wave only. `finally` empties the set after every unit, so a failed
+  // callback or provider call cannot leak concurrency into a later or resumed wave.
+  const activeChunkReads = new Set<number>();
 
   const runChunk = async (chunk: Chunk): Promise<void> => {
     const blockIds = chunk.blocks.map((b) => b.blockId);
+    activeChunkReads.add(chunk.n);
+    try {
     // The context block is omitted for the chunk that CONTAINS the global instructions:
     // showing a chunk to itself as "do not extract from this" would suppress the very
     // requirements that chunk exists to produce.
@@ -399,6 +436,26 @@ export async function runPassB(
     let purchasedUsages: CallUsage[] = [];
     let rawModelOutput: Record<string, unknown> | null = null;
     try {
+      if (onUnitStart) {
+        await onUnitStart({
+          stage: "secondary-chunks",
+          unit: {
+            kind: "chunk",
+            name: chunk.id,
+            ordinal: chunk.n,
+            total: chunks.length,
+            sourceContext: sourceContextForUnit(doc.blocks, blockIds),
+          },
+          primary: null,
+          secondary: {
+            total: chunks.length,
+            landed,
+            remaining: chunks.length - landed,
+            sweepRemaining: null,
+          },
+          concurrentUnitsInFlight: activeChunkReads.size,
+        });
+      }
       const outcome = await deepseekPassBJson(env, {
         system: SYSTEM_B,
         user: userMessageB(documentName, chunk.id, annotate(chunk.blocks), context, blockIds),
@@ -457,6 +514,11 @@ export async function runPassB(
       if (!(err instanceof PassBOutputInvalid) && !(err instanceof ModelCallError)) throw err;
       const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
       const semanticFailure = err instanceof PassBOutputInvalid;
+      const publicFailureDetail = publicExtractionFailureDetail(
+        semanticFailure
+          ? "extraction-pass-b-semantic-output-invalid"
+          : `extraction-provider-${err instanceof ModelCallError ? err.failureKind : "request-failed"}`,
+      );
       const failureUsages: CallUsage[] = semanticFailure
         ? purchasedUsages.map((usage) => ({ ...usage, status: "parse-failed", detail }))
         : err instanceof ModelCallError
@@ -497,8 +559,11 @@ export async function runPassB(
       if (!terminal) retriableFailures += 1;
       await reportProgress(
         onProgress,
-        `pass B ${chunk.id}: FAILED (attempt ${attempts} of ${maxIssues}) — ${detail.slice(0, 120)}`,
+        `pass B ${chunk.id}: FAILED (attempt ${attempts} of ${maxIssues}) — ${publicFailureDetail}`,
       );
+    }
+    } finally {
+      activeChunkReads.delete(chunk.n);
     }
   };
 
@@ -550,6 +615,25 @@ export async function runPassB(
       const sweepId = `SWEEP${String(i + 1).padStart(2, "0")}`;
       const allowed = new Set(slice.map((b) => b.blockId));
       const sweepEvidenceBlocks = evidenceBlocksFor(slice, contextBlocks.length > 0);
+      if (onUnitStart) {
+        await onUnitStart({
+          stage: "secondary-sweep",
+          unit: {
+            kind: "sweep",
+            name: sweepId,
+            ordinal: i + 1,
+            total: null,
+            sourceContext: sourceContextForUnit(doc.blocks, [...allowed]),
+          },
+          primary: null,
+          secondary: {
+            total: chunks.length,
+            landed: chunks.length,
+            remaining: 0,
+            sweepRemaining: null,
+          },
+        });
+      }
 
       const absorb = (
         sweptReqs: RawRequirement[],
@@ -660,6 +744,11 @@ export async function runPassB(
         if (!(err instanceof PassBOutputInvalid) && !(err instanceof ModelCallError)) throw err;
         const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
         const semanticFailure = err instanceof PassBOutputInvalid;
+        const publicFailureDetail = publicExtractionFailureDetail(
+          semanticFailure
+            ? "extraction-pass-b-semantic-output-invalid"
+            : `extraction-provider-${err instanceof ModelCallError ? err.failureKind : "request-failed"}`,
+        );
         const failureUsages: CallUsage[] = semanticFailure
           ? purchasedUsages.map((usage) => ({ ...usage, status: "parse-failed", detail }))
           : err instanceof ModelCallError
@@ -701,7 +790,7 @@ export async function runPassB(
         if (!terminal) sweepRemaining += 1;
         await reportProgress(
           onProgress,
-          `pass B ${sweepId}: FAILED (attempt ${attempts} of ${maxIssues}) — ${detail.slice(0, 120)}`,
+          `pass B ${sweepId}: FAILED (attempt ${attempts} of ${maxIssues}) — ${publicFailureDetail}`,
         );
         if (terminal) break;
       }
@@ -786,10 +875,14 @@ export async function reconstructPassBCompletedAuthority(
   let expectedSweepCalls = 0;
   let sweepsLanded = 0;
 
-  const invalid = (detail: string): PassBAuthorityReconstruction => ({
+  const invalid = (
+    detail: string,
+    failedUnit: PassResult["failedUnits"][number] | null = null,
+  ): PassBAuthorityReconstruction => ({
     kind: "invalid",
     detail: `PASS_B_COMPLETED_ARTIFACT_INVALID: ${detail}. No unit was re-bought and no completed Pass-B payload is authorized.`,
     accountingCalls,
+    failedUnit,
     slice: {
       done: false,
       chunksTotal: chunks.length,
@@ -809,10 +902,18 @@ export async function reconstructPassBCompletedAuthority(
     const unit = await readChunk(
       env, runId, chunk.n, chunk.blocks, evidenceBlocksFor(chunk.blocks, includesContext), parserVersion,
     );
-    if (unit === null) return invalid(`${chunk.id} is missing or belongs to a stale cache partition`);
+    if (unit === null) {
+      const detail = `${chunk.id} is missing or belongs to a stale cache partition`;
+      return invalid(detail, { unit: chunk.id, blockIds: chunk.blocks.map((block) => block.blockId), detail });
+    }
     accountingCalls.push(...unit.usages);
     chunksLanded += 1;
-    if (unit.kind === "failed") return invalid(`${chunk.id} retains failed authority: ${unit.detail}`);
+    if (unit.kind === "failed") {
+      return invalid(
+        `${chunk.id} retains failed authority: ${unit.detail}`,
+        { unit: chunk.id, blockIds: chunk.blocks.map((block) => block.blockId), detail: unit.detail },
+      );
+    }
     requirements.push(...unit.obligations);
     dispositions.push(...unit.dispositions);
     constructs.push(...unit.constructs);
@@ -846,10 +947,18 @@ export async function reconstructPassBCompletedAuthority(
       env, runId, index, sourceBlocks, evidenceBlocksFor(sourceBlocks, contextBlocks.length > 0),
       parserVersion,
     );
-    if (unit === null) return invalid(`${sweepId} is missing or belongs to a stale cache partition`);
+    if (unit === null) {
+      const detail = `${sweepId} is missing or belongs to a stale cache partition`;
+      return invalid(detail, { unit: sweepId, blockIds: sourceBlocks.map((block) => block.blockId), detail });
+    }
     accountingCalls.push(...unit.usages);
     sweepsLanded += 1;
-    if (unit.kind === "failed") return invalid(`${sweepId} retains failed authority: ${unit.detail}`);
+    if (unit.kind === "failed") {
+      return invalid(
+        `${sweepId} retains failed authority: ${unit.detail}`,
+        { unit: sweepId, blockIds: sourceBlocks.map((block) => block.blockId), detail: unit.detail },
+      );
+    }
     requirements.push(...unit.obligations);
     const owned = new Set(sourceBlocks.map((block) => block.blockId));
     for (let i = dispositions.length - 1; i >= 0; i -= 1) {

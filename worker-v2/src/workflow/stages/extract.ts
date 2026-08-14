@@ -63,6 +63,12 @@ import { CONSTRUCT_CLASSES, type CallUsage, type ParsedDocument, type PassResult
 import { limitationsFromPassAPayload } from "../../../shared/cross-window-limitations.mjs";
 import type { FacetInstance, ScopedRequirement } from "../../types/record";
 import { stageEvaluated, stageNotEvaluated, type GateProof, type StageResult } from "../gates";
+import {
+  publicExtractionFailureDetail,
+  sourceContextForUnit,
+  type DocumentReadingSourceContext,
+  type DocumentReadingUnitStartObserver,
+} from "../../observability/document-reading";
 
 export const mergedKey = (runId: string) => k("runs", runId, "extraction", "merged.json");
 export const previewKey = (runId: string) => k("runs", runId, "extraction", "expansion-preview.json");
@@ -295,6 +301,9 @@ export interface PassASliceOutcome {
   slice: PassASlice;
   /** Stop making waves even when unread windows remain; terminal is not the same as complete. */
   terminal: boolean;
+  /** Exact durable failed unit when the slice retained one; never parsed from prose. */
+  failedUnit?: PassResult["failedUnits"][number] | null;
+  failedUnitSourceContext?: DocumentReadingSourceContext | null;
 }
 
 const PASS_A_COMPLETION_KEYS = [
@@ -387,7 +396,10 @@ async function validatePassBCompletionAuthority(
   }
   const authority = await reconstructPassBCompletedAuthority(env, runId, doc, documentName);
   if (authority.kind !== "ok") {
-    return stageNotEvaluated("PASS_B_COMPLETION_ARTIFACT_INVALID", authority.detail);
+    return stageNotEvaluated(
+      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      publicExtractionFailureDetail("PASS_B_COMPLETION_ARTIFACT_INVALID"),
+    );
   }
   let parsed: Record<string, unknown>;
   try {
@@ -448,6 +460,7 @@ export async function stagePassASlice(
   options: PassASliceOptions,
   documentSemanticsProfile: DocumentSemanticsProfile,
   expectedDocumentSha256: string,
+  onUnitStart?: DocumentReadingUnitStartObserver,
 ): Promise<PassASliceOutcome> {
   const settled = (result: StageResult<PassSummary>): PassASliceOutcome => ({
     result,
@@ -516,9 +529,7 @@ export async function stagePassASlice(
     return {
       result: stageNotEvaluated<PassSummary>(
         "PASS_A_COMPLETION_ARTIFACT_INVALID",
-        authority.kind === "invalid" ? authority.detail :
-          "PASS_A_COMPLETED_ARTIFACT_INVALID: an immutable completion key is present but its bytes do not " +
-            "match current unit authority. No unit was re-bought and no Pass-B purchase was authorized.",
+        publicExtractionFailureDetail("PASS_A_COMPLETION_ARTIFACT_INVALID"),
       ),
       slice,
       terminal: true,
@@ -538,7 +549,7 @@ export async function stagePassASlice(
   const credential = await credentialCheck(env, "grok");
   if (credential) return settled(credential as StageResult<PassSummary>);
 
-  const result = await runPassA(env, runId, doc, documentName, beat, options);
+  const result = await runPassA(env, runId, doc, documentName, beat, options, onUnitStart);
   // THE LEDGER IS CHARGED FOR WHAT THIS WAVE BOUGHT, never for the windows it reclaimed —
   // those carry a telemetry row with cost zeroed so the payload keeps its provenance, and
   // charging them once per wave would walk a large document into CAP_MODEL_CALLS on calls
@@ -573,27 +584,23 @@ export async function stagePassASlice(
       return {
         result: stageNotEvaluated<PassSummary>(
           "PASS_A_SYNTHESIS_FAILURE",
-          `Pass A read all ${result.slice.windowsLanded} of ${result.slice.windowsTotal} primary window(s), ` +
-            `but the separately bounded cross-window reconciliation failed: ${first.detail.slice(0, 600)} ` +
-            `Concatenating window-local outputs cannot prove relationships across their boundaries. ` +
-            `No final Pass-A payload was persisted and no Pass-B purchase was authorized.`,
+          publicExtractionFailureDetail("PASS_A_SYNTHESIS_FAILURE"),
         ),
         slice: result.slice,
         terminal: true,
+        failedUnit: first,
+        failedUnitSourceContext: sourceContextForUnit(doc.blocks, first.blockIds),
       };
     }
-    const failedBlockIds = [...new Set(result.failedUnits.flatMap((unit) => unit.blockIds))];
-    const blockSample = failedBlockIds.slice(0, 5);
     return {
       result: stageNotEvaluated<PassSummary>(
         "PASS_A_WINDOW_FAILURES",
-        `Pass A stopped after a terminal provider/window failure rather than repeating it across later windows. ` +
-          `${result.slice.windowsLanded} of ${result.slice.windowsTotal} window(s) were accounted for and ` +
-          `${result.slice.windowsRemaining} remain unread. Failed block sample: ${blockSample.join(", ") || "none"}. ` +
-          `First failure: ${first.unit} — ${first.detail.slice(0, 400)}. No final Pass-A payload was persisted.`,
+        publicExtractionFailureDetail("PASS_A_WINDOW_FAILURES"),
       ),
       slice: result.slice,
       terminal: true,
+      failedUnit: first,
+      failedUnitSourceContext: sourceContextForUnit(doc.blocks, first.blockIds),
     };
   }
 
@@ -622,23 +629,16 @@ export async function stagePassASlice(
   }
 
   if (result.failedUnits.length > 0) {
-    const first = result.failedUnits[0]!;
-    const failedBlockIds = [...new Set(result.failedUnits.flatMap((unit) => unit.blockIds))];
-    const blockSample = failedBlockIds.slice(0, 5);
-    throw new Error(
-      `PASS_A_WINDOW_FAILURES: extraction pass A could not complete a trustworthy whole-document reading because ` +
-        `${result.failedUnits.length} of ${result.slice.windowsTotal} window(s) failed, covering ` +
-        `${failedBlockIds.length} source block(s). Failed block sample: ${blockSample.join(', ') || 'none'}. ` +
-        `First failure: ${first.unit} — ${first.detail.slice(0, 400)}. The ${result.requirements.length} ` +
-        `requirement(s) returned by successful windows cannot substitute for source blocks that were not read. ` +
-        `No final pass-A payload was persisted or evaluated.`,
-    );
+    throw new Error(publicExtractionFailureDetail("PASS_A_WINDOW_FAILURES"));
   }
 
   const authority = await reconstructPassACompletedAuthority(env, runId, doc, documentName);
   if (authority.kind === "invalid") {
     return {
-      result: stageNotEvaluated<PassSummary>("PASS_A_COMPLETION_ARTIFACT_INVALID", authority.detail),
+      result: stageNotEvaluated<PassSummary>(
+        "PASS_A_COMPLETION_ARTIFACT_INVALID",
+        publicExtractionFailureDetail("PASS_A_COMPLETION_ARTIFACT_INVALID"),
+      ),
       slice: authority.slice,
       terminal: true,
     };
@@ -714,6 +714,9 @@ export async function stagePassB(
 export interface PassBSliceOutcome {
   result: StageResult<PassSummary>;
   slice: PassBSlice;
+  /** Exact durable failed unit when the slice retained one; never parsed from prose. */
+  failedUnit?: PassResult["failedUnits"][number] | null;
+  failedUnitSourceContext?: DocumentReadingSourceContext | null;
 }
 
 /**
@@ -745,6 +748,7 @@ export async function stagePassBSlice(
   documentSemanticsProfile: DocumentSemanticsProfile,
   expectedPassAHash: string,
   expectedDocumentSha256: string,
+  onUnitStart?: DocumentReadingUnitStartObserver,
 ): Promise<PassBSliceOutcome> {
   const settled = (result: StageResult<PassSummary>): PassBSliceOutcome => ({
     result,
@@ -803,9 +807,7 @@ export async function stagePassBSlice(
     return {
       result: stageNotEvaluated(
         "PASS_B_COMPLETION_ARTIFACT_INVALID",
-        authority.kind === "invalid" ? authority.detail :
-          "PASS_B_COMPLETED_ARTIFACT_INVALID: an immutable completion key is present but its bytes do not " +
-            "match current unit authority. No Pass-B unit was re-bought.",
+        publicExtractionFailureDetail("PASS_B_COMPLETION_ARTIFACT_INVALID"),
       ),
       slice: authority.kind === "invalid" ? authority.slice : authority.value.slice,
     };
@@ -814,7 +816,7 @@ export async function stagePassBSlice(
   const credential = await credentialCheck(env, "deepseek");
   if (credential) return settled(credential as StageResult<PassSummary>);
 
-  const result = await runPassB(env, runId, doc, documentName, beat, options);
+  const result = await runPassB(env, runId, doc, documentName, beat, options, onUnitStart);
   // Offer every persisted pass-B receipt to the checkpoint CAS. Stable event ids
   // make this exact across both crash windows: artifact-before-accounting settles
   // on restart, while accounting-before-step-commit dedupes on restart.
@@ -824,10 +826,11 @@ export async function stagePassBSlice(
     return {
       result: stageNotEvaluated<PassSummary>(
         "PASS_B_UNIT_FAILURES",
-        `Pass B retained ${result.failedUnits.length} terminally failed unit(s); no completed pass payload was ` +
-          `written and consolidation is not authorized. ${result.failedUnits[0]?.detail ?? "A required unit failed."}`,
+        publicExtractionFailureDetail("PASS_B_UNIT_FAILURES"),
       ),
       slice: result.slice,
+      failedUnit: result.failedUnits[0] ?? null,
+      failedUnitSourceContext: sourceContextForUnit(doc.blocks, result.failedUnits[0]?.blockIds ?? []),
     };
   }
 
@@ -847,7 +850,10 @@ export async function stagePassBSlice(
   const authority = await reconstructPassBCompletedAuthority(env, runId, doc, documentName);
   if (authority.kind === "invalid") {
     return {
-      result: stageNotEvaluated("PASS_B_COMPLETION_ARTIFACT_INVALID", authority.detail),
+      result: stageNotEvaluated(
+        "PASS_B_COMPLETION_ARTIFACT_INVALID",
+        publicExtractionFailureDetail("PASS_B_COMPLETION_ARTIFACT_INVALID"),
+      ),
       slice: authority.slice,
     };
   }

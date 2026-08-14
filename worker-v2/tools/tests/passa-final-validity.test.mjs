@@ -361,8 +361,13 @@ test("the full Workflow terminalizes a provider-independence refusal without ret
     assertEq(cp.completion.test, "failed", "nothing was exercised, so the test axis fails rather than going partial");
     assertEq(cp.completion.reasonCode, "extraction-pass-a-reduced-provider-independence");
     assert(cp.failure == null, "no retryable exception was recorded");
-    assert(cp.error.includes("REDUCED_PROVIDER_INDEPENDENCE"), "the public detail retains the exact stage reason");
-    assert(cp.error.includes("remain unread"), "the public detail counts coverage deliberately left unread");
+    assertEq(
+      cp.error,
+      "The document read stopped because the required independent extraction routes were not available.",
+      "the public detail names the independence safeguard without copying provider or model output",
+    );
+    assert(!cp.error.includes("REDUCED_PROVIDER_INDEPENDENCE"), "internal stage prose is not public status text");
+    assert(!cp.error.includes("remain unread"), "internal coverage prose is not public status text");
     const extraction = cp.phases.find((phase) => phase.name === "extracting");
     assertEq(extraction?.reasonCode, cp.completion.reasonCode, "phase and run expose one durable reason vocabulary");
     assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "a")), null, "no final Pass-A payload was authorized");
@@ -401,7 +406,12 @@ test("the full Workflow terminalizes strict primary schema failure with zero Pas
     assert(!step.calls.includes("seal-contract-revision"), "invalid Pass A cannot reach seal");
     const cp = (await m.checkpoint.loadCheckpoint(env, ctx.runId)).checkpoint;
     assertEq(cp.completion.reasonCode, "extraction-pass-a-pass-a-window-failures");
-    assert(cp.error.includes("keys are not closed"), cp.error);
+    assertEq(
+      cp.error,
+      "Document reading stopped under the named safeguard extraction-pass-a-pass-a-window-failures.",
+      "strict-schema internals remain retained evidence rather than public status text",
+    );
+    assert(!cp.error.includes("keys are not closed"), "raw schema-decoder detail is not public status text");
     assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "a")), null);
   } finally {
     transport.restore();
@@ -445,7 +455,12 @@ test("the full Workflow terminalizes synthesis wire overflow before purchase and
       "extraction-pass-a-pass-a-synthesis-failure",
       `synthesis overflow reason; detail=${cp.error}`,
     );
-    assert(cp.error.includes("PASS_A_SYNTHESIS_REQUEST_TOO_LARGE"), cp.error);
+    assertEq(
+      cp.error,
+      "Document reading stopped under the named safeguard extraction-pass-a-pass-a-synthesis-failure.",
+      "wire-limit internals remain retained evidence rather than public status text",
+    );
+    assert(!cp.error.includes("PASS_A_SYNTHESIS_REQUEST_TOO_LARGE"), "raw wire-limit detail is not public status text");
     assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "a")), null);
   } finally {
     transport.restore();

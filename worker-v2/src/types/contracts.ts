@@ -16,6 +16,13 @@
  */
 
 import type { RunPolicy } from "./env";
+import {
+  publicExtractionFailureDetail,
+  projectDocumentReadingProgress,
+  selectExtractionFailureReason,
+  withoutDocumentSourceContext,
+  type DocumentReadingProgress,
+} from "../observability/document-reading";
 
 // ---------------------------------------------------------------------------
 // Phases (ui-report-redesign §3.1)
@@ -552,6 +559,12 @@ export interface RunCheckpoint {
    * objects actually in the bucket.
    */
   failure?: RunFailure | null;
+  /**
+   * Optional because checkpoints written before the visibility upgrade do not carry it.
+   * Every read passes through the closed projector; malformed progress becomes a named
+   * unavailable state, never plausible-looking zero progress.
+   */
+  documentReading?: DocumentReadingProgress | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -604,6 +617,8 @@ export interface RunStatusV2 {
    * are fine.
    */
   failure?: RunFailure;
+  /** Durable questionnaire-reading facts. Omitted before extraction has durable facts. */
+  documentReading?: DocumentReadingProgress;
 }
 
 /**
@@ -625,8 +640,31 @@ export function projectStatus(
   const note = typeof heartbeatNote === "string" ? heartbeatNote.trim().slice(0, 200) : "";
   // The cause travels beside the prose, never instead of it. `error` is what a person
   // reads; `failure` is what a client switches on.
-  const failure = projectFailure(cp.failure);
-  const error = cp.error === null || cp.error === undefined ? null : sanitiseErrorText(cp.error, ERROR_TEXT_MAX);
+  const projectedFailure = projectFailure(cp.failure);
+  const internalDocumentReading = projectDocumentReadingProgress(cp.documentReading);
+  const documentReading = internalDocumentReading
+    ? withoutDocumentSourceContext(internalDocumentReading)
+    : null;
+  const readingFailure = documentReading?.failure ?? null;
+  const stoppedExtraction = cp.phases.find(
+    (phase) => phase.name === "extracting" && phase.state === "stopped",
+  );
+  const extractionReason = selectExtractionFailureReason(
+    readingFailure?.reasonCode,
+    cp.completion.reasonCode,
+    cp.failure?.reasonCode,
+    stoppedExtraction?.reasonCode,
+  ) ?? (stoppedExtraction?.reasonCode === "workflow-error" ? "workflow-error" : null);
+  const publicExtractionDetail = extractionReason
+    ? publicExtractionFailureDetail(extractionReason)
+    : null;
+  const failure = projectedFailure && publicExtractionDetail
+    ? { ...projectedFailure, message: publicExtractionDetail }
+    : projectedFailure;
+  const error = publicExtractionDetail
+    ? publicExtractionDetail
+    : cp.error === null || cp.error === undefined ? null : sanitiseErrorText(cp.error, ERROR_TEXT_MAX);
+  const publicNote = publicExtractionDetail && note ? publicExtractionDetail : note;
   return {
     schemaVersion: RUN_STATUS_SCHEMA,
     runId: cp.runId,
@@ -634,13 +672,14 @@ export function projectStatus(
     phases: cp.phases,
     completion: cp.completion,
     heartbeatAt,
-    ...(note ? { heartbeatNote: note } : {}),
+    ...(publicNote ? { heartbeatNote: publicNote } : {}),
     lastProgressAt: cp.lastProgressAt,
     progressRevision: cp.revision,
     reportAvailable: cp.reportAvailable,
     recoveryMode: cp.recovery?.active ?? false,
     error,
     ...(failure ? { failure } : {}),
+    ...(documentReading ? { documentReading } : {}),
   };
 }
 

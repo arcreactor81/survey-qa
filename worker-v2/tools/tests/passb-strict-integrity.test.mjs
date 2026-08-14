@@ -750,7 +750,14 @@ test("a retained Pass-B unit mutation blocks integrated consolidation with zero 
     const outcome = await consolidate(m, bed);
     assertEq(outcome.state, "not-evaluated");
     assertEq(outcome.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
-    assert(outcome.detail.includes("persisted typed arrays do not exactly reconstruct"));
+    assertEq(
+      outcome.detail,
+      "Document reading stopped under the named safeguard PASS_B_COMPLETION_ARTIFACT_INVALID.",
+    );
+    assert(
+      !outcome.detail.includes("persisted typed arrays do not exactly reconstruct"),
+      "the integrated stage result must not expose the retained internal corruption diagnostic",
+    );
     assertEq(bed.provider.requests.length, 0, "authority revalidation never purchases a replacement unit");
     await assertNoConsolidationArtifacts(m, bed);
   } finally {

@@ -1,8 +1,8 @@
 /**
- * RETENTION — 30d raw evidence / 90d reports, as CONFIGURATION.
+ * RETENTION — permanent evidence, reports and run state.
  *
- * Every number here comes from `vars` (RETENTION_RAW_EVIDENCE_DAYS, RETENTION_REPORT_DAYS,
- * RETENTION_CONTRACT_DAYS, RETENTION_MODE) and can be changed without a code edit.
+ * Deployment variables attest the permanent policy as 0/0/0 + `permanent`; any drift
+ * is rejected before the audit lists or mutates storage.
  *
  * WHY THIS IS CODE AND NOT AN R2 LIFECYCLE RULE — this is the constraint that decided
  * the design: R2 lifecycle rules are configured per BUCKET (optionally per prefix, but
@@ -11,34 +11,34 @@
  * its own retention with a prefix-scoped sweep that can only ever see keys under `v2/`,
  * because every key it touches goes through `assertV2Key`.
  *
- * DEFAULT IS DRY RUN (`RETENTION_MODE=report-only`). It writes a report of what it WOULD
- * delete and deletes nothing. Flipping to `delete` is an owner decision, and the report
- * from the preceding days is the evidence for making it.
- *
- * Evidence is CONTENT-ADDRESSED and shared across runs, so age alone is not a licence to
- * delete: a blob is only eligible when no live catalog entry still references it. That
- * check is why `planRetention` reports `skippedStillReferenced` rather than silently
- * treating an old blob as garbage.
+ * The bounded sweep is audit-only. It has no delete call and age never creates an
+ * eligible object. Storage pressure permits compression, never deletion or pruning.
  */
 
 import type { Env } from "../types/env";
-import { num } from "../types/env";
 import { V2_PREFIX, assertV2Key, retentionReportKey } from "../keys";
 
 export interface RetentionPolicy {
   rawEvidenceDays: number;
   reportDays: number;
-  /** 0 means never expire — contract revisions are lineage, not cache. */
   contractDays: number;
-  mode: "report-only" | "delete";
+  mode: "permanent";
 }
 
 export function retentionPolicy(env: Env): RetentionPolicy {
+  if (
+    (env.RETENTION_RAW_EVIDENCE_DAYS ?? "0") !== "0" ||
+    (env.RETENTION_REPORT_DAYS ?? "0") !== "0" ||
+    (env.RETENTION_CONTRACT_DAYS ?? "0") !== "0" ||
+    (env.RETENTION_MODE ?? "permanent") !== "permanent"
+  ) {
+    throw new Error("RETENTION_POLICY_INVALID: permanent retention requires 0/0/0 and mode=permanent");
+  }
   return {
-    rawEvidenceDays: num(env.RETENTION_RAW_EVIDENCE_DAYS, 30),
-    reportDays: num(env.RETENTION_REPORT_DAYS, 90),
-    contractDays: num(env.RETENTION_CONTRACT_DAYS, 0),
-    mode: env.RETENTION_MODE === "delete" ? "delete" : "report-only",
+    rawEvidenceDays: 0,
+    reportDays: 0,
+    contractDays: 0,
+    mode: "permanent",
   };
 }
 
@@ -52,26 +52,20 @@ export function classify(key: string): RetentionClass {
   if (rest.startsWith("reports/")) return "report";
   if (rest.startsWith("contracts/")) return "contract";
   if (rest.startsWith("runs/")) {
-    // Per-run evidence catalogs and captured artifacts age with raw evidence; the
-    // envelope/checkpoint/record are run state and live as long as the report.
+    // Classification remains useful in audit output even though every class is permanent.
     return rest.includes("/evidence/") || rest.includes("/execution/") ? "raw-evidence" : "run-state";
   }
   return "unclassified";
 }
 
 export function retentionDays(policy: RetentionPolicy, cls: RetentionClass): number | null {
-  switch (cls) {
-    case "raw-evidence":
-      return policy.rawEvidenceDays;
-    case "report":
-      return policy.reportDays;
-    case "run-state":
-      return policy.reportDays; // run state must outlive nothing, but must not predecease its report
-    case "contract":
-      return policy.contractDays > 0 ? policy.contractDays : null;
-    case "unclassified":
-      return null;
-  }
+  // Owner policy (14 Aug 2026): every real-link run is permanent, including failed
+  // and partial runs. The configured ages remain visible in the audit report, but age
+  // is never authority to delete any v2 object. Storage pressure permits compression,
+  // never deletion or pruning.
+  void policy;
+  void cls;
+  return null;
 }
 
 export interface RetentionPlan {
@@ -85,10 +79,8 @@ export interface RetentionPlan {
 }
 
 /**
- * Enumerate the v2 namespace and decide what is expired. `referencedHashes` is the set of
- * content hashes still cited by any live catalog entry; callers that cannot compute it
- * pass an empty set, in which case NO raw-evidence blob is ever reported eligible (fail
- * safe: without reference information, deletion cannot be justified).
+ * Enumerate the v2 namespace for a bounded audit. `referencedHashes` remains in the
+ * stable call contract, but permanent policy makes every object ineligible by construction.
  */
 export async function planRetention(
   env: Env,
@@ -132,12 +124,7 @@ export async function planRetention(
     cursor = page.cursor;
   }
 
-  if (policy.mode === "delete") {
-    for (const e of plan.eligible) {
-      await env.EVIDENCE.delete(assertV2Key(e.key));
-      plan.deleted++;
-    }
-  }
+  // There is deliberately no delete path.
   return plan;
 }
 

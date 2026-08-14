@@ -127,10 +127,10 @@
     "CF_AIG_GATEWAY_ID": "survey-qa-arm-cr",
 
     // ---- everything below is IDENTICAL across all four arms, by construction ----
-    "RETENTION_RAW_EVIDENCE_DAYS": "30",
-    "RETENTION_REPORT_DAYS": "90",
+    "RETENTION_RAW_EVIDENCE_DAYS": "0",
+    "RETENTION_REPORT_DAYS": "0",
     "RETENTION_CONTRACT_DAYS": "0",
-    "RETENTION_MODE": "report-only",
+    "RETENTION_MODE": "permanent",
     "RETENTION_SCAN_BUDGET": "500",
 
     "BROWSER_KEEP_ALIVE_MS": "600000",

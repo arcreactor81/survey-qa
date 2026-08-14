@@ -356,7 +356,309 @@ test("primary candidates preserve distinct exact evidence spans across cited blo
   }
 });
 
-test("malformed primary schemas and evidence terminalize without a second purchase", async () => {
+test("an unproven primary target is downgraded to one unresolved question without trusting its statement", async () => {
+  const fixtures = [
+    { name: "inexact target quote", resolvedToBlock: "b0002", targetDocQuote: "not source text" },
+    { name: "absent target quote", resolvedToBlock: "b0002", targetDocQuote: null },
+    { name: "foreign claimed target", resolvedToBlock: "b9999", targetDocQuote: "foreign text" },
+  ];
+  const m = await mod();
+  for (const [index, fixture] of fixtures.entries()) {
+    const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
+    const doc = documentFor();
+    const untrusted = `UNTRUSTED TARGET-DERIVED STATEMENT ${index}`;
+    const provider = installProvider(() => ({
+      value: {
+        ...emptyPrimary(),
+        cross_references: [{
+          id: `UNPROVEN-${index}`,
+          from_block: "b0001",
+          target: "Omega",
+          resolved_to_block: fixture.resolvedToBlock,
+          target_doc_quote: fixture.targetDocQuote,
+          statement: untrusted,
+          doc_quote: TEXT.b0001,
+        }],
+      },
+    }));
+    const runId = `run_primary_target_downgrade_${index}`;
+    try {
+      const done = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+      assertEq(done.slice.done, true, fixture.name);
+      assertEq(done.slice.terminalFailure, false, fixture.name);
+      assertEq(done.failedUnits.length, 0, fixture.name);
+      assertEq(done.requirements.length, 0, "a cross-reference never becomes a requirement");
+      assertEq(done.crossRefs.length, 1, fixture.name);
+      const row = done.crossRefs[0];
+      assertEq(row.resolvedToBlock, null, fixture.name);
+      assertEq(row.targetDocQuote, null, fixture.name);
+      assertEq(row.statement, m.passA.PASS_A_UNPROVEN_TARGET_STATEMENT, fixture.name);
+      assert(row.statement !== untrusted, `${fixture.name}: the target-derived statement survived`);
+      assertEq(row.evidenceQuotes.length, 1, fixture.name);
+      assertEq(row.evidenceQuotes[0].blockId, "b0001", fixture.name);
+      assertEq(row.evidenceQuotes[0].quote, TEXT.b0001, fixture.name);
+
+      const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+      const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
+      assertEq(
+        artifact.modelOutput.cross_references[0].statement,
+        untrusted,
+        "the exact paid answer remains immutable audit authority",
+      );
+      assertEq(artifact.crossRefs[0].resolvedToBlock, null, "the typed projection stores no guessed target");
+      assertEq(artifact.crossRefs[0].statement, m.passA.PASS_A_UNPROVEN_TARGET_STATEMENT);
+
+      const passB = {
+        pass: "B", provider: "fixture-independent", model: "fixture-independent",
+        requirements: [], ambiguities: [], unverifiable: [], constructs: [], failedUnits: [], calls: [],
+        dispositions: doc.blocks.map((block) => ({
+          blockId: block.blockId, disposition: "non-normative", reason: "neutral merge fixture",
+        })),
+      };
+      const merged = await m.merge.mergePasses(done, passB, doc, done.crossRefs);
+      assertEq(merged.requirements.length, 0, "an unresolved xref mints zero sealed requirement authority");
+      assertEq(merged.diff.unresolvedCrossReferences.length, 1, "the withheld resolution is counted");
+      assertEq(merged.diff.unresolvedCrossReferences[0].statement, m.passA.PASS_A_UNPROVEN_TARGET_STATEMENT);
+
+      provider.reset();
+      const reclaimed = await m.passA.runPassA(env, runId, doc, "renamed.docx");
+      assertEq(provider.calls.length, 0, `${fixture.name}: the normalized paid unit is reclaimed`);
+      assertEq(reclaimed.crossRefs[0].resolvedToBlock, null, fixture.name);
+      const reconstructed = await m.passA.reconstructPassACompletedAuthority(env, runId, doc, "renamed.docx");
+      assertEq(reconstructed.kind, "ok", fixture.name);
+      assertEq(reconstructed.value.crossRefs[0].statement, m.passA.PASS_A_UNPROVEN_TARGET_STATEMENT);
+    } finally {
+      provider.restore();
+    }
+  }
+});
+
+test("an unproven target in one primary window does not stop later windows or mint merge authority", async () => {
+  const m = await mod();
+  const doc = documentFor([
+    TEXT.b0001,
+    TEXT.b0002,
+    "Every closing screen displays the approved thank-you text.",
+  ]);
+  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "2" });
+  const runId = "run_primary_target_tail_continues";
+  const provider = installProvider(({ unit }) => {
+    if (unit === "A-w1") {
+      return { value: {
+        ...emptyPrimary(),
+        cross_references: [{
+          id: "UNPROVEN-LOCAL", from_block: "b0001", target: "Omega",
+          resolved_to_block: "b0002", target_doc_quote: "not exact source",
+          statement: "UNTRUSTED CLAIM ABOUT OMEGA", doc_quote: TEXT.b0001,
+        }],
+      } };
+    }
+    if (unit === "A-w2") {
+      return { value: {
+        ...emptyPrimary(),
+        global_rules: [rule("LATER-RULE", "b0003", doc.blocks[2].text)],
+      } };
+    }
+    return { value: emptySynthesis() };
+  });
+  try {
+    const primary = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(primary.slice.terminalFailure, false);
+    assertEq(primary.slice.windowsLanded, 2, "the window after the unproven target still landed");
+    assertEq(primary.slice.windowsRemaining, 0);
+    assertEq(primary.slice.synthesisState, "pending");
+    assertEq(provider.count("A-w1"), 1);
+    assertEq(provider.count("A-w2"), 1);
+
+    const done = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(done.slice.done, true);
+    assertEq(done.failedUnits.length, 0);
+    assertEq(done.requirements.length, 1, "only the independently grounded later rule survives");
+    assertEq(done.requirements[0].origin, "A-w2");
+    assertEq(done.crossRefs.length, 1);
+    assertEq(done.crossRefs[0].resolvedToBlock, null);
+    assertEq(done.crossRefs[0].statement, m.passA.PASS_A_UNPROVEN_TARGET_STATEMENT);
+    assertEq(provider.count("A-synthesis"), 1, "exact synthesis still gets a chance to resolve the question");
+
+    const passB = {
+      pass: "B", provider: "fixture-independent", model: "fixture-independent",
+      requirements: [], ambiguities: [], unverifiable: [], constructs: [], failedUnits: [], calls: [],
+      dispositions: doc.blocks.map((block) => ({
+        blockId: block.blockId, disposition: "non-normative", reason: "neutral merge fixture",
+      })),
+    };
+    const merged = await m.merge.mergePasses(done, passB, doc, done.crossRefs);
+    assertEq(merged.requirements.length, 1, "the unproven target adds no Pass-B or seal authority");
+    assert(
+      merged.requirements.every((row) => row.normativeStatement !== "UNTRUSTED CLAIM ABOUT OMEGA"),
+      "the target-derived statement reached the contract",
+    );
+    assertEq(merged.diff.unresolvedCrossReferences.length, 1, "the unresolved question stays named and counted");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("structured unit-start visibility precedes both a primary purchase and its durable reclaim", async () => {
+  const m = await mod();
+  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
+  const doc = documentFor();
+  const runId = "run_primary_structured_visibility";
+  const events = [];
+  const provider = installProvider(() => {
+    assertEq(events.length, 1, "the current unit is durable before the provider is called");
+    assertEq(events[0].unit.name, "A");
+    return { value: emptyPrimary() };
+  });
+  const observe = async (event) => { events.push(event); };
+  try {
+    const done = await m.passA.runPassA(env, runId, doc, "neutral.docx", undefined, undefined, observe);
+    assertEq(done.slice.done, true);
+    assertEq(events.length, 1);
+    assertEq(events[0].stage, "primary-windows");
+    assertEq(events[0].unit.kind, "window");
+    assertEq(events[0].unit.ordinal, 1);
+    assertEq(events[0].unit.total, 1);
+    assertEq(events[0].unit.sourceContext.authority, "parsed-document-blocks");
+    assertEq(events[0].unit.sourceContext.blockCount, 2);
+    assertEq(events[0].unit.sourceContext.firstBlockId, "b0001");
+    assertEq(events[0].unit.sourceContext.lastBlockId, "b0002");
+    assert(events[0].unit.sourceContext.preview.includes("premium group"));
+    assertEq(events[0].primary.total, 1);
+    assertEq(events[0].primary.landed, 0);
+    assertEq(events[0].primary.remaining, 1);
+    assertEq(events[0].secondary, null);
+
+    events.length = 0;
+    provider.reset();
+    const reclaimed = await m.passA.runPassA(
+      env, runId, doc, "renamed.docx", undefined, undefined, observe,
+    );
+    assertEq(reclaimed.slice.done, true);
+    assertEq(provider.calls.length, 0, "structured visibility does not turn reclaim into a purchase");
+    assertEq(events.length, 1, "the current unit is also visible before a cached artifact read");
+    assertEq(events[0].unit.name, "A");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("a failed structured unit-start write buys no primary model call", async () => {
+  const m = await mod();
+  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
+  const doc = documentFor();
+  const runId = "run_primary_visibility_write_failure";
+  const provider = installProvider(() => ({ value: emptyPrimary() }));
+  let error = null;
+  try {
+    try {
+      await m.passA.runPassA(
+        env, runId, doc, "neutral.docx", undefined, undefined,
+        async () => { throw new Error("checkpoint unavailable"); },
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert(error instanceof Error);
+    assert(error.message.includes("checkpoint unavailable"));
+    assertEq(provider.calls.length, 0, "a visibility failure cannot strand a paid answer");
+    assertEq(env.EVIDENCE._store.size, 0, "no fake extraction artifact is written for a visibility failure");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("structured synthesis visibility names the exact candidate source before purchase and reclaim", async () => {
+  const m = await mod();
+  const env = envFor();
+  const doc = documentFor();
+  const runId = "run_synthesis_structured_visibility";
+  const events = [];
+  const observe = async (event) => { events.push(event); };
+  const provider = installProvider(({ unit }) => {
+    if (unit !== "A-synthesis") return { value: nominatedPrimary(unit) };
+    assertEq(events.at(-1).unit.name, "A-synthesis", "synthesis is visible before its purchase");
+    return { value: emptySynthesis() };
+  });
+  try {
+    const primary = await m.passA.runPassA(
+      env, runId, doc, "neutral.docx", undefined, { budgetMs: 600_000 }, observe,
+    );
+    assertEq(primary.slice.synthesisState, "pending");
+    assertEq(events.at(-1).stage, "cross-window-synthesis");
+    assertEq(events.at(-1).unit.sourceContext.blockCount, 2);
+    assertEq(events.at(-1).unit.sourceContext.firstBlockId, "b0001");
+    assertEq(events.at(-1).unit.sourceContext.lastBlockId, "b0002");
+
+    events.length = 0;
+    const done = await m.passA.runPassA(
+      env, runId, doc, "neutral.docx", undefined, { budgetMs: 600_000 }, observe,
+    );
+    assertEq(done.slice.done, true);
+    assertEq(provider.count("A-synthesis"), 1);
+    assertEq(events.at(-1).unit.name, "A-synthesis");
+
+    events.length = 0;
+    provider.reset();
+    const reclaimed = await m.passA.runPassA(
+      env, runId, doc, "neutral.docx", undefined, { budgetMs: 600_000 }, observe,
+    );
+    assertEq(reclaimed.slice.done, true);
+    assertEq(provider.calls.length, 0, "synthesis visibility precedes a free durable reclaim");
+    assertEq(events.at(-1).unit.name, "A-synthesis");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("completed authority names the exact failed primary unit and unread remainder", async () => {
+  const m = await mod();
+  const texts = Array.from(
+    { length: 11 },
+    (_, index) => `Neutral questionnaire source block ${index + 1}.`,
+  );
+  const doc = documentFor(texts);
+  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1" });
+  const runId = "run_primary_failed_unit_visibility";
+  const provider = installProvider(({ unit }) => {
+    if (unit !== "A-w3") return { value: emptyPrimary() };
+    return {
+      value: {
+        ...emptyPrimary(),
+        cross_references: [{
+          id: "BAD-SOURCE", from_block: "b0003", target: "another rule",
+          resolved_to_block: null, target_doc_quote: null,
+          statement: "The source names another rule.", doc_quote: "not exact source",
+        }],
+      },
+    };
+  });
+  try {
+    const stopped = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(stopped.slice.terminalFailure, true);
+    assertEq(stopped.failedUnits[0].unit, "A-w3");
+    assertEq(stopped.slice.windowsLanded, 3);
+    assertEq(stopped.slice.windowsRemaining, 8);
+
+    provider.reset();
+    const reconstructed = await m.passA.reconstructPassACompletedAuthority(
+      env, runId, doc, "neutral.docx",
+    );
+    assertEq(provider.calls.length, 0, "read-only reconstruction never re-buys the failed unit");
+    assertEq(reconstructed.kind, "invalid");
+    assertEq(reconstructed.failedUnit.unit, "A-w3");
+    assertEq(reconstructed.failedUnit.blockIds.length, 1);
+    assertEq(reconstructed.failedUnit.blockIds[0], "b0003");
+    assert(reconstructed.failedUnit.detail.includes("doc_quote matched 0 eligible source blocks"));
+    assertEq(reconstructed.slice.windowsTotal, 11);
+    assertEq(reconstructed.slice.windowsLanded, 3);
+    assertEq(reconstructed.slice.windowsRemaining, 8);
+  } finally {
+    provider.restore();
+  }
+});
+
+test("malformed primary schemas and source-side evidence terminalize without a second purchase", async () => {
   const cases = [
     {
       name: "missing required root array",
@@ -390,15 +692,30 @@ test("malformed primary schemas and evidence terminalize without a second purcha
       expected: "quote is not exact source text in b0002",
     },
     {
-      name: "resolved target quote is inexact",
+      name: "target quote is present while target block is unresolved",
       output: () => ({
         ...emptyPrimary(),
         cross_references: [{
-          id: "BAD-TARGET", from_block: "b0001", target: "Omega", resolved_to_block: "b0002",
-          target_doc_quote: "not source text", statement: "Claims a local target.", doc_quote: TEXT.b0001,
+          id: "BAD-TARGET-SHAPE", from_block: "b0001", target: "Omega", resolved_to_block: null,
+          target_doc_quote: TEXT.b0002, statement: "Contradictory target fields.", doc_quote: TEXT.b0001,
         }],
       }),
-      expected: "target_doc_quote is absent or not exact text",
+      expected: "target_doc_quote must be null when resolved_to_block is null",
+    },
+    {
+      name: "target quote key is missing entirely",
+      output: () => {
+        const value = {
+          ...emptyPrimary(),
+          cross_references: [{
+            id: "MISSING-TARGET-KEY", from_block: "b0001", target: "Omega", resolved_to_block: "b0002",
+            target_doc_quote: TEXT.b0002, statement: "Missing schema field.", doc_quote: TEXT.b0001,
+          }],
+        };
+        delete value.cross_references[0].target_doc_quote;
+        return value;
+      },
+      expected: "cross-reference keys are not closed",
     },
     {
       name: "none-observable rule has no linked unverifiable row",

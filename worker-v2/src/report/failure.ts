@@ -13,7 +13,6 @@ import type { Env } from "../types/env";
 import {
   CHECKPOINT_KIND,
   COVERAGE_BUCKETS,
-  sanitiseErrorText,
   type ModelCallUsageEvent,
   type RunCheckpoint,
 } from "../types/contracts";
@@ -22,9 +21,15 @@ import { checkpointKey, envelopeKey, k } from "../keys";
 import { loadCheckpoint } from "../store/checkpoint";
 import { sha256Hex } from "../store/hash";
 import { publishReport } from "../store/publish";
+import { resolveDocumentReading } from "../observability/reconstruct-document-reading";
+import {
+  publicExtractionFailureDetail,
+  withoutDocumentSourceContext,
+  type DocumentReadingProgress,
+} from "../observability/document-reading";
 
 export const TERMINAL_FAILURE_REPORT_KIND = "survey-qa-v2-operational-failure-report" as const;
-export const TERMINAL_FAILURE_REPORT_SCHEMA = "v2-operational-failure-report/1.0.0" as const;
+export const TERMINAL_FAILURE_REPORT_SCHEMA = "v2-operational-failure-report/1.2.0" as const;
 
 const MAX_INSPECTED_EXTRACTION_ARTIFACTS = 400;
 const MAX_INSPECTED_EXTRACTION_BYTES = 32 * 1024 * 1024;
@@ -312,6 +317,33 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, "&#39;");
 }
 
+function renderDocumentReading(progress: DocumentReadingProgress | null): string {
+  if (!progress) {
+    return `<h2>Questionnaire reading</h2><p>Durable reading progress is unavailable. This is not zero progress.</p>`;
+  }
+  if (progress.state === "unavailable" || progress.primary.total === null) {
+    return `<h2>Questionnaire reading</h2><p>Durable reading progress is unavailable. This is not zero progress, and no reading denominator is claimed.</p>`;
+  }
+  const primary = progress.primary;
+  const remaining = primary.remaining === null ? "unknown" : String(primary.remaining);
+  const unit = progress.currentUnit ?? progress.lastDurableUnit;
+  const unitLine = unit
+    ? `<dt>${progress.currentUnit ? "Current unit when stopped" : "Last durable unit"}</dt><dd><code>${escapeHtml(unit.name)}</code></dd>`
+    : `<dt>Current or last unit</dt><dd>unavailable</dd>`;
+  const failureLine = progress.failure
+    ? `<dt>Failed unit</dt><dd>${progress.failure.unit ? `<code>${escapeHtml(progress.failure.unit)}</code>` : "not identified"}</dd><dt>Reading stop</dt><dd><code>${escapeHtml(progress.failure.reasonCode)}</code> - ${escapeHtml(progress.failure.detail)}</dd>`
+    : "";
+  const secondaryLine = progress.secondary
+    ? `<dt>Secondary read</dt><dd>${escapeHtml(progress.secondary.landed)} of ${escapeHtml(progress.secondary.total ?? "unknown")} units accounted for; ${escapeHtml(progress.secondary.remaining ?? "unknown")} unread/not covered; ${escapeHtml(progress.secondary.sweepRemaining ?? "unknown")} sweep units remaining.</dd>`
+    : `<dt>Secondary read</dt><dd>not started; 0 survey checks ran and there is no QA result.</dd>`;
+  const usageLine = progress.usage.authority === "checkpoint-usage-ledger"
+    ? `${escapeHtml(progress.usage.modelCalls)} durable model call(s); $${escapeHtml(progress.usage.costUsd)} recorded spend.`
+    : "Durable model-call and spend totals are unavailable; they are not assumed to be zero.";
+  return `<h2>Questionnaire reading</h2>
+<p><strong>${escapeHtml(primary.landed)} of ${escapeHtml(primary.total)}</strong> primary reading windows were accounted for. <strong>${escapeHtml(remaining)}</strong> were unread/not covered.</p>
+<dl><dt>Reading state</dt><dd>${escapeHtml(progress.state)} at ${escapeHtml(progress.stage)}</dd>${unitLine}<dt>Cross-window synthesis</dt><dd>${escapeHtml(primary.synthesisState)}</dd>${secondaryLine}${failureLine}<dt>Last durable reading update</dt><dd>${escapeHtml(progress.updatedAt)}</dd><dt>Safe usage summary</dt><dd>${usageLine}</dd><dt>Retention</dt><dd>Artifacts for this run are permanent, isolated under its dedicated run ID, and may only be compressed.</dd></dl>`;
+}
+
 function renderFailureHtml(view: Record<string, unknown>): string {
   const outcome = view.outcome as Record<string, unknown>;
   const source = view.source as Record<string, unknown>;
@@ -320,6 +352,7 @@ function renderFailureHtml(view: Record<string, unknown>): string {
   const evidence = view.extractionEvidence as Record<string, unknown>;
   const artifacts = evidence.artifacts as InspectedExtractionArtifact[];
   const limitations = view.limitations as Array<Record<string, unknown>>;
+  const documentReading = view.documentReading as DocumentReadingProgress | null;
   const artifactRows = artifacts.slice(0, MAX_RENDERED_EXTRACTION_ARTIFACTS).map((artifact) =>
     `<tr><td><code>${escapeHtml(artifact.key)}</code></td><td>${artifact.bytes}</td><td><code>${escapeHtml(artifact.sha256)}</code></td><td>${artifact.usageEventIds.length}</td></tr>`,
   ).join("");
@@ -332,8 +365,9 @@ function renderFailureHtml(view: Record<string, unknown>): string {
 <style>body{font:16px/1.5 system-ui,sans-serif;max-width:1100px;margin:40px auto;padding:0 20px;color:#18202a}h1{margin-bottom:.25rem}.banner{border-left:6px solid #a33;background:#fff1f0;padding:16px;margin:20px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.card{border:1px solid #d8dde4;border-radius:8px;padding:12px}.value{font-size:1.35rem;font-weight:700}table{border-collapse:collapse;width:100%}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #ddd;padding:8px}code{overflow-wrap:anywhere}dt{font-weight:700}dd{margin:0 0 10px}</style></head>
 <body><main><h1>Run stopped during document extraction</h1><p>Operational failure report · no QA result</p>
 <section class="banner"><strong>No survey correctness claim was produced.</strong><br>The document did not yield a sealed test denominator, so zero survey checks ran and zero QA findings are reported.</section>
-<h2>Why it stopped</h2><dl><dt>Reason code</dt><dd><code>${escapeHtml(outcome.reasonCode)}</code></dd><dt>Detail</dt><dd>${escapeHtml(outcome.detail)}</dd></dl>
-<h2>Coverage actually achieved</h2><div class="grid"><div class="card"><div class="value">0</div>execution cases tested</div><div class="card"><div class="value">unknown</div>execution-case denominator</div><div class="card"><div class="value">0</div>QA findings</div><div class="card"><div class="value">${escapeHtml(evidence.total)}</div>retained extraction artifacts</div></div>
+  <h2>Why it stopped</h2><dl><dt>Reason code</dt><dd><code>${escapeHtml(outcome.reasonCode)}</code></dd><dt>Detail</dt><dd>${escapeHtml(outcome.detail)}</dd></dl>
+  ${renderDocumentReading(documentReading)}
+  <h2>Coverage actually achieved</h2><div class="grid"><div class="card"><div class="value">0</div>execution cases tested</div><div class="card"><div class="value">unknown</div>execution-case denominator</div><div class="card"><div class="value">0</div>QA findings</div><div class="card"><div class="value">${escapeHtml(evidence.total)}</div>retained extraction artifacts</div></div>
 <p>Uncovered execution cases: <strong>unknown</strong>. This is not zero; the contract never sealed, so no honest denominator exists. Source blocks represented by inspected artifacts: ${escapeHtml(coverage.sourceBlocksRepresented)}; total source blocks: unknown.</p>
 <h2>Retained source and usage evidence</h2><dl><dt>Document</dt><dd>${escapeHtml(source.documentName)} · envelope-declared SHA-256 (not recomputed) <code>${escapeHtml(source.documentSha256)}</code> · ${source.documentObjectAuthority === "missing" ? "source object missing from storage (stored byte count unavailable)" : `${escapeHtml(source.storedBytes)} stored bytes reported by R2 HEAD metadata`}</dd><dt>Paid model calls</dt><dd>${escapeHtml(usage.modelCalls)} · ${escapeHtml(usage.inputTokens)} input tokens · ${escapeHtml(usage.outputTokens)} output tokens · $${escapeHtml(usage.costUsd)}</dd><dt>Receipt binding</dt><dd>${escapeHtml(evidence.receiptBinding)}</dd></dl>
 <h2>Named limitations</h2><ul>${limitationRows}</ul>
@@ -408,11 +442,17 @@ export async function buildAndStoreTerminalFailureReport(env: Env, runId: string
   }
 
   const reasonCode = loaded.checkpoint.completion.reasonCode!;
-  const detail = sanitiseErrorText(loaded.checkpoint.error, 2000);
+  const detail = publicExtractionFailureDetail(reasonCode);
   const surveyOrigin = new URL(envelope.input.surveyUrl).origin;
   const receiptBinding = inventory.uninspected > 0
     ? `partial: ${inventory.uninspected} retained artifact(s) were not content-inspected, so full receipt equality is unknown`
     : `complete: ${paidIds.size} checkpoint paid receipt(s) equal ${inventory.usageEventIds.size} extraction receipt(s)`;
+  const resolvedDocumentReading = await resolveDocumentReading(env, runId, loaded.checkpoint);
+  // Operational reports are Access-protected, but document text and block identifiers still
+  // stay off the report wire until that separate disclosure is directly authorized.
+  const documentReading = resolvedDocumentReading.progress
+    ? withoutDocumentSourceContext(resolvedDocumentReading.progress)
+    : null;
   const limitations = [
     { code: "qa-execution-not-started", count: 1, detail: "No execution case was tested; zero QA claims were produced." },
     { code: "contract-denominator-unavailable", count: 1, detail: "Document requirement and execution-case totals are unknown because extraction never sealed a contract." },
@@ -425,6 +465,12 @@ export async function buildAndStoreTerminalFailureReport(env: Env, runId: string
         "Stored bytes are therefore unknown and no source authority, extraction, reuse, merge, seal, or QA coverage was granted.",
     }] : []),
     ...(inventory.uninspected > 0 ? [{ code: "extraction-artifact-content-uninspected", count: inventory.uninspected, detail: "Listed artifacts beyond the bounded content-audit set were counted but not opened or hashed." }] : []),
+    ...(typeof documentReading?.primary.remaining === "number" && documentReading.primary.remaining > 0 ? [{
+      code: "primary-reading-windows-unread",
+      count: documentReading.primary.remaining,
+      detail: "These primary reading windows were not durably accounted for and are explicitly unread/not covered.",
+    }] : []),
+    ...(documentReading?.limitations ?? []),
   ];
   const view: Record<string, unknown> = {
     schemaVersion: TERMINAL_FAILURE_REPORT_SCHEMA,
@@ -458,12 +504,11 @@ export async function buildAndStoreTerminalFailureReport(env: Env, runId: string
       qaClaims: { total: 0 },
     },
     usage: {
+      authority: "validated-checkpoint-usage-ledger",
       modelCalls: usage.modelEvents.length,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       costUsd: usage.costUsd,
-      events: usage.modelEvents,
-      checkpointTotals: loaded.checkpoint.usage,
     },
     extractionEvidence: {
       total: inventory.total,
@@ -473,6 +518,7 @@ export async function buildAndStoreTerminalFailureReport(env: Env, runId: string
       receiptBinding,
       artifacts: inventory.inspected,
     },
+    documentReading,
     limitations,
     qaResults: { currentColumnId: null, hasCurrentResults: false, findings: [], verdicts: [] },
   };

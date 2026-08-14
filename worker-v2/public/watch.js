@@ -106,6 +106,12 @@
       s ? String(s.recoveryMode) : "-",
       s ? String(s.reportAvailable) : "-",
       s ? String(s.error) : "-",
+      // Reading checkpoints can advance independently of the broad run revision. Include
+      // the closed, bounded projection itself so a newly landed/current/stopped unit cannot
+      // be suppressed as an otherwise identical poll. This is parsed JSON, never raw output.
+      s && Object.prototype.hasOwnProperty.call(s, "documentReading")
+        ? "reading:" + JSON.stringify(s.documentReading)
+        : "-",
       // THE RECOVERED CAUSE ARRIVES WITHOUT A NEW REVISION, ON PURPOSE. When a run dies
       // without recording why, the server answers the next poll with a cause it fetched from
       // the engine — but the run is dead and can never advance `progressRevision` again, and

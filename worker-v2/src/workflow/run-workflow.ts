@@ -151,6 +151,16 @@ import {
 import { PROMPT_VERSION_A, PROMPT_VERSION_B } from "../extract/prompts";
 import { docxBlocksVersion } from "../extract/docx-blocks";
 import {
+  publicExtractionFailureDetail,
+  projectDocumentReadingProgress,
+  readingAtUnitStart,
+  readingFromPrimary,
+  readingFromSecondary,
+  stopDocumentReading,
+  withCheckpointUsage,
+  type DocumentReadingUnitStartObserver,
+} from "../observability/document-reading";
+import {
   normalizeDocumentSemanticsProfile,
   type DocumentSemanticsProfile,
 } from "../extract/document-semantics";
@@ -378,8 +388,7 @@ export function extractionPassRefusal(
   if (result.reason === DOCUMENT_SOURCE_AUTHORITY_INVALID) {
     return {
       reasonCode: DOCUMENT_SOURCE_AUTHORITY_INVALID,
-      detail:
-        `extraction pass ${pass.toUpperCase()} refused changed or unbound document bytes: ${result.detail}`,
+      detail: publicExtractionFailureDetail(DOCUMENT_SOURCE_AUTHORITY_INVALID),
     };
   }
   const normalized = result.reason
@@ -387,10 +396,8 @@ export function extractionPassRefusal(
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "not-evaluated";
-  return {
-    reasonCode: `extraction-pass-${pass}-${normalized}`,
-    detail: `extraction pass ${pass.toUpperCase()} did not authorize continuation (${result.reason}): ${result.detail}`,
-  };
+  const reasonCode = `extraction-pass-${pass}-${normalized}`;
+  return { reasonCode, detail: publicExtractionFailureDetail(reasonCode) };
 }
 const NOT_IMPLEMENTED_VERIFICATION = "verification-not-implemented";
 const NOT_IMPLEMENTED_ADJUDICATION = "adjudication-not-implemented";
@@ -599,6 +606,23 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         return f;
       });
       reportingFence = fence;
+
+      // Awaited by the extractors before a unit read/reclaim and again before a provider
+      // purchase. A failed checkpoint write prevents that purchase; paid authority is never
+      // hidden behind heartbeat prose or re-bought because observability failed.
+      const recordDocumentReadingUnitStart: DocumentReadingUnitStartObserver = async (unit) => {
+        const saved = await updateCheckpoint(
+          this.env,
+          runId,
+          (d) => {
+            d.documentReading = readingAtUnitStart(
+              d.documentReading, unit, d.usage, d.observedAt,
+            );
+          },
+          { progressed: true, fence },
+        );
+        if (!saved) throw new Error(`DOCUMENT_READING_CURRENT_UNIT_WRITE_FAILED: no checkpoint for ${runId}`);
+      };
 
       // The Workflow event is transport, never source authority. Bind both the object key and
       // SHA to the durable envelope before reuse, extraction, or a resumed model wave can read
@@ -1131,11 +1155,31 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               { budgetMs: passAWaveBudget },
               documentSemanticsProfile,
               documentInput.documentSha256,
+              recordDocumentReadingUnitStart,
             );
           });
           passA = outcome.result;
           passAUnfinished = outcome.slice.done ? null : outcome.slice;
           passATerminal = outcome.terminal;
+          await step.do(`record-pass-a-wave-${wave}-reading-progress`, async () => {
+            const stopped = outcome.terminal && outcome.result.state === "not-evaluated";
+            const saved = await updateCheckpoint(
+              this.env,
+              runId,
+              (d) => {
+                d.documentReading = withCheckpointUsage(readingFromPrimary(outcome.slice, {
+                  state: stopped ? "stopped" : "reading",
+                  failedUnit: outcome.failedUnit ?? null,
+                  sourceContext: outcome.failedUnitSourceContext ?? null,
+                  reasonCode:
+                    outcome.terminal && outcome.result.state === "not-evaluated" ? outcome.result.reason : null,
+                  updatedAt: d.observedAt,
+                }), d.usage);
+              },
+              { progressed: true, fence },
+            );
+            if (!saved) throw new Error(`DOCUMENT_READING_PROGRESS_WRITE_FAILED: no checkpoint for ${runId}`);
+          });
           if (outcome.terminal || outcome.slice.done) break;
         }
 
@@ -1160,6 +1204,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 d.completion.test = "failed";
                 d.completion.reasonCode = EXTRACTION_PASS_A_WAVES_EXHAUSTED;
                 d.error = passAWavesExhaustedDetail(u, maxPassAWaves);
+                const reading = stopDocumentReading(
+                  d.documentReading, EXTRACTION_PASS_A_WAVES_EXHAUSTED, d.error, d.observedAt,
+                );
+                if (reading) d.documentReading = reading;
               },
               { progressed: true, fence },
             );
@@ -1211,6 +1259,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 d.completion.test = "failed";
                 d.completion.reasonCode = passALimitationCheck.reasonCode;
                 d.error = passALimitationCheck.detail;
+                const reading = stopDocumentReading(
+                  d.documentReading, passALimitationCheck.reasonCode, d.error, d.observedAt,
+                );
+                if (reading) d.documentReading = reading;
               },
               { progressed: true, fence },
             );
@@ -1273,10 +1325,36 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               documentSemanticsProfile,
               evaluatedPassAHash,
               documentInput.documentSha256,
+              recordDocumentReadingUnitStart,
             );
           });
           passB = outcome.result;
           passBUnfinished = outcome.slice.done || outcome.slice.terminalFailure ? null : outcome.slice;
+          await step.do(`record-pass-b-wave-${wave}-reading-progress`, async () => {
+            const stopped = outcome.slice.terminalFailure && outcome.result.state === "not-evaluated";
+            const saved = await updateCheckpoint(
+              this.env,
+              runId,
+              (d) => {
+                const primary = projectDocumentReadingProgress(d.documentReading);
+                if (!primary) {
+                  throw new Error("DOCUMENT_READING_PROGRESS_BASE_MISSING: Pass B has no durable Pass-A progress");
+                }
+                d.documentReading = withCheckpointUsage(readingFromSecondary(primary, outcome.slice, {
+                  state: stopped ? "stopped" : outcome.slice.done ? "complete" : "reading",
+                  failedUnit: outcome.failedUnit ?? null,
+                  sourceContext: outcome.failedUnitSourceContext ?? null,
+                  reasonCode:
+                    outcome.slice.terminalFailure && outcome.result.state === "not-evaluated"
+                      ? outcome.result.reason
+                      : null,
+                  updatedAt: d.observedAt,
+                }), d.usage);
+              },
+              { progressed: true, fence },
+            );
+            if (!saved) throw new Error(`DOCUMENT_READING_PROGRESS_WRITE_FAILED: no checkpoint for ${runId}`);
+          });
           if (outcome.slice.done || outcome.slice.terminalFailure) break;
         }
 
@@ -1304,6 +1382,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                   `call(s). ${u.chunksLanded} chunk(s) landed. Nothing was sealed, because a contract over a ` +
                   `half-read document would claim a denominator the document never approved. Raise ` +
                   `EXTRACT_PASS_B_MAX_WAVES or EXTRACT_WAVE_BUDGET_MS for a document this size.`;
+                const reading = stopDocumentReading(
+                  d.documentReading, EXTRACTION_WAVES_EXHAUSTED, d.error, d.observedAt,
+                );
+                if (reading) d.documentReading = reading;
               },
               { progressed: true, fence },
             );
@@ -2594,8 +2676,9 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
     step: WorkflowStep,
     runId: string,
     fence: Fence,
-    detail: string,
+    _detail: string,
   ): Promise<void> {
+    const publicDetail = publicExtractionFailureDetail(DOCUMENT_SOURCE_AUTHORITY_INVALID);
     await step.do("stop-document-source-authority-invalid", async () => {
       await updateCheckpoint(
         this.env,
@@ -2605,11 +2688,11 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           d.contract.state = "unavailable";
           d.completion.test = "failed";
           d.completion.reasonCode = DOCUMENT_SOURCE_AUTHORITY_INVALID;
-          d.error = detail;
+          d.error = publicDetail;
         },
         { progressed: true, fence },
       );
-      await beat(this.env, runId, detail, "document-source-authority-refused");
+      await beat(this.env, runId, publicDetail, "document-source-authority-refused");
     });
     await this.reportAndFinalize(step, runId, fence);
   }
@@ -2639,6 +2722,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           d.completion.test = "failed";
           d.completion.reasonCode = refusal.reasonCode;
           d.error = refusal.detail;
+          const reading = stopDocumentReading(
+            d.documentReading, refusal.reasonCode, refusal.detail, d.observedAt,
+          );
+          if (reading) d.documentReading = reading;
         },
         { progressed: true, fence },
       );
@@ -2750,7 +2837,18 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             // The in-closure record names the step and carries the untruncated cause; the
             // in-memory `cause` is the same object when the closure ran at all. Never
             // overwrite the better of the two.
-            const failure = d.failure ?? cause;
+            const observedFailure = d.failure ?? cause;
+            const activeReading = projectDocumentReadingProgress(d.documentReading);
+            const extracting = d.phases.find((phase) => phase.name === "extracting");
+            const extractionUnitCrash = activeReading?.state === "reading" &&
+              activeReading.currentUnit !== null && extracting?.state === "active";
+            const failure = extractionUnitCrash
+              ? {
+                  ...observedFailure,
+                  reasonCode: "extraction-unit-crashed",
+                  message: publicExtractionFailureDetail("extraction-unit-crashed"),
+                }
+              : observedFailure;
             d.failure = failure;
             // ONE TRUTH, TWO SPELLINGS. `error` is the sentence a person reads and
             // `failure.message` is the same sentence a client renders; deriving one from
@@ -2802,6 +2900,14 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 ph.reasonCode = ph.reasonCode ?? failure.reasonCode;
               }
             }
+
+            // `onUnitStart` is durable before a provider purchase. If any uncaught failure
+            // happens after that write and before the artifact lands, the status page must
+            // stop the exact in-flight unit instead of claiming it is still being read.
+            const reading = stopDocumentReading(
+              d.documentReading, failure.reasonCode, failure.message, d.observedAt,
+            );
+            if (reading) d.documentReading = withCheckpointUsage(reading, d.usage);
           },
           { progressed: true },
         );

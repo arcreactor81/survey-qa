@@ -41,7 +41,9 @@ const HALF_READ = "(a) the STAGE refuses to evaluate an unfinished pass A, and e
 const BLOCK_LIMIT = "dense pass-A windows stop at the exact block limit while the character limit stays independent";
 const FAILURE_REPORTS = "an UNCAUGHT step failure still produces a report — the failure path used to produce none";
 
-const STRICT_PRIMARY = "malformed primary schemas and evidence terminalize without a second purchase";
+const STRICT_PRIMARY = "malformed primary schemas and source-side evidence terminalize without a second purchase";
+const UNPROVEN_TARGET =
+  "an unproven primary target is downgraded to one unresolved question without trusting its statement";
 const RAW_PRIMARY = "retained primary typed projection is re-decoded from raw output and cannot be laundered";
 const PRIMARY_LAUNDER = "primary paid success cannot be relabeled as retryable semantic failure";
 const SYNTHESIS_INVALID = "malformed or ungrounded synthesis rows terminalize and are never re-bought";
@@ -189,7 +191,17 @@ await runMutantSuite({
       file: PASS_A,
       find: "if (targetQuote.length === 0 || !exactTarget.text.includes(targetQuote)) {",
       replace: "if (targetQuote.length === 0) {",
-      kills: [STRICT_PRIMARY],
+      kills: [UNPROVEN_TARGET],
+    },
+    {
+      name: "an unproven target keeps the model's target-derived statement",
+      breaks:
+        "a resolution whose target evidence failed is labelled with the very target-derived claim " +
+        "that the grounding check refused, laundering an unproved claim into the unresolved register",
+      file: PASS_A,
+      find: "statement: PASS_A_UNPROVEN_TARGET_STATEMENT,",
+      replace: "statement: row.statement,",
+      kills: [UNPROVEN_TARGET],
     },
     {
       name: "a failed primary artifact may retain an ok provider receipt",

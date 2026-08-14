@@ -85,6 +85,8 @@ const FILES = [
   // Terminal extraction refusals report durable operational evidence without inventing QA claims.
   // Malformed or missing receipts must leave no report pointer.
   "./tests/terminal-failure-report.test.mjs",
+  // Real-link artifacts are permanent even under the former delete/age variables.
+  "./tests/permanent-run-retention.test.mjs",
   // D23 — the verifier's structural floor may DEMOTE, but it may not author a VERDICT out of
   // the producer's own `error`/`contradiction` payload keys. Dormant until model-observations
   // land, at which point every failed model call would have become a defect claim about the
@@ -135,6 +137,9 @@ const FILES = [
   // The second test is the guard in the other direction: absent → the field is OMITTED, so a
   // run without a note is byte-identical to the shape that shipped before it existed.
   "./tests/heartbeat-note.test.mjs",
+  // Durable, closed, privacy-safe questionnaire-reading visibility. Counterexamples
+  // deliberately corrupt reconciled counts and add an undeclared field.
+  "./tests/document-reading-visibility.test.mjs",
   // D29 — the last two ways a confident defect could be reported about a HEALTHY survey: a
   // lost advance-timeout race read as a rejection (four states, delta witness, control
   // attribution, keyed on `advanced` and not on `blocked`), and a prose back-reference read as

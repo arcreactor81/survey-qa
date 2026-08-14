@@ -25,7 +25,9 @@ import { CONSTRUCT_CLASSES } from "./types";
 // synthesis provenance/required-field contract around exact nominated quote spans.
 // 1.6.0 makes all primary arrays/rows closed and fail-loud; no malformed candidate can be
 // silently filtered/defaulted into a shorter completed denominator.
-export const PROMPT_VERSION_A = "v2-extract-pass-a/1.6.0";
+// 1.7.0 requires exact target-side evidence for a claimed local cross-reference resolution;
+// without it, the reader must leave the reference unresolved rather than guess.
+export const PROMPT_VERSION_A = "v2-extract-pass-a/1.7.0";
 // v2-extract-pass-b/1.2.0 — This constant is also the version gate
 // on every persisted pass-B artifact (chunks, sweeps, the whole-pass payload), so it covers
 // what pass B COMPUTES from a parse, not just the words it sends: 1.2.0 restricts the
@@ -175,7 +177,9 @@ For every global rule, ambiguity, and unverifiable row, evidence_quotes must con
 one exact source span for every block_id (same set, no duplicates), and doc_quote must equal
 one of those spans. If browser_observable is "none", emit a matching unverifiable row with
 the same doc_quote and at least one shared block_id. A resolved cross-reference must provide
-target_doc_quote from resolved_to_block; both fields must be null when unresolved.`;
+target_doc_quote copied character-for-character from resolved_to_block. Never guess or
+paraphrase that target quote: if you cannot copy an exact target span, set BOTH
+resolved_to_block and target_doc_quote to null so the reference is reported unresolved.`;
 
 /**
  * Reconcile independently read windows without pretending their concatenation was already

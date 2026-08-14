@@ -93,7 +93,7 @@ const CONSTRUCTS = [
  * accounting, the coercion layer) is the real code. The testkit only stubs platform modules;
  * this is the established place to cut.
  */
-function stubProvider({ failUnit = () => false, citeBlocks = true, validEmpty = false } = {}) {
+function stubProvider({ failUnit = () => false, failBody = "upstream exploded", citeBlocks = true, validEmpty = false } = {}) {
   const original = globalThis.fetch;
   const requests = [];
   globalThis.fetch = async (url, init) => {
@@ -110,7 +110,7 @@ function stubProvider({ failUnit = () => false, citeBlocks = true, validEmpty = 
     requests.push({ url: String(url), unit, blockIds });
 
     if (failUnit(unit, requests.length)) {
-      return new Response("upstream exploded", { status: 502 });
+      return new Response(failBody, { status: 502 });
     }
 
     if (unit === "PASS-A") {
@@ -303,6 +303,210 @@ test("a generous budget still does the whole fan-out in ONE wave — slicing is 
     });
     assertEq(out.slice.done, true, "a wave with real budget finishes the document");
     assertEq(out.slice.chunksIssued, 6, "all six chunks bought inside one wave");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("structured current-unit visibility is awaited before a Pass-B purchase", async () => {
+  const m = await mod();
+  const doc = docFor(1);
+
+  const successEnv = sliceEnv();
+  const successProvider = stubProvider();
+  const events = [];
+  try {
+    const result = await m.passB.runPassB(
+      successEnv, "run_d21_visible_before_purchase", doc, "synthetic.docx", undefined,
+      { budgetMs: 600_000 },
+      async (event) => {
+        assertEq(successProvider.requests.length, 0, "the observer must finish before the provider is called");
+        events.push(structuredClone(event));
+      },
+    );
+    assertEq(result.slice.done, true);
+    assert(events.length >= 2, "the read boundary and purchase boundary both stay visible");
+    assertEq(events.at(-1).stage, "secondary-chunks");
+    assertEq(events.at(-1).unit.name, "C01-b0001");
+    assertEq(events.at(-1).unit.sourceContext.firstBlockId, "b0001");
+    assert(events.at(-1).unit.sourceContext.preview.includes("Ask the respondent"));
+  } finally {
+    successProvider.restore();
+  }
+
+  const refusedEnv = sliceEnv();
+  const refusedProvider = stubProvider();
+  try {
+    await assertThrows(
+      () => m.passB.runPassB(
+        refusedEnv, "run_d21_visibility_refused", doc, "synthetic.docx", undefined,
+        { budgetMs: 600_000 },
+        async () => { throw new Error("visibility checkpoint unavailable"); },
+      ),
+      "visibility checkpoint unavailable",
+    );
+    assertEq(refusedProvider.requests.length, 0, "a failed pre-purchase visibility write must buy nothing");
+    const listed = await refusedEnv.EVIDENCE.list({
+      prefix: "v2/runs/run_d21_visibility_refused/extraction/pass-b/",
+    });
+    assertEq(listed.objects.length, 0, "a failed visibility callback may author no paid-unit artifact");
+  } finally {
+    refusedProvider.restore();
+  }
+});
+
+test("Pass-B heartbeat hides a raw provider response from the real status poll", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_MAX_ATTEMPTS: "1", EXTRACT_CHUNK_MAX_ISSUES: "1" });
+  const runId = m.ids.mintRunId();
+  await m.checkpoint.createCheckpoint(env, m.checkpoint.initialCheckpoint(env, runId, "standard", false));
+  await m.checkpoint.updateCheckpoint(env, runId, (draft) => {
+    m.checkpoint.setPhase(draft, "extracting", "active");
+  }, { progressed: true });
+  const sentinel = "RAW_PROVIDER_HEARTBEAT_SENTINEL_DO_NOT_EXPOSE";
+  const provider = stubProvider({ failUnit: () => true, failBody: sentinel });
+  try {
+    const result = await m.passB.runPassB(
+      env,
+      runId,
+      docFor(1),
+      "synthetic.docx",
+      async (message) => m.checkpoint.beat(env, runId, message, "extract-b"),
+      { budgetMs: 600_000 },
+    );
+    assertEq(result.slice.terminalFailure, true, "the fixture must cross the real provider-failure branch");
+    const response = await m.apiRuns.getStatus(
+      new Request(`https://fixture.invalid/api/v2/runs/${runId}/status`),
+      env,
+      runId,
+    );
+    const text = await response.text();
+    assert(!text.includes(sentinel), "raw provider response text must not cross heartbeatNote/status");
+    const status = JSON.parse(text);
+    assert(status.heartbeatNote.includes(
+      "A provider request for a document-reading unit did not complete successfully.",
+    ));
+  } finally {
+    provider.restore();
+  }
+});
+
+test("terminal Pass-B refusal keeps raw provider evidence internal across status, report-data and HTML", async () => {
+  const m = await mod();
+  const env = sliceEnv({
+    EXTRACT_MAX_ATTEMPTS: "1",
+    EXTRACT_CHUNK_MAX_ISSUES: "1",
+    EXTRACT_CHUNK_MAX_BLOCKS: "999999",
+    EXTRACT_CHUNK_CHARS: "999999",
+    EXTRACT_SWEEP_MAX_CALLS: "0",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999",
+    EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+  });
+  const runId = m.ids.mintRunId();
+  await m.checkpoint.createCheckpoint(env, m.checkpoint.initialCheckpoint(env, runId, "standard", false));
+  const fence = await m.checkpoint.claimOwnership(env, runId, runId, 0);
+  const { readFileSync } = await import("node:fs");
+  const path = await import("node:path");
+  const { REPO_ROOT } = await import("../testkit.mjs");
+  const documentBytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+  const documentSha256 = await m.hash.sha256Hex(documentBytes);
+  const documentKey = m.keys.inputDocumentKey(runId);
+  await env.EVIDENCE.put(documentKey, documentBytes);
+  await m.envelope.putEnvelope(env, {
+    schemaVersion: "v2-run-envelope/1.0.0",
+    kind: "survey-qa-v2-envelope",
+    runId,
+    createdAt: "2026-08-14T00:00:00.000Z",
+    instanceId: runId,
+    input: {
+      surveyUrl: "https://fixture.invalid/survey",
+      documentKey,
+      documentSha256,
+      documentName: "questionnaire.docx",
+      targetBuildId: null,
+      locale: "en",
+      viewports: ["desktop"],
+      contractSource: { mode: "extract" },
+    },
+    profile: "standard",
+    contractRevisionId: null,
+    recovery: null,
+    finalCompletion: null,
+  });
+  const passAHash = await (async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return Response.json({
+        model: body.model,
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        choices: [{
+          message: { content: JSON.stringify({
+            global_rules: [], cross_references: [], ambiguities: [], unverifiable_from_browser: [],
+          }) },
+          finish_reason: "stop",
+        }],
+      });
+    };
+    try {
+      const outcome = await m.extractStage.stagePassASlice(
+        env, runId, documentKey, "questionnaire.docx", fence, async () => {}, {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE, documentSha256,
+      );
+      assertEq(outcome.result.state, "evaluated", "the privacy fixture has canonical Pass-A authority");
+      return outcome.result.value.hash;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  })();
+  const sentinel = "RAW_TERMINAL_PASS_B_PROVIDER_BODY_SENTINEL_DO_NOT_EXPOSE";
+  const provider = stubProvider({ failUnit: () => true, failBody: sentinel });
+  try {
+    const stage = await m.extractStage.stagePassBSlice(
+      env,
+      runId,
+      documentKey,
+      "questionnaire.docx",
+      fence,
+      async (message) => m.checkpoint.beat(env, runId, message, "extract-b"),
+      { budgetMs: 600_000 },
+      m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+      passAHash,
+      documentSha256,
+    );
+    assertEq(stage.result.state, "not-evaluated");
+    assertEq(stage.result.reason, "PASS_B_UNIT_FAILURES");
+    assert(stage.failedUnit.detail.includes(sentinel), "the retained internal evidence must contain the sentinel");
+    assert(!stage.result.detail.includes(sentinel), "the stage refusal prose must be closed");
+
+    const refusal = m.workflow.extractionPassRefusal("b", stage.result);
+    assert(refusal, "the real run-level refusal adapter must accept the terminal Pass-B result");
+    assert(!refusal.detail.includes(sentinel), "run-level refusal prose must not copy failed-unit detail");
+    await m.checkpoint.updateCheckpoint(env, runId, (draft) => {
+      m.checkpoint.setPhase(draft, "extracting", "stopped", refusal.reasonCode);
+      draft.contract = m.contracts.unavailableContract();
+      draft.completion.test = "failed";
+      draft.completion.reasonCode = refusal.reasonCode;
+      draft.error = refusal.detail;
+    }, { progressed: true, fence });
+    await m.checkpoint.beat(env, runId, refusal.detail, "extract-b-refused");
+
+    const statusText = await (await m.apiRuns.getStatus(
+      new Request("https://fixture.invalid/status"), env, runId,
+    )).text();
+    assert(!statusText.includes(sentinel), "terminal refusal beat/status must not expose raw provider evidence");
+
+    const finalized = await new m.workflow.SurveyRunWorkflowV2({}, env)
+      .reportAndFinalize(fakeStep(), runId, fence);
+    assertEq(finalized.completion.report, "complete", "the terminal Pass-B stop must publish an operational report");
+    const dataText = await (await m.apiReport.getReportData(
+      new Request("https://fixture.invalid/report-data"), env, runId,
+    )).text();
+    assert(!dataText.includes(sentinel), "failure report-data must not publish raw usage-event detail");
+    const html = await (await m.apiReport.getReport(
+      new Request("https://fixture.invalid/report"), env, runId,
+    )).text();
+    assert(!html.includes(sentinel), "failure-report HTML must not publish raw provider evidence");
   } finally {
     provider.restore();
   }

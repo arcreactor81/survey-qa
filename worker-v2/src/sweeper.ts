@@ -23,7 +23,7 @@
  *   - Liveness is judged on TWO signals, not one: the heartbeat AND the checkpoint's
  *     `lastProgressAt`. v1 could only see the heartbeat, so a process that was beating
  *     while making no progress looked healthy. A heartbeat is not progress.
- *   - It also runs the prefix-scoped retention sweep, in report-only mode by default.
+ *   - It also runs the prefix-scoped permanent-retention audit.
  *
  * ============ WHAT A FORENSIC REVIEW FOUND, AND WHAT IS NOW TRUE (8 Aug 2026) ============
  *
@@ -277,8 +277,8 @@ export async function sweep(env: Env, now: Date): Promise<Record<string, unknown
     cursor = page.truncated && seen < ACTIVE_PER_SWEEP ? page.cursor : undefined;
   } while (cursor);
 
-  // Retention: report-only unless RETENTION_MODE=delete. `null` referenced-hash set means
-  // no content-addressed blob is ever reported eligible — fail safe by construction.
+  // Permanent-retention audit: configuration drift fails closed, no object is eligible,
+  // and the planner contains no R2 delete path.
   let retention: unknown = null;
   try {
     const plan = await planRetention(env, now, null, num(env.RETENTION_SCAN_BUDGET, 500));

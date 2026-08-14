@@ -51,6 +51,7 @@ import {
   isDocumentSemanticsProfile,
   type DocumentSemanticsProfile,
 } from "../extract/document-semantics";
+import { resolveDocumentReading } from "../observability/reconstruct-document-reading";
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
@@ -820,15 +821,24 @@ export async function getStatus(req: Request, env: Env, runId: string): Promise<
   if (!loaded) return fail(404, "RUN_NOT_FOUND", `no v2 run ${runId}`);
   const hb = await readHeartbeat(env, runId);
   const { checkpoint, corrected } = await reconcileWithEngine(env, runId, loaded.checkpoint, hb?.at ?? null);
+  const reading = await resolveDocumentReading(env, runId, checkpoint);
+  const visibleCheckpoint = reading.progress
+    ? { ...checkpoint, documentReading: reading.progress }
+    : checkpoint;
   // The note travels with the timestamp. Without it the long quiet stages have a liveness
   // signal but nothing to say, and a legitimate ten-minute step reads as a hung page.
-  const status = projectStatus(checkpoint, hb?.at ?? null, hb?.note ?? null);
+  // projectStatus strips internal source text/block context. Public status carries only
+  // reconciled counts, unit names, safe usage, retention, and structured stop facts.
+  const status = projectStatus(visibleCheckpoint, hb?.at ?? null, hb?.note ?? null);
   // ETag keys on the revision: the client's only question is "is there a newer snapshot".
   //
   // AND ON WHETHER THE ENGINE ANSWERED. The correction above changes the body WITHOUT
   // changing the revision — the run is dead and can never advance it again — so an ETag of
   // the revision alone would 304 the poller that is waiting for exactly this news, forever.
-  return snapshot(req, status, `s${loaded.checkpoint.revision}${corrected ? "e" : ""}`);
+  return snapshot(
+    req, status,
+    `s${loaded.checkpoint.revision}${corrected ? "e" : ""}${reading.reconstructed ? "r" : ""}`,
+  );
 }
 
 /** GET /api/v2/runs/:id/coverage — coverage-snapshot/1.0.0 */

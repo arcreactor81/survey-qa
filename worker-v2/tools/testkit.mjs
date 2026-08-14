@@ -162,6 +162,7 @@ export async function loadWorker() {
       `export * as evidenceKeyspace from ${p("src/store/evidence-keyspace.ts")};`,
       `export * as ids from ${p("src/ids.ts")};`,
       `export * as contracts from ${p("src/types/contracts.ts")};`,
+      `export * as documentReading from ${p("src/observability/document-reading.ts")};`,
       `export * as checkpoint from ${p("src/store/checkpoint.ts")};`,
       `export * as usage from ${p("src/store/usage.ts")};`,
       `export * as envelope from ${p("src/store/envelope.ts")};`,
@@ -224,6 +225,7 @@ export async function loadWorker() {
       // accusation, and until D31 the module was not even importable by a test.
       `export * as executeBatch from ${p("src/workflow/stages/execute-batch.ts")};`,
       `export * as sweeper from ${p("src/sweeper.ts")};`,
+      `export * as retention from ${p("src/store/retention.ts")};`,
       // D40 needs the WRITE side of the target identity. `report/build.ts` re-exports only the
       // two pure derivations, and the defect this closes is that nothing PERSISTED one — so a
       // test reaching it through the report module could not tell a computed id from a

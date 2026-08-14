@@ -101,6 +101,11 @@ import { annotate, DOCX_BLOCKS_VERSION } from "./docx-blocks";
 import { coerceRequirement, coerceAmbiguities, coerceUnverifiable } from "./coerce";
 import { k } from "../keys";
 import { canonicalJson, sha256Hex } from "../store/hash";
+import {
+  publicExtractionFailureDetail,
+  sourceContextForUnit,
+  type DocumentReadingUnitStartObserver,
+} from "../observability/document-reading";
 
 export const PASS_A_VERSION = PROMPT_VERSION_A;
 export const GROK_FALLBACK_TRIGGER_VERSION = "grok-flash-fallback-trigger/1.0.0";
@@ -139,6 +144,16 @@ export interface CrossWindowEvidenceQuote {
   blockId: string;
   quote: string;
 }
+
+/**
+ * A primary reader may name a target only when it also supplies an exact quote from that
+ * target block. If the source side of the reference is exact but the target proof is not,
+ * the reference survives only as this unresolved question. It is not a requirement and can
+ * therefore mint no coverage credit; a later cross-window synthesis may resolve it only by
+ * supplying exact evidence from both sides.
+ */
+export const PASS_A_UNPROVEN_TARGET_STATEMENT =
+  "Resolution withheld: the primary reader did not supply exact evidence from the claimed target block." as const;
 
 /** Cross-references pass A resolved (or failed to), surfaced in the diff. */
 export interface CrossRef {
@@ -286,7 +301,14 @@ export type PassACompletedAuthority = Omit<
 
 export type PassAAuthorityReconstruction =
   | { kind: "ok"; value: PassACompletedAuthority }
-  | { kind: "invalid"; detail: string; accountingCalls: CallUsage[]; slice: PassASlice };
+  | {
+      kind: "invalid";
+      detail: string;
+      accountingCalls: CallUsage[];
+      slice: PassASlice;
+      /** Exact paid unit that blocked reconstruction, when one can be named honestly. */
+      failedUnit: PassResult["failedUnits"][number] | null;
+    };
 
 /** Slack over and above the budget and one whole purchase: R2 I/O, parsing, scheduling. */
 export const PASS_A_STEP_SLACK_MS = 60_000;
@@ -332,6 +354,7 @@ export async function runPassA(
   documentName: string,
   onProgress?: (msg: string) => Promise<void>,
   options?: PassASliceOptions,
+  onUnitStart?: DocumentReadingUnitStartObserver,
 ): Promise<PassAResult> {
   const parserVersion = doc.parserVersion ?? DOCX_BLOCKS_VERSION;
   const providerRouteIdentity = grokFlashRouteIdentity(env);
@@ -394,6 +417,29 @@ export async function runPassA(
     const label =
       windows.length === 1 ? null : `window ${n} of ${windows.length} (${w[0]!.blockId}–${w[w.length - 1]!.blockId})`;
     const origin = windows.length === 1 ? "A" : `A-w${n}`;
+
+    // This awaited structured write is deliberately BEFORE the artifact read and therefore
+    // before any possible purchase. A failed visibility write throws without buying model
+    // work; the Workflow can retry the checkpoint write without ever re-buying this unit.
+    if (onUnitStart) {
+      await onUnitStart({
+        stage: "primary-windows",
+        unit: {
+          kind: "window",
+          name: origin,
+          ordinal: n,
+          total: windows.length,
+          sourceContext: sourceContextForUnit(doc.blocks, blockIds),
+        },
+        primary: {
+          total: windows.length,
+          landed,
+          remaining: windows.length - landed,
+          synthesisState: "waiting-for-windows",
+        },
+        secondary: null,
+      });
+    }
 
     const absorb = (unit: PersistedWindow): void => {
       requirements.push(...unit.globalRules);
@@ -692,6 +738,11 @@ export async function runPassA(
         accountingCalls.push(usage);
       }
       const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
+      const publicDetail = publicExtractionFailureDetail(
+        err instanceof ModelCallError
+          ? `extraction-provider-${err.failureKind}`
+          : "extraction-pass-a-semantic-output-invalid",
+      );
       if (!(err instanceof ModelCallError) && purchasedUsages.length > 0) {
         const selected = purchasedUsages[purchasedUsages.length - 1]!;
         purchasedUsages[purchasedUsages.length - 1] = {
@@ -750,7 +801,7 @@ export async function runPassA(
       if (onProgress) {
         try {
           await onProgress(
-            `pass A ${origin}: FAILED (attempt ${attempts} of ${maxIssues}) — ${detail.slice(0, 120)}`,
+            `pass A ${origin}: FAILED (attempt ${attempts} of ${maxIssues}) — ${publicDetail}`,
           );
         } catch {
           // The terminal/failed artifact above is authoritative; heartbeat loss cannot retry it.
@@ -769,6 +820,38 @@ export async function runPassA(
     windows.length > 1 && remaining === 0 && !terminalFailure &&
     failedUnits.length === 0 && providerIndependence === "independent"
   ) {
+    if (onUnitStart) {
+      const nominated = new Set<string>();
+      for (const row of requirements) {
+        for (const evidence of row.evidenceQuotes ?? []) nominated.add(evidence.blockId);
+      }
+      for (const row of crossRefs) {
+        for (const evidence of row.evidenceQuotes ?? []) nominated.add(evidence.blockId);
+      }
+      for (const row of [...ambiguities, ...unverifiable]) {
+        for (const evidence of row.evidenceQuotes ?? []) nominated.add(evidence.blockId);
+      }
+      const synthesisBlockIds = doc.blocks
+        .map((block) => block.blockId)
+        .filter((blockId) => nominated.has(blockId));
+      await onUnitStart({
+        stage: "cross-window-synthesis",
+        unit: {
+          kind: "synthesis",
+          name: "A-synthesis",
+          ordinal: null,
+          total: null,
+          sourceContext: sourceContextForUnit(doc.blocks, synthesisBlockIds),
+        },
+        primary: {
+          total: windows.length,
+          landed: windows.length,
+          remaining: 0,
+          synthesisState: "pending",
+        },
+        secondary: null,
+      });
+    }
     // The synthesis primitive already makes progress best-effort after durable writes.
     // Do not forward an outer heartbeat callback whose throw could unwind the completed
     // Pass-A assembly after all paid artifacts landed.
@@ -942,6 +1025,16 @@ function groundPrimaryWindow(
     }
     return evidence;
   };
+  const unresolvedUnprovenTarget = (
+    row: CrossRef,
+    evidenceQuotes: CrossWindowEvidenceQuote[],
+  ): CrossRef => ({
+    ...row,
+    resolvedToBlock: null,
+    targetDocQuote: null,
+    statement: PASS_A_UNPROVEN_TARGET_STATEMENT,
+    evidenceQuotes,
+  });
 
   const globalRules = unit.globalRules.map((row, index) => {
     if (row.docQuote.length === 0) fail("global rule", index, "doc_quote is empty");
@@ -963,16 +1056,12 @@ function groundPrimaryWindow(
     if (row.resolvedToBlock !== null) {
       const target = byId.get(row.resolvedToBlock);
       if (!target) {
-        fail(
-          "cross-reference",
-          index,
-          `resolved_to_block ${row.resolvedToBlock} is outside the owning window`,
-        );
+        return unresolvedUnprovenTarget(row, evidenceQuotes);
       }
       const exactTarget = target as SourceBlock;
       const targetQuote = row.targetDocQuote ?? "";
       if (targetQuote.length === 0 || !exactTarget.text.includes(targetQuote)) {
-        fail("cross-reference", index, "target_doc_quote is absent or not exact text in resolved_to_block");
+        return unresolvedUnprovenTarget(row, evidenceQuotes);
       }
       evidenceQuotes.push({ blockId: exactTarget.blockId, quote: targetQuote });
     } else if (row.targetDocQuote !== null && row.targetDocQuote !== undefined) {
@@ -1140,9 +1229,9 @@ function strictPrimaryOutput(
       strictPrimaryString(raw, "resolved_to_block", "cross-reference");
     const targetDocQuote = raw["target_doc_quote"] === null ? null :
       strictPrimaryString(raw, "target_doc_quote", "cross-reference");
-    if ((resolvedToBlock === null) !== (targetDocQuote === null)) {
+    if (resolvedToBlock === null && targetDocQuote !== null) {
       throw new Error(
-        "PASS_A_WINDOW_OUTPUT_INVALID: resolved_to_block and target_doc_quote must both be null or both be non-null",
+        "PASS_A_WINDOW_OUTPUT_INVALID: target_doc_quote must be null when resolved_to_block is null",
       );
     }
     return {
@@ -2661,11 +2750,15 @@ export async function reconstructPassACompletedAuthority(
   let invalidSynthesisState: PassASlice["synthesisState"] =
     windows.length > 1 ? "waiting-for-windows" : "not-required";
   let synthesisAttempts = 0;
-  const invalid = (detail: string): PassAAuthorityReconstruction => ({
+  const invalid = (
+    detail: string,
+    failedUnit: PassResult["failedUnits"][number] | null = null,
+  ): PassAAuthorityReconstruction => ({
     kind: "invalid",
     detail: `PASS_A_COMPLETED_ARTIFACT_INVALID: ${detail}. ` +
       "No unit was re-bought and the completed payload is not continuation authority.",
     accountingCalls,
+    failedUnit,
     slice: {
       done: false,
       windowsTotal: windows.length,
@@ -2682,16 +2775,21 @@ export async function reconstructPassACompletedAuthority(
 
   for (let index = 0; index < windows.length; index += 1) {
     const origin = windows.length === 1 ? "A" : `A-w${index + 1}`;
+    const blockIds = windows[index]!.map((block) => block.blockId);
     const unit = await readWindow(env, runId, index + 1, windows[index]!, parserVersion, origin);
-    if (unit === null) return invalid(`${origin} is missing or belongs to a stale partition policy`);
+    if (unit === null) {
+      const detail = `${origin} is missing or belongs to a stale partition policy`;
+      return invalid(detail, { unit: origin, blockIds, detail });
+    }
     accountingCalls.push(...unit.usages);
     if (unit.kind === "invalid") {
       windowsLanded = index + 1;
-      return invalid(unit.detail);
+      return invalid(unit.detail, { unit: origin, blockIds, detail: unit.detail });
     }
     if (unit.kind === "failed") {
       windowsLanded = index + 1;
-      return invalid(`${origin} retains failed authority: ${unit.detail}`);
+      const detail = `${origin} retains failed authority: ${unit.detail}`;
+      return invalid(detail, { unit: origin, blockIds, detail: unit.detail });
     }
     windowsLanded = index + 1;
     requirements.push(...unit.globalRules);
@@ -2699,7 +2797,11 @@ export async function reconstructPassACompletedAuthority(
     ambiguities.push(...unit.ambiguities);
     unverifiable.push(...unit.unverifiable);
     routeReceipts.push(unit.routeReceipt);
-    if (unit.routeReceipt.trigger !== null) fallbackTriggers.push(unit.routeReceipt.trigger);
+    if (unit.routeReceipt.trigger !== null) {
+      fallbackTriggers.push(unit.routeReceipt.trigger);
+      const detail = `${origin} used same-family Flash fallback`;
+      return invalid(detail, { unit: origin, blockIds, detail });
+    }
   }
 
   let synthesisState: PassASlice["synthesisState"] = "not-required";
@@ -2709,24 +2811,38 @@ export async function reconstructPassACompletedAuthority(
     try {
       context = await buildPassASynthesisContext(env, runId, doc, documentName);
     } catch (error) {
-      return invalid(error instanceof Error ? error.message : "synthesis context is unreadable");
+      const detail = error instanceof Error ? error.message : "synthesis context is unreadable";
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
     }
-    if (context === null) return invalid("multiwindow synthesis context is absent");
+    if (context === null) {
+      const detail = "multiwindow synthesis context is absent";
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
+    }
     const synthesis = await readPassASynthesis(env, runId, context);
-    if (synthesis === null) return invalid("cross-window synthesis artifact is missing");
+    if (synthesis === null) {
+      const detail = "cross-window synthesis artifact is missing";
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
+    }
     accountingCalls.push(...synthesis.usages);
     synthesisAttempts = synthesis.attempts;
-    if (synthesis.kind === "invalid") return invalid(synthesis.detail);
-    if (synthesis.kind === "failed") return invalid(`cross-window synthesis failed: ${synthesis.detail}`);
+    if (synthesis.kind === "invalid") {
+      return invalid(synthesis.detail, { unit: "A-synthesis", blockIds: [], detail: synthesis.detail });
+    }
+    if (synthesis.kind === "failed") {
+      const detail = `cross-window synthesis failed: ${synthesis.detail}`;
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail: synthesis.detail });
+    }
     routeReceipts.push(synthesis.routeReceipt);
     if (synthesis.routeReceipt.trigger !== null) fallbackTriggers.push(synthesis.routeReceipt.trigger);
     if (synthesis.routeReceipt.trigger !== null) {
-      return invalid("cross-window synthesis used same-family Flash fallback");
+      const detail = "cross-window synthesis used same-family Flash fallback";
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
     }
     try {
       applySynthesisAdditions(requirements, crossRefs, ambiguities, unverifiable, synthesis.additions);
     } catch (error) {
-      return invalid(error instanceof Error ? error.message : "synthesis additions cannot be applied");
+      const detail = error instanceof Error ? error.message : "synthesis additions cannot be applied";
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
     }
     crossWindowLimitations.push(synthesisLimitation(context.coverage, synthesis.additions));
     synthesisState = "ok";

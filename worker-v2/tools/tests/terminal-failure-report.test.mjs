@@ -54,6 +54,20 @@ async function refusalFixture(mod, evidenceState) {
     draft.error =
       "REDUCED_PROVIDER_INDEPENDENCE: one provider family supplied both extraction methods. " +
       "1 of 4 windows landed and 3 remain unread. No Pass-B purchase was authorized.";
+    const reading = mod.documentReading.withCheckpointUsage(
+      mod.documentReading.readingFromPrimary({
+        done: false,
+        windowsTotal: 4,
+        windowsLanded: 1,
+        windowsRemaining: 3,
+        terminalFailure: true,
+        synthesisState: "reduced-provider-independence",
+      }, { state: "reading", updatedAt: draft.observedAt }),
+      draft.usage,
+    );
+    draft.documentReading = mod.documentReading.stopDocumentReading(
+      reading, REASON, draft.error, draft.observedAt,
+    );
   }, { progressed: true, fence });
 
   const artifactKey = mod.keys.k("runs", runId, "extraction", "pass-a", "window-01.json");
@@ -194,7 +208,9 @@ suite("terminal extraction failure report — durable evidence, zero guessed QA 
     const html = await htmlResponse.text();
     assert(html.includes("No survey correctness claim was produced."));
     assert(html.includes(REASON));
-    assert(html.includes("3 remain unread"));
+    assert(html.includes("<strong>1 of 4</strong>"));
+    assert(html.includes("<strong>3</strong> were unread/not covered"));
+    assert(html.includes("Artifacts for this run are permanent"));
 
     const dataResponse = await mod.apiReport.getReportData(new Request("https://fixture.invalid/"), fixture.env, fixture.runId);
     assertEq(dataResponse.status, 200);
@@ -211,6 +227,16 @@ suite("terminal extraction failure report — durable evidence, zero guessed QA 
     assertEq(data.qaResults.findings.length, 0);
     assertEq(data.qaResults.verdicts.length, 0);
     assertEq(data.usage.modelCalls, 1);
+    assertEq(data.usage.authority, "validated-checkpoint-usage-ledger");
+    assert(!Object.hasOwn(data.usage, "events"), "raw model-call receipt detail is not a public report field");
+    assert(!Object.hasOwn(data.usage, "checkpointTotals"), "the unprojected checkpoint ledger is not public");
+    assertEq(data.documentReading.state, "stopped");
+    assertEq(data.documentReading.primary.total, 4);
+    assertEq(data.documentReading.primary.landed, 1);
+    assertEq(data.documentReading.primary.remaining, 3);
+    assertEq(data.documentReading.usage.modelCalls, 1);
+    assertEq(data.documentReading.retention.artifacts, "permanent");
+    assertEq(data.documentReading.lastDurableUnit.sourceContext, null);
     assertEq(data.extractionEvidence.total, 1);
     assertEq(data.extractionEvidence.inspected, 1);
     assert(data.extractionEvidence.receiptBinding.startsWith("complete:"));
@@ -218,6 +244,31 @@ suite("terminal extraction failure report — durable evidence, zero guessed QA 
 
     const envelope = await mod.envelope.getEnvelope(fixture.env, fixture.runId);
     assertEq(envelope.finalCompletion.report, "complete", "the durable envelope mirrors the real published outcome");
+  });
+
+  test("NEGATIVE: malformed reading progress publishes named unavailable, never fake zero progress", async () => {
+    const mod = await worker();
+    const fixture = await refusalFixture(mod, "valid");
+    await mod.checkpoint.updateCheckpoint(fixture.env, fixture.runId, (draft) => {
+      draft.documentReading.primary.undeclaredShortcut = "must-not-pass";
+    }, { progressed: true, fence: fixture.fence });
+
+    const finalization = await finalize(mod, fixture);
+    assertEq(finalization.completion.report, "complete", "bad visibility metadata must not erase valid operational evidence");
+    const dataResponse = await mod.apiReport.getReportData(
+      new Request("https://fixture.invalid/report-data"), fixture.env, fixture.runId,
+    );
+    const data = await dataResponse.json();
+    assertEq(data.documentReading.state, "unavailable");
+    assertEq(data.documentReading.primary.total, null, "malformed 4 cannot remain a claimed denominator");
+    assertEq(data.documentReading.primary.remaining, null, "unknown unread is not zero unread");
+    assert(data.documentReading.limitations.some((entry) =>
+      entry.code === "document-reading-progress-invalid" && entry.count === 1));
+    const html = await (await mod.apiReport.getReport(
+      new Request("https://fixture.invalid/report"), fixture.env, fixture.runId,
+    )).text();
+    assert(html.includes("Durable reading progress is unavailable. This is not zero progress"));
+    assert(!html.includes("<strong>0 of 0</strong>"));
   });
 
   for (const [label, evidenceState, reasonCode] of [
@@ -245,6 +296,37 @@ suite("terminal extraction failure report — durable evidence, zero guessed QA 
       assertEq(operational.final, false);
     });
   }
+
+  test("NEGATIVE: report-failed with no pointer never returns raw checkpoint error prose", async () => {
+    const mod = await worker();
+    const fixture = await refusalFixture(mod, "malformed");
+    const finalization = await finalize(mod, fixture);
+    assertEq(finalization.completion.report, "failed");
+    assertEq(await mod.publish.readReportPointer(fixture.env, fixture.runId), null);
+    const sentinel = "RAW_REPORT_FAILED_CHECKPOINT_SENTINEL_DO_NOT_EXPOSE";
+    await mod.checkpoint.updateCheckpoint(fixture.env, fixture.runId, (draft) => {
+      draft.error = sentinel;
+      draft.failure = {
+        step: "report",
+        reasonCode: REASON,
+        kind: "ModelCallError",
+        message: sentinel,
+        at: "2026-08-14T00:00:01.000Z",
+      };
+    }, { progressed: true, fence: fixture.fence });
+
+    const response = await mod.apiReport.getReport(
+      new Request("https://fixture.invalid/report"), fixture.env, fixture.runId,
+    );
+    assertEq(response.status, 200);
+    const text = await response.text();
+    assert(!text.includes(sentinel), "no-pointer fallback must never copy checkpoint error/failure prose");
+    const operational = JSON.parse(text);
+    const fixed = mod.documentReading.publicExtractionFailureDetail(REASON);
+    assertEq(operational.state, "no-final-report");
+    assertEq(operational.message, fixed);
+    assertEq(operational.error, fixed);
+  });
 
   test("NEGATIVE: a checkpoint with executed coverage cannot publish a zero-tested report", async () => {
     const mod = await worker();

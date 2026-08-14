@@ -164,15 +164,13 @@
     "CF_AIG_ACCOUNT_ID": "f0cbb2076e484454e6567789b9be85d8",
     "CF_AIG_GATEWAY_ID": "firstgateway",
 
-    // ---- retention posture: CONFIGURATION, not hardcoded ----
-    // Proposal decision 7: 30d raw evidence / 90d final reports, configurable later.
-    // R2 lifecycle rules are BUCKET-wide and the bucket is shared with prod, so a
-    // lifecycle rule would delete v1 data too. Retention is therefore enforced by
-    // v2's own prefix-scoped cron sweep, and it DEFAULTS TO DRY RUN.
-    "RETENTION_RAW_EVIDENCE_DAYS": "30",
-    "RETENTION_REPORT_DAYS": "90",
-    "RETENTION_CONTRACT_DAYS": "0", // 0 = never expire (contract revisions are lineage)
-    "RETENTION_MODE": "report-only", // "report-only" | "delete"
+    // ---- permanent capture retention (owner policy, 14 Aug 2026) ----
+    // Failed, partial and successful runs are permanent. Storage pressure permits
+    // compression, never deletion or pruning. Runtime rejects drift from this policy.
+    "RETENTION_RAW_EVIDENCE_DAYS": "0",
+    "RETENTION_REPORT_DAYS": "0",
+    "RETENTION_CONTRACT_DAYS": "0",
+    "RETENTION_MODE": "permanent",
     "RETENTION_SCAN_BUDGET": "500", // objects examined per cron tick
 
     // ---- browser session policy (spike-derived) ----

@@ -129,6 +129,35 @@
     "partial-blocked": "Testing stopped because something blocked it."
   };
 
+  // Durable document-reading progress is a separate denominator from requirements and
+  // browser activity. These maps translate the closed server contract; an unknown token
+  // is treated as unavailable rather than printed as product copy.
+  var READING_SCHEMA = "document-reading-progress/1.0.0";
+  var READING_STAGES = {
+    "primary-windows": "First read: document windows",
+    "cross-window-synthesis": "Joining the first-read windows",
+    "secondary-chunks": "Second read (Pass B): document chunks",
+    "secondary-sweep": "Second read (Pass B): final sweep",
+    complete: "Document reading complete",
+    unavailable: "Reading progress unavailable"
+  };
+  var SYNTHESIS_WORDS = {
+    "waiting-for-windows": "Waiting for the first-read windows",
+    pending: "Joining the first-read windows",
+    ok: "First-read synthesis saved",
+    failed: "First-read synthesis failed",
+    "not-required": "No cross-window synthesis was needed",
+    "reduced-provider-independence": "First-read synthesis saved with less independent provider review than planned",
+    unknown: "Not reported"
+  };
+  var READING_STATE_WORDS = {
+    reading: "Reading",
+    complete: "Reading finished",
+    stopped: "Reading stopped",
+    unavailable: "Progress unavailable"
+  };
+  var readingHeadingSequence = 0;
+
   // ---------------------------------------------------------------- DOM helpers
   // `text` is the ONLY way data enters the DOM. There is no innerHTML for data.
   function el(tag, opts, kids) {
@@ -1181,6 +1210,385 @@
     })]);
   }
 
+  // ---------------------------------------------------------- questionnaire reading
+  // This is a second closed projection in the browser. The server already validates the
+  // checkpoint, but a stale cache, partial rollout, or malformed fixture must not turn a
+  // contradictory count into a plausible progress display. Invalid input therefore loses
+  // all counts and becomes one named unavailable state.
+  function readingObject(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function readingExactKeys(value, expected) {
+    if (!readingObject(value)) return false;
+    var keys = Object.keys(value);
+    if (keys.length !== expected.length) return false;
+    for (var i = 0; i < expected.length; i++) {
+      if (!Object.prototype.hasOwnProperty.call(value, expected[i])) return false;
+    }
+    return true;
+  }
+
+  function readingCount(value) {
+    return typeof value === "number" && isFinite(value) && Math.floor(value) === value &&
+      value >= 0 && value <= Number.MAX_SAFE_INTEGER;
+  }
+
+  function readingNumber(value) {
+    return typeof value === "number" && isFinite(value) && value >= 0;
+  }
+
+  function readingText(value, max, nullable) {
+    if (nullable && value === null) return true;
+    return typeof value === "string" && value.length > 0 && value.length <= max;
+  }
+
+  function readingCountsReconcile(total, landed, remaining) {
+    if (total === null) return landed === 0 && remaining === null;
+    return readingCount(total) && readingCount(landed) && readingCount(remaining) &&
+      landed <= total && remaining === total - landed;
+  }
+
+  function readingUnitIsValid(unit) {
+    if (!readingExactKeys(unit, ["kind", "name", "ordinal", "total", "sourceContext"]) ||
+      ["window", "synthesis", "chunk", "sweep"].indexOf(unit.kind) < 0 ||
+      !readingText(unit.name, 120, false) ||
+      (unit.ordinal !== null && !readingCount(unit.ordinal)) ||
+      (unit.total !== null && !readingCount(unit.total)) ||
+      (readingCount(unit.ordinal) && readingCount(unit.total) && unit.ordinal > unit.total)) return false;
+    var source = unit.sourceContext;
+    return source === null || (readingExactKeys(source,
+      ["authority", "blockCount", "firstBlockId", "lastBlockId", "label", "preview"]) &&
+      source.authority === "parsed-document-blocks" && readingCount(source.blockCount) &&
+      source.blockCount >= 1 && readingText(source.firstBlockId, 120, false) &&
+      readingText(source.lastBlockId, 120, false) && readingText(source.label, 160, true) &&
+      readingText(source.preview, 240, true));
+  }
+
+  function invalidReading(detail) {
+    return { kind: "invalid", detail: detail };
+  }
+
+  function documentReadingSnapshot(view) {
+    if (!view || !view.status) return { kind: "loading" };
+    if (!Object.prototype.hasOwnProperty.call(view.status, "documentReading") ||
+      view.status.documentReading == null) return { kind: "missing" };
+
+    var raw = view.status.documentReading;
+    if (!readingExactKeys(raw, ["schemaVersion", "state", "stage", "primary", "secondary",
+      "currentUnit", "lastDurableUnit", "failure", "limitations", "usage", "retention", "updatedAt"])) {
+      return invalidReading("The saved document-reading record has an unexpected shape.");
+    }
+    if (raw.schemaVersion !== READING_SCHEMA || !has(READING_STATE_WORDS, raw.state) ||
+      !has(READING_STAGES, raw.stage) || ms(raw.updatedAt) == null) {
+      return invalidReading("The saved document-reading record has an unsupported state, stage, or commit time.");
+    }
+
+    var primary = raw.primary;
+    if (!readingExactKeys(primary, ["total", "landed", "remaining", "synthesisState"]) ||
+      !readingCountsReconcile(primary.total, primary.landed, primary.remaining) ||
+      !has(SYNTHESIS_WORDS, primary.synthesisState)) {
+      return invalidReading("The saved first-read counts do not reconcile.");
+    }
+
+    var secondary = raw.secondary;
+    if (secondary !== null && (!readingExactKeys(secondary,
+      ["total", "landed", "remaining", "sweepRemaining"]) ||
+      !readingCountsReconcile(secondary.total, secondary.landed, secondary.remaining) ||
+      (secondary.sweepRemaining !== null && !readingCount(secondary.sweepRemaining)))) {
+      return invalidReading("The saved Pass B counts do not reconcile.");
+    }
+
+    var usage = raw.usage;
+    var usageValuesValid = readingObject(usage) &&
+      ((usage.authority === "unavailable" && usage.modelCalls === null && usage.costUsd === null) ||
+        (usage.authority === "checkpoint-usage-ledger" && readingCount(usage.modelCalls) &&
+          readingNumber(usage.costUsd)));
+    if (!readingExactKeys(usage, ["authority", "modelCalls", "costUsd"]) ||
+      !usageValuesValid) {
+      return invalidReading("The saved usage summary is not safe to display.");
+    }
+
+    var retention = raw.retention;
+    if (!readingExactKeys(retention, ["authority", "artifacts", "runIsolation", "compressionAllowed"]) ||
+      retention.authority !== "service-policy" || retention.artifacts !== "permanent" ||
+      retention.runIsolation !== "dedicated-run-id" || retention.compressionAllowed !== true) {
+      return invalidReading("The saved run-record retention statement is unsupported.");
+    }
+
+    var current = raw.currentUnit;
+    if (current !== null && !readingUnitIsValid(current)) {
+      return invalidReading("The saved latest-started-unit record or its source context is malformed.");
+    }
+    var last = raw.lastDurableUnit;
+    if (last !== null && !readingUnitIsValid(last)) {
+      return invalidReading("The saved latest-unit record or its source context is malformed.");
+    }
+
+    var failure = raw.failure;
+    if (failure !== null && (!readingExactKeys(failure, ["unit", "reasonCode", "detail"]) ||
+      !readingText(failure.unit, 120, true) || !readingText(failure.reasonCode, 100, false) ||
+      !readingText(failure.detail, 1000, false))) {
+      return invalidReading("The saved stopped-unit record is incomplete.");
+    }
+
+    if (!Array.isArray(raw.limitations) || raw.limitations.length > 20) {
+      return invalidReading("The saved reading limitations are not a bounded list.");
+    }
+    for (var li = 0; li < raw.limitations.length; li++) {
+      var limitation = raw.limitations[li];
+      if (!readingExactKeys(limitation, ["code", "count", "detail"]) ||
+        !readingText(limitation.code, 100, false) || !readingCount(limitation.count) ||
+        !readingText(limitation.detail, 1000, false)) {
+        return invalidReading("A saved reading limitation is incomplete.");
+      }
+    }
+
+    return { kind: "ok", value: raw };
+  }
+
+  function readingMetric(label, value, explanation) {
+    return el("div", { cls: "reading-metric" }, [
+      el("div", { cls: "reading-metric__label", text: label }),
+      el("div", { cls: "reading-metric__value num", text: value }),
+      el("div", { cls: "reading-metric__explain", text: explanation })
+    ]);
+  }
+
+  function readingFact(label, valueNode) {
+    return el("div", { cls: "reading-fact" }, [
+      el("div", { cls: "reading-fact__label", text: label }),
+      el("div", { cls: "reading-fact__value" }, [valueNode])
+    ]);
+  }
+
+  function renderReadingLimitations(reading) {
+    var box = el("section", {
+      cls: "reading-limitations",
+      attrs: { "aria-label": "Document-reading limitations" }
+    }, [el("h3", { text: "Recorded reading limitations" })]);
+    if (!reading.limitations.length) {
+      box.appendChild(el("p", { cls: "reading-none", text: "No document-reading limitation was recorded at this update." }));
+      return box;
+    }
+    box.appendChild(el("ul", {}, reading.limitations.map(function (limitation) {
+      return el("li", {}, [
+        el("div", { cls: "reading-limitation__head" }, [
+          machine(limitation.code),
+          el("span", { cls: "reading-limitation__count num", text: "Count " + limitation.count })
+        ]),
+        el("p", { text: limitation.detail })
+      ]);
+    })));
+    return box;
+  }
+
+  function renderReadingSource(source, ownerLabel) {
+    if (!source) {
+      return el("div", { cls: "reading-source is-missing" }, [
+        el("h3", { text: "Source context" }),
+        el("p", { text: "No exact parsed-document context was saved for the " + ownerLabel + "." })
+      ]);
+    }
+    var rows = [
+      readingMetric("Bound document blocks", String(source.blockCount),
+        "An exact count from the parsed document, not a page estimate."),
+      readingFact("First block", machine(source.firstBlockId)),
+      readingFact("Last block", machine(source.lastBlockId))
+    ];
+    if (source.label !== null) rows.push(readingFact("Section label", el("span", { text: source.label })));
+    if (source.preview !== null) rows.push(el("blockquote", { cls: "reading-source__preview", text: source.preview }));
+    return el("div", { cls: "reading-source" }, [
+      el("h3", { text: "Source context for the " + ownerLabel }),
+      el("div", { cls: "reading-source__rows" }, rows)
+    ]);
+  }
+
+  function renderReadingUsage(usage) {
+    var box = el("div", { cls: "reading-usage" }, [el("h3", { text: "Saved usage and spend" })]);
+    if (usage.authority !== "checkpoint-usage-ledger" ||
+      (usage.modelCalls === null && usage.costUsd === null)) {
+      box.appendChild(el("p", {
+        cls: "reading-none",
+        text: "No safe saved usage or spend figure is available for this reading update. Zero is not assumed."
+      }));
+      return box;
+    }
+    box.appendChild(el("div", { cls: "reading-usage__grid" }, [
+      readingMetric("Model calls", usage.modelCalls === null ? "Not reported" : String(usage.modelCalls),
+        "Durable whole-run total at this reading update."),
+      readingMetric("Spend", usage.costUsd === null ? "Not reported" : usd(usage.costUsd),
+        "Durable whole-run total at this reading update.")
+    ]));
+    box.appendChild(el("p", {
+      cls: "reading-usage__note",
+      text: "These whole-run checkpoint totals are not assigned to the displayed document unit."
+    }));
+    return box;
+  }
+
+  function readingEmptyCard(card, title, body, code) {
+    card.appendChild(el("div", { cls: "empty-state reading-empty" }, [
+      el("strong", { text: title }),
+      el("p", { text: body }),
+      code ? machineRow("Reference:", code) : null
+    ]));
+    return card;
+  }
+
+  function renderDocumentReading(view) {
+    var snapshot = documentReadingSnapshot(view);
+    var headingId = "document-reading-heading-" + (++readingHeadingSequence);
+    var state = snapshot.kind === "ok" ? snapshot.value.state : snapshot.kind;
+    var card = el("section", {
+      cls: "reading-card" + (state === "stopped" || state === "invalid" ? " is-stopped" : ""),
+      attrs: { "aria-labelledby": headingId, "data-document-reading-state": state }
+    });
+    card.appendChild(el("div", { cls: "reading-card__head" }, [
+      el("div", {}, [
+        el("p", { cls: "kicker", text: "Questionnaire reading" }),
+        el("h2", { attrs: { id: headingId }, text: "What the document reader has saved" })
+      ]),
+      el("span", { cls: "reading-state reading-state--" + state,
+        text: snapshot.kind === "ok" ? READING_STATE_WORDS[snapshot.value.state] :
+          snapshot.kind === "loading" ? "Waiting for update" :
+            snapshot.kind === "missing" ? "Not reported" : "Progress unavailable" })
+    ]));
+
+    if (snapshot.kind === "loading") {
+      return readingEmptyCard(card, "Waiting for the first status update.",
+        "No document-reading denominator has arrived yet, so this page does not show zero progress.", null);
+    }
+    if (snapshot.kind === "missing") {
+      return readingEmptyCard(card,
+        isTerminal(view) ? "The run ended without a document-reading record." : "No document-reading record has arrived yet.",
+        isTerminal(view)
+          ? "The page cannot say how much of the document was read. Missing progress is not zero and is not completion."
+          : "The page cannot yet say how much was read. Missing progress is not shown as zero.",
+        "document-reading-progress-missing");
+    }
+    if (snapshot.kind === "invalid") {
+      return readingEmptyCard(card, "Document-reading progress is unavailable.",
+        snapshot.detail + " Counts were withheld instead of being repaired or replaced with zero.",
+        "document-reading-progress-invalid");
+    }
+
+    var reading = snapshot.value;
+    card.appendChild(el("p", { cls: "reading-card__stage" }, [
+      el("span", { text: "Current reading step: " }),
+      el("strong", { text: READING_STAGES[reading.stage] })
+    ]));
+
+    if (reading.state === "unavailable") {
+      card.appendChild(el("div", { cls: "empty-state reading-empty" }, [
+        el("strong", { text: "Saved reading counts are unavailable." }),
+        el("p", { text: "The service named the limitation below. Its placeholder zeros are not displayed as progress." })
+      ]));
+    } else if (reading.primary.total === null) {
+      card.appendChild(el("div", { cls: "empty-state reading-empty" }, [
+        el("strong", { text: "The first-read denominator is not saved yet." }),
+        el("p", { text: "Until the total is durable, this page does not turn the placeholder count into progress." })
+      ]));
+    } else {
+      card.appendChild(el("div", { cls: "reading-pass" }, [
+        el("h3", { text: "First read" }),
+        el("div", { cls: "reading-metrics" }, [
+          readingMetric("Total units", String(reading.primary.total), "Fixed document-window denominator."),
+          readingMetric("Accounted for", String(reading.primary.landed),
+            "Durably retained units, including any retained failure."),
+          readingMetric("Unread", String(reading.primary.remaining), "Units not yet durably accounted for.")
+        ])
+      ]));
+    }
+
+    card.appendChild(el("div", { cls: "reading-states" }, [
+      readingFact("Cross-window synthesis", el("span", { text: SYNTHESIS_WORDS[reading.primary.synthesisState] })),
+      readingFact("Second read (Pass B)", el("span", { text: reading.secondary === null
+        ? "No saved Pass B progress yet; zero is not assumed."
+        : reading.secondary.total === null
+          ? "Its denominator is not saved yet."
+          : reading.secondary.remaining === 0 && reading.secondary.sweepRemaining === 0
+            ? "All saved Pass B units and sweep units are accounted for."
+            : "Saved Pass B progress is shown below." }))
+    ]));
+
+    if (reading.state !== "unavailable" && reading.secondary !== null && reading.secondary.total !== null) {
+      card.appendChild(el("div", { cls: "reading-pass" }, [
+        el("h3", { text: "Second read (Pass B)" }),
+        el("div", { cls: "reading-metrics reading-metrics--four" }, [
+          readingMetric("Total units", String(reading.secondary.total), "Fixed Pass B chunk denominator."),
+          readingMetric("Accounted for", String(reading.secondary.landed), "Durably retained Pass B units."),
+          readingMetric("Unread", String(reading.secondary.remaining), "Pass B chunks not yet accounted for."),
+          readingMetric("Sweep unread", reading.secondary.sweepRemaining === null ? "Not reported" : String(reading.secondary.sweepRemaining),
+            "Remaining units in the saved final sweep.")
+        ])
+      ]));
+    }
+
+    if (reading.state === "reading" && reading.currentUnit) {
+      var currentValue = el("span", {}, [machine(reading.currentUnit.name)]);
+      if (reading.currentUnit.ordinal !== null && reading.currentUnit.total !== null) {
+        currentValue.appendChild(document.createTextNode(" (" + reading.currentUnit.ordinal + " / " +
+          reading.currentUnit.total + ")"));
+      }
+      card.appendChild(el("div", { cls: "reading-current" }, [
+        readingFact("Latest unit started", currentValue),
+        renderReadingSource(reading.currentUnit.sourceContext, "latest unit started"),
+        reading.stage === "secondary-chunks"
+          ? el("p", { cls: "reading-none", text:
+            "Pass B may have other units in flight. This view names only the latest unit started; the exact active count is unavailable." })
+          : null
+      ]));
+    } else if (reading.state === "reading") {
+      card.appendChild(el("p", { cls: "reading-none", text: "No latest unit start is durably recorded at this update." }));
+    }
+
+    if (reading.lastDurableUnit) {
+      var lastValue = el("span", {}, [machine(reading.lastDurableUnit.name)]);
+      if (reading.lastDurableUnit.ordinal !== null && reading.lastDurableUnit.total !== null) {
+        lastValue.appendChild(document.createTextNode(" (" + reading.lastDurableUnit.ordinal + " / " +
+          reading.lastDurableUnit.total + ")"));
+      }
+      card.appendChild(el("div", { cls: "reading-latest" }, [
+        readingFact("Last saved unit", lastValue),
+        renderReadingSource(reading.lastDurableUnit.sourceContext, "last saved unit")
+      ]));
+    } else {
+      card.appendChild(el("p", { cls: "reading-none", text: "No durable document unit has been saved yet." }));
+    }
+
+    if (reading.failure) {
+      card.appendChild(el("div", { cls: "reading-failure", attrs: { role: "alert" } }, [
+        el("h3", { text: "Exact stopped unit and reason" }),
+        reading.failure.unit === null
+          ? el("p", { text: "The reader stopped before it could identify a durable unit." })
+          : machineRow("Stopped unit:", reading.failure.unit),
+        machineRow("Reason:", reading.failure.reasonCode),
+        el("p", { cls: "reading-failure__detail", text: reading.failure.detail })
+      ]));
+    } else if (reading.state === "stopped") {
+      card.appendChild(el("div", { cls: "reading-failure", attrs: { role: "alert" } }, [
+        el("h3", { text: "No exact stopped-unit reason was recorded." }),
+        el("p", { text: "The reading state says stopped, but this update cannot name the unit or cause." })
+      ]));
+    }
+
+    card.appendChild(el("div", { cls: "reading-updated" }, [
+      el("span", { text: "Last durable reading progress: " }),
+      el("time", { attrs: { datetime: reading.updatedAt }, text: clockTime(reading.updatedAt) || reading.updatedAt }),
+      el("span", { text: " (" }),
+      el("span", { attrs: { "data-age-of": "document-reading" }, text: ageWords(Math.max(0, Date.now() - ms(reading.updatedAt))) }),
+      el("span", { text: ")" })
+    ]));
+    card.appendChild(el("div", { cls: "reading-retention" }, [
+      el("strong", { text: "Run records retained permanently" }),
+      el("span", { text: "Artifacts for this run are kept permanently in its own run record. Compression may reduce size but does not delete evidence." })
+    ]));
+    card.appendChild(renderReadingUsage(reading.usage));
+    card.appendChild(renderReadingLimitations(reading));
+    return card;
+  }
+
   // ---------------------------------------------------------------- browser activity
   // This panel uses a separate server projection because attempts, screen changes, stable
   // screens and sealed-case credit have different grains. None is derived from another.
@@ -1737,6 +2145,26 @@
 
   // One short sentence for the screen-reader live region. watch.js announces it only when
   // it CHANGES, so a polite region does not re-read the page every poll.
+  function summarizeDocumentReading(view) {
+    var snapshot = documentReadingSnapshot(view);
+    if (snapshot.kind === "loading") return "Waiting for the first document-reading update.";
+    if (snapshot.kind === "missing") return isTerminal(view)
+      ? "The run ended without a document-reading record."
+      : "No document-reading record has arrived yet.";
+    if (snapshot.kind === "invalid") return "Document-reading progress is unavailable because its saved counts did not verify.";
+    var reading = snapshot.value;
+    if (reading.state === "unavailable") return "Document-reading progress is unavailable; its recorded limitations are shown.";
+    var counts = reading.primary.total === null
+      ? "The first-read total is not known."
+      : reading.primary.landed + " of " + reading.primary.total +
+        " first-read units are accounted for; " + reading.primary.remaining + " unread.";
+    if (reading.state === "stopped") return "Document reading stopped" +
+      (reading.failure && reading.failure.unit ? " at " + reading.failure.unit : "") + ". " + counts;
+    if (reading.state === "complete") return "Document reading finished. " + counts;
+    return "Document reading is in progress" +
+      (reading.currentUnit ? " at " + reading.currentUnit.name : "") + ". " + counts;
+  }
+
   function summarize(view) {
     var t = transportState(view);
     if (t === "not-found") return "We cannot find this run. This page has stopped checking.";
@@ -1751,7 +2179,7 @@
         ? tot.requirementsChecked + " of " + tot.requirements + " requirements checked."
         : tot.done + " of " + tot.total + " checks completed.")
       : "The number of requirements is not known yet.";
-    return h.title + ". " + progress;
+    return h.title + ". " + progress + " " + summarizeDocumentReading(view);
   }
 
   // ---------------------------------------------------------------- main render
@@ -1814,6 +2242,10 @@
 
     root.appendChild(card);
 
+    // Document reading has its own fixed denominators and durable unit identities. Keep it
+    // default-visible and separate from both QA coverage and browser movement.
+    if (transportState(view) !== "not-found") root.appendChild(renderDocumentReading(view));
+
     // Browser movement is a first-class, default-visible surface. It stays OUTSIDE the run
     // card and OUTSIDE the coverage details because a transition is neither a unique page nor
     // a checked case; placing these numbers in one progress meter would erase that distinction.
@@ -1840,7 +2272,10 @@
     var ages = root.querySelectorAll("[data-age-of]");
     for (var i = 0; i < ages.length; i++) {
       var which = ages[i].getAttribute("data-age-of");
-      var iso = which === "heartbeat" ? view.status.heartbeatAt : view.status.lastProgressAt;
+      var iso = which === "heartbeat" ? view.status.heartbeatAt
+        : which === "document-reading" && view.status.documentReading
+          ? view.status.documentReading.updatedAt
+          : view.status.lastProgressAt;
       var t = ms(iso);
       ages[i].textContent = t == null ? "—" : ageWords(nowMs - t);
     }

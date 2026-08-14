@@ -84,7 +84,12 @@ function docFor(n) {
  * id to key on the way pass B has. Without this the bounded-re-buy property could not be
  * measured at all, because every window would look like the same call.
  */
-function stubProvider({ failUnit = () => false, emitRules = true, emitCrossRefs = true } = {}) {
+function stubProvider({
+  failUnit = () => false,
+  failBody = "upstream exploded",
+  emitRules = true,
+  emitCrossRefs = true,
+} = {}) {
   const original = globalThis.fetch;
   const requests = [];
   globalThis.fetch = async (url, init) => {
@@ -108,7 +113,7 @@ function stubProvider({ failUnit = () => false, emitRules = true, emitCrossRefs 
     requests.push({ url: String(url), unit, blockIds, model: body.model, role: metadata.role ?? null });
 
     if (failUnit(unit, requests.length, body.model)) {
-      return new Response("upstream exploded", { status: 502 });
+      return new Response(failBody, { status: 502 });
     }
 
     // ONE CROSS-CUTTING RULE PER WINDOW, citing that window's blocks. Pass A reads
@@ -281,6 +286,46 @@ test("a pass-A wave with NO budget at all still issues one call — the wave loo
     assertEq(first.slice.done, false, "three windows cannot be done after a single-call wave");
     assert(first.slice.windowsRemaining > 0, "the wave must report the work it deferred");
     assertEq(provider.requests.length, first.slice.windowsIssued, "issued count matches the calls actually made");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("Pass-A heartbeat hides a raw provider response from the real status poll", async () => {
+  const m = await mod();
+  const env = sliceEnv({
+    EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "1",
+    EXTRACT_PASS_A_WINDOW_CHARS: "90000",
+  });
+  const runId = m.ids.mintRunId();
+  await m.checkpoint.createCheckpoint(env, m.checkpoint.initialCheckpoint(env, runId, "standard", false));
+  await m.checkpoint.updateCheckpoint(env, runId, (draft) => {
+    m.checkpoint.setPhase(draft, "extracting", "active");
+  }, { progressed: true });
+  const sentinel = "RAW_PASS_A_PROVIDER_BODY_SENTINEL_DO_NOT_EXPOSE";
+  const provider = stubProvider({ failUnit: () => true, failBody: sentinel });
+  try {
+    const result = await m.passA.runPassA(
+      env,
+      runId,
+      docFor(1),
+      "synthetic.docx",
+      async (message) => m.checkpoint.beat(env, runId, message, "extract-a"),
+      { budgetMs: 600_000 },
+    );
+    assert(result.slice.terminalFailure || result.providerIndependence === "reduced-same-provider-fallback",
+      "the fixture must cross the real terminal provider-failure branch");
+    const response = await m.apiRuns.getStatus(
+      new Request(`https://fixture.invalid/api/v2/runs/${runId}/status`),
+      env,
+      runId,
+    );
+    const text = await response.text();
+    assert(!text.includes(sentinel), "raw Pass-A provider response text must not cross heartbeatNote/status");
+    const status = JSON.parse(text);
+    assert(status.heartbeatNote.includes(
+      "A provider request for a document-reading unit did not complete successfully.",
+    ));
   } finally {
     provider.restore();
   }

@@ -74,11 +74,11 @@ export interface Env {
   // --- namespace guard (required; absence is a deployment defect, never an implicit prod default) ---
   V2_PREFIX: string;
 
-  // --- retention posture (CONFIGURATION, never hardcoded) ---
+  // --- permanent retention attestation; runtime rejects any drift from 0/0/0 + permanent ---
   RETENTION_RAW_EVIDENCE_DAYS?: string;
   RETENTION_REPORT_DAYS?: string;
   RETENTION_CONTRACT_DAYS?: string;
-  RETENTION_MODE?: string; // "report-only" | "delete"
+  RETENTION_MODE?: string; // exactly "permanent" in deployed environments
   /** Objects the retention sweep may examine per cron tick. Keeps a tick bounded. */
   RETENTION_SCAN_BUDGET?: string;
 
