@@ -7,10 +7,61 @@
  * publication fails with no pointer, no bytes claim, and reportAvailable=false.
  */
 
+import { strToU8, zipSync } from "fflate";
 import { assert, assertEq, fakeStep, suite, test } from "../testkit.mjs";
 import { testEnv, worker } from "./_helpers.mjs";
 
 const REASON = "extraction-pass-a-reduced-provider-independence";
+const WIRE_REASON = "extraction-model-input-wire-ceiling-exceeded";
+const WIRE_PRIVATE_SENTINEL = "PRIVATE_WIRE_SOURCE_SENTINEL_DO_NOT_EXPOSE";
+const WIRE_PUBLIC_DETAIL =
+  "A document-reading unit exceeded the configured safe input limit; this refusal issued no new credential lookup or provider request.";
+
+const oversizedWireDocx = () => zipSync({
+  "word/document.xml": strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+      `<w:p><w:r><w:t>Neutral questionnaire instruction. ${"x".repeat(450_100)} ${WIRE_PRIVATE_SENTINEL}</w:t></w:r></w:p>` +
+      `</w:body></w:document>`,
+  ),
+}, { mtime: "2026-08-14T00:00:00.000Z" });
+
+function wireCeilingEnv(secretReads) {
+  const countedSecret = {
+    async get() {
+      secretReads.count += 1;
+      return "fixture-secret-that-must-not-be-read";
+    },
+  };
+  return testEnv({
+    XAI_API_KEY: countedSecret,
+    DEEPSEEK_API_KEY: countedSecret,
+    GROK_MODEL: "grok-4.6",
+    GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
+    GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
+    GROK_RATE_SOURCE: "owner-dashboard-copy",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
+    GROK_RATE_ATTESTED_AT: "2026-08-13",
+    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_CONTEXT_WINDOW_TOKENS: "500000",
+    GROK_INPUT_USD_PER_MTOK: "2",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_OUTPUT_USD_PER_MTOK: "6",
+    GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
+    GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
+    GROK_MAX_INPUT_USD_PER_MTOK: "4",
+    GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
+    DEEPSEEK_CONTEXT_WINDOW_TOKENS: "1000000",
+    EXTRACT_MODEL_INPUT_MAX_BYTES: "450000",
+    EXTRACT_MAX_OUTPUT_TOKENS: "32000",
+    EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100",
+    EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2",
+    EXTRACT_MAX_ATTEMPTS: "2",
+  });
+}
 
 async function refusalFixture(mod, evidenceState) {
   const env = testEnv();
@@ -166,6 +217,193 @@ suite("terminal extraction failure report — durable evidence, zero guessed QA 
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("oversized model input stays counted, makes no purchase, and keeps its exact safe reason on every public surface", async () => {
+    const mod = await worker();
+    const secretReads = { count: 0 };
+    const env = wireCeilingEnv(secretReads);
+    const runId = mod.ids.mintRunId();
+    const documentKey = mod.keys.inputDocumentKey(runId);
+    const documentBytes = oversizedWireDocx();
+    const documentSha256 = await mod.hash.sha256Hex(documentBytes);
+    const parsedDocument = mod.docxBlocks.parseDocxBlocks(documentBytes);
+    assertEq(parsedDocument.blocks.length, 1, "the general wire fixture owns one source block");
+    assert(
+      parsedDocument.blocks[0].text.endsWith(WIRE_PRIVATE_SENTINEL),
+      "the private sentinel is really present in parser-owned source text",
+    );
+    await env.EVIDENCE.put(documentKey, documentBytes, {
+      httpMetadata: {
+        contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      },
+    });
+    await mod.envelope.putEnvelope(env, {
+      schemaVersion: "v2-run-envelope/1.0.0",
+      kind: "survey-qa-v2-envelope",
+      runId,
+      createdAt: "2026-08-14T00:00:00.000Z",
+      instanceId: runId,
+      input: {
+        surveyUrl: "https://fixture.invalid/survey",
+        documentKey,
+        documentSha256,
+        documentName: "oversized-neutral-questionnaire.docx",
+        targetBuildId: null,
+        locale: "en",
+        viewports: ["desktop"],
+        contractSource: { mode: "extract" },
+      },
+      profile: "standard",
+      contractRevisionId: null,
+      recovery: null,
+      finalCompletion: null,
+    });
+    await mod.checkpoint.createCheckpoint(
+      env,
+      mod.checkpoint.initialCheckpoint(env, runId, "standard", false),
+    );
+
+    const originalFetch = globalThis.fetch;
+    let providerRequests = 0;
+    globalThis.fetch = async () => {
+      providerRequests += 1;
+      throw new Error("the wire ceiling must refuse before any provider request");
+    };
+    const step = fakeStep();
+    try {
+      await new mod.workflow.SurveyRunWorkflowV2({}, env).run({
+        payload: {
+          runId,
+          surveyUrl: "https://fixture.invalid/survey",
+          documentKey,
+          documentSha256,
+          profile: "standard",
+          locale: "en",
+          viewports: ["desktop"],
+        },
+      }, step);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assertEq(secretReads.count, 0, "the all-window barrier runs before either Secrets Store lookup");
+    assertEq(providerRequests, 0, "the refusal issues no provider request");
+    assertEq(
+      step.calls.filter((name) => name.startsWith("extract-pass-a-wave-")).length,
+      1,
+      "one real Pass-A Workflow step reaches the guard",
+    );
+    assert(step.calls.includes("report") && step.calls.includes("finalize"));
+
+    const checkpoint = (await mod.checkpoint.loadCheckpoint(env, runId)).checkpoint;
+    assertEq(checkpoint.completion.reasonCode, WIRE_REASON);
+    assertEq(checkpoint.completion.test, "failed");
+    assertEq(checkpoint.completion.report, "complete");
+    assertEq(checkpoint.reportAvailable, true);
+    assertEq(checkpoint.contract.state, "unavailable", "oversize input never seals a contract");
+    assertEq(checkpoint.usage.modelCalls.used, 0, "zero-purchase refusal keeps a zero-call ledger");
+    assertEq(
+      await env.EVIDENCE.get(mod.keys.recordKey(runId)),
+      null,
+      "no RunRecord or QA authority is fabricated",
+    );
+
+    const extraction = await env.EVIDENCE.list({
+      prefix: mod.keys.k("runs", runId, "extraction"),
+      limit: 100,
+    });
+    const windowKey = extraction.objects
+      .map((entry) => entry.key)
+      .find((key) => /\/pass-a\/window-01[.]json$/.test(key));
+    assert(windowKey, "the zero-purchase refusal is a durable Pass-A unit artifact");
+    const artifactText = await (await env.EVIDENCE.get(windowKey)).text();
+    assert(!artifactText.includes(WIRE_PRIVATE_SENTINEL), "the durable refusal stores no source/body text");
+    const artifact = JSON.parse(artifactText);
+    assertEq(artifact.failureStage, "wire-ceiling");
+    assertEq(artifact.attempts, 0);
+    assertEq(artifact.usages.length, 0);
+    assertEq(artifact.blockIds.length, 1, "the refused unit retains its exact source-block count");
+    assert(String(artifact.detail).startsWith(WIRE_REASON + ":"));
+
+    const statusResponse = await mod.apiRuns.getStatus(
+      new Request("https://fixture.invalid/status"),
+      env,
+      runId,
+    );
+    assertEq(statusResponse.status, 200);
+    const statusText = await statusResponse.text();
+    assert(!statusText.includes(WIRE_PRIVATE_SENTINEL), "private source/body text cannot cross status");
+    const status = JSON.parse(statusText);
+    assertEq(status.completion.reasonCode, WIRE_REASON);
+    assertEq(status.documentReading.state, "stopped");
+    assertEq(status.documentReading.failure.reasonCode, WIRE_REASON);
+    assertEq(status.documentReading.failure.detail, WIRE_PUBLIC_DETAIL);
+    assertEq(
+      status.documentReading.lastDurableUnit.sourceContext,
+      null,
+      "public failure status withholds raw unit context; its counted limitation carries the safe census",
+    );
+    const statusWireLimitations = status.documentReading.limitations.filter(
+      (entry) => entry.code === WIRE_REASON,
+    );
+    assertEq(statusWireLimitations.length, 1, "status exposes one exact counted wire limitation");
+    assertEq(statusWireLimitations[0].count, 1);
+    assert(statusWireLimitations[0].detail.includes("no new credential lookup or provider request"));
+
+    const dataResponse = await mod.apiReport.getReportData(
+      new Request("https://fixture.invalid/report-data"),
+      env,
+      runId,
+    );
+    assertEq(dataResponse.status, 200);
+    const dataText = await dataResponse.text();
+    assert(!dataText.includes(WIRE_PRIVATE_SENTINEL), "private source/body text cannot cross report JSON");
+    const data = JSON.parse(dataText);
+    assertEq(data.outcome.reasonCode, WIRE_REASON);
+    assertEq(data.outcome.detail, WIRE_PUBLIC_DETAIL);
+    assertEq(data.coverage.executionCases.tested, 0);
+    assertEq(data.coverage.qaClaims.total, 0);
+    assertEq(data.qaResults.findings.length, 0);
+    assertEq(data.qaResults.verdicts.length, 0);
+    assertEq(data.usage.modelCalls, 0);
+    const reportWireLimitations = data.limitations.filter((entry) => entry.code === WIRE_REASON);
+    assertEq(reportWireLimitations.length, 1, "report JSON exposes one exact counted wire limitation");
+    assertEq(reportWireLimitations[0].count, 1);
+    assert(reportWireLimitations[0].detail.includes("no new credential lookup or provider request"));
+
+    const htmlResponse = await mod.apiReport.getReport(
+      new Request("https://fixture.invalid/report"),
+      env,
+      runId,
+    );
+    assertEq(htmlResponse.status, 200);
+    const html = await htmlResponse.text();
+    assert(!html.includes(WIRE_PRIVATE_SENTINEL), "private source/body text cannot cross report HTML");
+    assert(html.includes(WIRE_REASON), "HTML keeps the exact machine reason");
+    assert(html.includes(WIRE_PUBLIC_DETAIL), "HTML makes the no-new-request boundary explicit");
+    assert(html.includes("No survey correctness claim was produced."));
+
+    // Semantic counterproof: if the exact branch in extractionPassRefusal is removed, this
+    // same otherwise-valid result becomes the old generic extraction-pass-a-* reason and
+    // every exact public assertion above goes red.
+    const exactRefusal = mod.workflow.extractionPassRefusal("a", {
+      state: "not-evaluated",
+      reason: WIRE_REASON,
+      detail: WIRE_PRIVATE_SENTINEL,
+    });
+    const genericRefusal = mod.workflow.extractionPassRefusal("a", {
+      state: "not-evaluated",
+      reason: "PASS_A_WINDOW_FAILURES",
+      detail: WIRE_PRIVATE_SENTINEL,
+    });
+    assertEq(exactRefusal.reasonCode, WIRE_REASON);
+    assert(
+      genericRefusal.reasonCode !== exactRefusal.reasonCode,
+      "the wire refusal must remain distinguishable from a generic Pass-A failure",
+    );
+    assertEq(exactRefusal.detail, WIRE_PUBLIC_DETAIL);
+    assert(!exactRefusal.detail.includes(WIRE_PRIVATE_SENTINEL));
   });
 
   test("named refusal publishes real HTML+JSON bytes and only then closes reporting complete", async () => {

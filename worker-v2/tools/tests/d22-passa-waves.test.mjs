@@ -99,16 +99,25 @@ function stubProvider({
     const synthesis = metadata.role === "extract-pass-a-synthesis";
     const windowed = user.match(/window (\d+) of (\d+)/);
     const unit = synthesis ? "A-synthesis" : windowed ? `A-w${windowed[1]}` : "A";
+    const sourceRows = synthesis
+      ? []
+      : (() => {
+          const startMarker = "===== SOURCE BLOCKS JSONL (one object per physical line) =====";
+          const endMarker = "===== END SOURCE BLOCKS JSONL =====";
+          const start = user.indexOf(startMarker);
+          const end = user.indexOf(endMarker, start + startMarker.length);
+          assert(start >= 0 && end > start, "the primary prompt exposes a bounded JSONL source section");
+          return user
+            .slice(start + startMarker.length, end)
+            .trim()
+            .split(/\r?\n/)
+            .filter((line) => line.length > 0)
+            .map((line) => JSON.parse(line));
+        })();
     const blockIds = synthesis
       ? [...new Set([...user.matchAll(/"(b\d{4})"/g)].map((m) => m[1]))]
-      : [...new Set([...user.matchAll(/\[(b\d{4})\]/g)].map((m) => m[1]))];
-    const firstAnnotatedLine = blockIds.length === 0
-      ? ""
-      : user.split("\n").find((line) => line.startsWith(`[${blockIds[0]}]`)) ?? "";
-    let exactQuote = firstAnnotatedLine.replace(/^\[b\d{4}\]\s*/, "");
-    if (exactQuote.startsWith("(") && exactQuote.includes(") ")) {
-      exactQuote = exactQuote.slice(exactQuote.lastIndexOf(") ") + 2);
-    }
+      : [...new Set(sourceRows.map((row) => String(row.block_id)))];
+    let exactQuote = synthesis ? "" : String(sourceRows[0]?.text ?? "");
     if (exactQuote.length === 0) exactQuote = "Every question is compulsory.";
     requests.push({ url: String(url), unit, blockIds, model: body.model, role: metadata.role ?? null });
 
@@ -498,7 +507,7 @@ test("(b) a HALF-finished pass-A re-issues only the windows that never landed", 
   }
 });
 
-test("changing the block limit refuses persisted windows whose exact block sets changed", async () => {
+test("changing the block limit retains old authority and stops on the first occupied canonical key", async () => {
   const m = await mod();
   const shared = memoryR2();
   const runId = "run_d22_block_policy_repartition";
@@ -513,19 +522,65 @@ test("changing the block limit refuses persisted windows whose exact block sets 
     const first = await m.passA.runPassA(firstEnv, runId, document, "synthetic.docx");
     assertEq(first.slice.windowsTotal, 3, "the first policy creates 2,2,1 block windows");
     assertEq(provider.primaryRequests().map((request) => request.blockIds.length).join(","), "2,2,1");
+    const firstWindowKey = [...shared._store.keys()].find((key) =>
+      /\/extraction\/pass-a\/window-01\.json$/.test(key)
+    );
+    assert(typeof firstWindowKey === "string", "the old policy retained its first canonical window");
+    const oldCanonicalBytes = await shared.get(firstWindowKey).then((object) => object.text());
 
     provider.reset();
-    const repartitioned = await m.passA.runPassA(
-      { ...firstEnv, EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "3" },
-      runId,
-      document,
-      "synthetic.docx",
+    const repartitionStep = fakeStep();
+    const executeRepartition = () => repartitionStep.do(
+      "fixture-repartitioned-pass-a",
+      () => m.passA.runPassA(
+        { ...firstEnv, EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "3" },
+        runId,
+        document,
+        "synthetic.docx",
+      ),
     );
+    const repartitioned = await executeRepartition();
     assertEq(repartitioned.slice.windowsTotal, 2, "the changed policy creates 3,2 block windows");
     assertEq(
       provider.primaryRequests().map((request) => request.blockIds.length).join(","),
-      "3,2",
-      "neither differently-owned artifact is adopted under the new partition",
+      "3",
+      "the first new window is paid once, then its occupied canonical key stops the tail",
+    );
+    assertEq(repartitioned.slice.terminalFailure, true, "policy drift ends as a named persistence refusal");
+    assert(
+      String(repartitioned.failedUnits[0]?.detail).includes("PASS_A_WINDOW_PERSISTENCE_FAILED"),
+      "the failed unit names the immutable canonical-key conflict",
+    );
+    assertEq(
+      await shared.get(firstWindowKey).then((object) => object.text()),
+      oldCanonicalBytes,
+      "the old-identity canonical bytes are never overwritten",
+    );
+    const conflictKeys = [...shared._store.keys()].filter((key) =>
+      /window-01-cas-conflict-[0-9a-f]{64}\.json$/.test(key)
+    );
+    assertEq(conflictKeys.length, 1, "the new paid bytes land once under an append-only conflict key");
+    const newConflictBytes = await shared.get(conflictKeys[0]).then((object) => object.text());
+    const oldCanonical = JSON.parse(oldCanonicalBytes);
+    const newConflict = JSON.parse(newConflictBytes);
+    assertEq(oldCanonical.blockIds.length, 2, "the preserved canonical artifact owns the old two-block window");
+    assertEq(newConflict.blockIds.length, 3, "the conflict artifact retains the exact new three-block answer");
+    assert(
+      oldCanonical.windowPolicyIdentity.includes("blocks:2") &&
+        newConflict.windowPolicyIdentity.includes("blocks:3"),
+      "old and new exact bytes retain their distinct policy identities",
+    );
+
+    await executeRepartition();
+    assertEq(
+      provider.primaryRequests().length,
+      1,
+      "Workflow re-entry reuses the terminal result and buys no second conflicting answer",
+    );
+    assertEq(
+      [...shared._store.keys()].filter((key) => key.includes("window-01-cas-conflict-")).length,
+      1,
+      "cached re-entry neither overwrites nor duplicates retained conflict evidence",
     );
   } finally {
     provider.restore();
@@ -1045,12 +1100,40 @@ test("D51-a pass A rejects stale window success and terminal failure artifacts",
       usages: [],
       routeReceipt: { selected: "grok-4.6", trigger: null },
     });
+    const canonicalKey = d51WindowKey(m, runId);
+    const staleBytes = await env.EVIDENCE.get(canonicalKey).then((object) => object.text());
     const provider = stubProvider();
     try {
-      const result = await m.passA.runPassA(env, runId, document, "synthetic.docx");
+      const step = fakeStep();
+      const execute = () => step.do(
+        "d51-a-stale-success",
+        () => m.passA.runPassA(env, runId, document, "synthetic.docx"),
+      );
+      const result = await execute();
       assertEq(provider.requests.length, 1, "stale pass-A success is re-issued");
-      assert(result.requirements.some((row) => row.id === "A-G1"), "the current prompt's result replaces stale output");
-      d51AssertVersions(m, await d51Read(env, d51WindowKey(m, runId)), m.passA.PASS_A_VERSION, "fresh window success");
+      assertEq(result.slice.terminalFailure, true, "stale canonical authority causes a named persistence refusal");
+      assert(
+        result.failedUnits.some((unit) => String(unit.detail).includes("PASS_A_WINDOW_PERSISTENCE_FAILED")),
+        "the stale-key conflict is public as a named failed unit",
+      );
+      assertEq(
+        await env.EVIDENCE.get(canonicalKey).then((object) => object.text()),
+        staleBytes,
+        "the stale canonical success bytes are never overwritten",
+      );
+      const conflictKeys = [...env.EVIDENCE._store.keys()].filter((key) =>
+        /window-01-cas-conflict-[0-9a-f]{64}\.json$/.test(key));
+      assertEq(conflictKeys.length, 1, "the current paid success survives under one append-only conflict key");
+      const conflict = await d51Read(env, conflictKeys[0]);
+      d51AssertVersions(m, conflict, m.passA.PASS_A_VERSION, "retained current window success");
+      assert(conflict.globalRules.some((row) => row.id === "A-G1"), "the retained conflict contains the current answer");
+      await execute();
+      assertEq(provider.requests.length, 1, "Workflow re-entry buys no second current answer");
+      assertEq(
+        [...env.EVIDENCE._store.keys()].filter((key) => key.includes("window-01-cas-conflict-")).length,
+        1,
+        "cached re-entry neither overwrites nor duplicates retained conflict evidence",
+      );
     } finally {
       provider.restore();
     }
@@ -1074,21 +1157,43 @@ test("D51-a pass A rejects stale window success and terminal failure artifacts",
       fallbackTrigger: null,
       detail: "the old prompt exhausted its budget",
     });
+    const canonicalKey = d51WindowKey(m, runId);
+    const staleBytes = await env.EVIDENCE.get(canonicalKey).then((object) => object.text());
     const provider = stubProvider({ failUnit: () => true });
     try {
-      await m.passA.runPassA(env, runId, document, "synthetic.docx");
-      const fresh = await d51Read(env, d51WindowKey(m, runId));
-      // The normal topology buys Grok 4.6 first. Its eligible 502 then authorizes exactly
-      // one Flash fallback; the stale terminal artifact must not suppress either current
-      // route leg or leak its old 99-attempt ceiling into this prompt version.
-      assertEq(provider.requests.length, 2, "stale terminal failure cannot suppress the current Grok then Flash route");
-      assertEq(
-        provider.requests.map((request) => request.model).join(","),
-        "grok-4.6,deepseek-v4-flash",
-        "the reissued current route is exact Grok 4.6 followed by the eligible Flash fallback",
+      const step = fakeStep();
+      const execute = () => step.do(
+        "d51-a-stale-failure",
+        () => m.passA.runPassA(env, runId, document, "synthetic.docx"),
       );
-      assertEq(fresh.attempts, 1, "the current pass-A version restarts attempts at one");
-      d51AssertVersions(m, fresh, m.passA.PASS_A_VERSION, "fresh window failure");
+      const result = await execute();
+      assertEq(provider.requests.length, 1, "the stale terminal cannot suppress one current Grok purchase");
+      assertEq(provider.requests[0]?.model, "grok-4.6", "the current route starts with exact Grok 4.6");
+      assertEq(result.slice.terminalFailure, true, "occupied stale failure authority is terminal");
+      assert(
+        result.failedUnits.some((unit) => String(unit.detail).includes("PASS_A_WINDOW_PERSISTENCE_FAILED")),
+        "the fallback-checkpoint conflict is public as a named failed unit",
+      );
+      assertEq(
+        await env.EVIDENCE.get(canonicalKey).then((object) => object.text()),
+        staleBytes,
+        "the stale terminal bytes are never overwritten",
+      );
+      const conflictKeys = [...env.EVIDENCE._store.keys()].filter((key) =>
+        /window-01-cas-conflict-[0-9a-f]{64}\.json$/.test(key));
+      assertEq(conflictKeys.length, 1, "the current paid fallback checkpoint survives under one conflict key");
+      const conflict = await d51Read(env, conflictKeys[0]);
+      assertEq(conflict.status, "failed", "the retained current artifact is retryable state, not stale authority");
+      assertEq(conflict.failureStage, "fallback-authorized", "the exact pre-Flash checkpoint is retained");
+      assertEq(conflict.attempts, 1, "the current pass-A version restarts attempts at one");
+      d51AssertVersions(m, conflict, m.passA.PASS_A_VERSION, "retained current fallback checkpoint");
+      await execute();
+      assertEq(provider.requests.length, 1, "Workflow re-entry buys neither Grok nor Flash again");
+      assertEq(
+        [...env.EVIDENCE._store.keys()].filter((key) => key.includes("window-01-cas-conflict-")).length,
+        1,
+        "cached re-entry retains one exact paid conflict artifact",
+      );
     } finally {
       provider.restore();
     }

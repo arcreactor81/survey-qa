@@ -27,6 +27,7 @@ import {
   withoutDocumentSourceContext,
   type DocumentReadingProgress,
 } from "../observability/document-reading";
+import { EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED } from "../llm/extraction-wire";
 
 export const TERMINAL_FAILURE_REPORT_KIND = "survey-qa-v2-operational-failure-report" as const;
 export const TERMINAL_FAILURE_REPORT_SCHEMA = "v2-operational-failure-report/1.2.0" as const;
@@ -448,6 +449,9 @@ export async function buildAndStoreTerminalFailureReport(env: Env, runId: string
     ? `partial: ${inventory.uninspected} retained artifact(s) were not content-inspected, so full receipt equality is unknown`
     : `complete: ${paidIds.size} checkpoint paid receipt(s) equal ${inventory.usageEventIds.size} extraction receipt(s)`;
   const resolvedDocumentReading = await resolveDocumentReading(env, runId, loaded.checkpoint);
+  const affectedWireBlockCount =
+    resolvedDocumentReading.progress?.lastDurableUnit?.sourceContext?.blockCount ??
+    inventory.sourceBlockIds.size;
   // Operational reports are Access-protected, but document text and block identifiers still
   // stay off the report wire until that separate disclosure is directly authorized.
   const documentReading = resolvedDocumentReading.progress
@@ -471,6 +475,16 @@ export async function buildAndStoreTerminalFailureReport(env: Env, runId: string
       detail: "These primary reading windows were not durably accounted for and are explicitly unread/not covered.",
     }] : []),
     ...(documentReading?.limitations ?? []),
+    ...(reasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED &&
+        !(documentReading?.limitations ?? []).some(
+          (entry) => entry.code === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+        ) ? [{
+          code: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+          count: affectedWireBlockCount,
+          detail:
+            "The entire refused document-reading unit remains counted. No source was truncated, " +
+            "no QA or coverage credit was awarded, and this refusal issued no new credential lookup or provider request.",
+        }] : []),
   ];
   const view: Record<string, unknown> = {
     schemaVersion: TERMINAL_FAILURE_REPORT_SCHEMA,

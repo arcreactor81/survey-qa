@@ -78,7 +78,21 @@ import {
   deepseekGrokFallbackJson,
   deepseekGrokFallbackRequestShape,
 } from "../llm/deepseek";
-import { chatRequestBodyText, ModelCallError, type ModelFailureKind } from "../llm/chat";
+import {
+  chatRequestBodyText,
+  keyFor,
+  MissingCredential,
+  ModelCallError,
+  type ModelFailureKind,
+} from "../llm/chat";
+import {
+  EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+  extractionWireFailureDetail,
+  extractionWirePolicy,
+  extractionWirePreSerializationFailureDetail,
+  preflightExtractionRequestBodies,
+  utf8ByteLength,
+} from "../llm/extraction-wire";
 import {
   PROMPT_VERSION_A,
   SYSTEM_A,
@@ -97,7 +111,11 @@ import {
   RawUnverifiable,
   SourceBlock,
 } from "./types";
-import { annotate, DOCX_BLOCKS_VERSION } from "./docx-blocks";
+import { DOCX_BLOCKS_VERSION } from "./docx-blocks";
+import {
+  buildBoundedJsonText,
+  buildBoundedSourceBlocksJsonl,
+} from "./bounded-source-block-jsonl";
 import { coerceRequirement, coerceAmbiguities, coerceUnverifiable } from "./coerce";
 import { k } from "../keys";
 import { canonicalJson, sha256Hex } from "../store/hash";
@@ -106,10 +124,17 @@ import {
   sourceContextForUnit,
   type DocumentReadingUnitStartObserver,
 } from "../observability/document-reading";
+import {
+  PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+  validatePassAPrimaryGroundingLimitations,
+  type PassAPrimaryGroundingLimitationWire,
+  type PassAPrimaryGroundingReason,
+  type PassAPrimaryGroundingRowKind,
+} from "../../shared/pass-a-grounding-limitations.mjs";
 
 export const PASS_A_VERSION = PROMPT_VERSION_A;
 export const GROK_FALLBACK_TRIGGER_VERSION = "grok-flash-fallback-trigger/1.0.0";
-export const PASS_A_SYNTHESIS_VERSION = "v2-extract-pass-a-synthesis/1.0.0";
+export const PASS_A_SYNTHESIS_VERSION = "v2-extract-pass-a-synthesis/1.1.0";
 
 export type PassAProviderIndependence = "independent" | "reduced-same-provider-fallback";
 
@@ -130,6 +155,24 @@ export interface PassARouteReceipt {
 /** Where each window lands the instant it returns. The unit of resume for this pass. */
 const windowKey = (runId: string, n: number) =>
   k("runs", runId, "extraction", "pass-a", `window-${String(n).padStart(2, "0")}.json`);
+const windowCasConflictKey = (runId: string, n: number, bodySha256: string) =>
+  k(
+    "runs",
+    runId,
+    "extraction",
+    "pass-a",
+    `window-${String(n).padStart(2, "0")}-cas-conflict-${bodySha256}.json`,
+  );
+const windowHistoryKey = (runId: string, n: number, bodySha256: string) =>
+  k(
+    "runs",
+    runId,
+    "extraction",
+    "pass-a",
+    `window-${String(n).padStart(2, "0")}-history-${bodySha256}.json`,
+  );
+const windowWireCeilingKey = (runId: string, n: number) =>
+  k("runs", runId, "extraction", "pass-a", `window-${String(n).padStart(2, "0")}-wire-ceiling.json`);
 
 const windowPolicyIdentity = (env: Env): string =>
   `pass-a-window-policy/1.1.0|chars:${num(env.EXTRACT_PASS_A_WINDOW_CHARS, 90_000)}` +
@@ -139,6 +182,24 @@ const windowPolicyIdentity = (env: Env): string =>
 /** One durable reconciliation unit, distinct from every independently read primary window. */
 export const passASynthesisKey = (runId: string) =>
   k("runs", runId, "extraction", "pass-a", "cross-window-synthesis.json");
+const passASynthesisWireCeilingKey = (runId: string) =>
+  k("runs", runId, "extraction", "pass-a", "cross-window-synthesis-wire-ceiling.json");
+const passASynthesisHistoryKey = (runId: string, bodySha256: string) =>
+  k(
+    "runs",
+    runId,
+    "extraction",
+    "pass-a",
+    `cross-window-synthesis-history-${bodySha256}.json`,
+  );
+const passASynthesisCasConflictKey = (runId: string, bodySha256: string) =>
+  k(
+    "runs",
+    runId,
+    "extraction",
+    "pass-a",
+    `cross-window-synthesis-cas-conflict-${bodySha256}.json`,
+  );
 
 export interface CrossWindowEvidenceQuote {
   blockId: string;
@@ -222,6 +283,8 @@ export interface PassASynthesisOutcome {
   fallbackTrigger: GrokFallbackTrigger | null;
   failedUnit: PassResult["failedUnits"][number] | null;
   limitation: PassACrossWindowLimitation | null;
+  terminalReasonCode?: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+  credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" };
 }
 
 export interface PassASynthesisOptions {
@@ -277,6 +340,8 @@ export type PassAResult = PassResult & {
   crossRefs: CrossRef[];
   /** Counted honesty boundary for a synthesis that sees candidates, not every source byte. */
   crossWindowLimitations: PassACrossWindowLimitation[];
+  /** Counted candidates withheld from authority because exact document grounding failed. */
+  primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[];
   slice: PassASlice;
   /**
    * The calls this slice ACTUALLY BOUGHT, as opposed to `calls`, which also carries the
@@ -287,6 +352,8 @@ export type PassAResult = PassResult & {
   issuedCalls: CallUsage[];
   /** Persisted receipts re-offered to the idempotent usage CAS after any restart. */
   accountingCalls: CallUsage[];
+  terminalReasonCode?: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+  credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" };
 };
 
 export type PassACompletedAuthority = Omit<
@@ -374,6 +441,353 @@ export function passAStepTimeoutMs(env: Env): number {
   return passAWaveBudgetMs(env) + passACallCeilingMs(env) + PASS_A_STEP_SLACK_MS;
 }
 
+/** Exact immutable paid-window writes attempted before storage failure becomes a terminal stop. */
+export const PASS_A_PRIMARY_ARTIFACT_PERSIST_ATTEMPTS = 2;
+
+interface PassAWindowStorageAuthority {
+  /** R2 version that the strict reader actually decoded before this purchase. */
+  etag: string;
+  /** Exact decoded object bytes; an equal-looking replacement is not inferred from fields. */
+  bodyText: string;
+}
+
+// Storage authority is deliberately not a persisted/projected field. The WeakMap binds the
+// exact R2 object version to the in-memory value produced by the strict reader without letting
+// an internal CAS token leak into completion payloads or reports.
+const passAWindowStorageAuthority = new WeakMap<object, PassAWindowStorageAuthority>();
+
+function rememberPassAWindowStorageAuthority<T extends object>(
+  value: T,
+  authority: PassAWindowStorageAuthority,
+): T {
+  passAWindowStorageAuthority.set(value, authority);
+  return value;
+}
+
+function storageAuthorityOf(
+  value: PersistedWindow | FailedWindowArtifact | InvalidWindowArtifact | null,
+): PassAWindowStorageAuthority | null {
+  return value === null ? null : passAWindowStorageAuthority.get(value) ?? null;
+}
+
+/**
+ * A valid, grounded model answer reached the durable-write boundary but could not be
+ * proven present afterwards. This is infrastructure failure, never semantic-output
+ * authority: the slice returns a terminal no-rebuy outcome carrying the paid receipt. It
+ * must not throw into the Workflow step retry policy, rewrite the receipt as parse-failed,
+ * or persist an artifact that authorizes another model issue.
+ */
+class PassAPrimaryPersistenceError extends Error {
+  constructor(
+    origin: string,
+    writeError: unknown,
+    retainedState: string,
+  ) {
+    const writeDetail = writeError instanceof Error ? writeError.message : String(writeError);
+    super(
+      `PASS_A_WINDOW_PERSISTENCE_FAILED: ${origin}: ${writeDetail}; ` +
+        `success artifact reread ${retainedState}`,
+    );
+    this.name = "PassAPrimaryPersistenceError";
+  }
+}
+
+/**
+ * Preserve the losing paid answer verbatim when another invocation wins the canonical-key CAS.
+ * The body hash makes this append-only write idempotent; canonical readers ignore this key,
+ * while failure inventory can still reconcile the top-level usage receipts in the exact body.
+ */
+async function persistPrimaryWindowAppendOnly(
+  env: Env,
+  key: string,
+  serialized: string,
+  failureCode: string,
+): Promise<string> {
+  let writeError: unknown = null;
+  try {
+    const written = await env.EVIDENCE.put(key, serialized, {
+      httpMetadata: { contentType: "application/json" },
+      onlyIf: { etagDoesNotMatch: "*" },
+    });
+    if (written !== null) return key;
+  } catch (error) {
+    // A transport error can arrive after commit. Exact reread below decides, never the throw.
+    writeError = error;
+  }
+  let retained: R2ObjectBody | null;
+  try {
+    retained = await env.EVIDENCE.get(key);
+  } catch (readError) {
+    throw new Error(
+      `${failureCode}: ${key}: ` +
+        `${writeError instanceof Error ? writeError.message : String(writeError ?? "conditional create refused")}; ` +
+        `exact reread failed: ${readError instanceof Error ? readError.message : String(readError)}`,
+    );
+  }
+  let retainedText: string | null = null;
+  try {
+    retainedText = retained === null ? null : await retained.text();
+  } catch (readError) {
+    throw new Error(
+      `${failureCode}: ${key}: exact retained bytes could not be read: ` +
+        `${readError instanceof Error ? readError.message : String(readError)}`,
+    );
+  }
+  if (retainedText === serialized) return key;
+  throw new Error(
+    `${failureCode}: ${key}: append-only key did not retain the exact artifact bytes`,
+  );
+}
+
+async function persistPrimaryWindowCasConflict(
+  env: Env,
+  runId: string,
+  n: number,
+  serialized: string,
+): Promise<string> {
+  const bodySha256 = await sha256Hex(serialized);
+  return persistPrimaryWindowAppendOnly(
+    env,
+    windowCasConflictKey(runId, n, bodySha256),
+    serialized,
+    "PASS_A_WINDOW_CAS_CONFLICT_PERSISTENCE_FAILED",
+  );
+}
+
+async function persistPrimaryWindowHistory(
+  env: Env,
+  runId: string,
+  n: number,
+  serialized: string,
+): Promise<string> {
+  const bodySha256 = await sha256Hex(serialized);
+  return persistPrimaryWindowAppendOnly(
+    env,
+    windowHistoryKey(runId, n, bodySha256),
+    serialized,
+    "PASS_A_WINDOW_HISTORY_PERSISTENCE_FAILED",
+  );
+}
+
+/**
+ * A paid target that cannot become canonical must still survive under its deterministic
+ * append-only conflict key. Returning the error instead of throwing inside this helper lets
+ * every terminal branch preserve the same original write context and, when even the conflict
+ * namespace fails, report both storage failures without implying that bytes were retained.
+ */
+async function primaryWindowPersistenceFailure(
+  env: Env,
+  runId: string,
+  n: number,
+  origin: string,
+  serialized: string,
+  writeError: unknown,
+  retainedState: string,
+): Promise<PassAPrimaryPersistenceError> {
+  try {
+    const conflictKey = await persistPrimaryWindowCasConflict(env, runId, n, serialized);
+    return new PassAPrimaryPersistenceError(
+      origin,
+      writeError,
+      `${retainedState}; exact paid bytes retained at ${conflictKey}`,
+    );
+  } catch (conflictError) {
+    const originalDetail = writeError instanceof Error ? writeError.message : String(writeError);
+    const conflictDetail = conflictError instanceof Error ? conflictError.message : String(conflictError);
+    return new PassAPrimaryPersistenceError(
+      origin,
+      `${originalDetail}; append-only conflict retention also failed: ${conflictDetail}`,
+      `${retainedState}; exact paid bytes could not be retained`,
+    );
+  }
+}
+
+/**
+ * Persist one already-paid window artifact without ever repeating the model purchase.
+ *
+ * The bytes are constructed by the caller exactly once. A failed put is ambiguous because
+ * R2 can report a transport error after commit, so recovery first compares the retained
+ * bytes and then runs the normal current-identity strict reader. A missing artifact permits
+ * another put of the SAME bytes; an occupied different/invalid key is immutable authority
+ * and stops immediately.
+ */
+async function persistPrimaryWindowArtifact(
+  env: Env,
+  runId: string,
+  n: number,
+  source: SourceBlock[],
+  parserVersion: string,
+  origin: string,
+  predecessor: PassAWindowStorageAuthority | null,
+  serialized: string,
+  accept: (artifact: PersistedWindow | FailedWindowArtifact) => boolean,
+): Promise<PersistedWindow | FailedWindowArtifact | null> {
+  let lastFailure: PassAPrimaryPersistenceError | null = null;
+  let expected = predecessor;
+  const key = windowKey(runId, n);
+  if (expected !== null) {
+    try {
+      await persistPrimaryWindowHistory(env, runId, n, expected.bodyText);
+    } catch (historyError) {
+      throw await primaryWindowPersistenceFailure(
+        env,
+        runId,
+        n,
+        origin,
+        serialized,
+        historyError,
+        "could not archive the exact predecessor before replacement",
+      );
+    }
+  }
+  for (
+    let storageAttempt = 1;
+    storageAttempt <= PASS_A_PRIMARY_ARTIFACT_PERSIST_ATTEMPTS;
+    storageAttempt += 1
+  ) {
+    let writeError: unknown;
+    try {
+      const written = await env.EVIDENCE.put(
+        key,
+        serialized,
+        {
+          httpMetadata: { contentType: "application/json" },
+          onlyIf: expected === null
+            ? { etagDoesNotMatch: "*" }
+            : { etagMatches: expected.etag },
+        },
+      );
+      if (written !== null) return null;
+      writeError = new Error(
+        expected === null
+          ? "conditional create found an occupied window key"
+          : "conditional replacement no longer matched the exact predecessor",
+      );
+    } catch (error) {
+      writeError = error;
+    }
+    {
+      let object: R2ObjectBody | null;
+      try {
+        object = await env.EVIDENCE.get(key);
+      } catch (readError) {
+        const readDetail = readError instanceof Error ? readError.message : String(readError);
+        lastFailure = new PassAPrimaryPersistenceError(
+          origin,
+          writeError,
+          `failed with ${readDetail}`,
+        );
+        continue;
+      }
+      if (object === null) {
+        if (expected !== null) {
+          throw await primaryWindowPersistenceFailure(
+            env,
+            runId,
+            n,
+            origin,
+            serialized,
+            writeError,
+            "found the exact predecessor missing; refusing to recreate over lost retained authority",
+          );
+        }
+        lastFailure = new PassAPrimaryPersistenceError(
+          origin,
+          writeError,
+          "found no current artifact",
+        );
+        continue;
+      }
+      let retainedBytes: string;
+      try {
+        retainedBytes = await object.text();
+      } catch (readError) {
+        const readDetail = readError instanceof Error ? readError.message : String(readError);
+        lastFailure = new PassAPrimaryPersistenceError(
+          origin,
+          writeError,
+          `could not read retained bytes: ${readDetail}`,
+        );
+        continue;
+      }
+      if (retainedBytes !== serialized) {
+        if (expected !== null && retainedBytes === expected.bodyText) {
+          // A before-commit transport error, or an equal-byte predecessor re-put, leaves the
+          // exact authority in place. Bind the next bounded CAS to the version just reread.
+          expected = { etag: object.etag, bodyText: retainedBytes };
+          lastFailure = new PassAPrimaryPersistenceError(
+            origin,
+            writeError,
+            "found the exact predecessor still present",
+          );
+          continue;
+        }
+        throw await primaryWindowPersistenceFailure(
+          env,
+          runId,
+          n,
+          origin,
+          serialized,
+          writeError,
+          "found an occupied artifact with different bytes; the winner was not overwritten",
+        );
+      }
+      let retained: PersistedWindow | FailedWindowArtifact | InvalidWindowArtifact | null;
+      try {
+        retained = await readWindow(env, runId, n, source, parserVersion, origin);
+      } catch (readError) {
+        const readDetail = readError instanceof Error ? readError.message : String(readError);
+        lastFailure = new PassAPrimaryPersistenceError(
+          origin,
+          writeError,
+          `strict reread failed with ${readDetail}`,
+        );
+        continue;
+      }
+      if (retained !== null && retained.kind !== "invalid" && accept(retained)) return retained;
+      throw await primaryWindowPersistenceFailure(
+        env,
+        runId,
+        n,
+        origin,
+        serialized,
+        writeError,
+        retained === null ? "lost the exact artifact before strict reread" :
+          `found exact bytes with ${retained.kind} authority that failed the expected-state check`,
+      );
+    }
+  }
+  throw await primaryWindowPersistenceFailure(
+    env,
+    runId,
+    n,
+    origin,
+    serialized,
+    lastFailure ?? "unknown storage failure",
+    "did not prove the exact current artifact",
+  );
+}
+
+async function persistImmutableExtractionArtifact(
+  env: Env,
+  key: string,
+  bodyText: string,
+  unit: string,
+): Promise<void> {
+  const written = await env.EVIDENCE.put(key, bodyText, {
+    httpMetadata: { contentType: "application/json" },
+    onlyIf: { etagDoesNotMatch: "*" },
+  });
+  if (written !== null) return;
+  const retained = await env.EVIDENCE.get(key);
+  if (!retained || await retained.text() !== bodyText) {
+    throw new Error(
+      `EXTRACTION_WIRE_CEILING_ARTIFACT_IMMUTABLE: ${unit} exact key is occupied by ` +
+        `different bytes; it was not overwritten and no provider request was issued`,
+    );
+  }
+}
+
 export async function runPassA(
   env: Env,
   runId: string,
@@ -403,8 +817,22 @@ export async function runPassA(
   const routeReceipts: PassARouteReceipt[] = [];
   const fallbackTriggers: GrokFallbackTrigger[] = [];
   const crossWindowLimitations: PassACrossWindowLimitation[] = [];
+  const primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[] = [];
   let providerIndependence: PassAProviderIndependence = "independent";
   const model = DEFAULT_GROK_MODEL;
+  let resolvedGrokKey: string | null = null;
+  let resolvedDeepseekKey: string | null = null;
+  const purchaseEnvFor = async (needsGrok: boolean, needsDeepseek: boolean): Promise<Env> => {
+    if (needsGrok && resolvedGrokKey === null) resolvedGrokKey = await keyFor(env, "grok");
+    if (needsDeepseek && resolvedDeepseekKey === null) {
+      resolvedDeepseekKey = await keyFor(env, "deepseek");
+    }
+    return {
+      ...env,
+      ...(resolvedGrokKey !== null ? { XAI_API_KEY: resolvedGrokKey } : {}),
+      ...(resolvedDeepseekKey !== null ? { DEEPSEEK_API_KEY: resolvedDeepseekKey } : {}),
+    };
+  };
 
   // THE DEADLINE, AND THE ONE EXCEPTION TO IT. `issued === 0` keeps the first call of every
   // slice unconditional: a slice that issues nothing makes no progress, and a wave loop over
@@ -425,6 +853,83 @@ export async function runPassA(
 
   const maxIssues = Math.max(1, num(env.EXTRACT_PASS_A_WINDOW_MAX_ISSUES, 2));
 
+  const primaryWireMaxBytes = extractionWirePolicy(env).maxInputBytes;
+  const primaryPlanFor = (
+    source: SourceBlock[],
+    n: number,
+    label: string | null,
+  ) => {
+    const jsonl = buildBoundedSourceBlocksJsonl(source, primaryWireMaxBytes);
+    const origin = windows.length === 1 ? "A" : `A-w${n}`;
+    if (!jsonl.ok) {
+      return {
+        ok: false as const,
+        detail: extractionWirePreSerializationFailureDetail(
+          origin, source.length, jsonl, "EXTRACT_MODEL_INPUT_MAX_BYTES",
+        ),
+      };
+    }
+    const optionsForCall = {
+      system: SYSTEM_A,
+      user: userMessageA(documentName, jsonl.text, label),
+      maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
+      role: `extract-pass-a${label ? `-w${n}` : ""}`,
+      callId: `call_a_${n}`,
+      maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
+    };
+    const check = preflightExtractionRequestBodies(env, [
+      { route: "grok-4.6", bodyText: chatRequestBodyText(grokRequestShape(env), optionsForCall) },
+      {
+        route: "deepseek-v4-flash",
+        bodyText: chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall),
+      },
+    ]);
+    return check.ok
+      ? { ok: true as const, optionsForCall }
+      : { ok: false as const, detail: extractionWireFailureDetail(origin, source.length, check) };
+  };
+
+  // EXTRACTION_WIRE_PREFLIGHT_BEFORE_PRIMARY_PURCHASE: serialize BOTH possible route
+  // bodies for EVERY canonical window before A-w1 can spend. A later giant/escaped block
+  // therefore cannot be discovered only after earlier windows have already been bought.
+  const primaryWireChecks = windows.map((source, index) => {
+    const n = index + 1;
+    const label = windows.length === 1
+      ? null
+      : `window ${n} of ${windows.length} (${source[0]!.blockId}–${source[source.length - 1]!.blockId})`;
+    const plan = primaryPlanFor(source, n, label);
+    // The all-window barrier retains only compact verdicts. Keeping every accepted user/body
+    // string would turn thousands of independently safe windows into an aggregate Worker OOM.
+    return plan.ok ? { ok: true as const } : plan;
+  });
+  let pendingPrimaryWireFailure: {
+    index: number;
+    detail: string;
+  } | null = null;
+  for (let index = 0; index < primaryWireChecks.length; index += 1) {
+    const check = primaryWireChecks[index]!;
+    const n = index + 1;
+    const origin = windows.length === 1 ? "A" : `A-w${n}`;
+    const retained = await readWindow(env, runId, n, windows[index]!, parserVersion, origin);
+    // A retained terminal wire refusal is itself wave-wide authority. Re-entry must not
+    // touch a credential or buy an earlier missing/retryable unit before reaching it.
+    if (retained?.kind === "failed" && retained.terminal && retained.wireCeiling) {
+      pendingPrimaryWireFailure = { index, detail: retained.detail };
+      break;
+    }
+    if (check.ok) continue;
+    // A successful current artifact already owns this unit. Invalid or other terminal
+    // authority still makes the wave non-purchasing; its own strict failure is surfaced
+    // when the ordered reclaim loop reaches it rather than being relabelled as wire overflow.
+    if (retained?.kind === "ok") continue;
+    if (retained?.kind === "invalid" || retained?.terminal) {
+      pendingPrimaryWireFailure = { index, detail: check.detail };
+      break;
+    }
+    pendingPrimaryWireFailure = { index, detail: check.detail };
+    break;
+  }
+
   let landed = 0;
   let remaining = 0;
   let terminalFailure = false;
@@ -432,6 +937,8 @@ export async function runPassA(
     windows.length > 1 ? "waiting-for-windows" : "not-required";
   let synthesisIssued = 0;
   let synthesisAttempts = 0;
+  let terminalReasonCode: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED | undefined;
+  let credentialRefusal: PassAResult["credentialRefusal"];
 
   // WINDOWS ARE WALKED IN DOCUMENT ORDER, ONE AT A TIME. See the header for why this pass
   // does not fan out. The order matters beyond latency: it is what makes `requirements`,
@@ -473,6 +980,9 @@ export async function runPassA(
       crossRefs.push(...unit.crossRefs);
       ambiguities.push(...unit.ambiguities);
       unverifiable.push(...unit.unverifiable);
+      // PASS_A_PRIMARY_GROUNDING_LIMITATION_AGGREGATE: withheld rows remain counted in
+      // deterministic window/row order without entering requirements or synthesis input.
+      primaryGroundingLimitations.push(...unit.primaryGroundingLimitations);
     };
 
     // -----------------------------------------------------------------------
@@ -484,6 +994,64 @@ export async function runPassA(
     // window is exactly as accountable as a fresh one.
     // -----------------------------------------------------------------------
     const existing = await readWindow(env, runId, n, w, parserVersion, origin);
+    let predecessorAuthority = storageAuthorityOf(existing);
+
+    if (
+      pendingPrimaryWireFailure?.index === i &&
+      (existing === null || (existing.kind === "failed" && !existing.terminal))
+    ) {
+      const detail = pendingPrimaryWireFailure.detail;
+      const wireArtifact = JSON.stringify(
+        {
+          windowId: origin,
+          windowNumber: n,
+          blockIds,
+          parserVersion,
+          promptVersion: PROMPT_VERSION_A,
+          providerRouteIdentity,
+          windowPolicyIdentity: windowPolicyIdentity(env),
+          status: "failed",
+          attempts: 0,
+          usages: [],
+          fallbackTrigger: null,
+          terminal: true,
+          failureStage: "wire-ceiling",
+          detail,
+        },
+        null,
+        2,
+      );
+      if (existing?.kind === "failed") {
+        accountingCalls.push(...existing.usages);
+        for (const usage of existing.usages) {
+          calls.push({ ...usage, detail: "reused: prior failed pass-A purchase", costUsd: 0 });
+        }
+        if (existing.fallbackTrigger !== null) fallbackTriggers.push(existing.fallbackTrigger);
+        await persistImmutableExtractionArtifact(
+          env,
+          windowWireCeilingKey(runId, n),
+          wireArtifact,
+          origin,
+        );
+      } else {
+        await persistImmutableExtractionArtifact(
+          env, windowKey(runId, n), wireArtifact, origin,
+        );
+      }
+      landed += 1;
+      terminalFailure = true;
+      terminalReasonCode = EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+      failedUnits.push({ unit: origin, blockIds, detail });
+      remaining += windows.length - (i + 1);
+      if (onProgress) {
+        try {
+          await onProgress(`pass A ${origin}: FAILED — ${publicExtractionFailureDetail(detail)}`);
+        } catch {
+          // The zero-purchase terminal artifact is already durable authority.
+        }
+      }
+      break;
+    }
 
     if (existing?.kind === "invalid") {
       accountingCalls.push(...existing.usages);
@@ -542,6 +1110,9 @@ export async function runPassA(
       if (existing.terminal) {
         landed += 1;
         terminalFailure = true;
+        if (existing.wireCeiling) {
+          terminalReasonCode = EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+        }
         failedUnits.push({
           unit: origin,
           blockIds,
@@ -574,23 +1145,83 @@ export async function runPassA(
 
     const priorAttempts = existing && existing.kind === "failed" ? existing.attempts : 0;
 
+    // A later canonical window already failed the all-window wire preflight. Reclaiming
+    // durable earlier work is safe, but buying any missing/retryable earlier unit is not.
+    if (pendingPrimaryWireFailure !== null) {
+      remaining += 1;
+      continue;
+    }
+
     if (!mayIssue()) {
       remaining += 1;
       continue;
     }
+    const purchasePlan = primaryPlanFor(w, n, label);
+    if (!purchasePlan.ok) {
+      const detail = purchasePlan.detail;
+      const wireArtifact = JSON.stringify({
+        windowId: origin,
+        windowNumber: n,
+        blockIds,
+        parserVersion,
+        promptVersion: PROMPT_VERSION_A,
+        providerRouteIdentity,
+        windowPolicyIdentity: windowPolicyIdentity(env),
+        status: "failed",
+        attempts: 0,
+        usages: [],
+        fallbackTrigger: null,
+        terminal: true,
+        failureStage: "wire-ceiling",
+        detail,
+      }, null, 2);
+      if (existing?.kind === "failed") {
+        await persistImmutableExtractionArtifact(
+          env, windowWireCeilingKey(runId, n), wireArtifact, origin,
+        );
+      } else {
+        await persistImmutableExtractionArtifact(
+          env, windowKey(runId, n), wireArtifact, origin,
+        );
+      }
+      landed += 1;
+      terminalFailure = true;
+      terminalReasonCode = EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+      failedUnits.push({ unit: origin, blockIds, detail });
+      remaining += windows.length - (i + 1);
+      break;
+    }
+    const optionsForCall = purchasePlan.optionsForCall;
+    let purchaseEnv: Env;
+    try {
+      // A fresh unit may legitimately fall back, so both eligible route credentials are
+      // resolved once after all-window wire preflight but before Grok can spend. A retained
+      // fallback checkpoint needs only Flash. The cloned env turns subsequent client reads
+      // into side-effect-free string lookups for the entire purchase chain.
+      purchaseEnv = await purchaseEnvFor(
+        !(existing?.kind === "failed" && existing.fallbackTrigger !== null),
+        true,
+      );
+    } catch (error) {
+      if (!(error instanceof MissingCredential)) throw error;
+      credentialRefusal = {
+        reason: "NO_CREDENTIAL",
+        binding: error.binding,
+        provider: error.binding === "XAI_API_KEY" ? "grok" : "deepseek",
+      };
+      terminalFailure = true;
+      const detail = `${error.binding} is unavailable after request-size preflight; no new ` +
+        `provider request was issued for ${origin}.`;
+      failedUnits.push({ unit: origin, blockIds, detail });
+      remaining += windows.length - i;
+      break;
+    }
     issued += 1;
 
     const purchasedUsages: CallUsage[] = [];
+    let rawModelOutput: Record<string, unknown> | null = null;
     let fallbackTrigger = existing && existing.kind === "failed" ? existing.fallbackTrigger : null;
     const issue = pendingFlash ? Math.max(1, priorAttempts) : priorAttempts + 1;
-    const optionsForCall = {
-      system: SYSTEM_A,
-      user: userMessageA(documentName, annotate(w), label),
-      maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
-      role: `extract-pass-a${label ? `-w${n}` : ""}`,
-      callId: `call_a_${n}`,
-      maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
-    };
 
     try {
       let value: Record<string, unknown> | null = null;
@@ -598,13 +1229,14 @@ export async function runPassA(
 
       if (fallbackTrigger === null) {
         try {
-          const outcome = await grokJson(env, optionsForCall);
+          const outcome = await grokJson(purchaseEnv, optionsForCall);
           const usage = settlementUsage(runId, origin, issue, 1, outcome.usage);
           purchasedUsages.push(usage);
           calls.push(usage);
           issuedCalls.push(usage);
           accountingCalls.push(usage);
           value = outcome.value;
+          rawModelOutput = outcome.value;
           routeReceipt = { selected: "grok-4.6", trigger: null };
         } catch (err) {
           if (!(err instanceof ModelCallError) || !grokFlashFallbackEligible(err)) throw err;
@@ -625,31 +1257,66 @@ export async function runPassA(
           // COMMIT AUTHORITY BEFORE EFFECT. If the isolate dies after this put, the next
           // invocation sees the exact paid Grok receipt and calls Flash directly. It cannot
           // retry Grok and erase the condition that authorized another provider purchase.
-          await env.EVIDENCE.put(
-            windowKey(runId, n),
-            JSON.stringify({
-              windowId: origin,
-              windowNumber: n,
-              blockIds,
-              parserVersion,
-              promptVersion: PROMPT_VERSION_A,
-              providerRouteIdentity,
-              windowPolicyIdentity: windowPolicyIdentity(env),
-              status: "failed",
-              attempts: issue,
-              usages: [...priorUsages, ...purchasedUsages],
-              fallbackTrigger,
-              terminal: false,
-              failureStage: "fallback-authorized",
-              detail: `Flash fallback authorized but not yet landed: ${fallbackTrigger.detail}`,
-            }, null, 2),
-            { httpMetadata: { contentType: "application/json" } },
+          const authorizedTrigger = fallbackTrigger;
+          const fallbackArtifact = JSON.stringify({
+            windowId: origin,
+            windowNumber: n,
+            blockIds,
+            parserVersion,
+            promptVersion: PROMPT_VERSION_A,
+            providerRouteIdentity,
+            windowPolicyIdentity: windowPolicyIdentity(env),
+            status: "failed",
+            attempts: issue,
+            usages: [...priorUsages, ...purchasedUsages],
+            fallbackTrigger: authorizedTrigger,
+            terminal: false,
+            failureStage: "fallback-authorized",
+            detail: `Flash fallback authorized but not yet landed: ${authorizedTrigger.detail}`,
+          }, null, 2);
+          const retainedFallbackCheckpoint = await persistPrimaryWindowArtifact(
+            env,
+            runId,
+            n,
+            w,
+            parserVersion,
+            origin,
+            predecessorAuthority,
+            fallbackArtifact,
+            (artifact) =>
+              artifact.kind === "failed" &&
+              artifact.terminal === false &&
+              artifact.fallbackTrigger?.grokUsageEventId === authorizedTrigger.grokUsageEventId,
           );
+          if (retainedFallbackCheckpoint !== null) {
+            // The checkpoint committed despite its transport error. Preserve the existing
+            // commit-before-effect boundary: end this wave pending and let the next wave buy
+            // Flash from retained authority rather than adding another provider effect to
+            // the invocation that observed an uncertain write response.
+            throw new Error("pass-A fallback checkpoint was recovered after its transport failed");
+          }
+          const committedFallbackCheckpoint = await readWindow(
+            env, runId, n, w, parserVersion, origin,
+          );
+          const committedFallbackAuthority = storageAuthorityOf(committedFallbackCheckpoint);
+          if (
+            committedFallbackCheckpoint?.kind !== "failed" ||
+            committedFallbackCheckpoint.terminal ||
+            committedFallbackCheckpoint.fallbackTrigger?.grokUsageEventId !==
+              authorizedTrigger.grokUsageEventId ||
+            committedFallbackAuthority === null ||
+            committedFallbackAuthority.bodyText !== fallbackArtifact
+          ) {
+            throw new Error(
+              "pass-A fallback checkpoint committed but its exact strict predecessor authority could not be reread",
+            );
+          }
+          predecessorAuthority = committedFallbackAuthority;
         }
       }
 
       if (fallbackTrigger !== null) {
-        const outcome = await deepseekGrokFallbackJson(env, {
+        const outcome = await deepseekGrokFallbackJson(purchaseEnv, {
           ...optionsForCall,
           callId: `${optionsForCall.callId}:grok-fallback`,
         });
@@ -659,6 +1326,7 @@ export async function runPassA(
         issuedCalls.push(usage);
         accountingCalls.push(usage);
         value = outcome.value;
+        rawModelOutput = outcome.value;
         routeReceipt = { selected: "deepseek-v4-flash", trigger: fallbackTrigger };
         providerIndependence = "reduced-same-provider-fallback";
       }
@@ -667,48 +1335,52 @@ export async function runPassA(
       }
 
       const strict = strictPrimaryOutput(value, origin);
-      const windowRules = strict.globalRules;
-      const windowXrefs = strict.crossRefs;
-      const windowAmb = strict.ambiguities;
-      const windowUnv = strict.unverifiable;
 
       // ONE OBJECT IS BOTH PERSISTED AND ABSORBED, so what a resumed wave reads back cannot
       // drift from what this wave used. Written as two literals it drifted silently once
       // already elsewhere in this codebase; here it would mean a resumed pass quietly
       // publishing less than the pass that paid for it.
-      const landedWindow = groundPrimaryWindow({
+      let landedWindow = inspectPrimaryWindowGrounding({
         kind: "ok",
-        globalRules: windowRules,
-        crossRefs: windowXrefs,
-        ambiguities: windowAmb,
-        unverifiable: windowUnv,
+        ...strict,
+        primaryGroundingLimitations: [],
         usages: [...priorUsages, ...purchasedUsages],
         routeReceipt,
-      }, w, origin);
+      }, w, origin).unit;
 
-      // PERSIST FIRST, ACCUMULATE SECOND. A window that is on disk cannot be lost by
-      // whatever happens to the next one — including the step timeout that used to make
-      // every window in flight a re-purchase.
-      await env.EVIDENCE.put(
-        windowKey(runId, n),
-        JSON.stringify(
-          {
-            windowId: origin,
-            windowNumber: n,
-            blockIds,
-            parserVersion,
-            promptVersion: PROMPT_VERSION_A,
-            providerRouteIdentity,
-            windowPolicyIdentity: windowPolicyIdentity(env),
-            attempts: issue,
-            modelOutput: value,
-            ...landedWindow,
-          },
-          null,
-          2,
-        ),
-        { httpMetadata: { contentType: "application/json" } },
+      // PERSIST FIRST, ACCUMULATE SECOND. Serialize ONCE, then retry only these exact bytes:
+      // a storage retry can never become another model purchase or a drifted projection.
+      const successArtifact = JSON.stringify(
+        {
+          windowId: origin,
+          windowNumber: n,
+          blockIds,
+          parserVersion,
+          promptVersion: PROMPT_VERSION_A,
+          providerRouteIdentity,
+          windowPolicyIdentity: windowPolicyIdentity(env),
+          attempts: issue,
+          modelOutput: value,
+          ...landedWindow,
+        },
+        null,
+        2,
       );
+      const retainedSuccess = await persistPrimaryWindowArtifact(
+        env,
+        runId,
+        n,
+        w,
+        parserVersion,
+        origin,
+        predecessorAuthority,
+        successArtifact,
+        (artifact) => artifact.kind === "ok",
+      );
+      if (retainedSuccess?.kind === "ok") {
+        landedWindow = retainedSuccess;
+        routeReceipt = retainedSuccess.routeReceipt;
+      }
 
       landed += 1;
       routeReceipts.push(routeReceipt);
@@ -718,8 +1390,10 @@ export async function runPassA(
       if (onProgress) {
         try {
           await onProgress(
-            `pass A ${origin}: ${windowRules.length} cross-cutting rule(s), ${windowXrefs.length} cross-reference(s) ` +
-              `over ${blockIds.length} block(s)`,
+            `pass A ${origin}: ${landedWindow.globalRules.length} grounded cross-cutting rule(s), ` +
+              `${landedWindow.crossRefs.length} grounded cross-reference(s), ` +
+              `${landedWindow.primaryGroundingLimitations.length} candidate limitation(s) over ` +
+              `${blockIds.length} block(s)`,
           );
         } catch {
           // Preserve the successful artifact and continue/reclaim; never authorize rebuy.
@@ -730,6 +1404,30 @@ export async function runPassA(
         break;
       }
     } catch (err) {
+      // Credential resolution belongs to the provider client, after the exact request-body
+      // preflight above. Let the stage report a missing binding; it is neither a provider
+      // purchase nor a semantic model-output failure and must not mint either artifact.
+      if (err instanceof MissingCredential && purchasedUsages.length === 0) throw err;
+      // Persistence is outside both the semantic/provider retry policy AND the Workflow
+      // step retry policy. Return a terminal result carrying the still-ok paid receipt so
+      // stagePassASlice charges it once; throwing here would re-enter with no artifact and
+      // buy the model answer again.
+      if (err instanceof PassAPrimaryPersistenceError) {
+        const detail = err.message.slice(0, 400);
+        terminalFailure = true;
+        failedUnits.push({ unit: origin, blockIds, detail });
+        remaining += windows.length - i;
+        if (onProgress) {
+          try {
+            await onProgress(
+              `pass A ${origin}: FAILED — ${publicExtractionFailureDetail("pass-a-success-artifact-persistence-failed")}`,
+            );
+          } catch {
+            // The terminal no-rebuy outcome and paid receipt remain authoritative in memory.
+          }
+        }
+        break;
+      }
       // R2 may report a transport failure after committing the fallback-authority PUT.
       // Re-read the exact unit before writing any different state: if the checkpoint is
       // present, it owns recovery and the next invocation must buy only the pending Flash
@@ -793,33 +1491,59 @@ export async function runPassA(
         fallbackTrigger === null && err instanceof ModelCallError && !grokFlashFallbackEligible(err);
       const durableTerminal =
         !(err instanceof ModelCallError) || nonRetryablePrimaryFailure || attempts >= maxIssues;
-      failedUnits.push({ unit: origin, blockIds, detail });
       // A failed window is an artifact too, so its re-purchases are bounded the same way a
       // successful one's are cached rather than being re-bought once per wave.
-      await env.EVIDENCE.put(
-        windowKey(runId, n),
-        JSON.stringify(
-          {
-            windowId: origin,
-            windowNumber: n,
-            blockIds,
-            parserVersion,
-            promptVersion: PROMPT_VERSION_A,
-            providerRouteIdentity,
-            windowPolicyIdentity: windowPolicyIdentity(env),
-            status: "failed",
-            attempts: Math.max(attempts, issue),
-            usages: [...priorUsages, ...purchasedUsages],
-            fallbackTrigger,
-            terminal: durableTerminal,
-            failureStage: err instanceof ModelCallError ? "provider" : "semantic-output",
-            detail,
-          },
-          null,
-          2,
-        ),
-        { httpMetadata: { contentType: "application/json" } },
+      const failedArtifact = JSON.stringify(
+        {
+          windowId: origin,
+          windowNumber: n,
+          blockIds,
+          parserVersion,
+          promptVersion: PROMPT_VERSION_A,
+          providerRouteIdentity,
+          windowPolicyIdentity: windowPolicyIdentity(env),
+          status: "failed",
+          attempts: Math.max(attempts, issue),
+          usages: [...priorUsages, ...purchasedUsages],
+          fallbackTrigger,
+          terminal: durableTerminal,
+          failureStage: err instanceof ModelCallError ? "provider" : "semantic-output",
+          detail,
+          modelOutput: err instanceof ModelCallError ? null : rawModelOutput,
+        },
+        null,
+        2,
       );
+      try {
+        await persistPrimaryWindowArtifact(
+          env,
+          runId,
+          n,
+          w,
+          parserVersion,
+          origin,
+          predecessorAuthority,
+          failedArtifact,
+          (artifact) => artifact.kind === "failed",
+        );
+      } catch (persistenceError) {
+        if (!(persistenceError instanceof PassAPrimaryPersistenceError)) throw persistenceError;
+        const persistenceDetail = persistenceError.message.slice(0, 400);
+        terminalFailure = true;
+        failedUnits.push({ unit: origin, blockIds, detail: persistenceDetail });
+        remaining += windows.length - i;
+        if (onProgress) {
+          try {
+            await onProgress(
+              `pass A ${origin}: FAILED — ${publicExtractionFailureDetail("pass-a-failed-artifact-persistence-failed")}`,
+            );
+          } catch {
+            // The terminal no-rebuy outcome still carries the paid provider/semantic receipt.
+          }
+        }
+        break;
+      }
+      failedUnits.push({ unit: origin, blockIds, detail });
       if (attempts < maxIssues && !nonRetryablePrimaryFailure) remaining += 1;
       else {
         landed += 1;
@@ -893,6 +1617,12 @@ export async function runPassA(
     accountingCalls.push(...synthesis.accountingCalls);
     if (synthesis.routeReceipt !== null) routeReceipts.push(synthesis.routeReceipt);
     if (synthesis.fallbackTrigger !== null) fallbackTriggers.push(synthesis.fallbackTrigger);
+    if (synthesis.terminalReasonCode !== undefined) {
+      terminalReasonCode = synthesis.terminalReasonCode;
+    }
+    if (synthesis.credentialRefusal !== undefined) {
+      credentialRefusal = synthesis.credentialRefusal;
+    }
     if (synthesis.state === "reduced-provider-independence") {
       providerIndependence = "reduced-same-provider-fallback";
     }
@@ -952,9 +1682,12 @@ export async function runPassA(
     calls,
     crossRefs,
     crossWindowLimitations,
+    primaryGroundingLimitations,
     slice,
     issuedCalls,
     accountingCalls,
+    ...(terminalReasonCode ? { terminalReasonCode } : {}),
+    ...(credentialRefusal ? { credentialRefusal } : {}),
   };
 }
 
@@ -964,6 +1697,7 @@ interface PersistedWindow {
   crossRefs: CrossRef[];
   ambiguities: PassResult["ambiguities"];
   unverifiable: PassResult["unverifiable"];
+  primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[];
   usages: CallUsage[];
   routeReceipt: PassARouteReceipt;
 }
@@ -976,6 +1710,8 @@ interface FailedWindowArtifact {
   fallbackTrigger: GrokFallbackTrigger | null;
   /** Durable authority that this exact failure must not be purchased again after a crash. */
   terminal: boolean;
+  /** Derived only from a strictly decoded zero-receipt wire-ceiling artifact/sidecar. */
+  wireCeiling: boolean;
 }
 
 interface InvalidWindowArtifact {
@@ -984,6 +1720,22 @@ interface InvalidWindowArtifact {
   detail: string;
   /** Any strictly decodable receipts remain accounting authority even when content is corrupt. */
   usages: CallUsage[];
+}
+
+class PassAPrimaryGroundingError extends Error {
+  constructor(
+    readonly rowKind: PassAPrimaryGroundingRowKind,
+    readonly reason: PassAPrimaryGroundingReason,
+    readonly sourceBlockIds: string[],
+    origin: string,
+    rowIndex: number,
+    detail: string,
+  ) {
+    super(
+      `PASS_A_WINDOW_OUTPUT_UNGROUNDED: ${origin} ${rowKind} ${rowIndex + 1}: ${detail}`,
+    );
+    this.name = "PassAPrimaryGroundingError";
+  }
 }
 
 /**
@@ -997,29 +1749,50 @@ function groundPrimaryWindow(
   origin: string,
 ): PersistedWindow {
   const byId = new Map(source.map((block) => [block.blockId, block]));
-  const fail = (kind: string, index: number, detail: string): never => {
-    throw new Error(
-      `PASS_A_WINDOW_OUTPUT_UNGROUNDED: ${origin} ${kind} ${index + 1}: ${detail}`,
+  const ownedIds = (ids: readonly string[]): string[] => {
+    const seen = new Set<string>();
+    return ids.filter((id) => byId.has(id) && !seen.has(id) && Boolean(seen.add(id)));
+  };
+  const fail = (
+    kind: PassAPrimaryGroundingRowKind,
+    index: number,
+    reason: PassAPrimaryGroundingReason,
+    claimedIds: readonly string[],
+    detail: string,
+  ): never => {
+    throw new PassAPrimaryGroundingError(
+      kind,
+      reason,
+      ownedIds(claimedIds),
+      origin,
+      index,
+      detail,
     );
   };
   const exactOne = (
     quote: string,
     eligibleIds: string[],
-    kind: string,
+    kind: PassAPrimaryGroundingRowKind,
     index: number,
   ): CrossWindowEvidenceQuote => {
-    if (quote.length === 0) fail(kind, index, "doc_quote is empty");
+    if (quote.length === 0) {
+      fail(kind, index, "source-quote-not-exact", eligibleIds, "doc_quote is empty");
+    }
     const ids = uniqueStrings(eligibleIds);
-    if (ids.length === 0) fail(kind, index, "no source block id is available");
+    if (ids.length === 0) {
+      fail(kind, index, "source-block-ownership-invalid", eligibleIds, "no source block id is available");
+    }
     const foreign = ids.filter((id) => !byId.has(id));
     if (foreign.length > 0) {
-      fail(kind, index, `block id(s) are outside the owning window: ${foreign.join(", ")}`);
+      fail(
+        kind, index, "source-block-ownership-invalid", ids,
+        `block id(s) are outside the owning window: ${foreign.join(", ")}`,
+      );
     }
     const matches = ids.filter((id) => byId.get(id)!.text.includes(quote));
     if (matches.length !== 1) {
       fail(
-        kind,
-        index,
+        kind, index, "source-quote-not-exact", ids,
         `doc_quote matched ${matches.length} eligible source blocks; exact ownership requires one`,
       );
     }
@@ -1029,12 +1802,12 @@ function groundPrimaryWindow(
     docQuote: string,
     blockIds: string[],
     evidenceQuotes: CrossWindowEvidenceQuote[] | undefined,
-    kind: string,
+    kind: PassAPrimaryGroundingRowKind,
     index: number,
   ): CrossWindowEvidenceQuote[] => {
     const ids = uniqueStrings(blockIds);
     if (ids.length === 0 || ids.length !== blockIds.length) {
-      fail(kind, index, "block ids are empty or duplicated");
+      fail(kind, index, "source-evidence-set-invalid", blockIds, "block ids are empty or duplicated");
     }
     const evidence = evidenceQuotes ?? [];
     const evidenceIds = evidence.map((item) => item.blockId);
@@ -1042,12 +1815,25 @@ function groundPrimaryWindow(
       evidence.length !== ids.length || new Set(evidenceIds).size !== evidenceIds.length ||
       ids.some((id) => !evidenceIds.includes(id)) || evidenceIds.some((id) => !ids.includes(id)) ||
       !evidence.some((item) => item.quote === docQuote)
-    ) fail(kind, index, "evidence quote ids must equal block ids and include doc_quote");
+    ) {
+      fail(
+        kind, index, "source-evidence-set-invalid", blockIds,
+        "evidence quote ids must equal block ids and include doc_quote",
+      );
+    }
     for (const item of evidence) {
       const block = byId.get(item.blockId);
-      if (!block) fail(kind, index, `block id ${item.blockId} is outside the owning window`);
+      if (!block) {
+        fail(
+          kind, index, "source-block-ownership-invalid", blockIds,
+          `block id ${item.blockId} is outside the owning window`,
+        );
+      }
       if (item.quote.length === 0 || !block?.text.includes(item.quote)) {
-        fail(kind, index, `quote is not exact source text in ${item.blockId}`);
+        fail(
+          kind, index, "source-quote-not-exact", blockIds,
+          `quote is not exact source text in ${item.blockId}`,
+        );
       }
     }
     return evidence;
@@ -1064,14 +1850,18 @@ function groundPrimaryWindow(
   });
 
   const globalRules = unit.globalRules.map((row, index) => {
-    if (row.docQuote.length === 0) fail("global rule", index, "doc_quote is empty");
+    if (row.docQuote.length === 0) {
+      fail("global-rule", index, "source-quote-not-exact", row.blockIds, "doc_quote is empty");
+    }
     const evidenceQuotes = exactEvidenceSet(
-      row.docQuote, row.blockIds, row.evidenceQuotes, "global rule", index,
+      row.docQuote, row.blockIds, row.evidenceQuotes, "global-rule", index,
     );
     return { ...row, evidenceQuotes };
   });
   const crossRefs = unit.crossRefs.map((row, index) => {
-    if (row.fromBlock === null) fail("cross-reference", index, "from_block is absent");
+    if (row.fromBlock === null) {
+      fail("cross-reference", index, "source-block-ownership-invalid", [], "from_block is absent");
+    }
     const fromBlock = row.fromBlock as string;
     const sourceEvidence = exactOne(
       row.docQuote ?? "",
@@ -1092,13 +1882,16 @@ function groundPrimaryWindow(
       }
       evidenceQuotes.push({ blockId: exactTarget.blockId, quote: targetQuote });
     } else if (row.targetDocQuote !== null && row.targetDocQuote !== undefined) {
-      fail("cross-reference", index, "target_doc_quote must be null when resolved_to_block is null");
+      fail(
+        "cross-reference", index, "source-evidence-set-invalid", [fromBlock],
+        "target_doc_quote must be null when resolved_to_block is null",
+      );
     }
     return { ...row, evidenceQuotes };
   });
   const groundQuoted = <T extends RawAmbiguity | RawUnverifiable>(
     rows: T[],
-    kind: string,
+    kind: "ambiguity" | "unverifiable",
   ): T[] => rows.map((row, index) => {
     const declared = row.blockIds ?? [];
     const evidenceQuotes = exactEvidenceSet(
@@ -1147,6 +1940,22 @@ function strictPrimaryString(raw: Record<string, unknown>, key: string, row: str
   return value;
 }
 
+function strictPrimaryBlockIds(raw: Record<string, unknown>, row: string): string[] {
+  const value = raw["block_ids"];
+  if (!Array.isArray(value)) {
+    throw new Error(`PASS_A_WINDOW_OUTPUT_INVALID: ${row}.block_ids must be an array`);
+  }
+  if (value.some((id) => typeof id !== "string" || id.trim().length === 0)) {
+    throw new Error(
+      `PASS_A_WINDOW_OUTPUT_INVALID: ${row}.block_ids members must be non-empty strings`,
+    );
+  }
+  // Empty and duplicate sets are structurally typed model answers. They fail exact source
+  // grounding row-locally, where the candidate can be withheld and counted without turning
+  // valid siblings or the unread document tail into a failed unit.
+  return value as string[];
+}
+
 function strictPrimaryEvidence(
   raw: Record<string, unknown>,
   blockIds: string[],
@@ -1154,8 +1963,8 @@ function strictPrimaryEvidence(
   row: string,
 ): CrossWindowEvidenceQuote[] {
   const rows = raw["evidence_quotes"];
-  if (!Array.isArray(rows) || rows.length !== blockIds.length || rows.length === 0) {
-    throw new Error(`PASS_A_WINDOW_OUTPUT_INVALID: ${row}.evidence_quotes must map every block_id exactly once`);
+  if (!Array.isArray(rows)) {
+    throw new Error(`PASS_A_WINDOW_OUTPUT_INVALID: ${row}.evidence_quotes must be an array`);
   }
   const evidence = rows.map((value): CrossWindowEvidenceQuote => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -1168,23 +1977,18 @@ function strictPrimaryEvidence(
       quote: strictPrimaryString(item, "quote", `${row}.evidence_quote`),
     };
   });
-  const evidenceIds = evidence.map((item) => item.blockId);
-  if (
-    new Set(evidenceIds).size !== evidenceIds.length ||
-    blockIds.some((id) => !evidenceIds.includes(id)) || evidenceIds.some((id) => !blockIds.includes(id)) ||
-    !evidence.some((item) => item.quote === docQuote)
-  ) {
-    throw new Error(
-      `PASS_A_WINDOW_OUTPUT_INVALID: ${row}.evidence_quotes block ids must equal block_ids and include doc_quote`,
-    );
-  }
+  // Membership/cardinality/doc-quote linkage is source grounding, not JSON shape. The
+  // row-local grounder can safely withhold and count that one candidate while preserving
+  // structurally valid siblings. Non-array/member/key/type failures above remain terminal.
+  void blockIds;
+  void docQuote;
   return evidence;
 }
 
 function strictPrimaryOutput(
   value: Record<string, unknown>,
   origin: string,
-): Omit<PersistedWindow, "kind" | "usages" | "routeReceipt"> {
+): Omit<PersistedWindow, "kind" | "usages" | "routeReceipt" | "primaryGroundingLimitations"> {
   strictPrimaryKeys(
     value,
     ["global_rules", "cross_references", "ambiguities", "unverifiable_from_browser"],
@@ -1205,8 +2009,8 @@ function strictPrimaryOutput(
     const scope = strictPrimaryString(raw, "scope", "global rule");
     const quantifier = strictPrimaryString(raw, "quantifier", "global rule");
     const observable = strictPrimaryString(raw, "browser_observable", "global rule");
-    strictPrimaryString(raw, "statement", "global rule");
-    strictPrimaryString(raw, "doc_quote", "global rule");
+    const statement = strictPrimaryString(raw, "statement", "global rule");
+    const docQuote = strictPrimaryString(raw, "doc_quote", "global rule");
     if (!new Set<string>(CONSTRUCT_CLASSES).has(construct)) {
       throw new Error(`PASS_A_WINDOW_OUTPUT_INVALID: unknown construct ${JSON.stringify(construct)}`);
     }
@@ -1219,11 +2023,7 @@ function strictPrimaryOutput(
     if (!SYNTHESIS_OBSERVABILITY.has(observable)) {
       throw new Error(`PASS_A_WINDOW_OUTPUT_INVALID: invalid browser_observable ${JSON.stringify(observable)}`);
     }
-    if (
-      !Array.isArray(raw["block_ids"]) || raw["block_ids"].length === 0 ||
-      raw["block_ids"].some((id) => typeof id !== "string" || id.trim().length === 0) ||
-      new Set(raw["block_ids"]).size !== raw["block_ids"].length
-    ) throw new Error("PASS_A_WINDOW_OUTPUT_INVALID: block_ids must be nonempty and duplicate-free");
+    const blockIds = strictPrimaryBlockIds(raw, "global rule");
     if (
       !Array.isArray(raw["exceptions"]) ||
       raw["exceptions"].some((item) => typeof item !== "string" || item.trim().length === 0)
@@ -1238,12 +2038,28 @@ function strictPrimaryOutput(
       typeof raw["confidence"] !== "number" || !Number.isFinite(raw["confidence"]) ||
       raw["confidence"] < 0 || raw["confidence"] > 1
     ) throw new Error("PASS_A_WINDOW_OUTPUT_INVALID: confidence must be within 0..1");
-    const row = coerceRequirement(raw, "A", origin, "survey");
-    if (row === null) throw new Error("PASS_A_WINDOW_OUTPUT_INVALID: global rule failed typed decoding");
+    const coerced = coerceRequirement(raw, "A", origin, "survey");
+    const row: RawRequirement = coerced ?? {
+      id: strictPrimaryString(raw, "id", "global rule"),
+      construct,
+      scope,
+      quantifier,
+      selector: raw["selector"] as string | null,
+      exceptions: raw["exceptions"] as string[],
+      statement,
+      docQuote,
+      blockIds,
+      browserObservable: observable as RawRequirement["browserObservable"],
+      confidence: raw["confidence"] as number,
+      expansion: null,
+      pass: "A",
+      origin,
+    };
     return {
       ...row,
+      blockIds,
       evidenceQuotes: strictPrimaryEvidence(
-        raw, raw["block_ids"] as string[], strictPrimaryString(raw, "doc_quote", "global rule"), "global rule",
+        raw, blockIds, docQuote, "global rule",
       ),
     };
   });
@@ -1256,11 +2072,6 @@ function strictPrimaryOutput(
       strictPrimaryString(raw, "resolved_to_block", "cross-reference");
     const targetDocQuote = raw["target_doc_quote"] === null ? null :
       strictPrimaryString(raw, "target_doc_quote", "cross-reference");
-    if (resolvedToBlock === null && targetDocQuote !== null) {
-      throw new Error(
-        "PASS_A_WINDOW_OUTPUT_INVALID: target_doc_quote must be null when resolved_to_block is null",
-      );
-    }
     return {
       id: strictPrimaryString(raw, "id", "cross-reference"),
       sourceXrefHandle: `${origin}:x:${String(index + 1).padStart(3, "0")}`,
@@ -1288,7 +2099,7 @@ function strictPrimaryOutput(
     ) {
       throw new Error("PASS_A_WINDOW_OUTPUT_INVALID: ambiguity.affects must contain only non-empty strings");
     }
-    const blockIds = rawBlockIds(raw);
+    const blockIds = strictPrimaryBlockIds(raw, "ambiguity");
     const docQuote = strictPrimaryString(raw, "doc_quote", "ambiguity");
     return {
       id: strictPrimaryString(raw, "id", "ambiguity"),
@@ -1304,7 +2115,7 @@ function strictPrimaryOutput(
     strictPrimaryKeys(raw, [
       "id", "block_ids", "doc_quote", "evidence_quotes", "mandate", "why_not_observable", "browser_proxy_evidence",
     ], "unverifiable");
-    const blockIds = rawBlockIds(raw);
+    const blockIds = strictPrimaryBlockIds(raw, "unverifiable");
     const docQuote = strictPrimaryString(raw, "doc_quote", "unverifiable");
     return {
       id: strictPrimaryString(raw, "id", "unverifiable"),
@@ -1317,16 +2128,6 @@ function strictPrimaryOutput(
       evidenceQuotes: strictPrimaryEvidence(raw, blockIds, docQuote, "unverifiable"),
     };
   });
-  for (const rule of globalRules.filter((row) => row.browserObservable === "none")) {
-    const linked = unverifiable.some((row) =>
-      row.docQuote === rule.docQuote && (row.blockIds ?? []).some((id) => rule.blockIds.includes(id))
-    );
-    if (!linked) {
-      throw new Error(
-        "PASS_A_WINDOW_OUTPUT_INVALID: browser_observable=none requires an unverifiable row with the same exact quote and an overlapping block id",
-      );
-    }
-  }
   return { globalRules, crossRefs, ambiguities, unverifiable };
 }
 
@@ -1334,53 +2135,96 @@ function inspectPrimaryWindowGrounding(
   unit: PersistedWindow,
   source: SourceBlock[],
   origin: string,
-): { unit: PersistedWindow; failures: string[] } {
-  const failures: string[] = [];
+): { unit: PersistedWindow; limitations: PassAPrimaryGroundingLimitationWire[] } {
+  const limitations: PassAPrimaryGroundingLimitationWire[] = [];
+  const ownedIds = new Set(source.map((block) => block.blockId));
   const empty = (): PersistedWindow => ({
     ...unit,
     globalRules: [],
     crossRefs: [],
     ambiguities: [],
     unverifiable: [],
+    primaryGroundingLimitations: [],
   });
+  type GroundedRow<T> = { row: T; sourceIndex: number };
   const collect = <T>(
-    kind: "r" | "x" | "a" | "u",
+    rowKind: PassAPrimaryGroundingRowKind,
     rows: T[],
     project: (single: PersistedWindow) => T[],
     place: (single: PersistedWindow, row: T) => void,
-  ): T[] => rows.flatMap((row, index) => {
+  ): GroundedRow<T>[] => rows.flatMap((row, index) => {
     const single = empty();
     place(single, row);
     try {
-      return project(groundPrimaryWindow(
-        single,
-        source,
-        `${origin}:${kind}:${String(index + 1).padStart(3, "0")}`,
-      ));
+      return project(groundPrimaryWindow(single, source, origin)).map((grounded) => ({
+        row: grounded,
+        sourceIndex: index,
+      }));
     } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
+      if (!(error instanceof PassAPrimaryGroundingError)) throw error;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind,
+        rowIndex: index + 1,
+        sourceBlockIds: [...error.sourceBlockIds],
+        reason: error.reason,
+      });
       return [];
     }
   });
-  const globalRules = collect(
-    "r", unit.globalRules, (single) => single.globalRules,
+  const groundedGlobalRules = collect(
+    "global-rule", unit.globalRules, (single) => single.globalRules,
     (single, row) => { single.globalRules = [row]; },
   );
-  const crossRefs = collect(
-    "x", unit.crossRefs, (single) => single.crossRefs,
+  const groundedCrossRefs = collect(
+    "cross-reference", unit.crossRefs, (single) => single.crossRefs,
     (single, row) => { single.crossRefs = [row]; },
   );
-  const ambiguities = collect(
-    "a", unit.ambiguities, (single) => single.ambiguities,
+  const groundedAmbiguities = collect(
+    "ambiguity", unit.ambiguities, (single) => single.ambiguities,
     (single, row) => { single.ambiguities = [row]; },
   );
-  const unverifiable = collect(
-    "u", unit.unverifiable, (single) => single.unverifiable,
+  const groundedUnverifiable = collect(
+    "unverifiable", unit.unverifiable, (single) => single.unverifiable,
     (single, row) => { single.unverifiable = [row]; },
   );
+  const globalRules = groundedGlobalRules.flatMap(({ row, sourceIndex }) => {
+    if (row.browserObservable !== "none") return [row];
+    const linked = groundedUnverifiable.some(({ row: unv }) =>
+      unv.docQuote === row.docQuote && (unv.blockIds ?? []).some((id) => row.blockIds.includes(id))
+    );
+    if (linked) return [row];
+    limitations.push({
+      kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+      unit: origin,
+      rowKind: "global-rule",
+      rowIndex: sourceIndex + 1,
+      sourceBlockIds: row.blockIds.filter((id, index, ids) =>
+        ownedIds.has(id) && ids.indexOf(id) === index
+      ),
+      reason: "grounded-row-linkage-incomplete",
+    });
+    return [];
+  });
+  const rowKindOrder = new Map<PassAPrimaryGroundingRowKind, number>([
+    ["global-rule", 0], ["cross-reference", 1], ["ambiguity", 2], ["unverifiable", 3],
+  ]);
+  limitations.sort((left, right) =>
+    (rowKindOrder.get(left.rowKind)! - rowKindOrder.get(right.rowKind)!) ||
+    left.rowIndex - right.rowIndex
+  );
+  const validatedLimitations = validatePassAPrimaryGroundingLimitations(limitations);
   return {
-    unit: { ...unit, globalRules, crossRefs, ambiguities, unverifiable },
-    failures,
+    unit: {
+      ...unit,
+      globalRules,
+      crossRefs: groundedCrossRefs.map(({ row }) => row),
+      ambiguities: groundedAmbiguities.map(({ row }) => row),
+      unverifiable: groundedUnverifiable.map(({ row }) => row),
+      primaryGroundingLimitations: validatedLimitations,
+    },
+    limitations: validatedLimitations,
   };
 }
 
@@ -1433,7 +2277,54 @@ async function readWindow(
   parserVersion: string,
   origin: string,
 ): Promise<PersistedWindow | FailedWindowArtifact | InvalidWindowArtifact | null> {
-  const obj = await env.EVIDENCE.get(windowKey(runId, n));
+  const sidecar = await readWindowArtifact(
+    env, runId, n, expectedBlocks, parserVersion, origin, windowWireCeilingKey(runId, n),
+  );
+  const main = await readWindowArtifact(
+    env, runId, n, expectedBlocks, parserVersion, origin, windowKey(runId, n),
+  );
+  if (sidecar === null) return main;
+  const sidecarInvalid = (detail: string): InvalidWindowArtifact => ({
+    kind: "invalid",
+    attempts: main?.kind === "failed" || main?.kind === "invalid" ? main.attempts : 0,
+    usages: main?.usages ?? sidecar.usages,
+    detail: `PASS_A_WINDOW_WIRE_CEILING_SIDECAR_INVALID: ${origin}: ${detail}. ` +
+      `Neither retained artifact was overwritten or re-bought.`,
+  });
+  if (sidecar.kind !== "failed" || !sidecar.wireCeiling) {
+    return sidecarInvalid(
+      sidecar.kind === "ok" ? "sidecar contains a successful artifact" : sidecar.detail,
+    );
+  }
+  // A sidecar is written only when a valid, paid, retryable main artifact already owns the
+  // exact key. Fresh zero-receipt refusals live at the main key. Anything else is a retained
+  // conflict, not permission to relabel successful/corrupt/terminal authority as wire-safe.
+  if (
+    main?.kind !== "failed" || main.wireCeiling || main.attempts < 1 || main.terminal
+  ) {
+    return sidecarInvalid("wire-ceiling sidecar has no valid retryable paid main artifact");
+  }
+  return {
+    kind: "failed",
+    attempts: main.attempts,
+    usages: main.usages,
+    fallbackTrigger: main.fallbackTrigger,
+    terminal: true,
+    wireCeiling: true,
+    detail: sidecar.detail,
+  };
+}
+
+async function readWindowArtifact(
+  env: Env,
+  runId: string,
+  n: number,
+  expectedBlocks: SourceBlock[],
+  parserVersion: string,
+  origin: string,
+  artifactKey: string,
+): Promise<PersistedWindow | FailedWindowArtifact | InvalidWindowArtifact | null> {
+  const obj = await env.EVIDENCE.get(artifactKey);
   if (!obj) return null;
   const expectedBlockIds = expectedBlocks.map((block) => block.blockId);
   const invalid = (detail: string, parsed?: Record<string, unknown>): InvalidWindowArtifact => {
@@ -1442,7 +2333,7 @@ async function readWindow(
           isCallUsage(usage) && passAUsagePosition(usage, runId, origin) !== null)
       : [];
     const declared = parsed?.['attempts'];
-    const attempts = Number.isSafeInteger(declared) && (declared as number) >= 1
+    const attempts = Number.isSafeInteger(declared) && (declared as number) >= 0
       ? declared as number
       : usages.reduce((highest, usage) =>
           Math.max(highest, passAUsagePosition(usage, runId, origin)?.issue ?? 0), 0);
@@ -1452,9 +2343,16 @@ async function readWindow(
         'The current-identity paid artifact is terminal authority and will not be overwritten or re-bought.',
     };
   };
+  let artifactBodyText: string;
+  try {
+    artifactBodyText = await obj.text();
+  } catch {
+    return invalid('artifact bytes are unreadable');
+  }
+  const storageAuthority = { etag: obj.etag, bodyText: artifactBodyText };
   let parsed: Record<string, unknown>;
   try {
-    const decoded = JSON.parse(await obj.text()) as unknown;
+    const decoded = JSON.parse(artifactBodyText) as unknown;
     if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
       return invalid('artifact root is not an object');
     }
@@ -1468,6 +2366,9 @@ async function readWindow(
     if (parsed["parserVersion"] !== parserVersion || parsed["promptVersion"] !== PROMPT_VERSION_A) return null;
     if (parsed["providerRouteIdentity"] !== grokFlashRouteIdentity(env)) return null;
     if (parsed["windowPolicyIdentity"] !== windowPolicyIdentity(env)) return null;
+    if (parsed["windowId"] !== origin || parsed["windowNumber"] !== n) {
+      return invalid("windowId/windowNumber do not match this exact window key", parsed);
+    }
     const blockIds = Array.isArray(parsed["blockIds"]) ? (parsed["blockIds"] as string[]) : [];
     if (
       blockIds.length !== expectedBlockIds.length ||
@@ -1476,12 +2377,15 @@ async function readWindow(
     const attempts = parsed["attempts"];
     const usages = Array.isArray(parsed["usages"]) ? parsed["usages"] : null;
     if (
-      !Number.isSafeInteger(attempts) || (attempts as number) < 1 ||
+      !Number.isSafeInteger(attempts) || (attempts as number) < 0 ||
       usages === null || !usages.every(isCallUsage)
     ) return invalid('attempts/usages are malformed', parsed);
-    const coherence = validatePassAUnitUsageCoherence(
-      usages as CallUsage[], runId, origin, attempts as number,
-    );
+    const zeroReceiptWireFailure =
+      parsed["status"] === "failed" && parsed["failureStage"] === "wire-ceiling" &&
+      attempts === 0 && usages.length === 0;
+    const coherence = zeroReceiptWireFailure
+      ? null
+      : validatePassAUnitUsageCoherence(usages as CallUsage[], runId, origin, attempts as number);
     if (coherence !== null) return invalid(coherence, parsed);
     if (parsed["status"] === "failed") {
       if (typeof parsed["detail"] !== 'string' || parsed["detail"].length === 0) {
@@ -1502,7 +2406,8 @@ async function readWindow(
       const failureStage = parsed["failureStage"];
       if (
         failureStage !== 'fallback-authorized' &&
-        failureStage !== 'provider' && failureStage !== 'semantic-output'
+        failureStage !== 'provider' && failureStage !== 'semantic-output' &&
+        failureStage !== 'wire-ceiling'
       ) return invalid('failureStage is missing or invalid', parsed);
       const fallbackChainFailure = fallbackTrigger === null ? null : validatePassAFallbackUsageChain(
         usages as CallUsage[], runId, origin, attempts as number, fallbackTrigger,
@@ -1512,7 +2417,15 @@ async function readWindow(
       if (
         parsed["routeReceipt"] !== undefined || parsed["globalRules"] !== undefined ||
         parsed["crossRefs"] !== undefined || parsed["ambiguities"] !== undefined ||
-        parsed["unverifiable"] !== undefined ||
+        parsed["unverifiable"] !== undefined || parsed["primaryGroundingLimitations"] !== undefined ||
+        (failureStage === 'wire-ceiling' &&
+          ((attempts as number) !== 0 || usages.length !== 0 || fallbackTrigger !== null ||
+            parsed["terminal"] !== true ||
+            Object.hasOwn(parsed, "modelOutput") ||
+            !(parsed["detail"] as string).startsWith(
+              `${EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED}:`,
+            ))) ||
+        (failureStage !== 'wire-ceiling' && (attempts as number) === 0) ||
         (failureStage === 'provider' && fallbackTrigger === null && parsed["terminal"] !== true) ||
         (fallbackTrigger === null && (usages as CallUsage[]).some((usage) => usage.provider === 'deepseek')) ||
         (usages as CallUsage[]).some((usage) => usage.status === 'ok') ||
@@ -1523,10 +2436,26 @@ async function readWindow(
             (usages as CallUsage[]).some((usage) => usage.provider === 'deepseek'))) ||
         fallbackChainFailure !== null
       ) return invalid('failed artifact retains successful-shape fields or an unauthorized provider receipt', parsed);
-      return {
+      const failedModelOutput = parsed["modelOutput"];
+      if (failureStage === "semantic-output") {
+        if (
+          typeof failedModelOutput !== "object" || failedModelOutput === null ||
+          Array.isArray(failedModelOutput)
+        ) return invalid("semantic-output failure has no retained raw modelOutput", parsed);
+        try {
+          strictPrimaryOutput(failedModelOutput as Record<string, unknown>, origin);
+          return invalid("semantic-output failure does not reproduce under the current strict decoder", parsed);
+        } catch {
+          // Exact raw parsed output remains private evidence only. Reproducing the strict
+          // failure proves the failed envelope; it grants no typed or coverage authority.
+        }
+      } else if (failedModelOutput !== undefined && failedModelOutput !== null) {
+        return invalid("provider/fallback failure carries model output it could not have produced", parsed);
+      }
+      return rememberPassAWindowStorageAuthority<FailedWindowArtifact>({
         kind: "failed", attempts: attempts as number, detail: parsed["detail"], usages: usages as CallUsage[],
-        fallbackTrigger, terminal: parsed["terminal"],
-      };
+        fallbackTrigger, terminal: parsed["terminal"], wireCeiling: failureStage === "wire-ceiling",
+      }, storageAuthority);
     }
     if (
       parsed["kind"] !== 'ok' || parsed["status"] !== undefined ||
@@ -1546,24 +2475,30 @@ async function readWindow(
       return invalid('successful artifact has no raw modelOutput authority', parsed);
     }
     const strict = strictPrimaryOutput(modelOutput as Record<string, unknown>, origin);
-    const decoded: PersistedWindow = groundPrimaryWindow({
+    const decoded = inspectPrimaryWindowGrounding({
       kind: "ok",
       ...strict,
+      primaryGroundingLimitations: [],
       usages: usages as CallUsage[],
       routeReceipt,
-    }, expectedBlocks, origin);
+    }, expectedBlocks, origin).unit;
+    const storedLimitations = validatePassAPrimaryGroundingLimitations(
+      parsed["primaryGroundingLimitations"],
+    );
     const typedStored = {
       globalRules: parsed["globalRules"], crossRefs: parsed["crossRefs"],
       ambiguities: parsed["ambiguities"], unverifiable: parsed["unverifiable"],
+      primaryGroundingLimitations: storedLimitations,
     };
     const typedDecoded = {
       globalRules: decoded.globalRules, crossRefs: decoded.crossRefs,
       ambiguities: decoded.ambiguities, unverifiable: decoded.unverifiable,
+      primaryGroundingLimitations: decoded.primaryGroundingLimitations,
     };
     if (canonicalJson(typedStored) !== canonicalJson(typedDecoded)) {
       return invalid('typed projection differs from strict re-decoding of raw modelOutput', parsed);
     }
-    return decoded;
+    return rememberPassAWindowStorageAuthority(decoded, storageAuthority);
   } catch (error) {
     return invalid(error instanceof Error ? error.message : 'typed output validation failed', parsed);
   }
@@ -1610,7 +2545,6 @@ interface PassASynthesisInput {
 }
 
 interface PassASynthesisContext {
-  input: PassASynthesisInput;
   parserVersion: string;
   inputJson: string;
   inputHash: string;
@@ -1620,6 +2554,10 @@ interface PassASynthesisContext {
   wireBytes: number;
   grokWireBytes: number;
   flashWireBytes: number;
+  /** Closed refusal detail, null only when both exact provider bodies fit. */
+  wireFailureDetail: string | null;
+  /** Every source block whose exact span is owned by this synthesis unit. */
+  sourceBlockIds: string[];
   requestHash: string;
   policyIdentity: string;
   maxBytes: number;
@@ -1633,7 +2571,6 @@ interface PassASynthesisContext {
     maxAttempts: number;
   };
   coverage: PassASynthesisCoverage;
-  inputFailures: string[];
   blocks: Map<string, SourceBlock>;
   windowByBlock: Map<string, number>;
   evidenceBlockIds: Set<string>;
@@ -1670,6 +2607,7 @@ type PersistedPassASynthesis =
       usages: CallUsage[];
       fallbackTrigger: GrokFallbackTrigger | null;
       terminal: boolean;
+      wireCeiling: boolean;
       detail: string;
     }
   | {
@@ -1679,6 +2617,42 @@ type PersistedPassASynthesis =
       usages: CallUsage[];
       detail: string;
     };
+
+interface PassASynthesisStorageAuthority {
+  /** R2 version strictly decoded before the next paid synthesis transition. */
+  etag: string;
+  /** Exact canonical bytes; semantic equality is never enough to authorize replacement. */
+  bodyText: string;
+}
+
+const passASynthesisStorageAuthority =
+  new WeakMap<object, PassASynthesisStorageAuthority>();
+
+function rememberPassASynthesisStorageAuthority<T extends object>(
+  value: T,
+  authority: PassASynthesisStorageAuthority,
+): T {
+  passASynthesisStorageAuthority.set(value, authority);
+  return value;
+}
+
+function synthesisStorageAuthorityOf(
+  value: PersistedPassASynthesis | null,
+): PassASynthesisStorageAuthority | null {
+  return value === null ? null : passASynthesisStorageAuthority.get(value) ?? null;
+}
+
+const PASS_A_SYNTHESIS_ARTIFACT_PERSIST_ATTEMPTS = 2;
+
+class PassASynthesisPersistenceError extends Error {
+  constructor(writeError: unknown, retainedState: string) {
+    const writeDetail = writeError instanceof Error ? writeError.message : String(writeError);
+    super(
+      `PASS_A_SYNTHESIS_PERSISTENCE_FAILED: ${writeDetail}; synthesis artifact reread ${retainedState}`,
+    );
+    this.name = "PassASynthesisPersistenceError";
+  }
+}
 
 const emptySynthesisAdditions = (): PassASynthesisAdditions => ({
   globalRules: [],
@@ -1746,6 +2720,7 @@ function synthesisArtifactEnvelope(
   requestHash: string;
   policyIdentity: string;
   coverage: PassASynthesisCoverage;
+  blockIds: string[];
 } {
   return {
     schemaVersion: PASS_A_SYNTHESIS_VERSION,
@@ -1756,6 +2731,7 @@ function synthesisArtifactEnvelope(
     requestHash: context.requestHash,
     policyIdentity: context.policyIdentity,
     coverage: context.coverage,
+    blockIds: context.sourceBlockIds,
   };
 }
 
@@ -1858,11 +2834,55 @@ async function readPassASynthesis(
   runId: string,
   context: PassASynthesisContext,
 ): Promise<PersistedPassASynthesis | null> {
-  const obj = await env.EVIDENCE.get(passASynthesisKey(runId));
+  const sidecar = await readPassASynthesisArtifact(
+    env, runId, context, passASynthesisWireCeilingKey(runId),
+  );
+  const main = await readPassASynthesisArtifact(env, runId, context, passASynthesisKey(runId));
+  if (sidecar === null) return main;
+  const invalid = (detail: string): PersistedPassASynthesis => invalidSynthesisArtifact(
+    runId,
+    `wire-ceiling sidecar is invalid: ${detail}`,
+    { attempts: main?.attempts ?? 0, usages: main?.usages ?? [] },
+  );
+  if (sidecar.kind !== "failed" || !sidecar.wireCeiling) {
+    return invalid(
+      sidecar.kind === "ok" ? "it contains a successful artifact" : sidecar.detail,
+    );
+  }
+  if (
+    main?.kind !== "failed" || main.wireCeiling || main.attempts < 1 || main.terminal
+  ) {
+    return invalid("it has no valid retryable paid main synthesis artifact beneath it");
+  }
+  return {
+    kind: "failed",
+    attempts: main.attempts,
+    usages: main.usages,
+    fallbackTrigger: main.fallbackTrigger,
+    terminal: true,
+    wireCeiling: true,
+    detail: sidecar.detail,
+  };
+}
+
+async function readPassASynthesisArtifact(
+  env: Env,
+  runId: string,
+  context: PassASynthesisContext,
+  artifactKey: string,
+): Promise<PersistedPassASynthesis | null> {
+  const obj = await env.EVIDENCE.get(artifactKey);
   if (!obj) return null;
+  let artifactBodyText: string;
+  try {
+    artifactBodyText = await obj.text();
+  } catch {
+    return invalidSynthesisArtifact(runId, "artifact bytes are unreadable");
+  }
+  const storageAuthority = { etag: obj.etag, bodyText: artifactBodyText };
   let parsedForFailure: Record<string, unknown> | undefined;
   try {
-    const decoded = JSON.parse(await obj.text()) as unknown;
+    const decoded = JSON.parse(artifactBodyText) as unknown;
     if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
       return invalidSynthesisArtifact(runId, 'artifact root is not an object');
     }
@@ -1882,6 +2902,11 @@ async function readPassASynthesis(
         runId,
         'artifact envelope identity differs from the current parser/prompt/route/request/policy identity',
         parsed,
+      );
+    }
+    if (JSON.stringify(parsed["blockIds"]) !== JSON.stringify(expected.blockIds)) {
+      return invalidSynthesisArtifact(
+        runId, 'ordered source-block ownership does not match the exact synthesis request', parsed,
       );
     }
     if (JSON.stringify(parsed["coverage"]) !== JSON.stringify(expected.coverage)) {
@@ -1913,6 +2938,8 @@ async function readPassASynthesis(
         failureStage !== "fallback-authorized" && failureStage !== "provider" &&
         failureStage !== "semantic-output"
       ) return invalidSynthesisArtifact(runId, 'failureStage is missing or invalid', parsed);
+      const zeroReceiptStage =
+        failureStage === "input-grounding" || failureStage === "wire-ceiling";
       const fallbackChainFailure = fallbackTrigger === null ? null : validatePassAFallbackUsageChain(
         usages as CallUsage[], runId, 'A-synthesis', attempts as number, fallbackTrigger,
         failureStage === "fallback-authorized" ? "pending" :
@@ -1923,8 +2950,12 @@ async function readPassASynthesis(
         typeof parsed["detail"] !== "string" || parsed["detail"].length === 0 ||
         ((attempts as number) === 0 &&
           (usages.length !== 0 || fallbackTrigger !== null || parsed["terminal"] !== true)) ||
+        ((attempts as number) === 0 && !zeroReceiptStage) ||
+        (zeroReceiptStage && (attempts as number) !== 0) ||
+        (failureStage === "wire-ceiling" &&
+          !parsed["detail"].startsWith(`${EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED}:`)) ||
         ((attempts as number) > 0 && usages.length === 0) ||
-        parsed["routeReceipt"] !== undefined || parsed["modelOutput"] !== undefined ||
+        parsed["routeReceipt"] !== undefined ||
         (failureStage === "provider" && fallbackTrigger === null && parsed["terminal"] !== true) ||
         (usages as CallUsage[]).some((usage) => usage.status === "ok") ||
         (failureStage === "semantic-output" &&
@@ -1934,14 +2965,54 @@ async function readPassASynthesis(
             (usages as CallUsage[]).some((usage) => usage.provider === "deepseek"))) ||
         fallbackChainFailure !== null
       ) return invalidSynthesisArtifact(runId, 'failed-artifact state is incoherent', parsed);
-      return {
-        kind: "failed",
+      const failedModelOutput = parsed["modelOutput"];
+      if (failureStage === "semantic-output") {
+        if (
+          typeof failedModelOutput !== "object" || failedModelOutput === null ||
+          Array.isArray(failedModelOutput)
+        ) {
+          return invalidSynthesisArtifact(
+            runId, "semantic-output failure has no retained raw modelOutput", parsed,
+          );
+        }
+        let semanticReplayDetail: string | null = null;
+        try {
+          validatePassASynthesisOutput(
+            failedModelOutput as Record<string, unknown>,
+            context,
+          );
+        } catch (error) {
+          semanticReplayDetail = error instanceof Error ? error.message : String(error);
+        }
+        if (semanticReplayDetail === null) {
+          return invalidSynthesisArtifact(
+            runId,
+            "semantic-output failure does not reproduce under the current strict decoder",
+            parsed,
+          );
+        }
+        if (
+          semanticReplayDetail !== null &&
+          parsed["detail"] !== semanticReplayDetail.slice(0, 400)
+        ) {
+          return invalidSynthesisArtifact(
+            runId, "semantic-output detail differs from strict raw-output re-decoding", parsed,
+          );
+        }
+      } else if (failedModelOutput !== undefined) {
+        return invalidSynthesisArtifact(
+          runId, "non-semantic failure carries model output it could not have produced", parsed,
+        );
+      }
+      return rememberPassASynthesisStorageAuthority({
+        kind: "failed" as const,
         attempts: attempts as number,
         usages: usages as CallUsage[],
         fallbackTrigger,
         terminal: parsed["terminal"],
+        wireCeiling: failureStage === "wire-ceiling",
         detail: parsed["detail"],
-      };
+      }, storageAuthority);
     }
     if (
       parsed["status"] !== "ok" || parsed["kind"] !== undefined ||
@@ -1966,13 +3037,13 @@ async function readPassASynthesis(
     // Re-run the exact source/provenance decoder on every reclaim. Durable does not mean
     // trusted: corrupt or hand-edited additions must never bypass grounding after a crash.
     const additions = validatePassASynthesisOutput(modelOutput as Record<string, unknown>, context);
-    return {
-      kind: "ok",
+    return rememberPassASynthesisStorageAuthority({
+      kind: "ok" as const,
       attempts: attempts as number,
       usages: usages as CallUsage[],
       routeReceipt,
       additions,
-    };
+    }, storageAuthority);
   } catch (error) {
     return invalidSynthesisArtifact(
       runId,
@@ -1983,16 +3054,180 @@ async function readPassASynthesis(
   }
 }
 
+async function persistPassASynthesisHistory(
+  env: Env,
+  runId: string,
+  bodyText: string,
+): Promise<string> {
+  const bodySha256 = await sha256Hex(bodyText);
+  return persistPrimaryWindowAppendOnly(
+    env,
+    passASynthesisHistoryKey(runId, bodySha256),
+    bodyText,
+    "PASS_A_SYNTHESIS_HISTORY_PERSISTENCE_FAILED",
+  );
+}
+
+async function persistPassASynthesisCasConflict(
+  env: Env,
+  runId: string,
+  bodyText: string,
+): Promise<string> {
+  const bodySha256 = await sha256Hex(bodyText);
+  return persistPrimaryWindowAppendOnly(
+    env,
+    passASynthesisCasConflictKey(runId, bodySha256),
+    bodyText,
+    "PASS_A_SYNTHESIS_CAS_CONFLICT_PERSISTENCE_FAILED",
+  );
+}
+
 async function writePassASynthesis(
   env: Env,
   runId: string,
   context: PassASynthesisContext,
+  predecessor: PassASynthesisStorageAuthority | null,
   body: Record<string, unknown>,
-): Promise<void> {
-  await env.EVIDENCE.put(
-    passASynthesisKey(runId),
-    JSON.stringify({ ...synthesisArtifactEnvelope(env, context), ...body }, null, 2),
-    { httpMetadata: { contentType: "application/json" } },
+  accept: (artifact: PersistedPassASynthesis) => boolean,
+): Promise<PersistedPassASynthesis | null> {
+  const key = passASynthesisKey(runId);
+  const bodyText = JSON.stringify(
+    { ...synthesisArtifactEnvelope(env, context), ...body },
+    null,
+    2,
+  );
+  let synthesisExpected = predecessor;
+  let lastFailure: PassASynthesisPersistenceError | null = null;
+
+  if (synthesisExpected !== null) {
+    try {
+      await persistPassASynthesisHistory(env, runId, synthesisExpected.bodyText);
+    } catch (historyError) {
+      let losingState = "could not retain the losing paid synthesis artifact";
+      try {
+        const conflictKey = await persistPassASynthesisCasConflict(env, runId, bodyText);
+        losingState = `retained the losing paid synthesis artifact at ${conflictKey}`;
+      } catch {
+        // The history refusal stays primary. No canonical bytes are overwritten.
+      }
+      throw new PassASynthesisPersistenceError(
+        historyError,
+        `could not archive the exact predecessor before replacement and ${losingState}`,
+      );
+    }
+  }
+
+  for (
+    let storageAttempt = 1;
+    storageAttempt <= PASS_A_SYNTHESIS_ARTIFACT_PERSIST_ATTEMPTS;
+    storageAttempt += 1
+  ) {
+    let writeError: unknown;
+    try {
+      const written = await env.EVIDENCE.put(key, bodyText, {
+        httpMetadata: { contentType: "application/json" },
+        onlyIf: synthesisExpected === null
+          ? { etagDoesNotMatch: "*" }
+          : { etagMatches: synthesisExpected.etag },
+      });
+      if (written !== null) return null;
+      writeError = new Error(
+        synthesisExpected === null
+          ? "conditional create found an occupied synthesis key"
+          : "conditional replacement no longer matched the exact synthesis predecessor",
+      );
+    } catch (error) {
+      // A transport error can arrive before or after commit. Exact reread decides which.
+      writeError = error;
+    }
+
+    let object: R2ObjectBody | null;
+    try {
+      object = await env.EVIDENCE.get(key);
+    } catch (readError) {
+      lastFailure = new PassASynthesisPersistenceError(
+        writeError,
+        `failed with ${readError instanceof Error ? readError.message : String(readError)}`,
+      );
+      continue;
+    }
+
+    if (object === null) {
+      if (synthesisExpected === null) {
+        lastFailure = new PassASynthesisPersistenceError(
+          writeError,
+          "found no current synthesis artifact",
+        );
+        continue;
+      }
+      let losingState = "could not retain the losing paid synthesis artifact";
+      try {
+        const conflictKey = await persistPassASynthesisCasConflict(env, runId, bodyText);
+        losingState = `retained the losing paid synthesis artifact at ${conflictKey}`;
+      } catch {
+        // The missing predecessor remains terminal even if the conflict archive also fails.
+      }
+      throw new PassASynthesisPersistenceError(
+        writeError,
+        `found the exact predecessor missing; refusing to recreate over lost authority; ${losingState}`,
+      );
+    }
+
+    let retainedBytes: string;
+    try {
+      retainedBytes = await object.text();
+    } catch (readError) {
+      lastFailure = new PassASynthesisPersistenceError(
+        writeError,
+        `could not read retained bytes: ${readError instanceof Error ? readError.message : String(readError)}`,
+      );
+      continue;
+    }
+
+    if (retainedBytes !== bodyText) {
+      if (synthesisExpected !== null && retainedBytes === synthesisExpected.bodyText) {
+        synthesisExpected = { etag: object.etag, bodyText: retainedBytes };
+        lastFailure = new PassASynthesisPersistenceError(
+          writeError,
+          "found the exact synthesis predecessor still present",
+        );
+        continue;
+      }
+      let conflictKey: string;
+      try {
+        conflictKey = await persistPassASynthesisCasConflict(env, runId, bodyText);
+      } catch (conflictError) {
+        throw new PassASynthesisPersistenceError(
+          conflictError,
+          "found an occupied synthesis artifact with different bytes and could not retain the losing paid artifact",
+        );
+      }
+      throw new PassASynthesisPersistenceError(
+        writeError,
+        `found an occupied synthesis artifact with different bytes; exact losing bytes retained at ${conflictKey}`,
+      );
+    }
+
+    const retained = await readPassASynthesisArtifact(env, runId, context, key);
+    if (retained !== null && retained.kind !== "invalid" && accept(retained)) return retained;
+    throw new PassASynthesisPersistenceError(
+      writeError,
+      retained === null
+        ? "lost the exact synthesis artifact before strict reread"
+        : `found exact bytes with ${retained.kind} authority that failed the expected-state check`,
+    );
+  }
+
+  let retainedState = "did not prove the exact current synthesis artifact";
+  try {
+    const conflictKey = await persistPassASynthesisCasConflict(env, runId, bodyText);
+    retainedState += `; exact paid bytes retained at ${conflictKey}`;
+  } catch {
+    retainedState += "; exact paid bytes could not be retained at the conflict key";
+  }
+  throw lastFailure ?? new PassASynthesisPersistenceError(
+    "unknown storage failure",
+    retainedState,
   );
 }
 
@@ -2014,7 +3249,6 @@ export async function runPassASynthesis(
   const context = await buildPassASynthesisContext(env, runId, doc, documentName);
   if (context === null) return synthesisOutcome("not-required");
   const coverage = context.coverage;
-  const maxBytes = context.maxBytes;
   const maxIssues = context.maxIssues;
   const existing = await readPassASynthesis(env, runId, context);
   const reusedCalls = (usages: CallUsage[], detail: string): CallUsage[] =>
@@ -2045,66 +3279,11 @@ export async function runPassASynthesis(
       coverage,
       calls: reusedCalls(existing.usages, 'reused: invalid retained cross-window synthesis artifact'),
       accountingCalls: existing.usages,
-      failedUnit: { unit: 'A-synthesis-artifact', blockIds: [], detail: existing.detail },
+      failedUnit: { unit: 'A-synthesis-artifact', blockIds: context.sourceBlockIds, detail: existing.detail },
     });
   }
 
-  if (context.inputFailures.length > 0) {
-    const detail =
-      `PASS_A_SYNTHESIS_INPUT_UNGROUNDED: ${context.inputFailures.length} of ` +
-      `${coverage.candidateRowsTotal} primary candidate row(s) lacked unique exact source grounding. ` +
-      `No candidate was silently omitted and no synthesis purchase was made. ` +
-      context.inputFailures.slice(0, 3).join(" | ");
-    if (!existing) {
-      await writePassASynthesis(env, runId, context, {
-        status: "failed", attempts: 0, usages: [], fallbackTrigger: null, terminal: true,
-        failureStage: "input-grounding", detail,
-      });
-    }
-    return synthesisOutcome("failed", {
-      attempts: existing?.attempts ?? 0,
-      inputHash: context.inputHash,
-      coverage,
-      calls: existing ? reusedCalls(existing.usages, "reused: terminal ungrounded synthesis input") : [],
-      accountingCalls: existing?.usages ?? [],
-      fallbackTrigger: existing?.fallbackTrigger ?? null,
-      failedUnit: {
-        unit: "A-synthesis-input",
-        blockIds: [],
-        detail,
-      },
-    });
-  }
-
-  if (context.wireBytes > maxBytes) {
-    const detail =
-      `PASS_A_SYNTHESIS_REQUEST_TOO_LARGE: exact serialized provider request is ${context.wireBytes} UTF-8 bytes ` +
-      `(catalogue ${context.catalogueBytes}; Grok ${context.grokWireBytes}; Flash ${context.flashWireBytes}), ` +
-      `above EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES=${maxBytes}. No candidate or exact evidence was truncated.`;
-    if (!existing) {
-      await writePassASynthesis(env, runId, context, {
-        status: "failed", attempts: 0, usages: [], fallbackTrigger: null, terminal: true,
-        failureStage: "wire-ceiling", detail,
-      });
-    }
-    return synthesisOutcome("failed", {
-      attempts: existing?.attempts ?? 0,
-      inputHash: context.inputHash,
-      coverage,
-      calls: existing ? reusedCalls(existing.usages, "reused: terminal synthesis oversize") : [],
-      accountingCalls: existing?.usages ?? [],
-      fallbackTrigger: existing?.fallbackTrigger ?? null,
-      failedUnit: { unit: "A-synthesis", blockIds: [], detail },
-    });
-  }
-
-  const pendingFlash = existing?.kind === "failed" &&
-    existing.fallbackTrigger !== null &&
-    !existing.usages.some((usage) => usage.provider === "deepseek");
-  if (
-    existing?.kind === "failed" &&
-    (existing.terminal || (existing.attempts >= maxIssues && !pendingFlash))
-  ) {
+  if (existing?.kind === "failed" && existing.terminal) {
     return synthesisOutcome("failed", {
       attempts: existing.attempts,
       inputHash: context.inputHash,
@@ -2112,7 +3291,68 @@ export async function runPassASynthesis(
       calls: reusedCalls(existing.usages, "reused: terminal cross-window synthesis failure"),
       accountingCalls: existing.usages,
       fallbackTrigger: existing.fallbackTrigger,
-      failedUnit: { unit: "A-synthesis", blockIds: [], detail: existing.detail },
+      failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail: existing.detail },
+      ...(existing.wireCeiling
+        ? { terminalReasonCode: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED }
+        : {}),
+    });
+  }
+
+  if (context.wireFailureDetail !== null) {
+    const detail = context.wireFailureDetail;
+    const wireBody = JSON.stringify({
+      ...synthesisArtifactEnvelope(env, context),
+      status: "failed", attempts: 0, usages: [], fallbackTrigger: null, terminal: true,
+      failureStage: "wire-ceiling", detail,
+    }, null, 2);
+    await persistImmutableExtractionArtifact(
+      env,
+      existing ? passASynthesisWireCeilingKey(runId) : passASynthesisKey(runId),
+      wireBody,
+      "A-synthesis",
+    );
+    return synthesisOutcome("failed", {
+      attempts: existing?.attempts ?? 0,
+      inputHash: context.inputHash,
+      coverage,
+      calls: existing ? reusedCalls(existing.usages, "reused: terminal synthesis oversize") : [],
+      accountingCalls: existing?.usages ?? [],
+      fallbackTrigger: existing?.fallbackTrigger ?? null,
+      failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail },
+      terminalReasonCode: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+    });
+  }
+
+  const predecessorAuthority = existing?.kind === "failed"
+    ? synthesisStorageAuthorityOf(existing)
+    : null;
+  if (existing?.kind === "failed" && predecessorAuthority === null) {
+    const detail =
+      "PASS_A_SYNTHESIS_STORAGE_AUTHORITY_MISSING: a retryable retained artifact did not carry " +
+      "the exact strict-read etag/body authority; no new provider request was issued.";
+    return synthesisOutcome("failed", {
+      attempts: existing.attempts,
+      inputHash: context.inputHash,
+      coverage,
+      calls: reusedCalls(existing.usages, "reused: synthesis storage authority refusal"),
+      accountingCalls: existing.usages,
+      fallbackTrigger: existing.fallbackTrigger,
+      failedUnit: { unit: "A-synthesis-artifact", blockIds: context.sourceBlockIds, detail },
+    });
+  }
+
+  const pendingFlash = existing?.kind === "failed" &&
+    existing.fallbackTrigger !== null &&
+    !existing.usages.some((usage) => usage.provider === "deepseek");
+  if (existing?.kind === "failed" && existing.attempts >= maxIssues && !pendingFlash) {
+    return synthesisOutcome("failed", {
+      attempts: existing.attempts,
+      inputHash: context.inputHash,
+      coverage,
+      calls: reusedCalls(existing.usages, "reused: terminal cross-window synthesis failure"),
+      accountingCalls: existing.usages,
+      fallbackTrigger: existing.fallbackTrigger,
+      failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail: existing.detail },
     });
   }
   if (!options.issueAuthorized) {
@@ -2132,9 +3372,34 @@ export async function runPassASynthesis(
   let fallbackTrigger = existing?.kind === "failed" ? existing.fallbackTrigger : null;
   const purchasedUsages: CallUsage[] = [];
   const calls = reusedCalls(priorUsages, "reused: prior cross-window synthesis purchase");
+  let purchaseEnv: Env;
+  try {
+    const grokKey = fallbackTrigger === null ? await keyFor(env, "grok") : null;
+    const deepseekKey = await keyFor(env, "deepseek");
+    purchaseEnv = {
+      ...env,
+      ...(grokKey !== null ? { XAI_API_KEY: grokKey } : {}),
+      DEEPSEEK_API_KEY: deepseekKey,
+    };
+  } catch (error) {
+    if (!(error instanceof MissingCredential)) throw error;
+    const provider = error.binding === "XAI_API_KEY" ? "grok" : "deepseek";
+    const detail = `${error.binding} is unavailable after exact synthesis request preflight; ` +
+      `no new provider request was issued for A-synthesis.`;
+    return synthesisOutcome("failed", {
+      attempts: priorAttempts,
+      inputHash: context.inputHash,
+      coverage,
+      calls,
+      accountingCalls: priorUsages,
+      fallbackTrigger,
+      failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail },
+      credentialRefusal: { reason: "NO_CREDENTIAL", binding: error.binding, provider },
+    });
+  }
   return await purchasePassASynthesis(
-    env, runId, context, documentName, context.optionsForCall, issue, maxIssues,
-    priorUsages, purchasedUsages, calls, fallbackTrigger, onProgress,
+    purchaseEnv, runId, context, documentName, context.optionsForCall, issue, maxIssues,
+    priorUsages, purchasedUsages, calls, fallbackTrigger, predecessorAuthority, onProgress,
   );
 }
 
@@ -2152,9 +3417,32 @@ async function purchasePassASynthesis(
   purchasedUsages: CallUsage[],
   calls: CallUsage[],
   initialFallbackTrigger: GrokFallbackTrigger | null,
+  initialPredecessor: PassASynthesisStorageAuthority | null,
   onProgress?: (msg: string) => Promise<void>,
 ): Promise<PassASynthesisOutcome> {
   let fallbackTrigger = initialFallbackTrigger;
+  let predecessorAuthority = initialPredecessor;
+  let rawModelOutput: Record<string, unknown> | null = null;
+  const persistenceFailureOutcome = (
+    error: PassASynthesisPersistenceError,
+  ): PassASynthesisOutcome => {
+    const detail = error.message.slice(0, 400);
+    return synthesisOutcome("failed", {
+      issued: purchasedUsages.length,
+      attempts: issue,
+      inputHash: context.inputHash,
+      coverage: context.coverage,
+      calls,
+      issuedCalls: purchasedUsages,
+      accountingCalls: [...priorUsages, ...purchasedUsages],
+      fallbackTrigger,
+      failedUnit: {
+        unit: "A-synthesis-artifact",
+        blockIds: context.sourceBlockIds,
+        detail,
+      },
+    });
+  };
   try {
     let value: Record<string, unknown> | null = null;
     let routeReceipt: PassARouteReceipt | null = null;
@@ -2165,6 +3453,7 @@ async function purchasePassASynthesis(
         purchasedUsages.push(usage);
         calls.push(usage);
         value = outcome.value;
+        rawModelOutput = outcome.value;
         routeReceipt = { selected: "grok-4.6", trigger: null };
       } catch (error) {
         if (!(error instanceof ModelCallError) || !grokFlashFallbackEligible(error)) throw error;
@@ -2179,15 +3468,61 @@ async function purchasePassASynthesis(
           grokUsageEventId: usage.eventId!,
           detail: error.message.slice(0, 400),
         };
-        await writePassASynthesis(env, runId, context, {
-          status: "failed",
-          attempts: issue,
-          usages: [...priorUsages, ...purchasedUsages],
-          fallbackTrigger,
-          terminal: false,
-          failureStage: "fallback-authorized",
-          detail: `Flash fallback authorized but not yet landed: ${fallbackTrigger.detail}`,
-        });
+        const authorizedTrigger = fallbackTrigger;
+        const retainedFallbackCheckpoint = await writePassASynthesis(
+          env,
+          runId,
+          context,
+          predecessorAuthority,
+          {
+            status: "failed",
+            attempts: issue,
+            usages: [...priorUsages, ...purchasedUsages],
+            fallbackTrigger: authorizedTrigger,
+            terminal: false,
+            failureStage: "fallback-authorized",
+            detail: "Flash fallback authorized but not yet landed: " + authorizedTrigger.detail,
+          },
+          (artifact) =>
+            artifact.kind === "failed" &&
+            !artifact.terminal &&
+            artifact.fallbackTrigger?.grokUsageEventId === authorizedTrigger.grokUsageEventId,
+        );
+        if (retainedFallbackCheckpoint !== null) {
+          // The target committed despite a transport error. End this invocation at the
+          // commit-before-effect boundary; the next strict reclaim may buy only Flash.
+          return synthesisOutcome("pending", {
+            issued: purchasedUsages.length,
+            attempts: issue,
+            inputHash: context.inputHash,
+            coverage: context.coverage,
+            calls,
+            issuedCalls: purchasedUsages,
+            accountingCalls: retainedFallbackCheckpoint.usages,
+            fallbackTrigger: authorizedTrigger,
+          });
+        }
+        const committedFallbackCheckpoint = await readPassASynthesisArtifact(
+          env,
+          runId,
+          context,
+          passASynthesisKey(runId),
+        );
+        const committedFallbackAuthority =
+          synthesisStorageAuthorityOf(committedFallbackCheckpoint);
+        if (
+          committedFallbackCheckpoint?.kind !== "failed" ||
+          committedFallbackCheckpoint.terminal ||
+          committedFallbackCheckpoint.fallbackTrigger?.grokUsageEventId !==
+            authorizedTrigger.grokUsageEventId ||
+          committedFallbackAuthority === null
+        ) {
+          throw new PassASynthesisPersistenceError(
+            "fallback checkpoint committed without strict reread authority",
+            "could not bind the exact fallback-authorized predecessor before Flash",
+          );
+        }
+        predecessorAuthority = committedFallbackAuthority;
       }
     }
 
@@ -2200,17 +3535,27 @@ async function purchasePassASynthesis(
       purchasedUsages.push(usage);
       calls.push(usage);
       value = outcome.value;
+      rawModelOutput = outcome.value;
       routeReceipt = { selected: "deepseek-v4-flash", trigger: fallbackTrigger };
     }
     if (value === null || routeReceipt === null) {
       throw new Error("pass-A synthesis route produced neither a primary nor a fallback outcome");
     }
 
-    const additions = validatePassASynthesisOutput(value, context);
+    let additions = validatePassASynthesisOutput(value, context);
     const usages = [...priorUsages, ...purchasedUsages];
-    await writePassASynthesis(env, runId, context, {
-      status: "ok", attempts: issue, usages, routeReceipt, modelOutput: value,
-    });
+    const retainedSuccess = await writePassASynthesis(
+      env,
+      runId,
+      context,
+      predecessorAuthority,
+      { status: "ok", attempts: issue, usages, routeReceipt, modelOutput: value },
+      (artifact) => artifact.kind === "ok",
+    );
+    if (retainedSuccess?.kind === "ok") {
+      additions = retainedSuccess.additions;
+      routeReceipt = retainedSuccess.routeReceipt;
+    }
     const limitation = synthesisLimitation(context.coverage, additions);
     // Progress is observability, not extraction authority. A heartbeat failure after the
     // success artifact lands must never overwrite it as failed and authorize a repurchase.
@@ -2241,14 +3586,22 @@ async function purchasePassASynthesis(
       },
     );
   } catch (error) {
+    // The exact Grok + Flash bodies were preflighted before purchase. A missing secret is a
+    // stage configuration refusal, not a paid/semantic synthesis attempt.
+    if (error instanceof MissingCredential && purchasedUsages.length === 0) throw error;
+    if (error instanceof PassASynthesisPersistenceError) {
+      return persistenceFailureOutcome(error);
+    }
     if (error instanceof ModelCallError) {
       const receipt = fallbackTrigger === null ? 1 : 2;
       const usage = settlementUsage(runId, "A-synthesis", issue, receipt, error.usage);
       purchasedUsages.push(usage);
       calls.push(usage);
     }
+    const semanticFailure = !(error instanceof ModelCallError) && rawModelOutput !== null;
+    if (!(error instanceof ModelCallError) && !semanticFailure) throw error;
     const detail = error instanceof Error ? error.message.slice(0, 400) : String(error);
-    if (!(error instanceof ModelCallError) && purchasedUsages.length > 0) {
+    if (semanticFailure && purchasedUsages.length > 0) {
       const selected = purchasedUsages[purchasedUsages.length - 1]!;
       purchasedUsages[purchasedUsages.length - 1] = {
         ...selected,
@@ -2258,15 +3611,35 @@ async function purchasePassASynthesis(
       const index = calls.findIndex((usage) => usage.eventId === selected.eventId);
       if (index >= 0) calls[index] = purchasedUsages[purchasedUsages.length - 1]!;
     }
-    const terminal =
-      !(error instanceof ModelCallError) ||
-      (fallbackTrigger === null && !grokFlashFallbackEligible(error)) ||
-      issue >= maxIssues;
+    const terminal = semanticFailure || (
+      error instanceof ModelCallError &&
+      ((fallbackTrigger === null && !grokFlashFallbackEligible(error)) || issue >= maxIssues)
+    );
     const usages = [...priorUsages, ...purchasedUsages];
-    await writePassASynthesis(env, runId, context, {
-      status: "failed", attempts: issue, usages, fallbackTrigger, terminal,
-      failureStage: error instanceof ModelCallError ? "provider" : "semantic-output", detail,
-    });
+    try {
+      await writePassASynthesis(
+        env,
+        runId,
+        context,
+        predecessorAuthority,
+        {
+          status: "failed",
+          attempts: issue,
+          usages,
+          fallbackTrigger,
+          terminal,
+          failureStage: semanticFailure ? "semantic-output" : "provider",
+          detail,
+          ...(semanticFailure ? { modelOutput: rawModelOutput } : {}),
+        },
+        (artifact) => artifact.kind === "failed",
+      );
+    } catch (persistenceError) {
+      if (!(persistenceError instanceof PassASynthesisPersistenceError)) {
+        throw persistenceError;
+      }
+      return persistenceFailureOutcome(persistenceError);
+    }
     return synthesisOutcome(terminal ? "failed" : "pending", {
       issued: purchasedUsages.length,
       attempts: issue,
@@ -2276,7 +3649,7 @@ async function purchasePassASynthesis(
       issuedCalls: purchasedUsages,
       accountingCalls: usages,
       fallbackTrigger,
-      failedUnit: terminal ? { unit: "A-synthesis", blockIds: [], detail } : null,
+      failedUnit: terminal ? { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail } : null,
     });
   }
 }
@@ -2310,16 +3683,42 @@ async function buildPassASynthesisContext(
   );
   if (windows.length <= 1) return null;
 
+  const synthesisMaxRaw = env.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES ?? "45000";
+  if (!/^[1-9]\d*$/.test(synthesisMaxRaw)) {
+    throw new Error("EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES must be a canonical positive integer");
+  }
+  const configuredSynthesisMaxBytes = Number(synthesisMaxRaw);
+  if (!Number.isSafeInteger(configuredSynthesisMaxBytes)) {
+    throw new Error("EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES must be a safe positive integer");
+  }
+  const universalWireMaxBytes = extractionWirePolicy(env).maxInputBytes;
+  if (configuredSynthesisMaxBytes > universalWireMaxBytes) {
+    throw new Error(
+      `EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES (${configuredSynthesisMaxBytes}) must not exceed ` +
+        `EXTRACT_MODEL_INPUT_MAX_BYTES (${universalWireMaxBytes})`,
+    );
+  }
+  const maxBytes = configuredSynthesisMaxBytes;
+  const maxIssues = Math.max(1, Math.floor(num(env.EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES, 2)));
   const inputWindows: CompactWindowRow[] = [];
   const evidenceRows: CompactEvidenceRow[] = [];
   const evidenceBySpan = new Map<string, string>();
-  const inputFailures: string[] = [];
   const primaryCrossRefs: PassASynthesisContext["primaryCrossRefs"] = [];
   const blocks = new Map<string, SourceBlock>();
   const windowByBlock = new Map<string, number>();
   const evidenceBlockIds = new Set<string>();
   const evidenceSpanKeys = new Set<string>();
+  let primaryArtifactChainHash = `sha256:${await sha256Hex("pass-a-synthesis-primary-artifact-chain/v1")}`;
   let candidateRowsTotal = 0;
+  let candidateRowsUngrounded = 0;
+  let catalogueRefusal: Extract<ReturnType<typeof buildBoundedJsonText>, { ok: false }> | null = null;
+  const noteEvidenceBlockIds = (
+    rows: readonly { evidenceQuotes?: CrossWindowEvidenceQuote[] }[],
+  ): void => {
+    for (const row of rows) {
+      for (const quote of row.evidenceQuotes ?? []) evidenceBlockIds.add(quote.blockId);
+    }
+  };
   const evidenceIdsFor = (quotes: CrossWindowEvidenceQuote[] | undefined): string[] => {
     if (!quotes || quotes.length === 0) return [];
     return quotes.map((evidence) => {
@@ -2351,28 +3750,51 @@ async function buildPassASynthesisContext(
       // Synthesis cannot restore independence, so it must not buy another call.
       return null;
     }
+    const primaryArtifact = await env.EVIDENCE.get(windowKey(runId, n));
+    if (primaryArtifact === null) {
+      throw new Error(`PASS_A_SYNTHESIS_INPUT_INCOMPLETE: primary window ${n} artifact disappeared`);
+    }
+    const primaryArtifactHash = `sha256:${await sha256Hex(await primaryArtifact.text())}`;
+    primaryArtifactChainHash = `sha256:${await sha256Hex(
+      `${primaryArtifactChainHash}\nwindow:${n}\n${primaryArtifactHash}`,
+    )}`;
+    // readWindow already re-derived this exact projection from immutable raw modelOutput.
+    // Re-inspecting the accepted subset would erase the counted coordinates of rows that
+    // were deliberately withheld. Only closed metadata enters the synthesis input hash.
+    const grounded = unit;
+    candidateRowsUngrounded += unit.primaryGroundingLimitations.length;
+    const qualifiedCrossRefs = grounded.crossRefs.map((row) => {
+      const handle = row.sourceXrefHandle;
+      if (typeof handle !== "string" || !handle.startsWith(`A-w${n}:x:`)) {
+        throw new Error(`PASS_A_SYNTHESIS_INPUT_INVALID: surviving cross-reference lost its source-row handle`);
+      }
+      return { handle, windowNumber: n, row };
+    });
+    candidateRowsTotal +=
+      unit.globalRules.length + unit.crossRefs.length + unit.ambiguities.length + unit.unverifiable.length +
+      unit.primaryGroundingLimitations.length;
+    noteEvidenceBlockIds(unit.globalRules);
+    noteEvidenceBlockIds(unit.crossRefs);
+    noteEvidenceBlockIds(unit.ambiguities);
+    noteEvidenceBlockIds(unit.unverifiable);
+
+    // Once the complete catalogue is already proven too large, retain no more candidate,
+    // evidence or decode-only state. We still strict-read and hash every later immutable
+    // window above, and keep exact scalar counts plus every affected source block id.
+    if (catalogueRefusal !== null) continue;
+
     for (const block of source) {
       blocks.set(block.blockId, block);
       windowByBlock.set(block.blockId, n);
     }
-    const inspected = inspectPrimaryWindowGrounding(unit, source, `A-w${n}`);
-    inputFailures.push(...inspected.failures);
-    const grounded = inspected.unit;
-    const qualifiedCrossRefs = grounded.crossRefs.map((row, index) => ({
-      handle: `A-w${n}:x:${String(index + 1).padStart(3, "0")}`,
-      windowNumber: n,
-      row,
-    }));
     primaryCrossRefs.push(...qualifiedCrossRefs);
-    candidateRowsTotal +=
-      unit.globalRules.length + unit.crossRefs.length + unit.ambiguities.length + unit.unverifiable.length;
     const rules: CompactRuleRow[] = grounded.globalRules.map((row, index) => [
       `A-w${n}:r:${String(index + 1).padStart(3, "0")}`,
       row.construct, row.scope, row.quantifier, row.selector, row.exceptions, row.statement,
       evidenceIdsFor(row.evidenceQuotes), row.blockIds, row.browserObservable, row.expansion,
     ]);
-    const xrefs: CompactXrefRow[] = grounded.crossRefs.map((row, index) => [
-      `A-w${n}:x:${String(index + 1).padStart(3, "0")}`,
+    const xrefs: CompactXrefRow[] = grounded.crossRefs.map((row) => [
+      row.sourceXrefHandle!,
       row.fromBlock, row.target, row.resolvedToBlock, row.statement,
       evidenceIdsFor(row.evidenceQuotes),
     ]);
@@ -2387,28 +3809,51 @@ async function buildPassASynthesisContext(
       candidateEvidence(row), row.mandate, row.whyNotObservable, row.browserProxyEvidence,
     ]);
     inputWindows.push([`A-w${n}`, rules, xrefs, amb, unv]);
+
+    // A single primary output is provider-output-bounded. Checking after each window caps
+    // aggregate retained catalogue state at the synthesis ceiling instead of accumulating
+    // every paid window and only discovering the overflow at the final JSON.stringify.
+    const partialInput: PassASynthesisInput = {
+      v: 1,
+      c: [windows.length, candidateRowsTotal, doc.blocks.length, evidenceRows.length],
+      w: inputWindows,
+      e: evidenceRows,
+    };
+    const partialBound = buildBoundedJsonText(partialInput, maxBytes);
+    if (!partialBound.ok) {
+      catalogueRefusal = partialBound;
+      inputWindows.length = 0;
+      evidenceRows.length = 0;
+      evidenceBySpan.clear();
+      evidenceSpanKeys.clear();
+      primaryCrossRefs.length = 0;
+      blocks.clear();
+      windowByBlock.clear();
+    }
   }
 
-  const candidateRowsIncluded = inputWindows.reduce(
-    (sum, window) => sum + window[1].length + window[2].length + window[3].length + window[4].length,
-    0,
-  );
+  const candidateRowsIncluded = catalogueRefusal === null
+    ? inputWindows.reduce(
+        (sum, window) => sum + window[1].length + window[2].length + window[3].length + window[4].length,
+        0,
+      )
+    : 0;
   const coverage: PassASynthesisCoverage = {
     primaryWindowsTotal: windows.length,
-    primaryWindowsIncluded: inputWindows.length,
+    primaryWindowsIncluded: catalogueRefusal === null ? inputWindows.length : 0,
     candidateRowsTotal,
     candidateRowsIncluded,
-    candidateRowsUngrounded: inputFailures.length,
+    candidateRowsUngrounded,
     sourceBlocksTotal: doc.blocks.length,
-    sourceEvidenceBlocksIncluded: evidenceBlockIds.size,
-    sourceEvidenceSpansIncluded: evidenceRows.length,
-    sourceBlocksOmitted: doc.blocks.length - evidenceBlockIds.size,
+    sourceEvidenceBlocksIncluded: catalogueRefusal === null ? evidenceBlockIds.size : 0,
+    sourceEvidenceSpansIncluded: catalogueRefusal === null ? evidenceRows.length : 0,
+    sourceBlocksOmitted: catalogueRefusal === null ? doc.blocks.length - evidenceBlockIds.size : doc.blocks.length,
     method: "window-output-candidates-plus-exact-source-evidence",
   };
-  if (
+  if (catalogueRefusal === null && (
     coverage.primaryWindowsIncluded !== coverage.primaryWindowsTotal ||
     coverage.candidateRowsIncluded + coverage.candidateRowsUngrounded !== coverage.candidateRowsTotal
-  ) {
+  )) {
     throw new Error(
       `PASS_A_SYNTHESIS_COVERAGE_MISMATCH: included ${coverage.primaryWindowsIncluded}/${coverage.primaryWindowsTotal} ` +
         `windows and ${coverage.candidateRowsIncluded}/${coverage.candidateRowsTotal} candidate rows`,
@@ -2421,11 +3866,31 @@ async function buildPassASynthesisContext(
     w: inputWindows,
     e: evidenceRows,
   };
-  const inputJson = JSON.stringify(input);
-  const catalogueBytes = new TextEncoder().encode(inputJson).byteLength;
-  const inputHash = `sha256:${await sha256Hex(JSON.stringify({ input, inputFailures }))}`;
-  const maxBytes = Math.max(1, Math.floor(num(env.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES, 45_000)));
-  const maxIssues = Math.max(1, Math.floor(num(env.EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES, 2)));
+  const sourceBlockIds = catalogueRefusal === null
+    ? doc.blocks.map((block) => block.blockId).filter((blockId) => evidenceBlockIds.has(blockId))
+    : doc.blocks.map((block) => block.blockId);
+  const boundedInput = catalogueRefusal ?? buildBoundedJsonText(input, maxBytes);
+  const inputJson = boundedInput.ok ? boundedInput.text : "";
+  const catalogueBytes = boundedInput.ok
+    ? boundedInput.utf8Bytes
+    : boundedInput.provenUtf8ByteLowerBound;
+  const inputIdentity = boundedInput.ok
+    ? {
+        catalogueHash: await sha256Hex(inputJson),
+        primaryArtifactChainHash,
+      }
+    : {
+        refusal: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+        proof: {
+          phase: boundedInput.phase,
+          maxBytes: boundedInput.maxBytes,
+          provenUtf8ByteLowerBound: boundedInput.provenUtf8ByteLowerBound,
+        },
+        coverage,
+        sourceBlockIds,
+        primaryArtifactChainHash,
+      };
+  const inputHash = `sha256:${await sha256Hex(JSON.stringify(inputIdentity))}`;
   const optionsForCall = {
     system: SYSTEM_A_SYNTHESIS,
     user: userMessageASynthesis(documentName, inputJson),
@@ -2434,22 +3899,48 @@ async function buildPassASynthesisContext(
     callId: "call_a_synthesis",
     maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
   };
-  const grokBody = chatRequestBodyText(grokRequestShape(env), optionsForCall);
-  const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall);
-  const encoder = new TextEncoder();
-  const grokWireBytes = encoder.encode(grokBody).byteLength;
-  const flashWireBytes = encoder.encode(flashBody).byteLength;
-  const wireBytes = Math.max(grokWireBytes, flashWireBytes);
-  const requestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
+  let grokWireBytes = 0;
+  let flashWireBytes = 0;
+  let wireBytes = 0;
+  let wireFailureDetail: string | null;
+  let requestHash: string;
+  if (!boundedInput.ok) {
+    wireFailureDetail = extractionWirePreSerializationFailureDetail(
+      "A-synthesis",
+      sourceBlockIds.length,
+      boundedInput,
+      "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES",
+    );
+    requestHash = `sha256:${await sha256Hex(JSON.stringify({ inputHash, wireFailureDetail }))}`;
+  } else {
+    const grokBody = chatRequestBodyText(grokRequestShape(env), optionsForCall);
+    const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall);
+    grokWireBytes = utf8ByteLength(grokBody);
+    flashWireBytes = utf8ByteLength(flashBody);
+    wireBytes = Math.max(grokWireBytes, flashWireBytes);
+    const wirePreflight = preflightExtractionRequestBodies(
+      env,
+      [
+        { route: "grok-4.6", bodyText: grokBody },
+        { route: "deepseek-v4-flash", bodyText: flashBody },
+      ],
+      { name: "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES", maxBytes },
+    );
+    wireFailureDetail = wirePreflight.ok
+      ? null
+      : extractionWireFailureDetail("A-synthesis", sourceBlockIds.length, wirePreflight);
+    requestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
+  }
   const policyIdentity = [
     PASS_A_SYNTHESIS_VERSION,
     `max-bytes:${maxBytes}`,
     `max-issues:${maxIssues}`,
   ].join("|");
   return {
-    input, parserVersion, inputJson, inputHash, catalogueBytes, wireBytes, grokWireBytes, flashWireBytes,
+    parserVersion, inputJson, inputHash, catalogueBytes, wireBytes, grokWireBytes, flashWireBytes,
+    wireFailureDetail, sourceBlockIds,
     requestHash, policyIdentity, maxBytes, maxIssues, optionsForCall,
-    coverage, inputFailures, blocks, windowByBlock, evidenceBlockIds, evidenceSpanKeys, primaryCrossRefs,
+    coverage, blocks, windowByBlock, evidenceBlockIds, evidenceSpanKeys, primaryCrossRefs,
   };
 }
 
@@ -2844,13 +4335,16 @@ export async function reconstructPassAHistoricalProgressCensus(
     const attempts = parsed["attempts"];
     const usages = parsed["usages"];
     if (
-      !Number.isSafeInteger(attempts) || (attempts as number) < 1 ||
+      !Number.isSafeInteger(attempts) || (attempts as number) < 0 ||
       !Array.isArray(usages) || !usages.every(isCallUsage)
     ) return invalid(`${origin} attempts or paid receipts are malformed`);
     const typedUsages = usages as CallUsage[];
-    const coherence = validatePassAUnitUsageCoherence(
-      typedUsages, runId, origin, attempts as number,
-    );
+    const zeroReceiptWireFailure =
+      parsed["status"] === "failed" && parsed["failureStage"] === "wire-ceiling" &&
+      attempts === 0 && typedUsages.length === 0;
+    const coherence = zeroReceiptWireFailure
+      ? null
+      : validatePassAUnitUsageCoherence(typedUsages, runId, origin, attempts as number);
     if (coherence !== null) return invalid(`${origin} ${coherence}`);
 
     if (parsed["status"] === "failed") {
@@ -2861,9 +4355,10 @@ export async function reconstructPassAHistoricalProgressCensus(
         typeof parsed["detail"] !== "string" || parsed["detail"].length === 0 ||
         typeof parsed["terminal"] !== "boolean" ||
         parsed["kind"] !== undefined ||
-        parsed["routeReceipt"] !== undefined || parsed["modelOutput"] !== undefined ||
+        parsed["routeReceipt"] !== undefined ||
         parsed["globalRules"] !== undefined || parsed["crossRefs"] !== undefined ||
         parsed["ambiguities"] !== undefined || parsed["unverifiable"] !== undefined ||
+        parsed["primaryGroundingLimitations"] !== undefined ||
         (parsed["fallbackTrigger"] !== null && fallbackTrigger === null)
       ) return invalid(`${origin} failed-state envelope is malformed or carries success output`);
 
@@ -2871,8 +4366,19 @@ export async function reconstructPassAHistoricalProgressCensus(
       if (
         failureStage !== "fallback-authorized" &&
         failureStage !== "provider" &&
-        failureStage !== "semantic-output"
+        failureStage !== "semantic-output" &&
+        failureStage !== "wire-ceiling"
       ) return invalid(`${origin} failure stage is missing or invalid`);
+      const retainedModelOutput = parsed["modelOutput"];
+      if (
+        failureStage === "semantic-output" && retainedModelOutput !== undefined &&
+        (typeof retainedModelOutput !== "object" || retainedModelOutput === null ||
+          Array.isArray(retainedModelOutput))
+      ) return invalid(`${origin} retained semantic model output is not an object`);
+      if (
+        failureStage !== "semantic-output" &&
+        retainedModelOutput !== undefined && retainedModelOutput !== null
+      ) return invalid(`${origin} provider/fallback failure carries impossible model output`);
       if (
         fallbackTrigger !== null &&
         !typedUsages.some((usage) => usage.eventId === fallbackTrigger.grokUsageEventId)
@@ -2887,6 +4393,13 @@ export async function reconstructPassAHistoricalProgressCensus(
           failureStage === "semantic-output" ? "semantic-failed" : "provider-failed",
       );
       if (
+        (failureStage === "wire-ceiling" &&
+          ((attempts as number) !== 0 || typedUsages.length !== 0 || fallbackTrigger !== null ||
+            parsed["terminal"] !== true || Object.hasOwn(parsed, "modelOutput") ||
+            !(parsed["detail"] as string).startsWith(
+              `${EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED}:`,
+            ))) ||
+        (failureStage !== "wire-ceiling" && (attempts as number) === 0) ||
         (failureStage === "provider" && fallbackTrigger === null && parsed["terminal"] !== true) ||
         (fallbackTrigger === null && typedUsages.some((usage) => usage.provider === "deepseek")) ||
         typedUsages.some((usage) => usage.status === "ok") ||
@@ -2981,6 +4494,7 @@ export async function reconstructPassACompletedAuthority(
   const routeReceipts: PassARouteReceipt[] = [];
   const fallbackTriggers: GrokFallbackTrigger[] = [];
   const crossWindowLimitations: PassACrossWindowLimitation[] = [];
+  const primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[] = [];
   let windowsLanded = 0;
   let invalidSynthesisState: PassASlice["synthesisState"] =
     windows.length > 1 ? "waiting-for-windows" : "not-required";
@@ -3031,6 +4545,7 @@ export async function reconstructPassACompletedAuthority(
     crossRefs.push(...unit.crossRefs);
     ambiguities.push(...unit.ambiguities);
     unverifiable.push(...unit.unverifiable);
+    primaryGroundingLimitations.push(...unit.primaryGroundingLimitations);
     routeReceipts.push(unit.routeReceipt);
     if (unit.routeReceipt.trigger !== null) {
       fallbackTriggers.push(unit.routeReceipt.trigger);
@@ -3086,6 +4601,11 @@ export async function reconstructPassACompletedAuthority(
   if (fallbackTriggers.length > 0) {
     return invalid("a primary window used same-family Flash fallback");
   }
+  try {
+    validatePassAPrimaryGroundingLimitations(primaryGroundingLimitations);
+  } catch (error) {
+    return invalid(error instanceof Error ? error.message : "primary grounding limitations are malformed");
+  }
   const slice: PassASlice = {
     done: true,
     windowsTotal: windows.length,
@@ -3117,6 +4637,7 @@ export async function reconstructPassACompletedAuthority(
       calls: accountingCalls,
       crossRefs,
       crossWindowLimitations,
+      primaryGroundingLimitations,
       slice,
       issuedCalls: [],
       accountingCalls,

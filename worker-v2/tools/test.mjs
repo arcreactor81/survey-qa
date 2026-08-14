@@ -80,7 +80,10 @@ const FILES = [
   // client questionnaire arrived. Evidence they can fail: `tools/mutate-passa.mjs`.
   "./tests/d22-passa-waves.test.mjs",
   "./tests/passa-cross-window-synthesis.test.mjs",
+  "./tests/passa-primary-persistence.test.mjs",
   "./tests/cross-window-coverage-wire.test.mjs",
+  "./tests/primary-grounding-coverage-wire.test.mjs",
+  "./tests/passa-completion-shape.test.mjs",
   "./tests/passa-final-validity.test.mjs",
   // Terminal extraction refusals report durable operational evidence without inventing QA claims.
   // Malformed or missing receipts must leave no report pointer.
@@ -468,6 +471,8 @@ const FILES = [
   // correct when the SEAL still reads it, not when the parser test passes.
   // Evidence they can fail: `tools/mutate-docx-blocks.mjs`.
   "./tests/docx-robustness.test.mjs",
+  "./tests/bounded-source-block-jsonl.test.mjs",
+  "./tests/model-input-wire-ceiling.test.mjs",
   // COMMENT REVIEWER IDENTITY IS NOT SOURCE AUTHORITY. The parser currently carries it in
   // `SourceBlock.origin`; this executable fixture proves the operator catalogue keeps the
   // comment block while withholding author/initials and counting that omission. Removing

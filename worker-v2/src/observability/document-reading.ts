@@ -1,3 +1,5 @@
+import { EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED } from "../llm/extraction-wire";
+
 /**
  * Privacy-safe, durable progress for reading the submitted questionnaire.
  *
@@ -145,6 +147,17 @@ function safeText(value: unknown, max: number): string {
     .slice(0, max);
 }
 
+// Source text may legally be tens of MiB. Public context is only a short preview, so never
+// feed a whole source field to the redaction regexes or assemble a whole-unit joined string.
+// The bounded lookahead preserves ordinary previews while capping every temporary allocation.
+const SOURCE_CONTEXT_FIELD_PREFIX_CODE_UNITS = 1_024;
+const SOURCE_CONTEXT_JOINED_PREFIX_CODE_UNITS = 2_048;
+
+function safeSourcePrefix(value: unknown, max: number): string {
+  if (typeof value !== "string") return "";
+  return safeText(value.slice(0, SOURCE_CONTEXT_FIELD_PREFIX_CODE_UNITS), max);
+}
+
 const MACHINE_REASON = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;
 
 function safeReasonCode(value: unknown, fallback = "extraction-stopped"): string {
@@ -178,6 +191,9 @@ export function selectExtractionFailureReason(...values: unknown[]): string | nu
 export function publicExtractionFailureDetail(value: unknown): string {
   const reasonCode = safeReasonCode(value);
   const reason = reasonCode.toLowerCase();
+  if (reason === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) {
+    return "A document-reading unit exceeded the configured safe input limit; this refusal issued no new credential lookup or provider request.";
+  }
   if (reason.includes("ungrounded") || reason.includes("grounding")) {
     return "A document-reading result failed exact source grounding.";
   }
@@ -228,16 +244,33 @@ export function sourceContextForUnit(
   blocks: readonly { blockId: string; text: string; kind?: string }[],
   blockIds: readonly string[],
 ): DocumentReadingSourceContext | null {
-  if (blockIds.length < 1 || new Set(blockIds).size !== blockIds.length) return null;
-  const byId = new Map(blocks.map((block) => [block.blockId, block] as const));
-  const bound = blockIds.map((id) => byId.get(id));
-  if (bound.some((block) => !block)) return null;
-  const firstBlockId = safeText(blockIds[0], 120);
-  const lastBlockId = safeText(blockIds[blockIds.length - 1], 120);
+  if (blockIds.length < 1) return null;
+  let matched = 0;
+  let label: string | null = null;
+  let previewPrefix = "";
+  for (const block of blocks) {
+    if (matched >= blockIds.length) break;
+    if (block.blockId !== blockIds[matched]) continue;
+
+    // Parsed-document block ids are unique. Consequently, a missing, duplicated, or
+    // out-of-order requested id cannot advance this one-way canonical subsequence scan.
+    if (label === null && block.kind === "heading") {
+      label = safeSourcePrefix(block.text, 160) || null;
+    }
+    const separator = previewPrefix.length === 0 ? "" : " ";
+    const remaining = SOURCE_CONTEXT_JOINED_PREFIX_CODE_UNITS -
+      previewPrefix.length - separator.length;
+    if (remaining > 0 && typeof block.text === "string" && block.text.length > 0) {
+      const take = Math.min(remaining, SOURCE_CONTEXT_FIELD_PREFIX_CODE_UNITS);
+      previewPrefix += separator + block.text.slice(0, take);
+    }
+    matched += 1;
+  }
+  if (matched !== blockIds.length) return null;
+  const firstBlockId = safeSourcePrefix(blockIds[0], 120);
+  const lastBlockId = safeSourcePrefix(blockIds[blockIds.length - 1], 120);
   if (!firstBlockId || !lastBlockId) return null;
-  const labelBlock = bound.find((block) => block?.kind === "heading");
-  const label = safeText(labelBlock?.text, 160) || null;
-  const preview = safeText(bound.map((block) => block!.text).filter(Boolean).join(" "), 240) || null;
+  const preview = safeText(previewPrefix, 240) || null;
   return {
     authority: "parsed-document-blocks",
     blockCount: blockIds.length,
@@ -520,6 +553,20 @@ function failedUnit(
   };
 }
 
+function wireCeilingLimitations(
+  reasonCode: string | null | undefined,
+  sourceContext: DocumentReadingSourceContext | null | undefined,
+): DocumentReadingLimitation[] {
+  if (reasonCode !== EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) return [];
+  return [{
+    code: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+    count: sourceContext?.blockCount ?? 0,
+    detail:
+      "Every source block owned by the refused unit remains counted. No input was truncated, " +
+      "no coverage was awarded, and this refusal issued no new credential lookup or provider request.",
+  }];
+}
+
 function primaryUnit(
   slice: PrimarySliceFacts,
   unit: { unit: string; detail: string } | null | undefined,
@@ -565,6 +612,7 @@ export function readingFromPrimary(
       synthesis === "pending" || synthesis === "failed" ? "cross-window-synthesis" :
         slice.done ? "complete" : "cross-window-synthesis";
   const state = options.state ?? (slice.done && !slice.terminalFailure ? "reading" : "reading");
+  const wireLimitations = wireCeilingLimitations(options.reasonCode, options.sourceContext);
   return {
     schemaVersion: DOCUMENT_READING_PROGRESS_SCHEMA,
     state: known ? state : "unavailable",
@@ -579,11 +627,14 @@ export function readingFromPrimary(
     currentUnit: null,
     lastDurableUnit: known ? primaryUnit(slice, options.failedUnit, options.sourceContext ?? null) : null,
     failure: failedUnit(options.failedUnit, options.reasonCode),
-    limitations: known ? [] : [{
-      code: "document-reading-partition-unavailable",
-      count: 1,
-      detail: "The run stopped before a durable primary-window denominator was available.",
-    }],
+    limitations: [
+      ...(known ? [] : [{
+        code: "document-reading-partition-unavailable",
+        count: 1,
+        detail: "The run stopped before a durable primary-window denominator was available.",
+      }]),
+      ...wireLimitations,
+    ],
     usage: { authority: "unavailable", modelCalls: null, costUsd: null },
     retention: PERMANENT_RUN_RETENTION,
     updatedAt: safeIso(options.updatedAt) || new Date(0).toISOString(),
@@ -604,6 +655,7 @@ export function readingFromSecondary(
   const known = slice.chunksTotal > 0;
   const failed = options.failedUnit ?? null;
   const sweepStage = slice.chunksRemaining === 0 && slice.sweepRemaining > 0;
+  const wireLimitations = wireCeilingLimitations(options.reasonCode, options.sourceContext);
   let unit: DocumentReadingUnit | null = primary.lastDurableUnit;
   if (failed?.unit) {
     const sweep = /^SWEEP/i.test(failed.unit);
@@ -636,11 +688,15 @@ export function readingFromSecondary(
     currentUnit: null,
     lastDurableUnit: unit,
     failure: failedUnit(failed, options.reasonCode),
-    limitations: known ? primary.limitations : [...primary.limitations, {
-      code: "secondary-reading-partition-unavailable",
-      count: 1,
-      detail: "The secondary read stopped before a durable chunk denominator was available.",
-    }],
+    limitations: [
+      ...primary.limitations,
+      ...(known ? [] : [{
+        code: "secondary-reading-partition-unavailable",
+        count: 1,
+        detail: "The secondary read stopped before a durable chunk denominator was available.",
+      }]),
+      ...wireLimitations,
+    ],
     updatedAt: safeIso(options.updatedAt) || primary.updatedAt,
   };
 }

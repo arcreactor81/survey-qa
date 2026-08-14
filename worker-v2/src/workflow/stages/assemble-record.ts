@@ -26,6 +26,8 @@ import { readRunChecklist } from "./checklist-store";
 // storage key is how two readers come to disagree about where the run's own state lives.
 import { execProgressKey, type ExecProgress, type WalkRecord } from "./execute-batch";
 import { loadProgram, probeCapabilityLimitations, type PlanLimitation } from "./plan";
+import { CROSS_WINDOW_DISCOVERY_BLOCKER_KIND } from "../../../shared/cross-window-limitations.mjs";
+import { SOURCE_GROUNDING_BLOCKER_KIND } from "../../../shared/pass-a-grounding-limitations.mjs";
 
 // prettier-ignore
 // @ts-ignore -- untyped ESM, shared with the offline pipeline
@@ -302,7 +304,9 @@ async function signAndStore(
       claims: (record.claims as unknown[] | undefined)?.length ?? 0,
       blockers: (record.blockers as unknown[] | undefined)?.length ?? 0,
       coverageBlockers: (record.blockers as Array<{ kind?: unknown }> | undefined)?.filter(
-        (entry) => entry?.kind === "DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE",
+        (entry) =>
+          entry?.kind === CROSS_WINDOW_DISCOVERY_BLOCKER_KIND ||
+          entry?.kind === SOURCE_GROUNDING_BLOCKER_KIND,
       ).length ?? 0,
       attempts: (record.attempts as unknown[] | undefined)?.length ?? 0,
       ambiguities: (record.ambiguities as unknown[] | undefined)?.length ?? 0,

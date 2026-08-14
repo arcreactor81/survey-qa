@@ -530,6 +530,8 @@ export interface ContractRevision {
      * model-extraction reuse index.
      */
     reuseInputsHash?: string | null;
+    /** Present on current model revisions; requires the exact sealed grounding marker. */
+    primaryGroundingLimitationsVersion?: "pass-a-primary-grounding-limitations/1.0.0";
     passAHash: string | null;
     passBHash: string | null;
     sourceLedgerHash: string;

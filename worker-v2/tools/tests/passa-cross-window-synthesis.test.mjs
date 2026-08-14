@@ -137,6 +137,31 @@ function xref(id, blockId, quote, target = "Omega") {
   };
 }
 
+function ambiguity(id, blockId, quote, marker = id) {
+  return {
+    id,
+    block_ids: [blockId],
+    doc_quote: quote,
+    evidence_quotes: [{ block_id: blockId, quote }],
+    reading_a: marker + " reading A",
+    reading_b: marker + " reading B",
+    why_ambiguous: marker + " has two document-supported readings.",
+    affects: ["routing"],
+  };
+}
+
+function unverifiable(id, blockId, quote, marker = id) {
+  return {
+    id,
+    block_ids: [blockId],
+    doc_quote: quote,
+    evidence_quotes: [{ block_id: blockId, quote }],
+    mandate: marker + " mandate",
+    why_not_observable: marker + " is not fully browser-observable.",
+    browser_proxy_evidence: marker + " has a named browser proxy.",
+  };
+}
+
 function installProvider(responder) {
   const original = globalThis.fetch;
   const calls = [];
@@ -183,6 +208,88 @@ async function landPrimaryWindows(m, env, runId, doc, provider, onProgress) {
   assertEq(first.slice.done, false, "pending synthesis prevents completion");
   assertEq(provider.count("A-synthesis"), 0, "synthesis is never bought in the final primary wave");
   return first;
+}
+
+function interceptSynthesisTransitions() {
+  const base = memoryR2();
+  const mainWrites = [];
+  let throwAfterFinalCommit = false;
+  let finalCommitThrown = false;
+  let raceFinal = false;
+  let raced = false;
+  let raceWinnerModelOutput = null;
+  let raceWinnerBody = null;
+  let losingBody = null;
+  const bucket = {
+    ...base,
+    async put(key, value, options = {}) {
+      if (
+        typeof value === "string" &&
+        String(key).endsWith("/cross-window-synthesis.json")
+      ) {
+        const parsed = JSON.parse(value);
+        const before = await base.head(key);
+        mainWrites.push({
+          body: value,
+          options,
+          parsed,
+          raceFinal,
+          raced,
+          beforeEtag: before?.etag ?? null,
+        });
+        if (raceFinal && !raced && parsed.status === "ok") {
+          raced = true;
+          losingBody = value;
+          raceWinnerBody = JSON.stringify(
+            {
+              ...parsed,
+              modelOutput: raceWinnerModelOutput,
+            },
+            null,
+            2,
+          );
+          const injected = await base.put(key, raceWinnerBody, {
+            httpMetadata: { contentType: "application/json" },
+          });
+          const injectedRead = await base.get(key);
+          if (
+            injected === null || injectedRead === null ||
+            await injectedRead.text() !== raceWinnerBody
+          ) {
+            throw new Error("fixture failed to retain the injected synthesis CAS winner");
+          }
+          return base.put(key, value, options);
+        }
+        if (throwAfterFinalCommit && !finalCommitThrown && parsed.status === "ok") {
+          finalCommitThrown = true;
+          await base.put(key, value, options);
+          throw new Error("fixture final synthesis response failed after commit");
+        }
+      }
+      return base.put(key, value, options);
+    },
+  };
+  return {
+    bucket,
+    base,
+    mainWrites,
+    armAfterFinalCommit: () => { throwAfterFinalCommit = true; },
+    armFinalRace: (modelOutput) => {
+      raceWinnerModelOutput = modelOutput;
+      raceFinal = true;
+    },
+    raceWinnerBody: () => raceWinnerBody,
+    losingBody: () => losingBody,
+  };
+}
+
+async function synthesisDerivedObject(m, env, mainKey, kind, bodyText) {
+  const digest = await m.hash.sha256Hex(bodyText);
+  const key = mainKey.replace(
+    "cross-window-synthesis.json",
+    "cross-window-synthesis-" + kind + "-" + digest + ".json",
+  );
+  return { key, object: await env.EVIDENCE.get(key) };
 }
 
 suite("Pass-A cross-window synthesis — bounded, grounded, durable", () => {
@@ -283,6 +390,102 @@ test("a relation split across windows is added once and resolves the qualified p
       reclaimed.calls.every((call) => call.costUsd === 0),
       "every reclaimed provider receipt is explicitly zero-cost telemetry",
     );
+  } finally {
+    provider.restore();
+  }
+});
+
+test("withholding an earlier xref preserves the surviving source handle through synthesis", async () => {
+  const m = await mod();
+  const env = envFor();
+  const doc = documentFor();
+  const runId = "run_synthesis_surviving_xref_ordinal";
+  const rejectedMarker = "REJECTED_FIRST_XREF_AUTHORITY";
+  const provider = installProvider(({ unit }) => {
+    if (unit === "A-w1") {
+      return {
+        value: {
+          ...emptyPrimary(),
+          cross_references: [
+            {
+              ...xref("REJECTED-XREF", "b0001", "not exact source text"),
+              statement: rejectedMarker,
+            },
+            xref("SURVIVING-XREF", "b0001", TEXT.b0001),
+          ],
+        },
+      };
+    }
+    if (unit === "A-w2") {
+      return {
+        value: {
+          ...emptyPrimary(),
+          global_rules: [rule("TARGET-RULE", "b0002", TEXT.b0002)],
+        },
+      };
+    }
+    return {
+      value: {
+        ...emptySynthesis(),
+        cross_reference_resolutions: [{
+          source_xref_handle: "A-w1:x:002",
+          resolved_to_block: "b0002",
+          statement: "Omega requires an answer before Continue becomes enabled.",
+          evidence_quotes: [
+            { block_id: "b0001", quote: TEXT.b0001 },
+            { block_id: "b0002", quote: TEXT.b0002 },
+          ],
+        }],
+      },
+    };
+  });
+  try {
+    const primary = await landPrimaryWindows(m, env, runId, doc, provider);
+    assertEq(primary.crossRefs.length, 1);
+    assertEq(primary.crossRefs[0].id, "SURVIVING-XREF");
+    assertEq(
+      primary.crossRefs[0].sourceXrefHandle,
+      "A-w1:x:002",
+      "withholding row 1 never renumbers paid row 2",
+    );
+    assertEq(
+      JSON.stringify(primary.primaryGroundingLimitations),
+      JSON.stringify([{
+        kind: "pass-a-primary-candidate-ungrounded",
+        unit: "A-w1",
+        rowKind: "cross-reference",
+        rowIndex: 1,
+        sourceBlockIds: ["b0001"],
+        reason: "source-quote-not-exact",
+      }]),
+    );
+    const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+    const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
+    assertEq(artifact.crossRefs.length, 1);
+    assertEq(artifact.crossRefs[0].sourceXrefHandle, "A-w1:x:002");
+
+    const done = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(done.slice.done, true);
+    assertEq(done.slice.synthesisState, "ok");
+    const synthesisCall = provider.calls.find((call) => call.unit === "A-synthesis");
+    assert(synthesisCall);
+    assert(synthesisCall.user.includes("A-w1:x:002"), "the surviving paid handle reaches synthesis");
+    assert(!synthesisCall.user.includes("A-w1:x:001"), "the rejected handle never reaches synthesis");
+    assert(!synthesisCall.user.includes(rejectedMarker), "the rejected statement never reaches synthesis");
+    assertEq(done.crossRefs.length, 1);
+    assertEq(done.crossRefs[0].sourceXrefHandle, "A-w1:x:002");
+    assertEq(done.crossRefs[0].resolvedToBlock, "b0002");
+    assertEq(done.crossWindowLimitations[0].candidatesUngrounded, 1);
+    assertEq(done.crossWindowLimitations[0].candidatesSynthesized, 2);
+    assert(!JSON.stringify(done).includes(rejectedMarker));
+
+    const reconstructed = await m.passA.reconstructPassACompletedAuthority(
+      env, runId, doc, "neutral.docx",
+    );
+    assertEq(reconstructed.kind, "ok");
+    assertEq(reconstructed.value.crossRefs.length, 1);
+    assertEq(reconstructed.value.crossRefs[0].sourceXrefHandle, "A-w1:x:002");
+    assertEq(reconstructed.value.crossRefs[0].resolvedToBlock, "b0002");
   } finally {
     provider.restore();
   }
@@ -499,6 +702,529 @@ test("an unproven target in one primary window does not stop later windows or mi
   }
 });
 
+test("row-local primary grounding failures are retained and counted without gaining authority", async () => {
+  const m = await mod();
+  const doc = documentFor([
+    TEXT.b0001,
+    TEXT.b0002,
+    "Every closing screen displays the approved thank-you text.",
+    "The approved support address is shown beside the closing control.",
+  ]);
+  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "2" });
+  const runId = "run_primary_row_grounding_limitations";
+  const rejected = {
+    globalQuote: "REJECTED_GLOBAL_QUOTE",
+    globalAuthority: "REJECTED_GLOBAL_AUTHORITY",
+    globalForeign: "REJECTED_FOREIGN_RULE",
+    globalEvidenceSet: "REJECTED_EVIDENCE_SET_RULE",
+    xrefQuote: "REJECTED_XREF_QUOTE",
+    xrefAuthority: "REJECTED_XREF_AUTHORITY",
+    ambiguityQuote: "REJECTED_AMBIGUITY_QUOTE",
+    ambiguityAuthority: "REJECTED_AMBIGUITY",
+    unverifiableQuote: "REJECTED_UNVERIFIABLE_QUOTE",
+    unverifiableAuthority: "REJECTED_UNVERIFIABLE",
+  };
+  const firstWindowOutput = {
+    ...emptyPrimary(),
+    global_rules: [
+      rule("VALID-RULE", "b0001", doc.blocks[0].text),
+      rule("BAD-RULE-QUOTE", "b0002", rejected.globalQuote, rejected.globalAuthority),
+      rule("BAD-RULE-FOREIGN", "b9999", doc.blocks[0].text, rejected.globalForeign),
+      {
+        ...rule("BAD-RULE-EVIDENCE-SET", "b0001", doc.blocks[0].text, rejected.globalEvidenceSet),
+        block_ids: ["b0001", "b0002"],
+        evidence_quotes: [
+          { block_id: "b0001", quote: doc.blocks[0].text },
+          { block_id: "b0001", quote: doc.blocks[0].text },
+        ],
+      },
+    ],
+    cross_references: [
+      xref("VALID-XREF", "b0001", doc.blocks[0].text),
+      {
+        ...xref("BAD-XREF-QUOTE", "b0002", rejected.xrefQuote),
+        statement: rejected.xrefAuthority,
+      },
+    ],
+    ambiguities: [
+      ambiguity("VALID-AMBIGUITY", "b0001", doc.blocks[0].text, "VALID_AMBIGUITY"),
+      ambiguity(
+        "BAD-AMBIGUITY-QUOTE",
+        "b0002",
+        rejected.ambiguityQuote,
+        rejected.ambiguityAuthority,
+      ),
+    ],
+    unverifiable_from_browser: [
+      unverifiable("VALID-UNVERIFIABLE", "b0001", doc.blocks[0].text, "VALID_UNVERIFIABLE"),
+      unverifiable(
+        "BAD-UNVERIFIABLE-QUOTE",
+        "b0002",
+        rejected.unverifiableQuote,
+        rejected.unverifiableAuthority,
+      ),
+    ],
+  };
+  const expectedLimitations = [
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "global-rule",
+      rowIndex: 2,
+      sourceBlockIds: ["b0002"],
+      reason: "source-quote-not-exact",
+    },
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "global-rule",
+      rowIndex: 3,
+      sourceBlockIds: [],
+      reason: "source-block-ownership-invalid",
+    },
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "global-rule",
+      rowIndex: 4,
+      sourceBlockIds: ["b0001", "b0002"],
+      reason: "source-evidence-set-invalid",
+    },
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "cross-reference",
+      rowIndex: 2,
+      sourceBlockIds: ["b0002"],
+      reason: "source-quote-not-exact",
+    },
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "ambiguity",
+      rowIndex: 2,
+      sourceBlockIds: ["b0002"],
+      reason: "source-quote-not-exact",
+    },
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "unverifiable",
+      rowIndex: 2,
+      sourceBlockIds: ["b0002"],
+      reason: "source-quote-not-exact",
+    },
+  ];
+  const provider = installProvider(({ unit }) => {
+    if (unit === "A-w1") return { value: firstWindowOutput };
+    if (unit === "A-w2") {
+      return {
+        value: {
+          ...emptyPrimary(),
+          global_rules: [rule("VALID-LATER", "b0003", doc.blocks[2].text)],
+        },
+      };
+    }
+    return { value: emptySynthesis() };
+  });
+  try {
+    const primary = await landPrimaryWindows(m, env, runId, doc, provider);
+    assertEq(primary.slice.terminalFailure, false);
+    assertEq(primary.failedUnits.length, 0);
+    assertEq(provider.count("A-w1"), 1);
+    assertEq(provider.count("A-w2"), 1, "a row-local rejection does not stop the unread tail");
+    assertEq(
+      JSON.stringify(primary.primaryGroundingLimitations),
+      JSON.stringify(expectedLimitations),
+      "limitations are closed, 1-based, and deterministic",
+    );
+    assertEq(
+      JSON.stringify(primary.requirements.map((row) => row.id)),
+      JSON.stringify(["VALID-RULE", "VALID-LATER"]),
+      "only exact global-rule siblings survive",
+    );
+    assertEq(JSON.stringify(primary.crossRefs.map((row) => row.id)), JSON.stringify(["VALID-XREF"]));
+    assertEq(
+      JSON.stringify(primary.ambiguities.map((row) => row.id)),
+      JSON.stringify(["VALID-AMBIGUITY"]),
+    );
+    assertEq(
+      JSON.stringify(primary.unverifiable.map((row) => row.id)),
+      JSON.stringify(["VALID-UNVERIFIABLE"]),
+    );
+
+    const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+    assert(key, "the first successful primary artifact exists");
+    const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
+    assertEq(
+      JSON.stringify(artifact.modelOutput),
+      JSON.stringify(firstWindowOutput),
+      "the exact paid parsed output is retained even when some rows are rejected",
+    );
+    assertEq(
+      JSON.stringify(artifact.primaryGroundingLimitations),
+      JSON.stringify(expectedLimitations),
+      "the immutable window artifact owns its exact limitations",
+    );
+    assertEq(JSON.stringify(artifact.globalRules.map((row) => row.id)), JSON.stringify(["VALID-RULE"]));
+    assertEq(JSON.stringify(artifact.crossRefs.map((row) => row.id)), JSON.stringify(["VALID-XREF"]));
+    assertEq(JSON.stringify(artifact.ambiguities.map((row) => row.id)), JSON.stringify(["VALID-AMBIGUITY"]));
+    assertEq(
+      JSON.stringify(artifact.unverifiable.map((row) => row.id)),
+      JSON.stringify(["VALID-UNVERIFIABLE"]),
+    );
+
+    const done = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(done.slice.done, true);
+    assertEq(done.slice.terminalFailure, false);
+    assertEq(
+      JSON.stringify(done.primaryGroundingLimitations),
+      JSON.stringify(expectedLimitations),
+      "reclaim preserves the exact counted limitation ledger",
+    );
+    assertEq(done.crossWindowLimitations.length, 1);
+    assertEq(done.crossWindowLimitations[0].candidatesUngrounded, expectedLimitations.length);
+    assertEq(done.crossWindowLimitations[0].candidatesSynthesized, 5);
+    const synthesisCall = provider.calls.find((call) => call.unit === "A-synthesis");
+    assert(synthesisCall, "the bounded synthesis call ran after every primary window landed");
+    for (const marker of Object.values(rejected)) {
+      assert(!synthesisCall.user.includes(marker), marker + " reached synthesis authority");
+    }
+
+    const reconstructed = await m.passA.reconstructPassACompletedAuthority(
+      env, runId, doc, "renamed.docx",
+    );
+    assertEq(reconstructed.kind, "ok");
+    assertEq(
+      JSON.stringify(reconstructed.value.primaryGroundingLimitations),
+      JSON.stringify(expectedLimitations),
+      "read-only reconstruction preserves the same limitation ledger",
+    );
+
+    const passB = {
+      pass: "B", provider: "fixture-independent", model: "fixture-independent",
+      requirements: [], ambiguities: [], unverifiable: [], constructs: [], failedUnits: [], calls: [],
+      dispositions: doc.blocks.map((block) => ({
+        blockId: block.blockId, disposition: "non-normative", reason: "neutral merge fixture",
+      })),
+    };
+    const merged = await m.merge.mergePasses(done, passB, doc, done.crossRefs);
+    const mergedText = JSON.stringify(merged);
+    for (const marker of Object.values(rejected)) {
+      assert(!mergedText.includes(marker), marker + " reached merged authority");
+    }
+    assertEq(merged.requirements.length, 2, "only the two exact rules reach merged authority");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("typed primary relational and evidence failures quarantine rows while the tail and synthesis continue", async () => {
+  const m = await mod();
+  const doc = documentFor([
+    TEXT.b0001,
+    "A hidden server-side consistency check applies to every response.",
+    TEXT.b0002,
+    "Every closing screen displays the approved thank-you text.",
+  ]);
+  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "2" });
+  const runId = "run_primary_typed_row_quarantine";
+  const rejected = {
+    missingCompanion: "REJECTED_NONE_WITHOUT_COMPANION",
+    emptyRuleIds: "REJECTED_EMPTY_RULE_BLOCK_IDS",
+    duplicateRuleIds: "REJECTED_DUPLICATE_RULE_BLOCK_IDS",
+    nullTarget: "REJECTED_NULL_TARGET_WITH_TARGET_QUOTE",
+    emptyAmbiguityIds: "REJECTED_EMPTY_AMBIGUITY_BLOCK_IDS",
+    duplicateUnverifiableIds: "REJECTED_DUPLICATE_UNVERIFIABLE_BLOCK_IDS",
+  };
+  const firstWindowOutput = {
+    ...emptyPrimary(),
+    global_rules: [
+      rule("VALID-FIRST", "b0001", doc.blocks[0].text),
+      {
+        ...rule("NONE-WITHOUT-COMPANION", "b0002", doc.blocks[1].text, rejected.missingCompanion),
+        browser_observable: "none",
+      },
+      {
+        ...rule("EMPTY-BLOCK-IDS", "b0001", doc.blocks[0].text, rejected.emptyRuleIds),
+        block_ids: [],
+        evidence_quotes: [],
+      },
+      {
+        ...rule("DUPLICATE-BLOCK-IDS", "b0002", doc.blocks[1].text, rejected.duplicateRuleIds),
+        block_ids: ["b0002", "b0002"],
+        evidence_quotes: [{ block_id: "b0002", quote: doc.blocks[1].text }],
+      },
+    ],
+    cross_references: [
+      {
+        ...xref("NULL-TARGET-WITH-QUOTE", "b0001", doc.blocks[0].text),
+        target_doc_quote: rejected.nullTarget,
+        statement: rejected.nullTarget,
+      },
+      xref("VALID-STABLE-XREF", "b0001", doc.blocks[0].text),
+    ],
+    ambiguities: [{
+      ...ambiguity("EMPTY-AMBIGUITY-IDS", "b0002", doc.blocks[1].text, rejected.emptyAmbiguityIds),
+      block_ids: [],
+      evidence_quotes: [],
+    }],
+    unverifiable_from_browser: [{
+      ...unverifiable(
+        "DUPLICATE-UNVERIFIABLE-IDS",
+        "b0001",
+        doc.blocks[0].text,
+        rejected.duplicateUnverifiableIds,
+      ),
+      block_ids: ["b0001", "b0001"],
+      evidence_quotes: [{ block_id: "b0001", quote: doc.blocks[0].text }],
+    }],
+  };
+  const expectedLimitations = [
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "global-rule",
+      rowIndex: 2,
+      sourceBlockIds: ["b0002"],
+      reason: "grounded-row-linkage-incomplete",
+    },
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "global-rule",
+      rowIndex: 3,
+      sourceBlockIds: [],
+      reason: "source-evidence-set-invalid",
+    },
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "global-rule",
+      rowIndex: 4,
+      sourceBlockIds: ["b0002"],
+      reason: "source-evidence-set-invalid",
+    },
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "cross-reference",
+      rowIndex: 1,
+      sourceBlockIds: ["b0001"],
+      reason: "source-evidence-set-invalid",
+    },
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "ambiguity",
+      rowIndex: 1,
+      sourceBlockIds: [],
+      reason: "source-evidence-set-invalid",
+    },
+    {
+      kind: "pass-a-primary-candidate-ungrounded",
+      unit: "A-w1",
+      rowKind: "unverifiable",
+      rowIndex: 1,
+      sourceBlockIds: ["b0001"],
+      reason: "source-evidence-set-invalid",
+    },
+  ];
+  const provider = installProvider(({ unit }) => {
+    if (unit === "A-w1") return { value: firstWindowOutput };
+    if (unit === "A-w2") {
+      return { value: {
+        ...emptyPrimary(),
+        global_rules: [
+          rule("TARGET-RULE", "b0003", doc.blocks[2].text),
+          rule("VALID-LATER", "b0004", doc.blocks[3].text),
+        ],
+      } };
+    }
+    return { value: {
+      ...emptySynthesis(),
+      cross_reference_resolutions: [{
+        source_xref_handle: "A-w1:x:002",
+        resolved_to_block: "b0003",
+        statement: "Omega requires an answer before Continue becomes enabled.",
+        evidence_quotes: [
+          { block_id: "b0001", quote: doc.blocks[0].text },
+          { block_id: "b0003", quote: doc.blocks[2].text },
+        ],
+      }],
+    } };
+  });
+  try {
+    const primary = await landPrimaryWindows(m, env, runId, doc, provider);
+    assertEq(primary.slice.terminalFailure, false);
+    assertEq(primary.failedUnits.length, 0);
+    assertEq(provider.count("A-w1"), 1);
+    assertEq(provider.count("A-w2"), 1, "a typed bad row does not stop the unread tail");
+    assertEq(JSON.stringify(primary.primaryGroundingLimitations), JSON.stringify(expectedLimitations));
+    assertEq(
+      JSON.stringify(primary.requirements.map((row) => row.id)),
+      JSON.stringify(["VALID-FIRST", "TARGET-RULE", "VALID-LATER"]),
+      "only grounded sibling and tail rules retain authority",
+    );
+    assertEq(primary.crossRefs.length, 1);
+    assertEq(primary.crossRefs[0].id, "VALID-STABLE-XREF");
+    assertEq(
+      primary.crossRefs[0].sourceXrefHandle,
+      "A-w1:x:002",
+      "withholding typed row 1 never renumbers paid row 2",
+    );
+    assertEq(primary.ambiguities.length, 0);
+    assertEq(primary.unverifiable.length, 0);
+
+    const firstKey = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+    const firstArtifact = JSON.parse(await (await env.EVIDENCE.get(firstKey)).text());
+    assertEq(JSON.stringify(firstArtifact.modelOutput), JSON.stringify(firstWindowOutput));
+    assertEq(JSON.stringify(firstArtifact.primaryGroundingLimitations), JSON.stringify(expectedLimitations));
+    assertEq(firstArtifact.crossRefs[0].sourceXrefHandle, "A-w1:x:002");
+
+    const done = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(done.slice.done, true);
+    assertEq(done.slice.synthesisState, "ok");
+    assertEq(done.slice.terminalFailure, false);
+    assertEq(provider.count("A-synthesis"), 1, "row quarantine does not suppress reconciliation");
+    assertEq(done.crossRefs.length, 1);
+    assertEq(done.crossRefs[0].sourceXrefHandle, "A-w1:x:002");
+    assertEq(done.crossRefs[0].resolvedToBlock, "b0003");
+    assertEq(done.crossWindowLimitations[0].candidatesUngrounded, expectedLimitations.length);
+    assertEq(done.crossWindowLimitations[0].candidatesSynthesized, 4);
+    const synthesisCall = provider.calls.find((call) => call.unit === "A-synthesis");
+    assert(synthesisCall?.user.includes("A-w1:x:002"));
+    for (const marker of Object.values(rejected)) {
+      assert(!synthesisCall.user.includes(marker), marker + " reached synthesis authority");
+    }
+
+    const passB = {
+      pass: "B", provider: "fixture-independent", model: "fixture-independent",
+      requirements: [], ambiguities: [], unverifiable: [], constructs: [], failedUnits: [], calls: [],
+      dispositions: doc.blocks.map((block) => ({
+        blockId: block.blockId, disposition: "non-normative", reason: "neutral merge fixture",
+      })),
+    };
+    const merged = await m.merge.mergePasses(done, passB, doc, done.crossRefs);
+    assertEq(merged.requirements.length, 3, "quarantined candidates mint no merged coverage credit");
+    const mergedText = JSON.stringify(merged);
+    for (const marker of Object.values(rejected)) {
+      assert(!mergedText.includes(marker), marker + " reached merged authority");
+    }
+  } finally {
+    provider.restore();
+  }
+});
+
+test("grounded none-observable rules are withheld when their required companion is ungrounded", async () => {
+  const m = await mod();
+  const doc = documentFor([
+    TEXT.b0001,
+    TEXT.b0002,
+    "Every closing screen displays the approved thank-you text.",
+  ]);
+  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "2" });
+  const runId = "run_primary_grounded_linkage_limitation";
+  const linkedRule = {
+    ...rule("LINKED-RULE", "b0001", doc.blocks[0].text),
+    browser_observable: "none",
+  };
+  const linkedUnverifiable = {
+    ...unverifiable("LINKED-UNVERIFIABLE", "b0001", doc.blocks[0].text),
+    block_ids: ["b0001", "b9999"],
+    evidence_quotes: [
+      { block_id: "b0001", quote: doc.blocks[0].text },
+      { block_id: "b9999", quote: "foreign companion evidence" },
+    ],
+  };
+  const provider = installProvider(({ unit }) => {
+    if (unit === "A-w1") {
+      return {
+        value: {
+          ...emptyPrimary(),
+          global_rules: [linkedRule],
+          unverifiable_from_browser: [linkedUnverifiable],
+        },
+      };
+    }
+    if (unit === "A-w2") {
+      return {
+        value: {
+          ...emptyPrimary(),
+          global_rules: [rule("VALID-LATER", "b0003", doc.blocks[2].text)],
+        },
+      };
+    }
+    return { value: emptySynthesis() };
+  });
+  try {
+    await landPrimaryWindows(m, env, runId, doc, provider);
+    const done = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(done.slice.done, true);
+    assertEq(done.failedUnits.length, 0);
+    assertEq(JSON.stringify(done.requirements.map((row) => row.id)), JSON.stringify(["VALID-LATER"]));
+    const expected = [
+      {
+        kind: "pass-a-primary-candidate-ungrounded",
+        unit: "A-w1",
+        rowKind: "global-rule",
+        rowIndex: 1,
+        sourceBlockIds: ["b0001"],
+        reason: "grounded-row-linkage-incomplete",
+      },
+      {
+        kind: "pass-a-primary-candidate-ungrounded",
+        unit: "A-w1",
+        rowKind: "unverifiable",
+        rowIndex: 1,
+        sourceBlockIds: ["b0001"],
+        reason: "source-block-ownership-invalid",
+      },
+    ];
+    assertEq(
+      JSON.stringify(done.primaryGroundingLimitations),
+      JSON.stringify(expected),
+      "a dependent rule cannot outlive its rejected exact-evidence companion",
+    );
+    assertEq(done.crossWindowLimitations[0].candidatesUngrounded, 2);
+    assertEq(done.crossWindowLimitations[0].candidatesSynthesized, 1);
+  } finally {
+    provider.restore();
+  }
+});
+
+test("exactly grounded primary rows remain authoritative and create no limitation", async () => {
+  const m = await mod();
+  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
+  const doc = documentFor();
+  const exactOutput = {
+    ...emptyPrimary(),
+    global_rules: [rule("EXACT-RULE", "b0001", doc.blocks[0].text)],
+    cross_references: [xref("EXACT-XREF", "b0001", doc.blocks[0].text)],
+    ambiguities: [ambiguity("EXACT-AMBIGUITY", "b0002", doc.blocks[1].text)],
+    unverifiable_from_browser: [
+      unverifiable("EXACT-UNVERIFIABLE", "b0002", doc.blocks[1].text),
+    ],
+  };
+  const provider = installProvider(() => ({ value: exactOutput }));
+  try {
+    const done = await m.passA.runPassA(env, "run_primary_exact_grounding_control", doc, "neutral.docx");
+    assertEq(done.slice.done, true);
+    assertEq(done.slice.terminalFailure, false);
+    assertEq(done.primaryGroundingLimitations.length, 0);
+    assertEq(done.requirements.length, 1);
+    assertEq(done.crossRefs.length, 1);
+    assertEq(done.ambiguities.length, 1);
+    assertEq(done.unverifiable.length, 1);
+    const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+    const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
+    assertEq(artifact.primaryGroundingLimitations.length, 0);
+    assertEq(JSON.stringify(artifact.modelOutput), JSON.stringify(exactOutput));
+  } finally {
+    provider.restore();
+  }
+});
+
 test("structured unit-start visibility precedes both a primary purchase and its durable reclaim", async () => {
   const m = await mod();
   const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
@@ -611,7 +1337,7 @@ test("structured synthesis visibility names the exact candidate source before pu
   }
 });
 
-test("completed authority names the exact failed primary unit and unread remainder", async () => {
+test("completed authority names the exact strict-schema failure and unread remainder", async () => {
   const m = await mod();
   const texts = Array.from(
     { length: 11 },
@@ -622,16 +1348,9 @@ test("completed authority names the exact failed primary unit and unread remaind
   const runId = "run_primary_failed_unit_visibility";
   const provider = installProvider(({ unit }) => {
     if (unit !== "A-w3") return { value: emptyPrimary() };
-    return {
-      value: {
-        ...emptyPrimary(),
-        cross_references: [{
-          id: "BAD-SOURCE", from_block: "b0003", target: "another rule",
-          resolved_to_block: null, target_doc_quote: null,
-          statement: "The source names another rule.", doc_quote: "not exact source",
-        }],
-      },
-    };
+    const value = emptyPrimary();
+    delete value.global_rules;
+    return { value };
   });
   try {
     const stopped = await m.passA.runPassA(env, runId, doc, "neutral.docx");
@@ -649,7 +1368,7 @@ test("completed authority names the exact failed primary unit and unread remaind
     assertEq(reconstructed.failedUnit.unit, "A-w3");
     assertEq(reconstructed.failedUnit.blockIds.length, 1);
     assertEq(reconstructed.failedUnit.blockIds[0], "b0003");
-    assert(reconstructed.failedUnit.detail.includes("doc_quote matched 0 eligible source blocks"));
+    assert(reconstructed.failedUnit.detail.includes("root keys are not closed"));
     assertEq(reconstructed.slice.windowsTotal, 11);
     assertEq(reconstructed.slice.windowsLanded, 3);
     assertEq(reconstructed.slice.windowsRemaining, 8);
@@ -658,7 +1377,7 @@ test("completed authority names the exact failed primary unit and unread remaind
   }
 });
 
-test("malformed primary schemas and source-side evidence terminalize without a second purchase", async () => {
+test("strictly malformed primary schemas terminalize without a second purchase", async () => {
   const cases = [
     {
       name: "missing required root array",
@@ -677,32 +1396,6 @@ test("malformed primary schemas and source-side evidence terminalize without a s
       expected: "global rule keys are not closed",
     },
     {
-      name: "inexact second evidence span",
-      output: () => ({
-        ...emptyPrimary(),
-        global_rules: [{
-          ...rule("INEXACT", "b0001", TEXT.b0001),
-          block_ids: ["b0001", "b0002"],
-          evidence_quotes: [
-            { block_id: "b0001", quote: TEXT.b0001 },
-            { block_id: "b0002", quote: "words not present in the target block" },
-          ],
-        }],
-      }),
-      expected: "quote is not exact source text in b0002",
-    },
-    {
-      name: "target quote is present while target block is unresolved",
-      output: () => ({
-        ...emptyPrimary(),
-        cross_references: [{
-          id: "BAD-TARGET-SHAPE", from_block: "b0001", target: "Omega", resolved_to_block: null,
-          target_doc_quote: TEXT.b0002, statement: "Contradictory target fields.", doc_quote: TEXT.b0001,
-        }],
-      }),
-      expected: "target_doc_quote must be null when resolved_to_block is null",
-    },
-    {
       name: "target quote key is missing entirely",
       output: () => {
         const value = {
@@ -718,12 +1411,23 @@ test("malformed primary schemas and source-side evidence terminalize without a s
       expected: "cross-reference keys are not closed",
     },
     {
-      name: "none-observable rule has no linked unverifiable row",
+      name: "block_ids is not an array",
       output: () => ({
         ...emptyPrimary(),
-        global_rules: [{ ...rule("HIDDEN", "b0001", TEXT.b0001), browser_observable: "none" }],
+        global_rules: [{ ...rule("BAD-ID-ARRAY", "b0001", TEXT.b0001), block_ids: "b0001" }],
       }),
-      expected: "browser_observable=none requires an unverifiable row",
+      expected: "global rule.block_ids must be an array",
+    },
+    {
+      name: "block_ids contains a non-string member",
+      output: () => ({
+        ...emptyPrimary(),
+        ambiguities: [{
+          ...ambiguity("BAD-ID-MEMBER", "b0001", TEXT.b0001),
+          block_ids: ["b0001", 2],
+        }],
+      }),
+      expected: "ambiguity.block_ids members must be non-empty strings",
     },
   ];
   const m = await mod();
@@ -743,6 +1447,128 @@ test("malformed primary schemas and source-side evidence terminalize without a s
       const reclaimed = await m.passA.runPassA(env, `run_strict_primary_${index}`, doc, "neutral.docx");
       assertEq(provider.calls.length, 0, `${fixture.name}: semantic rejection is durable terminal authority`);
       assertEq(reclaimed.slice.terminalFailure, true, fixture.name);
+    } finally {
+      provider.restore();
+    }
+  }
+});
+
+test("strict semantic failure retains exact raw output and corrupt authority is never retried", async () => {
+  const m = await mod();
+  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1" });
+  const doc = documentFor();
+  const runId = "run_primary_strict_failure_raw_authority";
+  const rawOutput = emptyPrimary();
+  delete rawOutput.global_rules;
+  const provider = installProvider(({ unit }) => (
+    unit === "A-w1" ? { value: rawOutput } : { value: emptyPrimary() }
+  ));
+  try {
+    const stopped = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(stopped.slice.terminalFailure, true);
+    assertEq(provider.count("A-w1"), 1);
+    assertEq(provider.count("A-w2"), 0, "strict semantic failure stops the unread tail");
+    assertEq(provider.count("A-synthesis"), 0);
+    const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+    const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
+    assertEq(artifact.status, "failed");
+    assertEq(artifact.failureStage, "semantic-output");
+    assertEq(artifact.terminal, true);
+    assertEq(
+      JSON.stringify(artifact.modelOutput),
+      JSON.stringify(rawOutput),
+      "the exact paid parsed output remains durable failure evidence",
+    );
+    assertEq(artifact.usages.at(-1).status, "parse-failed");
+
+    provider.reset();
+    const reclaimed = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(provider.calls.length, 0, "a retained strict semantic failure is never re-bought");
+    assertEq(reclaimed.slice.terminalFailure, true);
+
+    for (const [name, mutate] of [
+      ["deleted raw output", (row) => { delete row.modelOutput; }],
+      ["raw output changed to valid", (row) => { row.modelOutput = emptyPrimary(); }],
+    ]) {
+      const corruptedArtifact = structuredClone(artifact);
+      mutate(corruptedArtifact);
+      const corrupted = JSON.stringify(corruptedArtifact);
+      await env.EVIDENCE.put(key, corrupted);
+      provider.reset();
+      const refused = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+      assertEq(provider.calls.length, 0, name + " must remain terminal authority, not a cache miss");
+      assertEq(refused.slice.terminalFailure, true, name);
+      assert(
+        refused.failedUnits.some((row) => row.detail.includes("PASS_A_WINDOW_ARTIFACT_INVALID")),
+        name + " was accepted as a valid semantic failure: " + JSON.stringify(refused.failedUnits),
+      );
+      assertEq(await (await env.EVIDENCE.get(key)).text(), corrupted, name + " was overwritten");
+    }
+  } finally {
+    provider.restore();
+  }
+});
+
+test("provider and fallback-authorized failures retain no fabricated model output", async () => {
+  const m = await mod();
+
+  {
+    const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
+    const provider = installProvider(() => ({ value: {}, status: 401 }));
+    try {
+      const stopped = await m.passA.runPassA(
+        env, "run_primary_provider_failure_no_output", documentFor(), "neutral.docx",
+      );
+      assertEq(stopped.slice.terminalFailure, true);
+      const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+      const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
+      assertEq(artifact.failureStage, "provider");
+      assert(
+        !Object.hasOwn(artifact, "modelOutput") || artifact.modelOutput === null,
+        "a provider failure fabricated a model output",
+      );
+    } finally {
+      provider.restore();
+    }
+  }
+
+  {
+    const env = envFor({
+      EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100",
+      EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2",
+    });
+    const committedPut = env.EVIDENCE.put.bind(env.EVIDENCE);
+    let checkpointTransportFailed = false;
+    env.EVIDENCE.put = async (key, value, options) => {
+      const result = await committedPut(key, value, options);
+      let parsed = null;
+      try { parsed = JSON.parse(String(value)); } catch { /* not a JSON checkpoint */ }
+      if (!checkpointTransportFailed && parsed?.failureStage === "fallback-authorized") {
+        checkpointTransportFailed = true;
+        throw new Error("fixture transport failed after committing fallback authority");
+      }
+      return result;
+    };
+    const provider = installProvider(({ body }) => (
+      body.model === "grok-4.6"
+        ? { value: {}, status: 502 }
+        : { value: emptyPrimary() }
+    ));
+    try {
+      const pending = await m.passA.runPassA(
+        env, "run_primary_fallback_checkpoint_no_output", documentFor(), "neutral.docx",
+      );
+      assertEq(checkpointTransportFailed, true);
+      assertEq(pending.slice.terminalFailure, false);
+      assertEq(provider.calls.length, 1, "Flash was not bought after the uncertain checkpoint transport");
+      const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+      const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
+      assertEq(artifact.failureStage, "fallback-authorized");
+      assertEq(artifact.terminal, false);
+      assert(
+        !Object.hasOwn(artifact, "modelOutput") || artifact.modelOutput === null,
+        "a pre-response fallback checkpoint fabricated a model output",
+      );
     } finally {
       provider.restore();
     }
@@ -802,7 +1628,8 @@ test("primary paid success cannot be relabeled as retryable semantic failure", a
       name: "ok receipt hidden behind a provider-failure discriminator",
       configure: (artifact) => {
         artifact.failureStage = "provider";
-        artifact.terminal = false;
+        artifact.terminal = true;
+        artifact.modelOutput = null;
       },
       mutate: () => {},
       expected: "unauthorized provider receipt",
@@ -812,6 +1639,7 @@ test("primary paid success cannot be relabeled as retryable semantic failure", a
       configure: (artifact) => {
         artifact.failureStage = "provider";
         artifact.terminal = false;
+        artifact.modelOutput = null;
       },
       mutate: (artifact) => { artifact.usages[0].status = "error"; },
       expected: "unauthorized provider receipt",
@@ -834,13 +1662,14 @@ test("primary paid success cannot be relabeled as retryable semantic failure", a
       delete artifact.crossRefs;
       delete artifact.ambiguities;
       delete artifact.unverifiable;
+      delete artifact.primaryGroundingLimitations;
       delete artifact.routeReceipt;
-      delete artifact.modelOutput;
       artifact.status = "failed";
       artifact.terminal = false;
       artifact.failureStage = "semantic-output";
       artifact.fallbackTrigger = null;
       artifact.detail = "forged retryable semantic state";
+      artifact.modelOutput = { ...emptyPrimary(), unexpected_key: true };
       fixture.configure?.(artifact);
       fixture.mutate(artifact);
       const corrupted = JSON.stringify(artifact);
@@ -1088,48 +1917,55 @@ test("the exact serialized provider request is gated before any synthesis purcha
     );
     assertEq(primaryWave.slice.windowsRemaining, 0);
     assertEq(provider.count("A-synthesis"), 0, "final-primary wave does not buy synthesis");
+    let secretReads = 0;
+    env.XAI_API_KEY = { get: async () => { secretReads += 1; return "must-not-be-read"; } };
+    env.DEEPSEEK_API_KEY = { get: async () => { secretReads += 1; return "must-not-be-read"; } };
     const prepared = await m.passA.preparePassASynthesis(env, runId, doc, "neutral.docx");
-    assert(prepared && prepared.inputBytes > 100, JSON.stringify(prepared));
-    assertEq(
-      prepared.inputBytes,
-      Math.max(prepared.grokWireBytes, prepared.flashWireBytes),
-      "the gated byte count is the larger exact provider body",
-    );
-    assert(prepared.inputBytes > prepared.catalogueBytes, "prompt wrapper/escaping is inside the ceiling");
+    assert(prepared, "the complete primary catalogue remains a required synthesis unit");
+    assertEq(prepared.inputBytes, 0, "no provider body is fabricated after the catalogue alone proves refusal");
+    assertEq(prepared.catalogueBytes, 101, "the saturating proof is exactly ceiling + 1");
+    assertEq(prepared.grokWireBytes, 0);
+    assertEq(prepared.flashWireBytes, 0);
+    assertEq(prepared.inputJson, "", "an oversized catalogue exposes no truncated prefix");
 
     const failed = await m.passA.runPassA(env, runId, doc, "neutral.docx");
     assertEq(provider.count("A-synthesis"), 0, "an oversize exact request is refused before fetch");
+    assertEq(secretReads, 0, "catalogue refusal precedes both provider credential reads");
     assertEq(failed.slice.terminalFailure, true);
+    assertEq(failed.slice.done, true, "the terminal refusal leaves no resumable synthesis work");
+    assertEq(failed.slice.synthesisState, "failed", "terminal completion is a refusal, never a Pass-A seal");
     assertEq(failed.slice.synthesisAttempts, 0, "a zero-purchase refusal does not invent an attempt");
+    assertEq(failed.terminalReasonCode, "extraction-model-input-wire-ceiling-exceeded");
     assert(
       failed.failedUnits.some((row) =>
-        row.detail.includes("PASS_A_SYNTHESIS_REQUEST_TOO_LARGE") &&
-        row.detail.includes("exact serialized provider request")),
+        row.detail.startsWith("extraction-model-input-wire-ceiling-exceeded:") &&
+        row.detail.includes("canonical inner source payload alone")),
       JSON.stringify(failed.failedUnits),
     );
+    const artifactKey = m.passA.passASynthesisKey(runId);
+    const artifactBytes = await (await env.EVIDENCE.get(artifactKey)).text();
+    const artifact = JSON.parse(artifactBytes);
+    assertEq(artifact.attempts, 0);
+    assertEq(artifact.usages.length, 0);
+    assertEq(artifact.failureStage, "wire-ceiling");
+    assertEq(Object.hasOwn(artifact, "modelOutput"), false);
 
     provider.reset();
     const reclaimed = await m.passA.runPassA(env, runId, doc, "neutral.docx");
     assertEq(provider.calls.length, 0, "the durable pre-purchase refusal is not rediscovered or re-bought");
+    assertEq(secretReads, 0, "re-entry reclaims the refusal before credential access");
     assertEq(reclaimed.slice.synthesisAttempts, 0);
+    assertEq(reclaimed.terminalReasonCode, "extraction-model-input-wire-ceiling-exceeded");
+    assertEq(await (await env.EVIDENCE.get(artifactKey)).text(), artifactBytes, "re-entry preserves exact bytes");
   } finally {
     provider.restore();
   }
 });
 
-test("foreign primary ids and repeated quote ownership fail loudly before synthesis", async () => {
+test("strictly malformed primary evidence fails loudly before synthesis", async () => {
   const fixtures = [
     {
-      name: "foreign rule block",
-      doc: documentFor(),
-      primary: () => ({
-        ...emptyPrimary(),
-        global_rules: [rule("FOREIGN", "b9999", TEXT.b0001)],
-      }),
-      expected: "outside the owning window",
-    },
-    {
-      name: "incomplete per-block ambiguity evidence",
+      name: "evidence member missing its required quote key",
       doc: documentFor(["Shared exact words.", "Shared exact words.", TEXT.b0002]),
       env: { EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "2" },
       primary: () => ({
@@ -1138,14 +1974,17 @@ test("foreign primary ids and repeated quote ownership fail loudly before synthe
           id: "AMB-REPEATED",
           block_ids: ["b0001", "b0002"],
           doc_quote: "Shared exact words.",
-          evidence_quotes: [{ block_id: "b0001", quote: "Shared exact words." }],
+          evidence_quotes: [
+            { block_id: "b0001", quote: "Shared exact words." },
+            { block_id: "b0002" },
+          ],
           reading_a: "A",
           reading_b: "B",
           why_ambiguous: "Two source owners remain possible.",
           affects: [],
         }],
       }),
-      expected: "evidence_quotes must map every block_id exactly once",
+      expected: "evidence_quote keys are not closed",
     },
   ];
   const m = await mod();
@@ -1473,6 +2312,245 @@ test("primary and synthesis Flash retries preserve one closed authorization chai
     } finally {
       provider.restore();
     }
+  }
+});
+
+test("synthesis fallback/retry transitions archive exact predecessors and accept an after-commit final target", async () => {
+  const m = await mod();
+  const storage = interceptSynthesisTransitions();
+  const env = envFor({
+    EVIDENCE: storage.bucket,
+    EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES: "2",
+  });
+  const doc = documentFor();
+  const runId = "run_synthesis_transition_history";
+  let flashAttempts = 0;
+  const provider = installProvider(({ unit, body }) => {
+    if (unit !== "A-synthesis") return { value: nominatedPrimary(unit) };
+    if (body.model === "grok-4.6") return { value: {}, status: 502 };
+    flashAttempts += 1;
+    return flashAttempts === 1
+      ? { value: {}, status: 502 }
+      : { value: emptySynthesis() };
+  });
+  try {
+    await landPrimaryWindows(m, env, runId, doc, provider);
+    const first = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(first.slice.synthesisState, "pending");
+    const mainKey = m.passA.passASynthesisKey(runId);
+    const fallbackWrite = storage.mainWrites.find((row) =>
+      row.parsed.failureStage === "fallback-authorized"
+    );
+    const providerFailureWrite = storage.mainWrites.find((row) =>
+      row.parsed.failureStage === "provider"
+    );
+    assert(fallbackWrite, "the Grok receipt first lands as fallback authority");
+    assert(providerFailureWrite, "the failed Flash receipt replaces fallback authority");
+    const fallbackHistory = await synthesisDerivedObject(
+      m, env, mainKey, "history", fallbackWrite.body,
+    );
+    assert(fallbackHistory.object, "the fallback predecessor history exists");
+    assertEq(
+      await fallbackHistory.object.text(),
+      fallbackWrite.body,
+      "fallback predecessor bytes are retained exactly",
+    );
+    assertEq(
+      await (await env.EVIDENCE.get(mainKey)).text(),
+      providerFailureWrite.body,
+      "the retryable provider failure is canonical after issue one",
+    );
+
+    storage.armAfterFinalCommit();
+    const recovered = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(recovered.slice.done, true, "strict exact-target reread accepts the committed final result");
+    assertEq(recovered.slice.synthesisState, "reduced-provider-independence");
+    const finalWrites = storage.mainWrites.filter((row) => row.parsed.status === "ok");
+    assertEq(finalWrites.length, 1, "an after-commit response failure does not retry the final put");
+    assert(
+      typeof finalWrites[0].options.onlyIf?.etagMatches === "string",
+      "the final result is conditional on the exact provider-failure predecessor etag",
+    );
+    assertEq(
+      await (await env.EVIDENCE.get(mainKey)).text(),
+      finalWrites[0].body,
+      "the final canonical bytes equal the admitted target exactly",
+    );
+    const failureHistory = await synthesisDerivedObject(
+      m, env, mainKey, "history", providerFailureWrite.body,
+    );
+    assert(failureHistory.object, "the retryable provider-failure predecessor history exists");
+    assertEq(
+      await failureHistory.object.text(),
+      providerFailureWrite.body,
+      "retry predecessor bytes are retained exactly",
+    );
+    assertEq(provider.count("A-synthesis"), 3, "one Grok trigger and two Flash issues were bought");
+
+    provider.reset();
+    const replay = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(replay.slice.done, true);
+    assertEq(provider.calls.length, 0, "replay reclaims final authority without another provider call");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("a different valid synthesis CAS winner is never overwritten and exact losing paid bytes survive", async () => {
+  const m = await mod();
+  const storage = interceptSynthesisTransitions();
+  const env = envFor({
+    EVIDENCE: storage.bucket,
+    EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES: "2",
+  });
+  const doc = documentFor();
+  const runId = "run_synthesis_valid_cas_winner";
+  let flashAttempts = 0;
+  const provider = installProvider(({ unit, body }) => {
+    if (unit !== "A-synthesis") return { value: nominatedPrimary(unit) };
+    if (body.model === "grok-4.6") return { value: {}, status: 502 };
+    flashAttempts += 1;
+    return flashAttempts === 1
+      ? { value: {}, status: 502 }
+      : { value: emptySynthesis() };
+  });
+  try {
+    await landPrimaryWindows(m, env, runId, doc, provider);
+    const first = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(first.slice.synthesisState, "pending");
+    const predecessor = storage.mainWrites.find((row) =>
+      row.parsed.failureStage === "provider"
+    );
+    assert(predecessor, "the retryable predecessor exists before the race");
+
+    storage.armFinalRace(synthesisWithRule(validCrossWindowRule()));
+    const raced = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assert(
+      storage.raceWinnerBody() !== null,
+      "the fixture injected a different winner before CAS; writes=" +
+        JSON.stringify(storage.mainWrites.map((row) => ({
+          status: row.parsed.status,
+          failureStage: row.parsed.failureStage,
+          onlyIf: row.options.onlyIf ?? null,
+          raceFinal: row.raceFinal,
+          raced: row.raced,
+          beforeEtag: row.beforeEtag,
+        }))),
+    );
+    assert(storage.losingBody() !== null, "the fixture captured the exact losing target bytes");
+    assertEq(raced.slice.synthesisState, "failed", "losing the predecessor CAS terminalizes synthesis");
+    assertEq(raced.slice.terminalFailure, true);
+    assertEq(
+      raced.requirements.filter((row) => row.origin === "A-synthesis").length,
+      0,
+      "a losing paid target grants no synthesis requirement authority",
+    );
+    assertEq(raced.crossWindowLimitations.length, 0, "a losing paid target grants no synthesis coverage claim");
+    assert(
+      raced.failedUnits.some((row) =>
+        row.unit === "A-synthesis-artifact" &&
+        row.detail.includes("PASS_A_SYNTHESIS_PERSISTENCE_FAILED")),
+      "the terminal result names the synthesis persistence refusal",
+    );
+    assertEq(
+      raced.calls.at(-1).status,
+      "ok",
+      "storage conflict never relabels the paid valid result as semantic parse failure",
+    );
+
+    const mainKey = m.passA.passASynthesisKey(runId);
+    assertEq(
+      await (await env.EVIDENCE.get(mainKey)).text(),
+      storage.raceWinnerBody(),
+      "the different strict-valid winner remains byte-for-byte canonical",
+    );
+    const conflict = await synthesisDerivedObject(
+      m, env, mainKey, "cas-conflict", storage.losingBody(),
+    );
+    assert(conflict.object, "the exact losing paid target has an append-only conflict artifact");
+    assertEq(await conflict.object.text(), storage.losingBody());
+    const history = await synthesisDerivedObject(
+      m, env, mainKey, "history", predecessor.body,
+    );
+    assert(history.object, "the exact retry predecessor is archived before CAS");
+    assertEq(await history.object.text(), predecessor.body);
+
+    provider.reset();
+    await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(provider.calls.length, 0, "reentry accepts retained winner authority without another purchase");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("strict synthesis semantic failure retains exact raw output and re-decodes it on reclaim", async () => {
+  const m = await mod();
+  const env = envFor();
+  const doc = documentFor();
+  const runId = "run_synthesis_raw_semantic_authority";
+  const rejectedOutput = synthesisWithRule({
+    ...validCrossWindowRule(),
+    quantifier: "sometimes",
+  });
+  const provider = installProvider(({ unit }) => ({
+    value: unit === "A-synthesis" ? rejectedOutput : nominatedPrimary(unit),
+  }));
+  try {
+    await landPrimaryWindows(m, env, runId, doc, provider);
+    const failed = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(failed.slice.synthesisState, "failed");
+    assertEq(
+      failed.requirements.filter((row) => row.origin === "A-synthesis").length,
+      0,
+      "rejected raw output grants no synthesis requirement authority",
+    );
+    assertEq(failed.crossWindowLimitations.length, 0, "rejected raw output grants no synthesis coverage claim");
+    const key = m.passA.passASynthesisKey(runId);
+    const originalBytes = await (await env.EVIDENCE.get(key)).text();
+    const artifact = JSON.parse(originalBytes);
+    assertEq(artifact.failureStage, "semantic-output");
+    assertEq(artifact.terminal, true);
+    assertEq(JSON.stringify(artifact.modelOutput), JSON.stringify(rejectedOutput));
+    assertEq(artifact.usages.at(-1).status, "parse-failed");
+
+    provider.reset();
+    const replay = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(provider.calls.length, 0, "strict semantic failure is re-decoded without a purchase");
+    assert(
+      replay.failedUnits.some((row) => row.detail.includes("invalid global rule quantifier")),
+      "clean replay reproduces the retained raw-output rejection",
+    );
+    assertEq(await (await env.EVIDENCE.get(key)).text(), originalBytes);
+
+    const corruptions = [
+      {
+        name: "missing raw output",
+        mutate: (row) => { delete row.modelOutput; },
+        expected: "semantic-output failure has no retained raw modelOutput",
+      },
+      {
+        name: "raw output now validates",
+        mutate: (row) => { row.modelOutput = emptySynthesis(); },
+        expected: "semantic-output failure does not reproduce under the current strict decoder",
+      },
+    ];
+    for (const fixture of corruptions) {
+      const corrupted = structuredClone(artifact);
+      fixture.mutate(corrupted);
+      const corruptedBytes = JSON.stringify(corrupted);
+      await env.EVIDENCE.put(key, corruptedBytes);
+      provider.reset();
+      const refused = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+      assertEq(provider.calls.length, 0, fixture.name + " is never re-bought");
+      assert(
+        refused.failedUnits.some((row) =>
+          row.unit === "A-synthesis-artifact" && row.detail.includes(fixture.expected)),
+        fixture.name + ": " + JSON.stringify(refused.failedUnits),
+      );
+      assertEq(await (await env.EVIDENCE.get(key)).text(), corruptedBytes);
+    }
+  } finally {
+    provider.restore();
   }
 });
 

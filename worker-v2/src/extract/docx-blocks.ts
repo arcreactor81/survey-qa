@@ -1041,7 +1041,39 @@ const partSyntax = (partXml: string, fallback: Syntax): Syntax => {
   return detected === null || detected === fallback.prefix ? fallback : buildSyntax(detected);
 };
 
-/** The whole-document rendering a pass reads: every line carries its id and its origin. */
+/**
+ * Lossless model-input rendering: one compact JSON object per physical line.
+ *
+ * `text` is deliberately assigned directly from `SourceBlock.text`. JSON escaping is the
+ * transport envelope, not a display normalization: after `JSON.parse`, every code unit —
+ * including CR/LF, quotes and backslashes — is the exact parser-owned source string that
+ * evidence grounding validates. Keep the metadata structural rather than re-rendering it
+ * into prose; a model must never have to infer provenance from a display convention.
+ */
+export function encodeSourceBlocksJsonl(blocks: SourceBlock[]): string {
+  return blocks.map((block) => JSON.stringify(sourceBlockModelProjection(block))).join("\n");
+}
+
+/**
+ * The single canonical object schema placed on the model-input wire for one source block.
+ * The bounded JSONL guard walks this same projection before serialization, so adding a field
+ * here cannot silently bypass its raw-value memory tripwire.
+ */
+export function sourceBlockModelProjection(block: SourceBlock) {
+  return {
+    block_id: block.blockId,
+    text: block.text,
+    kind: block.kind,
+    origin: block.origin,
+    section: block.section,
+    table_id: block.tableId,
+    coords: block.coords,
+    source_subrole: block.sourceSubrole ?? null,
+    semantic_spans: block.semanticSpans ?? [],
+  };
+}
+
+/** The legacy human-readable rendering: every line carries its id and its origin. */
 export function annotate(blocks: SourceBlock[]): string {
   const out: string[] = [];
   let lastTable: string | null = null;

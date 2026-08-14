@@ -202,6 +202,8 @@ export interface Env {
   GROK_MAX_INPUT_USD_PER_MTOK?: string;
   GROK_MAX_OUTPUT_USD_PER_MTOK?: string;
   DEEPSEEK_MODEL?: string;
+  /** Published maximum context size for the selected DeepSeek model, in tokens. */
+  DEEPSEEK_CONTEXT_WINDOW_TOKENS?: string;
   DEEPSEEK_REASONING_EFFORT?: string;
   DEEPSEEK_INPUT_USD_PER_MTOK?: string;
   DEEPSEEK_OUTPUT_USD_PER_MTOK?: string;
@@ -281,6 +283,8 @@ export interface Env {
    * lives in the synthesis R2 artifact, so Workflow retries and recovery share the ceiling.
    */
   EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES?: string;
+  /** Maximum UTF-8 bytes in any exact serialized extraction-model request. */
+  EXTRACT_MODEL_INPUT_MAX_BYTES?: string;
   /** Output ceiling per extraction call. Reasoning shares this budget on both providers. */
   EXTRACT_MAX_OUTPUT_TOKENS?: string;
   /** Attempts per extraction call. Two is the money rule, not a default worth raising. */

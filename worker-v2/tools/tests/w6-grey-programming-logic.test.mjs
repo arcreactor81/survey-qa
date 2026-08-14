@@ -436,7 +436,11 @@ suite("W6 — grey programming logic is provenance, not an option label", () => 
 
   test("whole-pass cache cannot cross document-semantics profiles", async () => {
     const mod = await worker();
-    const env = testEnv({ ...GROK_OWNER_RATE_FIXTURE, XAI_API_KEY: "fixture-xai-key" });
+    const env = testEnv({
+      ...GROK_OWNER_RATE_FIXTURE,
+      XAI_API_KEY: "fixture-xai-key",
+      DEEPSEEK_API_KEY: "fixture-deepseek-key",
+    });
     const runId = mod.ids.mintRunId();
     const documentKey = mod.keys.inputDocumentKey(runId);
     const documentBytes = docx(`<w:p>${run("Grey", `<w:highlight w:val="lightGray"/>`)}</w:p>`);

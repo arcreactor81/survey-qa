@@ -131,6 +131,7 @@ import {
   PassACrossWindowLimitationRefusal,
   passACrossWindowSupplementsForSeal,
 } from "../extract/cross-window-limitations";
+import { PASS_A_PRIMARY_GROUNDING_SUPPLEMENT_KIND } from "../../shared/pass-a-grounding-limitations.mjs";
 import { passBStepTimeoutMs, passBWaveBudgetMs, type PassBSlice } from "../extract/pass-b";
 import { deepseekPassBIdentity } from "../llm/deepseek";
 import { grokFlashRouteIdentity } from "../llm/grok";
@@ -149,6 +150,7 @@ import {
   type ExtractionInputs,
 } from "../store/contract-reuse";
 import { PROMPT_VERSION_A, PROMPT_VERSION_B } from "../extract/prompts";
+import { EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED } from "../llm/extraction-wire";
 import { docxBlocksVersion } from "../extract/docx-blocks";
 import {
   publicExtractionFailureDetail,
@@ -389,6 +391,12 @@ export function extractionPassRefusal(
     return {
       reasonCode: DOCUMENT_SOURCE_AUTHORITY_INVALID,
       detail: publicExtractionFailureDetail(DOCUMENT_SOURCE_AUTHORITY_INVALID),
+    };
+  }
+  if (result.reason === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) {
+    return {
+      reasonCode: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+      detail: publicExtractionFailureDetail(EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED),
     };
   }
   const normalized = result.reason
@@ -1612,6 +1620,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             contractSupplements: sealedCrossWindowSupplements,
             extraction: {
               reuseInputsHash: `sha256:${reuseDigest!}`,
+              primaryGroundingLimitationsVersion: PASS_A_PRIMARY_GROUNDING_SUPPLEMENT_KIND,
               passAHash: passA.state === "evaluated" ? passA.value.hash : "",
               passBHash: evaluatedPassBHash,
               sourceLedgerHash: ledger.state === "evaluated" ? ledger.value.hash : "",
@@ -3281,7 +3290,7 @@ export function testAxisBlockers(
     } else if (Number(coverageBlockers) > 0) {
       blockers.push(
         `${Number(coverageBlockers)} sealed document coverage limitation(s) prevent whole-document/full-coverage credit ` +
-          `(DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE)`,
+          `(see the RunRecord blocker list for each exact machine code and counted boundary)`,
       );
     }
   }

@@ -264,6 +264,13 @@ export function deepseekGrokFallbackRequestShape(
   return requestShapeForLeg(extractionLeg(env, "grok-fallback"));
 }
 
+/** Side-effect-free exact Pass-B request shape, used before any credential/provider I/O. */
+export function deepseekPassBRequestShape(
+  env: Env,
+): Pick<ProviderSpec, "model" | "extraBody"> {
+  return requestShapeForLeg(extractionLeg(env, "pass-b"));
+}
+
 async function extractionLegJson(
   env: Env,
   role: "grok-fallback" | "pass-b",

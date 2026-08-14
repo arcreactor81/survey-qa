@@ -93,6 +93,19 @@ const CONSTRUCTS = [
  * accounting, the coercion layer) is the real code. The testkit only stubs platform modules;
  * this is the established place to cut.
  */
+function boundedJsonlRows(user, startMarker, endMarker) {
+  const start = user.indexOf(startMarker);
+  if (start < 0) return null;
+  const end = user.indexOf(endMarker, start + startMarker.length);
+  assert(end > start, `missing JSONL end marker for ${startMarker}`);
+  return user
+    .slice(start + startMarker.length, end)
+    .trim()
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line));
+}
+
 function stubProvider({ failUnit = () => false, failBody = "upstream exploded", citeBlocks = true, validEmpty = false } = {}) {
   const original = globalThis.fetch;
   const requests = [];
@@ -101,12 +114,28 @@ function stubProvider({ failUnit = () => false, failBody = "upstream exploded", 
     const user = String(body.messages[1].content);
     const unit = (user.match(/Your chunk id for this call is: (\S+)/) ?? [])[1] ?? "PASS-A";
     const declaredChunk = (user.match(/Your chunk contains exactly \d+ blocks: ([^\n]+)/) ?? [])[1];
-    const sweepText = (user.match(/===== UNACCOUNTED BLOCKS =====\n([\s\S]*?)\n===== END =====/) ?? [])[1];
-    const blockIds = declaredChunk !== undefined
-      ? declaredChunk.split(",").map((value) => value.trim()).filter(Boolean)
-      : sweepText !== undefined
-        ? [...new Set([...sweepText.matchAll(/\[(b\d{4})\]/g)].map((match) => match[1]))]
-        : [];
+    const chunkRows = boundedJsonlRows(
+      user,
+      "===== YOUR SOURCE BLOCKS JSONL — EXTRACT AND DISPOSITION THESE BLOCKS =====",
+      "===== END YOUR SOURCE BLOCKS JSONL =====",
+    );
+    const sweepRows = boundedJsonlRows(
+      user,
+      "===== UNACCOUNTED SOURCE BLOCKS JSONL =====",
+      "===== END UNACCOUNTED SOURCE BLOCKS JSONL =====",
+    );
+    const sourceRows = chunkRows ?? sweepRows ?? [];
+    const blockIds = sourceRows.map((row) => String(row.block_id));
+    assertEq(new Set(blockIds).size, blockIds.length, "the bounded source JSONL has unique block ids");
+    if (declaredChunk !== undefined) {
+      const declaredIds = declaredChunk.split(",").map((value) => value.trim()).filter(Boolean);
+      assertEq(
+        JSON.stringify(blockIds),
+        JSON.stringify(declaredIds),
+        "the chunk declaration and bounded source JSONL name the same blocks in order",
+      );
+    }
+    const sourceText = new Map(sourceRows.map((row) => [String(row.block_id), String(row.text)]));
     requests.push({ url: String(url), unit, blockIds });
 
     if (failUnit(unit, requests.length)) {
@@ -123,12 +152,7 @@ function stubProvider({ failUnit = () => false, failBody = "upstream exploded", 
       });
     }
 
-    const exactQuote = (id) => {
-      const line = user.split("\n").find((value) => value.startsWith(`[${id}]`)) ?? "";
-      let quote = line.replace(/^\[b\d{4}\]\s*/, "");
-      if (quote.startsWith("(") && quote.includes(") ")) quote = quote.slice(quote.lastIndexOf(") ") + 2);
-      return quote;
-    };
+    const exactQuote = (id) => sourceText.get(id) ?? "";
     const obligations = citeBlocks && !validEmpty
       ? blockIds.map((id, i) => ({
           id: `${unit}-R${i + 1}`,
@@ -783,6 +807,254 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
     } finally {
       provider.restore();
     }
+  }
+});
+
+test("chunk replacement archives exact predecessor and CAS-binds its strict-read etag", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "0" });
+  const runId = "run_d21_chunk_transition_cas";
+  const canonicalKey = d51ChunkKey(m, runId);
+  const staleBody = JSON.stringify({
+    ...d51CurrentChunk(m, env, runId),
+    parserVersion: "stale-parser/transition-fixture",
+  });
+  await env.EVIDENCE.put(canonicalKey, staleBody, {
+    httpMetadata: { contentType: "application/json" },
+  });
+  const predecessor = await env.EVIDENCE.get(canonicalKey);
+  assert(predecessor !== null);
+  const observedPuts = [];
+  const basePut = env.EVIDENCE.put.bind(env.EVIDENCE);
+  env.EVIDENCE.put = async (key, value, options = {}) => {
+    observedPuts.push({ key, options: structuredClone(options) });
+    return basePut(key, value, options);
+  };
+  const provider = stubProvider();
+  try {
+    const result = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(result.slice.done, true, "the fresh current-version chunk replaces the stale version");
+    const digest = await m.hash.sha256Hex(staleBody);
+    const historyKey = m.keys.k(
+      "runs", runId, "extraction", "pass-b", `chunk-01-history-${digest}.json`,
+    );
+    const history = await env.EVIDENCE.get(historyKey);
+    assert(history !== null, "the exact predecessor has an append-only history object");
+    assertEq(await history.text(), staleBody, "history preserves predecessor bytes verbatim");
+    const historyWrite = observedPuts.find((row) => row.key === historyKey);
+    assertEq(historyWrite?.options?.onlyIf?.etagDoesNotMatch, "*", "history is create-only");
+    const canonicalWrite = observedPuts.find((row) => row.key === canonicalKey);
+    assertEq(
+      canonicalWrite?.options?.onlyIf?.etagMatches,
+      predecessor.etag,
+      "replacement is bound to the exact strict-read predecessor etag",
+    );
+    assert(
+      observedPuts.findIndex((row) => row.key === historyKey) <
+        observedPuts.findIndex((row) => row.key === canonicalKey),
+      "history lands before the canonical replacement is attempted",
+    );
+  } finally {
+    provider.restore();
+  }
+});
+
+test("chunk CAS loser preserves exact paid bytes, leaves winner untouched, and grants zero credit", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "0" });
+  const runId = "run_d21_chunk_cas_loser";
+  const canonicalKey = d51ChunkKey(m, runId);
+  const basePut = env.EVIDENCE.put.bind(env.EVIDENCE);
+  let losingBody = null;
+  let winnerBody = null;
+  let attemptedOnlyIf = null;
+  env.EVIDENCE.put = async (key, value, options = {}) => {
+    if (key === canonicalKey && losingBody === null && options?.onlyIf) {
+      losingBody = String(value);
+      winnerBody = `${losingBody}\n`;
+      attemptedOnlyIf = structuredClone(options.onlyIf);
+      await basePut(key, winnerBody, { httpMetadata: { contentType: "application/json" } });
+    }
+    return basePut(key, value, options);
+  };
+  const provider = stubProvider();
+  try {
+    const result = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.countFor("C01-b0001"), 1, "the race occurs after exactly one paid call");
+    assertEq(attemptedOnlyIf?.etagDoesNotMatch, "*", "absence authorizes create-only, never overwrite");
+    assertEq(result.slice.terminalFailure, true, "a losing paid target terminalizes the slice");
+    assertEq(result.slice.chunksLanded, 0, "the losing target earns no landed credit");
+    assertEq(result.slice.chunksRemaining, 1, "the refused unit remains explicitly unaccounted");
+    assertEq(result.requirements.length, 0, "losing decoded obligations earn no coverage authority");
+    assertEq(result.issuedCalls.length, 1, "the physical purchase remains chargeable");
+    assert(result.failedUnits[0]?.detail.includes("PASS_B_UNIT_CANONICAL_CAS_CONFLICT"));
+    assert(losingBody !== null && winnerBody !== null);
+    const canonical = await env.EVIDENCE.get(canonicalKey);
+    assertEq(await canonical.text(), winnerBody, "the concurrent winner is untouched byte-for-byte");
+    const digest = await m.hash.sha256Hex(losingBody);
+    const conflictKey = m.keys.k(
+      "runs", runId, "extraction", "pass-b", `chunk-01-cas-conflict-${digest}.json`,
+    );
+    const conflict = await env.EVIDENCE.get(conflictKey);
+    assert(conflict !== null, "the losing paid artifact has deterministic conflict evidence");
+    assertEq(await conflict.text(), losingBody, "conflict evidence is the exact losing serialized artifact");
+    assertEq(
+      JSON.parse(losingBody).usages[0].eventId,
+      result.issuedCalls[0].eventId,
+      "failure-report inventory can reconcile the conflict artifact's top-level paid receipt",
+    );
+
+    provider.reset();
+    const replay = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.requests.length, 0, "canonical replay ignores conflict evidence and buys nothing");
+    assertEq(replay.slice.done, true, "the exact canonical winner remains the sole semantic authority");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("ambiguous chunk commit exact-rereads as success without conflict or rebuy", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "0" });
+  const runId = "run_d21_chunk_ambiguous_commit";
+  const canonicalKey = d51ChunkKey(m, runId);
+  const basePut = env.EVIDENCE.put.bind(env.EVIDENCE);
+  let injected = false;
+  env.EVIDENCE.put = async (key, value, options = {}) => {
+    if (key === canonicalKey && !injected && options?.onlyIf) {
+      injected = true;
+      const committed = await basePut(key, value, options);
+      assert(committed !== null, "the fixture commits before losing the put response");
+      throw new Error("fixture lost the successful canonical put response");
+    }
+    return basePut(key, value, options);
+  };
+  const provider = stubProvider();
+  try {
+    const result = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.countFor("C01-b0001"), 1, "ambiguous storage never repeats the provider call");
+    assertEq(result.slice.done, true, "exact canonical reread proves the committed target");
+    assertEq(result.slice.terminalFailure, false);
+    const listed = await env.EVIDENCE.list({
+      prefix: m.keys.k("runs", runId, "extraction", "pass-b") + "/",
+    });
+    assertEq(
+      listed.objects.filter((object) => object.key.includes("-cas-conflict-")).length,
+      0,
+      "an exact committed target is not mislabeled as a CAS loser",
+    );
+  } finally {
+    provider.restore();
+  }
+});
+
+test("sweep replacement archives exact predecessor and CAS-binds its strict-read etag", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "1" });
+  const runId = "run_d21_sweep_transition_cas";
+  await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m, env, runId));
+  const canonicalKey = d51SweepKey(m, runId);
+  const staleBody = JSON.stringify({
+    sweepId: "SWEEP01",
+    blockIds: ["b0001"],
+    parserVersion: "stale-parser/transition-fixture",
+    promptVersion: m.passB.PASS_B_VERSION,
+    status: "failed",
+    attempts: 99,
+    detail: "stale sweep bytes must survive replacement",
+  });
+  await env.EVIDENCE.put(canonicalKey, staleBody, {
+    httpMetadata: { contentType: "application/json" },
+  });
+  const predecessor = await env.EVIDENCE.get(canonicalKey);
+  assert(predecessor !== null);
+  const observedPuts = [];
+  const basePut = env.EVIDENCE.put.bind(env.EVIDENCE);
+  env.EVIDENCE.put = async (key, value, options = {}) => {
+    observedPuts.push({ key, options: structuredClone(options) });
+    return basePut(key, value, options);
+  };
+  const provider = stubProvider();
+  try {
+    const result = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.requests.length, 1, "the current chunk is reused and only the stale sweep is bought");
+    assertEq(provider.requests[0].unit, "SWEEP01");
+    assertEq(result.slice.done, true);
+    const digest = await m.hash.sha256Hex(staleBody);
+    const historyKey = m.keys.k(
+      "runs", runId, "extraction", "pass-b", `sweep01-history-${digest}.json`,
+    );
+    const history = await env.EVIDENCE.get(historyKey);
+    assert(history !== null);
+    assertEq(await history.text(), staleBody, "sweep predecessor bytes are retained verbatim");
+    const historyWrite = observedPuts.find((row) => row.key === historyKey);
+    assertEq(historyWrite?.options?.onlyIf?.etagDoesNotMatch, "*", "sweep history is create-only");
+    const canonicalWrite = observedPuts.find((row) => row.key === canonicalKey);
+    assertEq(canonicalWrite?.options?.onlyIf?.etagMatches, predecessor.etag);
+    assert(
+      observedPuts.findIndex((row) => row.key === historyKey) <
+        observedPuts.findIndex((row) => row.key === canonicalKey),
+      "sweep history lands before replacement",
+    );
+  } finally {
+    provider.restore();
+  }
+});
+
+test("sweep CAS loser preserves exact paid bytes, leaves winner untouched, and grants zero credit", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "1" });
+  const runId = "run_d21_sweep_cas_loser";
+  await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m, env, runId));
+  const canonicalKey = d51SweepKey(m, runId);
+  const basePut = env.EVIDENCE.put.bind(env.EVIDENCE);
+  let losingBody = null;
+  let winnerBody = null;
+  let attemptedOnlyIf = null;
+  env.EVIDENCE.put = async (key, value, options = {}) => {
+    if (key === canonicalKey && losingBody === null && options?.onlyIf) {
+      losingBody = String(value);
+      winnerBody = `${losingBody}\n`;
+      attemptedOnlyIf = structuredClone(options.onlyIf);
+      await basePut(key, winnerBody, { httpMetadata: { contentType: "application/json" } });
+    }
+    return basePut(key, value, options);
+  };
+  const provider = stubProvider();
+  try {
+    const result = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.countFor("SWEEP01"), 1, "the race occurs after exactly one sweep purchase");
+    assertEq(attemptedOnlyIf?.etagDoesNotMatch, "*", "missing sweep authority is create-only");
+    assertEq(result.slice.terminalFailure, true);
+    assertEq(result.slice.done, false);
+    assertEq(result.slice.sweepRemaining, 1, "the losing sweep remains explicitly unaccounted");
+    assertEq(result.requirements.length, 0, "the losing sweep contributes no obligations");
+    assertEq(result.issuedCalls.length, 1, "the losing purchase remains chargeable");
+    assert(result.failedUnits.some((row) =>
+      row.unit === "SWEEP01" && row.detail.includes("PASS_B_UNIT_CANONICAL_CAS_CONFLICT")));
+    assert(losingBody !== null && winnerBody !== null);
+    const canonical = await env.EVIDENCE.get(canonicalKey);
+    assertEq(await canonical.text(), winnerBody, "the concurrent sweep winner is untouched");
+    const digest = await m.hash.sha256Hex(losingBody);
+    const conflictKey = m.keys.k(
+      "runs", runId, "extraction", "pass-b", `sweep01-cas-conflict-${digest}.json`,
+    );
+    const conflict = await env.EVIDENCE.get(conflictKey);
+    assert(conflict !== null);
+    assertEq(await conflict.text(), losingBody, "sweep conflict evidence preserves exact losing bytes");
+    assertEq(
+      JSON.parse(losingBody).usages[0].eventId,
+      result.issuedCalls[0].eventId,
+      "the sweep conflict exposes its charged receipt to bounded extraction inventory",
+    );
+
+    provider.reset();
+    const replay = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.requests.length, 0, "canonical sweep replay ignores conflict evidence");
+    assertEq(replay.slice.done, true);
+    assert(replay.requirements.some((row) => row.id === "SWEEP01-R1"));
+  } finally {
+    provider.restore();
   }
 });
 

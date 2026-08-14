@@ -185,6 +185,7 @@ export async function loadWorker() {
       // kill. `tests/docx-robustness.test.mjs` scores the 20-file hostile corpus through THIS
       // export, which is why the gate can never read a stale build artifact.
       `export * as docxBlocks from ${p("src/extract/docx-blocks.ts")};`,
+      `export * as prompts from ${p("src/extract/prompts.ts")};`,
       // D27 needs the REAL identity mint: the collision it reproduces is minted in the
       // merge and only OBSERVED in the expander, so a fixture requirement row would test
       // the wrong half of the pipeline.
@@ -195,6 +196,7 @@ export async function loadWorker() {
       `export * as chat from ${p("src/llm/chat.ts")};`,
       `export * as grok from ${p("src/llm/grok.ts")};`,
       `export * as deepseek from ${p("src/llm/deepseek.ts")};`,
+      `export * as extractionWire from ${p("src/llm/extraction-wire.ts")};`,
       `export * as extractStage from ${p("src/workflow/stages/extract.ts")};`,
       `export * as gates from ${p("src/workflow/gates.ts")};`,
       `export * as plan from ${p("src/workflow/stages/plan.ts")};`,

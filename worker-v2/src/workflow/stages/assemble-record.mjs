@@ -41,6 +41,11 @@ import {
   contractCrossWindowLimitations,
   crossWindowLimitationDetail,
 } from "../../../shared/cross-window-limitations.mjs";
+import {
+  SOURCE_GROUNDING_BLOCKER_KIND,
+  contractPrimaryGroundingLimitations,
+  primaryGroundingLimitationDetail,
+} from "../../../shared/pass-a-grounding-limitations.mjs";
 
 export const AGGREGATOR_ID = "v2-aggregator/1.0.0";
 export const RESULT_POLICY_ID = "v2-result-policy/1.0.0";
@@ -321,6 +326,27 @@ export function deriveBlockers({ revision, walks, itemResults, observations, evi
         kind: CROSS_WINDOW_DISCOVERY_BLOCKER_KIND,
         detail: crossWindowLimitationDetail(limitation),
         count: limitation.candidatesSynthesized,
+      }),
+    );
+  }
+
+  // Primary candidates that failed exact source grounding are omitted from semantic
+  // authority, never from the record of what was not covered. The one sealed marker carries
+  // an exact Pass-A hash and a closed metadata-only row array for single- and multi-window
+  // documents alike. Historical revisions with no marker remain readable; any named marker
+  // that is duplicate, malformed, or foreign to this revision throws above the signing seam.
+  const primaryGrounding = contractPrimaryGroundingLimitations(
+    revision?.contractSupplements,
+    revision?.extraction?.passAHash ?? null,
+    revision,
+  );
+  if (primaryGrounding !== null && primaryGrounding.rows.length > 0) {
+    blockers.push(
+      blocker({
+        blockerId: "blk_document-source-grounding-incomplete",
+        kind: SOURCE_GROUNDING_BLOCKER_KIND,
+        detail: primaryGroundingLimitationDetail(primaryGrounding),
+        count: primaryGrounding.rows.length,
       }),
     );
   }

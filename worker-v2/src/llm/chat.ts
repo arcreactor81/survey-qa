@@ -94,6 +94,12 @@ export interface ChatOptions {
   role: string;
   callId: string;
   /**
+   * Exact canonical request bytes already admitted by a caller's wire-size barrier.
+   * When present, transport sends this string unchanged instead of serializing again.
+   * Callers must derive it with `chatRequestBodyText` for this exact provider spec.
+   */
+  preSerializedBodyText?: string;
+  /**
    * The AI Gateway `feature` tag. Defaults to the extraction tag so every existing caller
    * keeps the exact metadata it had; the model verifier passes its own, because a cost
    * question ("what did verification cost on this document") is unanswerable from the
@@ -176,7 +182,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
     if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
   }
 
-  const bodyText = chatRequestBodyText(spec, opts);
+  const bodyText = opts.preSerializedBodyText ?? chatRequestBodyText(spec, opts);
   // A byte cannot encode fewer than zero tokens, and treating every request byte as one
   // token is a conservative ceiling for the provider tokenizers used here. max_tokens is
   // already the provider-enforced completion ceiling.

@@ -41,12 +41,16 @@
  */
 
 import { CROSS_WINDOW_DISCOVERY_BLOCKER_KIND } from "./cross-window-limitations.mjs";
+import { SOURCE_GROUNDING_BLOCKER_KIND } from "./pass-a-grounding-limitations.mjs";
 
 export const V2_RUN_RECORD_KIND = "survey-qa-v2-run-record";
 export const V2_CONTRACT_REVISION_KIND = "survey-qa-v2-contract-revision";
 
 /**
  * Bumped whenever the projected shape changes in a way a consumer can observe.
+ *
+ * 1.5.0 - exact-count primary source-grounding blockers join the closed document-coverage
+ * blocker projection, so omitted ungrounded candidates prevent report certification.
  *
  * 1.3.0 — human authorship no longer implies independent review, and sealed human
  * limitations/provenance are projected explicitly for the report boundary.
@@ -56,7 +60,7 @@ export const V2_CONTRACT_REVISION_KIND = "survey-qa-v2-contract-revision";
  * own copy. A consumer that judged against 1.1.0 was compiling expectations from the wrong
  * one of the two, so this is a value change every downstream reader must be able to see.
  */
-export const V2_PROJECTION_VERSION = "v2-record-projection/1.4.0";
+export const V2_PROJECTION_VERSION = "v2-record-projection/1.5.0";
 
 const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const arr = (v) => (Array.isArray(v) ? v : []);
@@ -570,12 +574,15 @@ export function projectV2ToLegacy(record, revision) {
     })),
     findings: [
       ...arr(record.claims).map((c) => findingFromClaim(c, observationToEvidence)),
-      // Exactly one closed document-coverage blocker is projected into the existing
+      // Only the two closed document-coverage blockers are projected into the existing
       // operational-blocker lane. Other RunBlockers retain their raw audit surface and do
-      // not silently acquire certification semantics. This one must: candidate-only
-      // synthesis cannot coexist with a report claiming complete/certifiable coverage.
+      // not silently acquire certification semantics. Candidate-only synthesis or omitted
+      // ungrounded primary rows cannot coexist with complete/certifiable document coverage.
       ...arr(record.blockers)
-        .filter((entry) => entry?.kind === CROSS_WINDOW_DISCOVERY_BLOCKER_KIND)
+        .filter((entry) =>
+          entry?.kind === CROSS_WINDOW_DISCOVERY_BLOCKER_KIND ||
+          entry?.kind === SOURCE_GROUNDING_BLOCKER_KIND
+        )
         .map((entry) => ({
           findingId: entry.blockerId,
           kind: "blocker",
@@ -585,7 +592,7 @@ export function projectV2ToLegacy(record, revision) {
           itemRefs: [],
           evidenceRefs: arr(entry.evidenceIds),
           attemptRefs: [],
-          sourceBlockerKind: CROSS_WINDOW_DISCOVERY_BLOCKER_KIND,
+          sourceBlockerKind: entry.kind,
         })),
     ],
     evidence: arr(record.evidence).map(legacyEvidenceEntry),

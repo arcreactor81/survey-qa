@@ -289,6 +289,7 @@
     "GROK_MAX_OUTPUT_USD_PER_MTOK": "12",
     // Flash is the dormant Grok substitute; Pro is the ordinary independent pass B.
     "DEEPSEEK_MODEL": "deepseek-v4-flash",
+    "DEEPSEEK_CONTEXT_WINDOW_TOKENS": "1000000",
     "DEEPSEEK_REASONING_EFFORT": "medium",
     // Official api.deepseek.com rates checked 13 Aug 2026. Primary and fallback
     // keep separate rates because the ledger records each actual model purchase.
@@ -315,6 +316,8 @@
     "EXTRACT_CHUNK_CHARS": "3000",
     "EXTRACT_CHUNK_MAX_BLOCKS": "15",
     "EXTRACT_CHUNK_CONCURRENCY": "5",
+    // Exact serialized provider-request bytes; runtime refuses oversize input without buying it.
+    "EXTRACT_MODEL_INPUT_MAX_BYTES": "450000",
     "EXTRACT_MAX_OUTPUT_TOKENS": "32000",
     "LLM_TIMEOUT_MS": "300000",
     "EXTRACT_BUDGET_FRACTION": "0.5",

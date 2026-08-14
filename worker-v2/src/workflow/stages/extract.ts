@@ -36,9 +36,10 @@ import {
   DOCUMENT_SEMANTICS_NONE,
   type DocumentSemanticsProfile,
 } from "../../extract/document-semantics";
-import { keyFor, MissingCredential } from "../../llm/chat";
+import { MissingCredential } from "../../llm/chat";
 import { deepseekPassBIdentity } from "../../llm/deepseek";
 import { grokFlashRouteIdentity, grokRateAttestation } from "../../llm/grok";
+import { EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED } from "../../llm/extraction-wire";
 import {
   runPassA,
   PASS_A_VERSION,
@@ -61,6 +62,7 @@ import { mergePasses, MERGE_VERSION, type ExtractionDiff, type SourceLedger } fr
 import { expandFloor, EXPANDER_VERSION, type ExpansionCoverage, type ExpansionPreviewEntry } from "../../extract/expand";
 import { CONSTRUCT_CLASSES, type CallUsage, type ParsedDocument, type PassResult } from "../../extract/types";
 import { limitationsFromPassAPayload } from "../../../shared/cross-window-limitations.mjs";
+import { primaryGroundingLimitationsFromPassAPayload } from "../../../shared/pass-a-grounding-limitations.mjs";
 import type { FacetInstance, ScopedRequirement } from "../../types/record";
 import { stageEvaluated, stageNotEvaluated, type GateProof, type StageResult } from "../gates";
 import {
@@ -310,7 +312,7 @@ const PASS_A_COMPLETION_KEYS = [
   "parserVersion", "promptVersion", "pass", "provider", "model", "providerRouteIdentity",
   "providerIndependence", "routeReceipts", "fallbackTriggers", "requirements", "ambiguities",
   "unverifiable", "dispositions", "constructs", "failedUnits", "calls", "crossRefs",
-  "crossWindowLimitations", "slice", "issuedCalls", "accountingCalls",
+  "crossWindowLimitations", "primaryGroundingLimitations", "slice", "issuedCalls", "accountingCalls",
 ] as const;
 
 const passACompletionProjection = (value: Record<string, unknown>): Record<string, unknown> => {
@@ -320,10 +322,12 @@ const passACompletionProjection = (value: Record<string, unknown>): Record<strin
 };
 
 const passACompletionShapeClosed = (value: Record<string, unknown>): boolean =>
+  Object.keys(value).length === PASS_A_COMPLETION_KEYS.length &&
   PASS_A_COMPLETION_KEYS.every((key) => Object.hasOwn(value, key)) &&
   [
     "routeReceipts", "fallbackTriggers", "requirements", "ambiguities", "unverifiable",
     "dispositions", "constructs", "failedUnits", "calls", "crossRefs", "crossWindowLimitations",
+    "primaryGroundingLimitations",
     "issuedCalls", "accountingCalls",
   ].every((key) => Array.isArray(value[key]));
 
@@ -544,17 +548,38 @@ export async function stagePassASlice(
       `${err instanceof Error ? err.message : String(err)}. No Grok request was issued.`,
     ));
   }
-  // Validate the closed cost policy before Secrets Store get(). A missing or malformed
-  // price binding is a zero-I/O configuration refusal, not permission to touch a credential.
-  const credential = await credentialCheck(env, "grok");
-  if (credential) return settled(credential as StageResult<PassSummary>);
-
-  const result = await runPassA(env, runId, doc, documentName, beat, options, onUnitStart);
+  // `runPassA` serializes and checks every possible primary body before its provider client
+  // resolves a secret; synthesis does the same once its retained candidate context exists.
+  // A missing binding therefore surfaces only after the no-purchase wire boundary has run.
+  let result: Awaited<ReturnType<typeof runPassA>>;
+  try {
+    result = await runPassA(env, runId, doc, documentName, beat, options, onUnitStart);
+  } catch (error) {
+    if (error instanceof MissingCredential) {
+      return settled(missingCredentialResult("grok", error) as StageResult<PassSummary>);
+    }
+    throw error;
+  }
   // THE LEDGER IS CHARGED FOR WHAT THIS WAVE BOUGHT, never for the windows it reclaimed —
   // those carry a telemetry row with cost zeroed so the payload keeps its provenance, and
   // charging them once per wave would walk a large document into CAP_MODEL_CALLS on calls
   // nobody ever made.
   await chargeUsage(env, runId, result.accountingCalls, fence);
+
+  if (result.credentialRefusal !== undefined) {
+    const first = result.failedUnits[0] ?? null;
+    return {
+      result: stageNotEvaluated<PassSummary>(
+        result.credentialRefusal.reason,
+        `${result.credentialRefusal.binding} is not available to this Worker after all eligible ` +
+          `request bodies passed preflight. No new provider request was issued.`,
+      ),
+      slice: result.slice,
+      terminal: true,
+      failedUnit: first,
+      failedUnitSourceContext: sourceContextForUnit(doc.blocks, first?.blockIds ?? []),
+    };
+  }
 
   if (result.providerIndependence === "reduced-same-provider-fallback") {
     // This authority is terminal even when later windows were intentionally left unread:
@@ -580,6 +605,18 @@ export async function stagePassASlice(
       blockIds: [],
       detail: "the terminal Pass-A unit did not retain a detailed failure row",
     };
+    if (result.terminalReasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) {
+      return {
+        result: stageNotEvaluated<PassSummary>(
+          EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+          publicExtractionFailureDetail(EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED),
+        ),
+        slice: result.slice,
+        terminal: true,
+        failedUnit: first,
+        failedUnitSourceContext: sourceContextForUnit(doc.blocks, first.blockIds),
+      };
+    }
     if (result.slice.synthesisState === "failed" || first.unit === "A-synthesis") {
       return {
         result: stageNotEvaluated<PassSummary>(
@@ -813,20 +850,42 @@ export async function stagePassBSlice(
     };
   }
 
-  const credential = await credentialCheck(env, "deepseek");
-  if (credential) return settled(credential as StageResult<PassSummary>);
-
-  const result = await runPassB(env, runId, doc, documentName, beat, options, onUnitStart);
+  let result: Awaited<ReturnType<typeof runPassB>>;
+  try {
+    result = await runPassB(env, runId, doc, documentName, beat, options, onUnitStart);
+  } catch (error) {
+    if (error instanceof MissingCredential) {
+      return settled(missingCredentialResult("deepseek", error) as StageResult<PassSummary>);
+    }
+    throw error;
+  }
   // Offer every persisted pass-B receipt to the checkpoint CAS. Stable event ids
   // make this exact across both crash windows: artifact-before-accounting settles
   // on restart, while accounting-before-step-commit dedupes on restart.
   await chargeUsage(env, runId, result.accountingCalls, fence);
 
-  if (result.slice.terminalFailure || result.failedUnits.length > 0) {
+  if (result.credentialRefusal !== undefined) {
+    const first = result.failedUnits[0] ?? null;
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_B_UNIT_FAILURES",
-        publicExtractionFailureDetail("PASS_B_UNIT_FAILURES"),
+        result.credentialRefusal.reason,
+        `${result.credentialRefusal.binding} is not available to this Worker after every ` +
+          `canonical Pass-B request body passed preflight. No new provider request was issued.`,
+      ),
+      slice: result.slice,
+      failedUnit: first,
+      failedUnitSourceContext: sourceContextForUnit(doc.blocks, first?.blockIds ?? []),
+    };
+  }
+
+  if (result.slice.terminalFailure || result.failedUnits.length > 0) {
+    const reason = result.terminalReasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED
+      ? EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED
+      : "PASS_B_UNIT_FAILURES";
+    return {
+      result: stageNotEvaluated<PassSummary>(
+        reason,
+        publicExtractionFailureDetail(reason),
       ),
       slice: result.slice,
       failedUnit: result.failedUnits[0] ?? null,
@@ -1176,6 +1235,7 @@ async function readPassPayload(
         canonicalJson(passACompletionProjection(expected))
       ) return null;
       limitationsFromPassAPayload(parsed);
+      primaryGroundingLimitationsFromPassAPayload(parsed);
     }
     if (pass === "b") {
       if (parsed.providerPlanIdentity !== deepseekPassBIdentity(env) || !parsedDocument) return null;
@@ -1246,6 +1306,7 @@ async function readPass(
         canonicalJson(passACompletionProjection(expected))
       ) return null;
       limitationsFromPassAPayload(parsed);
+      primaryGroundingLimitationsFromPassAPayload(parsed);
     }
     if (pass === "b") {
       if (parsed.providerPlanIdentity !== deepseekPassBIdentity(env) || !parsedDocument) return null;
@@ -1277,20 +1338,15 @@ async function readPass(
  * domain, so it cannot be misread as "this pass found nothing", and it falls through to the
  * seal gate — which refuses, names the gate, and lets the run report why.
  */
-async function credentialCheck(env: Env, which: "grok" | "deepseek"): Promise<StageResult<never> | null> {
-  try {
-    await keyFor(env, which);
-    return null;
-  } catch (err) {
-    if (err instanceof MissingCredential) {
-      return stageNotEvaluated<never>(
-        "NO_CREDENTIAL",
-        `${err.binding} is not available to this Worker, so the ${which} extraction pass never ran. ` +
-          `Extraction requires BOTH passes; one leg wearing a two-pass label is the failure the diff exists to expose.`,
-      );
-    }
-    throw err;
-  }
+function missingCredentialResult(
+  which: "grok" | "deepseek",
+  error: MissingCredential,
+): StageResult<never> {
+  return stageNotEvaluated<never>(
+    "NO_CREDENTIAL",
+    `${error.binding} is not available to this Worker, so the ${which} extraction pass never ran. ` +
+      `Extraction requires BOTH passes; one leg wearing a two-pass label is the failure the diff exists to expose.`,
+  );
 }
 
 /** Budget guard: extraction must not spend the reserve set aside for verification/report. */

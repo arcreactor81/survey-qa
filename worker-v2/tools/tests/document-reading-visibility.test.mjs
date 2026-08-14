@@ -71,6 +71,7 @@ function historicalSuccess(mod, env, doc, runId, windowNumber, promptVersion) {
     crossRefs: [],
     ambiguities: [],
     unverifiable: [],
+    primaryGroundingLimitations: [],
     usages: [historicalUsage(runId, windowNumber)],
     routeReceipt: { selected: "grok-4.6", trigger: null },
   };
@@ -86,6 +87,12 @@ function historicalTerminalFailure(mod, env, doc, runId, windowNumber, promptVer
     terminal: true,
     failureStage: "semantic-output",
     detail: HISTORICAL_DETAIL_SENTINEL,
+    modelOutput: {
+      global_rules: "malformed-terminal-fixture",
+      cross_references: [],
+      ambiguities: [],
+      unverifiable_from_browser: [],
+    },
   };
 }
 

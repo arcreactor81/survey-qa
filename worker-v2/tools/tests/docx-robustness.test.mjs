@@ -47,6 +47,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import * as esbuild from "esbuild";
 import { assert, assertEq, loadWorker, suite, test, REPO_ROOT } from "../testkit.mjs";
 import { SUITES, scoreSuite } from "../../../test-suite/docx-robustness/run-harness-v2.mjs";
 
@@ -65,6 +66,158 @@ const readOut = async (dir, name) => {
   const doc = parseDocxBlocks(fixture(dir, name));
   return { doc, text: annotate(doc.blocks) };
 };
+
+let promptsModule = null;
+async function prompts() {
+  if (promptsModule) return promptsModule;
+  const built = await esbuild.build({
+    entryPoints: [join(REPO_ROOT, "worker-v2", "src", "extract", "prompts.ts")],
+    bundle: true,
+    format: "esm",
+    platform: "neutral",
+    target: "es2022",
+    write: false,
+  });
+  const source = built.outputFiles[0].text;
+  promptsModule = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+  return promptsModule;
+}
+
+const between = (text, open, close) => {
+  const prefix = `${open}\n`;
+  const start = text.indexOf(prefix);
+  const end = text.indexOf(`\n${close}`, start + prefix.length);
+  assert(start >= 0 && end > start, `missing bounded prompt payload: ${open}`);
+  return text.slice(start + prefix.length, end);
+};
+
+suite("MODEL SOURCE JSONL — exact text and structural metadata share one seam", () => {
+  test("multiline source survives JSON transport exactly; the legacy display surface is a counterexample", async () => {
+    const mod = await parser();
+    const text = "First line\r\nSecond \quoted\ line \\ path\nThird line";
+    const semanticSpans = [{
+      role: "programming-logic",
+      profile: "shop-direct-grey-programming/1.0.0",
+      runSpans: 2,
+    }];
+    const blocks = [{
+      blockId: "b0042",
+      kind: "table-cell",
+      text,
+      origin: "footnote 7",
+      section: "Routing",
+      tableId: "t0003",
+      coords: { row: 3, col: 2, rowHeader: "Segment", colHeader: "Rule" },
+      sourceSubrole: "comment-proposal",
+      semanticSpans,
+    }, {
+      blockId: "b0043",
+      kind: "paragraph",
+      text: "A plain counterexample remains plain.",
+      origin: "body",
+      section: null,
+      tableId: null,
+      coords: null,
+      semanticSpans: [],
+    }];
+
+    const jsonl = mod.encodeSourceBlocksJsonl(blocks);
+    const physicalLines = jsonl.split("\n");
+    assertEq(physicalLines.length, blocks.length, "embedded source newlines escaped across JSONL rows");
+    assert(jsonl.includes("\\r\\n") && jsonl.includes("\\nThird line"), "newline escapes are absent");
+    assert(!jsonl.includes("\r"), "a raw CR split the compact transport");
+
+    const decoded = physicalLines.map((line) => JSON.parse(line));
+    assertEq(decoded[0].text, text, "JSON decoding did not restore SourceBlock.text exactly");
+    assertEq(decoded[1].text, blocks[1].text);
+    assertEq(decoded[0].block_id, "b0042");
+    assertEq(decoded[0].kind, "table-cell");
+    assertEq(decoded[0].origin, "footnote 7");
+    assertEq(decoded[0].section, "Routing");
+    assertEq(decoded[0].table_id, "t0003");
+    assertEq(JSON.stringify(decoded[0].coords), JSON.stringify(blocks[0].coords));
+    assertEq(decoded[0].source_subrole, "comment-proposal");
+    assertEq(JSON.stringify(decoded[0].semantic_spans), JSON.stringify(semanticSpans));
+    assertEq(decoded[1].source_subrole, null, "legacy-optional subrole is explicit, not omitted");
+    assertEq(
+      JSON.stringify(Object.keys(decoded[0])),
+      JSON.stringify([
+        "block_id", "text", "kind", "origin", "section", "table_id", "coords",
+        "source_subrole", "semantic_spans",
+      ]),
+      "the JSONL row contract drifted",
+    );
+
+    assert(
+      !mod.annotate([blocks[0]]).includes(text),
+      "counterproof failed: the old inline display unexpectedly retained the raw multiline source",
+    );
+  });
+
+  test("A, B, and sweep prompts carry the same parseable lossless JSONL contract", async () => {
+    const mod = await parser();
+    const p = await prompts();
+    const block = {
+      blockId: "b0099",
+      kind: "paragraph",
+      text: "Keep this line.\nAnd this exact second line.",
+      origin: "body",
+      section: "Closing",
+      tableId: null,
+      coords: null,
+      sourceSubrole: null,
+      semanticSpans: [],
+    };
+    const jsonl = mod.encodeSourceBlocksJsonl([block]);
+
+    assertEq(p.PROMPT_VERSION_A, "v2-extract-pass-a/1.8.0");
+    assertEq(p.PROMPT_VERSION_B, "v2-extract-pass-b/1.5.0");
+    for (const system of [p.SYSTEM_A, p.SYSTEM_B]) {
+      assert(system.includes('after decoding a row, its "text" value is the exact source string'));
+      assert(system.includes('"source_subrole"') && system.includes('"semantic_spans"'));
+      assert(!system.includes("Every block you are shown is prefixed"), "old display convention survived");
+    }
+    assert(p.SYSTEM_B.includes('"table_id" and "coords" identify a cell\'s structural position only'));
+    assert(p.SYSTEM_B.includes("surface the ambiguity instead of guessing"));
+    assert(!p.SYSTEM_B.includes("headers are what say which question"), "invented header authority survived");
+
+    const a = p.userMessageA("ignored.docx", jsonl, "window 1 of 1 (b0099–b0099)");
+    const aPayload = between(
+      a,
+      "===== SOURCE BLOCKS JSONL (one object per physical line) =====",
+      "===== END SOURCE BLOCKS JSONL =====",
+    );
+    assertEq(JSON.parse(aPayload).text, block.text);
+
+    const b = p.userMessageB("ignored.docx", "B-c1", jsonl, jsonl, [block.blockId]);
+    const bPayload = between(
+      b,
+      "===== YOUR SOURCE BLOCKS JSONL — EXTRACT AND DISPOSITION THESE BLOCKS =====",
+      "===== END YOUR SOURCE BLOCKS JSONL =====",
+    );
+    const bContext = between(
+      b,
+      "===== CONTEXT SOURCE BLOCKS JSONL — DO NOT EMIT OBLIGATIONS OR DISPOSITIONS FOR THESE BLOCKS =====",
+      "===== END CONTEXT SOURCE BLOCKS JSONL =====",
+    );
+    assertEq(JSON.parse(bPayload).text, block.text);
+    assertEq(JSON.parse(bContext).text, block.text);
+
+    const sweep = p.userMessageSweep("ignored.docx", "B-s1", jsonl, jsonl, [block.blockId]);
+    const sweepPayload = between(
+      sweep,
+      "===== UNACCOUNTED SOURCE BLOCKS JSONL =====",
+      "===== END UNACCOUNTED SOURCE BLOCKS JSONL =====",
+    );
+    const sweepContext = between(
+      sweep,
+      "===== CONTEXT SOURCE BLOCKS JSONL — DO NOT DISPOSITION THESE =====",
+      "===== END CONTEXT SOURCE BLOCKS JSONL =====",
+    );
+    assertEq(JSON.parse(sweepPayload).text, block.text);
+    assertEq(JSON.parse(sweepContext).text, block.text);
+  });
+});
 
 /**
  * THE TEN PROBES THAT STILL FAIL ON THE FROZEN CORPUS, BY IDENTITY.

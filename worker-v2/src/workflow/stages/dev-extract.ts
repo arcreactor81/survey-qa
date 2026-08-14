@@ -57,6 +57,7 @@ import {
 import {
   passACrossWindowSupplementsForSeal,
 } from "../../extract/cross-window-limitations";
+import { PASS_A_PRIMARY_GROUNDING_SUPPLEMENT_KIND } from "../../../shared/pass-a-grounding-limitations.mjs";
 import {
   DOCUMENT_SEMANTICS_NONE,
   isDocumentSemanticsProfile,
@@ -422,6 +423,7 @@ async function runExtraction(
           facetInstances: merged.facetInstances,
           contractSupplements: sealedSupplements,
           extraction: {
+            primaryGroundingLimitationsVersion: PASS_A_PRIMARY_GROUNDING_SUPPLEMENT_KIND,
             passAHash: passA.value.hash,
             passBHash: passB.value.hash,
             sourceLedgerHash: consolidated.value.ledgerHash,

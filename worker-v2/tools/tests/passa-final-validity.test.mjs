@@ -127,6 +127,20 @@ async function putPassB(m, env, runId) {
   }));
 }
 
+function primarySourceRows(user) {
+  const startMarker = "===== SOURCE BLOCKS JSONL (one object per physical line) =====";
+  const endMarker = "===== END SOURCE BLOCKS JSONL =====";
+  const start = user.indexOf(startMarker);
+  const end = user.indexOf(endMarker, start + startMarker.length);
+  assert(start >= 0 && end > start, "the primary prompt exposes one bounded JSONL source section");
+  return user
+    .slice(start + startMarker.length, end)
+    .trim()
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line));
+}
+
 function stubProvider({
   failed = new Set(), failedStatus = 502, emitRules = true, grokFallback = false,
   mutatePrimary = (value) => value,
@@ -141,14 +155,10 @@ function stubProvider({
     requests.push({ window, model: body.model });
     if (grokFallback && body.model === "grok-4.6") return new Response("unavailable", { status: 502 });
     if (failed.has(window)) return new Response("unavailable", { status: failedStatus });
-    const ids = [...new Set([...user.matchAll(/\[(b\d{4})\]/g)].map((row) => row[1]))];
-    const firstAnnotatedLine = ids.length === 0
-      ? ""
-      : user.split("\n").find((line) => line.startsWith(`[${ids[0]}]`)) ?? "";
-    let exactQuote = firstAnnotatedLine.replace(/^\[b\d{4}\]\s*/, "");
-    if (exactQuote.startsWith("(") && exactQuote.includes(") ")) {
-      exactQuote = exactQuote.slice(exactQuote.lastIndexOf(") ") + 2);
-    }
+    const sourceRows = primarySourceRows(user);
+    const ids = [...new Set(sourceRows.map((row) => String(row.block_id)))];
+    const exactQuote = String(sourceRows[0]?.text ?? "");
+    assert(ids.length > 0 && exactQuote.length > 0, "the fixture reads exact source authority from JSONL");
     const rules = [];
     if (emitRules) rules.push({
       id: "A-w" + window, construct: "instruction", scope: "survey", quantifier: "every",
@@ -452,13 +462,17 @@ test("the full Workflow terminalizes synthesis wire overflow before purchase and
     const cp = (await m.checkpoint.loadCheckpoint(env, ctx.runId)).checkpoint;
     assertEq(
       cp.completion.reasonCode,
-      "extraction-pass-a-pass-a-synthesis-failure",
+      "extraction-model-input-wire-ceiling-exceeded",
       `synthesis overflow reason; detail=${cp.error}`,
     );
     assertEq(
       cp.error,
-      "Document reading stopped under the named safeguard extraction-pass-a-pass-a-synthesis-failure.",
-      "wire-limit internals remain retained evidence rather than public status text",
+      "A document-reading unit exceeded the configured safe input limit; this refusal issued no new credential lookup or provider request.",
+      "the exact public wire-limit reason survives the Workflow stop",
+    );
+    assert(
+      !cp.error.includes("extraction-pass-a-pass-a-synthesis-failure"),
+      "the legacy generic synthesis reason is not public status text",
     );
     assert(!cp.error.includes("PASS_A_SYNTHESIS_REQUEST_TOO_LARGE"), "raw wire-limit detail is not public status text");
     assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "a")), null);
