@@ -14,7 +14,7 @@ const MAX = "a self-consistent receipt digest still cannot understate max base o
 const ORDER = "integrated pass-A stage rejects bad pricing before Secrets Store and fetch";
 const IDENTITY = "source receipt tiers threshold and max all invalidate route and contract reuse identity";
 
-const RATE_GATE_THEN_KEY = [
+const RATE_GATE_THEN_PASS_A = [
   "  try {",
   "    await grokRateAttestation(env);",
   "  } catch (err) {",
@@ -23,15 +23,31 @@ const RATE_GATE_THEN_KEY = [
   '      `${err instanceof Error ? err.message : String(err)}. No Grok request was issued.`,',
   "    ));",
   "  }",
-  "  // Validate the closed cost policy before Secrets Store get(). A missing or malformed",
-  "  // price binding is a zero-I/O configuration refusal, not permission to touch a credential.",
-  '  const credential = await credentialCheck(env, "grok");',
-  "  if (credential) return settled(credential as StageResult<PassSummary>);",
+  "  // `runPassA` serializes and checks every possible primary body before its provider client",
+  "  // resolves a secret; synthesis does the same once its retained candidate context exists.",
+  "  // A missing binding therefore surfaces only after the no-purchase wire boundary has run.",
+  "  let result: Awaited<ReturnType<typeof runPassA>>;",
+  "  try {",
+  "    result = await runPassA(env, runId, doc, documentName, beat, options, onUnitStart);",
+  "  } catch (error) {",
+  "    if (error instanceof MissingCredential) {",
+  '      return settled(missingCredentialResult("grok", error) as StageResult<PassSummary>);',
+  "    }",
+  "    throw error;",
+  "  }",
 ].join("\n");
 
-const KEY_THEN_RATE_GATE = [
-  '  const credential = await credentialCheck(env, "grok");',
-  "  if (credential) return settled(credential as StageResult<PassSummary>);",
+const PASS_A_THEN_RATE_GATE = [
+  "  // MUTANT: Pass A may resolve its purchase credentials before the rate policy gate.",
+  "  let result: Awaited<ReturnType<typeof runPassA>>;",
+  "  try {",
+  "    result = await runPassA(env, runId, doc, documentName, beat, options, onUnitStart);",
+  "  } catch (error) {",
+  "    if (error instanceof MissingCredential) {",
+  '      return settled(missingCredentialResult("grok", error) as StageResult<PassSummary>);',
+  "    }",
+  "    throw error;",
+  "  }",
   "  try {",
   "    await grokRateAttestation(env);",
   "  } catch (err) {",
@@ -40,7 +56,6 @@ const KEY_THEN_RATE_GATE = [
   '      `${err instanceof Error ? err.message : String(err)}. No Grok request was issued.`,',
   "    ));",
   "  }",
-  "  // MUTANT: credential was resolved before the rate policy",
 ].join("\n");
 
 await runMutantSuite({
@@ -92,8 +107,8 @@ await runMutantSuite({
       name: "stage resolves the secret before validating pricing",
       breaks: "a malformed pricing policy performs credential I/O before its zero-I/O refusal",
       file: STAGE,
-      find: RATE_GATE_THEN_KEY,
-      replace: KEY_THEN_RATE_GATE,
+      find: RATE_GATE_THEN_PASS_A,
+      replace: PASS_A_THEN_RATE_GATE,
       kills: [ORDER],
     },
     {
