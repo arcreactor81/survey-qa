@@ -78,7 +78,8 @@ function Resolve-ExactRealDirectory([string] $Directory, [string] $Label) {
     throw "$Label directory is not a real non-reparse directory"
   }
   $Lexical = [IO.Path]::GetFullPath($Item.FullName)
-  $RealOutput = @(& $Node -e 'const fs = require("node:fs"); process.stdout.write(fs.realpathSync.native(process.argv[1]));' $Lexical)
+  $RealScript = "const fs = require('node:fs'); process.stdout.write(fs.realpathSync.native(process.argv[1]));"
+  $RealOutput = @(& $Node -e $RealScript $Lexical)
   $NativeExit = $LASTEXITCODE
   if ($NativeExit -ne 0 -or $RealOutput.Count -ne 1 -or
       [string]::IsNullOrWhiteSpace([string] $RealOutput[0])) {

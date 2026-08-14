@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -228,6 +229,15 @@ function deployJsonValidationFunctions(source) {
   const end = source.indexOf("\n$MutationWatchdogProperties = @(", start);
   if (start < 0 || end <= start) {
     throw new Error("DEPLOY canonical JSON validation function block is missing");
+  }
+  return source.slice(start, end);
+}
+
+function deployOfflineTempFunction(source) {
+  const start = source.indexOf("function Resolve-ExactRealDirectory(");
+  const end = source.indexOf("\n$Dirty =", start);
+  if (start < 0 || end <= start) {
+    throw new Error("DEPLOY canonical offline temp function is missing");
   }
   return source.slice(start, end);
 }
@@ -1296,6 +1306,33 @@ suite("MUTATION EXECUTION CONTRACT — exact guards and closed release census", 
       const mutant = deploy.replaceAll(token, "");
       assert(mutant !== deploy, `runbook fixture is missing offline temp token ${token}`);
       expectThrow(() => auditOfflineTempRunbook(mutant), /offline temp|missing/u);
+    }
+
+    if (process.platform === "win32") {
+      const root = realpathSync.native(mkdtempSync(path.join(realpathSync.native(os.tmpdir()), "deploy-offline-temp-")));
+      try {
+        const script = `$ErrorActionPreference = "Stop"\n` +
+          `$Node = ${powerShellSingleQuotedLiteral(process.execPath)}\n` +
+          `${deployOfflineTempFunction(deploy)}\n` +
+          `$Expected = ${powerShellSingleQuotedLiteral(root)}\n` +
+          `$Actual = Resolve-ExactRealDirectory $Expected "test offline temp"\n` +
+          `if ($Actual -cne $Expected) { throw "offline temp helper changed the canonical path" }\n` +
+          `Write-Output "OFFLINE_TEMP_HELPER_OK"\n`;
+        const run = spawnSync(
+          powershellPath(),
+          ["-NoProfile", "-NonInteractive", "-Command", script],
+          { cwd: WORKER_ROOT, encoding: "utf8", timeout: 20000, windowsHide: true },
+        );
+        assertEq(
+          run.status,
+          0,
+          `DEPLOY offline temp helper failed: stderr=${JSON.stringify(run.stderr)}; ` +
+            `stdout=${JSON.stringify(run.stdout)}; error=${String(run.error ?? "none")}`,
+        );
+        assert(run.stdout.includes("OFFLINE_TEMP_HELPER_OK"), "the executable offline temp helper did not reach success");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     }
   });
 
