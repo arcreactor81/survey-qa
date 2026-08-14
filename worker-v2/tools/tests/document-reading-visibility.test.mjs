@@ -294,6 +294,59 @@ suite("durable questionnaire-reading visibility", () => {
     assert(!Object.hasOwn(legacyBody, "documentReading"), "no stored/extraction facts means the optional field stays omitted");
   });
 
+  test("a stopped extraction reconstructs after reporting while a later test failure does not", async () => {
+    const mod = await worker();
+    const stoppedEnv = testEnv();
+    const stopped = await seedRun(mod, stoppedEnv);
+    await mod.checkpoint.updateCheckpoint(stoppedEnv, stopped.runId, (draft) => {
+      mod.checkpoint.setPhase(draft, "extracting", "stopped", "PASS_A_WINDOW_FAILURES");
+      mod.checkpoint.setPhase(draft, "reporting", "complete");
+      draft.phase = "reporting";
+      draft.completion.test = "failed";
+      draft.completion.report = "complete";
+      draft.completion.reasonCode = "PASS_A_WINDOW_FAILURES";
+    }, { progressed: true });
+    const stoppedResponse = await mod.apiRuns.getStatus(
+      new Request("https://fixture.invalid/api/v2/runs/" + stopped.runId + "/status"),
+      stoppedEnv,
+      stopped.runId,
+    );
+    const stoppedBody = await stoppedResponse.json();
+    assertEq(stoppedResponse.status, 200);
+    assertEq(
+      stoppedBody.documentReading.state,
+      "unavailable",
+      "a terminal extraction remains visible after the workflow advances to reporting",
+    );
+    assert(
+      stoppedBody.documentReading.limitations.some(
+        (entry) => entry.code === "document-reading-partition-unavailable",
+      ),
+      "missing legacy artifacts are named rather than silently omitting the reading card",
+    );
+
+    const laterEnv = testEnv();
+    const later = await seedRun(mod, laterEnv);
+    await mod.checkpoint.updateCheckpoint(laterEnv, later.runId, (draft) => {
+      mod.checkpoint.setPhase(draft, "extracting", "complete");
+      mod.checkpoint.setPhase(draft, "reporting", "complete");
+      draft.phase = "reporting";
+      draft.completion.test = "failed";
+      draft.completion.report = "complete";
+      draft.completion.reasonCode = "execution-test-failed";
+    }, { progressed: true });
+    const laterResponse = await mod.apiRuns.getStatus(
+      new Request("https://fixture.invalid/api/v2/runs/" + later.runId + "/status"),
+      laterEnv,
+      later.runId,
+    );
+    const laterBody = await laterResponse.json();
+    assert(
+      !Object.hasOwn(laterBody, "documentReading"),
+      "a later browser-test failure must not be relabeled as a document-reading failure",
+    );
+  });
+
   test("INTEGRATED CRASH: a durable current unit is stopped and named before any artifact exists", async () => {
     const mod = await worker();
     const env = testEnv();

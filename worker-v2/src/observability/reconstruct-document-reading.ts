@@ -56,8 +56,9 @@ export async function resolveDocumentReading(
   if (stored) return { progress: withCheckpointUsage(stored, cp.usage), reconstructed: false };
 
   const extracting = cp.phases.find((phase) => phase.name === "extracting");
-  const terminal = extracting?.state === "stopped" || cp.completion.test === "failed";
-  if (!terminal || cp.phase !== "extracting") return { progress: null, reconstructed: false };
+  const terminalExtraction = extracting?.state === "stopped" ||
+    (cp.phase === "extracting" && cp.completion.test === "failed");
+  if (!terminalExtraction) return { progress: null, reconstructed: false };
 
   try {
     const envelope = await getEnvelope(env, runId);
