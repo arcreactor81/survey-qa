@@ -812,6 +812,67 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
     } finally {
       provider.restore();
     }
+
+    // The all-current control above is intentionally free to reconstruct before the immutable
+    // final-key collision. Prove the earlier occupancy guard is independently necessary: the same
+    // invalid whole-pass bytes in a fresh store with NO subordinate B artifacts must stop before a
+    // cache miss can authorize paid work or write new evidence.
+    const missingEnv = sliceEnv({
+      EXTRACT_CHUNK_MAX_BLOCKS: "999", EXTRACT_CHUNK_CHARS: "999999",
+      EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999", EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    });
+    await m.checkpoint.createCheckpoint(
+      missingEnv,
+      m.checkpoint.initialCheckpoint(missingEnv, runId, "standard", false),
+    );
+    const missingFence = await m.checkpoint.claimOwnership(missingEnv, runId, runId, 0);
+    await missingEnv.EVIDENCE.put(documentKey, documentBytes);
+    const missingPassAHash = await d51CompletePassA(
+      m, missingEnv, runId, documentKey, documentSha256, missingFence,
+    );
+    await d51Put(missingEnv, m.keys.extractionPassKey(runId, "b"), staleWhole);
+    const occupiedBytes = await missingEnv.EVIDENCE
+      .get(m.keys.extractionPassKey(runId, "b"))
+      .then((object) => object.text());
+    const evidenceKeysBefore = [...missingEnv.EVIDENCE._store.keys()].sort();
+    assertEq(await missingEnv.EVIDENCE.get(d51ChunkKey(m, runId)), null, "the subordinate cache starts absent");
+
+    const missingProvider = stubProvider();
+    try {
+      const missingOutcome = await m.extractStage.stagePassBSlice(
+        missingEnv,
+        runId,
+        documentKey,
+        "questionnaire.docx",
+        missingFence,
+        async () => {},
+        {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+        missingPassAHash,
+        documentSha256,
+      );
+      assertEq(missingOutcome.result.state, "not-evaluated", "occupied invalid authority is terminal before cache rebuild");
+      assertEq(missingOutcome.result.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+      assertEq(missingOutcome.slice.terminalFailure, true, "the refusal is a named terminal slice");
+      assertEq(missingProvider.requests.length, 0, "occupied invalid authority authorizes no replacement purchase");
+      assertEq(
+        await missingEnv.EVIDENCE.get(d51ChunkKey(m, runId)),
+        null,
+        "the absent subordinate remains absent",
+      );
+      assertEq(
+        JSON.stringify([...missingEnv.EVIDENCE._store.keys()].sort()),
+        JSON.stringify(evidenceKeysBefore),
+        "the refusal writes no chunk, sweep, history, or conflict evidence",
+      );
+      assertEq(
+        await missingEnv.EVIDENCE.get(m.keys.extractionPassKey(runId, "b")).then((object) => object.text()),
+        occupiedBytes,
+        "the occupied invalid completion bytes remain exact",
+      );
+    } finally {
+      missingProvider.restore();
+    }
   }
 });
 

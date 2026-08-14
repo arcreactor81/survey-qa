@@ -287,8 +287,8 @@ await runMutantSuite({
     {
       name: "an occupied invalid Pass-B completion is treated as rebuildable cache",
       breaks:
-        "immutable current-key completion authority is bypassed, so paid units can be re-run and an old " +
-        "whole-pass key can be laundered or overwritten",
+        "immutable current-key completion authority is bypassed, so missing subordinate units can be " +
+        "re-purchased and written underneath an occupied invalid whole-pass key",
       file: STAGE,
       find:
         'const already = await readPassPayload(env, runId, "b", expectedParserVersion, documentName, doc);\n' +
