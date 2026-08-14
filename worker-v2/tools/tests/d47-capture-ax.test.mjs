@@ -35,7 +35,10 @@ const screen = () => ({
   validationMessages: [],
   readerLimitations: [],
   counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0 },
-  screenSignature: "sig-d47-q1",
+  // Deliberately 24 lowercase hex characters. A broken writer that copies capture content
+  // directly into `epoch_${...}` would still pass the closed-format regex below; the exact
+  // digest assertion must be what makes that raw-content leak counterexample fail.
+  screenSignature: "2026080912000000deadbeef",
 });
 
 const geometry = {
@@ -99,12 +102,13 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
     const mod = await worker();
     const env = testEnv();
     const runId = mod.ids.mintRunId();
-    const page = goodPage();
+    const rendered = screen();
+    const page = goodPage(rendered);
 
     const epoch = await mod.driver.captureScreenEpoch(
       page,
       cap(env, runId),
-      screen(),
+      rendered,
       "before",
       3,
       { width: 1280, height: 900 },
@@ -112,7 +116,30 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
 
     assertEq(epoch.kind, "v2-screen-capture-epoch/1.0.0");
     assert(/^epoch_[a-f0-9]{24}$/.test(epoch.epochId), `epoch id is not opaque: ${epoch.epochId}`);
-    assert(!epoch.epochId.includes("sig-d47") && !epoch.epochId.includes("2026"), `epoch id leaked capture content: ${epoch.epochId}`);
+    const identityInputs = [
+      runId,
+      ATTEMPT_ID,
+      PATH_ID,
+      3,
+      "before",
+      rendered.at,
+      rendered.screenSignature,
+    ];
+    const expectedDigest = await mod.hash.sha256Hex(JSON.stringify(identityInputs));
+    assertEq(
+      epoch.epochId,
+      `epoch_${expectedDigest.slice(0, 24)}`,
+      "epoch identity must be the reproducible SHA-256 binding of the canonical capture identity inputs",
+    );
+    const rawLeakCounterexample = `epoch_${rendered.screenSignature}`;
+    assert(
+      /^epoch_[a-f0-9]{24}$/.test(rawLeakCounterexample),
+      "the leak counterexample must pass the format check or the exact digest check is vacuous",
+    );
+    assert(
+      epoch.epochId !== rawLeakCounterexample,
+      "a hex-valid capture signature crossed the epoch identity boundary without hashing",
+    );
     assertEq(epoch.stepIndex, 3);
     assertEq(epoch.slot, "before");
     assertEq(epoch.scope.kind, "viewport");

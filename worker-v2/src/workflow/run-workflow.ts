@@ -114,7 +114,11 @@ import {
 } from "./gates";
 import {
   extractionBudgetExceeded,
-  loadMerged,
+  documentSourceAuthorityDetail,
+  extractionDocumentName,
+  verifyDocumentSourceBytes,
+  validateExtractionSealAuthority,
+  DOCUMENT_SOURCE_AUTHORITY_INVALID,
   stageConsolidate,
   stagePassASlice,
   stagePassBSlice,
@@ -122,6 +126,11 @@ import {
   type PassSummary,
 } from "./stages/extract";
 import { passAStepTimeoutMs, passAWaveBudgetMs, type PassASlice } from "../extract/pass-a";
+import {
+  PASS_A_CROSS_WINDOW_LIMITATION_REFUSAL,
+  PassACrossWindowLimitationRefusal,
+  passACrossWindowSupplementsForSeal,
+} from "../extract/cross-window-limitations";
 import { passBStepTimeoutMs, passBWaveBudgetMs, type PassBSlice } from "../extract/pass-b";
 import { deepseekPassBIdentity } from "../llm/deepseek";
 import { grokFlashRouteIdentity } from "../llm/grok";
@@ -328,6 +337,61 @@ const EXTRACTION_PASS_A_WAVES_EXHAUSTED = "extraction-pass-a-waves-exhausted";
  * because nothing was even read all the way through.
  */
 const EXTRACTION_WAVES_EXHAUSTED = "extraction-pass-b-waves-exhausted";
+
+/** Truthful terminal detail for either unfinished primary windows or the separate synthesis. */
+export function passAWavesExhaustedDetail(u: PassASlice, maxPassAWaves: number): string {
+  if (u.windowsRemaining === 0 && u.synthesisState === "pending") {
+    return (
+      `extraction pass A used all ${maxPassAWaves} of its wave step(s) (EXTRACT_PASS_A_MAX_WAVES). ` +
+      `All ${u.windowsLanded} of ${u.windowsTotal} primary window(s) landed, but their separately bounded ` +
+      `cross-window reconciliation is still owed (synthesisState=${u.synthesisState}; ` +
+      `synthesisIssued=${u.synthesisIssued ?? 0} in the final wave). Nothing was sealed: independently ` +
+      `reading every window does not discover relationships between candidates across windows. Allocate at ` +
+      `least one additional Pass-A wave so the reconciliation gets its own issue-authorized step.`
+    );
+  }
+  return (
+    `extraction pass A used all ${maxPassAWaves} of its wave step(s) (EXTRACT_PASS_A_MAX_WAVES) and ` +
+    `still owes ${u.windowsRemaining} of ${u.windowsTotal} window(s). ${u.windowsLanded} window(s) ` +
+    `landed. Nothing was sealed, because a contract over a half-read document would claim a ` +
+    `denominator the document never approved - and pass A's whole purpose is the survey-scoped rule ` +
+    `that only an unread window may state. Raise EXTRACT_PASS_A_MAX_WAVES or ` +
+    `EXTRACT_PASS_A_WAVE_BUDGET_MS for a document this size.`
+  );
+}
+
+export interface ExtractionPassRefusal {
+  reasonCode: string;
+  detail: string;
+}
+
+/**
+ * Convert a completed pass's explicit non-result into the run-level terminal vocabulary.
+ * An unfinished pass is handled by wave exhaustion before this helper is called, so this
+ * never turns resumable work into a terminal run.
+ */
+export function extractionPassRefusal(
+  pass: "a" | "b",
+  result: StageResult<unknown>,
+): ExtractionPassRefusal | null {
+  if (result.state === "evaluated") return null;
+  if (result.reason === DOCUMENT_SOURCE_AUTHORITY_INVALID) {
+    return {
+      reasonCode: DOCUMENT_SOURCE_AUTHORITY_INVALID,
+      detail:
+        `extraction pass ${pass.toUpperCase()} refused changed or unbound document bytes: ${result.detail}`,
+    };
+  }
+  const normalized = result.reason
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "not-evaluated";
+  return {
+    reasonCode: `extraction-pass-${pass}-${normalized}`,
+    detail: `extraction pass ${pass.toUpperCase()} did not authorize continuation (${result.reason}): ${result.detail}`,
+  };
+}
 const NOT_IMPLEMENTED_VERIFICATION = "verification-not-implemented";
 const NOT_IMPLEMENTED_ADJUDICATION = "adjudication-not-implemented";
 const TEST_AXIS_NEVER_CLOSED = "test-axis-never-closed";
@@ -536,6 +600,31 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       });
       reportingFence = fence;
 
+      // The Workflow event is transport, never source authority. Bind both the object key and
+      // SHA to the durable envelope before reuse, extraction, or a resumed model wave can read
+      // anything. All later source checks consume this durable projection rather than `p`.
+      const documentInput = await step.do("bind-document-source-input", async () => {
+        const envelope = await getEnvelope(this.env, runId);
+        if (!envelope) {
+          throw new Error(
+            "WORKFLOW_INPUT_INVALID[DOCUMENT_SOURCE]: run envelope is missing; document authority cannot be verified",
+          );
+        }
+        const durable = {
+          documentKey: envelope.input.documentKey,
+          documentSha256: envelope.input.documentSha256,
+        };
+        if (
+          p.documentKey !== durable.documentKey ||
+          p.documentSha256 !== durable.documentSha256
+        ) {
+          throw new Error(
+            "WORKFLOW_INPUT_INVALID[DOCUMENT_SOURCE_MISMATCH]: workflow document key/SHA do not exactly match the run envelope",
+          );
+        }
+        return durable;
+      });
+
       // Bind the document-format convention to both durable authorities before reading or
       // reusing any extraction artifact. Legacy absence is neutral; an unknown spelling or
       // an envelope/payload mismatch is a named refusal, never an invitation to guess.
@@ -687,7 +776,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       const reuseSnapshot = await step.do("snapshot-contract-reuse-inputs", async () => {
         if (contractSource.mode !== "extract") return null;
         const inputs: ExtractionInputs = {
-          documentSha256: p.documentSha256,
+          documentSha256: documentInput.documentSha256,
           docxParserVersion: docxBlocksVersion(documentSemanticsProfile),
           documentSemanticsProfile,
           promptVersionA: PROMPT_VERSION_A,
@@ -715,7 +804,23 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // not look at all: it already has a denominator and §0 forbids minting a second.
       const reuse = resumed.contractRevisionId || reuseDigest === null
         ? { adopted: false as const }
-        : await this.adoptReusableContract(step, runId, reuseDigest, fence);
+        : await this.adoptReusableContract(
+            step,
+            runId,
+            reuseDigest,
+            fence,
+            {
+              documentKey: documentInput.documentKey,
+              documentSha256: documentInput.documentSha256,
+              documentSemanticsProfile,
+            },
+          );
+      if ("sourceAuthorityInvalid" in reuse && reuse.sourceAuthorityInvalid) {
+        await this.stopAndReportDocumentSourceAuthority(
+          step, runId, fence, reuse.sourceAuthorityInvalid,
+        );
+        return;
+      }
 
       if (resumed.contractRevisionId && resumed.executionCases !== null) {
         // Already sealed by the instance we are replacing. Adopt it by id; re-sealing
@@ -761,25 +866,51 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           await beat(this.env, runId, "validating human-authored requirements against document bytes", "human-contract");
         });
 
-        const humanValidation = await step.do("validate-human-requirements", EXTRACT_POLICY, async () => {
+        const humanValidationOutcome = await step.do("validate-human-requirements", EXTRACT_POLICY, async () => {
           await beat(this.env, runId, "binding every human-authored source span to the submitted DOCX", "human-validate");
-          return await stageValidateHumanRequirements(
-            this.env,
-            runId,
-            p.documentKey,
-            p.documentSha256,
-            contractSource.humanRequirementsKey,
-            contractSource.humanRequirementsSha256,
-            documentSemanticsProfile,
-          );
+          try {
+            return {
+              kind: "ok" as const,
+              value: await stageValidateHumanRequirements(
+                this.env,
+                runId,
+                documentInput.documentKey,
+                documentInput.documentSha256,
+                contractSource.humanRequirementsKey,
+                contractSource.humanRequirementsSha256,
+                documentSemanticsProfile,
+              ),
+            };
+          } catch (error) {
+            if (
+              error instanceof HumanRequirementsError &&
+              new Set([
+                "DOCUMENT_EXPECTED_HASH_INVALID",
+                "DOCUMENT_MISSING",
+                "DOCUMENT_TOO_LARGE",
+                "DOCUMENT_OBJECT_HASH_MISMATCH",
+                "DOCUMENT_UNREADABLE",
+              ]).has(error.code)
+            ) {
+              return { kind: "source-authority-invalid" as const, detail: error.message };
+            }
+            throw error;
+          }
         });
+        if (humanValidationOutcome.kind === "source-authority-invalid") {
+          await this.stopAndReportDocumentSourceAuthority(
+            step, runId, fence, humanValidationOutcome.detail,
+          );
+          return;
+        }
+        const humanValidation = humanValidationOutcome.value;
 
         const humanExpansion = await step.do("expand-human-requirements", EXTRACT_POLICY, async () => {
           await beat(this.env, runId, "materializing human-authored rows with the production floor expander", "human-expand");
           return await stageExpandHumanRequirements(
             this.env,
             runId,
-            p.documentSha256,
+            documentInput.documentSha256,
             p.locale,
             p.viewports,
             humanValidation.validationHash,
@@ -789,6 +920,18 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         });
 
         const sealOutcome = await step.do("seal-contract-revision", async () => {
+          try {
+            await verifyDocumentSourceBytes(
+              this.env,
+              documentInput.documentKey,
+              documentInput.documentSha256,
+            );
+          } catch (error) {
+            return {
+              sealed: false as const,
+              sourceAuthorityInvalid: documentSourceAuthorityDetail(error),
+            };
+          }
           const prepared = await loadPreparedHumanContract(this.env, runId, humanExpansion.preparedHash);
           if (!prepared) {
             throw new HumanRequirementsError(
@@ -796,7 +939,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               "validation and expansion completed but the prepared contract artifact is absent",
             );
           }
-          if (prepared.documentSha256 !== p.documentSha256.replace(/^sha256:/, "")) {
+          if (prepared.documentSha256 !== documentInput.documentSha256.replace(/^sha256:/, "")) {
             throw new HumanRequirementsError(
               "PREPARED_DOCUMENT_HASH_MISMATCH",
               "the prepared human contract is bound to different document bytes",
@@ -833,8 +976,8 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           const body: Omit<ContractRevision, "contractRevisionId"> = {
             schemaVersion: "v2-contract-revision/1.1.0",
             kind: "survey-qa-v2-contract-revision",
-            documentRevisionId: p.documentSha256,
-            documentSha256: p.documentSha256,
+            documentRevisionId: documentInput.documentSha256,
+            documentSha256: documentInput.documentSha256,
             sealedAt: new Date().toISOString(),
             requirements: prepared.requirements,
             facetInstances: prepared.facetInstances,
@@ -909,6 +1052,12 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           );
           return { sealed: true as const, contractRevisionId, contractHash, executionCases: d10.executionCases };
         });
+        if (!sealOutcome.sealed) {
+          await this.stopAndReportDocumentSourceAuthority(
+            step, runId, fence, sealOutcome.sourceAuthorityInvalid,
+          );
+          return;
+        }
         sealed = sealOutcome;
         if (sealOutcome.executionCases === 0) {
           await this.reportAndFinalize(step, runId, fence);
@@ -958,13 +1107,14 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           timeout: passAStepTimeoutMs(this.env),
         } as const;
         const passAWaveBudget = passAWaveBudgetMs(this.env);
-        const maxPassAWaves = Math.max(1, num(this.env.EXTRACT_PASS_A_MAX_WAVES, 10));
+        const maxPassAWaves = Math.max(1, num(this.env.EXTRACT_PASS_A_MAX_WAVES, 20));
 
         let passA: StageResult<PassSummary> = stageNotEvaluated<PassSummary>(
           "PASS_A_NEVER_RAN",
           "the pass A wave loop was configured with no waves at all, so the whole-document pass never ran",
         );
         let passAUnfinished: PassASlice | null = null;
+        let passATerminal = false;
 
         for (let wave = 0; wave < maxPassAWaves; wave++) {
           const outcome = await step.do(`extract-pass-a-wave-${wave}`, passAWavePolicy, async () => {
@@ -972,7 +1122,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             return await stagePassASlice(
               this.env,
               runId,
-              p.documentKey,
+              documentInput.documentKey,
               documentName(p),
               fence,
               async (msg) => {
@@ -980,12 +1130,19 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               },
               { budgetMs: passAWaveBudget },
               documentSemanticsProfile,
+              documentInput.documentSha256,
             );
           });
           passA = outcome.result;
           passAUnfinished = outcome.slice.done ? null : outcome.slice;
-          if (outcome.slice.done) break;
+          passATerminal = outcome.terminal;
+          if (outcome.terminal || outcome.slice.done) break;
         }
+
+        if (
+          passATerminal &&
+          await this.stopAndReportExtractionPassRefusal(step, runId, fence, "a", passA)
+        ) return;
 
         if (passAUnfinished) {
           // AN HONEST, NAMED STOP — identical in shape to the block pass's below, because
@@ -1002,13 +1159,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 d.contract.state = "unavailable";
                 d.completion.test = "failed";
                 d.completion.reasonCode = EXTRACTION_PASS_A_WAVES_EXHAUSTED;
-                d.error =
-                  `extraction pass A used all ${maxPassAWaves} of its wave step(s) (EXTRACT_PASS_A_MAX_WAVES) and ` +
-                  `still owes ${u.windowsRemaining} of ${u.windowsTotal} window(s). ${u.windowsLanded} window(s) ` +
-                  `landed. Nothing was sealed, because a contract over a half-read document would claim a ` +
-                  `denominator the document never approved — and pass A's whole purpose is the survey-scoped rule ` +
-                  `that only an unread window may state. Raise EXTRACT_PASS_A_MAX_WAVES or ` +
-                  `EXTRACT_PASS_A_WAVE_BUDGET_MS for a document this size.`;
+                d.error = passAWavesExhaustedDetail(u, maxPassAWaves);
               },
               { progressed: true, fence },
             );
@@ -1016,6 +1167,58 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           await this.reportAndFinalize(step, runId, fence);
           return;
         }
+
+        // A completed pass can still deliberately refuse authorization (for example when
+        // its fallback collapses the required provider-family independence). The step has
+        // succeeded and returned this state durably; stop and report instead of throwing it
+        // back across the retry boundary. No pass-B purchase is reachable after this return.
+        if (await this.stopAndReportExtractionPassRefusal(step, runId, fence, "a", passA)) return;
+        if (passA.state !== "evaluated") return;
+
+        // VALIDATE THE COVERAGE CEILING BEFORE BUYING PASS B. A multi-window Pass A that
+        // omits or malforms its candidate-dependence row is not a healthy zero-limitation
+        // result. Bind the row to the exact evaluated pass bytes now, then re-bind it again
+        // at seal time so cached Workflow state cannot outlive a replaced artifact.
+        const evaluatedPassAHash = passA.value.hash;
+        const passALimitationCheck = await step.do(
+          "validate-pass-a-cross-window-limitations",
+          async () => {
+            try {
+              const supplements = await passACrossWindowSupplementsForSeal(
+                this.env,
+                runId,
+                evaluatedPassAHash,
+              );
+              return { ok: true as const, supplements };
+            } catch (error) {
+              if (!(error instanceof PassACrossWindowLimitationRefusal)) throw error;
+              return {
+                ok: false as const,
+                reasonCode: PASS_A_CROSS_WINDOW_LIMITATION_REFUSAL,
+                detail: error.message,
+              };
+            }
+          },
+        );
+        if (!passALimitationCheck.ok) {
+          await step.do("stop-extract-pass-a-cross-window-limitation-invalid", async () => {
+            await updateCheckpoint(
+              this.env,
+              runId,
+              (d) => {
+                setPhase(d, "extracting", "stopped", passALimitationCheck.reasonCode);
+                d.contract.state = "unavailable";
+                d.completion.test = "failed";
+                d.completion.reasonCode = passALimitationCheck.reasonCode;
+                d.error = passALimitationCheck.detail;
+              },
+              { progressed: true, fence },
+            );
+          });
+          await this.reportAndFinalize(step, runId, fence);
+          return;
+        }
+        const passACrossWindowSupplements = passALimitationCheck.supplements;
 
         // -------------------------------------------------------------------
         // PASS B IS A FAN-OUT, AND A FAN-OUT DOES NOT FIT IN ONE STEP.
@@ -1060,7 +1263,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             return await stagePassBSlice(
               this.env,
               runId,
-              p.documentKey,
+              documentInput.documentKey,
               documentName(p),
               fence,
               async (msg) => {
@@ -1068,11 +1271,13 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               },
               { budgetMs: waveBudgetMs },
               documentSemanticsProfile,
+              evaluatedPassAHash,
+              documentInput.documentSha256,
             );
           });
           passB = outcome.result;
-          passBUnfinished = outcome.slice.done ? null : outcome.slice;
-          if (outcome.slice.done) break;
+          passBUnfinished = outcome.slice.done || outcome.slice.terminalFailure ? null : outcome.slice;
+          if (outcome.slice.done || outcome.slice.terminalFailure) break;
         }
 
         if (passBUnfinished) {
@@ -1107,6 +1312,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           return;
         }
 
+        if (await this.stopAndReportExtractionPassRefusal(step, runId, fence, "b", passB)) return;
+        if (passB.state !== "evaluated") return;
+        const evaluatedPassBHash = passB.value.hash;
+
         // MERGE + DIFF + LEDGER + FLOOR EXPANSION, deterministically, from the two
         // persisted payloads. No model call happens here, so the denominator this produces
         // is reproducible from the same two payloads by anyone who has them.
@@ -1121,17 +1330,33 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           const result = await stageConsolidate(
             this.env,
             runId,
-            p.documentKey,
-            p.documentSha256,
+            documentInput.documentKey,
+            documentInput.documentSha256,
             p.locale,
             p.viewports,
             documentSemanticsProfile,
+            documentName(p),
+            passA.value.hash,
+            evaluatedPassBHash,
           );
           if (result.state === "evaluated") {
             for (const line of result.value.diffSummary) console.log(`v2 ${runId} diff: ${line}`);
           }
           return result;
         });
+
+        // A source swap discovered at consolidation is the same terminal authority refusal as
+        // one discovered before either provider purchase. Do not project a not-evaluated ledger
+        // into generic gate failures: that would hide the violated source-byte invariant.
+        if (
+          consolidated.state !== "evaluated" &&
+          consolidated.reason === DOCUMENT_SOURCE_AUTHORITY_INVALID
+        ) {
+          await this.stopAndReportDocumentSourceAuthority(
+            step, runId, fence, consolidated.detail,
+          );
+          return;
+        }
 
         const ledger = projectLedger(consolidated);
         const diff = projectDiff(consolidated);
@@ -1223,28 +1448,78 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               "MERGED_ARTIFACT_HASH_MISMATCH: extraction gates passed without an evaluated consolidation result",
             );
           }
-          const merged = await loadMerged(this.env, runId, consolidated.value.mergedHash);
-          if (!merged) {
+          const sealAuthority = await validateExtractionSealAuthority(
+            this.env,
+            runId,
+            documentInput.documentKey,
+            documentInput.documentSha256,
+            documentSemanticsProfile,
+            documentName(p),
+            evaluatedPassAHash,
+            evaluatedPassBHash,
+            consolidated.value.mergedHash,
+          );
+          if (sealAuthority.kind === "invalid") {
             await updateCheckpoint(
               this.env,
               runId,
               (d) => {
-                setPhase(d, "extracting", "stopped", "merged-extraction-missing");
+                setPhase(d, "extracting", "stopped", sealAuthority.reason);
                 d.contract.state = "unavailable";
                 d.completion.test = "failed";
-                d.completion.reasonCode = "merged-extraction-missing";
-                d.error = "the gates passed but the merged extraction payload is not in storage; refusing to seal";
+                d.completion.reasonCode = sealAuthority.reason;
+                d.error = sealAuthority.detail;
               },
               { progressed: true, fence },
             );
-            return { sealed: false as const, unmet: ["mergedPayloadPresent:missing"] };
+            return { sealed: false as const, unmet: ["extractionSealAuthority:invalid"] };
+          }
+          const merged = sealAuthority.merged;
+
+          // RE-BIND AT THE WRITE BOUNDARY. The earlier durable validation prevents a bad
+          // payload from buying Pass B; this read prevents a cached validation result from
+          // sealing after the Pass-A object was replaced. The supplement itself carries
+          // this same hash as the provenance bridge to the exact nominated quote spans.
+          let sealedCrossWindowSupplements: string[];
+          try {
+            sealedCrossWindowSupplements = await passACrossWindowSupplementsForSeal(
+              this.env,
+              runId,
+              evaluatedPassAHash,
+            );
+            if (
+              JSON.stringify(sealedCrossWindowSupplements) !==
+              JSON.stringify(passACrossWindowSupplements)
+            ) {
+              throw new PassACrossWindowLimitationRefusal(
+                "durable validation result differs from the exact Pass-A bytes re-read at seal",
+              );
+            }
+          } catch (error) {
+            if (!(error instanceof PassACrossWindowLimitationRefusal)) throw error;
+            await updateCheckpoint(
+              this.env,
+              runId,
+              (d) => {
+                setPhase(d, "extracting", "stopped", PASS_A_CROSS_WINDOW_LIMITATION_REFUSAL);
+                d.contract.state = "unavailable";
+                d.completion.test = "failed";
+                d.completion.reasonCode = PASS_A_CROSS_WINDOW_LIMITATION_REFUSAL;
+                d.error = error.message;
+              },
+              { progressed: true, fence },
+            );
+            return {
+              sealed: false as const,
+              unmet: ["passACrossWindowLimitation:invalid"],
+            };
           }
 
           const body: Omit<ContractRevision, "contractRevisionId"> = {
             schemaVersion: "v2-contract-revision/1.0.0",
             kind: "survey-qa-v2-contract-revision",
-            documentRevisionId: p.documentSha256,
-            documentSha256: p.documentSha256,
+            documentRevisionId: documentInput.documentSha256,
+            documentSha256: documentInput.documentSha256,
             sealedAt: new Date().toISOString(),
             requirements: merged.requirements,
             // The deterministic floor expander materialized these from what the DOCUMENT
@@ -1252,11 +1527,11 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             // bound), never from what a run observed — a denominator that shrinks when
             // execution is missing hides the missing execution (D10).
             facetInstances: merged.facetInstances,
-            contractSupplements: [],
+            contractSupplements: sealedCrossWindowSupplements,
             extraction: {
               reuseInputsHash: `sha256:${reuseDigest!}`,
               passAHash: passA.state === "evaluated" ? passA.value.hash : "",
-              passBHash: passB.state === "evaluated" ? passB.value.hash : "",
+              passBHash: evaluatedPassBHash,
               sourceLedgerHash: ledger.state === "evaluated" ? ledger.value.hash : "",
               diffHash: diff.state === "evaluated" ? diff.value.hash : "",
               reviewMode,
@@ -2183,17 +2458,39 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
     runId: string,
     digest: string,
     fence: Fence,
+    sourceAuthority: {
+      documentKey: string;
+      documentSha256: string;
+      documentSemanticsProfile: DocumentSemanticsProfile;
+    },
   ): Promise<{
     adopted: boolean;
     contractRevisionId?: string;
     contractHash?: string;
     executionCases?: number;
+    sourceAuthorityInvalid?: string;
   }> {
     return await step.do("adopt-reusable-contract", async () => {
       const entry = await lookupReusableContract(this.env, digest);
       if (!entry) {
         await beat(this.env, runId, "no prior extraction of these exact inputs; extracting", "reuse-miss");
         return { adopted: false };
+      }
+
+      // Verify only after a hit: a miss has no authority to adopt and should not pay for an
+      // unrelated R2 read/ZIP parse. The verification remains INSIDE this durable callback so a
+      // source swap after envelope/input binding cannot race the actual adoption write.
+      try {
+        await verifyDocumentSourceBytes(
+          this.env,
+          sourceAuthority.documentKey,
+          sourceAuthority.documentSha256,
+        );
+      } catch (error) {
+        return {
+          adopted: false,
+          sourceAuthorityInvalid: documentSourceAuthorityDetail(error),
+        };
       }
 
       const revision = await getContractRevision(this.env, entry.contractRevisionId, {
@@ -2286,6 +2583,69 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         executionCases: d10.executionCases,
       };
     });
+  }
+
+  /**
+   * A named, reportable stop for source bytes that no longer bind the durable envelope.
+   * This is a policy refusal, not a retryable exception: no model, reuse, merge or seal work
+   * can repair a changed source inside the same run.
+   */
+  private async stopAndReportDocumentSourceAuthority(
+    step: WorkflowStep,
+    runId: string,
+    fence: Fence,
+    detail: string,
+  ): Promise<void> {
+    await step.do("stop-document-source-authority-invalid", async () => {
+      await updateCheckpoint(
+        this.env,
+        runId,
+        (d) => {
+          setPhase(d, "extracting", "stopped", DOCUMENT_SOURCE_AUTHORITY_INVALID);
+          d.contract.state = "unavailable";
+          d.completion.test = "failed";
+          d.completion.reasonCode = DOCUMENT_SOURCE_AUTHORITY_INVALID;
+          d.error = detail;
+        },
+        { progressed: true, fence },
+      );
+      await beat(this.env, runId, detail, "document-source-authority-refused");
+    });
+    await this.reportAndFinalize(step, runId, fence);
+  }
+
+  /**
+   * Persist an intentional extraction refusal, then finish the ordinary reporting tail.
+   * Returning from a successful `step.do` is what makes this non-retrying on Cloudflare;
+   * throwing here would turn a policy decision back into an infrastructure failure.
+   */
+  private async stopAndReportExtractionPassRefusal(
+    step: WorkflowStep,
+    runId: string,
+    fence: Fence,
+    pass: "a" | "b",
+    result: StageResult<PassSummary>,
+  ): Promise<boolean> {
+    const refusal = extractionPassRefusal(pass, result);
+    if (!refusal) return false;
+
+    await step.do(`stop-extract-pass-${pass}-not-evaluated`, async () => {
+      await updateCheckpoint(
+        this.env,
+        runId,
+        (d) => {
+          setPhase(d, "extracting", "stopped", refusal.reasonCode);
+          d.contract.state = "unavailable";
+          d.completion.test = "failed";
+          d.completion.reasonCode = refusal.reasonCode;
+          d.error = refusal.detail;
+        },
+        { progressed: true, fence },
+      );
+      await beat(this.env, runId, refusal.detail, `extract-${pass}-refused`);
+    });
+    await this.reportAndFinalize(step, runId, fence);
+    return true;
   }
 
   private instrumentSteps(step: WorkflowStep, runId: string): WorkflowStep {
@@ -2531,7 +2891,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // WIRED: the upgraded renderer (pipeline/report/) runs here, in-Worker, and
       // COMMITS its bytes to R2 behind an atomic pointer. `GET .../report` then serves
       // those exact bytes. Missing evidence/scorecard degrades ITS SECTION inside the view
-      // model; a missing RunRecord is not a degraded report, it is no report, and says so.
+      // model. A validated terminal extraction stop has no honest RunRecord denominator, so
+      // report/build.ts may instead publish the explicitly non-QA operational failure view:
+      // zero findings, unknown denominator, and the retained extraction/usage evidence. Any
+      // other missing RunRecord remains no report rather than being silently degraded.
       const built = await buildAndStoreReport(this.env, runId);
 
       await updateCheckpoint(
@@ -2753,7 +3116,7 @@ export function projectExpansion(
 
 /** The document's own name, for the extraction prompts' first line. */
 const documentName = (p: RunParamsV2): string =>
-  `${p.documentKey.split("/").pop() ?? "questionnaire.docx"} (sha256 ${p.documentSha256.slice(0, 12)}…)`;
+  extractionDocumentName(p.documentKey, p.documentSha256);
 
 // ---------------------------------------------------------------------------
 // The test-axis gate
@@ -2802,6 +3165,19 @@ export function testAxisBlockers(
   }
   if (assembled.state !== "evaluated") {
     blockers.push("no RunRecord was assembled, so there is nothing to be complete about");
+  } else if (assembled.value && typeof assembled.value === "object") {
+    const assembledValue = assembled.value as { coverageBlockers?: unknown };
+    const coverageBlockers = assembledValue.coverageBlockers;
+    if (!Object.prototype.hasOwnProperty.call(assembledValue, "coverageBlockers")) {
+      blockers.push("the RunRecord's whole-document coverage-blocker count was not evaluated");
+    } else if (!Number.isSafeInteger(coverageBlockers) || Number(coverageBlockers) < 0) {
+      blockers.push("the RunRecord's whole-document coverage-blocker count is malformed");
+    } else if (Number(coverageBlockers) > 0) {
+      blockers.push(
+        `${Number(coverageBlockers)} sealed document coverage limitation(s) prevent whole-document/full-coverage credit ` +
+          `(DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE)`,
+      );
+    }
   }
   // `undefined` preserves the pure helper's historical three-argument use in older callers.
   // Production passes either an exact assessment or NULL. Null is unknown, never zero.

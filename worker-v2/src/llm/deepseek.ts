@@ -245,6 +245,25 @@ export const deepseekGrokFallbackIdentity = (env: Env): string =>
 export const deepseekPassBIdentity = (env: Env): string =>
   extractionLegIdentity(env, "pass-b");
 
+/** Side-effect-free portion of the exact Flash substitute shape, for pre-purchase byte gates. */
+function requestShapeForLeg(
+  leg: DeepseekModelLeg,
+): Pick<ProviderSpec, "model" | "extraBody"> {
+  return {
+    model: leg.model,
+    extraBody: {
+      thinking: { type: "enabled" },
+      reasoning_effort: leg.reasoningEffort,
+    },
+  };
+}
+
+export function deepseekGrokFallbackRequestShape(
+  env: Env,
+): Pick<ProviderSpec, "model" | "extraBody"> {
+  return requestShapeForLeg(extractionLeg(env, "grok-fallback"));
+}
+
 async function extractionLegJson(
   env: Env,
   role: "grok-fallback" | "pass-b",
@@ -283,18 +302,16 @@ export function deepseekPassBAttemptCeiling(env: Env): number {
 
 async function specForLeg(env: Env, leg: DeepseekModelLeg, apiKey: string): Promise<ProviderSpec> {
   const rates = ratesFor(env, leg);
+  const request = requestShapeForLeg(leg);
   return {
     provider: "deepseek",
-    model: leg.model,
+    model: request.model,
     gatewaySuffix: "",
     directBaseUrl: "https://api.deepseek.com",
     apiKey,
     inputUsdPerMTok: rates.inputUsdPerMTok,
     outputUsdPerMTok: rates.outputUsdPerMTok,
-    extraBody: {
-      thinking: { type: "enabled" },
-      reasoning_effort: leg.reasoningEffort,
-    },
+    extraBody: request.extraBody,
   };
 }
 

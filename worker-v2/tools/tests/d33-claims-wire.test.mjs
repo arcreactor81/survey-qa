@@ -626,7 +626,7 @@ suite("D33 — the record carries the defects the run found", () => {
     assertEq(assembled.value.blockers, record.blockers.length, "the stage counted blockers the stored record does not carry");
     assert(assembled.value.claims > 0 && assembled.value.blockers > 0, "this fixture must produce both, or the equality is vacuous");
     for (const b of record.blockers) {
-      assertEq(b.derivedBy, "v2-blocker-projection/1.0.0", "every blocker names the projection that derived it");
+      assertEq(b.derivedBy, "v2-blocker-projection/1.1.0", "every blocker names the projection that derived it");
     }
   });
 });

@@ -309,10 +309,11 @@
     // block in it. Fifteen blocks lands each call near a minute, which is what makes the
     // per-chunk persistence and the resume path useful rather than theoretical.
     // Pass A has no per-block disposition ledger, but a dense table can still place more than
-    // a thousand short addressable cells below 90 KB. The second ceiling keeps that shape from
-    // becoming one 5-minute timeout/truncated-output unit; both limits split only between blocks.
+    // a thousand short addressable cells below 90 KB. The 1,087-block live document timed out
+    // on Grok 4.6 at the former 250-block ceiling; 100 makes that workload eleven bounded calls.
+    // Both limits split only between blocks and carry no survey/vendor/content assumptions.
     "EXTRACT_PASS_A_WINDOW_CHARS": "90000",
-    "EXTRACT_PASS_A_WINDOW_MAX_BLOCKS": "250",
+    "EXTRACT_PASS_A_WINDOW_MAX_BLOCKS": "100",
     "EXTRACT_CHUNK_CHARS": "3000",
     "EXTRACT_CHUNK_MAX_BLOCKS": "15",
     "EXTRACT_CHUNK_CONCURRENCY": "5",
@@ -347,13 +348,19 @@
     // with a named reason (`extraction-pass-a-waves-exhausted`) naming how many windows are
     // still owed — never a `partial-*` over a document nobody finished reading. Waves are
     // bounded by the WINDOW COUNT, since a wave always issues at least one call.
-    "EXTRACT_PASS_A_MAX_WAVES": "10",
+    "EXTRACT_PASS_A_MAX_WAVES": "20",
     // How many times ONE pass-A window may be BOUGHT across the WHOLE run. The count lives in
     // the window's own R2 artifact, so waves, step retries and recovery instances share one
     // budget. DELIBERATELY NOT the same knob as EXTRACT_CHUNK_MAX_ISSUES: a pass-A window is
     // a 90 KB purchase and a pass-B chunk is a 5 KB one, so the same number is not the same
     // money. EXTRACT_MAX_ATTEMPTS still absorbs transport blips INSIDE one purchase.
     "EXTRACT_PASS_A_WINDOW_MAX_ISSUES": "2",
+    // One durable Grok reconciliation reads ALL primary candidate rows plus only their exact
+    // nominated quote spans. This is explicitly candidate-dependent, not whole-source
+    // discovery. It never truncates a candidate/span; oversize wire input is a named failure.
+    "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES": "45000",
+    // The synthesis artifact carries this whole-run purchase count across waves/recovery.
+    "EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES": "2",
 
     // ---- pass-B wave split (the fan-out does not fit in one Workflow step) ----
     // Declared at the code defaults, so setting them changes nothing until they are tuned.

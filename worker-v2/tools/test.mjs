@@ -71,12 +71,20 @@ const FILES = [
   // what never landed, and resume still carries everything it used to.
   // Evidence they can fail: `tools/mutate-passb.mjs`.
   "./tests/d21-passb-waves.test.mjs",
+  // Strict, all-or-nothing provider decoding and exact retained-unit authority for Pass B.
+  // Evidence they can fail: `tools/mutate-passb.mjs`.
+  "./tests/passb-strict-integrity.test.mjs",
   // D22 — the SAME defect class on the Grok leg: pass A splits a large document into SERIAL
   // windows inside one step, with no per-window persistence, so a timeout re-buys every
   // window. It does not bite the small fixture, which is why it needed closing before a real
   // client questionnaire arrived. Evidence they can fail: `tools/mutate-passa.mjs`.
   "./tests/d22-passa-waves.test.mjs",
+  "./tests/passa-cross-window-synthesis.test.mjs",
+  "./tests/cross-window-coverage-wire.test.mjs",
   "./tests/passa-final-validity.test.mjs",
+  // Terminal extraction refusals report durable operational evidence without inventing QA claims.
+  // Malformed or missing receipts must leave no report pointer.
+  "./tests/terminal-failure-report.test.mjs",
   // D23 — the verifier's structural floor may DEMOTE, but it may not author a VERDICT out of
   // the producer's own `error`/`contradiction` payload keys. Dormant until model-observations
   // land, at which point every failed model call would have become a defect claim about the

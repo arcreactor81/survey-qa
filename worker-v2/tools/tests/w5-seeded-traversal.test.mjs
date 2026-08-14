@@ -687,7 +687,8 @@ suite("W5 — occurrence/history receipts and runtime work", () => {
       }],
     };
     const record = mod.assembleRecord.assembleRunRecordV2({
-      runId: "v2r_w5", envelope: { input: {} }, revision: { contractRevisionId: "cr", requirements: [], facetInstances: [] },
+      runId: "v2r_w5", envelope: { input: {} },
+      revision: { contractRevisionId: "cr", requirements: [], facetInstances: [], contractSupplements: [] },
       contractHash: "sha256:contract", observations: [], evidence: [], itemResults: [], walks: [],
       probeCapabilityLimitations: [], targetIdentity: { source: "fixture", targetBuildId: null, note: "" },
       checkpoint: { execution: { seedExecution }, usage: null }, planHash: "plan", startedAt: "start", endedAt: "end",

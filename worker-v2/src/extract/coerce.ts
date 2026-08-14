@@ -1,11 +1,10 @@
 /**
  * MODEL OUTPUT → TYPED EXTRACTION INPUT.
  *
- * A model returns JSON that is nearly the schema it was given. This module turns "nearly"
- * into "exactly", and it DROPS what it cannot bind rather than filling in a default:
- * a requirement with no statement, no quote or no block id is not a requirement with empty
- * fields, it is an item the merge cannot check, cite or expand — so it never enters the
- * denominator. Every drop is counted so the diff can say how many there were.
+ * A model returns JSON that is nearly the schema it was given. The strict Pass-A and Pass-B
+ * decoders now reject an entire paid unit before these compatibility coercers run whenever a
+ * row is missing authority. The nullable returns below are therefore defensive only; callers
+ * compare cardinality and terminalize instead of silently shortening the denominator.
  */
 
 import { CONSTRUCT_CLASSES, type ConstructVerdict, type BlockDisposition, type RawAmbiguity, type RawExpansion, type RawRequirement, type RawUnverifiable } from "./types";
@@ -25,14 +24,6 @@ const QUANTIFIERS = new Set(["every", "each", "only", "any", "none", "specific"]
 const OBSERVABLE = new Set(["full", "partial", "none"]);
 const EXPANSION_KINDS = new Set(["route", "boundary", "option-set", "rendered-state", "copy", "configuration"]);
 
-/** Drops that this module performed, for the diff's "what was unusable" line. */
-export const dropCounts = { noStatement: 0, noQuote: 0, noBlockId: 0 };
-export const resetDrops = (): void => {
-  dropCounts.noStatement = 0;
-  dropCounts.noQuote = 0;
-  dropCounts.noBlockId = 0;
-};
-
 export function coerceRequirement(
   raw: Record<string, unknown>,
   pass: "A" | "B",
@@ -43,15 +34,12 @@ export function coerceRequirement(
   const docQuote = typeof raw["doc_quote"] === "string" ? raw["doc_quote"] : "";
   const blockIds = strList(raw["block_ids"]);
   if (statement.length === 0) {
-    dropCounts.noStatement += 1;
     return null;
   }
   if (docQuote.trim().length === 0) {
-    dropCounts.noQuote += 1;
     return null;
   }
   if (blockIds.length === 0) {
-    dropCounts.noBlockId += 1;
     return null;
   }
   const q = str(raw["quantifier"]).toLowerCase();

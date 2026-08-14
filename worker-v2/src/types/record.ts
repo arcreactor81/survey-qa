@@ -627,7 +627,9 @@ export type RunBlockerKind =
   /** A failing case cites an observation this record does not carry. */
   | "UNRESOLVED_FAIL_OBSERVATION"
   /** The plan requests a probe action for which the current executor can emit no receipt. */
-  | "PLANNED_PROBE_NOT_EXECUTED";
+  | "PLANNED_PROBE_NOT_EXECUTED"
+  /** Candidate-only Pass-A synthesis did not inspect source text no primary reader nominated. */
+  | "DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE";
 
 export interface RunBlocker {
   blockerId: string;

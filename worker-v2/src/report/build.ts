@@ -21,9 +21,11 @@
  *    two fixed keys in sequence while the endpoint served any HTML it found before
  *    consulting completion. See store/publish.ts.
  *
- * FAILURE IS AN OUTCOME, NOT AN EXCEPTION. If there is no RunRecord to render, this
- * returns `{ ok: false, reasonCode }` and the caller marks `report: failed` with that
- * code. It must never mark `report: complete` with no artifact behind it.
+ * FAILURE IS AN OUTCOME, NOT AN EXCEPTION. A missing RunRecord can publish only the
+ * explicitly non-QA operational artifact in `failure.ts`, and only for a named terminal
+ * extraction stop backed by durable checkpoint/envelope/source/receipt evidence. Every
+ * other missing-record state returns `{ ok: false, reasonCode }`. Neither path may mark
+ * `report: complete` with no real HTML and JSON bytes behind it.
  */
 
 import type { Env } from "../types/env";
@@ -40,6 +42,7 @@ import { isRunRecordV2, NotRenderable, toRenderable } from "./renderable";
 import { attestationFromRecordHash, judgementTrustFromLoad, renderRunReport, type RenderedReport } from "./render";
 import type { JudgementLoad } from "../types/judgement";
 import type { EvidenceCatalogEntry, RunRecordV2 } from "../types/record";
+import { buildAndStoreTerminalFailureReport } from "./failure";
 
 /**
  * THE TARGET IDENTITY IS DERIVED, NOT ONLY CONFIGURED — re-exported here so the report
@@ -328,11 +331,7 @@ export function checkReportExecutionCaseIntegrity(input: {
 export async function buildAndStoreReport(env: Env, runId: string): Promise<BuildReportResult> {
   const obj = await env.EVIDENCE.get(recordKey(runId));
   if (!obj) {
-    return {
-      ok: false,
-      reasonCode: "no-run-record",
-      detail: `no RunRecord at ${recordKey(runId)} — nothing to render a report from`,
-    };
+    return buildAndStoreTerminalFailureReport(env, runId);
   }
 
   let record: unknown;

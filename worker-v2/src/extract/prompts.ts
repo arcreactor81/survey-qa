@@ -1,8 +1,8 @@
 /**
  * THE TWO PROMPTS. They differ in METHOD, not in model (owner ruling).
  *
- * PASS A reads the WHOLE document at once and is forbidden from restating per-question
- * facts. Its job is the class of rule a question-by-question read structurally cannot
+ * PASS A reads bounded document windows for cross-cutting candidates and, when needed,
+ * reconciles every exactly grounded candidate across them. It does not claim whole-source
  * find: "every question is compulsory" is ONE survey-scoped requirement, and the first
  * real run missed exactly that — a global blocking rule covering 9 of 11 questions.
  *
@@ -19,7 +19,13 @@ import { CONSTRUCT_CLASSES } from "./types";
 
 // 1.2.0 — both passes now receive the explicit programming-source ground rule. A persisted
 // 1.1.0 pass-A read could have turned a grey instruction into respondent option text.
-export const PROMPT_VERSION_A = "v2-extract-pass-a/1.2.0";
+// 1.4.0 requires owning-window exact source grounding and a separately receipted bounded
+// reconciliation of candidate relationships. It does not attest arbitrary omitted source.
+// 1.5.0 makes the emitted construct enum identical to the canonical decoder and closes the
+// synthesis provenance/required-field contract around exact nominated quote spans.
+// 1.6.0 makes all primary arrays/rows closed and fail-loud; no malformed candidate can be
+// silently filtered/defaulted into a shorter completed denominator.
+export const PROMPT_VERSION_A = "v2-extract-pass-a/1.6.0";
 // v2-extract-pass-b/1.2.0 — This constant is also the version gate
 // on every persisted pass-B artifact (chunks, sweeps, the whole-pass payload), so it covers
 // what pass B COMPUTES from a parse, not just the words it sends: 1.2.0 restricts the
@@ -28,7 +34,7 @@ export const PROMPT_VERSION_A = "v2-extract-pass-a/1.2.0";
 // artifact may have skipped exactly those blocks and must not be reused.
 // 1.3.0 — the explicit programming-source ground rule keeps those addressable blocks as
 // routing/termination authority while withholding them from respondent option labels.
-export const PROMPT_VERSION_B = "v2-extract-pass-b/1.3.0";
+export const PROMPT_VERSION_B = "v2-extract-pass-b/1.4.0";
 
 const SHARED_GROUND_RULES = `BINDING GROUND RULE
 The questionnaire document is the SOLE source of truth. You have never seen the implemented
@@ -101,8 +107,8 @@ panel integration, timing capture or anything a browser cannot confirm. Anything
 OUTPUT
 Return a SINGLE JSON object and nothing else. No prose before or after. No markdown fences.`;
 
-export const SYSTEM_A = `You are a senior survey-scripting QA analyst performing the WHOLE-DOCUMENT pass over a
-market-research questionnaire specification. A second, independent pass is reading the same
+export const SYSTEM_A = `You are a senior survey-scripting QA analyst performing the CROSS-CUTTING pass over a
+bounded document window from a market-research questionnaire specification. A second, independent pass is reading the same
 document block by block and will catch the per-question detail. Your pass exists to catch
 what that reading structurally cannot.
 
@@ -138,29 +144,139 @@ SCHEMA
   "global_rules": [
     {
       "id": "GLOB-01",
-      "construct": "instruction|validation|navigation|order|terminate|randomization|piping|carry-forward|calculation|loop|option-list|question",
+      "construct": "instruction|validation|skip-rule|terminate|randomization|piping|carry-forward|calculation|loop|option-list|question",
       "scope": "survey" | "section:<name>",
       "quantifier": "every|each|only|any|none|specific",
       "selector": "<population the rule ranges over>" | null,
       "exceptions": ["<explicitly excluded item>"],
       "statement": "<what must be true of a correct implementation, one atomic fact>",
       "doc_quote": "<verbatim span>",
-      "block_ids": ["b0007"],
-      "applies_to": "<which questions/screens this reaches, in the document's terms>",
+      "block_ids": ["b0007", "b0008"],
+      "evidence_quotes": [
+        { "block_id": "b0007", "quote": "<exact supporting span in b0007>" },
+        { "block_id": "b0008", "quote": "<exact supporting span in b0008>" }
+      ],
       "browser_observable": "full|partial|none",
       "confidence": 0.0
     }
   ],
   "cross_references": [
-    { "id": "XREF-01", "from_block": "b0031", "target": "<what it points at>", "resolved_to_block": "b0102" | null, "statement": "<what the reference obliges>", "doc_quote": "<verbatim>" }
+    { "id": "XREF-01", "from_block": "b0031", "target": "<what it points at>", "resolved_to_block": "b0102" | null, "target_doc_quote": "<verbatim from resolved target>" | null, "statement": "<what the reference obliges>", "doc_quote": "<verbatim from from_block>" }
   ],
   "ambiguities": [
-    { "id": "AMB-A-01", "doc_quote": "<verbatim>", "reading_a": "...", "reading_b": "...", "why_ambiguous": "...", "affects": ["<question or rule>"] }
+    { "id": "AMB-A-01", "block_ids": ["b0031"], "doc_quote": "<verbatim>", "evidence_quotes": [{ "block_id": "b0031", "quote": "<verbatim>" }], "reading_a": "...", "reading_b": "...", "why_ambiguous": "...", "affects": ["<question or rule>"] }
   ],
   "unverifiable_from_browser": [
-    { "id": "UNV-A-01", "doc_quote": "<verbatim>", "mandate": "...", "why_not_observable": "...", "browser_proxy_evidence": "<partial evidence, or 'none'>" }
+    { "id": "UNV-A-01", "block_ids": ["b0031"], "doc_quote": "<verbatim>", "evidence_quotes": [{ "block_id": "b0031", "quote": "<verbatim>" }], "mandate": "...", "why_not_observable": "...", "browser_proxy_evidence": "<partial evidence, or 'none'>" }
   ]
-}`;
+}
+
+For every global rule, ambiguity, and unverifiable row, evidence_quotes must contain exactly
+one exact source span for every block_id (same set, no duplicates), and doc_quote must equal
+one of those spans. If browser_observable is "none", emit a matching unverifiable row with
+the same doc_quote and at least one shared block_id. A resolved cross-reference must provide
+target_doc_quote from resolved_to_block; both fields must be null when unresolved.`;
+
+/**
+ * Reconcile independently read windows without pretending their concatenation was already
+ * a whole-document read. The input carries every primary window's typed output AND the
+ * exact source evidence behind those candidates. It deliberately does NOT receive every
+ * source block: that would recreate the oversized whole-document purchase windowing fixed.
+ * New rows are admissible only with exact per-block spans; runtime validates those spans
+ * and the cross-window boundary again. The final payload counts this candidate dependence.
+ */
+export const SYSTEM_A_SYNTHESIS = `You are reconciling independently read windows of one questionnaire.
+The document is the sole source of truth. Do not use survey conventions, vendor conventions,
+or facts not present in the supplied exact quote spans.
+
+Every primary window was read independently before this call. You receive every candidate
+those readers emitted plus exact nominated quote spans supporting those candidates. You do not
+receive source that no primary reader surfaced; do not claim otherwise. Your only job is to find
+relationships that require evidence from TWO OR MORE different windows:
+- one rule whose definition, condition, exception, scope, or consequence is split across windows;
+- a cross-reference whose source and exact target are in different windows;
+- a genuine ambiguity whose competing readings depend on text in different windows;
+- a browser-unverifiable mandate whose complete meaning depends on text in different windows.
+
+Do not restate a window-local result. Do not resolve an unresolved reference unless the exact
+target block is present in the source. If the supplied source does not settle it, leave it
+unresolved by emitting nothing for that resolution.
+
+COMPACT INPUT SCHEMA (positions are binding)
+Input is {"v":1,"c":[windows,candidates,sourceBlocks,evidenceSpans],"w":[...],"e":[...]}.
+Each e row is [evidenceId,blockId,exactQuote]. Each w row is [windowId,R,X,A,U]:
+- R: [handle,construct,scope,quantifier,selector,exceptions,statement,evidenceIds,blockIds,browserObservable,expansion]
+- X: [handle,fromBlock,target,resolvedToBlock,statement,evidenceIds]
+- A: [handle,evidenceIds,readingA,readingB,whyAmbiguous,affects]
+- U: [handle,evidenceIds,mandate,whyNotObservable,browserProxyEvidence]
+Evidence ids dereference e rows. Handles are stable and unique; use an X handle unchanged as
+source_xref_handle. This positional projection is lossless for reconciliation fields.
+
+PROVENANCE CONTRACT
+Every emitted global rule, ambiguity, and unverifiable row must name block_ids from at least two
+different windows. A cross-reference resolution derives its two ids from its qualified primary
+source handle and resolved_to_block. Every row must include evidence_quotes with at least one
+non-empty exact quote for EVERY cited block. Each quote must
+be copied character-for-character from that block's source text. For a global rule, doc_quote
+must equal one of those exact evidence quotes. Runtime rejects the row if any id is absent,
+any quote is inexact, or all ids belong to one window.
+
+Return one JSON object:
+{
+  "global_rules": [{
+    "id": "SYN-GLOB-01",
+    "construct": "instruction|validation|skip-rule|terminate|randomization|piping|carry-forward|calculation|loop|option-list|question",
+    "scope": "survey|section:<name>",
+    "quantifier": "every|each|only|any|none|specific",
+    "selector": "<population>" | null,
+    "exceptions": [],
+    "statement": "<one atomic cross-window obligation>",
+    "doc_quote": "<one exact evidence quote>",
+    "block_ids": ["b0001", "b0101"],
+    "evidence_quotes": [
+      { "block_id": "b0001", "quote": "<exact source span>" },
+      { "block_id": "b0101", "quote": "<exact source span>" }
+    ],
+    "browser_observable": "full|partial|none",
+    "confidence": 0.0
+  }],
+  "cross_reference_resolutions": [{
+    "source_xref_handle": "<the exact A-wN/local-id handle from the primary output>",
+    "resolved_to_block": "b0101",
+    "statement": "<what the now-resolved reference obliges>",
+    "evidence_quotes": [
+      { "block_id": "<the reference source block>", "quote": "<exact span>" },
+      { "block_id": "b0101", "quote": "<exact target span>" }
+    ]
+  }],
+  "ambiguities": [{
+    "id": "SYN-AMB-01",
+    "block_ids": ["b0001", "b0101"],
+    "doc_quote": "<one exact evidence quote>",
+    "reading_a": "...",
+    "reading_b": "...",
+    "why_ambiguous": "...",
+    "affects": [],
+    "evidence_quotes": [
+      { "block_id": "b0001", "quote": "<exact span>" },
+      { "block_id": "b0101", "quote": "<exact span>" }
+    ]
+  }],
+  "unverifiable_from_browser": [{
+    "id": "SYN-UNV-01",
+    "block_ids": ["b0001", "b0101"],
+    "doc_quote": "<one exact evidence quote>",
+    "mandate": "...",
+    "why_not_observable": "...",
+    "browser_proxy_evidence": "none",
+    "evidence_quotes": [
+      { "block_id": "b0001", "quote": "<exact span>" },
+      { "block_id": "b0101", "quote": "<exact span>" }
+    ]
+  }]
+}
+
+Return JSON only. Empty arrays are correct when the windows contain no cross-window fact.`;
 
 export const SYSTEM_B = `You are a senior survey-scripting QA analyst performing the BLOCK-BY-BLOCK pass over a
 market-research questionnaire specification. A second, independent pass is reading the whole
@@ -220,6 +336,7 @@ SCHEMA
       "statement": "<one atomic fact that must hold>",
       "doc_quote": "<verbatim span>",
       "block_ids": ["b0042"],
+      "evidence_quotes": [{ "block_id": "b0042", "quote": "<verbatim span>" }],
       "browser_observable": "full|partial|none",
       "confidence": 0.0,
       "expansion": {
@@ -233,13 +350,18 @@ SCHEMA
   ],
   "block_dispositions": [ { "block_id": "b0042", "disposition": "normative|mapped-context|non-normative|ambiguous", "reason": "<why>" } ],
   "construct_checklist": [ { "construct": "skip-rule", "present": true, "block_ids": ["b0044"] } ],
-  "ambiguities": [ { "id": "AMB-B-01", "doc_quote": "<verbatim>", "reading_a": "...", "reading_b": "...", "why_ambiguous": "...", "affects": [] } ],
-  "unverifiable_from_browser": [ { "id": "UNV-B-01", "doc_quote": "<verbatim>", "mandate": "...", "why_not_observable": "...", "browser_proxy_evidence": "..." } ]
-}`;
+  "ambiguities": [ { "id": "AMB-B-01", "block_ids": ["b0042"], "doc_quote": "<verbatim>", "evidence_quotes": [{ "block_id": "b0042", "quote": "<verbatim>" }], "reading_a": "...", "reading_b": "...", "why_ambiguous": "...", "affects": [] } ],
+  "unverifiable_from_browser": [ { "id": "UNV-B-01", "block_ids": ["b0042"], "doc_quote": "<verbatim>", "evidence_quotes": [{ "block_id": "b0042", "quote": "<verbatim>" }], "mandate": "...", "why_not_observable": "...", "browser_proxy_evidence": "..." } ]
+}
+
+For every obligation, ambiguity, and unverifiable row, evidence_quotes must contain exactly
+one non-empty exact source span for every block_id (the sets must be equal, with no duplicate
+ids), and doc_quote must equal one of those spans. Do not cite context-only or foreign blocks.`;
 
 export function userMessageA(documentName: string, annotated: string, windowLabel: string | null): string {
+  void documentName; // Display filenames are not semantic model input or reuse identity.
   return [
-    `DOCUMENT: ${documentName}`,
+    `DOCUMENT: submitted questionnaire`,
     windowLabel
       ? `You are reading a WINDOW of a document too large for one call: ${windowLabel}. Emit only rules you can support with the text below; another window covers the rest.`
       : `You are reading the ENTIRE document. Nothing is withheld from you.`,
@@ -253,6 +375,11 @@ export function userMessageA(documentName: string, annotated: string, windowLabe
   ].join("\n");
 }
 
+export function userMessageASynthesis(documentName: string, synthesisInputJson: string): string {
+  void documentName;
+  return `Document: submitted questionnaire\nCompact schema documented by system prompt. Input JSON:\n${synthesisInputJson}`;
+}
+
 /**
  * THE LEDGER SWEEP. Blocks the block pass called normative and then cited in no
  * obligation, plus blocks it never answered for at all, come back here — because a source
@@ -261,8 +388,9 @@ export function userMessageA(documentName: string, annotated: string, windowLabe
  * the whole pass or quietly reclassifying them in code.
  */
 export function userMessageSweep(documentName: string, sweepId: string, chunkText: string, contextText: string | null, blockIds: string[]): string {
+  void documentName;
   return [
-    `DOCUMENT: ${documentName}`,
+    `DOCUMENT: submitted questionnaire`,
     `Your chunk id for this call is: ${sweepId}`,
     ``,
     `THIS IS A LEDGER SWEEP. An earlier pass over the whole document left the ${blockIds.length} blocks`,
@@ -302,8 +430,9 @@ export function userMessageB(
   contextText: string | null,
   blockIds: string[],
 ): string {
+  void documentName;
   return [
-    `DOCUMENT: ${documentName}`,
+    `DOCUMENT: submitted questionnaire`,
     `Your chunk id for this call is: ${chunkId}`,
     `Your chunk contains exactly ${blockIds.length} blocks: ${blockIds.join(", ")}`,
     ``,

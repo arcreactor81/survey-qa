@@ -58,7 +58,7 @@ import { k } from "../keys";
 import { sha256Hex } from "./hash";
 import type { DocumentSemanticsProfile } from "../extract/document-semantics";
 
-export const CONTRACT_REUSE_VERSION = "v2-contract-reuse/1.7.0";
+export const CONTRACT_REUSE_VERSION = "v2-contract-reuse/1.9.0";
 
 /**
  * Configuration read by extraction/model calls that can change rows, source coverage, or
@@ -100,6 +100,8 @@ export const EXTRACTION_POLICY_KEYS = [
   "EXTRACT_PASS_A_WINDOW_CHARS",
   "EXTRACT_PASS_A_WINDOW_MAX_BLOCKS",
   "EXTRACT_PASS_A_WINDOW_MAX_ISSUES",
+  "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES",
+  "EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES",
   "EXTRACT_PASS_A_WAVE_BUDGET_MS",
   "EXTRACT_PASS_A_MAX_WAVES",
   "EXTRACT_CHUNK_CHARS",

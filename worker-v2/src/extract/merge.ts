@@ -31,7 +31,6 @@ import type {
   RawRequirement,
   SourceBlock,
 } from "./types";
-import { dropCounts } from "./coerce";
 import { annotate } from "./docx-blocks";
 import {
   isProgrammingLogicSourceRole,
@@ -70,7 +69,7 @@ export {
  * removed from an option label cryptographically claimed the respondent quote that remained.
  * Missing source blocks now refuse the merge rather than fabricating provenance.
  */
-export const MERGE_VERSION = "v2-extract-merge/1.4.0";
+export const MERGE_VERSION = "v2-extract-merge/1.5.0";
 // v2-source-ledger/1.1.0 — `accountedVia` is granted only to true table-cell blocks; a
 // lifted origin-bearing block now appears as its own entry (cited, or named unexplained),
 // never row-absorbed. A 1.0.0 ledger may under-report unexplainedNormativeBlocks.
@@ -397,6 +396,12 @@ async function toRequirement(
   }
 
   const notObservable = raws.every((r) => r.browserObservable === "none");
+  const observingPasses = [...new Set(raws.map((row) => row.pass))].sort();
+  const notObservableAuthority = observingPasses.length === 2
+    ? "both extraction passes"
+    : observingPasses[0] === "A"
+      ? "extraction pass A"
+      : "extraction pass B";
   return {
     // Deterministic: the same document + the same reading yields the same lineage id on a
     // re-run, which is what makes a cross-run comparison of a result cell mean anything.
@@ -413,7 +418,7 @@ async function toRequirement(
     assertionStatus,
     testability: notObservable ? "not-browser-observable" : "browser-observable",
     notBrowserObservableReason: notObservable
-      ? "both extraction passes recorded this mandate as not observable from a browser"
+      ? `${notObservableAuthority} recorded this mandate as not observable from a browser`
       : null,
     sourceAtoms: atoms,
     composition: null,
@@ -628,7 +633,9 @@ export async function mergePasses(
       unresolvableRouteConflicts: unresolvable.length,
       ambiguities: passA.ambiguities.length + passB.ambiguities.length,
       notBrowserVerifiable: passA.unverifiable.length + passB.unverifiable.length,
-      droppedUnusable: dropCounts.noStatement + dropCounts.noQuote + dropCounts.noBlockId,
+      // Successful strict units are cardinality preserving. Any unusable model row makes
+      // its whole unit terminal before merge, so a sealable merge has no dropped rows.
+      droppedUnusable: 0,
       failedUnits: passA.failedUnits.length + passB.failedUnits.length,
     },
     agreed: both.map((r) => ({
@@ -679,7 +686,7 @@ export async function mergePasses(
       ...passA.failedUnits.map((f) => ({ pass: "A" as const, unit: f.unit, blocks: f.blockIds.length, detail: f.detail })),
       ...passB.failedUnits.map((f) => ({ pass: "B" as const, unit: f.unit, blocks: f.blockIds.length, detail: f.detail })),
     ],
-    droppedUnusable: { ...dropCounts },
+    droppedUnusable: { noStatement: 0, noQuote: 0, noBlockId: 0 },
     documentCoverage: doc.coverage,
   };
 

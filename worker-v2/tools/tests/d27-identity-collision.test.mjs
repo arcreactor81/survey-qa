@@ -166,6 +166,28 @@ const expandOf = (mod, rows) => mod.expand.expandFloor(rows, { locale: "en", vie
 
 // ===========================================================================
 suite("D27 — requirement identity cannot collide across distinct requirements", () => {
+  test("an A-only cross-window mandate never claims both extraction passes corroborated its observability", async () => {
+    const mod = await worker();
+    const aOnly = raw({
+      id: "a-only-cross-window",
+      pass: "A",
+      origin: "A-synthesis",
+      browserObservable: "none",
+      statement: "A document-only mandate spans two windows.",
+      docQuote: "document-only mandate",
+      blockIds: ["b0100"],
+    });
+    const merged = await mod.merge.mergePasses(
+      pass("A", [aOnly]),
+      pass("B", []),
+      { blocks: [block("b0100", { text: "document-only mandate" })], coverage: COVERAGE },
+      [],
+    );
+    const reason = merged.requirements[0].notBrowserObservableReason;
+    assertEq(reason, "extraction pass A recorded this mandate as not observable from a browser");
+    assert(!reason.includes("both extraction passes"), "one model pass cannot become two-pass corroboration");
+  });
+
   test("THE REAL COLLISION: two grid rows stating one mandate get DISTINCT facet instance ids", async () => {
     const mod = await worker();
     const merged = await mergeOf(mod, [ROW_D, ROW_E]);

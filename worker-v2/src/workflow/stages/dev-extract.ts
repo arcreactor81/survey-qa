@@ -34,13 +34,29 @@ import {
   sourceLedgerKey,
 } from "../../keys";
 import { claimOwnership, createCheckpoint, initialCheckpoint, loadCheckpoint, setPhase, updateCheckpoint } from "../../store/checkpoint";
-import { markActive, putEnvelope } from "../../store/envelope";
+import { getEnvelope, markActive, putEnvelope } from "../../store/envelope";
 import { denominators, sealContract } from "../../store/contract-revision";
 import { sha256Hex } from "../../store/hash";
 import { ENVELOPE_KIND, ENVELOPE_SCHEMA, type ContractRevision, type RunEnvelopeV2 } from "../../types/record";
 import { describeGates, unmetGates } from "../gates";
 import { deriveGates, projectConstructs, projectDiff, projectExpansion, projectLedger } from "../run-workflow";
-import { loadMerged, mergedKey, previewKey, stageConsolidate, stagePassA, stagePassB } from "./extract";
+import {
+  extractionDocumentName,
+  DOCUMENT_SOURCE_AUTHORITY_INVALID,
+  documentSourceAuthorityDetail,
+  EXTRACTION_SEAL_AUTHORITY_INVALID,
+  loadDocument,
+  loadMerged,
+  mergedKey,
+  previewKey,
+  stageConsolidate,
+  stagePassA,
+  stagePassB,
+  validateExtractionSealAuthority,
+} from "./extract";
+import {
+  passACrossWindowSupplementsForSeal,
+} from "../../extract/cross-window-limitations";
 import {
   DOCUMENT_SEMANTICS_NONE,
   isDocumentSemanticsProfile,
@@ -56,7 +72,7 @@ interface ExtractBody {
   /** Override the Grok model for THIS call only — the A/B knob. */
   grokModel?: string;
   /** Run pass A only. Used for model comparison; never seals anything. */
-  passOnly?: "A" | "B";
+  passOnly?: "A";
   /**
    * Wait for the whole extraction inside the HTTP response. Default FALSE, and the default
    * is not a preference: a full extraction is one whole-document call plus one call per
@@ -99,47 +115,96 @@ export async function devExtract(req: Request, env: Env, ctx?: ExecutionContext)
   const resuming = typeof body.runId === "string" && isV2RunId(body.runId);
   const runId = resuming ? body.runId! : mintRunId();
   const now = new Date().toISOString();
-  const documentSha256 = await sha256Hex(bytes);
-  const documentName = body.documentName ?? "questionnaire.docx";
-  const locale = body.locale ?? "en";
+  const submittedDocumentSha256 = await sha256Hex(bytes);
+  let documentName = body.documentName ?? "questionnaire.docx";
+  let locale = body.locale ?? "en";
   if (body.documentSemanticsProfile !== undefined && !isDocumentSemanticsProfile(body.documentSemanticsProfile)) {
     return json({ error: "unsupported documentSemanticsProfile" }, 400);
   }
-  const documentSemanticsProfile = body.documentSemanticsProfile ?? DOCUMENT_SEMANTICS_NONE;
+  let documentSemanticsProfile = body.documentSemanticsProfile ?? DOCUMENT_SEMANTICS_NONE;
   // The Grok override travels as an env overlay, so the leg reads it exactly the way it
   // reads the deployed configuration — no second code path for the A/B.
   const runEnv: Env = body.grokModel ? { ...env, GROK_MODEL: body.grokModel } : env;
 
-  await env.EVIDENCE.put(inputDocumentKey(runId), bytes, {
-    httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
-  });
-  // A resumed run keeps its envelope, its checkpoint and its already-charged usage; only
-  // the work that never landed is redone.
-  if (resuming) await env.EVIDENCE.delete(devResultKey(runId));
-
   const policy = effectivePolicy(env, "standard", false);
-  const envelope: RunEnvelopeV2 = {
-    schemaVersion: ENVELOPE_SCHEMA,
-    kind: ENVELOPE_KIND,
-    runId,
-    createdAt: now,
-    instanceId: runId,
-    input: {
-      surveyUrl: body.surveyUrl ?? "https://example.invalid/not-executed-by-this-route",
-      documentKey: inputDocumentKey(runId),
-      documentSha256,
-      documentName,
-      targetBuildId: env.DEFAULT_TARGET_BUILD_ID ?? null,
-      locale,
-      viewports: ["desktop"],
-      documentSemanticsProfile,
-    },
-    profile: "standard",
-    contractRevisionId: null,
-    recovery: null,
-    finalCompletion: null,
-  };
-  if (!resuming) await putEnvelope(env, envelope);
+  let envelope: RunEnvelopeV2;
+  if (resuming) {
+    const durable = await getEnvelope(env, runId);
+    const durableProfile = durable?.input.documentSemanticsProfile ?? DOCUMENT_SEMANTICS_NONE;
+    if (
+      !durable ||
+      durable.input.documentKey !== inputDocumentKey(runId) ||
+      durable.input.documentSha256 !== submittedDocumentSha256 ||
+      durableProfile !== documentSemanticsProfile
+    ) {
+      return json({
+        error: {
+          code: DOCUMENT_SOURCE_AUTHORITY_INVALID,
+          detail:
+            "DEV_RESUME_DOCUMENT_MISMATCH: submitted document bytes/hash/profile do not exactly match the durable run envelope. " +
+            "The original document, result, envelope, and provider authority were left unchanged.",
+        },
+      }, 409);
+    }
+    try {
+      await loadDocument(
+        env,
+        durable.input.documentKey,
+        durable.input.documentSha256,
+        durableProfile,
+      );
+    } catch (error) {
+      return json({
+        error: {
+          code: DOCUMENT_SOURCE_AUTHORITY_INVALID,
+          detail: documentSourceAuthorityDetail(error),
+        },
+      }, 409);
+    }
+    envelope = durable;
+    documentName = durable.input.documentName;
+    locale = durable.input.locale;
+    documentSemanticsProfile = durableProfile;
+    // Only a verified same-source resume may clear the old result and continue unfinished work.
+    await env.EVIDENCE.delete(devResultKey(runId));
+  } else {
+    const documentKey = inputDocumentKey(runId);
+    const written = await env.EVIDENCE.put(documentKey, bytes, {
+      httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+      onlyIf: { etagDoesNotMatch: "*" },
+    });
+    if (written === null) {
+      return json({
+        error: {
+          code: DOCUMENT_SOURCE_AUTHORITY_INVALID,
+          detail: "DEV_DOCUMENT_KEY_OCCUPIED: the freshly minted run document key already exists and was not overwritten.",
+        },
+      }, 409);
+    }
+    envelope = {
+      schemaVersion: ENVELOPE_SCHEMA,
+      kind: ENVELOPE_KIND,
+      runId,
+      createdAt: now,
+      instanceId: runId,
+      input: {
+        surveyUrl: body.surveyUrl ?? "https://example.invalid/not-executed-by-this-route",
+        documentKey,
+        documentSha256: submittedDocumentSha256,
+        documentName,
+        targetBuildId: env.DEFAULT_TARGET_BUILD_ID ?? null,
+        locale,
+        viewports: ["desktop"],
+        documentSemanticsProfile,
+      },
+      profile: "standard",
+      contractRevisionId: null,
+      recovery: null,
+      finalCompletion: null,
+    };
+    await putEnvelope(env, envelope);
+  }
+  const documentSha256 = envelope.input.documentSha256;
   await env.EVIDENCE.put(
     inputManifestKey(runId),
     JSON.stringify({ runId, submittedAt: now, input: envelope.input, policy, via: "dev/extract" }, null, 2),
@@ -162,7 +227,7 @@ export async function devExtract(req: Request, env: Env, ctx?: ExecutionContext)
   );
 
   const startedAt = Date.now();
-  const label = `${documentName} (sha256 ${documentSha256.slice(0, 12)}…)`;
+  const label = extractionDocumentName(envelope.input.documentKey, documentSha256);
 
   // STREAMED, and not for cosmetics. A full extraction is one whole-document call plus one
   // call per chunk — minutes of provider latency — and neither of the alternatives survives
@@ -228,22 +293,20 @@ async function runExtraction(
   const fence = await claimOwnership(env, runId, runId, 0);
   const documentSemanticsProfile = envelope.input.documentSemanticsProfile ?? DOCUMENT_SEMANTICS_NONE;
   try {
-    const passA =
-      body.passOnly === "B"
-        ? null
-        : await (async () => {
-            await emit({ event: "pass-A", state: "started", model: body.grokModel ?? env.GROK_MODEL ?? "grok-4.3" });
-            const r = await stagePassA(
-              runEnv,
-              runId,
-              envelope.input.documentKey,
-              label,
-              fence,
-              documentSemanticsProfile,
-            );
-            await emit({ event: "pass-A", state: "finished", summary: r });
-            return r;
-          })();
+    const passA = await (async () => {
+      await emit({ event: "pass-A", state: "started", model: body.grokModel ?? env.GROK_MODEL ?? "grok-4.3" });
+      const r = await stagePassA(
+        runEnv,
+        runId,
+        envelope.input.documentKey,
+        label,
+        fence,
+        documentSemanticsProfile,
+        documentSha256,
+      );
+      await emit({ event: "pass-A", state: "finished", summary: r });
+      return r;
+    })();
     if (body.passOnly === "A") {
       return await persist(env, runId, {
         runId,
@@ -252,6 +315,16 @@ async function runExtraction(
         elapsedMs: Date.now() - startedAt,
         passA,
         passAKey: extractionPassKey(runId, "a"),
+      });
+    }
+
+    if (passA.state !== "evaluated") {
+      return await persist(env, runId, {
+        runId,
+        mode: "pass-B-refused",
+        elapsedMs: Date.now() - startedAt,
+        reason: passA.reason,
+        detail: "Pass A did not produce durable evaluated authority, so no Pass-B purchase was made.",
       });
     }
 
@@ -266,12 +339,19 @@ async function runExtraction(
         await emit({ event: "pass-B", state: "progress", note });
       },
       documentSemanticsProfile,
+      passA.value.hash,
+      documentSha256,
     );
     await emit({ event: "pass-B", state: "finished", summary: passB });
-    if (body.passOnly === "B") {
-      return await persist(env, runId, { runId, mode: "pass-B-only", elapsedMs: Date.now() - startedAt, passB });
+    if (passB.state !== "evaluated") {
+      return await persist(env, runId, {
+        runId,
+        mode: "consolidation-refused",
+        elapsedMs: Date.now() - startedAt,
+        reason: passB.reason,
+        detail: "Pass B did not produce durable evaluated authority, so consolidation and sealing were refused.",
+      });
     }
-
     await emit({ event: "consolidate", state: "started" });
     const consolidated = await stageConsolidate(
       runEnv,
@@ -281,6 +361,9 @@ async function runExtraction(
       locale,
       ["desktop"],
       documentSemanticsProfile,
+      label,
+      passA.value.hash,
+      passB.value.hash,
     );
 
     await emit({ event: "consolidate", state: "finished", summary: consolidated });
@@ -291,12 +374,44 @@ async function runExtraction(
       projectExpansion(consolidated),
     );
     const unmet = unmetGates(gates);
+    let sealMerged = null;
+    let sealedSupplements: string[] = [];
+    let sealAuthorityDetail: string | null = null;
+    let sealAuthorityReason: typeof EXTRACTION_SEAL_AUTHORITY_INVALID | typeof DOCUMENT_SOURCE_AUTHORITY_INVALID =
+      EXTRACTION_SEAL_AUTHORITY_INVALID;
+    if (consolidated.state === "evaluated") {
+      const authority = await validateExtractionSealAuthority(
+        runEnv,
+        runId,
+        envelope.input.documentKey,
+        documentSha256,
+        documentSemanticsProfile,
+        label,
+        passA.value.hash,
+        passB.value.hash,
+        consolidated.value.mergedHash,
+      );
+      if (authority.kind === "invalid") {
+        sealAuthorityDetail = authority.detail;
+        sealAuthorityReason = authority.reason;
+        unmet.push("extractionSealAuthority:invalid");
+      } else {
+        sealMerged = authority.merged;
+        try {
+          sealedSupplements = await passACrossWindowSupplementsForSeal(
+            runEnv, runId, passA.value.hash,
+          );
+        } catch (error) {
+          sealAuthorityDetail = error instanceof Error ? error.message : String(error);
+          unmet.push("passACrossWindowLimitation:invalid");
+        }
+      }
+    }
 
     await emit({ event: "gates", unmet, gates: describeGates(gates) });
     let sealed: { contractRevisionId: string; contractHash: string; executionCases: number; requirements: number } | null = null;
-    if (unmet.length === 0) {
-      const merged = await loadMerged(env, runId);
-      if (merged) {
+    if (unmet.length === 0 && consolidated.state === "evaluated" && sealMerged !== null) {
+      const merged = sealMerged;
         const revisionBody: Omit<ContractRevision, "contractRevisionId"> = {
           schemaVersion: "v2-contract-revision/1.0.0",
           kind: "survey-qa-v2-contract-revision",
@@ -305,12 +420,12 @@ async function runExtraction(
           sealedAt: new Date().toISOString(),
           requirements: merged.requirements,
           facetInstances: merged.facetInstances,
-          contractSupplements: [],
+          contractSupplements: sealedSupplements,
           extraction: {
-            passAHash: passA?.state === "evaluated" ? passA.value.hash : "",
-            passBHash: passB.state === "evaluated" ? passB.value.hash : "",
-            sourceLedgerHash: consolidated.state === "evaluated" ? consolidated.value.ledgerHash : "",
-            diffHash: consolidated.state === "evaluated" ? consolidated.value.diffHash : "",
+            passAHash: passA.value.hash,
+            passBHash: passB.value.hash,
+            sourceLedgerHash: consolidated.value.ledgerHash,
+            diffHash: consolidated.value.diffHash,
             reviewMode: policy.humanReviewMode,
             reviewedBy: null,
             reviewedAt: null,
@@ -347,22 +462,31 @@ async function runExtraction(
           requirements: d10.requirements,
         };
         await emit({ event: "sealed", ...sealed });
-      }
     } else {
       await updateCheckpoint(
         env,
         runId,
         (d) => {
-          setPhase(d, "extracting", "stopped", "extraction-gates-unmet");
+          setPhase(
+            d,
+            "extracting",
+            "stopped",
+            sealAuthorityDetail === null ? "extraction-gates-unmet" : sealAuthorityReason,
+          );
           d.completion.test = "failed";
-          d.completion.reasonCode = "extraction-gates-unmet";
-          d.error = `unmet approval gates [${unmet.join(", ")}]`;
+          d.completion.reasonCode =
+            sealAuthorityDetail === null ? "extraction-gates-unmet" : sealAuthorityReason;
+          d.error = sealAuthorityDetail ?? `unmet approval gates [${unmet.join(", ")}]`;
         },
         { progressed: true, fence },
       );
     }
 
-    const merged = await loadMerged(env, runId);
+    const merged = await loadMerged(
+      env,
+      runId,
+      consolidated.state === "evaluated" ? consolidated.value.mergedHash : undefined,
+    );
     return await persist(env, runId, {
       runId,
       elapsedMs: Date.now() - startedAt,

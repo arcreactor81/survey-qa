@@ -38,6 +38,10 @@ export function testEnv(overrides = {}) {
  */
 export async function seedRun(mod, env, opts = {}) {
   const runId = mod.ids.mintRunId();
+  // This is a post-extraction sealed-run fixture. Its opaque source locator/hash must still
+  // bind the Workflow event exactly, even though the sealed-resume path never re-reads source.
+  const documentKey = opts.documentKey ?? "k";
+  const documentSha256 = opts.documentSha256 ?? "a".repeat(64);
 
   // `opts.contract` lets a test seal the shape the REAL workflow seals — which sets
   // `extraction.reviewedAt: null` — rather than only the reviewed fixture.
@@ -73,8 +77,8 @@ export async function seedRun(mod, env, opts = {}) {
     instanceId: runId,
     input: {
       surveyUrl: "https://fixture.invalid/survey",
-      documentKey: mod.keys.inputDocumentKey(runId),
-      documentSha256: "a".repeat(64),
+      documentKey,
+      documentSha256,
       documentName: "fixture.docx",
       targetBuildId: opts.targetBuildId === undefined ? TARGET_BUILD_ID : opts.targetBuildId,
       locale: "en",
@@ -99,7 +103,7 @@ export async function seedRun(mod, env, opts = {}) {
     d.completion = { test: opts.testCompletion ?? "complete", report: "not-started", reasonCode: null };
   });
 
-  return { runId, record, contractRevisionId, contractHash, evidence };
+  return { runId, record, contractRevisionId, contractHash, evidence, documentKey, documentSha256 };
 }
 
 export async function putJudgement(mod, env, runId, judgementDoc) {

@@ -122,30 +122,23 @@ const CONSTRUCTS = [
   "carry-forward", "calculation", "randomization", "loop", "instruction",
 ];
 
-function passBPayload() {
+function passBPayload(body) {
+  const user = String(body.messages[1].content);
+  const unit = (user.match(/Your chunk id for this call is: (\S+)/) ?? [])[1] ?? "C01-b0001";
+  const declared = (user.match(/Your chunk contains exactly \d+ blocks: ([^\n]+)/) ?? [])[1] ?? "b0001";
+  const blockIds = declared.split(",").map((value) => value.trim()).filter(Boolean);
   return JSON.stringify({
-    obligations: [{
-      id: "R1",
-      construct: "question",
-      scope: "question",
-      quantifier: "every",
-      selector: "Q1",
-      exceptions: [],
-      statement: "Q1 must be asked",
-      doc_quote: "Ask whether the respondent agrees",
-      block_ids: ["b0001"],
-      browser_observable: "full",
-      confidence: 1,
-    }],
-    block_dispositions: [{
-      block_id: "b0001",
-      disposition: "normative",
-      reason: "states an implementation obligation",
-    }],
+    chunk_id: unit,
+    obligations: [],
+    block_dispositions: blockIds.map((block_id) => ({
+      block_id,
+      disposition: "non-normative",
+      reason: "valid empty control for provider transport/receipt tests",
+    })),
     construct_checklist: CONSTRUCTS.map((construct) => ({
       construct,
-      present: construct === "question",
-      block_ids: construct === "question" ? ["b0001"] : [],
+      present: false,
+      block_ids: [],
     })),
     ambiguities: [],
     unverifiable_from_browser: [],
@@ -159,6 +152,31 @@ function passAPayload() {
     ambiguities: [],
     unverifiable_from_browser: [],
   });
+}
+
+async function completePassA(m, value, runId, documentKey, documentSha256, fence) {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    return chatResponse(body.model, passAPayload(), 100, 50);
+  };
+  try {
+    const outcome = await m.extractStage.stagePassASlice(
+      value,
+      runId,
+      documentKey,
+      "questionnaire.docx",
+      fence,
+      async () => {},
+      {},
+      m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+      documentSha256,
+    );
+    assertEq(outcome.result.state, "evaluated", "fixture Pass A must be canonical retained authority");
+    return outcome.result.value.hash;
+  } finally {
+    globalThis.fetch = original;
+  }
 }
 
 function approx(actual, expected, label) {
@@ -353,6 +371,129 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
     }
   });
 
+  test("only the exact local deadline rejection is adaptive size evidence", async () => {
+    const m = await mod();
+    const signal = AbortSignal.timeout(1);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assertEq(signal.aborted, true);
+    assertEq(m.chat.isLocalDeadlineExpiry(signal.reason, signal), true);
+    assertEq(
+      m.chat.isLocalDeadlineExpiry(new TypeError("network failed after the timer fired"), signal),
+      false,
+      "an expired timer does not relabel an unrelated network failure",
+    );
+    assertEq(m.chat.isLocalDeadlineExpiry(signal.reason, null), false);
+
+    const httpTimeout = new m.chat.ModelCallError(
+      "fixture HTTP 408",
+      { callId: "c", role: "r", provider: "grok", model: "grok-4.6", status: "error",
+        inputTokens: 1, outputTokens: 1, costUsd: 1, latencyMs: 1, attempts: 1 },
+      "timeout-or-network",
+      408,
+      "http-status",
+    );
+    assertEq(httpTimeout.failureCause, "http-status", "HTTP 408 is not local workload-size evidence");
+  });
+
+  test("chat transport carries exact deadline, network-race, and HTTP causes", async () => {
+    const m = await mod();
+    const cases = [
+      {
+        label: "local deadline",
+        responder: (_body, _n, init) => new Promise((_resolve, reject) => {
+          const keepAlive = setTimeout(() => reject(new Error("deadline fixture did not abort")), 100);
+          init.signal.addEventListener("abort", () => {
+            clearTimeout(keepAlive);
+            reject(init.signal.reason);
+          }, { once: true });
+        }),
+        expected: "local-deadline",
+      },
+      {
+        label: "network after deadline",
+        responder: (_body, _n, init) => new Promise((_resolve, reject) => {
+          const keepAlive = setTimeout(() => reject(new Error("network-race fixture did not abort")), 100);
+          init.signal.addEventListener("abort", () => {
+            clearTimeout(keepAlive);
+            reject(new TypeError("fixture network race"));
+          }, { once: true });
+        }),
+        expected: "network",
+      },
+      {
+        label: "HTTP 408",
+        responder: () => new Response("fixture timeout", { status: 408 }),
+        expected: "http-status",
+      },
+    ];
+    for (const row of cases) {
+      const original = globalThis.fetch;
+      globalThis.fetch = async (_url, init) => row.responder(null, 1, init);
+      try {
+        const error = await assertThrows(
+          () => m.chat.chatJson(
+            {
+              provider: "grok",
+              model: "grok-4.6",
+              gatewaySuffix: "/v1",
+              directBaseUrl: "https://fixture.invalid",
+              apiKey: "fixture",
+              inputUsdPerMTok: 1,
+              outputUsdPerMTok: 1,
+              extraBody: {},
+            },
+            env(),
+            opts({ role: "typed-cause-fixture", timeoutMs: 1, maxAttempts: 1 }),
+          ),
+          "",
+        );
+        assert(error instanceof m.chat.ModelCallError, row.label);
+        assertEq(error.failureCause, row.expected, row.label);
+      } finally {
+        globalThis.fetch = original;
+      }
+    }
+  });
+
+  test("mixed transport failures stay mixed in either attempt order", async () => {
+    const m = await mod();
+    const localDeadline = (_body, _n, init) => new Promise((_resolve, reject) => {
+      const keepAlive = setTimeout(() => reject(new Error("deadline fixture did not abort")), 100);
+      init.signal.addEventListener("abort", () => {
+        clearTimeout(keepAlive);
+        reject(init.signal.reason);
+      }, { once: true });
+    });
+    const network = () => { throw new TypeError("fixture network failure"); };
+    for (const [label, responders] of [
+      ["deadline then network", [localDeadline, network]],
+      ["network then deadline", [network, localDeadline]],
+    ]) {
+      const original = globalThis.fetch;
+      let request = 0;
+      globalThis.fetch = async (_url, init) => responders[request++]?.(null, request, init);
+      try {
+        const error = await assertThrows(
+          () => m.chat.chatJson(
+            {
+              provider: "grok", model: "grok-4.6", gatewaySuffix: "/v1",
+              directBaseUrl: "https://fixture.invalid", apiKey: "fixture",
+              inputUsdPerMTok: 1, outputUsdPerMTok: 1, extraBody: {},
+            },
+            env(),
+            opts({ role: "mixed-cause-fixture", timeoutMs: 1, maxAttempts: 2 }),
+          ),
+          "",
+        );
+        assert(error instanceof m.chat.ModelCallError, label);
+        assertEq(error.failureCause, "mixed", label);
+        assertEq(request, 2, label + ": both attempt causes were exercised");
+      } finally {
+        globalThis.fetch = original;
+      }
+    }
+  });
+
   test("invalid fallback rates fail before the primary can spend", async () => {
     const m = await mod();
     const stub = stubSequence([]);
@@ -411,8 +552,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
       EXTRACT_SWEEP_MAX_CALLS: "0",
     });
     const stub = stubSequence([
-      (body) => chatResponse(body.model, passBPayload(), 100, 50),
-      (body) => chatResponse(body.model, passBPayload(), 100, 50),
+      (body) => chatResponse(body.model, passBPayload(body), 100, 50),
+      (body) => chatResponse(body.model, passBPayload(body), 100, 50),
     ]);
     try {
       const first = await m.passB.runPassB(base, "run_plan_bound", oneBlockDocument(), "fixture.docx");
@@ -433,7 +574,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
     }
   });
 
-  test("a missing usage array is a cache miss, never a silently trusted artifact", async () => {
+  test("a missing usage array is terminal current-key corruption, never a silently trusted or re-bought artifact", async () => {
     const m = await mod();
     const shared = memoryR2();
     const value = env({
@@ -443,8 +584,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
       EXTRACT_SWEEP_MAX_CALLS: "0",
     });
     const stub = stubSequence([
-      (body) => chatResponse(body.model, passBPayload(), 100, 50),
-      (body) => chatResponse(body.model, passBPayload(), 100, 50),
+      (body) => chatResponse(body.model, passBPayload(body), 100, 50),
+      (body) => chatResponse(body.model, passBPayload(body), 100, 50),
     ]);
     try {
       await m.passB.runPassB(value, "run_receipt_bound", oneBlockDocument(), "fixture.docx");
@@ -455,8 +596,12 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
       delete artifact.usages;
       await shared.put(key, JSON.stringify(artifact));
 
-      await m.passB.runPassB(value, "run_receipt_bound", oneBlockDocument(), "fixture.docx");
-      assertEq(stub.requests.length, 2, "malformed telemetry must force a fresh, receipted unit");
+      const resumed = await m.passB.runPassB(
+        value, "run_receipt_bound", oneBlockDocument(), "fixture.docx",
+      );
+      assertEq(stub.requests.length, 1, "malformed exact-key authority must not be overwritten or re-bought");
+      assertEq(resumed.slice.terminalFailure, true);
+      assert(resumed.failedUnits[0].detail.includes("PASS_B_UNIT_ARTIFACT_INVALID"));
     } finally {
       stub.restore();
     }
@@ -477,7 +622,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
     ]);
     try {
       const result = await m.passB.runPassB(value, "run_failed_receipts", oneBlockDocument(), "fixture.docx");
-      assertEq(result.slice.done, true, "terminally failed unit is accounted rather than retried forever");
+      assertEq(result.slice.done, false, "terminally failed unit cannot authorize a completed pass");
+      assertEq(result.slice.terminalFailure, true, "terminal failure is accounted rather than retried forever");
       assertEq(result.issuedCalls.length, 1);
       const key = m.keys.k("runs", "run_failed_receipts", "extraction", "pass-b", "chunk-01.json");
       const artifact = await (await shared.get(key)).json();
@@ -510,7 +656,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
       assertEq(first.slice.done, false);
       assertEq(first.issuedCalls.length, 1);
       const second = await m.passB.runPassB(value, "run_retry_receipts", oneBlockDocument(), "fixture.docx");
-      assertEq(second.slice.done, true);
+      assertEq(second.slice.done, false);
+      assertEq(second.slice.terminalFailure, true);
       assertEq(second.issuedCalls.length, 1, "only the new retry purchase is charged this wave");
       assertEq(second.calls.length, 2, "prior receipt remains visible as zero-cost reclaimed provenance");
       assertEq(second.calls.filter((row) => row.costUsd === 0).length, 1);
@@ -540,7 +687,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
       );
       const fence = await m.checkpoint.claimOwnership(value, runId, "provider-continuity-test", 1);
       const stub = stubSequence([
-        (body) => chatResponse(body.model, passBPayload(), 100, 50),
+        (body) => chatResponse(body.model, passBPayload(body), 100, 50),
       ]);
       try {
         const landed = await m.passB.runPassB(value, runId, oneBlockDocument(), "fixture.docx");
@@ -585,17 +732,32 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
     const fence = await m.checkpoint.claimOwnership(value, runId, "provider-continuity-test", 1);
     const documentKey = m.keys.inputDocumentKey(runId);
     const documentBytes = readFileSync(new URL("../../../public/sample/questionnaire.docx", import.meta.url));
+    const documentSha256 = await m.hash.sha256Hex(documentBytes);
     await value.EVIDENCE.put(documentKey, documentBytes);
-    const document = await m.extractStage.loadDocument(value, documentKey);
+    const { doc: document } = await m.extractStage.loadDocument(
+      value, documentKey, documentSha256, m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+    );
+    const passAHash = await completePassA(m, value, runId, documentKey, documentSha256, fence);
     const stub = stubSequence([
-      (body) => chatResponse(body.model, passBPayload(), 100, 50),
+      (body) => chatResponse(body.model, passBPayload(body), 100, 50),
     ]);
     try {
       // Simulate a process death after the unit artifact commits but before stage accounting.
+      const before = (await m.checkpoint.loadCheckpoint(value, runId)).checkpoint;
+      const baselineCalls = before.usage.modelCalls.used;
+      assertEq(
+        before.usage.events.filter((row) => row.eventId.startsWith(`core-model-call/pass-b/${runId}/`)).length,
+        0,
+        "canonical Pass A leaves no Pass-B settlement behind",
+      );
       const landed = await m.passB.runPassB(value, runId, document, "questionnaire.docx");
       assertEq(landed.slice.done, true);
       assertEq(landed.issuedCalls.length, 1);
-      assertEq((await m.checkpoint.loadCheckpoint(value, runId)).checkpoint.usage.modelCalls.used, 0);
+      assertEq(
+        (await m.checkpoint.loadCheckpoint(value, runId)).checkpoint.usage.modelCalls.used,
+        baselineCalls,
+        "the landed Pass-B artifact is not charged before the stage resumes",
+      );
 
       const resumed = await m.extractStage.stagePassBSlice(
         value,
@@ -605,11 +767,19 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
         fence,
         async () => {},
         {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+        passAHash,
+        documentSha256,
       );
       assertEq(resumed.result.state, "evaluated");
       assertEq(stub.requests.length, 1, "the stage reclaims rather than re-buys the landed unit");
       const checkpoint = (await m.checkpoint.loadCheckpoint(value, runId)).checkpoint;
-      assertEq(checkpoint.usage.modelCalls.used, 1, "stage settled the pre-existing paid receipt");
+      assertEq(checkpoint.usage.modelCalls.used, baselineCalls + 1, "stage settled exactly one pre-existing Pass-B receipt");
+      assertEq(
+        checkpoint.usage.events.filter((row) => row.eventId.startsWith(`core-model-call/pass-b/${runId}/`)).length,
+        1,
+        "the exact retained Pass-B receipt is settled once",
+      );
       assert(checkpoint.usage.cost.usedUsd > 0);
     } finally {
       stub.restore();
@@ -643,49 +813,63 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
   test("a completed pass-B payload is reusable only under its stored continuity identity", async () => {
     const m = await mod();
     const shared = memoryR2();
-    const base = env({ EVIDENCE: shared });
-    const identity = m.deepseek.deepseekPassBIdentity(base);
-    const runId = "run_completed_plan_bound";
-    await shared.put(m.keys.extractionPassKey(runId, "b"), JSON.stringify({
-      parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
-      promptVersion: m.passB.PASS_B_VERSION,
-      providerPlanIdentity: identity,
-      pass: "B",
-      provider: "deepseek",
-      model: identity,
-      requirements: [],
-      ambiguities: [],
-      unverifiable: [],
-      dispositions: [],
-      constructs: [],
-      failedUnits: [],
-      calls: [],
-    }));
+    const base = env({
+      EVIDENCE: shared,
+      EXTRACT_CHUNK_MAX_BLOCKS: "99999",
+      EXTRACT_CHUNK_CHARS: "99999999",
+      EXTRACT_SWEEP_MAX_CALLS: "0",
+      EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999",
+      EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    });
+    const runId = m.ids.mintRunId();
+    await m.checkpoint.createCheckpoint(base, m.checkpoint.initialCheckpoint(base, runId, "standard", false));
+    const fence = await m.checkpoint.claimOwnership(base, runId, "provider-continuity-test", 1);
+    const documentKey = m.keys.inputDocumentKey(runId);
+    const documentBytes = readFileSync(new URL("../../../public/sample/questionnaire.docx", import.meta.url));
+    const documentSha256 = await m.hash.sha256Hex(documentBytes);
+    await shared.put(documentKey, documentBytes);
+    const passAHash = await completePassA(m, base, runId, documentKey, documentSha256, fence);
+    const purchase = stubSequence([
+      (body) => chatResponse(body.model, passBPayload(body), 100, 50),
+    ]);
+    let completed;
+    try {
+      completed = await m.extractStage.stagePassBSlice(
+        base, runId, documentKey, "questionnaire.docx", fence, async () => {}, {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256,
+      );
+      assertEq(completed.result.state, "evaluated", "canonical Pass B completes under the stored plan");
+      assertEq(purchase.requests.length, 1, "the canonical completion bought exactly one unit");
+    } finally {
+      purchase.restore();
+    }
+    const retainedBody = await (await shared.get(m.keys.extractionPassKey(runId, "b"))).text();
 
-    const same = await m.extractStage.stagePassBSlice(
-      base,
-      runId,
-      "missing-on-purpose.docx",
-      "fixture.docx",
-      { instanceId: "fixture", epoch: 1 },
-      async () => {},
-      {},
-    );
-    assertEq(same.result.state, "evaluated", "same-plan completed payload should be reclaimed");
+    const replay = stubSequence([]);
+    try {
+      const same = await m.extractStage.stagePassBSlice(
+        base, runId, documentKey, "questionnaire.docx", fence, async () => {}, {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256,
+      );
+      assertEq(same.result.state, "evaluated", "same-plan completed payload is reclaimed");
+      assertEq(replay.requests.length, 0, "same-plan completion costs nothing");
 
-    await assertThrows(
-      () => m.extractStage.stagePassBSlice(
+      const changed = await m.extractStage.stagePassBSlice(
         { ...base, DEEPSEEK_FALLBACK_REASONING_EFFORT: "high" },
-        runId,
-        "missing-on-purpose.docx",
-        "fixture.docx",
-        { instanceId: "fixture", epoch: 1 },
-        async () => {},
-        {},
-      ),
-      "submitted document is missing",
-      "changed plan must miss the completed payload and enter fresh extraction",
-    );
+        runId, documentKey, "questionnaire.docx", fence, async () => {}, {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256,
+      );
+      assertEq(changed.result.state, "not-evaluated");
+      assertEq(changed.result.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+      assertEq(replay.requests.length, 0, "changed-plan occupied authority is refused without a re-buy");
+      assertEq(
+        await (await shared.get(m.keys.extractionPassKey(runId, "b"))).text(),
+        retainedBody,
+        "changed-plan refusal does not overwrite completed bytes",
+      );
+    } finally {
+      replay.restore();
+    }
   });
 
   test("contract reuse fingerprint changes with fallback policy and deployed rates are exact", async () => {
@@ -747,7 +931,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
     const value = extractionEnv();
     const stub = stubSequence([
       (body) => chatResponse(body.model, passAPayload(), 100, 20),
-      (body) => chatResponse(body.model, passBPayload(), 200, 40),
+      (body) => chatResponse(body.model, passBPayload(body), 200, 40),
     ]);
     try {
       const passA = await m.passA.runPassA(value, "run_normal_route", oneBlockDocument(), "fixture.docx");
@@ -930,6 +1114,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
     const runId = "run_unattested_rate";
     const documentKey = m.keys.inputDocumentKey(runId);
     const documentBytes = readFileSync(new URL("../../../public/sample/questionnaire.docx", import.meta.url));
+    const documentSha256 = await m.hash.sha256Hex(documentBytes);
     await value.EVIDENCE.put(documentKey, documentBytes);
     const stub = stubSequence([]);
     try {
@@ -941,6 +1126,8 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
         { instanceId: "fixture", epoch: 1 },
         async () => {},
         {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+        documentSha256,
       );
       assertEq(outcome.result.state, "not-evaluated");
       assertEq(outcome.result.reason, "GROK_RATE_UNATTESTED");
@@ -951,14 +1138,17 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
     }
   });
 
-  test("Flash plus Pro is retained but explicitly refused as independent corroboration", async () => {
+  test("a summary-only Flash plus Pro payload is immutable invalid authority", async () => {
     const m = await mod();
     const value = extractionEnv();
     const runId = "run_reduced_independence";
     const documentKey = m.keys.inputDocumentKey(runId);
     const documentBytes = readFileSync(new URL("../../../public/sample/questionnaire.docx", import.meta.url));
+    const documentSha256 = await m.hash.sha256Hex(documentBytes);
     await value.EVIDENCE.put(documentKey, documentBytes);
-    const document = await m.extractStage.loadDocument(value, documentKey);
+    const { doc: document } = await m.extractStage.loadDocument(
+      value, documentKey, documentSha256, m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+    );
     const grokEventId = `core-model-call/pass-a/${runId}/A/issue-1/receipt-1`;
     const trigger = {
       kind: m.passA.GROK_FALLBACK_TRIGGER_VERSION,
@@ -981,7 +1171,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
         costUsd: 0.0000028, latencyMs: 1, attempts: 1, usageSource: "provider-reported",
       },
     ];
-    await value.EVIDENCE.put(m.keys.extractionPassKey(runId, "a"), JSON.stringify({
+    const passABody = JSON.stringify({
       parserVersion: document.parserVersion,
       promptVersion: m.passA.PASS_A_VERSION,
       providerRouteIdentity: m.grok.grokFlashRouteIdentity(value),
@@ -993,7 +1183,8 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       failedUnits: [], calls, crossRefs: [],
       routeReceipts: [{ selected: "deepseek-v4-flash", trigger }],
       fallbackTriggers: [trigger],
-    }));
+    });
+    await value.EVIDENCE.put(m.keys.extractionPassKey(runId, "a"), passABody);
     await value.EVIDENCE.put(m.keys.extractionPassKey(runId, "b"), JSON.stringify({
       parserVersion: document.parserVersion,
       promptVersion: m.passB.PASS_B_VERSION,
@@ -1008,12 +1199,16 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       value,
       runId,
       documentKey,
-      "fixture-document-sha256",
+      documentSha256,
       "en",
       ["desktop"],
+      m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+      "questionnaire.docx",
+      `sha256:${await m.hash.sha256Hex(passABody)}`,
+      `sha256:${"0".repeat(64)}`,
     );
     assertEq(result.state, "not-evaluated");
-    assertEq(result.reason, "REDUCED_PROVIDER_INDEPENDENCE");
-    assert(result.detail.includes("both readings came from one provider family"));
+    assertEq(result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assert(result.detail.includes("PASS_A_COMPLETED_ARTIFACT_INVALID"));
   });
 });

@@ -262,6 +262,7 @@ suite("GROK COST POLICY - reviewed tiers and conservative flat ledger", () => {
     const runId = "run_grok_cost_gate";
     const documentKey = m.keys.inputDocumentKey(runId);
     const bytes = readFileSync(new URL("../../../public/sample/questionnaire.docx", import.meta.url));
+    const documentSha256 = await m.hash.sha256Hex(bytes);
     await value.EVIDENCE.put(documentKey, bytes);
     const original = globalThis.fetch;
     let requests = 0;
@@ -278,6 +279,8 @@ suite("GROK COST POLICY - reviewed tiers and conservative flat ledger", () => {
         { instanceId: "fixture", epoch: 1 },
         async () => {},
         {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+        documentSha256,
       );
       assertEq(outcome.result.state, "not-evaluated");
       assertEq(outcome.result.reason, "GROK_RATE_UNATTESTED");

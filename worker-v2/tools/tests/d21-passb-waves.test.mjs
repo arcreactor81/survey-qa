@@ -35,6 +35,7 @@
  */
 
 import { assert, assertEq, assertThrows, fakeStep, loadWorker, memoryR2, suite, test } from "../testkit.mjs";
+import { unzipSync, zipSync } from "fflate";
 
 const mod = async () => (await loadWorker()).mod;
 
@@ -92,51 +93,80 @@ const CONSTRUCTS = [
  * accounting, the coercion layer) is the real code. The testkit only stubs platform modules;
  * this is the established place to cut.
  */
-function stubProvider({ failUnit = () => false, citeBlocks = true } = {}) {
+function stubProvider({ failUnit = () => false, citeBlocks = true, validEmpty = false } = {}) {
   const original = globalThis.fetch;
   const requests = [];
   globalThis.fetch = async (url, init) => {
     const body = JSON.parse(init.body);
     const user = String(body.messages[1].content);
     const unit = (user.match(/Your chunk id for this call is: (\S+)/) ?? [])[1] ?? "PASS-A";
-    const blockIds = [...new Set([...user.matchAll(/\[(b\d{4})\]/g)].map((m) => m[1]))];
+    const declaredChunk = (user.match(/Your chunk contains exactly \d+ blocks: ([^\n]+)/) ?? [])[1];
+    const sweepText = (user.match(/===== UNACCOUNTED BLOCKS =====\n([\s\S]*?)\n===== END =====/) ?? [])[1];
+    const blockIds = declaredChunk !== undefined
+      ? declaredChunk.split(",").map((value) => value.trim()).filter(Boolean)
+      : sweepText !== undefined
+        ? [...new Set([...sweepText.matchAll(/\[(b\d{4})\]/g)].map((match) => match[1]))]
+        : [];
     requests.push({ url: String(url), unit, blockIds });
 
     if (failUnit(unit, requests.length)) {
       return new Response("upstream exploded", { status: 502 });
     }
 
-    const obligations = citeBlocks
+    if (unit === "PASS-A") {
+      return Response.json({
+        model: body.model,
+        usage: { prompt_tokens: 1000, completion_tokens: 500 },
+        choices: [{ message: { content: JSON.stringify({
+          global_rules: [], cross_references: [], ambiguities: [], unverifiable_from_browser: [],
+        }) }, finish_reason: "stop" }],
+      });
+    }
+
+    const exactQuote = (id) => {
+      const line = user.split("\n").find((value) => value.startsWith(`[${id}]`)) ?? "";
+      let quote = line.replace(/^\[b\d{4}\]\s*/, "");
+      if (quote.startsWith("(") && quote.includes(") ")) quote = quote.slice(quote.lastIndexOf(") ") + 2);
+      return quote;
+    };
+    const obligations = citeBlocks && !validEmpty
       ? blockIds.map((id, i) => ({
           id: `${unit}-R${i + 1}`,
           construct: "question",
-          scope: "question",
+          scope: `question:${id}`,
           quantifier: "every",
           selector: id,
           exceptions: [],
           statement: `block ${id} must be asked and answered`,
-          doc_quote: `Q text for ${id}`,
+          doc_quote: exactQuote(id),
           block_ids: [id],
+          evidence_quotes: [{
+            block_id: id,
+            quote: exactQuote(id),
+          }],
           browser_observable: "full",
           confidence: 0.9,
+          expansion: null,
         }))
       : [];
 
     const payload = {
-      // Pass A reads this key; pass B reads the two below. One stub answers both legs.
-      global_rules: [],
-      cross_references: [],
+      chunk_id: unit,
       obligations,
       block_dispositions: blockIds.map((id) => ({
         block_id: id,
-        disposition: "normative",
-        reason: "states something an implementation must do",
+        disposition: validEmpty ? "non-normative" : "normative",
+        reason: validEmpty
+          ? "valid empty control: this source block states no survey behavior"
+          : "states something an implementation must do",
       })),
       construct_checklist: CONSTRUCTS.map((c) => ({
         construct: c,
-        present: c === "question",
-        block_ids: c === "question" ? blockIds : [],
+        present: !validEmpty && c === "question",
+        block_ids: !validEmpty && c === "question" ? blockIds : [],
       })),
+      ambiguities: [],
+      unverifiable_from_browser: [],
     };
 
     return new Response(
@@ -307,21 +337,52 @@ function d51AssertVersions(m, value, promptVersion, label) {
   assertEq(value.promptVersion, promptVersion, `${label} prompt version`);
 }
 
-const d51CurrentChunk = (m, env) => ({
+async function d51CompletePassA(m, env, runId, documentKey, documentSha256, fence) {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    return Response.json({
+      model: body.model,
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+      choices: [{
+        message: { content: JSON.stringify({
+          global_rules: [], cross_references: [], ambiguities: [], unverifiable_from_browser: [],
+        }) },
+        finish_reason: "stop",
+      }],
+    });
+  };
+  try {
+    const outcome = await m.extractStage.stagePassASlice(
+      env, runId, documentKey, "questionnaire.docx", fence, async () => {}, {},
+      m.docxBlocks.DOCUMENT_SEMANTICS_NONE, documentSha256,
+    );
+    assertEq(outcome.result.state, "evaluated", "the fixture has canonical retained Pass-A authority");
+    return outcome.result.value.hash;
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+const d51CurrentChunk = (m, env, runId) => ({
   chunkId: "C01-b0001",
   blockIds: ["b0001"],
+  evidenceBlockIds: ["b0001"],
   parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
   promptVersion: m.passB.PASS_B_VERSION,
   // A pass-B artifact is reusable only under the exact Pro extraction leg, never under
   // the unrelated same-provider continuity plan. Keep every non-version identity current
   // here so the stale parser/prompt assertions exercise the field named by the test.
   providerPlanIdentity: m.deepseek.deepseekPassBIdentity(env),
+  decoderIdentity: m.passB.PASS_B_DECODER_VERSION,
+  status: "ok",
+  attempts: 1,
   usages: [{
-    eventId: "core-model-call/pass-b/d51/C01-b0001/issue-1/receipt-1",
-    callId: "d51-current-chunk",
+    eventId: `core-model-call/pass-b/${runId}/C01-b0001/issue-1/receipt-1`,
+    callId: "call_b_1",
     role: "extract-pass-b-C01-b0001",
     provider: "deepseek",
-    model: m.deepseek.deepseekContinuityPlan(env).primary.model,
+    model: "deepseek-v4-pro",
     status: "ok",
     inputTokens: 1,
     outputTokens: 1,
@@ -330,9 +391,25 @@ const d51CurrentChunk = (m, env) => ({
     attempts: 1,
     usageSource: "provider-reported",
   }],
+  modelOutput: {
+    chunk_id: "C01-b0001",
+    obligations: [],
+    block_dispositions: [{
+      block_id: "b0001",
+      disposition: "normative",
+      reason: "requires the ledger sweep",
+    }],
+    construct_checklist: CONSTRUCTS.map((construct) => ({
+      construct,
+      present: false,
+      block_ids: [],
+    })),
+    ambiguities: [],
+    unverifiable_from_browser: [],
+  },
   obligations: [],
   dispositions: [{ blockId: "b0001", disposition: "normative", reason: "requires the ledger sweep" }],
-  constructs: [],
+  constructs: CONSTRUCTS.map((construct) => ({ construct, present: false, blockIds: [] })),
   ambiguities: [],
   unverifiable: [],
 });
@@ -346,7 +423,7 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
     const env = sliceEnv();
     const runId = "run_d51_b_success";
     await d51Put(env, d51ChunkKey(m, runId), {
-      ...d51CurrentChunk(m, env),
+      ...d51CurrentChunk(m, env, runId),
       parserVersion: "stale-parser/0",
       obligations: [{ id: "B-STALE" }],
     });
@@ -369,7 +446,7 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
       chunkId: "C01-b0001",
       blockIds: ["b0001"],
       parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
-      promptVersion: "stale-prompt/0",
+      promptVersion: "v2-extract-pass-b/1.3.0",
       status: "failed",
       attempts: 99,
       detail: "the old prompt exhausted its budget",
@@ -391,7 +468,7 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
   {
     const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "1" });
     const runId = "run_d51_sweep_success";
-    await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m, env));
+    await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m, env, runId));
     await d51Put(env, d51SweepKey(m, runId), {
       sweepId: "SWEEP01",
       blockIds: ["b0001"],
@@ -418,12 +495,12 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
   {
     const env = sliceEnv({ EXTRACT_CHUNK_MAX_ISSUES: "2", EXTRACT_SWEEP_MAX_CALLS: "1" });
     const runId = "run_d51_sweep_failure";
-    await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m, env));
+    await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m, env, runId));
     await d51Put(env, d51SweepKey(m, runId), {
       sweepId: "SWEEP01",
       blockIds: ["b0001"],
       parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
-      promptVersion: "stale-prompt/0",
+      promptVersion: "v2-extract-pass-b/1.3.0",
       status: "failed",
       attempts: 99,
       detail: "the old prompt exhausted its sweep budget",
@@ -440,10 +517,13 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
     }
   }
 
-  // Whole-pass early reuse has its own reader. A stale prompt must fall through to the
-  // current chunk walk and the replacement whole artifact must carry both versions.
+  // An occupied whole-pass key is immutable authority. Even a stale prompt cannot be
+  // laundered by rebuilding over that key; it is a named refusal with zero new purchases.
   {
-    const env = sliceEnv({ EXTRACT_CHUNK_MAX_BLOCKS: "999", EXTRACT_CHUNK_CHARS: "999999" });
+    const env = sliceEnv({
+      EXTRACT_CHUNK_MAX_BLOCKS: "999", EXTRACT_CHUNK_CHARS: "999999",
+      EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999", EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    });
     const runId = m.ids.mintRunId();
     await m.checkpoint.createCheckpoint(env, m.checkpoint.initialCheckpoint(env, runId, "standard", false));
     const fence = await m.checkpoint.claimOwnership(env, runId, runId, 0);
@@ -451,13 +531,16 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
     const path = await import("node:path");
     const { REPO_ROOT } = await import("../testkit.mjs");
     const documentKey = m.keys.inputDocumentKey(runId);
-    await env.EVIDENCE.put(documentKey, readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx")));
-    await d51Put(env, m.keys.extractionPassKey(runId, "b"), {
+    const documentBytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+    const documentSha256 = await m.hash.sha256Hex(documentBytes);
+    await env.EVIDENCE.put(documentKey, documentBytes);
+    const passAHash = await d51CompletePassA(m, env, runId, documentKey, documentSha256, fence);
+    const staleWhole = {
       // Discriminating fixture: the exact current Pro-plan identity is held constant, so
       // only the stale prompt can reject this payload. Provider-plan mismatch refusal is
       // independently guarded in provider-continuity.test.mjs.
       parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
-      promptVersion: "stale-prompt/0",
+      promptVersion: "v2-extract-pass-b/1.3.0",
       providerPlanIdentity: m.deepseek.deepseekPassBIdentity(env),
       pass: "B",
       provider: "deepseek",
@@ -469,7 +552,8 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
       constructs: [],
       failedUnits: [],
       calls: [],
-    });
+    };
+    await d51Put(env, m.keys.extractionPassKey(runId, "b"), staleWhole);
     const provider = stubProvider();
     try {
       const outcome = await m.extractStage.stagePassBSlice(
@@ -480,14 +564,17 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
         fence,
         async () => {},
         {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+        passAHash,
+        documentSha256,
       );
-      assertEq(outcome.result.state, "evaluated", "the current whole pass B completes");
-      assert(provider.requests.length > 0, "the stale whole-pass B payload does not suppress current model work");
-      d51AssertVersions(
-        m,
-        await d51Read(env, m.keys.extractionPassKey(runId, "b")),
-        m.passB.PASS_B_VERSION,
-        "fresh whole pass B",
+      assertEq(outcome.result.state, "not-evaluated", "the stale occupied whole Pass-B key is refused");
+      assertEq(outcome.result.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+      assertEq(provider.requests.length, 0, "immutable invalid whole-pass authority buys nothing");
+      assertEq(
+        JSON.stringify(await d51Read(env, m.keys.extractionPassKey(runId, "b"))),
+        JSON.stringify(staleWhole),
+        "the invalid completion bytes are not overwritten",
       );
     } finally {
       provider.restore();
@@ -497,18 +584,18 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
 
 test("D51-e consolidation refuses stale pass A or pass B payloads", async () => {
   const m = await mod();
-  const env = sliceEnv();
-  const runId = "run_d51_consolidate";
   const { readFileSync } = await import("node:fs");
   const path = await import("node:path");
   const { REPO_ROOT } = await import("../testkit.mjs");
-  const documentKey = m.keys.inputDocumentKey(runId);
-  await env.EVIDENCE.put(documentKey, readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx")));
+  const documentBytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+  const documentSha256 = await m.hash.sha256Hex(documentBytes);
 
-  const pass = (name, stale) => ({
+  const pass = (env, name, stale) => ({
     parserVersion: stale === "parser" ? "stale-parser/0" : m.docxBlocks.DOCX_BLOCKS_VERSION,
     promptVersion:
-      stale === "prompt" ? "stale-prompt/0" : name === "A" ? m.passA.PASS_A_VERSION : m.passB.PASS_B_VERSION,
+      stale === "prompt"
+        ? name === "B" ? "v2-extract-pass-b/1.3.0" : "stale-prompt/0"
+        : name === "A" ? m.passA.PASS_A_VERSION : m.passB.PASS_B_VERSION,
     pass: name,
     provider: name === "A" ? "grok" : "deepseek",
     model: "seed-model",
@@ -530,24 +617,44 @@ test("D51-e consolidation refuses stale pass A or pass B payloads", async () => 
       crossRefs: [],
     } : {}),
   });
-  const aKey = m.keys.extractionPassKey(runId, "a");
-  const bKey = m.keys.extractionPassKey(runId, "b");
+  {
+    const env = sliceEnv();
+    const runId = "run_d51_consolidate_stale_a";
+    const documentKey = m.keys.inputDocumentKey(runId);
+    await env.EVIDENCE.put(documentKey, documentBytes);
+    const staleABody = JSON.stringify(pass(env, "A", "parser"));
+    await env.EVIDENCE.put(m.keys.extractionPassKey(runId, "a"), staleABody);
+    const staleA = await m.extractStage.stageConsolidate(
+      env, runId, documentKey, documentSha256, "en", ["desktop"],
+      m.docxBlocks.DOCUMENT_SEMANTICS_NONE, "questionnaire.docx",
+      `sha256:${await m.hash.sha256Hex(staleABody)}`, `sha256:${"b".repeat(64)}`,
+    );
+    assertEq(staleA.state, "not-evaluated", "stale pass A cannot be merged");
+    assertEq(staleA.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(runId)), null, "stale pass A writes no merged artifact");
+  }
 
-  await d51Put(env, aKey, pass("A", "parser"));
-  await d51Put(env, bKey, pass("B"));
-  const staleA = await m.extractStage.stageConsolidate(env, runId, documentKey, "a".repeat(64), "en", ["desktop"]);
-  assertEq(staleA.state, "not-evaluated", "stale pass A cannot be merged");
-  assertEq(staleA.reason, "MISSING_PASS", "stale pass A is a named current-payload absence");
-  assert(staleA.detail.includes("pass A left no payload"), "the refusal names pass A");
-  assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(runId)), null, "stale pass A writes no merged artifact");
-
-  await d51Put(env, aKey, pass("A"));
-  await d51Put(env, bKey, pass("B", "prompt"));
-  const staleB = await m.extractStage.stageConsolidate(env, runId, documentKey, "a".repeat(64), "en", ["desktop"]);
-  assertEq(staleB.state, "not-evaluated", "stale pass B cannot be merged");
-  assertEq(staleB.reason, "MISSING_PASS", "stale pass B is a named current-payload absence");
-  assert(staleB.detail.includes("pass B left no payload"), "the refusal names pass B");
-  assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(runId)), null, "stale pass B writes no merged artifact");
+  {
+    const env = sliceEnv({
+      EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999", EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    });
+    const runId = m.ids.mintRunId();
+    await m.checkpoint.createCheckpoint(env, m.checkpoint.initialCheckpoint(env, runId, "standard", false));
+    const fence = await m.checkpoint.claimOwnership(env, runId, runId, 0);
+    const documentKey = m.keys.inputDocumentKey(runId);
+    await env.EVIDENCE.put(documentKey, documentBytes);
+    const passAHash = await d51CompletePassA(m, env, runId, documentKey, documentSha256, fence);
+    const staleBBody = JSON.stringify(pass(env, "B", "prompt"));
+    await env.EVIDENCE.put(m.keys.extractionPassKey(runId, "b"), staleBBody);
+    const staleB = await m.extractStage.stageConsolidate(
+      env, runId, documentKey, documentSha256, "en", ["desktop"],
+      m.docxBlocks.DOCUMENT_SEMANTICS_NONE, "questionnaire.docx", passAHash,
+      `sha256:${await m.hash.sha256Hex(staleBBody)}`,
+    );
+    assertEq(staleB.state, "not-evaluated", "stale pass B cannot be merged");
+    assertEq(staleB.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+    assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(runId)), null, "stale pass B writes no merged artifact");
+  }
 });
 
 });
@@ -623,10 +730,25 @@ test("a chunk that keeps FAILING is re-bought a bounded number of times, not onc
   const provider = stubProvider({ failUnit: (unit) => unit === doomed });
   try {
     const doc = docFor(3);
-    const { last } = await driveToDone(m, env, "run_d21_bounded", doc, 0);
+    await m.passB.runPassB(env, "run_d21_bounded", doc, "synthetic.docx", undefined, { budgetMs: 0 });
+    await m.passB.runPassB(
+      env, "run_d21_bounded", doc, "synthetic.docx", undefined, { budgetMs: 0 },
+    );
+    let last = await m.passB.runPassB(
+      env, "run_d21_bounded", doc, "synthetic.docx", undefined, { budgetMs: 0 },
+    );
+    // Recovery can re-enter this exact slice arbitrarily many times. Exercise several
+    // entries after the retained failure has reached its ceiling; otherwise a mutant that
+    // ignores terminal/budget authority only on the NEXT entry is structurally invisible.
+    for (let i = 0; i < 4; i++) {
+      last = await m.passB.runPassB(
+        env, "run_d21_bounded", doc, "synthetic.docx", undefined, { budgetMs: 0 },
+      );
+    }
 
     assertEq(provider.countFor(doomed), 2, `the failing chunk must be bought EXACTLY twice, was bought ${provider.countFor(doomed)}`);
-    assertEq(last.slice.done, true, "the pass still terminates rather than looping on a chunk nobody can answer");
+    assertEq(last.slice.done, false, "a terminally failed chunk cannot be called a completed pass");
+    assertEq(last.slice.terminalFailure, true, "the bounded refusal is terminal rather than another retry");
     assert(
       last.failedUnits.some((f) => f.unit === doomed),
       "the failure is NAMED as a failed unit, never reported as a chunk that found nothing",
@@ -751,21 +873,53 @@ async function stageBed(overrides = {}) {
 }
 
 test("(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the finished one", async () => {
-  const { m, env, runId, fence } = await stageBed({ EXTRACT_CHUNK_MAX_BLOCKS: "10", EXTRACT_CHUNK_CHARS: "2000" });
-  const provider = stubProvider();
+  const { m, env, runId, fence } = await stageBed({
+    EXTRACT_CHUNK_MAX_BLOCKS: "10", EXTRACT_CHUNK_CHARS: "2000",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999", EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+  });
+  let provider;
   try {
     // A real .docx, read from disk, so `loadDocument` and the real parser are in the loop.
     const { readFileSync } = await import("node:fs");
     const path = await import("node:path");
     const { REPO_ROOT } = await import("../testkit.mjs");
     const bytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+    const documentSha256 = await m.hash.sha256Hex(bytes);
     const documentKey = m.keys.inputDocumentKey(runId);
     await env.EVIDENCE.put(documentKey, bytes, { httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return Response.json({
+        model: body.model,
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        choices: [{
+          message: { content: JSON.stringify({
+            global_rules: [], cross_references: [], ambiguities: [], unverifiable_from_browser: [],
+          }) },
+          finish_reason: "stop",
+        }],
+      });
+    };
+    let passA;
+    try {
+      passA = await m.extractStage.stagePassASlice(
+        env, runId, documentKey, "questionnaire.docx", fence, async () => {}, {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE, documentSha256,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assertEq(passA.result.state, "evaluated", "the block-pass fixture has exact durable Pass-A authority");
+    const passAHash = passA.result.value.hash;
+    const passABaselineCalls = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint.usage.modelCalls.used;
+    provider = stubProvider();
 
     const beat = async () => {};
     const first = await m.extractStage.stagePassBSlice(env, runId, documentKey, "questionnaire.docx", fence, beat, {
       budgetMs: 0,
-    });
+    }, m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256);
 
     // THE SILENT-TRUNCATION GUARD. `stageConsolidate` reads the pass key and merges whatever
     // it finds, with no way to tell a whole read from a partial one.
@@ -784,7 +938,7 @@ test("(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the fi
     while (!out.slice.done && waves < 60) {
       out = await m.extractStage.stagePassBSlice(env, runId, documentKey, "questionnaire.docx", fence, beat, {
         budgetMs: 0,
-      });
+      }, m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256);
       waves += 1;
     }
     assertEq(out.slice.done, true, `the pass finished across ${waves} wave(s)`);
@@ -801,11 +955,12 @@ test("(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the fi
     const cp = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint;
     assertEq(
       cp.usage.modelCalls.used,
-      provider.requests.length,
-      `the run is charged for the ${provider.requests.length} call(s) it bought, not for every reuse`,
+      passABaselineCalls + provider.requests.length,
+      `the run adds exactly the ${provider.requests.length} Pass-B call(s) it bought to the canonical ` +
+        `${passABaselineCalls}-call Pass-A baseline, not one charge per reuse`,
     );
   } finally {
-    provider.restore();
+    provider?.restore();
   }
 });
 
@@ -854,8 +1009,10 @@ test("(c) WORKFLOW seal is bound to the source-ledger step's merged artifact has
     EXTRACT_CHUNK_MAX_BLOCKS: "100",
     EXTRACT_CHUNK_CHARS: "90000",
     EXTRACT_PASS_B_MAX_WAVES: "3",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999",
+    EXTRACT_PASS_A_WINDOW_CHARS: "99999999",
   });
-  const provider = stubProvider();
+  const provider = stubProvider({ validEmpty: true });
   try {
     const runId = m.ids.mintRunId();
     await m.checkpoint.createCheckpoint(env, m.checkpoint.initialCheckpoint(env, runId, "standard", false));
@@ -897,10 +1054,9 @@ test("(c) WORKFLOW seal is bound to the source-ledger step's merged artifact has
           const object = await env.EVIDENCE.get(m.extractStage.mergedKey(runId));
           assert(object, "source-ledger must persist merged.json before the seal step starts");
           const replacement = JSON.parse(await object.text());
-          assert(replacement.requirements.length > 0, "the real consolidation must produce a requirement to replace");
           const requirementCount = replacement.requirements.length;
           const caseCount = replacement.facetInstances.length;
-          replacement.requirements[0].normativeStatement += " [same-count replacement]";
+          replacement.schemaVersion += "-same-count-replacement";
           assertEq(replacement.requirements.length, requirementCount);
           assertEq(replacement.facetInstances.length, caseCount);
           await env.EVIDENCE.put(m.extractStage.mergedKey(runId), JSON.stringify(replacement, null, 2));
@@ -917,25 +1073,117 @@ test("(c) WORKFLOW seal is bound to the source-ledger step's merged artifact has
     };
 
     const workflow = new m.workflow.SurveyRunWorkflowV2({}, env);
-    const err = await assertThrows(
-      () => workflow.run({
-        payload: {
-          runId,
-          surveyUrl: "https://fixture.invalid/survey",
-          documentKey,
-          documentSha256,
-          profile: "standard",
-          locale: "en",
-          viewports: ["desktop"],
-        },
-      }, step),
-      "MERGED_ARTIFACT_HASH_MISMATCH",
-    );
+    await workflow.run({
+      payload: {
+        runId,
+        surveyUrl: "https://fixture.invalid/survey",
+        documentKey,
+        documentSha256,
+        profile: "standard",
+        locale: "en",
+        viewports: ["desktop"],
+      },
+    }, step);
     assert(replaced, "the negative control must actually replace merged.json at the seal boundary");
-    assertEq(m.workflow.classifyFailure(err), "merged-extraction-hash-mismatch");
     const checkpoint = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint;
     assert(checkpoint.contract.state !== "sealed", "the substituted denominator must never seal");
-    assertEq(checkpoint.completion.reasonCode, "merged-extraction-hash-mismatch");
+    assertEq(checkpoint.completion.test, "failed", "an unsealed run with zero execution fails honestly");
+    assertEq(checkpoint.completion.reasonCode, "extraction-seal-authority-invalid");
+    assert(checkpoint.error.includes("MERGED_ARTIFACT_HASH_MISMATCH"), checkpoint.error);
+    assert(step.calls.includes("report") && step.calls.includes("finalize"), "named refusal reaches the report tail");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("a same-parsed source swap at source-ledger is a named terminal report with no merge or seal", async () => {
+  const m = await mod();
+  const env = sliceEnv({
+    EXTRACT_CHUNK_MAX_BLOCKS: "100",
+    EXTRACT_CHUNK_CHARS: "90000",
+    EXTRACT_PASS_B_MAX_WAVES: "3",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999",
+    EXTRACT_PASS_A_WINDOW_CHARS: "99999999",
+  });
+  const provider = stubProvider({ validEmpty: true });
+  try {
+    const runId = m.ids.mintRunId();
+    await m.checkpoint.createCheckpoint(env, m.checkpoint.initialCheckpoint(env, runId, "standard", false));
+    const { readFileSync } = await import("node:fs");
+    const path = await import("node:path");
+    const { REPO_ROOT } = await import("../testkit.mjs");
+    const documentBytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+    const replacement = zipSync(unzipSync(documentBytes), { mtime: "2040-01-02T03:04:06.000Z" });
+    const documentSha256 = await m.hash.sha256Hex(documentBytes);
+    assert(documentSha256 !== await m.hash.sha256Hex(replacement));
+    assertEq(
+      m.hash.canonicalJson(m.docxBlocks.parseDocxBlocks(documentBytes)),
+      m.hash.canonicalJson(m.docxBlocks.parseDocxBlocks(replacement)),
+      "the source-ledger counterexample keeps identical parsed document semantics",
+    );
+    const documentKey = m.keys.inputDocumentKey(runId);
+    await env.EVIDENCE.put(documentKey, documentBytes);
+    await m.envelope.putEnvelope(env, {
+      schemaVersion: "v2-run-envelope/1.0.0",
+      kind: "survey-qa-v2-envelope",
+      runId,
+      createdAt: "2026-08-14T00:00:00.000Z",
+      instanceId: runId,
+      input: {
+        surveyUrl: "https://fixture.invalid/survey",
+        documentKey,
+        documentSha256,
+        documentName: "questionnaire.docx",
+        targetBuildId: null,
+        locale: "en",
+        viewports: ["desktop"],
+      },
+      profile: "standard",
+      contractRevisionId: null,
+      recovery: null,
+      finalCompletion: null,
+    });
+
+    const inline = fakeStep();
+    let swapped = false;
+    let requestsBeforeLedger = -1;
+    const step = {
+      calls: inline.calls,
+      sleeps: inline.sleeps,
+      async do(name, a, b) {
+        if (name === "source-ledger" && !swapped) {
+          requestsBeforeLedger = provider.requests.length;
+          await env.EVIDENCE.put(documentKey, replacement);
+          swapped = true;
+        }
+        return inline.do(name, a, b);
+      },
+      async sleep(name, duration) { return inline.sleep(name, duration); },
+      async sleepUntil(name, timestamp) { return inline.sleepUntil(name, timestamp); },
+    };
+    await new m.workflow.SurveyRunWorkflowV2({}, env).run({
+      payload: {
+        runId,
+        surveyUrl: "https://fixture.invalid/survey",
+        documentKey,
+        documentSha256,
+        profile: "standard",
+        locale: "en",
+        viewports: ["desktop"],
+      },
+    }, step);
+
+    assert(swapped, "the source was replaced only after both passes completed");
+    assertEq(provider.requests.length, requestsBeforeLedger, "consolidation refusal buys no provider work");
+    assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(runId)), null, "changed bytes authorize no merge");
+    assert(!step.calls.includes("seal-contract-revision"), "changed bytes authorize no seal step");
+    assert(step.calls.includes("report") && step.calls.includes("finalize"));
+    const checkpoint = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint;
+    assertEq(checkpoint.completion.reasonCode, "extraction-document-source-authority-invalid");
+    assertEq(checkpoint.completion.test, "failed");
+    assertEq(checkpoint.completion.report, "complete");
+    assertEq(checkpoint.contract.state, "unavailable");
+    assertEq(checkpoint.reportAvailable, true);
   } finally {
     provider.restore();
   }
@@ -960,7 +1208,9 @@ test("(a) pass B occupies MULTIPLE distinct workflow steps, and exhausting them 
     const path = await import("node:path");
     const { REPO_ROOT } = await import("../testkit.mjs");
     const documentKey = m.keys.inputDocumentKey(runId);
-    await env.EVIDENCE.put(documentKey, readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx")));
+    const documentBytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+    const documentSha256 = await m.hash.sha256Hex(documentBytes);
+    await env.EVIDENCE.put(documentKey, documentBytes);
     await m.envelope.putEnvelope(env, {
       schemaVersion: "v2-run-envelope/1.0.0",
       kind: "survey-qa-v2-envelope",
@@ -970,7 +1220,7 @@ test("(a) pass B occupies MULTIPLE distinct workflow steps, and exhausting them 
       input: {
         surveyUrl: "https://fixture.invalid/survey",
         documentKey,
-        documentSha256: "b".repeat(64),
+        documentSha256,
         documentName: "questionnaire.docx",
         targetBuildId: null,
         locale: "en",
@@ -990,7 +1240,7 @@ test("(a) pass B occupies MULTIPLE distinct workflow steps, and exhausting them 
           runId,
           surveyUrl: "https://fixture.invalid/survey",
           documentKey,
-          documentSha256: "b".repeat(64),
+          documentSha256,
           profile: "standard",
           locale: "en",
           viewports: ["desktop"],

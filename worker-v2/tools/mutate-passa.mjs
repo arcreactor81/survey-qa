@@ -33,12 +33,25 @@ const WORKFLOW = "src/workflow/run-workflow.ts";
 const WAVES_NAMED_STOP = "(a) pass A occupies MULTIPLE distinct workflow steps, and exhausting them is a NAMED failure";
 const NO_STALL = "a pass-A wave with NO budget at all still issues one call — the wave loop can never stall";
 const RESUME_FREE = "(b) a second wave over a finished pass-A buys NOTHING";
-const BOUNDED = "a pass-A window that keeps FAILING is re-bought a bounded number of times, not once per wave";
+const BOUNDED_RETRY = "a pass-A window that keeps FAILING is re-bought a bounded number of times, not once per wave";
+const FALLBACK_STOP = "a receipted Flash result stops later pass-A purchases immediately";
 const XREFS = "(c) CROSS-REFERENCES survive a resume — pass A's one output with no pass-B analogue";
 const DERIVED_TIMEOUT = "the pass-A step timeout always exceeds its own wave budget by at least one whole PURCHASE";
 const HALF_READ = "(a) the STAGE refuses to evaluate an unfinished pass A, and evaluates the finished one";
 const BLOCK_LIMIT = "dense pass-A windows stop at the exact block limit while the character limit stays independent";
 const FAILURE_REPORTS = "an UNCAUGHT step failure still produces a report — the failure path used to produce none";
+
+const STRICT_PRIMARY = "malformed primary schemas and evidence terminalize without a second purchase";
+const RAW_PRIMARY = "retained primary typed projection is re-decoded from raw output and cannot be laundered";
+const PRIMARY_LAUNDER = "primary paid success cannot be relabeled as retryable semantic failure";
+const SYNTHESIS_INVALID = "malformed or ungrounded synthesis rows terminalize and are never re-bought";
+const SYNTHESIS_WIRE = "the exact serialized provider request is gated before any synthesis purchase";
+const SYNTHESIS_RETAINED = "corrupt or incoherent retained synthesis authority terminalizes with zero new fetch";
+const SYNTHESIS_CROSS_ISSUE = "a fallback route receipt cannot bind its trigger and selected leg across different issues";
+const SYNTHESIS_SEPARATE_WAVE = "a relation split across windows is added once and resolves the qualified primary xref";
+const FALLBACK_CHAIN = "fallback retry authority rejects a missing Flash issue, extra Grok purchase, and ineligible trigger";
+const DOCUMENT_SOURCE_BYTES =
+  "byte-different DOCX with identical parsed blocks is refused before Pass A buys anything";
 
 await runMutantSuite({
   title: "D22 — pass A is sliced across steps, resumes what landed, and fails by name",
@@ -47,9 +60,19 @@ await runMutantSuite({
   filter: "",
   mutants: [
     {
+      name: "document source authority trusts parsed equivalence instead of exact current bytes",
+      breaks:
+        "a replacement DOCX with identical parsed blocks can inherit the envelope hash and authorize " +
+        "provider purchases, consolidation, reuse, and sealing for bytes that were never submitted",
+      file: STAGE,
+      find: "if (actualRawSha256 !== expectedRawSha256) {",
+      replace: "if (false) {",
+      kills: [DOCUMENT_SOURCE_BYTES],
+    },
+    {
       name: "the pass-A block ceiling is off by one",
       breaks:
-        "a dense 251-block document remains one oversized unit even though the configured ceiling is 250",
+        "a dense 101-block document remains one oversized unit even though the configured ceiling is 100",
       file: PASS_A,
       find: "const reachesBlockLimit = current.length >= blockLimit;",
       replace: "const reachesBlockLimit = current.length > blockLimit;",
@@ -102,17 +125,29 @@ await runMutantSuite({
       kills: [RESUME_FREE],
     },
     {
-      name: "a failing window is re-bought without bound",
+      name: "the retained issue ceiling is ignored on artifact reclaim",
       breaks:
         "the per-window purchase budget is ignored, so one window nobody can answer is bought " +
         "once per wave, per step retry, per recovery instance — the 21–24x billing storm, on the " +
         "most expensive call in the system",
       file: PASS_A,
+      find: "const maxIssues = Math.max(1, num(env.EXTRACT_PASS_A_WINDOW_MAX_ISSUES, 2));",
+      replace: "const maxIssues = 999999;",
+      kills: [BOUNDED_RETRY],
+    },
+    {
+      name: "a shared nonretryable primary failure is not durable across Workflow retry",
+      breaks:
+        "a provider authentication or invalid-request failure stops the first stage invocation but its " +
+        "artifact is resumable, so recovery purchases the same doomed call again",
+      file: PASS_A,
       find:
-        'if (existing && existing.kind === "failed" && existing.attempts >= maxIssues && !pendingFlash) {',
+        "const durableTerminal =\n" +
+        "        !(err instanceof ModelCallError) || nonRetryablePrimaryFailure || attempts >= maxIssues;",
       replace:
-        'if (existing && existing.kind === "failed" && existing.attempts >= 999999 && !pendingFlash) {',
-      kills: [BOUNDED],
+        "const durableTerminal =\n" +
+        "        !(err instanceof ModelCallError) || attempts >= maxIssues;",
+      kills: ["a retained nonretryable Pass-A failure is never re-bought after the stage boundary"],
     },
     {
       name: "the window artifact is written without its cross-references",
@@ -125,12 +160,108 @@ await runMutantSuite({
       kills: [XREFS],
     },
     {
-      name: "the window artifact's cross-references are never read back",
-      breaks: "the other half of the same round trip: they are stored and then dropped on reclaim",
+      name: "typed primary bytes are trusted instead of re-derived from raw model authority",
+      breaks: "a retained typed projection can be shortened independently of the paid raw answer",
       file: PASS_A,
-      find: 'crossRefs: (parsed["crossRefs"] ?? []) as CrossRef[],',
-      replace: "crossRefs: [] as CrossRef[],",
-      kills: [XREFS],
+      find: "if (canonicalJson(typedStored) !== canonicalJson(typedDecoded)) {",
+      replace: "if (false) {",
+      kills: [RAW_PRIMARY],
+    },
+    {
+      name: "primary output row keys are no longer closed",
+      breaks: "unknown authority-bearing fields can be silently ignored by coercion",
+      file: PASS_A,
+      find: "function strictPrimaryKeys(raw: Record<string, unknown>, allowed: readonly string[], row: string): void {",
+      replace: "function strictPrimaryKeys(raw: Record<string, unknown>, allowed: readonly string[], row: string): void { if (row) return;",
+      kills: [STRICT_PRIMARY],
+    },
+    {
+      name: "a primary evidence quote need not occur in its cited source block",
+      breaks: "a hallucinated per-block span is accepted as source provenance",
+      file: PASS_A,
+      find: "if (item.quote.length === 0 || !block?.text.includes(item.quote)) {",
+      replace: "if (item.quote.length === 0) {",
+      kills: [STRICT_PRIMARY],
+    },
+    {
+      name: "a resolved primary cross-reference need not quote its target",
+      breaks: "a local target is marked resolved without exact evidence from that target block",
+      file: PASS_A,
+      find: "if (targetQuote.length === 0 || !exactTarget.text.includes(targetQuote)) {",
+      replace: "if (targetQuote.length === 0) {",
+      kills: [STRICT_PRIMARY],
+    },
+    {
+      name: "a failed primary artifact may retain an ok provider receipt",
+      breaks: "a paid success can be relabeled as retryable semantic failure",
+      file: PASS_A,
+      find: "(usages as CallUsage[]).some((usage) => usage.status === 'ok') ||",
+      replace: "false ||",
+      kills: [PRIMARY_LAUNDER],
+    },
+    {
+      name: "synthesis ignores the exact serialized request ceiling",
+      breaks: "the bounded reconciliation recreates the oversized provider request windowing removed",
+      file: PASS_A,
+      find: "if (context.wireBytes > maxBytes) {",
+      replace: "if (false) {",
+      kills: [SYNTHESIS_WIRE],
+    },
+    {
+      name: "synthesis can be bought in the same wave as the final primary window",
+      breaks: "one Workflow step may contain two full purchases under a one-purchase timeout",
+      file: PASS_A,
+      find: "if (!options.issueAuthorized) {",
+      replace: "if (false) {",
+      kills: [SYNTHESIS_SEPARATE_WAVE],
+    },
+    {
+      name: "synthesis may cite a real but unsupplied source span",
+      breaks: "output gains authority from text absent from the bounded provider wire",
+      file: PASS_A,
+      find: "!context.evidenceBlockIds.has(blockId) || !context.evidenceSpanKeys.has(spanKey) ||",
+      replace: "!context.evidenceBlockIds.has(blockId) || false ||",
+      kills: [SYNTHESIS_INVALID],
+    },
+    {
+      name: "a failed synthesis artifact may retain an ok provider receipt",
+      breaks: "a synthesis success can be laundered into retryable failed state",
+      file: PASS_A,
+      find: '(usages as CallUsage[]).some((usage) => usage.status === "ok") ||',
+      replace: "false ||",
+      kills: [SYNTHESIS_RETAINED],
+    },
+    {
+      name: "a Flash route can bind its Grok trigger from another issue",
+      breaks: "independent purchase issues can be spliced into one fallback route",
+      file: PASS_A,
+      find: 'if (!completeFlashIssues) return "fallback chain has a missing or duplicate Flash issue";',
+      replace: 'if (false) return "fallback chain has a missing or duplicate Flash issue";',
+      kills: [SYNTHESIS_CROSS_ISSUE],
+    },
+    {
+      name: "a fallback chain may contain another Grok purchase",
+      breaks: "one trigger can hide an independently purchased intervening Grok leg",
+      file: PASS_A,
+      find: 'if (grokUsages.length !== 1) return "fallback chain contains an extra Grok purchase";',
+      replace: 'if (false) return "fallback chain contains an extra Grok purchase";',
+      kills: [FALLBACK_CHAIN],
+    },
+    {
+      name: "an unverified invalid-content receipt may authorize Flash",
+      breaks: "a response with no established Grok model identity can be forged into fallback authority",
+      file: PASS_A,
+      find: 'bound.usageSource === "unverified-model-rate-ceiling"',
+      replace: "false",
+      kills: [FALLBACK_CHAIN],
+    },
+    {
+      name: "a null-trigger provider failure may be relabeled retryable",
+      breaks: "a writer-terminal provider refusal can be changed into authority for another Grok purchase",
+      file: PASS_A,
+      find: `(failureStage === 'provider' && fallbackTrigger === null && parsed["terminal"] !== true) ||`,
+      replace: "false ||",
+      kills: [PRIMARY_LAUNDER],
     },
     {
       name: "the step timeout drops the purchase term",
@@ -173,12 +304,36 @@ await runMutantSuite({
         "CAP_MODEL_CALLS on calls nobody ever made",
       file: STAGE,
       find:
-        "await chargeUsage(env, runId, result.accountingCalls, fence);\n\r\n" +
-        "  const wholeDocumentRead = result.slice.done;",
+        "await chargeUsage(env, runId, result.accountingCalls, fence);\n\n" +
+        '  if (result.providerIndependence === "reduced-same-provider-fallback") {',
       replace:
-        "await chargeUsage(env, runId, result.calls, fence);\n\r\n" +
-        "  const wholeDocumentRead = result.slice.done;",
+        "await chargeUsage(env, runId, result.calls, fence);\n\n" +
+        '  if (result.providerIndependence === "reduced-same-provider-fallback") {',
       kills: [HALF_READ],
+    },
+    {
+      name: "a receipted Flash result does not stop later pass-A windows",
+      breaks:
+        "once Pass A lands Flash, configured DeepSeek Pro Pass B can no longer restore provider-family " +
+        "independence, so later Grok windows are pure spend with no sealable outcome",
+      file: PASS_A,
+      find: "if (routeReceipt.trigger !== null) {",
+      replace: "if (false) {",
+      kills: [FALLBACK_STOP],
+    },
+    {
+      name: "a reclaimed Flash result does not stop later pass-A windows",
+      breaks:
+        "a Workflow retry reclaims the Flash window but resumes buying the unread tail even though " +
+        "provider-family independence is already irreversibly reduced",
+      file: PASS_A,
+      find:
+        "if (existing.routeReceipt.trigger !== null) {\n" +
+        "        remaining += windows.length - (i + 1);",
+      replace:
+        "if (false) {\n" +
+        "        remaining += windows.length - (i + 1);",
+      kills: [FALLBACK_STOP],
     },
     {
       name: "the exhausted-waves stop is skipped entirely",

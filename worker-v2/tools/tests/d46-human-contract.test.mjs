@@ -8,7 +8,7 @@
  * identical captured survey bytes, not merely an intermediate hash.
  */
 
-import { strToU8, zipSync } from "fflate";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import { assert, assertEq, assertThrows, fakeStep, suite, test } from "../testkit.mjs";
 import { seedRun, testEnv, worker } from "./_helpers.mjs";
 
@@ -884,6 +884,119 @@ suite("D46 — production submission/workflow seam", () => {
     assert(envelope.contractRevisionId, "the common sealer must bind the run envelope before planning");
   });
 
+  test("human seal rechecks current source bytes after validation and refuses a same-parsed swap", async () => {
+    const mod = await worker();
+    let created = null;
+    const env = testEnv({
+      V2_RUN_WORKFLOW: {
+        async create(input) {
+          created = input;
+        },
+      },
+    });
+    const docx = makeDocx();
+    const replacement = zipSync(unzipSync(docx), { mtime: "2040-01-02T03:04:06.000Z" });
+    assert(await mod.hash.sha256Hex(docx) !== await mod.hash.sha256Hex(replacement));
+    assertEq(
+      mod.hash.canonicalJson(mod.docxBlocks.parseDocxBlocks(docx)),
+      mod.hash.canonicalJson(mod.docxBlocks.parseDocxBlocks(replacement)),
+      "the counterexample preserves parsed source semantics while changing exact bytes",
+    );
+    const documentSha256 = await mod.hash.sha256Hex(docx);
+    const humanBytes = enc.encode(JSON.stringify(authoredInput(documentSha256)));
+    const response = await mod.apiRuns.submitRun(
+      new Request("https://worker.example.invalid/api/v2/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          surveyUrl: "https://survey.example/colors",
+          documentName: "colors.docx",
+          documentBase64: Buffer.from(docx).toString("base64"),
+          contractSource: "human-authored",
+          humanRequirementsBase64: Buffer.from(humanBytes).toString("base64"),
+          locale: "en",
+          viewports: ["desktop"],
+        }),
+      }),
+      env,
+    );
+    assertEq(response.status, 202);
+
+    const step = fakeStep();
+    const originalDo = step.do.bind(step);
+    let swapped = false;
+    step.do = async (name, ...args) => {
+      if (name === "seal-contract-revision" && !swapped) {
+        swapped = true;
+        await env.EVIDENCE.put(created.params.documentKey, replacement);
+      }
+      return originalDo(name, ...args);
+    };
+    await new mod.workflow.SurveyRunWorkflowV2({}, env).run({ payload: created.params }, step);
+    assert(swapped);
+    assert(step.calls.includes("validate-human-requirements"));
+    assert(step.calls.includes("expand-human-requirements"));
+    assert(step.calls.includes("seal-contract-revision"));
+    assertEq(
+      step.calls.filter((name) => name.startsWith("extract-pass-")).length,
+      0,
+      "the human source refusal never diverts into model extraction",
+    );
+    const checkpoint = (await mod.checkpoint.loadCheckpoint(env, created.params.runId)).checkpoint;
+    assertEq(checkpoint.completion.reasonCode, "extraction-document-source-authority-invalid");
+    assertEq(checkpoint.contract.state, "unavailable");
+    assertEq(checkpoint.contract.contractRevisionId, null);
+    assertEq(checkpoint.reportAvailable, true);
+    const envelope = await mod.envelope.getEnvelope(env, created.params.runId);
+    assertEq(envelope.contractRevisionId, null, "no changed-source contract reaches the common sealer");
+  });
+
+  test("hash-bound but unreadable human DOCX is the shared named source refusal, not a retrying workflow error", async () => {
+    const mod = await worker();
+    let created = null;
+    const env = testEnv({
+      V2_RUN_WORKFLOW: {
+        async create(input) {
+          created = input;
+        },
+      },
+    });
+    // Submission intentionally checks the OOXML ZIP signature only. The authoritative parser
+    // must retain responsibility for naming a corrupt-but-hash-bound package.
+    const unreadableDocx = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]);
+    const documentSha256 = await mod.hash.sha256Hex(unreadableDocx);
+    const humanBytes = enc.encode(JSON.stringify(authoredInput(documentSha256)));
+    const response = await mod.apiRuns.submitRun(
+      new Request("https://worker.example.invalid/api/v2/runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          surveyUrl: "https://survey.example/colors",
+          documentName: "unreadable.docx",
+          documentBase64: Buffer.from(unreadableDocx).toString("base64"),
+          contractSource: "human-authored",
+          humanRequirementsBase64: Buffer.from(humanBytes).toString("base64"),
+          locale: "en",
+          viewports: ["desktop"],
+        }),
+      }),
+      env,
+    );
+    assertEq(response.status, 202);
+
+    const step = fakeStep();
+    await new mod.workflow.SurveyRunWorkflowV2({}, env).run({ payload: created.params }, step);
+    assert(step.calls.includes("validate-human-requirements"));
+    assert(!step.calls.includes("expand-human-requirements"));
+    assert(!step.calls.includes("seal-contract-revision"));
+    const checkpoint = (await mod.checkpoint.loadCheckpoint(env, created.params.runId)).checkpoint;
+    assertEq(checkpoint.completion.reasonCode, "extraction-document-source-authority-invalid");
+    assert(String(checkpoint.error).includes("DOCUMENT_UNREADABLE"));
+    assertEq(checkpoint.contract.state, "unavailable");
+    assertEq(checkpoint.completion.report, "complete");
+    assertEq(checkpoint.reportAvailable, true);
+  });
+
   test("human mode fails before storage on a mismatched document hash", async () => {
     const mod = await worker();
     const env = testEnv();
@@ -981,8 +1094,8 @@ suite("D46 — production submission/workflow seam", () => {
         payload: {
           runId: seeded.runId,
           surveyUrl: "https://fixture.invalid/s",
-          documentKey: mod.keys.inputDocumentKey(seeded.runId),
-          documentSha256: "a".repeat(64),
+          documentKey: seeded.documentKey,
+          documentSha256: seeded.documentSha256,
           profile: "standard",
           locale: "en",
           viewports: ["desktop"],
@@ -1008,8 +1121,8 @@ suite("D46 — production submission/workflow seam", () => {
         payload: {
           runId: seeded.runId,
           surveyUrl: "https://fixture.invalid/s",
-          documentKey: mod.keys.inputDocumentKey(seeded.runId),
-          documentSha256: "a".repeat(64),
+          documentKey: seeded.documentKey,
+          documentSha256: seeded.documentSha256,
           profile: "standard",
           locale: "en",
           viewports: ["desktop"],

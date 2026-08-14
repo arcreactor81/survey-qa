@@ -159,6 +159,12 @@ export interface RawRequirement {
   pass: "A" | "B";
   /** Chunk/window id inside that pass, for the diff's provenance line. */
   origin: string;
+  /**
+   * Exact per-block spans supporting a cross-window synthesis result. Ordinary window and
+   * pass-B rows omit this field. A synthesis row is accepted only after every quote has
+   * been matched byte-for-byte inside the named parsed source block.
+   */
+  evidenceQuotes?: Array<{ blockId: string; quote: string }>;
 }
 
 export interface RawExpansion {
@@ -177,6 +183,9 @@ export interface RawAmbiguity {
   whyAmbiguous: string;
   affects: string[];
   pass: "A" | "B";
+  /** Present on cross-window synthesis rows; every id must have exact quoted evidence. */
+  blockIds?: string[];
+  evidenceQuotes?: Array<{ blockId: string; quote: string }>;
 }
 
 export interface RawUnverifiable {
@@ -186,6 +195,9 @@ export interface RawUnverifiable {
   whyNotObservable: string;
   browserProxyEvidence: string;
   pass: "A" | "B";
+  /** Present on cross-window synthesis rows; every id must have exact quoted evidence. */
+  blockIds?: string[];
+  evidenceQuotes?: Array<{ blockId: string; quote: string }>;
 }
 
 export interface BlockDisposition {

@@ -78,7 +78,11 @@ const healthyCheckpoint = () => ({
   phases: [{ name: "adjudicating", state: "complete", observedAt: null, reasonCode: null }],
 });
 
-const evaluated = { state: "evaluated", value: {}, proof: {} };
+const evaluated = { state: "evaluated", value: { coverageBlockers: 0 }, proof: {} };
+const healthyRevision = {
+  contractSupplements: [],
+  extraction: { passAHash: `sha256:${"0".repeat(64)}` },
+};
 
 suite("D52 — planned probe actions are never certified as executed", () => {
   test("BACK-NAVIGATION WITHOUT A PAYLOAD IS STILL COUNTED — the mandatory flag is an action request", async () => {
@@ -157,6 +161,7 @@ suite("D52 — planned probe actions are never certified as executed", () => {
     const required = path("EXP-RANDOM-5", { repeats: 5, observation_role: "required-additional" });
     const limitations = mod.plan.probeCapabilityLimitations(plan({ exploration: [required] }));
     const blockers = mod.assembleRecord.deriveRecordBlockers({
+      revision: healthyRevision,
       walks: [],
       itemResults: [],
       observations: [],
@@ -183,6 +188,7 @@ suite("D52 — planned probe actions are never certified as executed", () => {
     assertEq(mod.workflow.testAxisBlockers(healthyCheckpoint(), evaluated, evaluated, limitations).length, 0);
     assertEq(
       mod.assembleRecord.deriveRecordBlockers({
+        revision: healthyRevision,
         walks: [],
         itemResults: [],
         observations: [],
@@ -193,4 +199,3 @@ suite("D52 — planned probe actions are never certified as executed", () => {
     );
   });
 });
-

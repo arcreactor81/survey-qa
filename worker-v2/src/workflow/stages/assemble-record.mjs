@@ -36,6 +36,11 @@ import {
   liveRequirements,
 } from "../../../shared/v2-record.mjs";
 import { payloadHashOf } from "../../../../scorer/src/lib/attest.mjs";
+import {
+  CROSS_WINDOW_DISCOVERY_BLOCKER_KIND,
+  contractCrossWindowLimitations,
+  crossWindowLimitationDetail,
+} from "../../../shared/cross-window-limitations.mjs";
 
 export const AGGREGATOR_ID = "v2-aggregator/1.0.0";
 export const RESULT_POLICY_ID = "v2-result-policy/1.0.0";
@@ -170,7 +175,7 @@ const divergenceSet = (facetResults) =>
 // ---------------------------------------------------------------------------
 
 export const CLAIM_PROJECTION_ID = "v2-claim-projection/1.0.0";
-export const BLOCKER_PROJECTION_ID = "v2-blocker-projection/1.0.0";
+export const BLOCKER_PROJECTION_ID = "v2-blocker-projection/1.1.0";
 
 /**
  * DERIVE THE DEFECT CLAIMS FROM THE VERDICTS THAT WERE ALREADY DERIVED.
@@ -301,8 +306,24 @@ const proseOf = (o) => {
  *   blocker. A parameter that defaulted to empty would rebuild the exact disconnected wire
  *   this change exists to remove, one field over.
  */
-export function deriveBlockers({ walks, itemResults, observations, evidence, probeCapabilityLimitations }) {
+export function deriveBlockers({ revision, walks, itemResults, observations, evidence, probeCapabilityLimitations }) {
   const blockers = [];
+
+  // This is a coverage ceiling on the DOCUMENT, not a defect in one requirement. Derive it
+  // from the sealed supplement so no caller can forget to pass a parallel limitations list.
+  for (const limitation of contractCrossWindowLimitations(
+    revision?.contractSupplements,
+    revision?.extraction?.passAHash ?? null,
+  )) {
+    blockers.push(
+      blocker({
+        blockerId: "blk_document-cross-window-discovery-incomplete",
+        kind: CROSS_WINDOW_DISCOVERY_BLOCKER_KIND,
+        detail: crossWindowLimitationDetail(limitation),
+        count: limitation.candidatesSynthesized,
+      }),
+    );
+  }
 
   if (!Array.isArray(walks)) {
     blockers.push(
@@ -759,6 +780,7 @@ export function assembleRunRecordV2({
   // fact from the record's point of view: nothing is known about the walks.
   const ledger = walks === undefined ? null : walks;
   const blockers = deriveBlockers({
+    revision,
     walks: ledger,
     itemResults,
     observations,

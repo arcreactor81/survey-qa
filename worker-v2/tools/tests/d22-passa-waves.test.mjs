@@ -90,12 +90,24 @@ function stubProvider({ failUnit = () => false, emitRules = true, emitCrossRefs 
   globalThis.fetch = async (url, init) => {
     const body = JSON.parse(init.body);
     const user = String(body.messages[1].content);
+    const metadata = JSON.parse(String(init.headers?.["cf-aig-metadata"] ?? "{}"));
+    const synthesis = metadata.role === "extract-pass-a-synthesis";
     const windowed = user.match(/window (\d+) of (\d+)/);
-    const unit = windowed ? `A-w${windowed[1]}` : "A";
-    const blockIds = [...new Set([...user.matchAll(/\[(b\d{4})\]/g)].map((m) => m[1]))];
-    requests.push({ url: String(url), unit, blockIds, model: body.model });
+    const unit = synthesis ? "A-synthesis" : windowed ? `A-w${windowed[1]}` : "A";
+    const blockIds = synthesis
+      ? [...new Set([...user.matchAll(/"(b\d{4})"/g)].map((m) => m[1]))]
+      : [...new Set([...user.matchAll(/\[(b\d{4})\]/g)].map((m) => m[1]))];
+    const firstAnnotatedLine = blockIds.length === 0
+      ? ""
+      : user.split("\n").find((line) => line.startsWith(`[${blockIds[0]}]`)) ?? "";
+    let exactQuote = firstAnnotatedLine.replace(/^\[b\d{4}\]\s*/, "");
+    if (exactQuote.startsWith("(") && exactQuote.includes(") ")) {
+      exactQuote = exactQuote.slice(exactQuote.lastIndexOf(") ") + 2);
+    }
+    if (exactQuote.length === 0) exactQuote = "Every question is compulsory.";
+    requests.push({ url: String(url), unit, blockIds, model: body.model, role: metadata.role ?? null });
 
-    if (failUnit(unit, requests.length)) {
+    if (failUnit(unit, requests.length, body.model)) {
       return new Response("upstream exploded", { status: 502 });
     }
 
@@ -113,8 +125,9 @@ function stubProvider({ failUnit = () => false, emitRules = true, emitCrossRefs 
               selector: null,
               exceptions: [],
               statement: `every question in ${unit} is compulsory`,
-              doc_quote: "Every question is compulsory.",
-              block_ids: blockIds,
+              doc_quote: exactQuote,
+              block_ids: [blockIds[0]],
+              evidence_quotes: [{ block_id: blockIds[0], quote: exactQuote }],
               browser_observable: "full",
               confidence: 0.9,
             },
@@ -129,7 +142,9 @@ function stubProvider({ failUnit = () => false, emitRules = true, emitCrossRefs 
               from_block: blockIds[0],
               target: "the screening section",
               resolved_to_block: null,
+              target_doc_quote: null,
               statement: `${unit} refers to the screening section`,
+              doc_quote: exactQuote,
             },
           ]
         : [];
@@ -142,8 +157,10 @@ function stubProvider({ failUnit = () => false, emitRules = true, emitCrossRefs 
           {
             message: {
               content: JSON.stringify({
-                global_rules: globalRules,
-                cross_references: crossReferences,
+                global_rules: synthesis ? [] : globalRules,
+                ...(synthesis
+                  ? { cross_reference_resolutions: [] }
+                  : { cross_references: crossReferences }),
                 ambiguities: [],
                 unverifiable_from_browser: [],
               }),
@@ -158,6 +175,8 @@ function stubProvider({ failUnit = () => false, emitRules = true, emitCrossRefs 
   return {
     requests,
     unitsCalled: () => requests.map((r) => r.unit),
+    primaryRequests: () => requests.filter((r) => r.unit !== "A-synthesis"),
+    primaryUnitsCalled: () => requests.filter((r) => r.unit !== "A-synthesis").map((r) => r.unit),
     countFor: (unit) => requests.filter((r) => r.unit === unit).length,
     reset: () => {
       requests.length = 0;
@@ -203,13 +222,15 @@ function sliceEnv(overrides = {}) {
   };
 }
 
-/** Drive slices until the pass reports done, or give up loudly rather than hang. */
+/** Drive slices until the pass reports done or reaches a terminal failure, or give up loudly. */
 async function driveToDone(m, env, runId, doc, budgetMs, cap = 40) {
   const waves = [];
   for (let i = 0; i < cap; i++) {
     const out = await m.passA.runPassA(env, runId, doc, "synthetic.docx", undefined, { budgetMs });
     waves.push(out);
-    if (out.slice.done) return { waves, last: out };
+    if (out.slice.done || out.slice.terminalFailure || out.providerIndependence === "reduced-same-provider-fallback") {
+      return { waves, last: out };
+    }
   }
   throw new Error(`pass A never reported done after ${cap} wave(s) — the wave loop does not terminate`);
 }
@@ -234,8 +255,9 @@ test("(a) six windows that cannot fit one wave are finished ACROSS waves, and no
 
     // AND IT DID NOT SILENTLY TRUNCATE: every block of the document is covered by exactly one
     // window, bought exactly once, and every one of them is cited.
-    assertEq(provider.requests.length, 6, `one purchase per window, got ${provider.unitsCalled().join(",")}`);
-    assertEq(new Set(provider.unitsCalled()).size, 6, "six DISTINCT windows were bought");
+    assertEq(provider.primaryRequests().length, 6, `one purchase per window, got ${provider.unitsCalled().join(",")}`);
+    assertEq(new Set(provider.primaryUnitsCalled()).size, 6, "six DISTINCT windows were bought");
+    assertEq(provider.countFor("A-synthesis"), 1, "candidate reconciliation is one separately receipted purchase");
     const cited = new Set(last.requirements.flatMap((r) => r.blockIds));
     assertEq(cited.size, 6, "every source block is cited by a cross-cutting rule");
     assertEq(last.crossRefs.length, 6, "every window's cross-references reached the result");
@@ -264,17 +286,27 @@ test("a pass-A wave with NO budget at all still issues one call — the wave loo
   }
 });
 
-test("a generous budget still does the whole walk in ONE wave — slicing is not serialization", async () => {
+test("a generous budget lands all primary windows, then defers synthesis to its own wave", async () => {
   const m = await mod();
   const env = sliceEnv();
   const provider = stubProvider();
   try {
-    const out = await m.passA.runPassA(env, "run_d22_onewave", docFor(6), "synthetic.docx", undefined, {
+    const runId = "run_d22_onewave";
+    const out = await m.passA.runPassA(env, runId, docFor(6), "synthetic.docx", undefined, {
       budgetMs: 600_000,
     });
-    assertEq(out.slice.done, true, "a wave with real budget finishes the document");
+    assertEq(out.slice.done, false, "synthesis is not bought in the same wave as the final primary window");
     assertEq(out.slice.windowsIssued, 6, "all six windows bought inside one wave");
+    assertEq(out.slice.windowsRemaining, 0, "no primary window remains unread");
+    assertEq(out.slice.synthesisState, "pending", "the separately timed synthesis unit is named as pending");
     assertEq(out.slice.deadlineHit, false, "and it never hit its deadline");
+    assertEq(provider.countFor("A-synthesis"), 0, "no synthesis purchase shares the primary-window wave");
+
+    const done = await m.passA.runPassA(env, runId, docFor(6), "synthetic.docx", undefined, {
+      budgetMs: 600_000,
+    });
+    assertEq(done.slice.done, true, "the next zero-primary-purchase wave lands synthesis");
+    assertEq(provider.countFor("A-synthesis"), 1, "exactly one synthesis purchase lands");
   } finally {
     provider.restore();
   }
@@ -304,25 +336,29 @@ test("dense pass-A windows stop at the exact block limit while the character lim
   const { readFileSync } = await import("node:fs");
   const releaseConfig = readFileSync(new URL("../../wrangler.jsonc", import.meta.url), "utf8");
   assert(
-    releaseConfig.includes('"EXTRACT_PASS_A_WINDOW_MAX_BLOCKS": "250"'),
-    "the reviewed production config must declare the same 250-block ceiling the runtime defaults to",
+    releaseConfig.includes('"EXTRACT_PASS_A_WINDOW_MAX_BLOCKS": "100"'),
+    "the reviewed production config must declare the same 100-block ceiling the runtime defaults to",
+  );
+  assert(
+    releaseConfig.includes('"EXTRACT_PASS_A_MAX_WAVES": "20"'),
+    "the reviewed production wave cap must exceed the eleven windows owed by the measured 1,087-block shape",
   );
   const cases = [
     {
-      label: "exactly the default 250-block boundary",
+      label: "exactly the default 100-block boundary",
       env: sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "999999" }),
-      document: docFor(250),
-      expectedBlockCounts: [250],
+      document: docFor(100),
+      expectedBlockCounts: [100],
     },
     {
       label: "one block beyond the default boundary",
       env: sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "999999" }),
-      document: docFor(251),
-      expectedBlockCounts: [250, 1],
+      document: docFor(101),
+      expectedBlockCounts: [100, 1],
     },
     {
       label: "the character bound fires below the block bound",
-      env: sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "10", EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "250" }),
+      env: sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "10", EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" }),
       document: docFor(2),
       expectedBlockCounts: [1, 1],
     },
@@ -337,11 +373,11 @@ test("dense pass-A windows stop at the exact block limit while the character lim
         fixture.document,
         "synthetic.docx",
       );
-      const actualBlockCounts = provider.requests.map((request) => request.blockIds.length);
+      const actualBlockCounts = provider.primaryRequests().map((request) => request.blockIds.length);
       assertEq(actualBlockCounts.join(","), fixture.expectedBlockCounts.join(","), fixture.label);
       assertEq(result.slice.windowsTotal, fixture.expectedBlockCounts.length, fixture.label + ": window count");
       assertEq(
-        provider.requests.flatMap((request) => request.blockIds).join(","),
+        provider.primaryRequests().flatMap((request) => request.blockIds).join(","),
         fixture.document.blocks.map((block) => block.blockId).join(","),
         fixture.label + ": every block remains present exactly once and in document order",
       );
@@ -364,7 +400,8 @@ test("(b) a second wave over a finished pass-A buys NOTHING", async () => {
     const doc = docFor(4);
     const runId = "run_d22_resume";
     const { last: first } = await driveToDone(m, env, runId, doc, 0);
-    assertEq(provider.requests.length, 4, "the first pass bought four windows");
+    assertEq(provider.primaryRequests().length, 4, "the first pass bought four windows");
+    assertEq(provider.countFor("A-synthesis"), 1, "and one separately receipted synthesis unit");
 
     provider.reset();
     const again = await m.passA.runPassA(env, runId, doc, "synthetic.docx", undefined, { budgetMs: 600_000 });
@@ -377,7 +414,7 @@ test("(b) a second wave over a finished pass-A buys NOTHING", async () => {
 
     // RESUME IS NOT JUST 'CHEAP', IT IS COMPLETE.
     assertEq(again.requirements.length, first.requirements.length, "reclaimed rules are all there");
-    assertEq(again.calls.length, 4, "the telemetry rows survive for the payload");
+    assertEq(again.calls.length, 5, "four primary and one synthesis telemetry row survive for the payload");
     assert(
       again.calls.every((c) => c.costUsd === 0),
       "a reclaimed window costs nothing — charging it again would describe a run that never happened",
@@ -395,18 +432,22 @@ test("(b) a HALF-finished pass-A re-issues only the windows that never landed", 
     const doc = docFor(5);
     const runId = "run_d22_partial";
     const first = await m.passA.runPassA(env, runId, doc, "synthetic.docx", undefined, { budgetMs: 0 });
-    const boughtFirst = new Set(provider.unitsCalled());
+    const boughtFirst = new Set(provider.primaryUnitsCalled());
     assertEq(first.slice.done, false, "one call cannot finish five windows");
 
     provider.reset();
     const rest = await m.passA.runPassA(env, runId, doc, "synthetic.docx", undefined, { budgetMs: 600_000 });
-    const boughtAgain = provider.unitsCalled();
+    const boughtAgain = provider.primaryUnitsCalled();
 
-    assertEq(rest.slice.done, true, "the second wave finishes the rest");
+    assertEq(rest.slice.done, false, "the second wave lands the rest but defers synthesis");
     for (const unit of boughtAgain) {
       assert(!boughtFirst.has(unit), `window ${unit} landed in wave 0 and must never be bought again`);
     }
     assertEq(boughtAgain.length, 5 - boughtFirst.size, "exactly the windows that had not landed were bought");
+    provider.reset();
+    const done = await m.passA.runPassA(env, runId, doc, "synthetic.docx", undefined, { budgetMs: 600_000 });
+    assertEq(done.slice.done, true, "a third zero-primary-purchase wave lands synthesis");
+    assertEq(provider.unitsCalled().join(","), "A-synthesis", "that wave buys only synthesis");
   } finally {
     provider.restore();
   }
@@ -426,7 +467,7 @@ test("changing the block limit refuses persisted windows whose exact block sets 
   try {
     const first = await m.passA.runPassA(firstEnv, runId, document, "synthetic.docx");
     assertEq(first.slice.windowsTotal, 3, "the first policy creates 2,2,1 block windows");
-    assertEq(provider.requests.map((request) => request.blockIds.length).join(","), "2,2,1");
+    assertEq(provider.primaryRequests().map((request) => request.blockIds.length).join(","), "2,2,1");
 
     provider.reset();
     const repartitioned = await m.passA.runPassA(
@@ -437,7 +478,7 @@ test("changing the block limit refuses persisted windows whose exact block sets 
     );
     assertEq(repartitioned.slice.windowsTotal, 2, "the changed policy creates 3,2 block windows");
     assertEq(
-      provider.requests.map((request) => request.blockIds.length).join(","),
+      provider.primaryRequests().map((request) => request.blockIds.length).join(","),
       "3,2",
       "neither differently-owned artifact is adopted under the new partition",
     );
@@ -448,13 +489,13 @@ test("changing the block limit refuses persisted windows whose exact block sets 
 
 test("the pass-A block window policy changes cross-run contract reuse identity", async () => {
   const m = await mod();
-  const at250 = await m.contractReuse.extractionPolicyFingerprint(
-    sliceEnv({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "250" }),
+  const at100 = await m.contractReuse.extractionPolicyFingerprint(
+    sliceEnv({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" }),
   );
-  const at251 = await m.contractReuse.extractionPolicyFingerprint(
-    sliceEnv({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "251" }),
+  const at101 = await m.contractReuse.extractionPolicyFingerprint(
+    sliceEnv({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "101" }),
   );
-  assert(at250 !== at251, "a changed block partition must miss cross-run reuse, never adopt an old denominator");
+  assert(at100 !== at101, "a changed block partition must miss cross-run reuse, never adopt an old denominator");
   assert(
     m.contractReuse.EXTRACTION_POLICY_KEYS.includes("EXTRACT_PASS_A_WINDOW_MAX_BLOCKS"),
     "the new output-affecting knob must remain in the explicit reuse-policy census",
@@ -497,7 +538,7 @@ test("(c) CROSS-REFERENCES survive a resume — pass A's one output with no pass
   }
 });
 
-test("a pass-A window that keeps FAILING is re-bought a bounded number of times, not once per wave", async () => {
+test("a receipted Flash result stops later pass-A purchases immediately", async () => {
   // The pass-B gateway trace showed a single chunk id billed 21–24 times during a recovery
   // storm. A pass-A window is a 90 KB purchase, so the same unbounded re-issue costs more per
   // repeat. The attempt count lives in the window's own artifact, so waves, step retries and
@@ -505,33 +546,68 @@ test("a pass-A window that keeps FAILING is re-bought a bounded number of times,
   const m = await mod();
   const env = sliceEnv({ EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2" });
   const doomed = "A-w2";
-  const provider = stubProvider({ failUnit: (unit) => unit === doomed });
+  const provider = stubProvider({
+    failUnit: (unit, _requestNumber, model) => unit === doomed && model === "grok-4.6",
+  });
   try {
     const doc = docFor(3);
-    const { last } = await driveToDone(m, env, "run_d22_bounded", doc, 0);
+    // A generous slice proves the explicit FRESH-success stop. With a zero budget the
+    // deadline itself would prevent A-w3 even if the independence guard were removed.
+    const last = await m.passA.runPassA(
+      env, "run_d22_bounded", doc, "synthetic.docx", undefined, { budgetMs: 600_000 },
+    );
 
     assertEq(
       provider.countFor(doomed),
-      3,
-      `the failing window may buy Grok once and bounded Flash twice, was bought ${provider.countFor(doomed)}`,
+      2,
+      `the terminal window buys Grok then its receipted Flash substitute once, was bought ${provider.countFor(doomed)}`,
     );
     const doomedRequests = provider.requests.filter((request) => request.unit === doomed);
     assertEq(doomedRequests.filter((request) => request.model === "grok-4.6").length, 1,
       "a retained trigger prevents Grok from being re-bought across waves");
-    assertEq(doomedRequests.filter((request) => request.model === "deepseek-v4-flash").length, 2,
-      "only the bounded substitute retry budget is spent after Grok authorizes fallback");
-    assertEq(last.slice.done, true, "the pass still terminates rather than looping on a window nobody can answer");
-    assert(
-      last.failedUnits.some((f) => f.unit === doomed),
-      "the failure is NAMED as a failed unit, never reported as a window that found nothing",
-    );
-    assert(
-      last.failedUnits.find((f) => f.unit === doomed).blockIds.includes("b0002"),
-      "and it names the blocks nobody read",
-    );
-    // The windows around it are unaffected: a bounded failure is not a poisoned pass.
+    assertEq(doomedRequests.filter((request) => request.model === "deepseek-v4-flash").length, 1,
+      "one usable Flash receipt is enough to make the configured Pass B ineligible");
+    assertEq(last.providerIndependence, "reduced-same-provider-fallback");
+    assertEq(last.slice.done, false, "terminal provider refusal is not whole-document completion");
+    assertEq(last.slice.windowsLanded, 2, "the healthy prefix and fallback window landed");
+    assertEq(last.slice.windowsRemaining, 1, "the deliberately unread tail remains counted");
     assertEq(provider.countFor("A-w1"), 1, "a healthy window is still bought exactly once");
-    assertEq(provider.countFor("A-w3"), 1, "including the one after the failure");
+    assertEq(provider.countFor("A-w3"), 0, "no later window is bought after independence collapses");
+
+    provider.reset();
+    const reclaimed = await m.passA.runPassA(env, "run_d22_bounded", doc, "synthetic.docx", undefined, {
+      budgetMs: 0,
+    });
+    assertEq(provider.requests.length, 0, "a resumed refusal reclaims evidence without another provider call");
+    assertEq(reclaimed.providerIndependence, "reduced-same-provider-fallback");
+    assertEq(reclaimed.slice.windowsLanded, 2, "the resumed slice retains its landed denominator");
+    assertEq(reclaimed.slice.windowsRemaining, 1, "the resumed slice retains its unread denominator");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("a pass-A window that keeps FAILING is re-bought a bounded number of times, not once per wave", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2" });
+  const doomed = "A-w2";
+  const provider = stubProvider({ failUnit: (unit) => unit === doomed });
+  try {
+    const doc = docFor(3);
+    const { waves, last } = await driveToDone(m, env, "run_d22_repeated_failure", doc, 0);
+    assertEq(waves.length, 3, "one Grok attempt and two retained-authority Flash attempts span three waves");
+    assertEq(provider.countFor(doomed), 3, "the shared two-issue budget permits Grok once and Flash twice");
+    const doomedRequests = provider.requests.filter((request) => request.unit === doomed);
+    assertEq(doomedRequests.filter((request) => request.model === "grok-4.6").length, 1,
+      "the retained fallback authority prevents Grok from being bought again");
+    assertEq(doomedRequests.filter((request) => request.model === "deepseek-v4-flash").length, 2,
+      "Flash retries only to the declared whole-run issue ceiling");
+    assertEq(last.slice.terminalFailure, true, "exhausting the retained issue budget is terminal");
+    assertEq(last.slice.done, false, "terminal failure is not whole-document completion");
+    assertEq(last.slice.windowsLanded, 2, "the healthy prefix and terminal failed unit are counted");
+    assertEq(last.slice.windowsRemaining, 1, "the unread tail remains explicitly counted");
+    assertEq(provider.countFor("A-w1"), 1, "a healthy prefix is never re-bought across failure waves");
+    assertEq(provider.countFor("A-w3"), 0, "a terminal shared failure does not fan out to later windows");
   } finally {
     provider.restore();
   }
@@ -627,7 +703,7 @@ async function seedSampleDocument(m, env, runId) {
       contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     },
   });
-  return documentKey;
+  return { documentKey, documentSha256: await m.hash.sha256Hex(bytes) };
 }
 
 test("(a) the STAGE refuses to evaluate an unfinished pass A, and evaluates the finished one", async () => {
@@ -638,11 +714,11 @@ test("(a) the STAGE refuses to evaluate an unfinished pass A, and evaluates the 
   const { m, env, runId, fence } = await stageBed({ EXTRACT_PASS_A_WINDOW_CHARS: "1000" });
   const provider = stubProvider();
   try {
-    const documentKey = await seedSampleDocument(m, env, runId);
+    const { documentKey, documentSha256 } = await seedSampleDocument(m, env, runId);
     const beat = async () => {};
     const first = await m.extractStage.stagePassASlice(env, runId, documentKey, "questionnaire.docx", fence, beat, {
       budgetMs: 0,
-    });
+    }, "none/1.0.0", documentSha256);
 
     // THE SILENT-TRUNCATION GUARD. `stageConsolidate` reads the pass key and merges whatever
     // it finds, with no way to tell a whole read from a partial one.
@@ -661,7 +737,7 @@ test("(a) the STAGE refuses to evaluate an unfinished pass A, and evaluates the 
     while (!out.slice.done && waves < 60) {
       out = await m.extractStage.stagePassASlice(env, runId, documentKey, "questionnaire.docx", fence, beat, {
         budgetMs: 0,
-      });
+      }, "none/1.0.0", documentSha256);
       waves += 1;
     }
     assertEq(out.slice.done, true, `the pass finished across ${waves} wave(s)`);
@@ -698,7 +774,9 @@ async function workflowBed(m, env) {
   const path = await import("node:path");
   const { REPO_ROOT } = await import("../testkit.mjs");
   const documentKey = m.keys.inputDocumentKey(runId);
-  await env.EVIDENCE.put(documentKey, readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx")));
+  const documentBytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+  const documentSha256 = await m.hash.sha256Hex(documentBytes);
+  await env.EVIDENCE.put(documentKey, documentBytes);
   await m.envelope.putEnvelope(env, {
     schemaVersion: "v2-run-envelope/1.0.0",
     kind: "survey-qa-v2-envelope",
@@ -708,7 +786,7 @@ async function workflowBed(m, env) {
     input: {
       surveyUrl: "https://fixture.invalid/survey",
       documentKey,
-      documentSha256: "c".repeat(64),
+      documentSha256,
       documentName: "questionnaire.docx",
       targetBuildId: null,
       locale: "en",
@@ -719,7 +797,7 @@ async function workflowBed(m, env) {
     recovery: null,
     finalCompletion: null,
   });
-  return { runId, documentKey };
+  return { runId, documentKey, documentSha256 };
 }
 
 test("(a) pass A occupies MULTIPLE distinct workflow steps, and exhausting them is a NAMED failure", async () => {
@@ -734,7 +812,7 @@ test("(a) pass A occupies MULTIPLE distinct workflow steps, and exhausting them 
   });
   const provider = stubProvider();
   try {
-    const { runId, documentKey } = await workflowBed(m, env);
+    const { runId, documentKey, documentSha256 } = await workflowBed(m, env);
     const step = fakeStep();
     const wf = new m.workflow.SurveyRunWorkflowV2({}, env);
     await wf.run(
@@ -743,7 +821,7 @@ test("(a) pass A occupies MULTIPLE distinct workflow steps, and exhausting them 
           runId,
           surveyUrl: "https://fixture.invalid/survey",
           documentKey,
-          documentSha256: "c".repeat(64),
+          documentSha256,
           profile: "standard",
           locale: "en",
           viewports: ["desktop"],
@@ -811,8 +889,8 @@ test("a replacement instance re-runs NO pass-A wave step — resume is by contra
       payload: {
         runId: seeded.runId,
         surveyUrl: "https://fixture.invalid/s",
-        documentKey: "k",
-        documentSha256: "a".repeat(64),
+        documentKey: seeded.documentKey,
+        documentSha256: seeded.documentSha256,
         profile: "standard",
         locale: "en",
         viewports: ["desktop"],
@@ -848,8 +926,8 @@ test("an UNCAUGHT step failure still produces a report — the failure path used
           payload: {
             runId: seeded.runId,
             surveyUrl: "https://fixture.invalid/s",
-            documentKey: "k",
-            documentSha256: "a".repeat(64),
+            documentKey: seeded.documentKey,
+            documentSha256: seeded.documentSha256,
             profile: "standard",
             locale: "en",
             viewports: ["desktop"],
@@ -972,7 +1050,7 @@ test("D51-a pass A rejects stale window success and terminal failure artifacts",
   }
 });
 
-test("D51-d whole-pass A stale payload cannot take early reuse", async () => {
+test("D51-d occupied stale whole-pass A is immutable terminal authority", async () => {
   const m = await mod();
   const env = sliceEnv({ EXTRACT_PASS_A_WINDOW_CHARS: "999999" });
   const runId = m.ids.mintRunId();
@@ -983,8 +1061,10 @@ test("D51-d whole-pass A stale payload cannot take early reuse", async () => {
   const path = await import("node:path");
   const { REPO_ROOT } = await import("../testkit.mjs");
   const documentKey = m.keys.inputDocumentKey(runId);
-  await env.EVIDENCE.put(documentKey, readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx")));
-  await d51Put(env, m.keys.extractionPassKey(runId, "a"), {
+  const documentBytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+  const documentSha256 = await m.hash.sha256Hex(documentBytes);
+  await env.EVIDENCE.put(documentKey, documentBytes);
+  const stale = {
     // Discriminating fixture: every provider-route dimension is current and internally
     // coherent, so only the stale parser can make this payload ineligible. Provider-route
     // mismatches retain their own counterweights in provider-continuity.test.mjs.
@@ -1005,7 +1085,9 @@ test("D51-d whole-pass A stale payload cannot take early reuse", async () => {
     crossRefs: [],
     fallbackTriggers: [],
     routeReceipts: [],
-  });
+  };
+  await d51Put(env, m.keys.extractionPassKey(runId, "a"), stale);
+  const staleBytes = JSON.stringify(stale);
 
   const provider = stubProvider();
   try {
@@ -1017,14 +1099,16 @@ test("D51-d whole-pass A stale payload cannot take early reuse", async () => {
       fence,
       async () => {},
       {},
+      m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+      documentSha256,
     );
-    assertEq(outcome.result.state, "evaluated", "the current whole pass completes");
-    assert(provider.requests.length > 0, "the stale whole-pass payload does not suppress current model work");
-    d51AssertVersions(
-      m,
-      await d51Read(env, m.keys.extractionPassKey(runId, "a")),
-      m.passA.PASS_A_VERSION,
-      "fresh whole pass A",
+    assertEq(outcome.result.state, "not-evaluated", "occupied stale completion is terminal");
+    assertEq(outcome.result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(provider.requests.length, 0, "an immutable final key never authorizes duplicate spend");
+    assertEq(
+      await (await env.EVIDENCE.get(m.keys.extractionPassKey(runId, "a"))).text(),
+      staleBytes,
+      "the stale completion bytes are not overwritten under the same run id",
     );
   } finally {
     provider.restore();

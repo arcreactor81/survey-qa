@@ -17,6 +17,7 @@
 import { runMutantSuite } from "./mutate-runner.mjs";
 
 const PASS_B = "src/extract/pass-b.ts";
+const PASS_B_DECODER = "src/extract/pass-b-decode.ts";
 const STAGE = "src/workflow/stages/extract.ts";
 const WORKFLOW = "src/workflow/run-workflow.ts";
 
@@ -86,17 +87,207 @@ await runMutantSuite({
         "the per-unit purchase budget is ignored, so one chunk nobody can answer is bought once " +
         "per wave, per step retry, per recovery instance — the 21–24x billing storm",
       file: PASS_B,
-      find: "if (existing.attempts < maxIssues) {",
-      replace: "if (existing.attempts < 999999) {",
+      find: "if (!existing.terminal && existing.attempts < maxIssues) {",
+      replace: "if (true) {",
       kills: ["a chunk that keeps FAILING is re-bought a bounded number of times, not once per wave"],
     },
     {
       name: "the ledger sweep stops resuming",
       breaks: "sweep artifacts go back to being write-only, so every re-entry re-buys all of them",
       file: PASS_B,
-      find: "const existing = await readSweep(env, runId, i, allowed, parserVersion);",
+      find: "const existing = await readSweep(env, runId, i, slice, sweepEvidenceBlocks, parserVersion);",
       replace: "const existing = null;",
       kills: ["(c) the ledger sweep resumes too — its calls used to be written and never read back"],
+    },
+    {
+      name: "strict array decoding silently filters a malformed row",
+      breaks:
+        "a provider array containing one valid row and one malformed row is shortened to the valid prefix, " +
+        "turning unread evidence into apparent success",
+      file: PASS_B_DECODER,
+      find: 'obligations: rows(root["obligations"], "obligations").map((raw, index) =>',
+      replace:
+        'obligations: rows(root["obligations"], "obligations")' +
+        '.filter((raw) => Object.hasOwn(raw, "statement")).map((raw, index) =>',
+      kills: [
+        "a malformed second row terminalizes the whole chunk, keeps its paid receipt, and never sweeps or shortens",
+      ],
+    },
+    {
+      name: "per-block evidence quotes are no longer grounded in source bytes",
+      breaks: "invented quotes can support an obligation merely by naming an allowed block id",
+      file: PASS_B_DECODER,
+      find: "if (!source.text.includes(quote)) fail(`${rowLabel}.quote is not an exact span of source block ${blockId}`);",
+      replace: "if (false) fail(`${rowLabel}.quote is not an exact span of source block ${blockId}`);",
+      kills: [
+        "multi-block obligations, ambiguities, and unverifiable rows require exact per-block quotes",
+      ],
+    },
+    {
+      name: "none-observable obligations no longer require an unverifiable evidence row",
+      breaks: "the output can claim browser impossibility without a counted mandate and exact source overlap",
+      file: PASS_B_DECODER,
+      find: "if (!linked) {",
+      replace: "if (false) {",
+      kills: [
+        "none-observable obligations require an exact overlapping unverifiable row; full needs none",
+      ],
+    },
+    {
+      name: "a terminal chunk failure is forgotten before the sweep",
+      breaks: "the later sweep can launder a decoder failure after its named failed-unit row is dropped",
+      file: PASS_B,
+      find: "failedUnits.push({ unit: chunk.id, blockIds, detail });",
+      replace: "terminalFailure = false;",
+      kills: [
+        "a malformed second row terminalizes the whole chunk, keeps its paid receipt, and never sweeps or shortens",
+      ],
+    },
+    {
+      name: "typed-array corruption becomes a cache miss",
+      breaks: "a retained exact-key success can be overwritten by a new purchase",
+      file: PASS_B,
+      find: 'return invalid("persisted typed arrays do not exactly reconstruct from raw model output");',
+      replace: "return null;",
+      kills: [
+        "mutating a retained successful unit invalidates reconstruction with zero fetches",
+      ],
+    },
+    {
+      name: "current-key decoder corruption becomes a cache miss",
+      breaks: "malformed retained raw output authorizes an overwrite and a second provider purchase",
+      file: PASS_B,
+      find: 'return invalid(error instanceof Error ? error.message : "artifact JSON is unreadable");',
+      replace: "return null;",
+      kills: [
+        "corrupt current-key success is terminal on resume and causes zero provider fetches",
+      ],
+    },
+    {
+      name: "receipt role binding is bypassed",
+      breaks: "a paid receipt from another logical unit can be replayed as this chunk's authority",
+      file: PASS_B,
+      find: 'usage.role !== `extract-pass-b-${unitId}` ||',
+      replace: 'false ||',
+      kills: [
+        "a current-key receipt with the wrong role is terminal and never authorizes a replacement call",
+      ],
+    },
+    {
+      name: "completion hash is detached from exact reconstructed bytes",
+      breaks: "the completion can carry a hash that does not name the deterministic Pass-B body",
+      file: PASS_B,
+      find: "hash: `sha256:${await sha256Hex(body)}`,",
+      replace: 'hash: `sha256:${"0".repeat(64)}`,',
+      kills: [
+        "completed reconstruction is zero-purchase, byte-stable, closed, and returns its exact hash",
+      ],
+    },
+    {
+      name: "Pass B starts even though durable Pass-A authority was refused",
+      breaks:
+        "a missing, replaced, or non-reconstructable Pass-A completion no longer stops the independent " +
+        "Pass-B provider purchase at the stage boundary",
+      file: STAGE,
+      find: 'if (passAAuthority.state !== "evaluated") return settled(passAAuthority);',
+      replace: 'if (false) return settled(passAAuthority);',
+      kills: ["a changed completed Pass-A hash blocks Pass B before any provider request"],
+    },
+    {
+      name: "an occupied invalid Pass-B completion is treated as rebuildable cache",
+      breaks:
+        "immutable current-key completion authority is bypassed, so paid units can be re-run and an old " +
+        "whole-pass key can be laundered or overwritten",
+      file: STAGE,
+      find:
+        'const already = await readPassPayload(env, runId, "b", expectedParserVersion, documentName, doc);\n' +
+        '  if (already) return settled(already);\n' +
+        '  if (existingPassObject) {',
+      replace:
+        'const already = await readPassPayload(env, runId, "b", expectedParserVersion, documentName, doc);\n' +
+        '  if (already) return settled(already);\n' +
+        '  if (false && existingPassObject) {',
+      kills: ["D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and resets attempts"],
+    },
+    {
+      name: "consolidation ignores the durable Pass-A hash",
+      breaks:
+        "source-ledger output can be rebuilt over Pass-A bytes other than the exact completion returned by " +
+        "the durable Pass-A step",
+      file: STAGE,
+      find: "if (actual !== expectedPassAHash) {",
+      replace: "if (false) {",
+      kills: ["integrated consolidation requires the exact durable A and B completion hashes"],
+    },
+    {
+      name: "consolidation ignores the durable Pass-B hash",
+      breaks:
+        "source-ledger output can be rebuilt over Pass-B bytes other than the exact completion returned by " +
+        "the durable Pass-B step",
+      file: STAGE,
+      find: "if (actualHash !== expectedPassBHash) {",
+      replace: "if (false) {",
+      kills: ["integrated consolidation requires the exact durable A and B completion hashes"],
+    },
+    {
+      name: "consolidation skips Pass-B unit reconstruction authority",
+      breaks:
+        "a whole-pass summary whose retained unit was changed after completion can reach merge without the " +
+        "zero-purchase unit reconstruction check",
+      file: STAGE,
+      find:
+        '  const passBContinuation = await validatePassBCompletionAuthority(\n' +
+        '    env, runId, doc, documentName, expectedPassBHash,\n' +
+        '  );\n' +
+        '  if (passBContinuation.state !== "evaluated") {',
+      replace:
+        '  const passBContinuation = await validatePassBCompletionAuthority(\n' +
+        '    env, runId, doc, documentName, expectedPassBHash,\n' +
+        '  );\n' +
+        '  if (false) {',
+      kills: [
+        "a retained Pass-B unit mutation blocks integrated consolidation with zero re-buy or partial output",
+      ],
+    },
+    {
+      name: "seal trusts cached source-ledger after a Pass-B unit changes",
+      breaks:
+        "the final write boundary no longer reconstructs current Pass-B units, so cached Workflow state can " +
+        "seal a denominator after its paid source authority was replaced",
+      file: STAGE,
+      find: 'if (passB.state !== "evaluated") return invalid(`${passB.reason}: ${passB.detail}`);',
+      replace: 'if (false) return invalid(`${passB.reason}: ${passB.detail}`);',
+      kills: [
+        "cached source-ledger state cannot authorize seal after a retained Pass-B unit mutation",
+      ],
+    },
+    {
+      name: "seal ignores the merged payload's Pass-B input binding",
+      breaks:
+        "even byte-hash-approved merged output can name a different Pass-B completion than the exact one " +
+        "being sealed",
+      file: STAGE,
+      find: "merged.inputAuthority.passBHash !== expectedPassBHash",
+      replace: "false",
+      kills: ["seal authority rejects merged bytes that do not bind the exact A and B inputs"],
+    },
+    {
+      name: "Workflow seals without invoking the final extraction authority check",
+      breaks:
+        "the zero-purchase helper remains unit-tested but production no longer calls it before sealContract, " +
+        "so a same-count merged replacement reaches the immutable contract revision",
+      file: WORKFLOW,
+      find:
+        "const sealAuthority = await validateExtractionSealAuthority(\n" +
+        "            this.env,\n" +
+        "            runId,",
+      replace:
+        "const sealAuthority = { kind: \ok\, merged: await loadMerged(this.env, runId) };\n" +
+        "          void validateExtractionSealAuthority;\n" +
+        "          void (\n" +
+        "            this.env,\n" +
+        "            runId,",
+      kills: ["(c) WORKFLOW seal is bound to the source-ledger step's merged artifact hash"],
     },
     {
       name: "the step timeout drops the purchase term",
@@ -138,11 +329,11 @@ await runMutantSuite({
         "on calls nobody ever made",
       file: STAGE,
       find:
-        "await chargeUsage(env, runId, result.accountingCalls, fence);\n\r\n" +
-        "  if (!result.slice.done) {",
+        "await chargeUsage(env, runId, result.accountingCalls, fence);\n\n" +
+        "  if (result.slice.terminalFailure || result.failedUnits.length > 0) {",
       replace:
-        "await chargeUsage(env, runId, result.calls, fence);\n\r\n" +
-        "  if (!result.slice.done) {",
+        "await chargeUsage(env, runId, result.calls, fence);\n\n" +
+        "  if (result.slice.terminalFailure || result.failedUnits.length > 0) {",
       kills: ["(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the finished one"],
     },
     {

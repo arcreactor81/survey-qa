@@ -40,6 +40,8 @@
  * `null` and says so. It never invents a severity, a confidence, a count or a case.
  */
 
+import { CROSS_WINDOW_DISCOVERY_BLOCKER_KIND } from "./cross-window-limitations.mjs";
+
 export const V2_RUN_RECORD_KIND = "survey-qa-v2-run-record";
 export const V2_CONTRACT_REVISION_KIND = "survey-qa-v2-contract-revision";
 
@@ -54,7 +56,7 @@ export const V2_CONTRACT_REVISION_KIND = "survey-qa-v2-contract-revision";
  * own copy. A consumer that judged against 1.1.0 was compiling expectations from the wrong
  * one of the two, so this is a value change every downstream reader must be able to see.
  */
-export const V2_PROJECTION_VERSION = "v2-record-projection/1.3.0";
+export const V2_PROJECTION_VERSION = "v2-record-projection/1.4.0";
 
 const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const arr = (v) => (Array.isArray(v) ? v : []);
@@ -566,7 +568,26 @@ export function projectV2ToLegacy(record, revision) {
       divergenceSet: r.divergenceSet,
       derivedBy: r.derivedBy,
     })),
-    findings: arr(record.claims).map((c) => findingFromClaim(c, observationToEvidence)),
+    findings: [
+      ...arr(record.claims).map((c) => findingFromClaim(c, observationToEvidence)),
+      // Exactly one closed document-coverage blocker is projected into the existing
+      // operational-blocker lane. Other RunBlockers retain their raw audit surface and do
+      // not silently acquire certification semantics. This one must: candidate-only
+      // synthesis cannot coexist with a report claiming complete/certifiable coverage.
+      ...arr(record.blockers)
+        .filter((entry) => entry?.kind === CROSS_WINDOW_DISCOVERY_BLOCKER_KIND)
+        .map((entry) => ({
+          findingId: entry.blockerId,
+          kind: "blocker",
+          severity: null,
+          supported: null,
+          summary: entry.detail,
+          itemRefs: [],
+          evidenceRefs: arr(entry.evidenceIds),
+          attemptRefs: [],
+          sourceBlockerKind: CROSS_WINDOW_DISCOVERY_BLOCKER_KIND,
+        })),
+    ],
     evidence: arr(record.evidence).map(legacyEvidenceEntry),
     resources: {
       modelCalls: arr(record.resources?.modelCalls),

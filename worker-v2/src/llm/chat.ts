@@ -48,6 +48,17 @@ export type ModelFailureKind =
   | "invalid-request"
   | "nonretryable-http";
 
+/**
+ * The transport cause of the failed purchase. A local deadline is deliberately narrower
+ * than timeout-or-network so callers cannot turn a provider outage into a fan-out storm.
+ */
+export type ModelFailureCause =
+  | "local-deadline"
+  | "network"
+  | "http-status"
+  | "provider-content"
+  | "mixed";
+
 export class ModelCallError extends Error {
   constructor(
     message: string,
@@ -55,6 +66,12 @@ export class ModelCallError extends Error {
     /** Final attempt's failure class. Existing callers may continue reading only usage. */
     readonly failureKind: ModelFailureKind = "timeout-or-network",
     readonly httpStatus: number | null = null,
+    readonly failureCause: ModelFailureCause =
+      httpStatus === null && failureKind === "timeout-or-network"
+        ? "network"
+        : failureKind === "invalid-content"
+          ? "provider-content"
+          : "http-status",
   ) {
     super(message);
     this.name = "ModelCallError";
@@ -101,6 +118,27 @@ export interface ChatOutcome {
 }
 
 /**
+ * Canonical OpenAI-compatible request bytes. Size gates use this same serializer as fetch,
+ * so prompt wrappers, JSON escaping, model fields and provider-specific reasoning fields
+ * cannot sit outside the reviewed wire ceiling.
+ */
+export function chatRequestBodyText(
+  spec: Pick<ProviderSpec, "model" | "extraBody">,
+  opts: Pick<ChatOptions, "system" | "user" | "maxTokens">,
+): string {
+  return JSON.stringify({
+    model: spec.model,
+    response_format: { type: "json_object" },
+    max_tokens: opts.maxTokens,
+    ...spec.extraBody,
+    messages: [
+      { role: "system", content: opts.system },
+      { role: "user", content: opts.user },
+    ],
+  });
+}
+
+/**
  * Run one JSON-mode chat completion and parse it. Throws `ModelCallError` (with usage
  * attached, so a failed call still costs what it cost on the ledger) after the attempt cap.
  */
@@ -138,17 +176,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
     if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
   }
 
-  const body = {
-    model: spec.model,
-    response_format: { type: "json_object" },
-    max_tokens: opts.maxTokens,
-    ...spec.extraBody,
-    messages: [
-      { role: "system", content: opts.system },
-      { role: "user", content: opts.user },
-    ],
-  };
-  const bodyText = JSON.stringify(body);
+  const bodyText = chatRequestBodyText(spec, opts);
   // A byte cannot encode fewer than zero tokens, and treating every request byte as one
   // token is a conservative ceiling for the provider tokenizers used here. max_tokens is
   // already the provider-enforced completion ceiling.
@@ -160,6 +188,9 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
   let outputTokens = 0;
   let lastDetail = "no attempt was made";
   let lastFailureKind: ModelFailureKind = "timeout-or-network";
+  let lastFailureCause: ModelFailureCause = "network";
+  let allFailuresWereLocalDeadlines = true;
+  let sawLocalDeadline = false;
   let lastHttpStatus: number | null = null;
   let usedConservativeCeiling = false;
   let usedUnboundModelRateCeiling = false;
@@ -170,6 +201,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
     attemptsMade = attempt;
     const startedAt = Date.now();
     let usageAccounted = false;
+    let attemptSignal: AbortSignal | null = null;
     const accountUsage = (usage: ChatResponse["usage"] | undefined): void => {
       if (usageAccounted) return;
       usageAccounted = true;
@@ -195,6 +227,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
       usedConservativeCeiling = true;
     };
     try {
+      attemptSignal = AbortSignal.timeout(opts.timeoutMs ?? num(env.LLM_TIMEOUT_MS, 300_000));
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers,
@@ -203,7 +236,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         // that used to sit at 240 s aborted a chunk twice and cost the run its seal. The
         // ceiling is configuration now, because "how long may one call take" is a property
         // of the document and the provider, not of this code.
-        signal: AbortSignal.timeout(opts.timeoutMs ?? num(env.LLM_TIMEOUT_MS, 300_000)),
+        signal: attemptSignal,
       });
       const rawBody = await res.text();
       const latencyMs = Date.now() - startedAt;
@@ -219,6 +252,8 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastDetail = `HTTP ${res.status}: ${rawBody.slice(0, 300)}`;
         lastHttpStatus = res.status;
         lastFailureKind = failureKindForHttpStatus(res.status);
+        lastFailureCause = "http-status";
+        allFailuresWereLocalDeadlines = false;
         // Auth, balance and invalid requests are properties shared by every retry.
         // Re-sending them cannot succeed and only multiplies a doomed purchase.
         if (attempt === maxAttempts || !retryableFailure(lastFailureKind)) break;
@@ -230,6 +265,8 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         accountUsage(undefined);
         lastDetail = `non-JSON transport body: ${rawBody.slice(0, 200)}`;
         lastFailureKind = "invalid-content";
+        lastFailureCause = "provider-content";
+        allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
       }
@@ -250,6 +287,8 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
           `response model identity mismatch: requested ${JSON.stringify(spec.model)}, ` +
           `reported ${JSON.stringify(reportedModel)}`;
         lastFailureKind = "invalid-content";
+        lastFailureCause = "provider-content";
+        allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
       }
@@ -260,12 +299,16 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
       if (finish === "length") {
         lastDetail = `truncated at max_tokens (${opts.maxTokens}); the JSON is incomplete`;
         lastFailureKind = "invalid-content";
+        lastFailureCause = "provider-content";
+        allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
       }
       if (content.trim().length === 0) {
         lastDetail = "empty content";
         lastFailureKind = "invalid-content";
+        lastFailureCause = "provider-content";
+        allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
       }
@@ -274,6 +317,8 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
       if (parsed === null) {
         lastDetail = `unparseable JSON: ${content.slice(0, 200)}`;
         lastFailureKind = "invalid-content";
+        lastFailureCause = "provider-content";
+        allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
       }
@@ -309,6 +354,9 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
       accountUsage(undefined);
       lastDetail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
       lastFailureKind = "timeout-or-network";
+      lastFailureCause = isLocalDeadlineExpiry(err, attemptSignal) ? "local-deadline" : "network";
+      if (lastFailureCause === "local-deadline") sawLocalDeadline = true;
+      if (lastFailureCause !== "local-deadline") allFailuresWereLocalDeadlines = false;
       lastHttpStatus = null;
       if (attempt === maxAttempts) break;
     }
@@ -337,7 +385,12 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         ? `usage conservatively ceilinged because at least one attempt returned no valid token receipt; ${lastDetail}`
         : lastDetail
     ).slice(0, 400),
-  }, lastFailureKind, lastHttpStatus);
+  }, lastFailureKind, lastHttpStatus,
+  allFailuresWereLocalDeadlines
+    ? "local-deadline"
+    : sawLocalDeadline
+      ? "mixed"
+      : lastFailureCause);
 }
 
 function failureKindForHttpStatus(status: number): ModelFailureKind {
@@ -348,6 +401,18 @@ function failureKindForHttpStatus(status: number): ModelFailureKind {
   if (status === 402) return "insufficient-balance";
   if (status === 400 || status === 404 || status === 409 || status === 422) return "invalid-request";
   return "nonretryable-http";
+}
+
+/** A timer being expired is insufficient: the caught rejection must be that timer's reason. */
+export function isLocalDeadlineExpiry(err: unknown, signal: AbortSignal | null): boolean {
+  if (signal === null || !signal.aborted || err !== signal.reason) return false;
+  const reason = signal.reason;
+  return (
+    typeof reason === "object" &&
+    reason !== null &&
+    "name" in reason &&
+    (reason as { name?: unknown }).name === "TimeoutError"
+  );
 }
 
 function retryableFailure(kind: ModelFailureKind): boolean {

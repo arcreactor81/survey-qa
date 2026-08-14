@@ -665,7 +665,7 @@ suite("D11 — no stage may certify work it did not do", () => {
         phases: [{ name: "adjudicating", state: "complete", observedAt: null, reasonCode: null }],
       },
       { state: "evaluated", value: {}, proof: {} },
-      { state: "evaluated", value: {}, proof: {} },
+      { state: "evaluated", value: { coverageBlockers: 0 }, proof: {} },
     );
     assertEq(ok.length, 0, JSON.stringify(ok));
   });

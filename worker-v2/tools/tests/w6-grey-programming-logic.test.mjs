@@ -436,57 +436,63 @@ suite("W6 — grey programming logic is provenance, not an option label", () => 
 
   test("whole-pass cache cannot cross document-semantics profiles", async () => {
     const mod = await worker();
-    const env = testEnv(GROK_OWNER_RATE_FIXTURE);
-    const runId = "run_w6_profile_cache";
+    const env = testEnv({ ...GROK_OWNER_RATE_FIXTURE, XAI_API_KEY: "fixture-xai-key" });
+    const runId = mod.ids.mintRunId();
     const documentKey = mod.keys.inputDocumentKey(runId);
-    await env.EVIDENCE.put(documentKey, docx(`<w:p>${run("Grey", `<w:highlight w:val="lightGray"/>`)}</w:p>`));
-    await env.EVIDENCE.put(mod.keys.extractionPassKey(runId, "a"), JSON.stringify({
-      parserVersion: mod.docxBlocks.docxBlocksVersion(NONE_PROFILE),
-      promptVersion: mod.passA.PASS_A_VERSION,
-      providerRouteIdentity: mod.grok.grokFlashRouteIdentity(env),
-      providerIndependence: "independent",
-      pass: "A",
-      provider: "grok",
-      model: "grok-4.6",
-      requirements: [raw("instruction", "fixture", "Grey", ["b0001"])],
-      ambiguities: [],
-      unverifiable: [],
-      dispositions: [],
-      constructs: [],
-      failedUnits: [],
-      calls: [{
-        eventId: `core-model-call/pass-a/${runId}/A/issue-1/receipt-1`,
-        callId: "fixture-neutral", role: "extract-pass-a", provider: "grok", model: "grok-4.6",
-        status: "ok", inputTokens: 1, outputTokens: 1, costUsd: 0, latencyMs: 1, attempts: 1,
-        usageSource: "provider-reported",
-      }],
-      routeReceipts: [{ selected: "grok-4.6", trigger: null }],
-      fallbackTriggers: [],
-      crossRefs: [],
-    }));
-    const neutral = await mod.extractStage.stagePassASlice(
-      env,
-      runId,
-      documentKey,
-      "fixture.docx",
-      {},
-      async () => {},
-      {},
-      NONE_PROFILE,
-    );
-    assertEq(neutral.result.state, "evaluated", "same-profile whole-pass payload is reusable");
-    const shop = await mod.extractStage.stagePassASlice(
-      env,
-      runId,
-      documentKey,
-      "fixture.docx",
-      {},
-      async () => {},
-      {},
-      SHOP_PROFILE,
-    );
-    assertEq(shop.result.state, "not-evaluated", "cross-profile payload is not reused");
-    assertEq(shop.result.reason, "NO_CREDENTIAL", "the shop path reached fresh extraction after the safe cache miss");
+    const documentBytes = docx(`<w:p>${run("Grey", `<w:highlight w:val="lightGray"/>`)}</w:p>`);
+    const documentSha256 = await mod.hash.sha256Hex(documentBytes);
+    await env.EVIDENCE.put(documentKey, documentBytes);
+    await mod.checkpoint.createCheckpoint(env, mod.checkpoint.initialCheckpoint(env, runId, "standard", false));
+    const fence = await mod.checkpoint.claimOwnership(env, runId, runId, 0);
+    const originalFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (_url, init) => {
+      const request = JSON.parse(init.body);
+      calls.push(request);
+      return new Response(JSON.stringify({
+        model: request.model,
+        usage: { prompt_tokens: 100, completion_tokens: 20 },
+        choices: [{
+          message: { content: JSON.stringify({
+            global_rules: [],
+            cross_references: [],
+            ambiguities: [],
+            unverifiable_from_browser: [],
+          }) },
+          finish_reason: "stop",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    try {
+      const seeded = await mod.extractStage.stagePassASlice(
+        env, runId, documentKey, "fixture.docx", fence, async () => {}, {}, NONE_PROFILE, documentSha256,
+      );
+      assertEq(seeded.result.state, "evaluated", "production code seeds strict current Pass-A authority");
+      assertEq(calls.length, 1, "the strict authority came from exactly one primary purchase");
+
+      calls.length = 0;
+      const neutral = await mod.extractStage.stagePassASlice(
+        env, runId, documentKey, "fixture.docx", fence, async () => {}, {}, NONE_PROFILE, documentSha256,
+      );
+      assertEq(neutral.result.state, "evaluated", "same-profile whole-pass payload is reusable");
+      assertEq(calls.length, 0, "same-profile reuse makes no provider purchase");
+      const passKey = mod.keys.extractionPassKey(runId, "a");
+      const retained = await (await env.EVIDENCE.get(passKey)).text();
+
+      const shop = await mod.extractStage.stagePassASlice(
+        env, runId, documentKey, "fixture.docx", fence, async () => {}, {}, SHOP_PROFILE, documentSha256,
+      );
+      assertEq(shop.result.state, "not-evaluated", "cross-profile payload is not reused");
+      assertEq(
+        shop.result.reason,
+        "PASS_A_COMPLETION_ARTIFACT_INVALID",
+        "an occupied final key is immutable terminal authority under the wrong semantics profile",
+      );
+      assertEq(calls.length, 0, "profile mismatch cannot buy or overwrite same-run authority");
+      assertEq(await (await env.EVIDENCE.get(passKey)).text(), retained, "the mismatched reader did not rewrite the final key");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("option merge excludes exact grey bytes with counts; route merge retains them", async () => {

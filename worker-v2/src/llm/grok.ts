@@ -317,9 +317,10 @@ export function grokFlashRouteIdentity(env: Env): string {
 
 export async function grokSpec(env: Env): Promise<ProviderSpec> {
   const rate = await grokRateAttestation(env);
+  const request = grokRequestShape(env);
   return {
     provider: "grok",
-    model: rate.model,
+    model: request.model,
     gatewaySuffix: "/v1",
     directBaseUrl: "https://api.x.ai/v1",
     apiKey: await keyFor(env, "grok"),
@@ -327,6 +328,20 @@ export async function grokSpec(env: Env): Promise<ProviderSpec> {
     outputUsdPerMTok: rate.outputUsdPerMTok,
     // Reasoning tokens share the output budget, so max_tokens is set
     // generously by the caller rather than trimmed here.
+    extraBody: request.extraBody,
+  };
+}
+
+/** Side-effect-free portion of the exact Grok request shape, for pre-purchase byte gates. */
+export function grokRequestShape(
+  env: Env,
+): Pick<ProviderSpec, "model" | "extraBody"> {
+  const model = env.GROK_MODEL ?? DEFAULT_GROK_MODEL;
+  if (model !== DEFAULT_GROK_MODEL) {
+    throw new Error(`GROK_MODEL must be pinned to ${DEFAULT_GROK_MODEL}, got ${JSON.stringify(model)}`);
+  }
+  return {
+    model,
     extraBody: { reasoning_effort: env.GROK_REASONING_EFFORT ?? "high" },
   };
 }

@@ -609,6 +609,11 @@ suite("D50 — row accounting never absorbs lifted origin-bearing blocks (blocke
     const suggestion = parsed.blocks.find((b) => b.origin === "combo-box-suggestion");
     assert(suggestion, "the fixture must lift the suggestion as an origin-bearing block");
     const suggestionId = suggestion.blockId;
+    const sourceText = new Map(parsed.blocks.map((block) => [block.blockId, block.text]));
+    const constructs = [
+      "question", "option-list", "skip-rule", "terminate", "validation", "piping",
+      "carry-forward", "calculation", "randomization", "loop", "instruction",
+    ];
 
     // Transport-boundary stub, the d21 pattern: the CHUNK call cites every block EXCEPT the
     // suggestion while dispositioning all of them normative — Codex's exact scenario. A
@@ -623,25 +628,34 @@ suite("D50 — row accounting never absorbs lifted origin-bearing blocks (blocke
       requests.push({ unit, blockIds });
       const cite = unit.startsWith("SWEEP") ? blockIds : blockIds.filter((id) => id !== suggestionId);
       const payload = {
+        chunk_id: unit,
         obligations: cite.map((id, i) => ({
           id: `${unit}-R${i + 1}`,
           construct: "question",
-          scope: "question",
+          scope: `question:${id}`,
           quantifier: "every",
           selector: id,
           exceptions: [],
           statement: `block ${id} must be honoured`,
-          doc_quote: `text for ${id}`,
+          doc_quote: sourceText.get(id),
           block_ids: [id],
+          evidence_quotes: [{ block_id: id, quote: sourceText.get(id) }],
           browser_observable: "full",
           confidence: 0.9,
+          expansion: null,
         })),
         block_dispositions: blockIds.map((id) => ({
           block_id: id,
           disposition: "normative",
           reason: "states something an implementation must do",
         })),
-        construct_checklist: [],
+        construct_checklist: constructs.map((construct) => ({
+          construct,
+          present: construct === "question" && cite.length > 0,
+          block_ids: construct === "question" ? cite : [],
+        })),
+        ambiguities: [],
+        unverifiable_from_browser: [],
       };
       return new Response(
         JSON.stringify({

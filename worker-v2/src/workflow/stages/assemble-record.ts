@@ -19,7 +19,7 @@ import { recordArchiveKey, recordKey } from "../../keys";
 import { loadRunInputs } from "./run-inputs";
 import { signingKeys } from "./run-inputs";
 import { stageNotEvaluated, type StageResult } from "../gates";
-import type { ItemResult, RunClosure } from "../../types/record";
+import type { ContractRevision, ItemResult, RunClosure } from "../../types/record";
 import { resolveTargetIdentity } from "../../store/target-build";
 import { readRunChecklist } from "./checklist-store";
 // The execution ledger's key and shape, imported rather than re-spelled: a second copy of a
@@ -44,6 +44,8 @@ export interface AssembledRecord {
   /** Surfaced on the stage result so a run's findings are countable without re-reading R2. */
   claims: number;
   blockers: number;
+  /** Blockers that prohibit whole-document/full-coverage credit even if every sealed case settled. */
+  coverageBlockers: number;
   attempts: number;
   ambiguities: number;
   taxonomyGaps: number;
@@ -99,6 +101,7 @@ async function executionProbeLimitations(
 
 /** Pure record projection seam exported so its fail-loud behaviour is mutation-testable. */
 export const deriveRecordBlockers = deriveBlockers as (args: {
+  revision: ContractRevision;
   walks: WalkRecord[] | null;
   itemResults: unknown[];
   observations: unknown[];
@@ -298,6 +301,9 @@ async function signAndStore(
       testComplete: !!(record.exploration as { testComplete?: boolean })?.testComplete,
       claims: (record.claims as unknown[] | undefined)?.length ?? 0,
       blockers: (record.blockers as unknown[] | undefined)?.length ?? 0,
+      coverageBlockers: (record.blockers as Array<{ kind?: unknown }> | undefined)?.filter(
+        (entry) => entry?.kind === "DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE",
+      ).length ?? 0,
       attempts: (record.attempts as unknown[] | undefined)?.length ?? 0,
       ambiguities: (record.ambiguities as unknown[] | undefined)?.length ?? 0,
       taxonomyGaps: (record.taxonomyGaps as unknown[] | undefined)?.length ?? 0,

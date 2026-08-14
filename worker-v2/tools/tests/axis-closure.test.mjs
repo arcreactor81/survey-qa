@@ -48,9 +48,12 @@ async function freshRun(mod, env) {
  * honestly — schema 1.0.0, matching documentSha256, digest that re-derives, non-empty
  * docxParserVersion, a revision that re-reads and re-hashes.
  */
-async function seedAdoptableContract(mod, env) {
-  const documentSha256 = "b".repeat(64);
+async function seedAdoptableContract(mod, env, runId) {
+  const documentBytes = new TextEncoder().encode("axis-closure reusable source bytes");
+  const documentSha256 = await mod.hash.sha256Hex(documentBytes);
   const documentSemanticsProfile = mod.docxBlocks.DOCUMENT_SEMANTICS_NONE;
+  const documentKey = mod.keys.inputDocumentKey(runId);
+  await env.EVIDENCE.put(documentKey, documentBytes);
   const inputs = {
     documentSha256,
     docxParserVersion: mod.docxBlocks.docxBlocksVersion(documentSemanticsProfile),
@@ -77,7 +80,12 @@ async function seedAdoptableContract(mod, env) {
     sealedByRunId: "v2r_priorrunfixture",
     sealedAt: "2026-08-10T00:00:00.000Z",
   });
-  return { digest, contractRevisionId, contractHash };
+  return {
+    digest,
+    contractRevisionId,
+    contractHash,
+    sourceAuthority: { documentKey, documentSha256, documentSemanticsProfile },
+  };
 }
 
 suite("test axis closure: adoption marks the axis in flight", () => {
@@ -85,10 +93,10 @@ suite("test axis closure: adoption marks the axis in flight", () => {
     const mod = await worker();
     const env = testEnv();
     const runId = await freshRun(mod, env);
-    const { digest, contractRevisionId } = await seedAdoptableContract(mod, env);
+    const { digest, contractRevisionId, sourceAuthority } = await seedAdoptableContract(mod, env, runId);
 
     const wf = new mod.workflow.SurveyRunWorkflowV2({}, env);
-    const reuse = await wf.adoptReusableContract(fakeStep(), runId, digest, undefined);
+    const reuse = await wf.adoptReusableContract(fakeStep(), runId, digest, undefined, sourceAuthority);
 
     // The fixture must genuinely adopt, or every assertion below is vacuous.
     assertEq(reuse.adopted, true, "the honestly-seeded index entry must adopt");

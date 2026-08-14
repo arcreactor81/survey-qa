@@ -905,10 +905,12 @@ suite("D41 — the fields the record declared empty while the data sat in its in
  * ADOPTION tests about adoption; the digest-sensitivity test below still varies the field
  * explicitly, which is where a version's effect on the key belongs.
  */
+const D41_DOCUMENT_BYTES = new TextEncoder().encode("D41 neutral reusable questionnaire bytes");
+
 const reuseInputs = async (mod, env = testEnv()) => {
   const documentSemanticsProfile = mod.docxBlocks.DOCUMENT_SEMANTICS_NONE;
   return {
-    documentSha256: "e".repeat(64),
+    documentSha256: await mod.hash.sha256Hex(D41_DOCUMENT_BYTES),
     docxParserVersion: mod.docxBlocks.docxBlocksVersion(documentSemanticsProfile),
     documentSemanticsProfile,
     promptVersionA: mod.passA.PASS_A_VERSION,
@@ -964,6 +966,7 @@ async function seedReusableRun(
     recovery: null,
     finalCompletion: null,
   });
+  await env.EVIDENCE.put(mod.keys.inputDocumentKey(runId), D41_DOCUMENT_BYTES);
   await mod.checkpoint.createCheckpoint(env, mod.checkpoint.initialCheckpoint(env, runId, "standard", false));
   await mod.checkpoint.claimOwnership(env, runId, runId, 0);
 
@@ -1213,6 +1216,54 @@ suite("D41 — a contract sealed over identical inputs is reused, not re-bought"
     assertEq(cp.contract.contractRevisionId, seeded.contractRevisionId, "the adopted revision is the indexed one");
     assertEq(cp.contract.state, "sealed");
     assertEq(cp.contract.total, seeded.executionCases, "and the denominator is the sealed one, not a fresh count");
+  });
+
+  test("a reuse hit rechecks current bytes inside adoption and refuses a hit-time source swap", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const RI = await reuseInputs(mod, env);
+    const seeded = await seedReusableRun(mod, env, RI);
+    const digest = await mod.contractReuse.extractionInputsDigest(RI);
+    const reuseKey = mod.contractReuse.contractReuseKey(digest);
+    const documentKey = mod.keys.inputDocumentKey(seeded.runId);
+    const replacement = new TextEncoder().encode("D41 changed bytes with the same declared reuse identity");
+
+    const originalGet = env.EVIDENCE.get.bind(env.EVIDENCE);
+    let swapped = false;
+    env.EVIDENCE.get = async (key) => {
+      const object = await originalGet(key);
+      if (!swapped && key === reuseKey) {
+        swapped = true;
+        await env.EVIDENCE.put(documentKey, replacement);
+      }
+      return object;
+    };
+    const originalFetch = globalThis.fetch;
+    let providerRequests = 0;
+    globalThis.fetch = async () => {
+      providerRequests += 1;
+      throw new Error("a changed source must not reach extraction after a reuse hit");
+    };
+    try {
+      const step = fakeStep();
+      await new mod.workflow.SurveyRunWorkflowV2({}, env).run(reusePayload(seeded.runId, RI), step);
+      assert(swapped, "the counterexample swaps bytes only after the reuse entry is read");
+      assert(step.calls.includes("adopt-reusable-contract"));
+      assertEq(
+        step.calls.filter((name) => name.startsWith("extract-pass-a-wave-")).length,
+        0,
+        "an invalid reuse hit is terminal rather than falling through to a fresh purchase",
+      );
+      assertEq(providerRequests, 0);
+      const checkpoint = (await mod.checkpoint.loadCheckpoint(env, seeded.runId)).checkpoint;
+      assertEq(checkpoint.completion.reasonCode, "extraction-document-source-authority-invalid");
+      assertEq(checkpoint.contract.state, "unavailable");
+      assertEq(checkpoint.contract.contractRevisionId, null);
+      assertEq(checkpoint.reportAvailable, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      env.EVIDENCE.get = originalGet;
+    }
   });
 
   test("A DIFFERENT VIEWPORT SET MISSES: the run must not adopt a denominator expanded for another", async () => {

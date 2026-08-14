@@ -253,8 +253,9 @@ export interface Env {
   /**
    * How many pass-A wave STEPS a run may use before it stops with a named reason. A backstop,
    * not a tuning knob: waves are bounded by the WINDOW COUNT (a wave always issues at least
-   * one call), and windows are 90 KB of source each, so a double-digit value covers documents
-   * far larger than any real questionnaire. A run that exhausts this ends `failed` /
+   * one call). Production permits 20 waves so the measured 1,087-block document's eleven
+   * 100-block windows still have deterministic headroom under a zero-budget wave. A run that
+   * exhausts this ends `failed` /
    * `extraction-pass-a-waves-exhausted` naming how many windows are still owed — never a
    * `partial-*` over a document nobody finished reading.
    */
@@ -268,6 +269,18 @@ export interface Env {
    * `EXTRACT_MAX_ATTEMPTS` still absorbs transport blips INSIDE one purchase.
    */
   EXTRACT_PASS_A_WINDOW_MAX_ISSUES?: string;
+  /**
+   * Maximum UTF-8 bytes in the exact serialized cross-window provider request. The request
+   * contains every primary candidate plus only its nominated exact source quote spans; it is
+   * not whole-source discovery. Exceeding this limit is a named failed synthesis unit; no
+   * candidate or nominated span is truncated to make a call fit.
+   */
+  EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES?: string;
+  /**
+   * Whole-run purchase ceiling for the one cross-window synthesis unit. Its attempt count
+   * lives in the synthesis R2 artifact, so Workflow retries and recovery share the ceiling.
+   */
+  EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES?: string;
   /** Output ceiling per extraction call. Reasoning shares this budget on both providers. */
   EXTRACT_MAX_OUTPUT_TOKENS?: string;
   /** Attempts per extraction call. Two is the money rule, not a default worth raising. */

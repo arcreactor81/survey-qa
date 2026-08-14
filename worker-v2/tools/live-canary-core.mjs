@@ -897,9 +897,11 @@ async function pollRun(input) {
   let visual = null;
   while (input.nowMs() - started <= input.pollTimeoutMs) {
     polls += 1;
-    // Read core first. A true test/report failure never reaches the normal post-report visual
-    // launch and must return immediately. A deliberate partial outcome is different: once its
-    // report is durably finalized, the isolated visual child is expected to finish independently.
+    // Read core first. A failure on one completion axis is not yet a coherent terminal snapshot:
+    // the Workflow can persist test=failed while its catch path is still building the failure
+    // report. Wait for BOTH axes to close before collecting artifacts. A deliberate partial
+    // outcome is different: once its report is durably finalized, the isolated visual child is
+    // expected to finish independently.
     const statusResponse = await requestJson(
       new URL(`api/v2/runs/${input.runId}/status`, input.baseUrl),
       { method: "GET" },
@@ -914,7 +916,7 @@ async function pollRun(input) {
       if (!(error instanceof LiveCanaryError)) throw error;
       return { polls, status: null, visual: null, corePollFailure: error };
     }
-    if (isCoreInfrastructureFailure(status)) return { polls, status, visual: null };
+    if (isCoreTerminalFailure(status)) return { polls, status, visual: null };
 
     if (!isCoreVisualEligibleFinal(status)) {
       await input.sleep(input.pollIntervalMs);
@@ -948,6 +950,12 @@ async function pollRun(input) {
     const visualTerminal = visual.coverage.state === "finalized" || visual.terminal.state === "limitation";
     if (visualTerminal) return { polls, status, visual };
     await input.sleep(input.pollIntervalMs);
+  }
+  if (status === null || !isCoreTerminal(status)) {
+    throw new LiveCanaryError(
+      'POLL_TIMEOUT',
+      'the test and report completion axes did not both reach terminal states before the poll deadline',
+    );
   }
   throw new LiveCanaryError("POLL_TIMEOUT", "the core and visual channels did not reach explicit terminal states before the poll deadline");
 }
@@ -1138,7 +1146,8 @@ function isCoreTerminal(status) {
     && (report === "complete" || report === "failed");
 }
 
-function isCoreInfrastructureFailure(status) {
+function isCoreTerminalFailure(status) {
+  if (!isCoreTerminal(status)) return false;
   return status.completion?.test === "failed" || status.completion?.report === "failed";
 }
 

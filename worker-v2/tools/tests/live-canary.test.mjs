@@ -1596,6 +1596,131 @@ async function fileExists(filePath) {
   }
 }
 
+for (const regression of [
+  {
+    name: 'test failure while the report is still building',
+    openCompletion: { test: 'failed', report: 'building', reasonCode: 'workflow-error' },
+  },
+  {
+    name: 'report failure while the test axis is still running',
+    openCompletion: { test: 'running', report: 'failed', reasonCode: 'report-build-failed' },
+  },
+]) {
+  test('polling waits for both core completion axes after ' + regression.name, async (t) => {
+    const fixture = await executionFixture(t);
+    let statusRequests = 0;
+    let visualRequests = 0;
+    let sleeps = 0;
+
+    await assert.rejects(
+      executeLiveCanary({
+        baseUrl: LIVE_CANARY_ORIGIN,
+        canaryTokenFile: fixture.tokenFile,
+        surveyUrl: 'https://survey.example.test/instrument',
+        docx: fixture.docx,
+        expectedDocumentSha256: fixture.expectedDocumentSha256,
+        outputDir: fixture.outputDir,
+        pollIntervalMs: 100,
+        pollTimeoutMs: 1_000,
+        requestTimeoutMs: 1_000,
+      }, {
+        fetchImpl: fakeRunFetch({
+          status: () => {
+            statusRequests += 1;
+            const status = completeStatus();
+            status.completion = statusRequests === 1
+              ? regression.openCompletion
+              : { test: 'failed', report: 'failed', reasonCode: 'workflow-error' };
+            status.reportAvailable = false;
+            return status;
+          },
+          visual: () => {
+            visualRequests += 1;
+            return pendingVisualStatus();
+          },
+        }),
+        sleep: async () => { sleeps += 1; },
+      }),
+      (error) => {
+        assert.ok(error instanceof LiveCanaryError);
+        assert.equal(error.code, 'CORE_RUN_FAILED');
+        assert.deepEqual(error.summary.core.completion, {
+          test: 'failed',
+          report: 'failed',
+          reasonCode: 'workflow-error',
+        });
+        return true;
+      },
+    );
+
+    assert.equal(sleeps, 1, 'neither one-axis failure may terminate polling while its peer axis remains open');
+    assert.equal(statusRequests, 3, 'two polls reach both-axis closure, then collection re-reads that terminal state');
+    assert.equal(visualRequests, 1, 'a core failure never polls visual work; it only retains the endpoint once');
+    const retained = JSON.parse(await readFile(path.join(fixture.outputDir, 'status.json'), 'utf8'));
+    assert.deepEqual(retained.completion, {
+      test: 'failed',
+      report: 'failed',
+      reasonCode: 'workflow-error',
+    });
+  });
+}
+
+test('an open core completion axis fails loudly at the bounded poll deadline and is never collected as terminal', async (t) => {
+  const fixture = await executionFixture(t);
+  let clockMs = 0;
+  let sleeps = 0;
+  let statusRequests = 0;
+  let visualRequests = 0;
+  const openStatus = completeStatus();
+  openStatus.completion = { test: 'failed', report: 'building', reasonCode: 'workflow-error' };
+  openStatus.reportAvailable = false;
+
+  await assert.rejects(
+    executeLiveCanary({
+      baseUrl: LIVE_CANARY_ORIGIN,
+      canaryTokenFile: fixture.tokenFile,
+      surveyUrl: 'https://survey.example.test/instrument',
+      docx: fixture.docx,
+      expectedDocumentSha256: fixture.expectedDocumentSha256,
+      outputDir: fixture.outputDir,
+      pollIntervalMs: 100,
+      pollTimeoutMs: 1_000,
+      requestTimeoutMs: 1_000,
+    }, {
+      fetchImpl: fakeRunFetch({
+        status: openStatus,
+        visual: () => {
+          visualRequests += 1;
+          return pendingVisualStatus();
+        },
+        onCall: async (url) => {
+          if (url.pathname.endsWith('/status') && !url.pathname.endsWith('/visual-status')) statusRequests += 1;
+        },
+      }),
+      sleep: async (milliseconds) => {
+        sleeps += 1;
+        clockMs += milliseconds;
+      },
+      nowMs: () => clockMs,
+    }),
+    (error) => {
+      assert.ok(error instanceof LiveCanaryError);
+      assert.equal(error.code, 'POLL_TIMEOUT');
+      assert.match(error.message, /test and report completion axes did not both reach terminal states/);
+      return true;
+    },
+  );
+
+  assert.equal(sleeps, 11, 'the inclusive deadline permits polls from 0 through 1000 ms only');
+  assert.equal(statusRequests, 11);
+  assert.equal(visualRequests, 0, 'visual work is ineligible until both core axes close');
+  assert.equal(
+    await fileExists(path.join(fixture.outputDir, 'status.json')),
+    false,
+    'an open snapshot must not be mislabeled as a terminal collected artifact',
+  );
+});
+
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

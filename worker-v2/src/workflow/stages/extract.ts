@@ -28,7 +28,7 @@
 import type { Env } from "../../types/env";
 import { num } from "../../types/env";
 import { extractionDiffKey, extractionPassKey, k, sourceLedgerKey } from "../../keys";
-import { sha256Hex } from "../../store/hash";
+import { canonicalJson, sha256Hex } from "../../store/hash";
 import { type Fence } from "../../store/checkpoint";
 import { pushModelUsageStrict, modelUsage } from "../../store/usage";
 import { docxBlocksVersion, parseDocxBlocks } from "../../extract/docx-blocks";
@@ -42,22 +42,33 @@ import { grokFlashRouteIdentity, grokRateAttestation } from "../../llm/grok";
 import {
   runPassA,
   PASS_A_VERSION,
-  validatePassAProviderState,
+  reconstructPassACompletedAuthority,
   type CrossRef,
   type PassAProviderIndependence,
   type PassASlice,
   type PassASliceOptions,
 } from "../../extract/pass-a";
-import { runPassB, PASS_B_VERSION, type PassBSlice, type PassBSliceOptions } from "../../extract/pass-b";
+import {
+  runPassB,
+  PASS_B_VERSION,
+  passBCompletionProjection,
+  passBCompletionShapeClosed,
+  reconstructPassBCompletedAuthority,
+  type PassBSlice,
+  type PassBSliceOptions,
+} from "../../extract/pass-b";
 import { mergePasses, MERGE_VERSION, type ExtractionDiff, type SourceLedger } from "../../extract/merge";
 import { expandFloor, EXPANDER_VERSION, type ExpansionCoverage, type ExpansionPreviewEntry } from "../../extract/expand";
-import { resetDrops } from "../../extract/coerce";
 import { CONSTRUCT_CLASSES, type CallUsage, type ParsedDocument, type PassResult } from "../../extract/types";
+import { limitationsFromPassAPayload } from "../../../shared/cross-window-limitations.mjs";
 import type { FacetInstance, ScopedRequirement } from "../../types/record";
 import { stageEvaluated, stageNotEvaluated, type GateProof, type StageResult } from "../gates";
 
 export const mergedKey = (runId: string) => k("runs", runId, "extraction", "merged.json");
 export const previewKey = (runId: string) => k("runs", runId, "extraction", "expansion-preview.json");
+export const extractionDocumentName = (documentKey: string, documentSha256: string): string =>
+  `${documentKey.split("/").pop() ?? "questionnaire.docx"} ` +
+  `(sha256 ${documentSha256.slice(0, 12)}…)`;
 
 export interface PassSummary {
   hash: string;
@@ -98,8 +109,10 @@ export interface ConsolidationSummary {
 }
 
 export interface MergedPayload {
-  schemaVersion: "v2-extraction-merged/1.0.0" | "v2-extraction-merged/1.1.0";
+  schemaVersion: "v2-extraction-merged/1.0.0" | "v2-extraction-merged/1.1.0" | "v2-extraction-merged/1.2.0";
   documentSha256: string;
+  /** Exact completed-pass bytes whose strict unit authority this merge was derived from. */
+  inputAuthority: { passAHash: string; passBHash: string };
   requirements: ScopedRequirement[];
   facetInstances: FacetInstance[];
   preview: ExpansionPreviewEntry[];
@@ -116,20 +129,97 @@ const proof = (evaluatorId: string, evaluatorVersion: string, inputHash: string)
   observedAt: new Date().toISOString(),
 });
 
-/** Read the submitted .docx from R2 and parse it into addressable blocks. */
-export async function loadDocument(
+/** Public run/checkpoint reason code for a document object that no longer binds its envelope. */
+export const DOCUMENT_SOURCE_AUTHORITY_INVALID = "extraction-document-source-authority-invalid";
+
+export class DocumentSourceAuthorityFailure extends Error {
+  constructor(readonly detail: string) {
+    super(`${DOCUMENT_SOURCE_AUTHORITY_INVALID}: ${detail}`);
+    this.name = DOCUMENT_SOURCE_AUTHORITY_INVALID;
+  }
+}
+
+/** Convert only an intentional source-authority refusal; transient R2/runtime faults retry. */
+export function documentSourceAuthorityDetail(error: unknown): string {
+  if (error instanceof DocumentSourceAuthorityFailure) return error.message;
+  throw error;
+}
+
+export interface VerifiedDocumentSource {
+  doc: ParsedDocument;
+  /** Lowercase SHA-256 of the exact R2 bytes that were parsed, without a scheme prefix. */
+  rawSha256: string;
+}
+
+export interface VerifiedDocumentBytes {
+  bytes: Uint8Array;
+  rawSha256: string;
+}
+
+/**
+ * Verify current source bytes without parsing them. Reuse adoption and final sealing need
+ * byte authority but must not pay for an unnecessary ZIP parse.
+ *
+ * Hash BEFORE parse and compare against the durable envelope hash. Parsing can deliberately
+ * ignore package parts, ZIP metadata and other non-semantic bytes; therefore equal parsed
+ * blocks are not evidence that the stored source is still the submitted source.
+ */
+export async function verifyDocumentSourceBytes(
   env: Env,
   documentKey: string,
-  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
-): Promise<ParsedDocument> {
+  expectedDocumentSha256: string,
+): Promise<VerifiedDocumentBytes> {
+  const expectedRawSha256 = expectedDocumentSha256.replace(/^sha256:/, "");
+  if (!/^[0-9a-f]{64}$/.test(expectedRawSha256)) {
+    throw new DocumentSourceAuthorityFailure(
+      "the durable envelope document SHA-256 is missing or malformed; no source bytes were parsed",
+    );
+  }
   const obj = await env.EVIDENCE.get(documentKey);
   if (!obj) {
-    throw new Error(
+    throw new DocumentSourceAuthorityFailure(
       `the submitted document is missing from storage at ${documentKey}. Extraction has no source of truth to read, ` +
         `and an extraction with no document would produce a denominator out of nothing.`,
     );
   }
-  return parseDocxBlocks(await obj.arrayBuffer(), { documentSemanticsProfile });
+  const maxDocumentBytes = Math.max(1, num(env.MAX_DOCUMENT_BYTES, 25 * 1024 * 1024));
+  if (obj.size > maxDocumentBytes) {
+    throw new DocumentSourceAuthorityFailure(
+      `the current document object is ${obj.size} bytes, above MAX_DOCUMENT_BYTES=${maxDocumentBytes}; ` +
+        "it was refused before buffering or parsing",
+    );
+  }
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  const actualRawSha256 = await sha256Hex(bytes);
+  if (actualRawSha256 !== expectedRawSha256) {
+    throw new DocumentSourceAuthorityFailure(
+      `the current document bytes do not match the durable submitted source (expected sha256:${expectedRawSha256}, ` +
+        `got sha256:${actualRawSha256}). No extraction, reuse, merge, or seal authority was granted.`,
+    );
+  }
+  return { bytes, rawSha256: actualRawSha256 };
+}
+
+/** Verify exact current bytes, then parse those SAME bytes into addressable blocks. */
+export async function loadDocument(
+  env: Env,
+  documentKey: string,
+  expectedDocumentSha256: string,
+  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
+): Promise<VerifiedDocumentSource> {
+  const verified = await verifyDocumentSourceBytes(
+    env, documentKey, expectedDocumentSha256,
+  );
+  try {
+    return {
+      doc: parseDocxBlocks(verified.bytes, { documentSemanticsProfile }),
+      rawSha256: verified.rawSha256,
+    };
+  } catch (error) {
+    throw new DocumentSourceAuthorityFailure(
+      `the hash-bound submitted DOCX could not be parsed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 /**
@@ -182,7 +272,8 @@ export async function stagePassA(
   documentKey: string,
   documentName: string,
   fence: Fence,
-  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
+  documentSemanticsProfile: DocumentSemanticsProfile,
+  expectedDocumentSha256: string,
 ): Promise<StageResult<PassSummary>> {
   const { result } = await stagePassASlice(
     env,
@@ -193,6 +284,7 @@ export async function stagePassA(
     async () => {},
     {},
     documentSemanticsProfile,
+    expectedDocumentSha256,
   );
   return result;
 }
@@ -201,6 +293,127 @@ export async function stagePassA(
 export interface PassASliceOutcome {
   result: StageResult<PassSummary>;
   slice: PassASlice;
+  /** Stop making waves even when unread windows remain; terminal is not the same as complete. */
+  terminal: boolean;
+}
+
+const PASS_A_COMPLETION_KEYS = [
+  "parserVersion", "promptVersion", "pass", "provider", "model", "providerRouteIdentity",
+  "providerIndependence", "routeReceipts", "fallbackTriggers", "requirements", "ambiguities",
+  "unverifiable", "dispositions", "constructs", "failedUnits", "calls", "crossRefs",
+  "crossWindowLimitations", "slice", "issuedCalls", "accountingCalls",
+] as const;
+
+const passACompletionProjection = (value: Record<string, unknown>): Record<string, unknown> => {
+  const out: Record<string, unknown> = {};
+  for (const key of PASS_A_COMPLETION_KEYS) out[key] = value[key];
+  return out;
+};
+
+const passACompletionShapeClosed = (value: Record<string, unknown>): boolean =>
+  PASS_A_COMPLETION_KEYS.every((key) => Object.hasOwn(value, key)) &&
+  [
+    "routeReceipts", "fallbackTriggers", "requirements", "ambiguities", "unverifiable",
+    "dispositions", "constructs", "failedUnits", "calls", "crossRefs", "crossWindowLimitations",
+    "issuedCalls", "accountingCalls",
+  ].every((key) => Array.isArray(value[key]));
+
+export async function validatePassAContinuationAuthority(
+  env: Env,
+  runId: string,
+  doc: ParsedDocument,
+  documentName: string,
+  expectedPassAHash: string,
+): Promise<StageResult<PassSummary>> {
+  if (!/^sha256:[0-9a-f]{64}$/.test(expectedPassAHash)) {
+    return stageNotEvaluated<PassSummary>(
+      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "PASS_A_COMPLETED_ARTIFACT_INVALID: a durable evaluated Pass-A hash is required before any continuation.",
+    );
+  }
+  const obj = await env.EVIDENCE.get(extractionPassKey(runId, "a"));
+  if (!obj) {
+    return stageNotEvaluated<PassSummary>(
+      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "PASS_A_COMPLETED_ARTIFACT_INVALID: durable Pass-A completion bytes are missing.",
+    );
+  }
+  const actual = `sha256:${await sha256Hex(await obj.arrayBuffer())}`;
+  if (actual !== expectedPassAHash) {
+    return stageNotEvaluated<PassSummary>(
+      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      `PASS_A_COMPLETED_ARTIFACT_INVALID: durable Pass-A hash ${expectedPassAHash} no longer binds ` +
+        `current bytes ${actual}. No Pass-B purchase is authorized.`,
+    );
+  }
+  return await readPassPayload(
+    env, runId, "a", doc.parserVersion ?? docxBlocksVersion(DOCUMENT_SEMANTICS_NONE), documentName, doc,
+  ) ??
+    stageNotEvaluated<PassSummary>(
+      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "PASS_A_COMPLETED_ARTIFACT_INVALID: the retained completion bytes do not exactly match " +
+        "current window/synthesis authority. No Pass-B purchase is authorized.",
+    );
+}
+
+async function validatePassBCompletionAuthority(
+  env: Env,
+  runId: string,
+  doc: ParsedDocument,
+  documentName: string,
+  expectedPassBHash: string,
+): Promise<StageResult<PassSummary>> {
+  if (!/^sha256:[0-9a-f]{64}$/.test(expectedPassBHash)) {
+    return stageNotEvaluated(
+      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "PASS_B_COMPLETED_ARTIFACT_INVALID: a durable evaluated Pass-B hash is required before consolidation.",
+    );
+  }
+  const obj = await env.EVIDENCE.get(extractionPassKey(runId, "b"));
+  if (!obj) {
+    return stageNotEvaluated(
+      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "PASS_B_COMPLETED_ARTIFACT_INVALID: durable Pass-B completion bytes are missing.",
+    );
+  }
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  const actualHash = `sha256:${await sha256Hex(bytes)}`;
+  if (actualHash !== expectedPassBHash) {
+    return stageNotEvaluated(
+      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      `PASS_B_COMPLETED_ARTIFACT_INVALID: durable Pass-B hash ${expectedPassBHash} no longer binds ` +
+        `current bytes ${actualHash}. Consolidation is not authorized.`,
+    );
+  }
+  const authority = await reconstructPassBCompletedAuthority(env, runId, doc, documentName);
+  if (authority.kind !== "ok") {
+    return stageNotEvaluated("PASS_B_COMPLETION_ARTIFACT_INVALID", authority.detail);
+  }
+  let parsed: Record<string, unknown>;
+  try {
+    const value = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("root");
+    parsed = value as Record<string, unknown>;
+  } catch {
+    return stageNotEvaluated(
+      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "PASS_B_COMPLETED_ARTIFACT_INVALID: durable completion JSON is malformed.",
+    );
+  }
+  const expected = JSON.parse(authority.body) as Record<string, unknown>;
+  if (
+    !passBCompletionShapeClosed(parsed) ||
+    canonicalJson(passBCompletionProjection(parsed)) !== canonicalJson(passBCompletionProjection(expected))
+  ) {
+    return stageNotEvaluated(
+      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "PASS_B_COMPLETED_ARTIFACT_INVALID: completion projection differs from strict unit reconstruction.",
+    );
+  }
+  return stageEvaluated(
+    { ...summarize(authority.value, authority.hash), costUsd: 0 },
+    proof("extract-pass-b", PASS_B_VERSION, authority.hash),
+  );
 }
 
 /**
@@ -233,23 +446,85 @@ export async function stagePassASlice(
   fence: Fence,
   beat: (msg: string) => Promise<void>,
   options: PassASliceOptions,
-  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
+  documentSemanticsProfile: DocumentSemanticsProfile,
+  expectedDocumentSha256: string,
 ): Promise<PassASliceOutcome> {
   const settled = (result: StageResult<PassSummary>): PassASliceOutcome => ({
     result,
     // Nothing further can be done for this pass, so the wave loop must stop rather than
     // spend its whole step budget re-discovering the same missing credential.
-    slice: { done: true, windowsTotal: 0, windowsLanded: 0, windowsIssued: 0, windowsRemaining: 0, deadlineHit: false },
+    slice: {
+      done: true, windowsTotal: 0, windowsLanded: 0, windowsIssued: 0,
+      windowsRemaining: 0, terminalFailure: false, deadlineHit: false,
+    },
+    terminal: true,
   });
 
   // RESUME AT THE PASS, NOT ONLY AT THE WINDOW. If a previous attempt already landed the
   // whole payload, re-reading it is strictly better than re-walking the windows.
   const expectedParserVersion = docxBlocksVersion(documentSemanticsProfile);
-  const already = await readPassPayload(env, runId, "a", expectedParserVersion);
-  if (already) return settled(already);
+  let doc: ParsedDocument;
+  try {
+    ({ doc } = await loadDocument(
+      env, documentKey, expectedDocumentSha256, documentSemanticsProfile,
+    ));
+  } catch (error) {
+    return {
+      result: stageNotEvaluated<PassSummary>(
+        DOCUMENT_SOURCE_AUTHORITY_INVALID,
+        documentSourceAuthorityDetail(error),
+      ),
+      slice: {
+        done: false,
+        windowsTotal: 0,
+        windowsLanded: 0,
+        windowsIssued: 0,
+        windowsRemaining: 0,
+        terminalFailure: true,
+        synthesisState: "waiting-for-windows",
+        synthesisAttempts: 0,
+        synthesisIssued: 0,
+        deadlineHit: false,
+      },
+      terminal: true,
+    };
+  }
+  const existingPassObject = await env.EVIDENCE.get(extractionPassKey(runId, "a"));
+  const already = await readPassPayload(
+    env, runId, "a", expectedParserVersion, documentName, doc,
+  );
+  if (already) {
+    if (
+      already.state === "evaluated" &&
+      already.value.providerIndependence === "reduced-same-provider-fallback"
+    ) {
+      return settled(stageNotEvaluated<PassSummary>(
+        "REDUCED_PROVIDER_INDEPENDENCE",
+        "The retained completed Pass-A payload used DeepSeek Flash after a receipted Grok failure. " +
+          "Pass B is DeepSeek Pro, so reusing that payload cannot restore provider-family independence. " +
+          "No Pass-B purchase was authorized.",
+      ));
+    }
+    return settled(already);
+  }
 
-  resetDrops();
-  const doc = await loadDocument(env, documentKey, documentSemanticsProfile);
+  // A PRESENT current-version completion key that failed strict reconstruction is not a
+  // cache miss. Rebuilding would overwrite paid authority and could launder deleted rows.
+  if (existingPassObject) {
+    const authority = await reconstructPassACompletedAuthority(env, runId, doc, documentName);
+    const slice = authority.kind === "invalid" ? authority.slice : authority.value.slice;
+    return {
+      result: stageNotEvaluated<PassSummary>(
+        "PASS_A_COMPLETION_ARTIFACT_INVALID",
+        authority.kind === "invalid" ? authority.detail :
+          "PASS_A_COMPLETED_ARTIFACT_INVALID: an immutable completion key is present but its bytes do not " +
+            "match current unit authority. No unit was re-bought and no Pass-B purchase was authorized.",
+      ),
+      slice,
+      terminal: true,
+    };
+  }
+
   try {
     await grokRateAttestation(env);
   } catch (err) {
@@ -270,17 +545,79 @@ export async function stagePassASlice(
   // nobody ever made.
   await chargeUsage(env, runId, result.accountingCalls, fence);
 
+  if (result.providerIndependence === "reduced-same-provider-fallback") {
+    // This authority is terminal even when later windows were intentionally left unread:
+    // configured Pass B is already ineligible, so buying those windows cannot produce a
+    // sealable run. Refuse before the ordinary incomplete-slice branch.
+    return {
+      result: stageNotEvaluated<PassSummary>(
+        "REDUCED_PROVIDER_INDEPENDENCE",
+        "Grok pass A landed a receipted DeepSeek Flash substitute. " +
+        "Pass B is DeepSeek Pro, so buying it cannot restore the required provider-family independence. " +
+        `The per-window evidence and charged usage are retained: ${result.slice.windowsLanded} of ` +
+        `${result.slice.windowsTotal} window(s) landed and ${result.slice.windowsRemaining} remain unread. ` +
+        "No final Pass-A payload was persisted and no Pass-B purchase was authorized.",
+      ),
+      slice: result.slice,
+      terminal: true,
+    };
+  }
+
+  if (result.slice.terminalFailure) {
+    const first = result.failedUnits[0] ?? {
+      unit: result.slice.synthesisState === "failed" ? "A-synthesis" : "A-unknown",
+      blockIds: [],
+      detail: "the terminal Pass-A unit did not retain a detailed failure row",
+    };
+    if (result.slice.synthesisState === "failed" || first.unit === "A-synthesis") {
+      return {
+        result: stageNotEvaluated<PassSummary>(
+          "PASS_A_SYNTHESIS_FAILURE",
+          `Pass A read all ${result.slice.windowsLanded} of ${result.slice.windowsTotal} primary window(s), ` +
+            `but the separately bounded cross-window reconciliation failed: ${first.detail.slice(0, 600)} ` +
+            `Concatenating window-local outputs cannot prove relationships across their boundaries. ` +
+            `No final Pass-A payload was persisted and no Pass-B purchase was authorized.`,
+        ),
+        slice: result.slice,
+        terminal: true,
+      };
+    }
+    const failedBlockIds = [...new Set(result.failedUnits.flatMap((unit) => unit.blockIds))];
+    const blockSample = failedBlockIds.slice(0, 5);
+    return {
+      result: stageNotEvaluated<PassSummary>(
+        "PASS_A_WINDOW_FAILURES",
+        `Pass A stopped after a terminal provider/window failure rather than repeating it across later windows. ` +
+          `${result.slice.windowsLanded} of ${result.slice.windowsTotal} window(s) were accounted for and ` +
+          `${result.slice.windowsRemaining} remain unread. Failed block sample: ${blockSample.join(", ") || "none"}. ` +
+          `First failure: ${first.unit} — ${first.detail.slice(0, 400)}. No final Pass-A payload was persisted.`,
+      ),
+      slice: result.slice,
+      terminal: true,
+    };
+  }
+
   const wholeDocumentRead = result.slice.done;
   if (!wholeDocumentRead) {
+    const reconciliationPending =
+      result.slice.windowsRemaining === 0 &&
+      result.slice.synthesisState === "pending";
+    const detail = reconciliationPending
+      ? `pass A read all ${result.slice.windowsTotal} primary window(s), but the separately bounded ` +
+        `cross-window reconciliation unit remains pending after this wave. No final pass-A payload is ` +
+        `persisted until that unit lands; concatenated window-local answers cannot stand in for ` +
+        `relationships whose evidence crosses a window boundary.`
+      : `pass A has ${result.slice.windowsRemaining} of ${result.slice.windowsTotal} window(s) still owed after ` +
+        `this wave. Nothing is persisted under the pass key until the whole document has been read: a partial ` +
+        `pass A merged as if it were complete would claim the document contains no cross-cutting rule that only ` +
+        `an unread window states.`;
     return {
       result: stageNotEvaluated<PassSummary>(
         "PASS_A_INCOMPLETE",
-        `pass A has ${result.slice.windowsRemaining} of ${result.slice.windowsTotal} window(s) still owed after ` +
-          `this wave. Nothing is persisted under the pass key until the whole document has been read: a partial ` +
-          `pass A merged as if it were complete would claim the document contains no cross-cutting rule that only ` +
-          `an unread window states.`,
+        detail,
       ),
       slice: result.slice,
+      terminal: false,
     };
   }
 
@@ -298,25 +635,45 @@ export async function stagePassASlice(
     );
   }
 
-  if (result.providerIndependence === "reduced-same-provider-fallback") {
-    throw new Error(
-      "REDUCED_PROVIDER_INDEPENDENCE: Grok pass A activated its receipted DeepSeek Flash substitute. " +
-        "Pass B is DeepSeek Pro, so buying it cannot restore the required provider-family independence. " +
-        "The per-window Pass-A evidence and charged usage are retained, but no final Pass-A payload was " +
-        "persisted and no Pass-B purchase was authorized.",
-    );
+  const authority = await reconstructPassACompletedAuthority(env, runId, doc, documentName);
+  if (authority.kind === "invalid") {
+    return {
+      result: stageNotEvaluated<PassSummary>("PASS_A_COMPLETION_ARTIFACT_INVALID", authority.detail),
+      slice: authority.slice,
+      terminal: true,
+    };
   }
-
-  const payload = { parserVersion: doc.parserVersion, promptVersion: PASS_A_VERSION, ...result };
+  const payload = {
+    parserVersion: doc.parserVersion,
+    promptVersion: PASS_A_VERSION,
+    ...authority.value,
+  };
   const body = JSON.stringify(payload, null, 2);
-  await env.EVIDENCE.put(extractionPassKey(runId, "a"), body, {
+  const passKey = extractionPassKey(runId, "a");
+  const written = await env.EVIDENCE.put(passKey, body, {
     httpMetadata: { contentType: "application/json" },
+    onlyIf: { etagDoesNotMatch: "*" },
   });
+  if (written === null) {
+    const existing = await env.EVIDENCE.get(passKey);
+    if (existing === null || await existing.text() !== body) {
+      return {
+        result: stageNotEvaluated<PassSummary>(
+          "PASS_A_COMPLETION_ARTIFACT_INVALID",
+          "PASS_A_COMPLETED_ARTIFACT_IMMUTABLE: the completion key already exists with different bytes. " +
+            "The existing authority was not overwritten and no Pass-B purchase was authorized.",
+        ),
+        slice: authority.value.slice,
+        terminal: true,
+      };
+    }
+  }
   const hash = `sha256:${await sha256Hex(body)}`;
 
   return {
-    result: stageEvaluated(summarize(result, hash), proof("extract-pass-a", PASS_A_VERSION, hash)),
-    slice: result.slice,
+    result: stageEvaluated(summarize(authority.value, hash), proof("extract-pass-a", PASS_A_VERSION, hash)),
+    slice: authority.value.slice,
+    terminal: true,
   };
 }
 
@@ -334,7 +691,9 @@ export async function stagePassB(
   documentName: string,
   fence: Fence,
   beat: (msg: string) => Promise<void>,
-  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
+  documentSemanticsProfile: DocumentSemanticsProfile,
+  expectedPassAHash: string,
+  expectedDocumentSha256: string,
 ): Promise<StageResult<PassSummary>> {
   const { result } = await stagePassBSlice(
     env,
@@ -345,6 +704,8 @@ export async function stagePassB(
     beat,
     {},
     documentSemanticsProfile,
+    expectedPassAHash,
+    expectedDocumentSha256,
   );
   return result;
 }
@@ -381,7 +742,9 @@ export async function stagePassBSlice(
   fence: Fence,
   beat: (msg: string) => Promise<void>,
   options: PassBSliceOptions,
-  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
+  documentSemanticsProfile: DocumentSemanticsProfile,
+  expectedPassAHash: string,
+  expectedDocumentSha256: string,
 ): Promise<PassBSliceOutcome> {
   const settled = (result: StageResult<PassSummary>): PassBSliceOutcome => ({
     result,
@@ -395,6 +758,7 @@ export async function stagePassBSlice(
       chunksRemaining: 0,
       sweepCallsIssued: 0,
       sweepRemaining: 0,
+      terminalFailure: false,
       deadlineHit: false,
     },
   });
@@ -403,11 +767,50 @@ export async function stagePassBSlice(
   // pass B did not, so a wave that re-entered after the pass had already finished re-read
   // every chunk from R2 and re-bought all three ledger-sweep calls at full price.
   const expectedParserVersion = docxBlocksVersion(documentSemanticsProfile);
-  const already = await readPassPayload(env, runId, "b", expectedParserVersion);
+  let doc: ParsedDocument;
+  try {
+    ({ doc } = await loadDocument(
+      env, documentKey, expectedDocumentSha256, documentSemanticsProfile,
+    ));
+  } catch (error) {
+    return {
+      result: stageNotEvaluated<PassSummary>(
+        DOCUMENT_SOURCE_AUTHORITY_INVALID,
+        documentSourceAuthorityDetail(error),
+      ),
+      slice: {
+        done: false,
+        chunksTotal: 0,
+        chunksLanded: 0,
+        chunksIssued: 0,
+        chunksRemaining: 0,
+        sweepCallsIssued: 0,
+        sweepRemaining: 0,
+        terminalFailure: true,
+        deadlineHit: false,
+      },
+    };
+  }
+  const passAAuthority = await validatePassAContinuationAuthority(
+    env, runId, doc, documentName, expectedPassAHash,
+  );
+  if (passAAuthority.state !== "evaluated") return settled(passAAuthority);
+  const existingPassObject = await env.EVIDENCE.get(extractionPassKey(runId, "b"));
+  const already = await readPassPayload(env, runId, "b", expectedParserVersion, documentName, doc);
   if (already) return settled(already);
+  if (existingPassObject) {
+    const authority = await reconstructPassBCompletedAuthority(env, runId, doc, documentName);
+    return {
+      result: stageNotEvaluated(
+        "PASS_B_COMPLETION_ARTIFACT_INVALID",
+        authority.kind === "invalid" ? authority.detail :
+          "PASS_B_COMPLETED_ARTIFACT_INVALID: an immutable completion key is present but its bytes do not " +
+            "match current unit authority. No Pass-B unit was re-bought.",
+      ),
+      slice: authority.kind === "invalid" ? authority.slice : authority.value.slice,
+    };
+  }
 
-  resetDrops();
-  const doc = await loadDocument(env, documentKey, documentSemanticsProfile);
   const credential = await credentialCheck(env, "deepseek");
   if (credential) return settled(credential as StageResult<PassSummary>);
 
@@ -416,6 +819,17 @@ export async function stagePassBSlice(
   // make this exact across both crash windows: artifact-before-accounting settles
   // on restart, while accounting-before-step-commit dedupes on restart.
   await chargeUsage(env, runId, result.accountingCalls, fence);
+
+  if (result.slice.terminalFailure || result.failedUnits.length > 0) {
+    return {
+      result: stageNotEvaluated<PassSummary>(
+        "PASS_B_UNIT_FAILURES",
+        `Pass B retained ${result.failedUnits.length} terminally failed unit(s); no completed pass payload was ` +
+          `written and consolidation is not authorized. ${result.failedUnits[0]?.detail ?? "A required unit failed."}`,
+      ),
+      slice: result.slice,
+    };
+  }
 
   if (!result.slice.done) {
     return {
@@ -430,20 +844,38 @@ export async function stagePassBSlice(
     };
   }
 
-  const payload = { parserVersion: doc.parserVersion, promptVersion: PASS_B_VERSION, ...result };
-  const body = JSON.stringify(payload, null, 2);
-  await env.EVIDENCE.put(extractionPassKey(runId, "b"), body, {
-    httpMetadata: { contentType: "application/json" },
-  });
-  const hash = `sha256:${await sha256Hex(body)}`;
-
-  if (result.requirements.length === 0 && result.failedUnits.length === result.calls.length + result.failedUnits.length) {
-    throw new Error(
-      `extraction pass B produced no requirements and every chunk failed: ` +
-        `${result.failedUnits[0]?.detail ?? "no chunk returned"}.`,
-    );
+  const authority = await reconstructPassBCompletedAuthority(env, runId, doc, documentName);
+  if (authority.kind === "invalid") {
+    return {
+      result: stageNotEvaluated("PASS_B_COMPLETION_ARTIFACT_INVALID", authority.detail),
+      slice: authority.slice,
+    };
   }
-  return { result: stageEvaluated(summarize(result, hash), proof("extract-pass-b", PASS_B_VERSION, hash)), slice: result.slice };
+  const passKey = extractionPassKey(runId, "b");
+  const written = await env.EVIDENCE.put(passKey, authority.body, {
+    httpMetadata: { contentType: "application/json" },
+    onlyIf: { etagDoesNotMatch: "*" },
+  });
+  if (written === null) {
+    const existing = await env.EVIDENCE.get(passKey);
+    if (existing === null || await existing.text() !== authority.body) {
+      return {
+        result: stageNotEvaluated(
+          "PASS_B_COMPLETION_ARTIFACT_INVALID",
+          "PASS_B_COMPLETED_ARTIFACT_IMMUTABLE: the completion key already exists with different bytes. " +
+            "The existing authority was not overwritten.",
+        ),
+        slice: authority.value.slice,
+      };
+    }
+  }
+  return {
+    result: stageEvaluated(
+      summarize(authority.value, authority.hash),
+      proof("extract-pass-b", PASS_B_VERSION, authority.hash),
+    ),
+    slice: authority.value.slice,
+  };
 }
 
 /**
@@ -458,11 +890,37 @@ export async function stageConsolidate(
   documentSha256: string,
   locale: string,
   viewports: string[],
-  documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
+  documentSemanticsProfile: DocumentSemanticsProfile,
+  documentName: string,
+  expectedPassAHash: string,
+  expectedPassBHash: string,
 ): Promise<StageResult<ConsolidationSummary>> {
-  const doc = await loadDocument(env, documentKey, documentSemanticsProfile);
-  const passA = await readPass(env, runId, "a", doc.parserVersion);
-  const passB = await readPass(env, runId, "b", doc.parserVersion);
+  let source: VerifiedDocumentSource;
+  try {
+    source = await loadDocument(
+      env, documentKey, documentSha256, documentSemanticsProfile,
+    );
+  } catch (error) {
+    return stageNotEvaluated(
+      DOCUMENT_SOURCE_AUTHORITY_INVALID,
+      documentSourceAuthorityDetail(error),
+    );
+  }
+  const { doc } = source;
+  const continuation = await validatePassAContinuationAuthority(
+    env, runId, doc, documentName, expectedPassAHash,
+  );
+  if (continuation.state !== "evaluated") {
+    return stageNotEvaluated(continuation.reason, continuation.detail);
+  }
+  const passBContinuation = await validatePassBCompletionAuthority(
+    env, runId, doc, documentName, expectedPassBHash,
+  );
+  if (passBContinuation.state !== "evaluated") {
+    return stageNotEvaluated(passBContinuation.reason, passBContinuation.detail);
+  }
+  const passA = await readPass(env, runId, "a", doc.parserVersion, doc, documentName);
+  const passB = await readPass(env, runId, "b", doc.parserVersion, doc, documentName);
   // A pass with no payload never ran. Consolidating over it would produce a ONE-pass
   // contract wearing a two-pass label — the exact claim the diff exists to make impossible
   // — so the merge does not happen and the gates are told why, in the words the report
@@ -501,8 +959,9 @@ export async function stageConsolidate(
   const undispositioned = CONSTRUCT_CLASSES.filter((c) => !dispositioned.includes(c));
 
   const merged: MergedPayload = {
-    schemaVersion: "v2-extraction-merged/1.1.0",
-    documentSha256,
+    schemaVersion: "v2-extraction-merged/1.2.0",
+    documentSha256: source.rawSha256,
+    inputAuthority: { passAHash: expectedPassAHash, passBHash: expectedPassBHash },
     requirements,
     facetInstances,
     preview,
@@ -588,12 +1047,95 @@ export async function loadMerged(
   return JSON.parse(new TextDecoder().decode(bytes)) as MergedPayload;
 }
 
+export const EXTRACTION_SEAL_AUTHORITY_INVALID = "extraction-seal-authority-invalid";
+
+export type ExtractionSealAuthority =
+  | { kind: "ok"; merged: MergedPayload }
+  | {
+      kind: "invalid";
+      reason: typeof EXTRACTION_SEAL_AUTHORITY_INVALID | typeof DOCUMENT_SOURCE_AUTHORITY_INVALID;
+      detail: string;
+    };
+
+/**
+ * Zero-purchase seal precondition.
+ *
+ * A cached Workflow source-ledger result cannot outlive mutation of a completed pass, any
+ * of its unit artifacts, or the merged payload. Reconstruct both passes from their units,
+ * bind their exact durable hashes, then require the merged bytes approved by the ledger to
+ * name those same hashes. The seal consumes only the returned merged value.
+ */
+export async function validateExtractionSealAuthority(
+  env: Env,
+  runId: string,
+  documentKey: string,
+  documentSha256: string,
+  documentSemanticsProfile: DocumentSemanticsProfile,
+  documentName: string,
+  expectedPassAHash: string,
+  expectedPassBHash: string,
+  expectedMergedHash: string,
+): Promise<ExtractionSealAuthority> {
+  const invalid = (
+    detail: string,
+    reason: typeof EXTRACTION_SEAL_AUTHORITY_INVALID | typeof DOCUMENT_SOURCE_AUTHORITY_INVALID =
+      EXTRACTION_SEAL_AUTHORITY_INVALID,
+  ): ExtractionSealAuthority => ({
+    kind: "invalid",
+    reason,
+    detail: `${reason}: ${detail} No contract was sealed.`,
+  });
+  if (!/^sha256:[0-9a-f]{64}$/.test(expectedMergedHash)) {
+    return invalid("the durable source-ledger merged hash is missing or malformed.");
+  }
+  let source: VerifiedDocumentSource;
+  try {
+    source = await loadDocument(
+      env, documentKey, documentSha256, documentSemanticsProfile,
+    );
+  } catch (error) {
+    return invalid(
+      documentSourceAuthorityDetail(error),
+      DOCUMENT_SOURCE_AUTHORITY_INVALID,
+    );
+  }
+  const { doc } = source;
+  const passA = await validatePassAContinuationAuthority(
+    env, runId, doc, documentName, expectedPassAHash,
+  );
+  if (passA.state !== "evaluated") return invalid(`${passA.reason}: ${passA.detail}`);
+  const passB = await validatePassBCompletionAuthority(
+    env, runId, doc, documentName, expectedPassBHash,
+  );
+  if (passB.state !== "evaluated") return invalid(`${passB.reason}: ${passB.detail}`);
+  let merged: MergedPayload | null;
+  try {
+    merged = await loadMerged(env, runId, expectedMergedHash);
+  } catch (error) {
+    return invalid(error instanceof Error ? error.message : String(error));
+  }
+  if (merged === null) return invalid("the durable merged extraction payload is missing.");
+  if (
+    merged.documentSha256 !== source.rawSha256 ||
+    typeof merged.inputAuthority !== "object" || merged.inputAuthority === null ||
+    merged.inputAuthority.passAHash !== expectedPassAHash ||
+    merged.inputAuthority.passBHash !== expectedPassBHash
+  ) {
+    return invalid(
+      "the merged payload does not bind the current document and exact evaluated Pass-A/Pass-B hashes.",
+    );
+  }
+  return { kind: "ok", merged };
+}
+
 /** A completed pass already in storage, re-summarized without a model call. */
 async function readPassPayload(
   env: Env,
   runId: string,
   pass: "a" | "b",
   expectedParserVersion: string,
+  documentName = "document.docx",
+  parsedDocument?: ParsedDocument,
 ): Promise<StageResult<PassSummary> | null> {
   const obj = await env.EVIDENCE.get(extractionPassKey(runId, pass));
   if (!obj) return null;
@@ -608,13 +1150,39 @@ async function readPassPayload(
     };
     const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;
     if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;
-    if (pass === "a" && (
-      parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
-      validatePassAProviderState(parsed) === null ||
-      !Array.isArray(parsed.failedUnits) ||
-      parsed.failedUnits.length > 0
-    )) return null;
-    if (pass === "b" && parsed.providerPlanIdentity !== deepseekPassBIdentity(env)) return null;
+    if (pass === "a") {
+      if (
+        parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
+        !passACompletionShapeClosed(parsed as unknown as Record<string, unknown>) ||
+        !Array.isArray(parsed.failedUnits) || parsed.failedUnits.length > 0
+      ) return null;
+      if (!parsedDocument) return null;
+      const doc = parsedDocument;
+      const authority = await reconstructPassACompletedAuthority(env, runId, doc, documentName);
+      if (authority.kind !== "ok") return null;
+      const expected = {
+        parserVersion: expectedParserVersion,
+        promptVersion: PASS_A_VERSION,
+        ...authority.value,
+      } as unknown as Record<string, unknown>;
+      if (
+        canonicalJson(passACompletionProjection(parsed as unknown as Record<string, unknown>)) !==
+        canonicalJson(passACompletionProjection(expected))
+      ) return null;
+      limitationsFromPassAPayload(parsed);
+    }
+    if (pass === "b") {
+      if (parsed.providerPlanIdentity !== deepseekPassBIdentity(env) || !parsedDocument) return null;
+      const authority = await reconstructPassBCompletedAuthority(env, runId, parsedDocument, documentName);
+      if (authority.kind !== "ok" || !passBCompletionShapeClosed(parsed as unknown as Record<string, unknown>)) {
+        return null;
+      }
+      const expected = JSON.parse(authority.body) as Record<string, unknown>;
+      if (
+        canonicalJson(passBCompletionProjection(parsed as unknown as Record<string, unknown>)) !==
+        canonicalJson(passBCompletionProjection(expected))
+      ) return null;
+    }
     if (!Array.isArray(parsed.requirements)) return null;
     const hash = `sha256:${await sha256Hex(body)}`;
     // costUsd is zeroed deliberately: this attempt did not spend it, and charging a run
@@ -633,6 +1201,8 @@ async function readPass(
   runId: string,
   pass: "a" | "b",
   expectedParserVersion: string,
+  parsedDocument?: ParsedDocument,
+  documentName = "document.docx",
 ): Promise<(PassResult & {
   crossRefs?: CrossRef[];
   providerIndependence?: PassAProviderIndependence;
@@ -650,13 +1220,39 @@ async function readPass(
     };
     const expectedPrompt = pass === "a" ? PASS_A_VERSION : PASS_B_VERSION;
     if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;
-    if (pass === "a" && (
-      parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
-      validatePassAProviderState(parsed) === null ||
-      !Array.isArray(parsed.failedUnits) ||
-      parsed.failedUnits.length > 0
-    )) return null;
-    if (pass === "b" && parsed.providerPlanIdentity !== deepseekPassBIdentity(env)) return null;
+    if (pass === "a") {
+      if (
+        parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
+        !passACompletionShapeClosed(parsed as unknown as Record<string, unknown>) ||
+        !Array.isArray(parsed.failedUnits) || parsed.failedUnits.length > 0
+      ) return null;
+      if (!parsedDocument) return null;
+      const doc = parsedDocument;
+      const authority = await reconstructPassACompletedAuthority(env, runId, doc, documentName);
+      if (authority.kind !== "ok") return null;
+      const expected = {
+        parserVersion: expectedParserVersion,
+        promptVersion: PASS_A_VERSION,
+        ...authority.value,
+      } as unknown as Record<string, unknown>;
+      if (
+        canonicalJson(passACompletionProjection(parsed as unknown as Record<string, unknown>)) !==
+        canonicalJson(passACompletionProjection(expected))
+      ) return null;
+      limitationsFromPassAPayload(parsed);
+    }
+    if (pass === "b") {
+      if (parsed.providerPlanIdentity !== deepseekPassBIdentity(env) || !parsedDocument) return null;
+      const authority = await reconstructPassBCompletedAuthority(env, runId, parsedDocument, documentName);
+      if (authority.kind !== "ok" || !passBCompletionShapeClosed(parsed as unknown as Record<string, unknown>)) {
+        return null;
+      }
+      const expected = JSON.parse(authority.body) as Record<string, unknown>;
+      if (
+        canonicalJson(passBCompletionProjection(parsed as unknown as Record<string, unknown>)) !==
+        canonicalJson(passBCompletionProjection(expected))
+      ) return null;
+    }
     if (!Array.isArray(parsed.requirements)) return null;
     return parsed as PassResult & {
       crossRefs?: CrossRef[];

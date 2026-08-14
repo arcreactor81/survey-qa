@@ -189,6 +189,7 @@ export async function loadWorker() {
       // the wrong half of the pipeline.
       `export * as merge from ${p("src/extract/merge.ts")};`,
       `export * as passA from ${p("src/extract/pass-a.ts")};`,
+      `export * as crossWindowLimitations from ${p("src/extract/cross-window-limitations.ts")};`,
       `export * as passB from ${p("src/extract/pass-b.ts")};`,
       `export * as chat from ${p("src/llm/chat.ts")};`,
       `export * as grok from ${p("src/llm/grok.ts")};`,

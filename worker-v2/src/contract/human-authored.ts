@@ -587,19 +587,35 @@ export async function stageValidateHumanRequirements(
   expectedHumanRequirementsSha256: string,
   documentSemanticsProfile: DocumentSemanticsProfile = DOCUMENT_SEMANTICS_NONE,
 ): Promise<HumanValidationSummary> {
+  const expectedDocumentRawSha256 = expectedDocumentSha256.replace(/^sha256:/, "");
+  if (!/^[0-9a-f]{64}$/.test(expectedDocumentRawSha256)) {
+    invalid("DOCUMENT_EXPECTED_HASH_INVALID", "the durable envelope document SHA-256 is missing or malformed");
+  }
   const [documentObject, humanObject] = await Promise.all([
     env.EVIDENCE.get(documentKey),
     env.EVIDENCE.get(humanRequirementsKey),
   ]);
   if (!documentObject) invalid("DOCUMENT_MISSING", `the submitted document is absent at ${documentKey}`);
   if (!humanObject) invalid("INPUT_MISSING", `the human requirements file is absent at ${humanRequirementsKey}`);
+  const configuredDocumentLimit = Number(env.MAX_DOCUMENT_BYTES);
+  const maxDocumentBytes =
+    Number.isFinite(configuredDocumentLimit) && configuredDocumentLimit > 0
+      ? configuredDocumentLimit
+      : 25 * 1024 * 1024;
+  if (documentObject.size > maxDocumentBytes) {
+    invalid(
+      "DOCUMENT_TOO_LARGE",
+      `the current document object is ${documentObject.size} bytes, above MAX_DOCUMENT_BYTES=${maxDocumentBytes}; ` +
+        "it was refused before buffering or parsing",
+    );
+  }
   const documentBytes = new Uint8Array(await documentObject.arrayBuffer());
   const humanBytes = new Uint8Array(await humanObject.arrayBuffer());
   const [actualDocumentSha256, actualHumanSha256] = await Promise.all([
     sha256Hex(documentBytes),
     sha256Hex(humanBytes),
   ]);
-  if (actualDocumentSha256 !== expectedDocumentSha256.replace(/^sha256:/, "")) {
+  if (actualDocumentSha256 !== expectedDocumentRawSha256) {
     invalid("DOCUMENT_OBJECT_HASH_MISMATCH", "the stored DOCX bytes no longer match the run envelope");
   }
   if (actualHumanSha256 !== expectedHumanRequirementsSha256.replace(/^sha256:/, "")) {
@@ -609,7 +625,15 @@ export async function stageValidateHumanRequirements(
   if (input.documentSha256 !== actualDocumentSha256) {
     invalid("DOCUMENT_HASH_MISMATCH", "the human requirements file is bound to different document bytes");
   }
-  const doc = parseDocxBlocks(documentBytes, { documentSemanticsProfile });
+  let doc: ParsedDocument;
+  try {
+    doc = parseDocxBlocks(documentBytes, { documentSemanticsProfile });
+  } catch (error) {
+    invalid(
+      "DOCUMENT_UNREADABLE",
+      `the hash-bound submitted DOCX could not be parsed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   const rows = await deriveUniqueRows(input, doc);
   const normalizedForHash = {
     schemaVersion: HUMAN_REQUIREMENTS_SCHEMA,
