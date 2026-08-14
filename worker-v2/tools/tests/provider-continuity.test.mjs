@@ -1025,6 +1025,21 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
         assertEq(result.routeReceipts.length, 0);
         assertEq(result.failedUnits.length, 1);
         assertEq(result.issuedCalls[0].usageSource, "unverified-model-rate-ceiling");
+        const key = m.keys.k(
+          "runs",
+          `run_unbound_model_${String(reportedModel)}`,
+          "extraction",
+          "pass-a",
+          "window-01.json",
+        );
+        const artifact = await (await value.EVIDENCE.get(key)).json();
+        assertEq(artifact.failureStage, "provider", "unbound identity remains an honest provider failure");
+        assertEq(artifact.terminal, true, "unbound identity cannot leave pending fallback authority");
+        assertEq(artifact.fallbackTrigger, null, "unbound identity mints no fallback trigger");
+        assertEq(artifact.usages.length, 1, "the paid unbound Grok attempt remains visible exactly once");
+        assertEq(artifact.usages[0].provider, "grok");
+        assertEq(artifact.usages[0].status, "error");
+        assertEq(artifact.usages[0].usageSource, "unverified-model-rate-ceiling");
       } finally {
         stub.restore();
       }

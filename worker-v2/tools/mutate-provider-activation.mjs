@@ -4,6 +4,7 @@
 import { runMutantSuite } from "./mutate-runner.mjs";
 
 const GROK = "src/llm/grok.ts";
+const CHAT = "src/llm/chat.ts";
 const DEEPSEEK = "src/llm/deepseek.ts";
 const PASS_A = "src/extract/pass-a.ts";
 const STAGE = "src/workflow/stages/extract.ts";
@@ -46,11 +47,19 @@ await runMutantSuite({
       kills: [ELIGIBLE],
     },
     {
-      name: "unbound Grok model identity authorizes Flash",
-      breaks: "an alias, redirect, or missing model echo can authorize another provider purchase",
+      name: "unbound Grok model identity mints fallback authority",
+      breaks: "an alias, redirect, or missing model echo can poison the canonical window with a pending trigger",
       file: GROK,
       find: '    return error.usage.usageSource !== "unverified-model-rate-ceiling";',
       replace: "    return true;",
+      kills: [UNBOUND_MODEL],
+    },
+    {
+      name: "unbound Grok model identity is laundered as a bound receipt",
+      breaks: "an alias, redirect, or missing model echo can satisfy both authorization and replay guards",
+      file: CHAT,
+      find: "        usedUnboundModelRateCeiling = true;",
+      replace: "        usedUnboundModelRateCeiling = false;",
       kills: [UNBOUND_MODEL],
     },
     {
