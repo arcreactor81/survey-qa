@@ -65,6 +65,8 @@ import type {
   BlockedReason,
   ControlState,
   PathObservation,
+  PdfCapture,
+  PdfCaptureFailureKind,
   PerformedAction,
   RenderedScreen,
   ScreenCaptureEpoch,
@@ -79,6 +81,7 @@ import {
   captureAccessibilitySnapshot,
   captureFailure,
   capturePathObservation,
+  captureRenderedPdfRef,
   captureScreenJsonRef,
   captureScreenshotRef,
 } from "./capture";
@@ -98,12 +101,24 @@ export interface ElementHandleLike {
   dispose?(): Promise<void>;
 }
 
+/** Public Puppeteer CDP surface used by the bounded, handle-owning PDF adapter. */
+export interface PdfProtocolSessionLike {
+  send(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeout: number },
+  ): Promise<unknown>;
+  detach(): Promise<void>;
+}
+
 export interface PageLike {
   goto(url: string, opts?: unknown): Promise<unknown>;
   evaluate(script: string): Promise<unknown>;
   evaluateOnNewDocument(script: string): Promise<unknown>;
   $$(selector: string): Promise<ElementHandleLike[]>;
   screenshot(opts?: unknown): Promise<Uint8Array | ArrayBuffer | string>;
+  /** Optional so adapters without the public, handle-owning CDP seam produce a named limitation. */
+  createCDPSession?(): Promise<PdfProtocolSessionLike>;
   /** Optional only so pre-pivot test doubles and old adapters fail visibly rather than crash. */
   accessibility?: { snapshot(opts?: { interestingOnly?: boolean }): Promise<unknown | null> };
   setViewport(vp: { width: number; height: number; deviceScaleFactor?: number }): Promise<void>;
@@ -488,6 +503,50 @@ export const ACCESSIBILITY_CAPTURE_LIMITS: Readonly<{
   maxSerializedBytes: 1_500_000,
 });
 
+/** Hard browser-side bounds for the visibility-only PDF rendition. */
+export const PDF_CAPTURE_LIMITS: Readonly<{
+  timeoutMs: number;
+  maxBytes: number;
+  maxDocumentWidth: number;
+  maxDocumentHeight: number;
+  maxDocumentArea: number;
+}> = Object.freeze({
+  timeoutMs: 5_000,
+  maxBytes: 8 * 1024 * 1024,
+  maxDocumentWidth: 50_000,
+  maxDocumentHeight: 50_000,
+  maxDocumentArea: 250_000_000,
+});
+
+/** Each protocol read is bounded independently as well as by the total PDF deadline. */
+export const PDF_PROTOCOL_READ_CHUNK_BYTES = 64 * 1024;
+const PDF_PROTOCOL_CLEANUP_TIMEOUT_MS = 1_000;
+
+const PDF_FONT_READY_EXPRESSION =
+  "document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : Promise.resolve(true)";
+
+// These are the exact normalized defaults produced by Puppeteer 1.1.0 for
+// `{ format: "a4", printBackground: true }`, plus stream transfer mode.
+const PDF_PRINT_TO_PDF_PARAMS: Readonly<Record<string, unknown>> = Object.freeze({
+  transferMode: "ReturnAsStream",
+  landscape: false,
+  displayHeaderFooter: false,
+  headerTemplate: "",
+  footerTemplate: "",
+  printBackground: true,
+  scale: 1,
+  paperWidth: 8.27,
+  paperHeight: 11.7,
+  marginTop: 0,
+  marginBottom: 0,
+  marginLeft: 0,
+  marginRight: 0,
+  pageRanges: "",
+  preferCSSPageSize: false,
+  generateTaggedPDF: true,
+  generateDocumentOutline: false,
+});
+
 type AccessibilityLimitKind = Extract<
   ScreenCaptureFailure["kind"],
   | "accessibility-snapshot-invalid-node"
@@ -711,14 +770,283 @@ async function shoot(page: PageLike): Promise<ScreenshotAttempt> {
   }
 }
 
-function captureFailureRow(
-  kind: ScreenCaptureFailure["kind"],
+export interface PdfAttempt {
+  bytes: Uint8Array | null;
+  kind: PdfCaptureFailureKind | null;
+  detail: string | null;
+}
+
+type PdfCapturePolicy = typeof PDF_CAPTURE_LIMITS;
+
+const effectivePdfPolicy = (requested: Partial<PdfCapturePolicy>): PdfCapturePolicy => ({
+  timeoutMs: Math.max(1, Math.floor(requested.timeoutMs ?? PDF_CAPTURE_LIMITS.timeoutMs)),
+  maxBytes: Math.max(1, Math.floor(requested.maxBytes ?? PDF_CAPTURE_LIMITS.maxBytes)),
+  maxDocumentWidth: Math.max(1, Math.floor(requested.maxDocumentWidth ?? PDF_CAPTURE_LIMITS.maxDocumentWidth)),
+  maxDocumentHeight: Math.max(1, Math.floor(requested.maxDocumentHeight ?? PDF_CAPTURE_LIMITS.maxDocumentHeight)),
+  maxDocumentArea: Math.max(1, Math.floor(requested.maxDocumentArea ?? PDF_CAPTURE_LIMITS.maxDocumentArea)),
+});
+
+const isPdfTimeoutError = (err: unknown): boolean => {
+  if ((typeof err !== "object" || err === null) && typeof err !== "function") return false;
+  const value = err as { name?: unknown; message?: unknown };
+  if (value.name === "TimeoutError") return true;
+  return typeof value.message === "string" && /\b(?:timeout|timed out)\b/i.test(value.message);
+};
+
+class PdfCaptureTimeoutError extends Error {
+  override readonly name = "TimeoutError";
+}
+
+const remainingPdfTimeout = (deadline: number, phase: string): number => {
+  const remaining = Math.floor(deadline - Date.now());
+  if (remaining <= 0) throw new PdfCaptureTimeoutError(`PDF ${phase} exceeded the total capture deadline`);
+  return remaining;
+};
+
+/**
+ * `Page.createCDPSession()` has no per-call timeout option. Observe its late settlement and
+ * dispose a session that arrives after the total deadline, so the timeout branch never creates
+ * an unhandled rejection or an ownerless protocol session.
+ */
+async function awaitPdfPromiseBeforeDeadline<T>(
+  operation: Promise<T>,
+  deadline: number,
+  phase: string,
+  onLateValue?: (value: T) => Promise<void>,
+): Promise<T> {
+  const timeoutMs = Math.max(1, Math.floor(deadline - Date.now()));
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const observed = operation.then(
+    async (value) => {
+      if (timedOut) {
+        if (onLateValue) {
+          try {
+            await onLateValue(value);
+          } catch {
+            // The late value is already unusable. Observation prevents an unhandled cleanup
+            // rejection; the owning page/browser teardown remains the final containment layer.
+          }
+        }
+        throw new PdfCaptureTimeoutError(`PDF ${phase} completed after the total capture deadline`);
+      }
+      return value;
+    },
+    (error: unknown) => {
+      throw error;
+    },
+  );
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new PdfCaptureTimeoutError(`PDF ${phase} exceeded the total capture deadline`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([observed, timeout]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
+const decodePdfProtocolChunk = (data: string, base64Encoded: boolean): Uint8Array => {
+  if (!base64Encoded) return new TextEncoder().encode(data);
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+};
+
+/**
+ * Capture one bounded print rendition. Exported so the timeout/size/dimension refusal paths can
+ * be tested with small bounds; production calls it with the frozen five-second/eight-MiB policy.
+ */
+export async function capturePdfBytes(
+  page: PageLike,
+  geometry: ScreenCaptureGeometry,
+  requested: Partial<PdfCapturePolicy> = {},
+): Promise<PdfAttempt> {
+  if (typeof page.createCDPSession !== "function") {
+    return {
+      bytes: null,
+      kind: "pdf-api-unavailable",
+      detail:
+        "this browser adapter exposes no public Puppeteer createCDPSession API; " +
+        "an unbounded page.pdf fallback is intentionally not used",
+    };
+  }
+
+  const policy = effectivePdfPolicy(requested);
+  const width = geometry.documentWidth;
+  const height = geometry.documentHeight;
+  if (
+    geometry.source !== "browser" ||
+    width === null ||
+    height === null ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    width > policy.maxDocumentWidth ||
+    height > policy.maxDocumentHeight ||
+    width * height > policy.maxDocumentArea
+  ) {
+    return {
+      bytes: null,
+      kind: "pdf-capture-dimension-limit",
+      detail:
+        `PDF capture refused before createCDPSession: document geometry ${String(width)}x${String(height)} ` +
+        `(source ${geometry.source}) is unavailable or exceeds ` +
+        `${policy.maxDocumentWidth}x${policy.maxDocumentHeight}/${policy.maxDocumentArea} CSS pixels squared`,
+    };
+  }
+
+  const deadline = Date.now() + policy.timeoutMs;
+  const createSession = page.createCDPSession;
+  let session: PdfProtocolSessionLike | null = null;
+  let handle: string | null = null;
+  let handleCloseIssued = false;
+  let outcome: PdfAttempt = {
+    bytes: null,
+    kind: "pdf-capture-failed",
+    detail: "Puppeteer PDF protocol capture ended without a classified outcome",
+  };
+  try {
+    session = await awaitPdfPromiseBeforeDeadline(
+      createSession.call(page),
+      deadline,
+      "CDP session creation",
+      async (lateSession) => lateSession.detach(),
+    );
+    const send = async (method: string, params: Record<string, unknown>): Promise<unknown> =>
+      session!.send(method, params, { timeout: remainingPdfTimeout(deadline, method) });
+
+    const fontResult = await send("Runtime.evaluate", {
+      expression: PDF_FONT_READY_EXPRESSION,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    if (plainObject(fontResult) && fontResult.exceptionDetails !== undefined) {
+      throw new Error("document.fonts.ready failed before PDF capture");
+    }
+
+    const printed = await send("Page.printToPDF", { ...PDF_PRINT_TO_PDF_PARAMS });
+    if (!plainObject(printed) || typeof printed.stream !== "string" || printed.stream.length === 0) {
+      throw new Error("Page.printToPDF returned no protocol stream handle");
+    }
+    handle = printed.stream;
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const row = await send("IO.read", { handle, size: PDF_PROTOCOL_READ_CHUNK_BYTES });
+      if (
+        !plainObject(row) ||
+        typeof row.data !== "string" ||
+        typeof row.eof !== "boolean" ||
+        (row.base64Encoded !== undefined && typeof row.base64Encoded !== "boolean")
+      ) {
+        throw new Error("IO.read returned an invalid PDF stream row");
+      }
+      const base64Encoded = row.base64Encoded === true;
+      const available = policy.maxBytes - total;
+      const definitelyOversize = base64Encoded
+        ? row.data.length > Math.ceil(available / 3) * 4
+        : row.data.length > available;
+      if (definitelyOversize) {
+        outcome = {
+          bytes: null,
+          kind: "pdf-capture-size-limit",
+          detail: `Puppeteer PDF stream exceeded the ${policy.maxBytes}-byte evidence cap; its protocol handle was closed`,
+        };
+        break;
+      }
+      const chunk = decodePdfProtocolChunk(row.data, base64Encoded);
+      if (chunk.byteLength > available) {
+        outcome = {
+          bytes: null,
+          kind: "pdf-capture-size-limit",
+          detail: `Puppeteer PDF stream exceeded the ${policy.maxBytes}-byte evidence cap; its protocol handle was closed`,
+        };
+        break;
+      }
+      total += chunk.byteLength;
+      if (chunk.byteLength > 0) chunks.push(chunk);
+      if (row.eof) {
+        if (total === 0) {
+          outcome = { bytes: null, kind: "pdf-capture-empty", detail: "Puppeteer PDF stream yielded zero bytes" };
+        } else {
+          const bytes = new Uint8Array(total);
+          let offset = 0;
+          for (const part of chunks) {
+            bytes.set(part, offset);
+            offset += part.byteLength;
+          }
+          outcome = { bytes, kind: null, detail: null };
+        }
+        break;
+      }
+    }
+  } catch (err) {
+    if (isPdfTimeoutError(err)) {
+      outcome = {
+        bytes: null,
+        kind: "pdf-capture-timeout",
+        detail: `Puppeteer PDF capture exceeded its ${policy.timeoutMs}ms total deadline: ${errorText(err)}`,
+      };
+    } else {
+      outcome = {
+        bytes: null,
+        kind: "pdf-capture-failed",
+        detail: `Puppeteer PDF protocol capture failed: ${errorText(err)}`,
+      };
+    }
+  }
+
+  let cleanupError: unknown = null;
+  // Cleanup has a separate short bound: when IO.read consumes the full five-second operation
+  // deadline, reusing that expired deadline would reduce IO.close to a token 1ms attempt.
+  const cleanupDeadline = Date.now() + Math.min(PDF_PROTOCOL_CLEANUP_TIMEOUT_MS, policy.timeoutMs);
+  // PDF_PROTOCOL_HANDLE_COMPLETE_CLEANUP: every acquired print handle is closed exactly once,
+  // including EOF success, overflow, read failure and timeout. PDF remains visibility-only.
+  if (session !== null && handle !== null && !handleCloseIssued) {
+    handleCloseIssued = true;
+    try {
+      await session.send("IO.close", { handle }, { timeout: Math.max(1, Math.floor(cleanupDeadline - Date.now())) });
+    } catch (error) {
+      cleanupError = error;
+    }
+  }
+  if (session !== null) {
+    try {
+      await awaitPdfPromiseBeforeDeadline(session.detach(), cleanupDeadline, "CDP session detach");
+    } catch (error) {
+      cleanupError ??= error;
+    }
+  }
+  if (outcome.bytes !== null && cleanupError !== null) {
+    return isPdfTimeoutError(cleanupError)
+      ? {
+          bytes: null,
+          kind: "pdf-capture-timeout",
+          detail: `Puppeteer PDF cleanup exceeded its ${policy.timeoutMs}ms total deadline: ${errorText(cleanupError)}`,
+        }
+      : {
+          bytes: null,
+          kind: "pdf-capture-failed",
+          detail: `Puppeteer PDF cleanup failed: ${errorText(cleanupError)}`,
+        };
+  }
+  return outcome;
+}
+
+function captureFailureRow<K extends ScreenCaptureFailure["kind"]>(
+  kind: K,
   detail: string,
   stepIndex: number,
   slot: string,
   at = new Date().toISOString(),
   count = 1,
-): ScreenCaptureFailure {
+): ScreenCaptureFailure & { kind: K } {
   return { kind, detail, count, at, stepIndex, slot };
 }
 
@@ -771,6 +1099,7 @@ const captureIds = (epoch: ScreenCaptureEpoch): string[] => {
   const ids = [epoch.screenJson.evidenceId];
   if (epoch.screenshot.status === "captured") ids.push(epoch.screenshot.ref.evidenceId);
   if (epoch.accessibility.status === "captured") ids.push(epoch.accessibility.ref.evidenceId);
+  if ("pdf" in epoch && epoch.pdf.status === "captured") ids.push(epoch.pdf.ref.evidenceId);
   return ids;
 };
 
@@ -877,7 +1206,7 @@ async function prepareAccessibility(
 }
 
 /**
- * Capture one logical screen epoch across all three modalities.
+ * Capture one logical screen epoch across all four modalities.
  *
  * Browser protocol calls are sequential, never falsely called atomic: `startedAt`/`endedAt`
  * bound that window. They are intentionally made before any R2 writes, so storage latency does
@@ -916,6 +1245,8 @@ export async function captureScreenEpoch(
   const screenshotAttempt = await shoot(page);
   const screenshotAttemptedAt = new Date().toISOString();
   const accessibilityPrepared = await prepareAccessibility(page, stepIndex, slot);
+  const pdfAttemptedAt = new Date().toISOString();
+  const pdfAttempt = await capturePdfBytes(page, geometryAttempt.geometry);
   // End the browser capture window before writing anything to evidence storage.
   const endedAt = new Date().toISOString();
 
@@ -945,6 +1276,35 @@ export async function captureScreenEpoch(
           stepIndex,
           slot,
           screenshotAttemptedAt,
+        ),
+      };
+    }
+  }
+
+  let pdf: PdfCapture;
+  if (!pdfAttempt.bytes || pdfAttempt.kind) {
+    pdf = {
+      status: "failed",
+      failure: captureFailureRow(
+        pdfAttempt.kind ?? "pdf-capture-empty",
+        pdfAttempt.detail ?? "Puppeteer returned no usable PDF bytes",
+        stepIndex,
+        slot,
+        pdfAttemptedAt,
+      ),
+    };
+  } else {
+    try {
+      pdf = { status: "captured", ref: await captureRenderedPdfRef(cap, pdfAttempt.bytes, slot, stepIndex) };
+    } catch (err) {
+      pdf = {
+        status: "failed",
+        failure: captureFailureRow(
+          "pdf-evidence-write-failed",
+          `PDF was captured but its immutable evidence write failed: ${errorText(err)}`,
+          stepIndex,
+          slot,
+          pdfAttemptedAt,
         ),
       };
     }
@@ -1096,10 +1456,13 @@ export async function captureScreenEpoch(
   const captureFailures: ScreenCaptureFailure[] = [
     ...(geometryAttempt.failure ? [geometryAttempt.failure] : []),
     ...(screenshot.status === "failed" ? [screenshot.failure] : []),
+    // PDF_FAILURES_ARE_COUNTED_VISIBILITY_LIMITATIONS: PDF does not decide QA eligibility,
+    // but every failed rendition remains an explicit epoch/walk failure with a summed count.
+    ...(pdf.status === "failed" ? [pdf.failure] : []),
     ...(accessibility.status === "failed" ? [accessibility.failure] : accessibility.limitations),
   ];
   return {
-    kind: "v2-screen-capture-epoch/1.0.0",
+    kind: "v2-screen-capture-epoch/1.1.0",
     epochId,
     stepIndex,
     slot,
@@ -1113,6 +1476,7 @@ export async function captureScreenEpoch(
     geometry: geometryAttempt.geometry,
     screenJson,
     screenshot,
+    pdf,
     accessibility,
     captureFailures,
     captureFailureCount: sumCaptureFailures(captureFailures),

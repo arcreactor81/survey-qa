@@ -604,6 +604,11 @@ export async function buildAndStoreReport(env: Env, runId: string): Promise<Buil
           href: `/api/v2/runs/${runId}/evidence`,
           note: "bytes are re-hashed on every fetch and fail closed on mismatch",
         },
+        {
+          label: "View captured screens",
+          href: `/runs/${runId}#captured-screens`,
+          note: "opens recorded capture epochs with screenshot, extracted JSON, and PDF where recorded",
+        },
       ],
     });
   } catch (err) {

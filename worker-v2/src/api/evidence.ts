@@ -76,9 +76,13 @@ export function decideMedia(declaredMediaType: string, evidenceId: string): Serv
     return { contentType: `${base}${charset}`, disposition: "inline", inline: true, declared };
   }
   // Filename is derived from the evidence id, never from anything the target site chose.
+  // PDF stays a forced download, but receives a truthful extension so the operator can
+  // open the captured print rendition without renaming it. No other active type earns
+  // an extension here: expanding this map is a security decision, not presentation sugar.
+  const extension = base === "application/pdf" ? "pdf" : "bin";
   return {
     contentType: "application/octet-stream",
-    disposition: `attachment; filename="${evidenceId}.bin"`,
+    disposition: `attachment; filename="${evidenceId}.${extension}"`,
     inline: false,
     declared,
   };

@@ -49,6 +49,15 @@
     coverage: null,
     execution: null,
     executionFeed: { state: "unknown", code: null, lastConfirmedAt: null },
+    screenEvidence: {
+      state: "not-requested",
+      entries: [],
+      denominator: null,
+      indexLimitations: [],
+      nextCursor: null,
+      code: null,
+      pagesLoaded: 0
+    },
     transport: { state: "in-flight", failStreak: 0, maxFails: MAX_POLL_FAILS, lastConfirmedAt: null },
     integrity: { state: "unknown", code: null, detail: null },
     // Whether a technical record exists to link to. "unknown" until something is ASKED —
@@ -67,6 +76,8 @@
   var recordProbed = false;
   var lastActivityAttemptsStarted = null;
   var lastActivityFetchMs = 0;
+  var handoffTimer = null;
+  var handoffCancelled = location.hash === "#captured-screens";
 
   function browserExecutionActive(status) {
     if (!status || !Array.isArray(status.phases)) return false;
@@ -135,6 +146,14 @@
           ].join(":")
         : "-",
       view.executionFeed ? view.executionFeed.state + ":" + String(view.executionFeed.code) : "-",
+      view.screenEvidence
+        ? [
+            view.screenEvidence.state,
+            view.screenEvidence.entries.length,
+            view.screenEvidence.nextCursor || "end",
+            view.screenEvidence.pagesLoaded
+          ].join(":")
+        : "-",
       view.integrity.state,
       view.record ? view.record.state : "-",
       // "in-flight" and "ok" are the SAME token on purpose. They are the two halves of one
@@ -218,6 +237,10 @@
   // records did not verify — a page that auto-opened an untrustworthy report would be
   // pushing exactly the thing the banner tells you not to trust.
   function offerHandoff() {
+    // A report reader who deliberately followed the captured-screen link asked to stay on
+    // this page. Redirecting them back to the report six seconds later makes the viewer
+    // unusable and turns a stable report link into a loop.
+    if (handoffCancelled || location.hash === "#captured-screens") return;
     if (!view.status || !view.status.reportAvailable) return;
     if (view.integrity && view.integrity.state === "invalid") return;
     var host = document.querySelector(".run-actions");
@@ -235,14 +258,16 @@
     stay.textContent = "Stay on this page";
     stay.addEventListener("click", function () {
       cancelled = true;
+      if (handoffTimer) { clearTimeout(handoffTimer); handoffTimer = null; }
       line.textContent = "Staying here. Use the button above when you are ready.";
       stay.remove();
     });
 
     host.appendChild(stay);
     host.appendChild(line);
-    setTimeout(function () {
-      if (cancelled) return;
+    handoffTimer = setTimeout(function () {
+      handoffTimer = null;
+      if (cancelled || handoffCancelled || location.hash === "#captured-screens") return;
       location.href = "/api/v2/runs/" + encodeURIComponent(runId) + "/report";
     }, HANDOFF_MS);
   }
@@ -402,6 +427,125 @@
     }
   }
 
+  function screenCursor(value) {
+    if (typeof value !== "string") return null;
+    var match = /^(0|[1-9][0-9]*):(-1|0|[1-9][0-9]*)$/.exec(value);
+    if (!match) return null;
+    var walkOrdinal = Number(match[1]);
+    var epochOrdinal = Number(match[2]);
+    if (!Number.isSafeInteger(walkOrdinal) || !Number.isSafeInteger(epochOrdinal)) return null;
+    if (walkOrdinal > 99999 || epochOrdinal > 499999) return null;
+    return { walkOrdinal: walkOrdinal, epochOrdinal: epochOrdinal };
+  }
+
+  function screenCursorAfter(left, right) {
+    return left.walkOrdinal > right.walkOrdinal ||
+      (left.walkOrdinal === right.walkOrdinal && left.epochOrdinal > right.epochOrdinal);
+  }
+
+  function validScreenEvidencePage(value, requestedCursor) {
+    if (!value || typeof value !== "object") return false;
+    if (value.schemaVersion !== "survey-qa-screen-evidence-page/1.0.0") return false;
+    if (value.runId !== runId || (value.state !== "available" && value.state !== "unavailable")) return false;
+    if (value.cursor !== requestedCursor) return false;
+    if (!Array.isArray(value.entries) || value.entries.length > 20) return false;
+    if (!Array.isArray(value.indexLimitations) || value.indexLimitations.length > 8) return false;
+    if (value.nextCursor !== null && screenCursor(value.nextCursor) === null) return false;
+    if (value.nextCursor !== null && value.nextCursor === requestedCursor) return false;
+    var previous = requestedCursor === null ? null : screenCursor(requestedCursor);
+    for (var i = 0; i < value.entries.length; i++) {
+      var entry = value.entries[i];
+      if (!entry || typeof entry !== "object") return false;
+      if (entry.kind !== "captured-screen" && entry.kind !== "limitation") return false;
+      var position = screenCursor(entry.cursor);
+      if (position === null || (previous !== null && !screenCursorAfter(position, previous))) return false;
+      previous = position;
+    }
+    if (value.nextCursor !== null &&
+        (!value.entries.length || value.nextCursor !== value.entries[value.entries.length - 1].cursor)) return false;
+    return true;
+  }
+
+  // A page whose nextCursor is null is only the tail that existed when it was read. During an
+  // active run, later committed walks may extend that immutable ordering. Resume from the last
+  // accepted entry rather than requesting null (which would restart at the beginning).
+  function screenEvidenceTailCursor(current) {
+    if (!current || !Array.isArray(current.entries) || !current.entries.length) return null;
+    var last = current.entries[current.entries.length - 1];
+    return last && screenCursor(last.cursor) !== null ? last.cursor : null;
+  }
+
+  function screenEvidenceRequestCursor(current) {
+    if (!current) return null;
+    if (current.nextCursor !== null) return current.nextCursor;
+    return current.state === "ready" ? screenEvidenceTailCursor(current) : null;
+  }
+
+  function mergeScreenEvidencePage(current, page) {
+    var seen = {};
+    for (var j = 0; j < current.entries.length; j++) seen[current.entries[j].cursor] = true;
+    for (var k = 0; k < page.entries.length; k++) {
+      if (!seen[page.entries[k].cursor]) {
+        current.entries.push(page.entries[k]);
+        seen[page.entries[k].cursor] = true;
+      }
+    }
+    current.denominator = page.denominator;
+    current.indexLimitations = page.indexLimitations;
+    current.nextCursor = page.nextCursor;
+    current.pagesLoaded += 1;
+  }
+
+  async function requestScreenEvidence() {
+    var current = view.screenEvidence;
+    if (!runId || !current || current.state === "loading") return;
+    var requestedCursor = screenEvidenceRequestCursor(current);
+    // Preserve the exact retry position if this request fails. This is normally already the
+    // pagination cursor; at a live tail it is the last accepted entry derived above.
+    current.nextCursor = requestedCursor;
+    current.state = "loading";
+    current.code = null;
+    paint(true);
+    try {
+      var endpoint = "/api/v2/runs/" + encodeURIComponent(runId) + "/screens?limit=8";
+      if (requestedCursor !== null) endpoint += "&cursor=" + encodeURIComponent(requestedCursor);
+      var res = await fetch(endpoint, {
+        headers: { accept: "application/json" },
+        cache: "no-store"
+      });
+      if (!res.ok) {
+        var failureBody = await res.json().catch(function () { return null; });
+        current.state = "unavailable";
+        current.code = failureBody && failureBody.error && failureBody.error.code
+          ? failureBody.error.code
+          : "HTTP_" + res.status;
+        paint(true);
+        return;
+      }
+      var page = await res.json();
+      if (!validScreenEvidencePage(page, requestedCursor)) {
+        current.state = "unavailable";
+        current.code = "SCREEN_EVIDENCE_RESPONSE_INVALID";
+        paint(true);
+        return;
+      }
+      mergeScreenEvidencePage(current, page);
+      current.state = page.state === "available" ? "ready" : "unavailable";
+      current.code = null;
+      paint(true);
+    } catch (err) {
+      current.state = "unavailable";
+      current.code = "SCREEN_EVIDENCE_REQUEST_FAILED";
+      paint(true);
+    }
+  }
+
+  function cancelHandoffForScreenEvidence() {
+    handoffCancelled = true;
+    if (handoffTimer) { clearTimeout(handoffTimer); handoffTimer = null; }
+    if (location.hash !== "#captured-screens") location.hash = "captured-screens";
+  }
+
   async function probeAttestation() {
     // The status contract carries no attestation field, so the report endpoint is the
     // authority: it answers 409 ATTESTATION_INVALID when a purported final record fails
@@ -456,6 +600,18 @@
     else schedule();
   });
 
+  // Tracker is a pure renderer. This one transport-owned delegated listener turns its
+  // stable action marker into the lazy request and also cancels a report handoff that may
+  // already have been scheduled on a settled run.
+  root.addEventListener("click", function (event) {
+    var target = event.target && event.target.closest
+      ? event.target.closest("[data-screen-evidence-action]")
+      : null;
+    if (!target || !root.contains(target)) return;
+    cancelHandoffForScreenEvidence();
+    requestScreenEvidence();
+  });
+
   if (!runId) {
     view.transport = { state: "not-found", failStreak: 0, maxFails: MAX_POLL_FAILS, lastConfirmedAt: null };
     paint();
@@ -466,6 +622,12 @@
       // between server snapshots.
       SurveyQATracker.ageTick(root, view, Date.now());
     }, AGE_TICK_MS);
-    loadSummary().then(poll);
+    loadSummary().then(function () {
+      if (location.hash === "#captured-screens") {
+        cancelHandoffForScreenEvidence();
+        requestScreenEvidence();
+      }
+      poll();
+    });
   }
 })();

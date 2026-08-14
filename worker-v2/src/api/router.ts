@@ -17,6 +17,7 @@ import {
 } from "./runs";
 import { getExport, getRecord, getReport, getReportData } from "./report";
 import { getEvidenceContent, listEvidence } from "./evidence";
+import { getScreens } from "./screens";
 import { devSeed } from "./devseed";
 import { devJudge } from "./devrun";
 import { devDrive } from "../workflow/stages/dev-drive";
@@ -53,6 +54,7 @@ export async function route(req: Request, env: Env, ctx?: ExecutionContext): Pro
           "survey-qa-execution-activity/1.0.0",
           "run-record/2.0.0",
           "survey-qa-visual-status/1.0.0",
+          "survey-qa-screen-evidence-page/1.0.0",
         ],
       });
     }
@@ -94,6 +96,7 @@ export async function route(req: Request, env: Env, ctx?: ExecutionContext): Pro
       if (rest === "coverage") return getCoverage(req, env, runId);
       if (rest === "execution-activity") return getExecutionActivity(req, env, runId);
       if (rest === "visual-status") return getVisualStatus(req, env, runId);
+      if (rest === "screens") return getScreens(req, env, runId);
       if (rest === "report") return getReport(req, env, runId);
       if (rest === "report-data") return getReportData(req, env, runId);
       if (rest === "record") return getRecord(req, env, runId);

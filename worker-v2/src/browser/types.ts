@@ -181,12 +181,12 @@ export interface CollectedError {
  * the storage-facing identity. Neither one is inferred from the other.
  */
 export interface ScreenArtifactRef {
-  kind: "screen-json" | "screenshot" | "accessibility";
+  kind: "screen-json" | "screenshot" | "accessibility" | "rendered-pdf";
   evidenceId: string;
   artifactRef: string;
   sourceEvidenceId: string;
   contentHash: string;
-  mediaType: "application/json" | "image/png";
+  mediaType: "application/json" | "image/png" | "application/pdf";
   size: number;
 }
 
@@ -235,6 +235,13 @@ export interface ScreenCaptureFailure {
     | "screenshot-capture-failed"
     | "screenshot-capture-empty"
     | "screenshot-evidence-write-failed"
+    | "pdf-api-unavailable"
+    | "pdf-capture-timeout"
+    | "pdf-capture-failed"
+    | "pdf-capture-empty"
+    | "pdf-capture-size-limit"
+    | "pdf-capture-dimension-limit"
+    | "pdf-evidence-write-failed"
     | "accessibility-api-unavailable"
     | "accessibility-snapshot-failed"
     | "accessibility-snapshot-empty"
@@ -250,6 +257,24 @@ export interface ScreenCaptureFailure {
   stepIndex: number;
   slot: string;
 }
+
+/** PDF is a visibility/download rendition. It never participates in QA or visual eligibility. */
+export const PDF_CAPTURE_FAILURE_KINDS = [
+  "pdf-api-unavailable",
+  "pdf-capture-timeout",
+  "pdf-capture-failed",
+  "pdf-capture-empty",
+  "pdf-capture-size-limit",
+  "pdf-capture-dimension-limit",
+  "pdf-evidence-write-failed",
+] as const;
+
+export type PdfCaptureFailureKind = (typeof PDF_CAPTURE_FAILURE_KINDS)[number];
+
+export const isPdfCaptureFailureKind = (
+  kind: ScreenCaptureFailure["kind"],
+): kind is PdfCaptureFailureKind =>
+  (PDF_CAPTURE_FAILURE_KINDS as readonly ScreenCaptureFailure["kind"][]).includes(kind);
 
 /**
  * Closed, JSON-only projection of Puppeteer's `SerializedAXNode`.
@@ -320,6 +345,10 @@ export type ScreenshotCapture =
   | { status: "captured"; ref: ScreenArtifactRef & { kind: "screenshot" } }
   | { status: "failed"; failure: ScreenCaptureFailure };
 
+export type PdfCapture =
+  | { status: "captured"; ref: ScreenArtifactRef & { kind: "rendered-pdf" } }
+  | { status: "failed"; failure: ScreenCaptureFailure & { kind: PdfCaptureFailureKind } };
+
 export type AccessibilityCapture =
   | {
       status: "captured";
@@ -331,7 +360,7 @@ export type AccessibilityCapture =
   | { status: "failed"; failure: ScreenCaptureFailure };
 
 /**
- * THE THREE REPRESENTATIONS OF ONE RENDERED SCREEN, PAIRED WITHOUT A DOM CONVENTION.
+ * THE CAPTURED REPRESENTATIONS OF ONE RENDERED SCREEN, PAIRED WITHOUT A DOM CONVENTION.
  *
  * A capture is necessarily sequential over Puppeteer's protocol: screen JSON, PNG and Chrome's
  * accessibility snapshot cannot be obtained in one atomic CDP command. `startedAt` / `endedAt`
@@ -339,8 +368,7 @@ export type AccessibilityCapture =
  * exact content hashes bind what was collected together. This is an observation bundle, not a
  * claim that two separately-timed browser commands were simultaneous.
  */
-export interface ScreenCaptureEpoch {
-  kind: "v2-screen-capture-epoch/1.0.0";
+interface ScreenCaptureEpochBase {
   epochId: string;
   stepIndex: number;
   slot: string;
@@ -358,6 +386,19 @@ export interface ScreenCaptureEpoch {
   captureFailures: ScreenCaptureFailure[];
   captureFailureCount: number;
 }
+
+/** Historical capture shape. A PDF field on this kind is invalid, never an implicit upgrade. */
+export interface ScreenCaptureEpochV1 extends ScreenCaptureEpochBase {
+  kind: "v2-screen-capture-epoch/1.0.0";
+}
+
+/** Current capture shape. Every new epoch states whether its bounded PDF rendition landed. */
+export interface ScreenCaptureEpochV1_1 extends ScreenCaptureEpochBase {
+  kind: "v2-screen-capture-epoch/1.1.0";
+  pdf: PdfCapture;
+}
+
+export type ScreenCaptureEpoch = ScreenCaptureEpochV1 | ScreenCaptureEpochV1_1;
 
 export interface RenderedScreen {
   at: string;

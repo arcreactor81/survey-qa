@@ -1438,6 +1438,58 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
   white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto;
 }
 
+/* ---- verified per-screen evidence (loaded only when requested) ---- */
+.screen-evidence {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 20px; margin-bottom: 24px; box-shadow: var(--shadow);
+}
+.screen-evidence__lead { max-width: 760px; color: var(--text); }
+.screen-evidence__denominator {
+  font-family: var(--mono); font-size: 11.5px; color: var(--slate);
+  margin: 10px 0 16px;
+}
+.screen-evidence__file-check { font-size: 12px; color: var(--muted); margin: 8px 0 14px; }
+.screen-evidence__print-note, .screen-evidence__partial {
+  font-size: 12px; color: var(--muted); margin: 8px 0 14px;
+}
+.screen-evidence__partial {
+  color: var(--wait-text); border-left: 3px solid var(--lane-amb-border); padding-left: 10px;
+}
+.screen-evidence__grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+  gap: 16px; margin: 16px 0;
+}
+.screen-capture {
+  min-width: 0; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2); padding: 14px;
+}
+.screen-capture__head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  margin-bottom: 10px;
+}
+.screen-capture__head h3 { margin: 0; font-size: 16px; }
+.screen-capture__ordinal {
+  font-family: var(--mono); font-size: 10.5px; color: var(--slate); white-space: nowrap;
+}
+.screen-capture__image {
+  display: block; width: 100%; height: auto; max-height: 460px; object-fit: contain;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+}
+.screen-capture__links { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; font-size: 12.5px; }
+.screen-capture__missing, .screen-evidence__missing {
+  color: var(--muted); font-size: 12.5px; margin: 12px 0;
+}
+.screen-capture__limits, .screen-evidence__limits {
+  margin-top: 12px; padding: 10px 12px; background: var(--wait-bg);
+  border: 1px solid var(--lane-amb-border); border-radius: var(--radius-sm);
+}
+.screen-capture__limits h4, .screen-evidence__limits h3 { margin: 0 0 6px; font-size: 13px; }
+.screen-capture__limits ul, .screen-evidence__limits ul { margin: 0; padding-left: 20px; }
+.screen-capture__limits li, .screen-evidence__limits li { margin: 4px 0; font-size: 12px; }
+@media (max-width: 520px) {
+  .screen-capture__head { align-items: flex-start; flex-direction: column; }
+}
+
 
 /* =====================================================================
  * REGION 5 — opt-in "play while you wait" panel
@@ -1497,8 +1549,13 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
  * REGION 6 — print. Warnings and denominators must survive export.
  * ===================================================================== */
 @media print {
-  .game-panel, .poll-badge, .report-cta, .run-actions { display: none !important; }
-  section, .tcard, .run-card, .detail-block { break-inside: avoid; box-shadow: none; }
+  .game-panel, .poll-badge, .report-cta, .run-actions, .screen-evidence > .btn { display: none !important; }
+  section, .tcard, .run-card, .detail-block, .screen-capture { break-inside: avoid; box-shadow: none; }
+  /* The evidence section can contain many API pages. Let the section paginate, then keep each
+     individual capture together where it fits. A single print column is deterministic. */
+  .screen-evidence { break-inside: auto; }
+  .screen-evidence__grid { display: block; }
+  .screen-capture { break-inside: avoid; page-break-inside: avoid; margin-bottom: 14px; }
   .banner, .run-note { border-left-width: 4px !important; }
   /* Print expands the detail layer: an exported page must not hide what the screen
      merely folded away. */

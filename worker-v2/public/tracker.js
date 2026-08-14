@@ -1829,6 +1829,208 @@
     return card;
   }
 
+  var SCREEN_LIMITATION_WORDS = {
+    "walk-artifact-missing": "No saved browser record was found for this walk.",
+    "walk-artifact-mismatched": "The saved browser record belongs to a different attempt.",
+    "walk-artifact-ambiguous": "More than one saved browser record could match this walk.",
+    "legacy-walk-artifact-resolution": "This older browser record cannot be tied to one exact attempt.",
+    "walk-artifact-catalog-entry-missing": "The saved file list no longer contains this browser record.",
+    "walk-artifact-catalog-binding-failed": "The saved browser record did not verify.",
+    "walk-artifact-index-catalog-mismatch": "The saved file details do not match this browser record.",
+    "walk-artifact-bytes-unreadable": "The saved browser record did not pass its file check.",
+    "walk-artifact-envelope-invalid": "The saved browser record could not be read safely.",
+    "walk-artifact-identity-mismatch": "The saved browser record belongs to a different walk.",
+    "screen-captures-not-recorded-by-reader": "This older browser record did not include screen captures.",
+    "no-screen-capture-epochs-recorded": "This browser record contains no screen captures.",
+    "inconsistent-declared-capture-counts": "The saved capture total does not match the saved capture list.",
+    "pdf-not-recorded-by-reader": "This older capture did not record a PDF.",
+    "evidence-catalog-entry-missing": "The saved file list no longer contains this capture file.",
+    "evidence-catalog-binding-failed": "This capture file did not verify.",
+    "evidence-reference-catalog-mismatch": "The saved file details do not match this capture.",
+    "evidence-bytes-unreadable": "A recorded capture file did not pass its stored hash check.",
+    "walk-artifact-index-missing": "The run has no saved browser-walk list yet, so the screen list is not known."
+  };
+
+  function screenLimitationText(kind) {
+    return SCREEN_LIMITATION_WORDS[kind] || "A named capture limitation was recorded.";
+  }
+
+  function renderScreenLimitation(item) {
+    var count = item && typeof item.count === "number" && isFinite(item.count) ? item.count : 1;
+    return el("li", { text: screenLimitationText(item && item.kind) + " " + count + " occurrence(s)." });
+  }
+
+  function evidenceHref(view, modality) {
+    if (!modality || modality.status !== "catalog-bound" || modality.verification !== "on-content-request") return null;
+    if (typeof modality.evidenceId !== "string" || !/^ev_[0-9a-hjkmnp-tv-z]{12}$/.test(modality.evidenceId)) return null;
+    return "/api/v2/runs/" + encodeURIComponent(view.runId || "") +
+      "/evidence/" + encodeURIComponent(modality.evidenceId) + "/content";
+  }
+
+  function renderCapturedScreen(view, entry) {
+    var card = el("article", { cls: "screen-capture", attrs: { "data-screen-cursor": entry.cursor } });
+    var walkNumber = typeof entry.walkOrdinal === "number" && isFinite(entry.walkOrdinal)
+      ? Math.floor(entry.walkOrdinal) + 1
+      : null;
+    var captureNumber = typeof entry.epochOrdinal === "number" && isFinite(entry.epochOrdinal)
+      ? Math.floor(entry.epochOrdinal) + 1
+      : null;
+    var positionLabel = walkNumber !== null && captureNumber !== null
+      ? "Walk " + walkNumber + ", capture " + captureNumber
+      : "Recorded capture";
+    card.appendChild(el("div", { cls: "screen-capture__head" }, [
+      el("h3", { text: "Captured screen" }),
+      el("span", { cls: "screen-capture__ordinal", text: positionLabel })
+    ]));
+
+    var screenshotHref = evidenceHref(view, entry.screenshot);
+    if (screenshotHref) {
+      card.appendChild(el("img", {
+        cls: "screen-capture__image",
+        attrs: {
+          src: screenshotHref,
+          alt: "Captured screen image. " + positionLabel,
+          loading: "lazy",
+          decoding: "async"
+        }
+      }));
+    } else {
+      card.appendChild(el("p", {
+        cls: "screen-capture__missing",
+        text: "No verified screenshot is available for this recorded capture."
+      }));
+    }
+
+    var links = [];
+    var screenJsonHref = evidenceHref(view, entry.extractedJson);
+    if (screenJsonHref) {
+      links.push(el("a", {
+        text: "Extracted JSON", attrs: { href: screenJsonHref, target: "_blank", rel: "noopener" }
+      }));
+    }
+    var pdfHref = evidenceHref(view, entry.pdf);
+    if (pdfHref) {
+      links.push(el("a", { text: "Download print PDF", attrs: { href: pdfHref, download: "" } }));
+    }
+    var accessibilityHref = evidenceHref(view, entry.accessibility);
+    if (accessibilityHref) {
+      links.push(el("a", {
+        text: "Accessibility JSON", attrs: { href: accessibilityHref, target: "_blank", rel: "noopener" }
+      }));
+    }
+    if (links.length) card.appendChild(el("div", { cls: "screen-capture__links" }, links));
+
+    if (Array.isArray(entry.limitations) && entry.limitations.length) {
+      card.appendChild(el("div", { cls: "screen-capture__limits" }, [
+        el("h4", { text: "Limitations" }),
+        el("ul", {}, entry.limitations.map(renderScreenLimitation))
+      ]));
+    }
+    return card;
+  }
+
+  function renderScreenEvidence(view) {
+    if (transportState(view) === "not-found") return null;
+    var state = view.screenEvidence || {
+      state: "not-requested", entries: [], denominator: null, indexLimitations: [], nextCursor: null, code: null
+    };
+    var card = el("section", { cls: "screen-evidence", attrs: { id: "captured-screens" } }, [
+      el("p", { cls: "kicker", text: "Saved browser evidence" }),
+      el("h2", { text: "Captured screens" }),
+      el("p", {
+        cls: "screen-evidence__lead",
+        text: "Open the exact screen files saved by the browser. Each card is one recorded capture, not a guessed page or question."
+      }),
+      el("p", {
+        cls: "screen-evidence__print-note",
+        text: "The screenshot is the exact captured view. The PDF is an A4 browser print rendition; it may reflow or span pages."
+      })
+    ]);
+    card.appendChild(el("p", {
+      cls: "screen-evidence__file-check",
+      text: "Large capture files are not preloaded. Each file is checked against its saved fingerprint when it opens."
+    }));
+
+    if (state.denominator && typeof state.denominator.walks === "number") {
+      card.appendChild(el("p", {
+        cls: "screen-evidence__denominator",
+        text: state.denominator.walks + " browser walk(s) are recorded. Captures and any walk-level record limitations are listed below."
+      }));
+    }
+
+    if (Array.isArray(state.indexLimitations) && state.indexLimitations.length) {
+      card.appendChild(el("div", { cls: "screen-evidence__limits" }, [
+        el("h3", { text: "Known record limitations" }),
+        el("ul", {}, state.indexLimitations.map(function (item) {
+          return renderScreenLimitation({ kind: item.kind, count: item.occurrences });
+        }))
+      ]));
+    }
+
+    var entries = Array.isArray(state.entries) ? state.entries : [];
+    var captures = entries.filter(function (entry) { return entry && entry.kind === "captured-screen"; });
+    var walkLimits = entries.filter(function (entry) { return entry && entry.kind === "limitation"; });
+    if (captures.length) {
+      card.appendChild(el("div", { cls: "screen-evidence__grid" }, captures.map(function (entry) {
+        return renderCapturedScreen(view, entry);
+      })));
+    }
+    if (walkLimits.length) {
+      card.appendChild(el("div", { cls: "screen-evidence__limits" }, [
+        el("h3", { text: "Recorded walk-level capture limitations" }),
+        el("ul", {}, walkLimits.reduce(function (items, entry) {
+          var limitations = Array.isArray(entry.limitations) ? entry.limitations : [];
+          return items.concat(limitations.map(renderScreenLimitation));
+        }, []))
+      ]));
+    }
+
+    if (state.state === "unavailable") {
+      card.appendChild(el("p", {
+        cls: "screen-evidence__missing",
+        text: entries.length
+          ? "The next screen-evidence page could not be loaded. The verified captures already shown remain available."
+          : "Screen evidence is not available at this update. This is not evidence that no screens were captured."
+      }));
+    }
+
+    if (state.nextCursor !== null) {
+      card.appendChild(el("p", {
+        cls: "screen-evidence__partial",
+        text: "This view is incomplete: more saved captures are available. Load more before printing."
+      }));
+    }
+
+    var atLiveTail = state.state === "ready" && state.nextCursor === null && !isTerminal(view);
+    var shouldOffer = state.state === "not-requested" || state.state === "unavailable" ||
+      state.nextCursor !== null || atLiveTail;
+    if (state.state === "ready" && !entries.length) {
+      card.appendChild(el("p", {
+        cls: "screen-evidence__missing",
+        text: "The recorded browser walks contain no viewable screen captures. Any known limits are shown above."
+      }));
+    }
+    if (state.state === "loading") {
+      card.appendChild(el("button", {
+        cls: "btn btn-ghost", text: "Loading captured screensâ€¦", attrs: { type: "button", disabled: "" }
+      }));
+    } else if (shouldOffer) {
+      var label = state.state === "not-requested"
+        ? "Show captured screens"
+        : state.state === "unavailable"
+          ? "Try loading screen evidence again"
+          : state.nextCursor !== null
+            ? "Load more"
+            : "Check for newer captures";
+      card.appendChild(el("button", {
+        cls: "btn btn-ghost",
+        text: label,
+        attrs: { type: "button", "data-screen-evidence-action": "load" }
+      }));
+    }
+    return card;
+  }
+
   function detailWork(view) {
     var cov = view.coverage;
     if (!cov) {
@@ -2251,6 +2453,9 @@
     // a checked case; placing these numbers in one progress meter would erase that distinction.
     var activity = renderBrowserActivity(view);
     if (activity) root.appendChild(activity);
+
+    var screens = renderScreenEvidence(view);
+    if (screens) root.appendChild(screens);
 
     if (view.status || view.coverage) root.appendChild(renderDetails(view));
 

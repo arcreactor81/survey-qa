@@ -739,7 +739,9 @@ function validAccessibilityState(value: VisualWorkEpochRow["accessibility"], ste
 
 function validFailure(value: ScreenCaptureFailure, step: number, slot: string): boolean {
   return isRecord(value) && hasExactKeys(value, ["kind", "detail", "count", "at", "stepIndex", "slot"]) &&
-    FAILURE_KINDS.includes(value.kind) && boundedNonempty(value.detail, MAX_TEXT) &&
+    // PDF is visibility-only and never impersonates a missing screen or AX channel. Its
+    // named failures travel in the manifest's limitationKinds, outside these modalities.
+    (FAILURE_KINDS as readonly ScreenCaptureFailure["kind"][]).includes(value.kind) && boundedNonempty(value.detail, MAX_TEXT) &&
     nonnegativeInteger(value.count, 1_000_000) && value.count > 0 && validTimestamp(value.at) &&
     value.stepIndex === step && value.slot === slot;
 }

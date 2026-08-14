@@ -425,11 +425,11 @@ const FILES = [
   // The signed cross-surface ordering gate is mutation-proved by
   // `tools/mutate-axis-closure.mjs`.
   "./tests/axis-closure.test.mjs",
-  // D47 — every screen epoch is captured as three explicitly paired modalities: the legacy
-  // screen JSON, a viewport PNG and Chrome's full accessibility tree. Exact hashes/media and
+  // D47 — every current screen epoch is captured as four explicitly paired modalities: the legacy
+  // screen JSON, a viewport PNG, a bounded PDF and Chrome's full accessibility tree. Exact hashes/media and
   // viewport/scroll/DPR metadata bind them; browser handles are stripped through a closed
   // projection; unavailable APIs and every node/depth/value/byte cap are named and counted.
-  // The negative fixture fails all three capture surfaces independently so a silent catch makes
+  // The negative fixture fails all four capture surfaces independently so a silent catch makes
   // the suite red instead of turning absence into an empty tree.
   "./tests/d47-capture-ax.test.mjs",
   // D49 — screenshot pixels own visible option grouping, AX is the independent semantic
@@ -483,6 +483,10 @@ const FILES = [
   // zero credited walks; privacy sentinels cover URL userinfo/path/query/fragment, raw screen
   // and action text, errors, and W5 receipt content. A corrupt total is the negative fixture.
   "./tests/execution-activity-api.test.mjs",
+  // API AUTHORITY: screen discovery comes only from the immutable walk index; every typed
+  // modality is exact-bound to its catalog row, raw failure/content text cannot serialize,
+  // pagination advances over walk+epoch positions, and the renderer remains network-free.
+  "./tests/screens-api.test.mjs",
   // P0 fail-closed browser/progress honesty blockers: disjoint multi-question ownership,
   // occurrence-aware advancement, structural native-choice groups, ambiguous forward controls,
   // and corrupt durable progress that must never reset to empty.
