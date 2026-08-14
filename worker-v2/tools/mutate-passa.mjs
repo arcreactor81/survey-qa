@@ -54,6 +54,8 @@ const SYNTHESIS_SEPARATE_WAVE = "a relation split across windows is added once a
 const FALLBACK_CHAIN = "fallback retry authority rejects a missing Flash issue, extra Grok purchase, and ineligible trigger";
 const DOCUMENT_SOURCE_BYTES =
   "byte-different DOCX with identical parsed blocks is refused before Pass A buys anything";
+const HISTORICAL_PROGRESS_OWNERSHIP =
+  "counterproof: historical wrong canonical block ownership fails closed instead of guessing partial progress";
 
 await runMutantSuite({
   title: "D22 — pass A is sliced across steps, resumes what landed, and fails by name",
@@ -61,6 +63,16 @@ await runMutantSuite({
   // workflow's extraction branch, and collateral damage elsewhere is worth seeing.
   filter: "",
   mutants: [
+    {
+      name: "historical progress ignores exact canonical window ownership",
+      breaks:
+        "a stale paid artifact from another source window can inflate the public accounted count " +
+        "even though it grants no semantic extraction authority",
+      file: PASS_A,
+      find: "blockIds.some((id, blockIndex) =>",
+      replace: "false && blockIds.some((id, blockIndex) =>",
+      kills: [HISTORICAL_PROGRESS_OWNERSHIP],
+    },
     {
       name: "document source authority trusts parsed equivalence instead of exact current bytes",
       breaks:

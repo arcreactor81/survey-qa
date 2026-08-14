@@ -4,10 +4,151 @@
  * arithmetic or an undeclared field into plausible-looking progress.
  */
 
+import { strToU8, zipSync } from "fflate";
 import { assert, assertEq, assertThrows, fakeStep, suite, test } from "../testkit.mjs";
 import { seedRun, testEnv, worker } from "./_helpers.mjs";
 
 const AT = "2026-08-14T04:32:10.000Z";
+const HISTORICAL_PROMPT = "v2-extract-pass-a/1.6.0";
+const HISTORICAL_DETAIL_SENTINEL = "RAW_HISTORICAL_PASS_A_DETAIL_DO_NOT_EXPOSE";
+const HISTORICAL_REASON = "extraction-pass-a-pass-a-window-failures";
+
+const neutralElevenWindowDocx = () => zipSync({
+  "word/document.xml": strToU8(
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` +
+      Array.from({ length: 33 }, (_, index) =>
+        `<w:p><w:r><w:t>Neutral questionnaire source block ${String(index + 1).padStart(2, "0")}</w:t></w:r></w:p>`,
+      ).join("") +
+      `</w:body></w:document>`,
+  ),
+}, { mtime: AT });
+
+function historicalUsage(runId, windowNumber, status = "ok") {
+  const unit = `A-w${windowNumber}`;
+  return {
+    eventId: `core-model-call/pass-a/${runId}/${unit}/issue-1/receipt-1`,
+    callId: `call_a_${windowNumber}`,
+    role: `extract-pass-a-w${windowNumber}`,
+    provider: "grok",
+    model: "grok-4.6",
+    status,
+    inputTokens: 100,
+    outputTokens: 20,
+    costUsd: 0.001,
+    latencyMs: 25,
+    attempts: 1,
+    usageSource: "provider-reported",
+  };
+}
+
+function historicalWindowIdentity(mod, env, doc, runId, windowNumber, promptVersion) {
+  return {
+    windowId: `A-w${windowNumber}`,
+    windowNumber,
+    blockIds: doc.blocks
+      .slice((windowNumber - 1) * 3, windowNumber * 3)
+      .map((block) => block.blockId),
+    parserVersion: doc.parserVersion,
+    promptVersion,
+    providerRouteIdentity: mod.grok.grokFlashRouteIdentity(env),
+    windowPolicyIdentity: "pass-a-window-policy/1.1.0|chars:999999|blocks:3|max-issues:2",
+  };
+}
+
+function historicalSuccess(mod, env, doc, runId, windowNumber, promptVersion) {
+  return {
+    ...historicalWindowIdentity(mod, env, doc, runId, windowNumber, promptVersion),
+    attempts: 1,
+    modelOutput: {
+      global_rules: [],
+      cross_references: [],
+      ambiguities: [],
+      unverifiable_from_browser: [],
+    },
+    kind: "ok",
+    globalRules: [],
+    crossRefs: [],
+    ambiguities: [],
+    unverifiable: [],
+    usages: [historicalUsage(runId, windowNumber)],
+    routeReceipt: { selected: "grok-4.6", trigger: null },
+  };
+}
+
+function historicalTerminalFailure(mod, env, doc, runId, windowNumber, promptVersion) {
+  return {
+    ...historicalWindowIdentity(mod, env, doc, runId, windowNumber, promptVersion),
+    status: "failed",
+    attempts: 1,
+    usages: [historicalUsage(runId, windowNumber, "parse-failed")],
+    fallbackTrigger: null,
+    terminal: true,
+    failureStage: "semantic-output",
+    detail: HISTORICAL_DETAIL_SENTINEL,
+  };
+}
+
+async function historicalReadingFixture(mod, { promptVersion, mutate = null }) {
+  const env = testEnv({
+    EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "3",
+    EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2",
+  });
+  const documentBytes = neutralElevenWindowDocx();
+  const documentSha256 = await mod.hash.sha256Hex(documentBytes);
+  const documentKey = "fixtures/neutral-eleven-window-questionnaire.docx";
+  const seeded = await seedRun(mod, env, { documentKey, documentSha256 });
+  await env.EVIDENCE.put(documentKey, documentBytes, {
+    httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+  });
+  const doc = mod.docxBlocks.parseDocxBlocks(documentBytes);
+  assertEq(doc.blocks.length, 33, "33 neutral blocks form exactly 11 three-block windows");
+
+  const artifacts = new Map([
+    [1, historicalSuccess(mod, env, doc, seeded.runId, 1, promptVersion)],
+    [2, historicalSuccess(mod, env, doc, seeded.runId, 2, promptVersion)],
+    [3, historicalTerminalFailure(mod, env, doc, seeded.runId, 3, promptVersion)],
+  ]);
+  if (mutate) mutate({ artifacts, doc, runId: seeded.runId });
+  for (const [windowNumber, artifact] of artifacts) {
+    await env.EVIDENCE.put(
+      mod.keys.k(
+        "runs", seeded.runId, "extraction", "pass-a",
+        `window-${String(windowNumber).padStart(2, "0")}.json`,
+      ),
+      JSON.stringify(artifact),
+      { httpMetadata: { contentType: "application/json" } },
+    );
+  }
+  await mod.checkpoint.updateCheckpoint(env, seeded.runId, (draft) => {
+    mod.checkpoint.setPhase(draft, "extracting", "stopped", HISTORICAL_REASON);
+    mod.checkpoint.setPhase(draft, "reporting", "complete");
+    draft.phase = "reporting";
+    draft.completion.test = "failed";
+    draft.completion.report = "complete";
+    draft.completion.reasonCode = HISTORICAL_REASON;
+    draft.error = HISTORICAL_DETAIL_SENTINEL;
+  }, { progressed: true });
+
+  const originalFetch = globalThis.fetch;
+  let providerRequests = 0;
+  globalThis.fetch = async () => {
+    providerRequests += 1;
+    throw new Error("a read-only historical status request must not call a model provider");
+  };
+  try {
+    const response = await mod.apiRuns.getStatus(
+      new Request(`https://fixture.invalid/api/v2/runs/${seeded.runId}/status`),
+      env,
+      seeded.runId,
+    );
+    const text = await response.text();
+    return { response, text, body: JSON.parse(text), providerRequests };
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
 
 function usage() {
   return { modelCalls: { used: 3 }, cost: { usedUsd: 0.548308 } };
@@ -344,6 +485,100 @@ suite("durable questionnaire-reading visibility", () => {
     assert(
       !Object.hasOwn(laterBody, "documentReading"),
       "a later browser-test failure must not be relabeled as a document-reading failure",
+    );
+  });
+
+  test("historical stale-prompt artifacts surface retained 3/11 progress without semantic reuse", async () => {
+    const mod = await worker();
+    const result = await historicalReadingFixture(mod, { promptVersion: HISTORICAL_PROMPT });
+    assertEq(result.response.status, 200);
+    assertEq(result.providerRequests, 0, "status reconstruction is read-only and cannot rebuy a document read");
+    assert(!result.text.includes(HISTORICAL_DETAIL_SENTINEL), "retained raw failure prose cannot cross status");
+    const reading = result.body.documentReading;
+    assertEq(reading.state, "stopped");
+    assertEq(reading.primary.total, 11);
+    assertEq(reading.primary.landed, 3);
+    assertEq(reading.primary.remaining, 8);
+    assertEq(reading.lastDurableUnit.name, "A-w3");
+    assertEq(reading.failure.unit, "A-w3");
+    assert(
+      reading.limitations.some((entry) =>
+        entry.code === mod.passA.PASS_A_HISTORICAL_PROGRESS_CENSUS_LIMITATION_CODE &&
+        entry.count === 1),
+      "metadata-only historical progress must carry its named observability limitation",
+    );
+  });
+
+  for (const [label, mutate] of [
+    [
+      "gap before the terminal artifact",
+      ({ artifacts }) => { artifacts.delete(2); },
+    ],
+    [
+      "wrong canonical block ownership",
+      ({ artifacts, doc }) => { artifacts.get(2).blockIds[1] = doc.blocks[20].blockId; },
+    ],
+    [
+      "ordered interior block swap",
+      ({ artifacts }) => {
+        const ids = artifacts.get(2).blockIds;
+        [ids[1], ids[2]] = [ids[2], ids[1]];
+      },
+    ],
+    [
+      "receipt owned by a foreign run",
+      ({ artifacts }) => {
+        artifacts.get(2).usages[0].eventId =
+          "core-model-call/pass-a/run_foreign/A-w2/issue-1/receipt-1";
+      },
+    ],
+    [
+      "receipt owned by a foreign window",
+      ({ artifacts, runId }) => {
+        artifacts.get(2).usages[0].eventId =
+          `core-model-call/pass-a/${runId}/A-w9/issue-1/receipt-1`;
+      },
+    ],
+  ]) {
+    test(`counterproof: historical ${label} fails closed instead of guessing partial progress`, async () => {
+      const mod = await worker();
+      const result = await historicalReadingFixture(mod, { promptVersion: HISTORICAL_PROMPT, mutate });
+      assertEq(result.response.status, 200);
+      assertEq(result.providerRequests, 0);
+      assert(!result.text.includes(HISTORICAL_DETAIL_SENTINEL));
+      const reading = result.body.documentReading;
+      assertEq(reading.state, "unavailable");
+      assertEq(reading.primary.total, null, "an invalid census cannot retain the tempting denominator 11");
+      assertEq(
+        reading.primary.landed,
+        0,
+        "the unavailable contract's zero sentinel carries no progress authority from rows before corruption",
+      );
+      assertEq(reading.primary.remaining, null, "unknown unread work is not zero or an inferred remainder");
+      assert(
+        !reading.limitations.some((entry) =>
+          entry.code === mod.passA.PASS_A_HISTORICAL_PROGRESS_CENSUS_LIMITATION_CODE),
+        "the positive historical census limitation cannot bless an invalid census",
+      );
+    });
+  }
+
+  test("current-prompt terminal authority remains on the strict reconstruction path", async () => {
+    const mod = await worker();
+    const result = await historicalReadingFixture(mod, { promptVersion: mod.passA.PASS_A_VERSION });
+    assertEq(result.response.status, 200);
+    assertEq(result.providerRequests, 0);
+    assert(!result.text.includes(HISTORICAL_DETAIL_SENTINEL));
+    const reading = result.body.documentReading;
+    assertEq(reading.state, "stopped");
+    assertEq(reading.primary.total, 11);
+    assertEq(reading.primary.landed, 3);
+    assertEq(reading.primary.remaining, 8);
+    assertEq(reading.failure.unit, "A-w3");
+    assert(
+      !reading.limitations.some((entry) =>
+        entry.code === mod.passA.PASS_A_HISTORICAL_PROGRESS_CENSUS_LIMITATION_CODE),
+      "current-identity strict evidence must not be relabeled as a legacy metadata census",
     );
   });
 

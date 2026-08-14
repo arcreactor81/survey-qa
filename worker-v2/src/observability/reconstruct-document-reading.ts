@@ -3,7 +3,10 @@ import type { RunCheckpoint } from "../types/contracts";
 import { getEnvelope } from "../store/envelope";
 import { k } from "../keys";
 import { normalizeDocumentSemanticsProfile } from "../extract/document-semantics";
-import { reconstructPassACompletedAuthority } from "../extract/pass-a";
+import {
+  reconstructPassACompletedAuthority,
+  reconstructPassAHistoricalProgressCensus,
+} from "../extract/pass-a";
 import { reconstructPassBCompletedAuthority } from "../extract/pass-b";
 import { loadDocument } from "../workflow/stages/extract";
 import {
@@ -76,6 +79,39 @@ export async function resolveDocumentReading(
       env, runId, doc, envelope.input.documentName,
     );
     if (passA.kind === "invalid") {
+      const historical = await reconstructPassAHistoricalProgressCensus(env, runId, doc);
+      if (historical.kind === "ok") {
+        const value = historical.value;
+        const progress = readingFromPrimary({
+          done: false,
+          windowsTotal: value.total,
+          windowsLanded: value.accounted,
+          windowsRemaining: value.remaining,
+          terminalFailure: true,
+          synthesisState: "waiting-for-windows",
+        }, {
+          state: "stopped",
+          failedUnit: value.failedUnit,
+          sourceContext: sourceContextForUnit(doc.blocks, value.failedUnit.blockIds),
+          reasonCode: reason(cp, "pass-a-authority-invalid"),
+          updatedAt: cp.lastProgressAt,
+        });
+        progress.limitations = [...progress.limitations, value.limitation];
+        return {
+          reconstructed: true,
+          progress: withCheckpointUsage(progress, cp.usage),
+        };
+      }
+      if (historical.kind === "invalid") {
+        return {
+          reconstructed: true,
+          progress: unavailable(
+            cp,
+            "document-reading-historical-progress-invalid",
+            "Retained historical window metadata could not be reconciled into a trustworthy progress count.",
+          ),
+        };
+      }
       return {
         reconstructed: true,
         progress: withCheckpointUsage(readingFromPrimary(passA.slice, {

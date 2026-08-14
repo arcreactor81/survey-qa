@@ -310,6 +310,33 @@ export type PassAAuthorityReconstruction =
       failedUnit: PassResult["failedUnits"][number] | null;
     };
 
+export const PASS_A_HISTORICAL_PROGRESS_CENSUS_LIMITATION_CODE =
+  "legacy-reading-progress-from-artifact-census" as const;
+
+/**
+ * Metadata-only compatibility evidence for runs created before structured reading progress.
+ *
+ * This deliberately cannot carry requirements, model output, dispositions, or coverage. A
+ * caller may use it to say how many canonical primary-window artifacts were durably accounted
+ * for, and nothing more.
+ */
+export interface PassAHistoricalProgressCensusValue {
+  total: number;
+  accounted: number;
+  remaining: number;
+  failedUnit: PassResult["failedUnits"][number];
+  limitation: {
+    code: typeof PASS_A_HISTORICAL_PROGRESS_CENSUS_LIMITATION_CODE;
+    count: 1;
+    detail: string;
+  };
+}
+
+export type PassAHistoricalProgressCensus =
+  | { kind: "none" }
+  | { kind: "invalid"; detail: string }
+  | { kind: "ok"; value: PassAHistoricalProgressCensusValue };
+
 /** Slack over and above the budget and one whole purchase: R2 I/O, parsing, scheduling. */
 export const PASS_A_STEP_SLACK_MS = 60_000;
 
@@ -2719,6 +2746,214 @@ export function validatePassASynthesisOutput(
   }
 
   return { globalRules, crossRefs, ambiguities, unverifiable };
+}
+
+const STALE_PASS_A_PROMPT_IDENTITY = /^v2-extract-pass-a\/\d+\.\d+\.\d+$/;
+
+/**
+ * Reconstruct only the amount of historical primary-window work that durably landed.
+ *
+ * Unlike `reconstructPassACompletedAuthority`, this compatibility reader intentionally does
+ * not decode `modelOutput`, re-ground candidate rows, or return any semantic payload. It is
+ * useful only when a pre-reading-progress run retained artifacts written by an older Pass-A
+ * prompt. Every other identity remains current and exact; relaxing more than the prompt
+ * would turn a historical display into an accidental cache/coverage authority.
+ */
+export async function reconstructPassAHistoricalProgressCensus(
+  env: Env,
+  runId: string,
+  doc: ParsedDocument,
+): Promise<PassAHistoricalProgressCensus> {
+  const parserVersion = doc.parserVersion ?? DOCX_BLOCKS_VERSION;
+  const windows = splitWindows(
+    doc.blocks,
+    num(env.EXTRACT_PASS_A_WINDOW_CHARS, 90_000),
+    num(env.EXTRACT_PASS_A_WINDOW_MAX_BLOCKS, 100),
+  );
+  const routeIdentity = grokFlashRouteIdentity(env);
+  const policyIdentity = windowPolicyIdentity(env);
+  let historicalPromptIdentity: string | null = null;
+
+  const invalid = (detail: string): PassAHistoricalProgressCensus => ({
+    kind: "invalid",
+    detail: `PASS_A_HISTORICAL_PROGRESS_CENSUS_INVALID: ${detail}. ` +
+      "No stored model output was decoded, reused, or granted coverage authority.",
+  });
+
+  for (let index = 0; index < windows.length; index += 1) {
+    const n = index + 1;
+    const origin = windows.length === 1 ? "A" : `A-w${n}`;
+    const expectedBlockIds = windows[index]!.map((block) => block.blockId);
+    const object = await env.EVIDENCE.get(windowKey(runId, n));
+    if (!object) {
+      return historicalPromptIdentity === null
+        ? { kind: "none" }
+        : invalid(`${origin} is missing from the contiguous retained sequence`);
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      const decoded = JSON.parse(await object.text()) as unknown;
+      if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+        return historicalPromptIdentity === null
+          ? { kind: "none" }
+          : invalid(`${origin} artifact root is not an object`);
+      }
+      parsed = decoded as Record<string, unknown>;
+    } catch {
+      return historicalPromptIdentity === null
+        ? { kind: "none" }
+        : invalid(`${origin} artifact JSON is unreadable`);
+    }
+
+    const promptIdentity = parsed["promptVersion"];
+    if (historicalPromptIdentity === null) {
+      // Current-prompt artifacts belong to the strict authority decoder, including its
+      // corruption handling. This reader only arbitrates a positively identified stale
+      // Pass-A lineage.
+      if (
+        promptIdentity === PROMPT_VERSION_A ||
+        typeof promptIdentity !== "string" ||
+        !STALE_PASS_A_PROMPT_IDENTITY.test(promptIdentity)
+      ) return { kind: "none" };
+      historicalPromptIdentity = promptIdentity;
+    } else if (promptIdentity !== historicalPromptIdentity) {
+      return invalid(`${origin} does not share the first artifact's stale prompt identity`);
+    }
+
+    if (
+      parsed["parserVersion"] !== parserVersion ||
+      parsed["providerRouteIdentity"] !== routeIdentity ||
+      parsed["windowPolicyIdentity"] !== policyIdentity
+    ) return invalid(`${origin} does not match the current parser, route, and partition identities`);
+    if (parsed["windowId"] !== origin || parsed["windowNumber"] !== n) {
+      return invalid(`${origin} does not own its declared window id and ordinal`);
+    }
+
+    const blockIds = parsed["blockIds"];
+    // HISTORICAL_CENSUS_ORDERED_BLOCK_OWNERSHIP_GUARD: progress is counted only when the
+    // retained unit owns exactly the canonical current window, in exact document order.
+    if (
+      !Array.isArray(blockIds) ||
+      blockIds.length !== expectedBlockIds.length ||
+      blockIds.some((id, blockIndex) =>
+        typeof id !== "string" || id !== expectedBlockIds[blockIndex]
+      )
+    ) return invalid(`${origin} ordered source-block ownership is not canonical`);
+
+    const attempts = parsed["attempts"];
+    const usages = parsed["usages"];
+    if (
+      !Number.isSafeInteger(attempts) || (attempts as number) < 1 ||
+      !Array.isArray(usages) || !usages.every(isCallUsage)
+    ) return invalid(`${origin} attempts or paid receipts are malformed`);
+    const typedUsages = usages as CallUsage[];
+    const coherence = validatePassAUnitUsageCoherence(
+      typedUsages, runId, origin, attempts as number,
+    );
+    if (coherence !== null) return invalid(`${origin} ${coherence}`);
+
+    if (parsed["status"] === "failed") {
+      const fallbackTrigger = parsed["fallbackTrigger"] === null
+        ? null
+        : parseFallbackTrigger(parsed["fallbackTrigger"], typedUsages);
+      if (
+        typeof parsed["detail"] !== "string" || parsed["detail"].length === 0 ||
+        typeof parsed["terminal"] !== "boolean" ||
+        parsed["kind"] !== undefined ||
+        parsed["routeReceipt"] !== undefined || parsed["modelOutput"] !== undefined ||
+        parsed["globalRules"] !== undefined || parsed["crossRefs"] !== undefined ||
+        parsed["ambiguities"] !== undefined || parsed["unverifiable"] !== undefined ||
+        (parsed["fallbackTrigger"] !== null && fallbackTrigger === null)
+      ) return invalid(`${origin} failed-state envelope is malformed or carries success output`);
+
+      const failureStage = parsed["failureStage"];
+      if (
+        failureStage !== "fallback-authorized" &&
+        failureStage !== "provider" &&
+        failureStage !== "semantic-output"
+      ) return invalid(`${origin} failure stage is missing or invalid`);
+      if (
+        fallbackTrigger !== null &&
+        !typedUsages.some((usage) => usage.eventId === fallbackTrigger.grokUsageEventId)
+      ) return invalid(`${origin} fallback trigger is not bound to a retained receipt`);
+      const fallbackChainFailure = fallbackTrigger === null ? null : validatePassAFallbackUsageChain(
+        typedUsages,
+        runId,
+        origin,
+        attempts as number,
+        fallbackTrigger,
+        failureStage === "fallback-authorized" ? "pending" :
+          failureStage === "semantic-output" ? "semantic-failed" : "provider-failed",
+      );
+      if (
+        (failureStage === "provider" && fallbackTrigger === null && parsed["terminal"] !== true) ||
+        (fallbackTrigger === null && typedUsages.some((usage) => usage.provider === "deepseek")) ||
+        typedUsages.some((usage) => usage.status === "ok") ||
+        (failureStage === "semantic-output" &&
+          (parsed["terminal"] !== true || !typedUsages.some((usage) => usage.status === "parse-failed"))) ||
+        (failureStage === "fallback-authorized" &&
+          (parsed["terminal"] !== false || fallbackTrigger === null ||
+            typedUsages.some((usage) => usage.provider === "deepseek"))) ||
+        fallbackChainFailure !== null
+      ) return invalid(`${origin} failure state is inconsistent with its retained receipts`);
+      if (parsed["terminal"] !== true) {
+        return invalid(`${origin} is a non-terminal failure, so it is not an accounted unit`);
+      }
+
+      // Serial Pass A cannot legitimately persist a later canonical window after a terminal
+      // failure. Check only key presence; later bodies remain unread and have no authority.
+      for (let laterIndex = index + 1; laterIndex < windows.length; laterIndex += 1) {
+        const later = await env.EVIDENCE.get(windowKey(runId, laterIndex + 1));
+        if (later) {
+          return invalid(
+            `${origin} is terminal but a later canonical primary-window artifact is present`,
+          );
+        }
+      }
+
+      const accounted = n;
+      return {
+        kind: "ok",
+        value: {
+          total: windows.length,
+          accounted,
+          remaining: windows.length - accounted,
+          failedUnit: {
+            unit: origin,
+            blockIds: [...expectedBlockIds],
+            detail:
+              "A retained primary-window artifact records a terminal failure; semantic output was not reused.",
+          },
+          limitation: {
+            code: PASS_A_HISTORICAL_PROGRESS_CENSUS_LIMITATION_CODE,
+            count: 1,
+            detail:
+              "Primary-window progress was reconstructed from retained artifact metadata after the run. " +
+              "Stored model output was neither decoded nor reused, and this census grants no extraction or coverage authority.",
+          },
+        },
+      };
+    }
+
+    if (
+      parsed["kind"] !== "ok" ||
+      parsed["status"] !== undefined || parsed["detail"] !== undefined ||
+      parsed["failureStage"] !== undefined || parsed["terminal"] !== undefined ||
+      parsed["fallbackTrigger"] !== undefined ||
+      !Array.isArray(parsed["globalRules"]) || !Array.isArray(parsed["crossRefs"]) ||
+      !Array.isArray(parsed["ambiguities"]) || !Array.isArray(parsed["unverifiable"]) ||
+      typeof parsed["modelOutput"] !== "object" || parsed["modelOutput"] === null ||
+      Array.isArray(parsed["modelOutput"])
+    ) return invalid(`${origin} successful-state envelope is malformed`);
+    if (validatePassARouteReceiptForUnit(parsed["routeReceipt"], typedUsages, runId, origin) === null) {
+      return invalid(`${origin} successful route receipt is not bound to this window`);
+    }
+    // Do not inspect the typed arrays or modelOutput here. Their meaning belongs exclusively
+    // to the strict decoder; presence plus paid-unit coherence is enough to observe progress.
+  }
+
+  return invalid("the retained sequence contains no terminal failed primary window");
 }
 
 /**
