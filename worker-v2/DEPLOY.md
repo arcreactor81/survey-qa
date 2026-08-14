@@ -69,6 +69,28 @@ $Origin = "https://survey-qa-v2.wellshit.co.in"
 if (-not (Test-Path -LiteralPath $Node -PathType Leaf)) { throw "Pinned Node missing" }
 if ((& $Node --version).Trim() -ne "v24.18.0") { throw "Unexpected Node version" }
 if ((& $Node $Wrangler --version).Trim() -ne "4.106.0") { throw "Unexpected Wrangler version" }
+
+function Resolve-ExactRealDirectory([string] $Directory, [string] $Label) {
+  if ([string]::IsNullOrWhiteSpace($Directory)) { throw "$Label directory is required" }
+  $Item = Get-Item -LiteralPath $Directory -Force -ErrorAction Stop
+  if (-not $Item.PSIsContainer -or
+      ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw "$Label directory is not a real non-reparse directory"
+  }
+  $Lexical = [IO.Path]::GetFullPath($Item.FullName)
+  $RealOutput = @(& $Node -e 'const fs = require("node:fs"); process.stdout.write(fs.realpathSync.native(process.argv[1]));' $Lexical)
+  $NativeExit = $LASTEXITCODE
+  if ($NativeExit -ne 0 -or $RealOutput.Count -ne 1 -or
+      [string]::IsNullOrWhiteSpace([string] $RealOutput[0])) {
+    throw "$Label directory has no canonical real path"
+  }
+  $Real = [string] $RealOutput[0]
+  if (-not [string]::Equals($Real, $Lexical, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "$Label directory path is not canonical or traverses a link"
+  }
+  return $Real
+}
+
 $Dirty = @(& git -C $Repo status --porcelain=v1 --untracked-files=all)
 if ($LASTEXITCODE -ne 0 -or $Dirty.Count -ne 0) { throw "Release worktree is not clean" }
 
@@ -84,8 +106,15 @@ if ($ReleaseId -notmatch "^[A-Za-z0-9.-]{6,80}$") { throw "Invalid release id" }
 $Evidence = Join-Path $Repo (".local-private\v2-release-" + $ReleaseId)
 if (Test-Path -LiteralPath $Evidence) { throw "Choose a fresh evidence directory" }
 New-Item -ItemType Directory -Path $Evidence -ErrorAction Stop | Out-Null
+$OfflineTempCandidate = Join-Path $Evidence "offline-temp"
+if (Test-Path -LiteralPath $OfflineTempCandidate) { throw "Offline temp directory already exists" }
+New-Item -ItemType Directory -Path $OfflineTempCandidate -ErrorAction Stop | Out-Null
+$OfflineTemp = Resolve-ExactRealDirectory $OfflineTempCandidate "offline gate temp"
+$env:TEMP = $OfflineTemp
+$env:TMP = $OfflineTemp
+if ($env:TEMP -cne $OfflineTemp -or $env:TMP -cne $OfflineTemp) { throw "Offline temp environment changed" }
 [ordered]@{ releaseId=$ReleaseId; head=$Head; v2Tree=$V2Tree; configSha256=$ConfigHash;
-  lockSha256=$LockHash; node="v24.18.0"; wrangler="4.106.0" } |
+  lockSha256=$LockHash; offlineTemp=$OfflineTemp; node="v24.18.0"; wrangler="4.106.0" } |
   ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Evidence "frozen-identity.json") -Encoding utf8
 
 function Assert-Frozen {
@@ -94,6 +123,8 @@ function Assert-Frozen {
   if ((& git -C $Repo rev-parse HEAD).Trim() -ne $Head) { throw "HEAD changed after freeze" }
   if ((Get-FileHash -LiteralPath $Config -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ConfigHash) { throw "Config changed" }
   if ((Get-FileHash -LiteralPath $Lock -Algorithm SHA256).Hash.ToLowerInvariant() -ne $LockHash) { throw "Lockfile changed" }
+  if ((Resolve-ExactRealDirectory $OfflineTemp "offline gate temp") -cne $OfflineTemp) { throw "Offline temp identity changed" }
+  if ($env:TEMP -cne $OfflineTemp -or $env:TMP -cne $OfflineTemp) { throw "Offline temp environment changed" }
 }
 ~~~
 

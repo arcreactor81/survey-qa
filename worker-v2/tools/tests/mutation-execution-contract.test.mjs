@@ -413,6 +413,58 @@ const SEVERANCE_CALL =
 const SEVERANCE_CLOSE = ['once("cl', 'ose"'].join("");
 const SEVERANCE_WRITE = ["writeFileSync(", "\n    severedPath,"].join("");
 
+const OFFLINE_TEMP_RUNBOOK_TOKENS = Object.freeze([
+  "function Resolve-ExactRealDirectory([string] $Directory, [string] $Label)",
+  "Get-Item -LiteralPath $Directory -Force -ErrorAction Stop",
+  "($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0",
+  "realpathSync.native(process.argv[1])",
+  "[string]::Equals($Real, $Lexical, [System.StringComparison]::OrdinalIgnoreCase)",
+  '$OfflineTempCandidate = Join-Path $Evidence "offline-temp"',
+  'if (Test-Path -LiteralPath $OfflineTempCandidate) { throw "Offline temp directory already exists" }',
+  "New-Item -ItemType Directory -Path $OfflineTempCandidate -ErrorAction Stop",
+  '$OfflineTemp = Resolve-ExactRealDirectory $OfflineTempCandidate "offline gate temp"',
+  "$env:TEMP = $OfflineTemp",
+  "$env:TMP = $OfflineTemp",
+  'if ($env:TEMP -cne $OfflineTemp -or $env:TMP -cne $OfflineTemp) { throw "Offline temp environment changed" }',
+  "offlineTemp=$OfflineTemp;",
+  'Resolve-ExactRealDirectory $OfflineTemp "offline gate temp"',
+]);
+
+function auditOfflineTempRunbook(source) {
+  for (const token of OFFLINE_TEMP_RUNBOOK_TOKENS) {
+    if (!source.includes(token)) throw new Error(`offline temp runbook is missing ${token}`);
+  }
+
+  const orderedTokens = [
+    "New-Item -ItemType Directory -Path $Evidence -ErrorAction Stop",
+    "New-Item -ItemType Directory -Path $OfflineTempCandidate -ErrorAction Stop",
+    '$OfflineTemp = Resolve-ExactRealDirectory $OfflineTempCandidate "offline gate temp"',
+    "$env:TEMP = $OfflineTemp",
+    "$env:TMP = $OfflineTemp",
+    "offlineTemp=$OfflineTemp;",
+    "## 2. Offline gates",
+  ];
+  const positions = orderedTokens.map((token) => source.indexOf(token));
+  if (positions.some((position) => position < 0) || positions.some((position, index) => index > 0 && position <= positions[index - 1])) {
+    throw new Error("offline temp runbook ordering is invalid");
+  }
+
+  if ((source.match(/^\$env:TEMP = \$OfflineTemp$/gmu) ?? []).length !== 1 ||
+      (source.match(/^\$env:TMP = \$OfflineTemp$/gmu) ?? []).length !== 1) {
+    throw new Error("offline temp runbook must assign TEMP and TMP exactly once");
+  }
+
+  const assertStart = source.indexOf("function Assert-Frozen {");
+  const assertEnd = source.indexOf("\n}", assertStart);
+  const assertFrozen = assertStart >= 0 && assertEnd > assertStart
+    ? source.slice(assertStart, assertEnd)
+    : "";
+  if (!assertFrozen.includes('Resolve-ExactRealDirectory $OfflineTemp "offline gate temp"') ||
+      !assertFrozen.includes('$env:TEMP -cne $OfflineTemp -or $env:TMP -cne $OfflineTemp')) {
+    throw new Error("offline temp runbook is missing Assert-Frozen revalidation");
+  }
+}
+
 function auditRunbookExecution(source) {
   for (const token of RUNBOOK_EXECUTION_TOKENS) {
     if (!source.includes(token)) throw new Error(`runbook mutation execution is missing ${token}`);
@@ -1235,6 +1287,16 @@ suite("MUTATION EXECUTION CONTRACT — exact guards and closed release census", 
       ),
       /direct unwrapped/u,
     );
+  });
+
+  test("release runbook owns one fresh canonical offline TEMP and TMP directory", () => {
+    const deploy = readFileSync(DEPLOY_PATH, "utf8");
+    auditOfflineTempRunbook(deploy);
+    for (const token of OFFLINE_TEMP_RUNBOOK_TOKENS) {
+      const mutant = deploy.replaceAll(token, "");
+      assert(mutant !== deploy, `runbook fixture is missing offline temp token ${token}`);
+      expectThrow(() => auditOfflineTempRunbook(mutant), /offline temp|missing/u);
+    }
   });
 
   test("DEPLOY canonical watchdog types reject string booleans and decimal numbers", () => {

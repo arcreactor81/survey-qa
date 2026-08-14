@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -19,7 +19,7 @@ const SELECTORS = [
 ];
 
 function fixture(t) {
-  const root = mkdtempSync(path.join(tmpdir(), "canary-source-snapshot-"));
+  const root = mkdtempSync(path.join(realpathSync.native(tmpdir()), "canary-source-snapshot-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const files = {
     "package.json": "{\"name\":\"fixture\"}\n",

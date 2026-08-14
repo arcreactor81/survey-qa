@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -62,7 +62,7 @@ const TWO_MODULE_POLICY = Object.freeze({
 });
 
 function fixture(t) {
-  const root = mkdtempSync(path.join(tmpdir(), "canary-bundle-inputs-"));
+  const root = mkdtempSync(path.join(realpathSync.native(tmpdir()), "canary-bundle-inputs-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const files = {
     "package.json": "{\"name\":\"fixture\"}\n",
