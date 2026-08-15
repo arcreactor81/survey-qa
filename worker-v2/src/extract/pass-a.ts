@@ -2453,9 +2453,24 @@ export async function runPassA(
           // Replace the failed artifact with a degraded success artifact that carries the
           // salvaged items plus limitations. The failed artifact already persisted above is
           // overwritten by a success artifact here.
+          //
+          // The usages were reclassified to "parse-failed" when strict validation threw.
+          // Degradation salvaged valid items, so the last purchased usage's status must be
+          // restored to "ok" — the route receipt validator requires exactly one "ok" usage.
+          const degradedUsages = [...priorUsages, ...purchasedUsages];
+          if (degradedUsages.length > 0) {
+            const last = degradedUsages[degradedUsages.length - 1]!;
+            if (last.status === "parse-failed") {
+              degradedUsages[degradedUsages.length - 1] = {
+                ...last,
+                status: "ok" as const,
+                detail: `degraded: ${degraded.degradedItemCount} of ${degraded.totalItemCount} items excluded`,
+              };
+            }
+          }
           const degradedWindow: PersistedWindow = {
             ...degraded.unit,
-            usages: [...priorUsages, ...purchasedUsages],
+            usages: degradedUsages,
             routeReceipt: passAPrimary === "gemini"
               ? { selected: "gemini-2.5-flash" as const, trigger: null }
               : { selected: "grok-4.6" as const, trigger: fallbackTrigger },
@@ -2470,12 +2485,32 @@ export async function runPassA(
               providerRouteIdentity,
               windowPolicyIdentity: windowPolicyIdentity(env),
               attempts: issue,
-              modelOutput: rawModelOutput,
+              // The synthetic modelOutput contains only raw rows that passed per-item strict
+              // structural validation. This ensures readWindowArtifact's strict reader accepts
+              // the persisted form without any degraded fallback. Grounding-excluded rows are
+              // still present here; the grounding filter runs independently on re-read.
+              modelOutput: degraded.strictPassingModelOutput,
+              // The ORIGINAL raw model output is retained for audit and raw-retention assertions.
+              // readWindowArtifact ignores this field — it reads only modelOutput.
+              rawModelOutputPreDegradation: rawModelOutput,
               ...degradedWindow,
             },
             null,
             2,
           );
+          // The failed artifact was just persisted at the same key. Read its current storage
+          // authority so the degraded artifact can CAS-replace it, not the original predecessor.
+          let degradedPredecessor: PassAWindowStorageAuthority | null = null;
+          {
+            const currentObj = await env.EVIDENCE.get(windowKey(runId, n));
+            if (currentObj) {
+              try {
+                degradedPredecessor = { etag: currentObj.etag, bodyText: await currentObj.text() };
+              } catch {
+                // If the just-persisted failed artifact is unreadable, fall through to terminal
+              }
+            }
+          }
           try {
             const retained = await persistPrimaryWindowArtifact(
               env,
@@ -2484,7 +2519,7 @@ export async function runPassA(
               w,
               parserVersion,
               origin,
-              predecessorAuthority,
+              degradedPredecessor,
               degradedArtifact,
               (artifact) => artifact.kind === "ok",
             );
@@ -3230,6 +3265,14 @@ export function degradedPrimaryOutput(
   limitations: PassAPrimaryGroundingLimitationWire[];
   degradedItemCount: number;
   totalItemCount: number;
+  /**
+   * Synthetic model output containing ONLY the raw rows that passed per-item strict
+   * structural validation. This is the form that must be persisted as `modelOutput` so
+   * that the strict reader on re-read accepts the artifact without any degraded fallback.
+   * Rows excluded by grounding (not structural) failure are INCLUDED here — the grounding
+   * filter runs independently on re-read and produces the same limitations.
+   */
+  strictPassingModelOutput: Record<string, unknown>;
 } | null {
   // Verify the raw output has the expected top-level arrays
   const globalRows = rawModelOutput["global_rules"];
@@ -3250,6 +3293,12 @@ export function degradedPrimaryOutput(
 
   let totalItemCount = 0;
   let degradedItemCount = 0;
+
+  // Raw rows that passed per-item strict structural validation (for synthetic modelOutput)
+  const strictPassingGlobalRules: unknown[] = [];
+  const strictPassingXrefs: unknown[] = [];
+  const strictPassingAmbiguities: unknown[] = [];
+  const strictPassingUnverifiable: unknown[] = [];
 
   // Try each global rule individually
   const globalRules: RawRequirement[] = [];
@@ -3276,6 +3325,7 @@ export function degradedPrimaryOutput(
         unverifiable_from_browser: [],
       };
       const strict = strictPrimaryOutput(singleOutput, origin);
+      strictPassingGlobalRules.push(row);
       const windowUnit: PersistedWindow = {
         kind: "ok", ...strict,
         primaryGroundingLimitations: [], usages: [],
@@ -3326,6 +3376,7 @@ export function degradedPrimaryOutput(
         unverifiable_from_browser: [],
       };
       const strict = strictPrimaryOutput(singleOutput, origin);
+      strictPassingXrefs.push(row);
       const windowUnit: PersistedWindow = {
         kind: "ok", ...strict,
         primaryGroundingLimitations: [], usages: [],
@@ -3377,6 +3428,7 @@ export function degradedPrimaryOutput(
         unverifiable_from_browser: [],
       };
       const strict = strictPrimaryOutput(singleOutput, origin);
+      strictPassingAmbiguities.push(row);
       const windowUnit: PersistedWindow = {
         kind: "ok", ...strict,
         primaryGroundingLimitations: [], usages: [],
@@ -3427,6 +3479,7 @@ export function degradedPrimaryOutput(
         unverifiable_from_browser: [row],
       };
       const strict = strictPrimaryOutput(singleOutput, origin);
+      strictPassingUnverifiable.push(row);
       const windowUnit: PersistedWindow = {
         kind: "ok", ...strict,
         primaryGroundingLimitations: [], usages: [],
@@ -3476,6 +3529,12 @@ export function degradedPrimaryOutput(
     limitations: validatedLimitations,
     degradedItemCount,
     totalItemCount,
+    strictPassingModelOutput: {
+      global_rules: strictPassingGlobalRules,
+      cross_references: strictPassingXrefs,
+      ambiguities: strictPassingAmbiguities,
+      unverifiable_from_browser: strictPassingUnverifiable,
+    },
   };
 }
 
@@ -3725,32 +3784,20 @@ async function readWindowArtifact(
     if (typeof modelOutput !== 'object' || modelOutput === null || Array.isArray(modelOutput)) {
       return invalid('successful artifact has no raw modelOutput authority', parsed);
     }
-    // Try the strict path first; if it throws, fall back to degraded item-level re-decode.
-    let decoded: PersistedWindow;
-    try {
-      const strict = strictPrimaryOutput(modelOutput as Record<string, unknown>, origin);
-      decoded = inspectPrimaryWindowGrounding({
-        kind: "ok",
-        ...strict,
-        primaryGroundingLimitations: [],
-        usages: usages as CallUsage[],
-        routeReceipt,
-      }, expectedBlocks, origin).unit;
-    } catch {
-      // The raw model output fails strict whole-window decode. Try degraded per-item decode
-      // which is the path a retry-exhausted window uses to salvage individually valid items.
-      const degraded = degradedPrimaryOutput(
-        modelOutput as Record<string, unknown>, expectedBlocks, origin,
-      );
-      if (degraded === null) {
-        return invalid('raw modelOutput is not decodable even per-item', parsed);
-      }
-      decoded = {
-        ...degraded.unit,
-        usages: usages as CallUsage[],
-        routeReceipt,
-      };
-    }
+    // STRICT-ONLY re-decode: a stored artifact is integrity-bound evidence. If the strict
+    // reader throws, the artifact is corrupt or was mutated after the fact — the only honest
+    // response is terminal invalid authority. Degraded item-level salvage is allowed at
+    // exactly ONE point: when FRESH model output (just returned by a provider, retries
+    // exhausted) fails validation, before the window artifact is first persisted. Once
+    // persisted (whether strict or degraded), the stored artifact must re-read strictly.
+    const strict = strictPrimaryOutput(modelOutput as Record<string, unknown>, origin);
+    const decoded = inspectPrimaryWindowGrounding({
+      kind: "ok",
+      ...strict,
+      primaryGroundingLimitations: [],
+      usages: usages as CallUsage[],
+      routeReceipt,
+    }, expectedBlocks, origin).unit;
     const storedLimitations = validatePassAPrimaryGroundingLimitations(
       parsed["primaryGroundingLimitations"],
     );

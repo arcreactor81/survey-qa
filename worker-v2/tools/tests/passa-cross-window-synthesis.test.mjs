@@ -1343,42 +1343,81 @@ test("completed authority names the exact strict-schema failure and unread remai
     { length: 11 },
     (_, index) => `Neutral questionnaire source block ${index + 1}.`,
   );
-  const doc = documentFor(texts);
-  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1" });
-  const runId = "run_primary_failed_unit_visibility";
-  const provider = installProvider(({ unit }) => {
-    if (unit !== "A-w3") return { value: emptyPrimary() };
-    const value = emptyPrimary();
-    delete value.global_rules;
-    return { value };
-  });
-  try {
-    const stopped = await m.passA.runPassA(env, runId, doc, "neutral.docx");
-    assertEq(stopped.slice.terminalFailure, true);
-    assertEq(stopped.failedUnits[0].unit, "A-w3");
-    assertEq(stopped.slice.windowsLanded, 3);
-    assertEq(stopped.slice.windowsRemaining, 8);
 
-    provider.reset();
-    const reconstructed = await m.passA.reconstructPassACompletedAuthority(
-      env, runId, doc, "neutral.docx",
-    );
-    assertEq(provider.calls.length, 0, "read-only reconstruction never re-buys the failed unit");
-    assertEq(reconstructed.kind, "invalid");
-    assertEq(reconstructed.failedUnit.unit, "A-w3");
-    assertEq(reconstructed.failedUnit.blockIds.length, 1);
-    assertEq(reconstructed.failedUnit.blockIds[0], "b0003");
-    assert(reconstructed.failedUnit.detail.includes("root keys are not closed"));
-    assertEq(reconstructed.slice.windowsTotal, 11);
-    assertEq(reconstructed.slice.windowsLanded, 3);
-    assertEq(reconstructed.slice.windowsRemaining, 8);
-  } finally {
-    provider.restore();
+  // CASE A: partial missing array — some arrays exist, so degradation salvages (zero items)
+  // and the tail continues across waves. The degraded window lands, no terminal failure.
+  {
+    const doc = documentFor(texts);
+    const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1" });
+    const runId = "run_primary_failed_unit_visibility_degraded";
+    const provider = installProvider(({ unit }) => {
+      if (unit === "A-synthesis") return { value: emptySynthesis() };
+      if (unit !== "A-w3") return { value: emptyPrimary() };
+      const value = emptyPrimary();
+      delete value.global_rules;
+      return { value };
+    });
+    try {
+      // First wave: processes windows until degradation, then breaks out for the next wave
+      let result = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+      assertEq(result.slice.terminalFailure, false, "partial-missing degrades, never terminally fails");
+      assertEq(result.failedUnits.length, 0, "no failed units when degradation salvages");
+      assertEq(provider.count("A-w3"), 1, "exactly one purchase for the degraded window");
+      // Continue until all windows land (the wave architecture defers remaining after degradation)
+      for (let wave = 2; wave <= 20 && !result.slice.done; wave++) {
+        result = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+        assertEq(result.slice.terminalFailure, false, "no terminal failure in subsequent waves");
+      }
+      assertEq(result.slice.done, true, "pass completes after sufficient waves");
+      assertEq(result.slice.windowsLanded, 11, "all windows land including the degraded one");
+      assertEq(result.slice.windowsRemaining, 0);
+      assertEq(result.requirements.length, 0, "no items from any window (all return empty)");
+    } finally {
+      provider.restore();
+    }
+  }
+
+  // CASE B: ALL arrays missing — degradedPrimaryOutput returns null, so the original
+  // terminal failure fires. This case must name the schema failure and the unread remainder.
+  {
+    const doc = documentFor(texts);
+    const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1" });
+    const runId = "run_primary_failed_unit_visibility_terminal";
+    const provider = installProvider(({ unit }) => {
+      if (unit !== "A-w3") return { value: emptyPrimary() };
+      // Delete ALL four required arrays so degradedPrimaryOutput returns null
+      return { value: {} };
+    });
+    try {
+      const stopped = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+      assertEq(stopped.slice.terminalFailure, true);
+      assertEq(stopped.failedUnits[0].unit, "A-w3");
+      assertEq(stopped.slice.windowsLanded, 3);
+      assertEq(stopped.slice.windowsRemaining, 8);
+
+      provider.reset();
+      const reconstructed = await m.passA.reconstructPassACompletedAuthority(
+        env, runId, doc, "neutral.docx",
+      );
+      assertEq(provider.calls.length, 0, "read-only reconstruction never re-buys the failed unit");
+      assertEq(reconstructed.kind, "invalid");
+      assertEq(reconstructed.failedUnit.unit, "A-w3");
+      assertEq(reconstructed.failedUnit.blockIds.length, 1);
+      assertEq(reconstructed.failedUnit.blockIds[0], "b0003");
+      assert(reconstructed.failedUnit.detail.includes("root keys are not closed"));
+      assertEq(reconstructed.slice.windowsTotal, 11);
+      assertEq(reconstructed.slice.windowsLanded, 3);
+      assertEq(reconstructed.slice.windowsRemaining, 8);
+    } finally {
+      provider.restore();
+    }
   }
 });
 
 test("strictly malformed primary schemas terminalize without a second purchase", async () => {
-  const cases = [
+  // Cases where individual items fail strict validation: degradation excludes those items,
+  // lands the window, and counts each exclusion as a named limitation. No second purchase.
+  const degradedCases = [
     {
       name: "missing required root array",
       output: () => {
@@ -1386,14 +1425,15 @@ test("strictly malformed primary schemas terminalize without a second purchase",
         delete value.global_rules;
         return value;
       },
-      expected: "root keys are not closed",
+      // No per-item limitations because the absent array has no items to exclude.
+      expectedLimitationCount: 0,
     },
     {
       name: "unknown silently ignored rule field",
       output: () => ({
         ...emptyPrimary(), global_rules: [{ ...rule("EXTRA", "b0001", TEXT.b0001), applies_to: "all" }],
       }),
-      expected: "global rule keys are not closed",
+      expectedLimitationCount: 1,
     },
     {
       name: "target quote key is missing entirely",
@@ -1408,7 +1448,7 @@ test("strictly malformed primary schemas terminalize without a second purchase",
         delete value.cross_references[0].target_doc_quote;
         return value;
       },
-      expected: "cross-reference keys are not closed",
+      expectedLimitationCount: 1,
     },
     {
       name: "block_ids is not an array",
@@ -1416,7 +1456,7 @@ test("strictly malformed primary schemas terminalize without a second purchase",
         ...emptyPrimary(),
         global_rules: [{ ...rule("BAD-ID-ARRAY", "b0001", TEXT.b0001), block_ids: "b0001" }],
       }),
-      expected: "global rule.block_ids must be an array",
+      expectedLimitationCount: 1,
     },
     {
       name: "block_ids contains a non-string member",
@@ -1427,26 +1467,61 @@ test("strictly malformed primary schemas terminalize without a second purchase",
           block_ids: ["b0001", 2],
         }],
       }),
-      expected: "ambiguity.block_ids members must be non-empty strings",
+      expectedLimitationCount: 1,
     },
   ];
   const m = await mod();
-  for (const [index, fixture] of cases.entries()) {
+  for (const [index, fixture] of degradedCases.entries()) {
     const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
     const doc = documentFor();
     const provider = installProvider(() => ({ value: fixture.output() }));
     try {
-      const failed = await m.passA.runPassA(env, `run_strict_primary_${index}`, doc, "neutral.docx");
-      assertEq(failed.slice.terminalFailure, true, fixture.name);
-      assertEq(provider.calls.length, 1, fixture.name);
-      assert(
-        failed.failedUnits.some((row) => row.detail.includes(fixture.expected)),
-        `${fixture.name}: ${JSON.stringify(failed.failedUnits)}`,
+      const result = await m.passA.runPassA(env, `run_strict_primary_${index}`, doc, "neutral.docx");
+      assertEq(result.slice.terminalFailure, false, `${fixture.name}: degradation lands the window`);
+      assertEq(provider.calls.length, 1, `${fixture.name}: exactly one purchase, zero further purchases during salvage`);
+      assertEq(result.failedUnits.length, 0, `${fixture.name}: degraded window is not a failed unit`);
+      assertEq(result.slice.done, true, `${fixture.name}: window lands and pass completes`);
+      assertEq(
+        result.primaryGroundingLimitations.length,
+        fixture.expectedLimitationCount,
+        `${fixture.name}: each excluded item is a named limitation`,
       );
+      if (fixture.expectedLimitationCount > 0) {
+        assert(
+          result.primaryGroundingLimitations.every(
+            (row) => row.reason === "structural-validation-failed",
+          ),
+          `${fixture.name}: every limitation names the exact structural reason`,
+        );
+      }
+      // Reentry reclaims the degraded artifact at zero cost
       provider.reset();
       const reclaimed = await m.passA.runPassA(env, `run_strict_primary_${index}`, doc, "neutral.docx");
-      assertEq(provider.calls.length, 0, `${fixture.name}: semantic rejection is durable terminal authority`);
-      assertEq(reclaimed.slice.terminalFailure, true, fixture.name);
+      assertEq(provider.calls.length, 0, `${fixture.name}: degraded artifact is durable — reclaimed, not re-bought`);
+      assertEq(reclaimed.slice.done, true, fixture.name);
+    } finally {
+      provider.restore();
+    }
+  }
+
+  // TERMINAL CASE: when the ENTIRE output is unusable (all root arrays missing),
+  // degradedPrimaryOutput returns null and the original terminal failure fires.
+  {
+    const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
+    const doc = documentFor();
+    const provider = installProvider(() => ({ value: {} }));
+    try {
+      const failed = await m.passA.runPassA(env, "run_strict_primary_terminal", doc, "neutral.docx");
+      assertEq(failed.slice.terminalFailure, true, "fully unusable output is terminal");
+      assertEq(provider.calls.length, 1, "exactly one purchase");
+      assert(
+        failed.failedUnits.some((row) => row.detail.includes("root keys are not closed")),
+        "terminal failure names the schema error: " + JSON.stringify(failed.failedUnits),
+      );
+      provider.reset();
+      const reclaimed = await m.passA.runPassA(env, "run_strict_primary_terminal", doc, "neutral.docx");
+      assertEq(provider.calls.length, 0, "terminal semantic rejection is durable authority");
+      assertEq(reclaimed.slice.terminalFailure, true);
     } finally {
       provider.restore();
     }
@@ -1455,57 +1530,115 @@ test("strictly malformed primary schemas terminalize without a second purchase",
 
 test("strict semantic failure retains exact raw output and corrupt authority is never retried", async () => {
   const m = await mod();
-  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1" });
-  const doc = documentFor();
-  const runId = "run_primary_strict_failure_raw_authority";
-  const rawOutput = emptyPrimary();
-  delete rawOutput.global_rules;
-  const provider = installProvider(({ unit }) => (
-    unit === "A-w1" ? { value: rawOutput } : { value: emptyPrimary() }
-  ));
-  try {
-    const stopped = await m.passA.runPassA(env, runId, doc, "neutral.docx");
-    assertEq(stopped.slice.terminalFailure, true);
-    assertEq(provider.count("A-w1"), 1);
-    assertEq(provider.count("A-w2"), 0, "strict semantic failure stops the unread tail");
-    assertEq(provider.count("A-synthesis"), 0);
-    const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
-    const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
-    assertEq(artifact.status, "failed");
-    assertEq(artifact.failureStage, "semantic-output");
-    assertEq(artifact.terminal, true);
-    assertEq(
-      JSON.stringify(artifact.modelOutput),
-      JSON.stringify(rawOutput),
-      "the exact paid parsed output remains durable failure evidence",
-    );
-    assertEq(artifact.usages.at(-1).status, "parse-failed");
 
-    provider.reset();
-    const reclaimed = await m.passA.runPassA(env, runId, doc, "neutral.docx");
-    assertEq(provider.calls.length, 0, "a retained strict semantic failure is never re-bought");
-    assertEq(reclaimed.slice.terminalFailure, true);
-
-    for (const [name, mutate] of [
-      ["deleted raw output", (row) => { delete row.modelOutput; }],
-      ["raw output changed to valid", (row) => { row.modelOutput = emptyPrimary(); }],
-    ]) {
-      const corruptedArtifact = structuredClone(artifact);
-      mutate(corruptedArtifact);
-      const corrupted = JSON.stringify(corruptedArtifact);
-      await env.EVIDENCE.put(key, corrupted);
-      provider.reset();
-      const refused = await m.passA.runPassA(env, runId, doc, "neutral.docx");
-      assertEq(provider.calls.length, 0, name + " must remain terminal authority, not a cache miss");
-      assertEq(refused.slice.terminalFailure, true, name);
-      assert(
-        refused.failedUnits.some((row) => row.detail.includes("PASS_A_WINDOW_ARTIFACT_INVALID")),
-        name + " was accepted as a valid semantic failure: " + JSON.stringify(refused.failedUnits),
+  // PART 1: degraded landing retains the exact raw output for audit.
+  // When a partial-missing output degrades, the ORIGINAL raw model output is retained in
+  // the artifact's rawModelOutputPreDegradation field.
+  {
+    const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
+    const doc = documentFor();
+    const runId = "run_primary_degraded_raw_retention";
+    const rawOutput = emptyPrimary();
+    delete rawOutput.global_rules;
+    const provider = installProvider(() => ({ value: rawOutput }));
+    try {
+      // All blocks in one window, so degradation lands the entire pass in one wave
+      const result = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+      assertEq(result.slice.terminalFailure, false, "partial-missing degrades, not terminal");
+      assertEq(result.slice.done, true);
+      assertEq(provider.calls.length, 1, "exactly one purchase, zero further purchases during salvage");
+      const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+      const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
+      assertEq(artifact.kind, "ok", "degraded window persists as success shape");
+      assertEq(
+        JSON.stringify(artifact.rawModelOutputPreDegradation),
+        JSON.stringify(rawOutput),
+        "the exact paid parsed output is retained under rawModelOutputPreDegradation",
       );
-      assertEq(await (await env.EVIDENCE.get(key)).text(), corrupted, name + " was overwritten");
+      // The modelOutput field contains the synthetic strict-passing form (not the raw output)
+      assert(
+        artifact.modelOutput !== undefined && artifact.modelOutput !== null,
+        "modelOutput is present for strict re-read",
+      );
+
+      provider.reset();
+      const reclaimed = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+      assertEq(provider.calls.length, 0, "degraded artifact is reclaimed, not re-bought");
+      assertEq(reclaimed.slice.done, true);
+    } finally {
+      provider.restore();
     }
-  } finally {
-    provider.restore();
+  }
+
+  // PART 2: fully-unusable output (terminal failure) retains raw output in the failed artifact.
+  {
+    const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1" });
+    const doc = documentFor();
+    const runId = "run_primary_terminal_raw_retention";
+    // All arrays missing — degradedPrimaryOutput returns null -> terminal failure
+    const rawOutput = {};
+    const provider = installProvider(({ unit }) => (
+      unit === "A-w1" ? { value: rawOutput } : { value: emptyPrimary() }
+    ));
+    try {
+      const stopped = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+      assertEq(stopped.slice.terminalFailure, true);
+      assertEq(provider.count("A-w1"), 1);
+      assertEq(provider.count("A-w2"), 0, "terminal failure stops the unread tail");
+      const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+      const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
+      assertEq(artifact.status, "failed");
+      assertEq(artifact.failureStage, "semantic-output");
+      assertEq(artifact.terminal, true);
+      assertEq(artifact.usages.at(-1).status, "parse-failed");
+      assertEq(
+        JSON.stringify(artifact.modelOutput),
+        JSON.stringify(rawOutput),
+        "the exact paid parsed output remains durable failure evidence even when fully unusable",
+      );
+    } finally {
+      provider.restore();
+    }
+  }
+
+  // PART 3: corrupt stored authority is never retried (unchanged property).
+  // A stored FAILED artifact whose modelOutput is deleted or changed to valid remains
+  // terminal authority with zero new purchases.
+  {
+    const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1" });
+    const doc = documentFor();
+    const runId = "run_primary_corrupt_authority_never_retried";
+    const rawOutput = {};
+    const provider = installProvider(({ unit }) => (
+      unit === "A-w1" ? { value: rawOutput } : { value: emptyPrimary() }
+    ));
+    try {
+      const stopped = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+      assertEq(stopped.slice.terminalFailure, true);
+      const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
+      const artifact = JSON.parse(await (await env.EVIDENCE.get(key)).text());
+
+      for (const [name, mutate] of [
+        ["deleted raw output", (row) => { delete row.modelOutput; }],
+        ["raw output changed to valid", (row) => { row.modelOutput = emptyPrimary(); }],
+      ]) {
+        const corruptedArtifact = structuredClone(artifact);
+        mutate(corruptedArtifact);
+        const corrupted = JSON.stringify(corruptedArtifact);
+        await env.EVIDENCE.put(key, corrupted);
+        provider.reset();
+        const refused = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+        assertEq(provider.calls.length, 0, name + " must remain terminal authority, not a cache miss");
+        assertEq(refused.slice.terminalFailure, true, name);
+        assert(
+          refused.failedUnits.some((row) => row.detail.includes("PASS_A_WINDOW_ARTIFACT_INVALID")),
+          name + " was accepted as a valid semantic failure: " + JSON.stringify(refused.failedUnits),
+        );
+        assertEq(await (await env.EVIDENCE.get(key)).text(), corrupted, name + " was overwritten");
+      }
+    } finally {
+      provider.restore();
+    }
   }
 });
 
@@ -1984,7 +2117,6 @@ test("strictly malformed primary evidence fails loudly before synthesis", async 
           affects: [],
         }],
       }),
-      expected: "evidence_quote keys are not closed",
     },
   ];
   const m = await mod();
@@ -1995,17 +2127,33 @@ test("strictly malformed primary evidence fails loudly before synthesis", async 
       return { value: emptyPrimary() };
     });
     try {
-      const failed = await m.passA.runPassA(
+      const result = await m.passA.runPassA(
         env, `run_primary_grounding_${index}`, fixture.doc, "neutral.docx",
       );
-      assertEq(failed.slice.terminalFailure, true, fixture.name);
-      assertEq(provider.count("A-synthesis"), 0, `${fixture.name}: no synthesis follows invalid input`);
+      // The malformed item is excluded via degradation before synthesis sees it.
+      assertEq(result.slice.terminalFailure, false, `${fixture.name}: degradation lands the window`);
+      assertEq(result.failedUnits.length, 0, `${fixture.name}: degraded window is not a failed unit`);
+      // The excluded item is counted as a structural-validation-failed limitation.
       assert(
-        failed.failedUnits.some((row) =>
-          row.detail.includes("PASS_A_WINDOW_OUTPUT_") &&
-          row.detail.includes(fixture.expected)),
-        `${fixture.name}: ${JSON.stringify(failed.failedUnits)}`,
+        result.primaryGroundingLimitations.length > 0,
+        `${fixture.name}: malformed item must produce a named limitation`,
       );
+      assert(
+        result.primaryGroundingLimitations.some(
+          (row) => row.reason === "structural-validation-failed",
+        ),
+        `${fixture.name}: the limitation names the exact structural reason`,
+      );
+      // The malformed ambiguity must NOT reach the result — it was excluded before synthesis.
+      assertEq(result.ambiguities.length, 0, `${fixture.name}: excluded item never reaches output`);
+      // If synthesis ran, it never saw the excluded item.
+      if (provider.count("A-synthesis") > 0) {
+        const synthesisCall = provider.calls.find((call) => call.unit === "A-synthesis");
+        assert(
+          !synthesisCall.user.includes("AMB-REPEATED"),
+          `${fixture.name}: the excluded ambiguity must not reach synthesis input`,
+        );
+      }
     } finally {
       provider.restore();
     }
