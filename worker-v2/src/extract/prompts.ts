@@ -29,7 +29,11 @@ import { CONSTRUCT_CLASSES } from "./types";
 // without it, the reader must leave the reference unresolved rather than guess.
 // 1.8.0 replaces the lossy one-line display surface with lossless source-block JSONL. The
 // decoded `text` field is now code-unit-for-code-unit the string exact-evidence validation receives.
-export const PROMPT_VERSION_A = "v2-extract-pass-a/1.8.0";
+// 1.9.0 makes the closed construct vocabulary explicit and imperative in the prompt text.
+// Gemini systematically invented plausible construct names outside the closed set ("ordering",
+// "presentation"), causing semantic-output failures. The eleven allowed values are now
+// enumerated with a statement that any other value invalidates the item.
+export const PROMPT_VERSION_A = "v2-extract-pass-a/1.9.0";
 // v2-extract-pass-b/1.2.0 — This constant is also the version gate
 // on every persisted pass-B artifact (chunks, sweeps, the whole-pass payload), so it covers
 // what pass B COMPUTES from a parse, not just the words it sends: 1.2.0 restricts the
@@ -150,12 +154,18 @@ list, its own skip). That is the other pass's job and duplicating it wastes the 
 If a global rule has explicit exceptions, the exceptions belong in "exceptions", not in a
 separate item.
 
+CLOSED CONSTRUCT VOCABULARY
+The "construct" field must be exactly one of these values — no others are valid:
+${CONSTRUCT_CLASSES.map((c) => `  - "${c}"`).join("\n")}
+Any item whose "construct" value is not in this list is invalid and will be discarded.
+Do not invent construct names. If a rule does not fit any listed construct, use "instruction".
+
 SCHEMA
 {
   "global_rules": [
     {
       "id": "GLOB-01",
-      "construct": "instruction|validation|skip-rule|terminate|randomization|piping|carry-forward|calculation|loop|option-list|question",
+      "construct": "${CONSTRUCT_CLASSES.join("|")}",
       "scope": "survey" | "section:<name>",
       "quantifier": "every|each|only|any|none|specific",
       "selector": "<population the rule ranges over>" | null,
@@ -234,11 +244,13 @@ be copied character-for-character from that block's source text. For a global ru
 must equal one of those exact evidence quotes. Runtime rejects the row if any id is absent,
 any quote is inexact, or all ids belong to one window.
 
+The "construct" field must be exactly one of: ${CONSTRUCT_CLASSES.join(", ")}. No other value is valid.
+
 Return one JSON object:
 {
   "global_rules": [{
     "id": "SYN-GLOB-01",
-    "construct": "instruction|validation|skip-rule|terminate|randomization|piping|carry-forward|calculation|loop|option-list|question",
+    "construct": "${CONSTRUCT_CLASSES.join("|")}",
     "scope": "survey|section:<name>",
     "quantifier": "every|each|only|any|none|specific",
     "selector": "<population>" | null,

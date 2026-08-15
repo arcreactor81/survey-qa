@@ -2382,8 +2382,23 @@ export async function runPassA(
       const attempts = issue;
       const nonRetryablePrimaryFailure =
         fallbackTrigger === null && err instanceof ModelCallError && !grokFlashFallbackEligible(err);
+      // BUDGET-MODE FAILURE LADDER (fix: 15 Aug 2026):
+      // Before this change, `!(err instanceof ModelCallError)` made EVERY semantic-output
+      // error unconditionally terminal on the FIRST attempt — even though the retry-counting
+      // logic at line ~2440 incremented `remaining`. The persisted `terminal: true` won
+      // because the next wave checked it before the attempt ceiling. In budget mode
+      // (gemini-primary), this killed the run after exactly one $0.005 call.
+      //
+      // The ladder is now provider-neutral and identical in grok-mode and budget-mode:
+      //   (a) retry the window on the SAME provider up to maxIssues;
+      //   (b) at retry exhaustion with a semantic-output failure + retained raw output
+      //       → item-level degradation (exclude invalid items, land the window);
+      //   (c) transport-class typed failures → DeepSeek Flash last resort;
+      //   (d) fully-unusable output after retries (degradedPrimaryOutput returns null)
+      //       → terminal.
+      // The MODE changes WHO reads; the ladder is the same.
       const durableTerminal =
-        !(err instanceof ModelCallError) || nonRetryablePrimaryFailure || attempts >= maxIssues;
+        nonRetryablePrimaryFailure || attempts >= maxIssues;
       // A failed window is an artifact too, so its re-purchases are bounded the same way a
       // successful one's are cached rather than being re-bought once per wave.
       const failedArtifact = JSON.stringify(

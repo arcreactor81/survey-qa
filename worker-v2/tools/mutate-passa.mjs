@@ -297,10 +297,10 @@ await runMutantSuite({
       file: PASS_A,
       find:
         "const durableTerminal =\n" +
-        "        !(err instanceof ModelCallError) || nonRetryablePrimaryFailure || attempts >= maxIssues;",
+        "        nonRetryablePrimaryFailure || attempts >= maxIssues;",
       replace:
         "const durableTerminal =\n" +
-        "        !(err instanceof ModelCallError) || attempts >= maxIssues;",
+        "        attempts >= maxIssues;",
       kills: ["a retained nonretryable Pass-A failure is never re-bought after the stage boundary"],
     },
     {
