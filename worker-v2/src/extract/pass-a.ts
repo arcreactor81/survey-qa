@@ -1688,7 +1688,17 @@ export async function runPassA(
     const pendingSubstitute = existing && existing.kind === "failed" &&
       existing.fallbackTrigger !== null &&
       !existing.usages.some((usage) => usage.provider === "deepseek" || usage.provider === "gemini");
-    if (existing && existing.kind === "failed" && existing.attempts >= maxIssues && !pendingSubstitute) {
+    // SLICE TERMINALITY DERIVES FROM DURABLE WINDOW TERMINALITY (fix: 15 Aug 2026).
+    // Before this change, the attempts-exhausted gate checked only `existing.attempts >=
+    // maxIssues`, independently of `existing.terminal`. When the durableTerminal formula
+    // was corrected (bdfd068) so the ARTIFACT carries `terminal: false` for first-attempt
+    // semantic failures, this reclaim gate still short-circuited to terminalFailure = true
+    // on re-entry if some edge moved `attempts` to the ceiling without setting `terminal`.
+    // Now: if the persisted artifact says non-terminal, the window is re-issued so the
+    // catch block's durableTerminal / degradation logic handles it with full context.
+    // The check `existing.terminal` is already caught by the preceding block (line ~1667);
+    // this guard fires only when attempts are exhausted AND the artifact durably agrees.
+    if (existing && existing.kind === "failed" && existing.attempts >= maxIssues && !pendingSubstitute && existing.terminal) {
       landed += 1;
       failedUnits.push({
         unit: origin,
