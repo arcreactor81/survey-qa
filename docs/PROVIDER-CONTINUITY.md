@@ -9,7 +9,7 @@ Extraction intentionally uses two different reading methods and two providers:
 
 | Pass | Method | Normal model |
 |---|---|---|
-| A | whole-document windows for global rules, ambiguity, and cross-references | exact `grok-4.6` |
+| A | whole-document windows for global rules, ambiguity, and cross-references | exact `grok-4.5` |
 | B | addressable block walk plus a source-ledger sweep | exact `deepseek-v4-pro` |
 
 The normal result is therefore **Grok 4.6 + DeepSeek Pro**. Deterministic parsing,
@@ -27,7 +27,7 @@ select it. Keeping a tested primitive is different from silently scheduling it.
 ```text
 pass-A window
     |
-    +-- exact grok-4.6 usable result --------------------> persist Grok result
+    +-- exact grok-4.5 usable result --------------------> persist Grok result
     |
     +-- eligible typed ModelCallError
              |
@@ -76,14 +76,14 @@ Every successful response must report the exact requested model. An alias, redir
 missing `response.model`, or different model is unusable and is charged conservatively;
 it is never stored under the requested model's identity.
 
-`grok-4.6` is pinned. The active reviewed authority is explicitly an
-`owner-dashboard-copy` observed on `2026-08-13`, not an authenticated catalogue result.
-The copied dashboard reports a 500,000-token context window and these text tiers:
+`grok-4.5` is pinned. The active reviewed authority is explicitly an
+`owner-console-confirmation` observed on `2026-08-15`, not an authenticated catalogue result.
+The owner-confirmed console reports a 500,000-token context window and these text tiers:
 
 | Context | Input USD/Mtok | Cached input USD/Mtok | Output USD/Mtok |
 |---|---:|---:|---:|
-| at or below 200,000 tokens | 2 | 0.5 | 6 |
-| above 200,000 tokens | 4 | 1 | 12 |
+| at or below 200,000 tokens | 2 | 0.3 | 6 |
+| above 200,000 tokens | 4 | 0.6 | 12 |
 
 The transport ledger has one flat input/output pair, so the reviewed policy is
 `max-known-text-tier/1.0.0`: every Grok call is reserved and settled at 4 USD/Mtok input
@@ -92,7 +92,7 @@ under-reserving a long-context request. Grok 4.5 rates are never reused.
 
 The complete binding includes exact model, source, observation date, context window, base
 and long tiers, threshold, explicit 4/12 maxima, and the SHA-256 of their canonical JSON:
-`be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5`. The Worker
+`9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e`. The Worker
 recomputes that digest before resolving the Secrets Store key. Missing, malformed, zero,
 under-ceiling, mixed-source, or digest-mismatched fields return `GROK_RATE_UNATTESTED`
 and issue zero Grok requests. The reviewed main v2 config activates all sixteen added
@@ -133,9 +133,9 @@ name—define which leg is actually scheduled.
 
 `worker-v2/tools/grok-rate-attestation-core.ts` is the only operator parser permitted to
 turn an xAI catalogue result into a proposed Grok 4.6 rate receipt. It makes one fixed request:
-`GET https://api.x.ai/v1/language-models/grok-4.6`, the documented full language-model schema,
+`GET https://api.x.ai/v1/language-models/grok-4.5`, the documented full language-model schema,
 with redirects rejected. It accepts only a 200 JSON
-response whose exact `id`, `object`, and `owned_by` are `grok-4.6`, `model`, and `xai`; duplicate
+response whose exact `id`, `object`, and `owned_by` are `grok-4.5`, `model`, and `xai`; duplicate
 keys, aliases, unknown price fields, malformed/non-integer prices, and oversized bodies fail
 closed. xAI describes these catalogue prices as integer USD ticks per token, so the receipt
 renders USD/Mtok exactly as `ticks / 10,000` (for example 12,500 ticks/token → `$1.25/Mtok`).

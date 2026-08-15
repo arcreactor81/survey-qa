@@ -213,20 +213,20 @@ function sliceEnv(overrides = {}) {
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key",
     DEEPSEEK_API_KEY: "test-deepseek-key",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -647,7 +647,7 @@ test("a receipted Flash result stops later pass-A purchases immediately", async 
   const env = sliceEnv({ EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2" });
   const doomed = "A-w2";
   const provider = stubProvider({
-    failUnit: (unit, _requestNumber, model) => unit === doomed && model === "grok-4.6",
+    failUnit: (unit, _requestNumber, model) => unit === doomed && model === "grok-4.5",
   });
   try {
     const doc = docFor(3);
@@ -663,7 +663,7 @@ test("a receipted Flash result stops later pass-A purchases immediately", async 
       `the terminal window buys Grok then its receipted Flash substitute once, was bought ${provider.countFor(doomed)}`,
     );
     const doomedRequests = provider.requests.filter((request) => request.unit === doomed);
-    assertEq(doomedRequests.filter((request) => request.model === "grok-4.6").length, 1,
+    assertEq(doomedRequests.filter((request) => request.model === "grok-4.5").length, 1,
       "a retained trigger prevents Grok from being re-bought across waves");
     assertEq(doomedRequests.filter((request) => request.model === "deepseek-v4-flash").length, 1,
       "one usable Flash receipt is enough to make the configured Pass B ineligible");
@@ -698,7 +698,7 @@ test("a pass-A window that keeps FAILING is re-bought a bounded number of times,
     assertEq(waves.length, 3, "one Grok attempt and two retained-authority Flash attempts span three waves");
     assertEq(provider.countFor(doomed), 3, "the shared two-issue budget permits Grok once and Flash twice");
     const doomedRequests = provider.requests.filter((request) => request.unit === doomed);
-    assertEq(doomedRequests.filter((request) => request.model === "grok-4.6").length, 1,
+    assertEq(doomedRequests.filter((request) => request.model === "grok-4.5").length, 1,
       "the retained fallback authority prevents Grok from being bought again");
     assertEq(doomedRequests.filter((request) => request.model === "deepseek-v4-flash").length, 2,
       "Flash retries only to the declared whole-run issue ceiling");
@@ -1166,7 +1166,7 @@ test("D51-a pass A rejects stale window success and terminal failure artifacts",
       );
       const result = await execute();
       assertEq(provider.requests.length, 1, "the stale terminal cannot suppress one current Grok purchase");
-      assertEq(provider.requests[0]?.model, "grok-4.6", "the current route starts with exact Grok 4.6");
+      assertEq(provider.requests[0]?.model, "grok-4.5", "the current route starts with exact Grok 4.6");
       assertEq(result.slice.terminalFailure, true, "occupied stale failure authority is terminal");
       assert(
         result.failedUnits.some((unit) => String(unit.detail).includes("PASS_A_WINDOW_PERSISTENCE_FAILED")),

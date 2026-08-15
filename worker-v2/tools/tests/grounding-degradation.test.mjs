@@ -610,9 +610,9 @@ suite("GEMINI construct prompt constraint", () => {
     );
   });
 
-  test("prompt version bumped to 1.9.0", async () => {
+  test("prompt version bumped to 1.10.0", async () => {
     const mod = await worker();
-    assertEq(mod.prompts.PROMPT_VERSION_A, "v2-extract-pass-a/1.9.0");
+    assertEq(mod.prompts.PROMPT_VERSION_A, "v2-extract-pass-a/1.10.0");
   });
 
   test("negative: construct 'ordering' is not in the allowed list", async () => {
@@ -633,6 +633,46 @@ suite("GEMINI construct prompt constraint", () => {
     assert(
       mod.prompts.SYSTEM_A_SYNTHESIS.includes("No other value is valid"),
       "synthesis prompt must also constrain the construct vocabulary",
+    );
+  });
+});
+
+suite("Pass-A imperative scope constraint", () => {
+  test("SYSTEM_A prompt contains the scope constraint", async () => {
+    const mod = await worker();
+    assert(
+      mod.prompts.SYSTEM_A.includes("IMPERATIVE SCOPE CONSTRAINT"),
+      "SYSTEM_A must contain the imperative scope constraint heading",
+    );
+    assert(
+      mod.prompts.SYSTEM_A.includes('must be exactly "survey" or "section:<name>"'),
+      "SYSTEM_A must state the two allowed scope values",
+    );
+    assert(
+      mod.prompts.SYSTEM_A.includes("Question-level rules"),
+      "SYSTEM_A must mention question-level rules belong to pass B",
+    );
+  });
+
+  test("SYSTEM_A_SYNTHESIS also constrains scope", async () => {
+    const mod = await worker();
+    assert(
+      mod.prompts.SYSTEM_A_SYNTHESIS.includes('must be exactly "survey" or "section:<name>"'),
+      "synthesis prompt must also constrain scope",
+    );
+    assert(
+      mod.prompts.SYSTEM_A_SYNTHESIS.includes("Question-level scope"),
+      "synthesis prompt must mention question-level scope belongs to pass B",
+    );
+  });
+
+  test("negative: scope constraint rejects question-level", async () => {
+    const mod = await worker();
+    // The prompt text must say question scope invalidates the item
+    assert(
+      mod.prompts.SYSTEM_A.includes("invalidates the item") ||
+      mod.prompts.SYSTEM_A.includes("will be discarded"),
+      "SYSTEM_A scope constraint must state consequence for invalid scope",
     );
   });
 });

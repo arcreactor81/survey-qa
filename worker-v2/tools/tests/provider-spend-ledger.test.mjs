@@ -323,7 +323,7 @@ suite("PROVIDER CUMULATIVE SPEND LEDGER - cross-run Gemini cap enforcement", () 
       await m.providerSpendLedger.recordProviderSpend(bucket, {
         provider: "grok",
         costUsd: 0.001,
-        model: "grok-4.6",
+        model: "grok-4.5",
         runId: `run_${i}`,
         eventId: `evt-${i}`,
       });

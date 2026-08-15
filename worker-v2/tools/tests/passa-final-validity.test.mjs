@@ -5,20 +5,20 @@ import { assert, assertEq, assertThrows, fakeStep, loadWorker, memoryR2, REPO_RO
 
 const mod = async () => (await loadWorker()).mod;
 const rates = {
-  GROK_MODEL: "grok-4.6",
+  GROK_MODEL: "grok-4.5",
   GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
   GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-  GROK_RATE_SOURCE: "owner-dashboard-copy",
-  GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-  GROK_RATE_ATTESTED_AT: "2026-08-13",
-  GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+  GROK_RATE_SOURCE: "owner-console-confirmation",
+  GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+  GROK_RATE_ATTESTED_AT: "2026-08-15",
+  GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
   GROK_CONTEXT_WINDOW_TOKENS: "500000",
   GROK_INPUT_USD_PER_MTOK: "2",
-  GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+  GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
   GROK_OUTPUT_USD_PER_MTOK: "6",
   GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
   GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-  GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+  GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
   GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
   GROK_MAX_INPUT_USD_PER_MTOK: "4",
   GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -73,7 +73,7 @@ async function putWholePass(m, env, runId, failedUnits, requirements) {
     promptVersion: m.passA.PASS_A_VERSION,
     providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
     providerIndependence: "independent",
-    pass: "A", provider: "grok-primary/deepseek-flash-fallback", model: "grok-4.6",
+    pass: "A", provider: "grok-primary/deepseek-flash-fallback", model: "grok-4.5",
     requirements, ambiguities: [], unverifiable: [], dispositions: [], constructs: [],
     failedUnits, calls: [], crossRefs: [], fallbackTriggers: [], routeReceipts: [],
   });
@@ -87,14 +87,14 @@ async function putReducedWholePass(m, env, runId) {
     kind: m.passA.GROK_FALLBACK_TRIGGER_VERSION,
     failureKind: "provider-unavailable",
     httpStatus: 502,
-    grokModel: "grok-4.6",
+    grokModel: "grok-4.5",
     grokUsageEventId: grokEventId,
     detail: "neutral retained provider failure",
   };
   const calls = [
     {
       eventId: grokEventId, callId: "call_a_1", role: "extract-pass-a", provider: "grok",
-      model: "grok-4.6", status: "error", inputTokens: 1, outputTokens: 1,
+      model: "grok-4.5", status: "error", inputTokens: 1, outputTokens: 1,
       costUsd: 0, latencyMs: 1, attempts: 1, usageSource: "conservative-ceiling",
     },
     {
@@ -109,7 +109,7 @@ async function putReducedWholePass(m, env, runId) {
     promptVersion: m.passA.PASS_A_VERSION,
     providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
     providerIndependence: "reduced-same-provider-fallback",
-    pass: "A", provider: "grok-primary/deepseek-flash-fallback", model: "grok-4.6",
+    pass: "A", provider: "grok-primary/deepseek-flash-fallback", model: "grok-4.5",
     requirements: [], ambiguities: [], unverifiable: [], dispositions: [], constructs: [],
     failedUnits: [], calls, crossRefs: [], fallbackTriggers: [trigger],
     routeReceipts: [{ selected: "deepseek-v4-flash", trigger }],
@@ -153,7 +153,7 @@ function stubProvider({
     const match = user.match(/window (\d+) of (\d+)/);
     const window = match ? Number(match[1]) : 1;
     requests.push({ window, model: body.model });
-    if (grokFallback && body.model === "grok-4.6") return new Response("unavailable", { status: 502 });
+    if (grokFallback && body.model === "grok-4.5") return new Response("unavailable", { status: 502 });
     if (failed.has(window)) return new Response("unavailable", { status: failedStatus });
     const sourceRows = primarySourceRows(user);
     const ids = [...new Set(sourceRows.map((row) => String(row.block_id)))];
@@ -267,7 +267,7 @@ test("a receipted Flash substitute stops before later windows or a final Pass-A 
     assertEq(outcome.result.state, "not-evaluated", "a deliberate refusal is a durable value, not a retryable throw");
     assertEq(outcome.result.reason, "REDUCED_PROVIDER_INDEPENDENCE");
     assert(
-      transport.requests.some((row) => row.model === "grok-4.6"),
+      transport.requests.some((row) => row.model === "grok-4.5"),
       "the primary Grok route must really fail before the refusal",
     );
     assert(
@@ -276,7 +276,7 @@ test("a receipted Flash substitute stops before later windows or a final Pass-A 
     );
     assertEq(
       transport.requests.map((row) => row.model).join(","),
-      "grok-4.6,deepseek-v4-flash",
+      "grok-4.5,deepseek-v4-flash",
       "no later window is purchased after success became impossible",
     );
     assertEq(
@@ -303,7 +303,7 @@ test("fallback authority without a usable Flash receipt is a window failure, not
       env, ctx.runId, ctx.documentKey, "questionnaire.docx", ctx.fence, async () => {}, {},
       m.docxBlocks.DOCUMENT_SEMANTICS_NONE, ctx.documentSha256,
     );
-    assertEq(first.requests.map((row) => row.model).join(","), "grok-4.6,deepseek-v4-flash",
+    assertEq(first.requests.map((row) => row.model).join(","), "grok-4.5,deepseek-v4-flash",
       "the primary trigger and failed substitute are both real transport attempts");
     assertEq(outcome.result.state, "not-evaluated");
     assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES",
@@ -363,7 +363,7 @@ test("the full Workflow terminalizes a provider-independence refusal without ret
     assert(step.calls.includes("report") && step.calls.includes("finalize"), "the refusal reaches report finalization");
     assertEq(
       transport.requests.map((row) => row.model).join(","),
-      "grok-4.6,deepseek-v4-flash",
+      "grok-4.5,deepseek-v4-flash",
       "only the primary and its authorized substitute were bought",
     );
 
@@ -458,7 +458,7 @@ test("the full Workflow terminalizes synthesis wire overflow before purchase and
     }, step);
     assert(transport.requests.length >= 2, "the document really landed multiple primary windows");
     assert(
-      transport.requests.every((request) => request.model === "grok-4.6"),
+      transport.requests.every((request) => request.model === "grok-4.5"),
       "the oversize synthesis and every Pass-B provider request remain at zero",
     );
     assertEq(step.calls.filter((name) => name.startsWith("extract-pass-b-wave-")).length, 0);

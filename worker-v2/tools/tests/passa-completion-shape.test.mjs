@@ -21,7 +21,7 @@ function completionPayload(mod, env, extra = {}) {
     promptVersion: mod.passA.PASS_A_VERSION,
     pass: "A",
     provider: "grok-primary/gemini-substitute/deepseek-flash-fallback",
-    model: "grok-4.6",
+    model: "grok-4.5",
     providerRouteIdentity: mod.passA.passAPrimaryRouteIdentity(env),
     providerIndependence: "independent",
     routeReceipts: [],

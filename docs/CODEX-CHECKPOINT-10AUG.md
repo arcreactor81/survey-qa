@@ -714,7 +714,7 @@ not touched.
 ### Superseding provider-route implementation — 13 August 2026
 
 The provider paragraph above is historical. The implemented production route now follows the
-owner-approved topology recorded in `docs/COORDINATION.md`: normal pass A is exact `grok-4.6`,
+owner-approved topology recorded in `docs/COORDINATION.md`: normal pass A is exact `grok-4.5`,
 normal pass B is exact `deepseek-v4-pro`, and `deepseek-v4-flash` is a dormant substitute only
 after a retained eligible Grok trigger. Flash+Pro is explicitly reduced provider independence and
 cannot seal as ordinary cross-provider corroboration.

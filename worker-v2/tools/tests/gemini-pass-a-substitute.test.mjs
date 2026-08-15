@@ -37,20 +37,20 @@ function env(overrides = {}) {
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     EXTRACT_MAX_ATTEMPTS: "1",
     DEEPSEEK_FALLBACK_MAX_ATTEMPTS: "1",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -155,7 +155,7 @@ suite("GEMINI PASS-A SUBSTITUTE - cross-family Grok substitute wiring", () => {
       try {
         const result = await m.passA.runPassA(value, `run_gemini_${label}`, oneBlockDocument(), "fixture.docx");
         assertEq(stub.requests.length, 2, `${label}: one Grok + one Gemini request`);
-        assertEq(stub.requests[0].body.model, "grok-4.6", `${label}: first request is Grok`);
+        assertEq(stub.requests[0].body.model, "grok-4.5", `${label}: first request is Grok`);
         assertEq(stub.requests[1].body.model, "gemini-2.5-flash", `${label}: second request is Gemini`);
         assertEq(
           result.providerIndependence,
@@ -196,7 +196,7 @@ suite("GEMINI PASS-A SUBSTITUTE - cross-family Grok substitute wiring", () => {
       );
       // Gemini model mismatch makes it fail, Flash takes over
       assertEq(stub.requests.length, 3, "Grok + Gemini (failed) + Flash");
-      assertEq(stub.requests[0].body.model, "grok-4.6");
+      assertEq(stub.requests[0].body.model, "grok-4.5");
       assertEq(stub.requests[1].body.model, "gemini-2.5-flash");
       assertEq(stub.requests[2].body.model, "deepseek-v4-flash");
       assertEq(
@@ -245,7 +245,7 @@ suite("GEMINI PASS-A SUBSTITUTE - cross-family Grok substitute wiring", () => {
         value, "run_gemini_then_flash", oneBlockDocument(), "fixture.docx",
       );
       assertEq(stub.requests.length, 3, "three provider requests: Grok + Gemini + Flash");
-      assertEq(stub.requests[0].body.model, "grok-4.6");
+      assertEq(stub.requests[0].body.model, "grok-4.5");
       assertEq(stub.requests[1].body.model, "gemini-2.5-flash");
       assertEq(stub.requests[2].body.model, "deepseek-v4-flash");
       assertEq(
@@ -396,9 +396,9 @@ suite("GEMINI PASS-A SUBSTITUTE - cross-family Grok substitute wiring", () => {
     try {
       const result = await m.passA.runPassA(value, "run_no_gemini", oneBlockDocument(), "fixture.docx");
       assertEq(stub.requests.length, 1, "only one Grok request, no Gemini");
-      assertEq(stub.requests[0].body.model, "grok-4.6");
+      assertEq(stub.requests[0].body.model, "grok-4.5");
       assertEq(result.providerIndependence, "independent");
-      assertEq(result.routeReceipts[0].selected, "grok-4.6");
+      assertEq(result.routeReceipts[0].selected, "grok-4.5");
       assertEq(result.issuedCalls.length, 1);
       assertEq(result.issuedCalls[0].provider, "grok");
     } finally {

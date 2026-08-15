@@ -9,12 +9,12 @@ const DEEPSEEK = "src/llm/deepseek.ts";
 const PASS_A = "src/extract/pass-a.ts";
 const STAGE = "src/workflow/stages/extract.ts";
 
-const NORMAL = "normal extraction buys exact Grok 4.6 plus Pro and zero Flash requests";
+const NORMAL = "normal extraction buys exact Grok 4.5 plus Pro and zero Flash requests";
 const ELIGIBLE = "eligible quota/non-response/invalid-content failures activate exactly Flash";
 const INELIGIBLE = "authentication and bad requests fail honestly and make zero Flash requests";
 const UNBOUND_MODEL = "a missing or mismatched Grok response model cannot authorize Flash";
 const RESTART = "restart after trigger persistence resumes Flash without retrying Grok";
-const RATES = "Grok 4.6 rate/model attestation fails before any request";
+const RATES = "Grok 4.5 rate/model attestation fails before any request";
 const RATE_STAGE = "an unattested Grok rate is a named stage refusal with zero requests";
 const INDEPENDENCE = "a receipted Flash substitute stops before later windows or a final Pass-A payload can authorize Pass B";
 
@@ -136,10 +136,10 @@ await runMutantSuite({
     },
     {
       name: "Grok accepts an alias or redirect-prone model id",
-      breaks: "response identity and configured price identity are no longer exact grok-4.6",
+      breaks: "response identity and configured price identity are no longer exact grok-4.5",
       file: GROK,
-      find: 'export const DEFAULT_GROK_MODEL = "grok-4.6";',
-      replace: 'export const DEFAULT_GROK_MODEL = "grok-4.6-latest";',
+      find: 'export const DEFAULT_GROK_MODEL = "grok-4.5";',
+      replace: 'export const DEFAULT_GROK_MODEL = "grok-4.5-latest";',
       kills: [RATES],
     },
     {

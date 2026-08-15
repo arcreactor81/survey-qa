@@ -260,34 +260,33 @@
     // "Q8 is the only question a respondent may leave blank"). Pass A exists to find exactly
     // the class of rule a block-by-block read cannot produce, so a miss here is not recovered
     // downstream — the extra cent is the cheapest part of this pipeline.
-    // BUDGET MODE (owner-approved 15 Aug 2026): "gemini" runs pass A on gemini-2.5-flash
-    // with no Grok calls; "grok" is the original behavior. Set to "gemini" while cumulative
-    // xAI spend exceeds its approved budget.
-    "EXTRACT_PASS_A_PRIMARY": "gemini",
-    "GROK_MODEL": "grok-4.6",
+    // PREMIUM SLOT (owner-approved 15 Aug 2026): "grok" runs pass A on grok-4.5 at
+    // reasoning HIGH; "gemini" substitutes with gemini-2.5-flash when set.
+    "EXTRACT_PASS_A_PRIMARY": "grok",
+    "GROK_MODEL": "grok-4.5",
     "GROK_REASONING_EFFORT": "high",
-    // Owner-dashboard copy observed 13 Aug 2026 for exact grok-4.6:
-    //   context 500000 tokens; <=200000 input $2/Mtok, cached $0.5, output $6;
-    //   >200000 input $4/Mtok, cached $1, output $12.
+    // Owner-console-confirmation observed 15 Aug 2026 for exact grok-4.5:
+    //   context 500000 tokens; <=200000 input $2/Mtok, cached $0.30, output $6;
+    //   >200000 input $4/Mtok, cached $0.60, output $12.
     // The current flat ledger therefore MUST use max-known-text-tier/1.0.0 at $4/$12.
-    // This is explicitly an owner-dashboard-copy, not an authenticated catalogue receipt.
+    // This is explicitly an owner-console-confirmation, not an authenticated catalogue receipt.
     //
     // Activated atomically from the reviewed canonical receipt bytes below. Every field is
     // one binding: missing/malformed/zero/mixed fields return
-    // GROK_RATE_UNATTESTED before Secrets Store or network I/O. grok-4.5 rates are forbidden.
+    // GROK_RATE_UNATTESTED before Secrets Store or network I/O. grok-4.6 rates are forbidden.
     "GROK_RATE_BINDING_SCHEMA": "survey-qa-grok-rate-binding/1.0.0",
     "GROK_RATE_POLICY": "max-known-text-tier/1.0.0",
-    "GROK_RATE_SOURCE": "owner-dashboard-copy",
-    "GROK_RATE_ATTESTED_MODEL": "grok-4.6",
-    "GROK_RATE_ATTESTED_AT": "2026-08-13",
-    "GROK_RATE_RECEIPT_SHA256": "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    "GROK_RATE_SOURCE": "owner-console-confirmation",
+    "GROK_RATE_ATTESTED_MODEL": "grok-4.5",
+    "GROK_RATE_ATTESTED_AT": "2026-08-15",
+    "GROK_RATE_RECEIPT_SHA256": "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     "GROK_CONTEXT_WINDOW_TOKENS": "500000",
     "GROK_INPUT_USD_PER_MTOK": "2",
-    "GROK_CACHED_INPUT_USD_PER_MTOK": "0.5",
+    "GROK_CACHED_INPUT_USD_PER_MTOK": "0.3",
     "GROK_OUTPUT_USD_PER_MTOK": "6",
     "GROK_LONG_CONTEXT_THRESHOLD_TOKENS": "200000",
     "GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK": "4",
-    "GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK": "1",
+    "GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK": "0.6",
     "GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK": "12",
     "GROK_MAX_INPUT_USD_PER_MTOK": "4",
     "GROK_MAX_OUTPUT_USD_PER_MTOK": "12",

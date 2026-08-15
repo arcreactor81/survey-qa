@@ -209,7 +209,7 @@ The v1 URL and all v1 subsystems were untouched throughout this recovery/integra
 This section supersedes the provider-continuity topology described immediately above; that earlier
 text records an intermediate implementation, not the owner-approved production route.
 
-- **Normal extraction:** Grok `grok-4.6` performs the whole-document/global-rule,
+- **Normal extraction:** Grok `grok-4.5` performs the whole-document/global-rule,
   cross-reference, and ambiguity pass; DeepSeek Pro performs the independent source-block/table
   and disposition pass.
 - **Grok fallback (updated 15 Aug 2026):** a retained typed eligible Grok failure (quota/exhaustion,
@@ -219,7 +219,7 @@ text records an intermediate implementation, not the owner-approved production r
   Flash substitutes as the last resort; a Flash+Pro result is explicitly reduced provider
   independence because both calls are DeepSeek and must not masquerade as ordinary cross-provider
   corroboration. Gemini spend is hard-capped at USD 10 cumulative.
-- **Exact identity:** the owner supplied the API-returned model id `grok-4.6`. Requests and
+- **Exact identity:** the owner supplied the API-returned model id `grok-4.5`. Requests and
   receipts must require that exact returned identity; redirects or aliases are not 4.6 evidence.
 - **Paid-call authorization:** cumulative caps for this sprint are **USD 5 Grok/xAI**,
   **USD 5 DeepSeek**, and **USD 20 Gemini** (raised from the earlier USD 10 Gemini approval).
@@ -244,15 +244,15 @@ TypeScript check is clean. The heavier canary
 deploy/replay suite exceeded two local harness timeouts without output, so it is **not attested**
 by this update and must be rerun in the settled pre-deploy gate.
 
-The main and generated canary configs pin exact `grok-4.6`; activation is authorized only by the
+The main and generated canary configs pin exact `grok-4.5`; activation is authorized only by the
 retained `survey-qa-grok-rate-binding/1.0.0` binding whose fixed-order canonical receipt has SHA-256
-`be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5`. Its provenance is the
-owner-provided model-dashboard transcription supplied in this thread on 13 August 2026
-(`source: owner-dashboard-copy`, `observedAt: 2026-08-13`), not catalogue attestation. The xAI
+`9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e`. Its provenance is the
+owner-confirmed console observation on 15 August 2026
+(`source: owner-console-confirmation`, `observedAt: 2026-08-15`), not catalogue attestation. The xAI
 catalogue probe failed and supplied no usable rate evidence, so it was not used.
-The retained copy records the exact `grok-4.6` 500,000-token context and every text tier: at or
-below 200,000 tokens, USD 2 input / USD 0.50 cached input / USD 6 output per million tokens; above
-200,000, USD 4 input / USD 1 cached input / USD 12 output. The usage ledger conservatively reserves
+The retained copy records the exact `grok-4.5` 500,000-token context and every text tier: at or
+below 200,000 tokens, USD 2 input / USD 0.30 cached input / USD 6 output per million tokens; above
+200,000, USD 4 input / USD 0.60 cached input / USD 12 output. The usage ledger conservatively reserves
 the `max-known-text-tier/1.0.0` ceiling of USD 4 input / USD 12 output per million tokens. Returned
 model identity must still match exactly, and Grok 4.5 prices are never reused for 4.6.
 

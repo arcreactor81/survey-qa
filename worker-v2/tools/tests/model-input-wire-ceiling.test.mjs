@@ -19,14 +19,14 @@ function envFor(overrides = {}) {
     CF_AIG_ACCOUNT_ID: "fixture-account", CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key", DEEPSEEK_API_KEY: "test-deepseek-key",
     DEEPSEEK_FALLBACK_MODE: "disabled", DEEPSEEK_CONTEXT_WINDOW_TOKENS: "1000000",
-    GROK_MODEL: "grok-4.6", GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
-    GROK_RATE_POLICY: "max-known-text-tier/1.0.0", GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6", GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_MODEL: "grok-4.5", GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
+    GROK_RATE_POLICY: "max-known-text-tier/1.0.0", GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5", GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000", GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5", GROK_OUTPUT_USD_PER_MTOK: "6",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3", GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000", GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1", GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6", GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4", GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
     EXTRACT_MODEL_INPUT_MAX_BYTES: "450000", EXTRACT_MAX_OUTPUT_TOKENS: "32000",
     EXTRACT_MAX_ATTEMPTS: "1", EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2",
@@ -137,7 +137,7 @@ test("ordinary chat transport sends the exact admitted serialized body", async (
   const env = envFor();
   const spec = {
     provider: "grok",
-    model: "grok-4.6",
+    model: "grok-4.5",
     gatewaySuffix: "/v1",
     directBaseUrl: "https://unused.invalid",
     apiKey: "fixture-key",
@@ -264,7 +264,7 @@ test("Pass-A primary gates the larger Flash body when the Grok body alone fits",
     EXTRACT_MODEL_INPUT_MAX_BYTES: String(between),
   });
   assertEq(m.extractionWire.preflightExtractionRequestBodies(
-    env, [{ route: "grok-4.6", bodyText: grokBody }],
+    env, [{ route: "grok-4.5", bodyText: grokBody }],
   ).ok, true);
   const flashOnly = m.extractionWire.preflightExtractionRequestBodies(
     env, [{ route: "deepseek-v4-flash", bodyText: flashBody }],

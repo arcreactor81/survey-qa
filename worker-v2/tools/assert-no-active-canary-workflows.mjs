@@ -133,7 +133,7 @@ const EXPECTED_STATIC_VARS = Object.freeze({
   EXTRACT_SWEEP_BLOCKS_PER_CALL: "40",
   EXTRACT_SWEEP_MAX_CALLS: "3",
   EXTRACT_WAVE_BUDGET_MS: "600000",
-  GROK_MODEL: "grok-4.6",
+  GROK_MODEL: "grok-4.5",
   GROK_REASONING_EFFORT: "high",
   HUMAN_REVIEW_MODE: "high-risk-only",
   JUDGE_MODEL: "claude-sonnet-4-6",

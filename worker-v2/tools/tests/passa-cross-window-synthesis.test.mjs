@@ -53,20 +53,20 @@ function envFor(overrides = {}) {
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key",
     DEEPSEEK_API_KEY: "test-deepseek-key",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -1733,7 +1733,7 @@ test("provider and fallback-authorized failures retain no fabricated model outpu
       return result;
     };
     const provider = installProvider(({ body }) => (
-      body.model === "grok-4.6"
+      body.model === "grok-4.5"
         ? { value: {}, status: 502 }
         : { value: emptyPrimary() }
     ));
@@ -2421,7 +2421,7 @@ test("a fallback route receipt cannot bind its trigger and selected leg across d
   const runId = "run_synthesis_cross_issue_route";
   const provider = installProvider(({ unit, body }) => {
     if (unit !== "A-synthesis") return { value: nominatedPrimary(unit) };
-    if (body.model === "grok-4.6") return { value: {}, status: 429 };
+    if (body.model === "grok-4.5") return { value: {}, status: 429 };
     return { value: emptySynthesis() };
   });
   try {
@@ -2460,7 +2460,7 @@ test("primary and synthesis Flash retries preserve one closed authorization chai
     const doc = documentFor();
     let flashAttempts = 0;
     const provider = installProvider(({ body }) => {
-      if (body.model === "grok-4.6") return { value: {}, status: 502 };
+      if (body.model === "grok-4.5") return { value: {}, status: 502 };
       flashAttempts += 1;
       return flashAttempts === 1
         ? { value: {}, status: 502 }
@@ -2472,7 +2472,7 @@ test("primary and synthesis Flash retries preserve one closed authorization chai
       const recovered = await m.passA.runPassA(env, "run_primary_flash_retry", doc, "neutral.docx");
       assertEq(recovered.slice.done, true);
       assertEq(recovered.providerIndependence, "reduced-same-provider-fallback");
-      assertEq(provider.calls.filter((call) => call.body.model === "grok-4.6").length, 1);
+      assertEq(provider.calls.filter((call) => call.body.model === "grok-4.5").length, 1);
       assertEq(provider.calls.filter((call) => call.body.model === "deepseek-v4-flash").length, 2);
       provider.reset();
       const reclaimed = await m.passA.runPassA(env, "run_primary_flash_retry", doc, "neutral.docx");
@@ -2489,7 +2489,7 @@ test("primary and synthesis Flash retries preserve one closed authorization chai
     let synthesisFlashAttempts = 0;
     const provider = installProvider(({ unit, body }) => {
       if (unit !== "A-synthesis") return { value: nominatedPrimary(unit) };
-      if (body.model === "grok-4.6") return { value: {}, status: 502 };
+      if (body.model === "grok-4.5") return { value: {}, status: 502 };
       synthesisFlashAttempts += 1;
       return synthesisFlashAttempts === 1
         ? { value: {}, status: 502 }
@@ -2525,7 +2525,7 @@ test("synthesis fallback/retry transitions archive exact predecessors and accept
   let flashAttempts = 0;
   const provider = installProvider(({ unit, body }) => {
     if (unit !== "A-synthesis") return { value: nominatedPrimary(unit) };
-    if (body.model === "grok-4.6") return { value: {}, status: 502 };
+    if (body.model === "grok-4.5") return { value: {}, status: 502 };
     flashAttempts += 1;
     return flashAttempts === 1
       ? { value: {}, status: 502 }
@@ -2606,7 +2606,7 @@ test("a different valid synthesis CAS winner is never overwritten and exact losi
   let flashAttempts = 0;
   const provider = installProvider(({ unit, body }) => {
     if (unit !== "A-synthesis") return { value: nominatedPrimary(unit) };
-    if (body.model === "grok-4.6") return { value: {}, status: 502 };
+    if (body.model === "grok-4.5") return { value: {}, status: 502 };
     flashAttempts += 1;
     return flashAttempts === 1
       ? { value: {}, status: 502 }
@@ -2790,7 +2790,7 @@ test("fallback retry authority rejects a missing Flash issue, extra Grok purchas
     const doc = documentFor();
     let flashAttempts = 0;
     const provider = installProvider(({ body }) => {
-      if (body.model === "grok-4.6") return { value: {}, status: 502 };
+      if (body.model === "grok-4.5") return { value: {}, status: 502 };
       flashAttempts += 1;
       return flashAttempts === 1 ? { value: {}, status: 502 } : { value: emptyPrimary() };
     });

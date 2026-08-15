@@ -87,20 +87,20 @@ function primaryEnv(evidence) {
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key",
     DEEPSEEK_API_KEY: "test-deepseek-key",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -288,7 +288,7 @@ function stubFallbackRoute() {
   globalThis.fetch = async (_url, init) => {
     const request = JSON.parse(init.body);
     models.push(request.model);
-    if (request.model === "grok-4.6") {
+    if (request.model === "grok-4.5") {
       return new Response("fixture transient Grok failure", { status: 502 });
     }
     const source = firstPrimarySource(request);
@@ -422,7 +422,7 @@ test("a current-identity corrupt occupant cannot be overwritten by a paid Flash 
     assertEq(checkpointed.slice.done, false, "after-commit ambiguity leaves Flash pending");
     assertEq(
       JSON.stringify(provider.models),
-      JSON.stringify(["grok-4.6"]),
+      JSON.stringify(["grok-4.5"]),
       "the first invocation buys Grok once and retains fallback authority before Flash",
     );
 
@@ -435,7 +435,7 @@ test("a current-identity corrupt occupant cannot be overwritten by a paid Flash 
     assertEq(raced.slice.terminalFailure, true, "losing the exact predecessor CAS is terminal");
     assertEq(
       JSON.stringify(provider.models),
-      JSON.stringify(["grok-4.6", "deepseek-v4-flash"]),
+      JSON.stringify(["grok-4.5", "deepseek-v4-flash"]),
       "the resumed invocation buys only the authorized Flash leg",
     );
 
@@ -492,7 +492,7 @@ test("a fallback-authority write retries identical bytes before Flash and never 
     );
     assertEq(
       JSON.stringify(provider.models),
-      JSON.stringify(["grok-4.6", "deepseek-v4-flash"]),
+      JSON.stringify(["grok-4.5", "deepseek-v4-flash"]),
       "one Grok failure authorizes exactly one Flash purchase",
     );
     assertEq(storage.attempts(), 2, "only the same fallback checkpoint bytes are retried");
@@ -564,7 +564,7 @@ test("exhausted fallback-checkpoint storage stops before Flash and a cached step
     assertEq(first.calls[0].status, "error", "the Grok provider receipt remains an error");
     assertEq(
       JSON.stringify(provider.models),
-      JSON.stringify(["grok-4.6"]),
+      JSON.stringify(["grok-4.5"]),
       "Flash is never bought without durable fallback authority",
     );
     assertEq(
