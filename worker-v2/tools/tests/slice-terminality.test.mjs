@@ -246,8 +246,6 @@ function sliceEnv(overrides = {}) {
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key",
     DEEPSEEK_API_KEY: "test-deepseek-key",
-    GEMINI_API_KEY: "test-gemini-key",
-    GEMINI_MAX_TOTAL_USD: "100",
     GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
@@ -569,7 +567,7 @@ test("negative fixture: this test CAN fail — terminal:true + attempts:1 from t
   const env = sliceEnv({
     EXTRACT_PASS_A_WINDOW_CHARS: "10",
     EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2",
-    // Grok mode (not gemini) so nonRetryablePrimaryFailure can trigger
+    // Grok primary so nonRetryablePrimaryFailure can trigger
   });
   const doc = docFor(3);
 

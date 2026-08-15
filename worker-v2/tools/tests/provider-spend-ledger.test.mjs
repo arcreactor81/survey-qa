@@ -12,7 +12,7 @@
  *  8. all providers recorded: grok/deepseek/gemini spend flows into the cumulative ledger
  *
  * What makes each test fail:
- *  - Test 1: removing the enforceGeminiCap call before geminiGrokSubstituteJson
+ *  - Test 1: removing the enforceGeminiCap call or the cap threshold
  *  - Test 2: not calling recordProviderSpend after settlement, or wrong amount
  *  - Test 3: removing the conservative reservation (checking only cumulative, not projected)
  *  - Test 4: treating corrupt/unparseable as zero instead of failing closed

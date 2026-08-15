@@ -21,7 +21,7 @@
  *   synthesis SYNTHETIC plausible strict-valid output (empty additions)
  *   pass B    SYNTHETIC valid chunk/sweep outputs (real DeepSeek captures not available)
  *
- * Environment mirrors production wrangler.jsonc budget mode (EXTRACT_PASS_A_PRIMARY=gemini).
+ * Environment mirrors production wrangler.jsonc (grok-4.5 primary).
  *
  * USAGE:  node tools/reading-rehearsal.mjs
  *   env REHEARSAL_MATERIALS=E:/survey-qa/.local-private   (default) real material root
@@ -67,7 +67,7 @@ function realWindowOutputs() {
   const w1 = JSON.parse(readFileSync(RUN_RECORD_W1, "utf8"));
   canned.set(1, {
     content: JSON.stringify(w1.modelOutput),
-    source: "run-record v2r_01m02f7dnzxgb8rdpveh8ayd51 window-01 modelOutput (REAL production Gemini, construct 'ordering')",
+    source: "run-record v2r_01m02f7dnzxgb8rdpveh8ayd51 window-01 modelOutput (REAL production output, construct 'ordering')",
     real: true,
   });
   const premium = [
@@ -81,7 +81,7 @@ function realWindowOutputs() {
     const rec = JSON.parse(readFileSync(p, "utf8"));
     canned.set(n, {
       content: String(rec.output),
-      source: `premium-ab-20260815/${file} (REAL captured Gemini, ${note})`,
+      source: `premium-ab-20260815/${file} (REAL captured output, ${note})`,
       real: true,
     });
   }
@@ -254,14 +254,6 @@ function installProvider(canned, log, findings) {
     const entry = { seq: log.length + 1, unit, kind, role, model, url: u.slice(0, 110) };
     log.push(entry);
 
-    if (model === "grok-4.5") {
-      findings.push({
-        kind: "grok-call-in-budget-mode",
-        detail: `A Grok purchase was issued in budget mode: unit=${unit} role=${role}. The owner Grok freeze forbids this.`,
-      });
-      return new Response("rehearsal: grok is frozen", { status: 500 });
-    }
-
     let value;
     if (kind === "pass-a-window") {
       const n = Number(unit.replace("A-w", "")) || 0;
@@ -323,7 +315,7 @@ function installProvider(canned, log, findings) {
 }
 
 // ---------------------------------------------------------------------------
-// Environment — production wrangler.jsonc values, budget mode
+// Environment — production wrangler.jsonc values, grok-4.5 primary
 // ---------------------------------------------------------------------------
 
 function productionEnv() {
@@ -334,10 +326,8 @@ function productionEnv() {
     CF_AIG_GATEWAY_ID: "rehearsal-gateway",
     XAI_API_KEY: "rehearsal-xai-key",
     DEEPSEEK_API_KEY: "rehearsal-deepseek-key",
-    GEMINI_API_KEY: "rehearsal-gemini-key",
     V2_RUN_WORKFLOW: { async get() { throw new Error("instance.not_found"); }, async create() {} },
 
-    EXTRACT_PASS_A_PRIMARY: "gemini",
     GROK_MODEL: "grok-4.5",
     GROK_REASONING_EFFORT: "high",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
@@ -356,12 +346,6 @@ function productionEnv() {
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
-
-    GEMINI_EXTRACTION_MODEL: "gemini-2.5-flash",
-    GEMINI_INPUT_USD_PER_MTOK: "0.15",
-    GEMINI_OUTPUT_USD_PER_MTOK: "3.5",
-    GEMINI_MAX_TOTAL_USD: "10",
-    GEMINI_REASONING_EFFORT: "medium",
 
     DEEPSEEK_MODEL: "deepseek-v4-flash",
     DEEPSEEK_CONTEXT_WINDOW_TOKENS: "1000000",

@@ -20,7 +20,7 @@ function completionPayload(mod, env, extra = {}) {
     parserVersion: mod.docxBlocks.DOCX_BLOCKS_VERSION,
     promptVersion: mod.passA.PASS_A_VERSION,
     pass: "A",
-    provider: "grok-primary/gemini-substitute/deepseek-flash-fallback",
+    provider: "grok-primary/deepseek-flash-fallback",
     model: "grok-4.5",
     providerRouteIdentity: mod.passA.passAPrimaryRouteIdentity(env),
     providerIndependence: "independent",

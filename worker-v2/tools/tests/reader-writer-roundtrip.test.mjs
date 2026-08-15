@@ -1,20 +1,12 @@
 /**
  * READER / WRITER ROUND-TRIP PROPERTY TESTS
  *
- * ROOT CAUSE: validatePassAUnitUsageCoherence required receipt-1 to carry Grok's callId
- * and provider identity (callId=call_a_N, provider=grok, model=grok-4.5). In Gemini-primary
- * (budget) mode, receipt-1 is written with callId=call_a_N:gemini-primary, provider=gemini,
- * model=gemini-2.5-flash. The coherence check rejected every Gemini-primary artifact as
- * "receipt role/call/provider is inconsistent with its settlement identity", the reader
- * returned kind:"invalid", and the reclaim path treated this as a terminal failure --
- * killing the run without re-buying the window.
+ * ROOT CAUSE: validatePassAUnitUsageCoherence must accept the provider identities that the
+ * writer actually produces. A coherence check that silently rejects a valid artifact shape
+ * would cause the reader to return kind:"invalid", and the reclaim path would treat this as a
+ * terminal failure -- killing the run without re-buying the window.
  *
- * SECONDARY: parseFallbackTrigger required bound.provider === "grok", rejecting a
- * Gemini-primary trigger (provider=gemini). This would have caused an identical failure
- * for Gemini-primary artifacts that carried a fallback trigger.
- *
- * THE PINNED FIXTURE reproduces the real v31 artifact structure from production R2
- * (commit 25429ab, run v2r_01m02ps7vwajrad78vjwarx73s, window A-w1).
+ * THE PINNED FIXTURE reproduces real artifact structure (v31 R2 shape) relabelled to grok-4.5.
  */
 
 import { assert, assertEq, loadWorker, memoryR2, suite, test } from "../testkit.mjs";
@@ -64,8 +56,6 @@ function baseProviderEnv(overrides = {}) {
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key",
     DEEPSEEK_API_KEY: "test-deepseek-key",
-    GEMINI_API_KEY: "test-gemini-key",
-    GEMINI_MAX_TOTAL_USD: "10",
     GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
@@ -91,11 +81,8 @@ function baseProviderEnv(overrides = {}) {
   };
 }
 
-function geminiEnv(overrides = {}) {
-  return baseProviderEnv({ EXTRACT_PASS_A_PRIMARY: "gemini", ...overrides });
-}
 function grokEnv(overrides = {}) {
-  return baseProviderEnv({ EXTRACT_PASS_A_PRIMARY: "grok", ...overrides });
+  return baseProviderEnv(overrides);
 }
 
 // ---------------------------------------------------------------------------
@@ -144,9 +131,9 @@ function policyId(env) {
   return `pass-a-window-policy/1.1.0|chars:${env.EXTRACT_PASS_A_WINDOW_CHARS}|blocks:${env.EXTRACT_PASS_A_WINDOW_MAX_BLOCKS}|max-issues:${Math.max(1, Number(env.EXTRACT_PASS_A_WINDOW_MAX_ISSUES))}`;
 }
 
-/** Build a failed semantic-output artifact (the v31 shape). */
+/** Build a failed semantic-output artifact (relabelled to grok-4.5). */
 function failedSemanticArtifact(m, env, { origin, windowNumber, runId = V31_RUN_ID,
-    provider = "gemini", callIdSuffix = ":gemini-primary", model = "gemini-2.5-flash" } = {}) {
+    provider = "grok", callIdSuffix = "", model = "grok-4.5" } = {}) {
   return {
     windowId: origin, windowNumber,
     blockIds: windowBlockIds(windowNumber),
@@ -173,8 +160,8 @@ function failedSemanticArtifact(m, env, { origin, windowNumber, runId = V31_RUN_
 
 /** Build a successful OK artifact. */
 function okArtifact(m, env, { origin, windowNumber, runId = V31_RUN_ID,
-    provider = "gemini", callIdSuffix = ":gemini-primary", model = "gemini-2.5-flash",
-    selected = "gemini-2.5-flash" } = {}) {
+    provider = "grok", callIdSuffix = "", model = "grok-4.5",
+    selected = "grok-4.5" } = {}) {
   return {
     windowId: origin, windowNumber,
     blockIds: windowBlockIds(windowNumber),
@@ -210,9 +197,9 @@ async function reconstruct(m, env, runId, blocks, parserVersion) {
 // ===========================================================================
 suite("Reader-writer round-trip — pinned v31 production artifact", () => {
 
-test("REAL v31 failed Gemini-primary artifact round-trips through readWindowArtifact", async () => {
+test("REAL v31 failed artifact round-trips through readWindowArtifact", async () => {
   const m = await mod();
-  const env = geminiEnv();
+  const env = grokEnv();
   const blocks = sourceBlocks100();
   const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
   const art = failedSemanticArtifact(m, env, { origin: "A-w1", windowNumber: 1 });
@@ -227,17 +214,17 @@ test("REAL v31 failed Gemini-primary artifact round-trips through readWindowArti
   );
   assert(
     !result.detail.includes("PASS_A_WINDOW_ARTIFACT_INVALID"),
-    `reader must NOT reject v31 artifact as corrupt. Got: ${result.detail}`,
+    `reader must NOT reject artifact as corrupt. Got: ${result.detail}`,
   );
   assert(
     !result.detail.includes("receipt role/call/provider"),
-    `coherence check must NOT reject Gemini-primary receipts. Got: ${result.detail}`,
+    `coherence check must NOT reject receipts. Got: ${result.detail}`,
   );
 });
 
 test("v31 artifact with CORRUPTED usages is still rejected", async () => {
   const m = await mod();
-  const env = geminiEnv();
+  const env = grokEnv();
   const blocks = sourceBlocks100();
   const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
   const art = failedSemanticArtifact(m, env, { origin: "A-w1", windowNumber: 1 });
@@ -257,52 +244,20 @@ test("v31 artifact with CORRUPTED usages is still rejected", async () => {
 // ===========================================================================
 suite("Reader-writer round-trip — every writer-producible variant", () => {
 
-test("ok artifact (Gemini-primary) round-trips", async () => {
-  const m = await mod();
-  const env = geminiEnv();
-  const blocks = sourceBlocks100();
-  const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
-
-  // Seed BOTH windows as OK (2 windows = multiwindow, but synthesis is not seeded
-  // so reconstruction will fail on "synthesis missing", which is expected).
-  // We test window-level round-trip by seeding both and checking reconstruction
-  // fails at synthesis, not at any window.
-  await seed(m, env, V31_RUN_ID, 1, okArtifact(m, env, { origin: "A-w1", windowNumber: 1 }));
-  await seed(m, env, V31_RUN_ID, 2, okArtifact(m, env, { origin: "A-w2", windowNumber: 2 }));
-
-  const result = await reconstruct(m, env, V31_RUN_ID, blocks, pv);
-  // Both windows read OK, reconstruction fails at synthesis (expected for multiwindow).
-  assertEq(result.kind, "invalid", "multiwindow without synthesis = invalid");
-  assert(
-    result.detail.includes("synthesis"),
-    `both windows read OK, failure is at synthesis. Got: ${result.detail}`,
-  );
-  assert(
-    !result.detail.includes("PASS_A_WINDOW_ARTIFACT_INVALID"),
-    `no window was rejected as corrupt. Got: ${result.detail}`,
-  );
-});
-
 test("ok artifact (Grok-primary) round-trips", async () => {
   const m = await mod();
   const env = grokEnv();
   const blocks = sourceBlocks100();
   const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
 
-  await seed(m, env, V31_RUN_ID, 1, okArtifact(m, env, {
-    origin: "A-w1", windowNumber: 1,
-    provider: "grok", callIdSuffix: "", model: "grok-4.5", selected: "grok-4.5",
-  }));
-  await seed(m, env, V31_RUN_ID, 2, okArtifact(m, env, {
-    origin: "A-w2", windowNumber: 2,
-    provider: "grok", callIdSuffix: "", model: "grok-4.5", selected: "grok-4.5",
-  }));
+  await seed(m, env, V31_RUN_ID, 1, okArtifact(m, env, { origin: "A-w1", windowNumber: 1 }));
+  await seed(m, env, V31_RUN_ID, 2, okArtifact(m, env, { origin: "A-w2", windowNumber: 2 }));
 
   const result = await reconstruct(m, env, V31_RUN_ID, blocks, pv);
   assertEq(result.kind, "invalid", "multiwindow without synthesis = invalid");
   assert(
     result.detail.includes("synthesis"),
-    `Grok windows read OK, failure at synthesis. Got: ${result.detail}`,
+    `both windows read OK, failure at synthesis. Got: ${result.detail}`,
   );
   assert(
     !result.detail.includes("PASS_A_WINDOW_ARTIFACT_INVALID"),
@@ -310,9 +265,9 @@ test("ok artifact (Grok-primary) round-trips", async () => {
   );
 });
 
-test("failed-retryable semantic-output (Gemini-primary, terminal:false) round-trips as 'failed'", async () => {
+test("failed-retryable semantic-output (terminal:false) round-trips as 'failed'", async () => {
   const m = await mod();
-  const env = geminiEnv();
+  const env = grokEnv();
   const blocks = sourceBlocks100();
   const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
 
@@ -325,9 +280,9 @@ test("failed-retryable semantic-output (Gemini-primary, terminal:false) round-tr
     `retryable failed artifact accepted. Got: ${result.detail}`);
 });
 
-test("failed-terminal provider failure (Gemini-primary + DeepSeek fallback) round-trips", async () => {
+test("failed-terminal provider failure (Grok + DeepSeek fallback) round-trips", async () => {
   const m = await mod();
-  const env = geminiEnv();
+  const env = grokEnv();
   const blocks = sourceBlocks100();
   const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
   const r1 = `core-model-call/pass-a/${V31_RUN_ID}/A-w1/issue-1/receipt-1`;
@@ -341,11 +296,11 @@ test("failed-terminal provider failure (Gemini-primary + DeepSeek fallback) roun
     windowPolicyIdentity: policyId(env),
     status: "failed", attempts: 1,
     usages: [
-      { eventId: r1, callId: "call_a_1:gemini-primary", role: "extract-pass-a-w1",
-        provider: "gemini", model: "gemini-2.5-flash", status: "error",
+      { eventId: r1, callId: "call_a_1", role: "extract-pass-a-w1",
+        provider: "grok", model: "grok-4.5", status: "error",
         inputTokens: 0, outputTokens: 0, costUsd: 0, latencyMs: 5000,
         attempts: 1, usageSource: "conservative-ceiling",
-        detail: "gemini-primary failed: 500" },
+        detail: "grok failed: 500" },
       { eventId: r2, callId: "call_a_1:grok-fallback", role: "extract-pass-a-w1",
         provider: "deepseek", model: "deepseek-v4-flash", status: "error",
         inputTokens: 0, outputTokens: 0, costUsd: 0, latencyMs: 3000,
@@ -355,7 +310,7 @@ test("failed-terminal provider failure (Gemini-primary + DeepSeek fallback) roun
     fallbackTrigger: {
       kind: "grok-flash-fallback-trigger/1.0.0", failureKind: "timeout-or-network",
       httpStatus: 500, grokModel: "grok-4.5", grokUsageEventId: r1,
-      detail: "gemini-primary failed: 500",
+      detail: "grok failed: 500",
     },
     terminal: true, failureStage: "provider",
     detail: "deepseek fallback failed: 503", modelOutput: null,
@@ -390,7 +345,7 @@ test("failed semantic-output (Grok-primary) round-trips", async () => {
 
 test("wire-ceiling zero-receipt artifact round-trips", async () => {
   const m = await mod();
-  const env = geminiEnv();
+  const env = grokEnv();
   const blocks = sourceBlocks100();
   const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
 
@@ -414,7 +369,7 @@ test("wire-ceiling zero-receipt artifact round-trips", async () => {
 
 test("stale-identity artifact returns null (cache miss), not invalid", async () => {
   const m = await mod();
-  const env = geminiEnv();
+  const env = grokEnv();
   const blocks = sourceBlocks100();
   const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
 
@@ -430,7 +385,7 @@ test("stale-identity artifact returns null (cache miss), not invalid", async () 
 
 test("corrupted blockIds artifact is rejected as invalid", async () => {
   const m = await mod();
-  const env = geminiEnv();
+  const env = grokEnv();
   const blocks = sourceBlocks100();
   const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
 
@@ -447,159 +402,6 @@ test("corrupted blockIds artifact is rejected as invalid", async () => {
 });
 
 // ===========================================================================
-suite("Reader-writer round-trip — gemini-primary SYNTHESIS artifact", () => {
-
-test("gemini-primary synthesis artifact round-trips through the reconstruction reader", async () => {
-  const m = await mod();
-  const env = geminiEnv({
-    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1",
-    EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "45000",
-    EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES: "2",
-    EXTRACT_MAX_OUTPUT_TOKENS: "32000",
-    GEMINI_EXTRACTION_MODEL: "gemini-2.5-flash",
-    GEMINI_INPUT_USD_PER_MTOK: "0.15",
-    GEMINI_OUTPUT_USD_PER_MTOK: "3.5",
-    GEMINI_REASONING_EFFORT: "medium",
-  });
-  const TEXT_B1 = "Apply the rule named Omega for respondents in the premium group.";
-  const TEXT_B2 = "Omega means Continue stays disabled until an answer is selected.";
-  const blocks = [
-    { blockId: "b0001", kind: "paragraph", text: TEXT_B1,
-      origin: "body", section: "Rules", coords: null, tableId: null },
-    { blockId: "b0002", kind: "paragraph", text: TEXT_B2,
-      origin: "body", section: "Rules", coords: null, tableId: null },
-  ];
-  const doc = docFor(blocks, m.docxBlocks.DOCX_BLOCKS_VERSION);
-  const runId = "run_synth_roundtrip_gemini";
-
-  const emptyPrimary = {
-    global_rules: [], cross_references: [], ambiguities: [], unverifiable_from_browser: [],
-  };
-  const xref = {
-    id: "XREF-01", from_block: "b0001", target: "Omega",
-    resolved_to_block: null, target_doc_quote: null,
-    statement: "The text refers to Omega.", doc_quote: TEXT_B1,
-  };
-  const emptySynthesis = {
-    global_rules: [], cross_reference_resolutions: [], ambiguities: [], unverifiable_from_browser: [],
-  };
-
-  const originalFetch = globalThis.fetch;
-  const calls = [];
-  globalThis.fetch = async (url, init) => {
-    const body = JSON.parse(init.body);
-    const metadata = JSON.parse(String(init.headers?.["cf-aig-metadata"] ?? "{}"));
-    const role = String(metadata.role ?? "");
-    const user = String(body.messages[1].content);
-    const wMatch = user.match(/window (\d+) of (\d+)/);
-    const unit = role === "extract-pass-a-synthesis" ? "A-synthesis"
-      : wMatch ? `A-w${wMatch[1]}` : "A";
-    calls.push({ unit, model: body.model });
-    const value = unit === "A-w1"
-      ? { ...emptyPrimary, cross_references: [xref] }
-      : unit === "A-synthesis"
-        ? emptySynthesis
-        : emptyPrimary;
-    return new Response(JSON.stringify({
-      model: body.model,
-      usage: { prompt_tokens: 1000, completion_tokens: 500 },
-      choices: [{ message: { content: JSON.stringify(value) }, finish_reason: "stop" }],
-    }), { status: 200, headers: { "content-type": "application/json" } });
-  };
-
-  try {
-    // Land primary windows
-    const first = await m.passA.runPassA(
-      env, runId, doc, "neutral.docx", async () => {}, { budgetMs: 600_000 },
-    );
-    assertEq(first.slice.windowsRemaining, 0, "all windows landed");
-    assertEq(first.slice.synthesisState, "pending", "synthesis pending");
-
-    // Run synthesis
-    const done = await m.passA.runPassA(
-      env, runId, doc, "neutral.docx", async () => {}, { budgetMs: 600_000 },
-    );
-    assertEq(done.slice.done, true, "run completed");
-    assertEq(done.slice.synthesisState, "ok", "synthesis ok");
-
-    // Verify Gemini was used (not Grok)
-    const synthCalls = calls.filter((c) => c.unit === "A-synthesis");
-    assertEq(synthCalls.length, 1, "one synthesis call");
-    assertEq(synthCalls[0].model, "gemini-2.5-flash", "synthesis used Gemini");
-
-    // Reclaim: the stored artifact must round-trip through the reader
-    calls.length = 0;
-    const reclaimed = await m.passA.runPassA(env, runId, doc, "neutral.docx");
-    assertEq(calls.length, 0, "reclaim issues zero provider requests");
-    assertEq(reclaimed.slice.done, true, "reclaim succeeds");
-    assertEq(reclaimed.slice.synthesisState, "ok", "synthesis still ok on reclaim");
-
-    // Full reconstruction also accepts the artifact
-    const authority = await m.passA.reconstructPassACompletedAuthority(env, runId, doc, "neutral.docx");
-    assertEq(authority.kind, "ok",
-      `reconstruction must accept gemini-primary synthesis. Got: ${authority.kind}: ${authority.detail ?? ""}`);
-    assert(
-      !authority.detail?.includes("PASS_A_WINDOW_ARTIFACT_INVALID"),
-      `no corruption detected. Got: ${authority.detail ?? "(none)"}`,
-    );
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-});
-
-// ===========================================================================
-suite("Reader-writer round-trip — parseFallbackTrigger Gemini-primary", () => {
-
-test("fallback trigger from Gemini-primary failure is accepted", async () => {
-  const m = await mod();
-  const env = geminiEnv();
-  const blocks = sourceBlocks100();
-  const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
-  const r1 = `core-model-call/pass-a/${V31_RUN_ID}/A-w1/issue-1/receipt-1`;
-  const r2 = `core-model-call/pass-a/${V31_RUN_ID}/A-w1/issue-1/receipt-2`;
-
-  const art = {
-    windowId: "A-w1", windowNumber: 1,
-    blockIds: windowBlockIds(1),
-    parserVersion: pv, promptVersion: m.passA.PASS_A_VERSION,
-    providerRouteIdentity: m.passA.passAPrimaryRouteIdentity(env),
-    windowPolicyIdentity: policyId(env),
-    status: "failed", attempts: 1,
-    usages: [
-      { eventId: r1, callId: "call_a_1:gemini-primary", role: "extract-pass-a-w1",
-        provider: "gemini", model: "gemini-2.5-flash", status: "error",
-        inputTokens: 0, outputTokens: 0, costUsd: 0, latencyMs: 5000,
-        attempts: 1, usageSource: "conservative-ceiling",
-        detail: "gemini-primary failed: rate-limited" },
-      { eventId: r2, callId: "call_a_1:grok-fallback", role: "extract-pass-a-w1",
-        provider: "deepseek", model: "deepseek-v4-flash", status: "error",
-        inputTokens: 0, outputTokens: 0, costUsd: 0, latencyMs: 3000,
-        attempts: 1, usageSource: "conservative-ceiling",
-        detail: "deepseek fallback failed: 503" },
-    ],
-    fallbackTrigger: {
-      kind: "grok-flash-fallback-trigger/1.0.0", failureKind: "rate-limited",
-      httpStatus: 429, grokModel: "grok-4.5", grokUsageEventId: r1,
-      detail: "gemini-primary failed: rate-limited",
-    },
-    terminal: true, failureStage: "provider",
-    detail: "deepseek fallback failed: 503", modelOutput: null,
-  };
-  await seed(m, env, V31_RUN_ID, 1, art);
-
-  const result = await reconstruct(m, env, V31_RUN_ID, blocks, pv);
-  assertEq(result.kind, "invalid", "failed window -> invalid");
-  assert(result.detail.includes("retains failed authority"),
-    `Gemini fallback trigger accepted. Got: ${result.detail}`);
-  assert(!result.detail.includes("PASS_A_WINDOW_ARTIFACT_INVALID"),
-    `must not reject as corrupt. Got: ${result.detail}`);
-});
-
-});
-
-// ===========================================================================
 suite("Reader-writer round-trip — degraded artifact with item-level limitations", () => {
 
 /**
@@ -611,7 +413,7 @@ suite("Reader-writer round-trip — degraded artifact with item-level limitation
 
 test("degraded artifact with structural-validation-failed limitations round-trips through readWindowArtifact", async () => {
   const m = await mod();
-  const env = geminiEnv();
+  const env = grokEnv();
   // Use a focused two-block source with one valid + one invalid-construct rule.
   // Single-window doc: origin is "A" (not "A-w1").
   const source = [
@@ -679,21 +481,21 @@ test("degraded artifact with structural-validation-failed limitations round-trip
     ...degraded.unit,
     usages: [
       {
-        eventId: r1, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
-        provider: "gemini", model: "gemini-2.5-flash", status: "parse-failed",
+        eventId: r1, callId: "call_a_1", role: "extract-pass-a",
+        provider: "grok", model: "grok-4.5", status: "parse-failed",
         inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
         attempts: 1, usageSource: "provider-reported",
         detail: "semantic output rejected: PASS_A_WINDOW_OUTPUT_INVALID: unknown construct \"ordering\"",
       },
       {
-        eventId: r2, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
-        provider: "gemini", model: "gemini-2.5-flash", status: "ok",
+        eventId: r2, callId: "call_a_1", role: "extract-pass-a",
+        provider: "grok", model: "grok-4.5", status: "ok",
         inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
         attempts: 1, usageSource: "provider-reported",
         detail: "degraded: 1 of 2 items excluded",
       },
     ],
-    routeReceipt: { selected: "gemini-2.5-flash", trigger: null },
+    routeReceipt: { selected: "grok-4.5", trigger: null },
   };
 
   // Seed as a single-window document (blocks = source only)
@@ -714,7 +516,7 @@ test("degraded artifact with structural-validation-failed limitations round-trip
 
 test("degraded artifact with root-malformed + structural-validation-failed round-trips", async () => {
   const m = await mod();
-  const env = geminiEnv();
+  const env = grokEnv();
   const source = [
     { blockId: "b0001", kind: "paragraph", text: "Block 1 content. Every question is compulsory.",
       origin: "body", section: "Questions", coords: null, tableId: null },
@@ -757,21 +559,21 @@ test("degraded artifact with root-malformed + structural-validation-failed round
     ...degraded.unit,
     usages: [
       {
-        eventId: r1, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
-        provider: "gemini", model: "gemini-2.5-flash", status: "parse-failed",
+        eventId: r1, callId: "call_a_1", role: "extract-pass-a",
+        provider: "grok", model: "grok-4.5", status: "parse-failed",
         inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
         attempts: 1, usageSource: "provider-reported",
         detail: "semantic output rejected",
       },
       {
-        eventId: r2, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
-        provider: "gemini", model: "gemini-2.5-flash", status: "ok",
+        eventId: r2, callId: "call_a_1", role: "extract-pass-a",
+        provider: "grok", model: "grok-4.5", status: "ok",
         inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
         attempts: 1, usageSource: "provider-reported",
         detail: "degraded: 1 of 2 items excluded",
       },
     ],
-    routeReceipt: { selected: "gemini-2.5-flash", trigger: null },
+    routeReceipt: { selected: "grok-4.5", trigger: null },
   };
 
   await seed(m, env, runId, 1, artifact);
@@ -784,7 +586,7 @@ test("degraded artifact with root-malformed + structural-validation-failed round
 
 test("TAMPERING: modifying modelOutput of degraded artifact is still rejected", async () => {
   const m = await mod();
-  const env = geminiEnv();
+  const env = grokEnv();
   const source = [
     { blockId: "b0001", kind: "paragraph", text: "Block 1 content. Every question is compulsory.",
       origin: "body", section: "Questions", coords: null, tableId: null },
@@ -837,27 +639,24 @@ test("TAMPERING: modifying modelOutput of degraded artifact is still rejected", 
     ...degraded.unit,
     usages: [
       {
-        eventId: r1, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
-        provider: "gemini", model: "gemini-2.5-flash", status: "parse-failed",
+        eventId: r1, callId: "call_a_1", role: "extract-pass-a",
+        provider: "grok", model: "grok-4.5", status: "parse-failed",
         inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
         attempts: 1, usageSource: "provider-reported",
         detail: "semantic output rejected",
       },
       {
-        eventId: r2, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
-        provider: "gemini", model: "gemini-2.5-flash", status: "ok",
+        eventId: r2, callId: "call_a_1", role: "extract-pass-a",
+        provider: "grok", model: "grok-4.5", status: "ok",
         inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
         attempts: 1, usageSource: "provider-reported",
         detail: "degraded: 1 of 2 items excluded",
       },
     ],
-    routeReceipt: { selected: "gemini-2.5-flash", trigger: null },
+    routeReceipt: { selected: "grok-4.5", trigger: null },
   };
 
   // TAMPER: modify the surviving rule's id in globalRules to simulate content injection.
-  // The stored typed content has the original rule id, but modelOutput now carries a
-  // different id. The subset check must catch this: the stored globalRules[0].id no longer
-  // appears in the re-decoded set from modelOutput.
   artifact.globalRules = [{
     ...artifact.globalRules[0],
     id: "INJECTED-FAKE",

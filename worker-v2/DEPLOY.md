@@ -1050,7 +1050,6 @@ const v=c.vars||{}; eq(v.V2_PREFIX,"v2/","wrong prefix");
 eq(v.CAP_STANDARD_MAX_USD,"5","source cap not $5");
 eq(v.CAP_WALL_CLOCK_MS,"14400000","wall cap not 4h"); eq(v.VISUAL_SHADOW_ENABLED,"false","visual enabled");
 if(Object.hasOwn(v,"DEV_SEED")) fail("DEV_SEED present");
-eq(v.EXTRACT_PASS_A_PRIMARY,"grok","wrong Pass-A primary mode");
 eq(v.GROK_MODEL,"grok-4.5","wrong normal Pass-A model");
 const grokRateBinding={
  GROK_RATE_BINDING_SCHEMA:"survey-qa-grok-rate-binding/1.0.0",
@@ -1076,9 +1075,6 @@ eq(v.DEEPSEEK_CONTEXT_WINDOW_TOKENS,"1000000","wrong DeepSeek V4 context-window 
 eq(v.EXTRACT_MODEL_INPUT_MAX_BYTES,"450000","wrong extraction request-body ceiling");
 eq(v.EXTRACT_MAX_OUTPUT_TOKENS,"32000","wrong extraction output-token ceiling");
 eq(v.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES,"45000","wrong Pass-A synthesis catalogue ceiling");
-eq(v.GEMINI_EXTRACTION_MODEL,"gemini-2.5-flash","wrong Gemini extraction model"); eq(v.GEMINI_INPUT_USD_PER_MTOK,"0.15","wrong Gemini input rate");
-eq(v.GEMINI_OUTPUT_USD_PER_MTOK,"3.5","wrong Gemini output rate"); eq(v.GEMINI_MAX_TOTAL_USD,"10","wrong Gemini cumulative cap");
-eq(v.GEMINI_REASONING_EFFORT,"medium","wrong Gemini reasoning effort");
 eq(v.DEEPSEEK_MODEL,"deepseek-v4-flash","wrong eligible Grok-fallback model"); eq(v.DEEPSEEK_INPUT_USD_PER_MTOK,"0.14","wrong Flash input rate");
 eq(v.DEEPSEEK_OUTPUT_USD_PER_MTOK,"0.28","wrong Flash output rate"); eq(v.DEEPSEEK_FALLBACK_MODE,"on-error","wrong DeepSeek route mode");
 eq(v.DEEPSEEK_FALLBACK_MODEL,"deepseek-v4-pro","wrong normal Pass-B model"); eq(v.DEEPSEEK_FALLBACK_MAX_ATTEMPTS,"1","unbounded Pass-B attempts");

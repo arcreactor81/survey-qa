@@ -1,16 +1,11 @@
 /**
- * Item-level grounding degradation and Gemini budget mode.
+ * Item-level grounding degradation.
  *
  * When a window's retry budget is exhausted for a semantic-output error, instead of
  * failing the whole window (and therefore the whole run), each individually invalid or
  * ungrounded item is excluded and counted as a named limitation, while every valid +
  * grounded item survives into the landed window. The grounding validation stays exactly
  * as strict; only the consequence granularity changes from window to item.
- *
- * Budget mode: EXTRACT_PASS_A_PRIMARY="gemini" runs pass A on gemini-2.5-flash through
- * the pinned Gemini leg. Grok is never called. The existing USD 10 cumulative cap
- * enforcement applies to EVERY pass-A call. Pass B stays DeepSeek Pro. Provider-family
- * independence is intact.
  */
 import { assert, assertEq, suite, test } from "../testkit.mjs";
 import { testEnv, worker } from "./_helpers.mjs";
@@ -567,21 +562,16 @@ suite("Budget mode failure ladder — semantic errors are retriable", () => {
     assertEq(canDegrade2, true, "degradation must be attempted at retry exhaustion");
   });
 
-  test("budget mode ladder mirrors grok mode exactly: mode changes who reads, not the ladder", () => {
-    // The decision table is identical for both modes. The durableTerminal formula
-    // does not reference passAPrimary. Prove it by showing the formula is the same.
-    for (const mode of ["grok", "gemini"]) {
-      void mode; // mode does not appear in the formula
-      const attempts = 1;
-      const maxIssues = 2;
-      const nonRetryablePrimaryFailure = false;
-      const durableTerminal = nonRetryablePrimaryFailure || attempts >= maxIssues;
-      assertEq(durableTerminal, false, `${mode} mode: first-attempt semantic error is retriable`);
-    }
+  test("failure ladder is mode-neutral: same formula regardless of primary provider", () => {
+    const attempts = 1;
+    const maxIssues = 2;
+    const nonRetryablePrimaryFailure = false;
+    const durableTerminal = nonRetryablePrimaryFailure || attempts >= maxIssues;
+    assertEq(durableTerminal, false, "first-attempt semantic error is retriable");
   });
 });
 
-suite("GEMINI construct prompt constraint", () => {
+suite("Construct prompt constraint", () => {
   test("SYSTEM_A prompt explicitly lists all eleven construct values", async () => {
     const mod = await worker();
     const prompts = mod.prompts;
@@ -677,52 +667,12 @@ suite("Pass-A imperative scope constraint", () => {
   });
 });
 
-suite("Budget mode — Gemini-primary pass A", () => {
-  test("EXTRACT_PASS_A_PRIMARY validates legal values", async () => {
+suite("Pass-A route identity is grok-flash form", () => {
+  test("route identity equals grokFlashRouteIdentity", async () => {
     const mod = await worker();
-    assertEq(mod.passA.validatePassAPrimaryMode({ EXTRACT_PASS_A_PRIMARY: "grok" }), "grok");
-    assertEq(mod.passA.validatePassAPrimaryMode({ EXTRACT_PASS_A_PRIMARY: "gemini" }), "gemini");
-    assertEq(mod.passA.validatePassAPrimaryMode({}), "grok"); // default
-  });
-
-  test("invalid EXTRACT_PASS_A_PRIMARY throws", async () => {
-    const mod = await worker();
-    let threw = false;
-    try {
-      mod.passA.validatePassAPrimaryMode({ EXTRACT_PASS_A_PRIMARY: "openai" });
-    } catch (err) {
-      threw = true;
-      assert(err.message.includes("EXTRACT_PASS_A_PRIMARY"), "error must name the var");
-    }
-    assert(threw, "invalid mode must throw");
-  });
-
-  test("budget mode: route identity is distinct from grok mode", async () => {
-    const mod = await worker();
-    const grokEnv = testEnv({ EXTRACT_PASS_A_PRIMARY: "grok" });
-    const geminiEnv = testEnv({ EXTRACT_PASS_A_PRIMARY: "gemini" });
-    const grokId = mod.passA.passAPrimaryRouteIdentity(grokEnv);
-    const geminiId = mod.passA.passAPrimaryRouteIdentity(geminiEnv);
-    assert(grokId !== geminiId, "gemini-read contract is not a grok-read contract");
-    assert(geminiId.startsWith("gemini-primary:"), "gemini route must be named distinctly");
-  });
-
-  test('"grok" mode byte-identical behavior to today (regression)', async () => {
-    const mod = await worker();
-    const env = testEnv({ EXTRACT_PASS_A_PRIMARY: "grok" });
+    const env = testEnv({});
     const routeId = mod.passA.passAPrimaryRouteIdentity(env);
     const grokRouteId = mod.grok.grokFlashRouteIdentity(env);
     assertEq(routeId, grokRouteId);
-  });
-
-  test("negative fixture: setting an invalid value throws at mode validation", async () => {
-    const mod = await worker();
-    let threw = false;
-    try {
-      mod.passA.validatePassAPrimaryMode({ EXTRACT_PASS_A_PRIMARY: "" });
-    } catch {
-      threw = true;
-    }
-    assert(threw, "empty string must be rejected");
   });
 });

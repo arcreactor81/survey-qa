@@ -463,10 +463,7 @@ const FILES = [
   // Neither leg can impersonate the independent Grok method.
   // Evidence these can fail: tools/mutate-provider-continuity.mjs.
   "./tests/provider-continuity.test.mjs",
-  // Gemini pass-A substitute: cross-family Grok substitute (owner-approved 15 Aug 2026).
-  // Evidence these can fail: typed-trigger, identity-mismatch, cap, fallthrough, config-gate.
-  "./tests/gemini-pass-a-substitute.test.mjs",
-  // Provider cumulative spend ledger: cross-run accounting and Gemini USD 10 cap enforcement.
+  // Provider cumulative spend ledger: cross-run accounting and spend enforcement.
   // Evidence these can fail: each test documents what mutation makes it fail; the negative
   // fixture proves the enforcement check is structurally capable of failing.
   "./tests/provider-spend-ledger.test.mjs",

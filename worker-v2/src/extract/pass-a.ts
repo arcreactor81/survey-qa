@@ -80,21 +80,6 @@ import {
   deepseekGrokFallbackRequestShape,
 } from "../llm/deepseek";
 import {
-  geminiGrokSubstituteIdentity,
-  geminiGrokSubstituteJson,
-  geminiGrokSubstituteRequestShape,
-  geminiMaxTotalUsd,
-  keyForGemini,
-  GEMINI_OFFICIAL_RATES,
-  DEFAULT_GEMINI_MODEL,
-} from "../llm/gemini";
-import {
-  enforceGeminiCap,
-  ProviderCapExceededRefusal,
-  ProviderLedgerCorrupt,
-  conservativeGeminiReservation,
-} from "../store/provider-spend-ledger";
-import {
   chatRequestBodyText,
   keyFor,
   MissingCredential,
@@ -154,7 +139,6 @@ export const PASS_A_SYNTHESIS_VERSION = "v2-extract-pass-a-synthesis/1.1.0";
 
 export type PassAProviderIndependence =
   | "independent"
-  | "independent-gemini-substitute"
   | "reduced-same-provider-fallback";
 
 export interface GrokFallbackTrigger {
@@ -167,7 +151,7 @@ export interface GrokFallbackTrigger {
 }
 
 export interface PassARouteReceipt {
-  selected: "grok-4.5" | "gemini-2.5-flash" | "deepseek-v4-flash";
+  selected: "grok-4.5" | "deepseek-v4-flash";
   trigger: GrokFallbackTrigger | null;
 }
 
@@ -208,7 +192,7 @@ const windowPolicyIdentity = (env: Env): string =>
 //   output-ceiling truncation              | SPLIT: divide the window into two halves along
 //     (finish_reason: "length")            |   block boundaries. Same provider reads each
 //                                          |   half; independence intact; attacks the CAUSE.
-//   other typed eligible failures          | existing substitution chain (Gemini -> Flash)
+//   other typed eligible failures          | DeepSeek Flash substitute (reduced independence)
 //     (rate-limited, timeout, etc)         |
 //   sub-window still truncates             | split again, depth-bounded (max 3 levels)
 //   single-block sub-window truncates      | typed named refusal, counted, surfaced in
@@ -387,7 +371,7 @@ export interface PassASynthesisOutcome {
   failedUnit: PassResult["failedUnits"][number] | null;
   limitation: PassACrossWindowLimitation | null;
   terminalReasonCode?: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
-  credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" | "gemini" };
+  credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" };
 }
 
 export interface PassASynthesisOptions {
@@ -460,7 +444,7 @@ export type PassAResult = PassResult & {
   /** Named refusals for sub-windows that could not be split further. */
   splitExhaustionRefusals: SplitExhaustionRefusal[];
   terminalReasonCode?: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
-  credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" | "gemini" };
+  credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" };
 };
 
 export type PassACompletedAuthority = Omit<
@@ -1304,29 +1288,7 @@ async function readSubWindowsWithSplit(
   return result;
 }
 
-/**
- * Validated pass-A primary provider selection.
- * "grok"   — default, current behavior: Grok primary with Gemini/Flash substitution chain.
- * "gemini" — budget mode: Gemini gemini-2.5-flash is the primary, Grok is never called.
- */
-export type PassAPrimaryMode = "grok" | "gemini";
-
-export function validatePassAPrimaryMode(env: Env): PassAPrimaryMode {
-  const raw = env.EXTRACT_PASS_A_PRIMARY ?? "grok";
-  if (raw !== "grok" && raw !== "gemini") {
-    throw new Error(
-      `EXTRACT_PASS_A_PRIMARY must be exactly "grok" or "gemini", got ${JSON.stringify(raw)}. ` +
-        `Any other value is refused at construction.`,
-    );
-  }
-  return raw;
-}
-
 export function passAPrimaryRouteIdentity(env: Env): string {
-  const mode = validatePassAPrimaryMode(env);
-  if (mode === "gemini") {
-    return `gemini-primary:${geminiGrokSubstituteIdentity(env)}|fallback:deepseek-flash`;
-  }
   return grokFlashRouteIdentity(env);
 }
 
@@ -1339,7 +1301,6 @@ export async function runPassA(
   options?: PassASliceOptions,
   onUnitStart?: DocumentReadingUnitStartObserver,
 ): Promise<PassAResult> {
-  const passAPrimary = validatePassAPrimaryMode(env);
   const parserVersion = doc.parserVersion ?? DOCX_BLOCKS_VERSION;
   const providerRouteIdentity = passAPrimaryRouteIdentity(env);
   // Local, NOT module scope: one isolate serves many runs, and a module-level accumulator
@@ -1364,10 +1325,9 @@ export async function runPassA(
   const splitEvents: SplitEvent[] = [];
   const splitExhaustionRefusals: SplitExhaustionRefusal[] = [];
   let providerIndependence: PassAProviderIndependence = "independent";
-  const model = passAPrimary === "gemini" ? DEFAULT_GEMINI_MODEL : DEFAULT_GROK_MODEL;
+  const model = DEFAULT_GROK_MODEL;
   let resolvedGrokKey: string | null = null;
   let resolvedDeepseekKey: string | null = null;
-  let resolvedGeminiKey: string | null = null;
   const purchaseEnvFor = async (needsGrok: boolean, needsDeepseek: boolean): Promise<Env> => {
     if (needsGrok && resolvedGrokKey === null) resolvedGrokKey = await keyFor(env, "grok");
     if (needsDeepseek && resolvedDeepseekKey === null) {
@@ -1377,14 +1337,7 @@ export async function runPassA(
       ...env,
       ...(resolvedGrokKey !== null ? { XAI_API_KEY: resolvedGrokKey } : {}),
       ...(resolvedDeepseekKey !== null ? { DEEPSEEK_API_KEY: resolvedDeepseekKey } : {}),
-      ...(resolvedGeminiKey !== null ? { GEMINI_API_KEY: resolvedGeminiKey } : {}),
     };
-  };
-  /** Resolve the Gemini key lazily — only when the substitution path is actually taken. */
-  const resolveGeminiKey = async (): Promise<void> => {
-    if (resolvedGeminiKey === null) {
-      resolvedGeminiKey = await keyForGemini(env);
-    }
   };
 
   // THE DEADLINE, AND THE ONE EXCEPTION TO IT. `issued === 0` keeps the first call of every
@@ -1432,10 +1385,6 @@ export async function runPassA(
     };
     const check = preflightExtractionRequestBodies(env, [
       { route: "grok-4.5", bodyText: chatRequestBodyText(grokRequestShape(env), optionsForCall) },
-      {
-        route: "gemini-2.5-flash",
-        bodyText: chatRequestBodyText(geminiGrokSubstituteRequestShape(env), optionsForCall),
-      },
       {
         route: "deepseek-v4-flash",
         bodyText: chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall),
@@ -1687,7 +1636,7 @@ export async function runPassA(
     // call that costs far more.
     const pendingSubstitute = existing && existing.kind === "failed" &&
       existing.fallbackTrigger !== null &&
-      !existing.usages.some((usage) => usage.provider === "deepseek" || usage.provider === "gemini");
+      !existing.usages.some((usage) => usage.provider === "deepseek");
     // SLICE TERMINALITY DERIVES FROM DURABLE WINDOW TERMINALITY (fix: 15 Aug 2026).
     // Before this change, the attempts-exhausted gate checked only `existing.attempts >=
     // maxIssues`, independently of `existing.terminal`. When the durableTerminal formula
@@ -1762,28 +1711,19 @@ export async function runPassA(
     let purchaseEnv: Env;
     try {
       // A fresh unit may legitimately fall back, so Grok and DeepSeek credentials are
-      // resolved once after all-window wire preflight but before Grok can spend. Gemini
-      // credentials are resolved lazily inside the substitution path only when needed.
+      // resolved once after all-window wire preflight but before Grok can spend.
       // A retained fallback checkpoint needs only substitutes. The cloned env turns
       // subsequent client reads into side-effect-free string lookups.
-      //
-      // BUDGET MODE ("gemini"): Grok is never called; Gemini key is resolved eagerly
-      // instead. DeepSeek Flash remains the fallback for typed Gemini failures.
-      if (passAPrimary === "gemini") {
-        await resolveGeminiKey();
-        purchaseEnv = await purchaseEnvFor(false, true);
-      } else {
-        purchaseEnv = await purchaseEnvFor(
-          !(existing?.kind === "failed" && existing.fallbackTrigger !== null),
-          true,
-        );
-      }
+      purchaseEnv = await purchaseEnvFor(
+        !(existing?.kind === "failed" && existing.fallbackTrigger !== null),
+        true,
+      );
     } catch (error) {
       if (!(error instanceof MissingCredential)) throw error;
       credentialRefusal = {
         reason: "NO_CREDENTIAL",
         binding: error.binding,
-        provider: error.binding === "XAI_API_KEY" ? "grok" : error.binding === "GEMINI_API_KEY" ? "gemini" : "deepseek",
+        provider: error.binding === "XAI_API_KEY" ? "grok" : "deepseek",
       };
       terminalFailure = true;
       const detail = `${error.binding} is unavailable after request-size preflight; no new ` +
@@ -1803,73 +1743,7 @@ export async function runPassA(
       let value: Record<string, unknown> | null = null;
       let routeReceipt: PassARouteReceipt | null = null;
 
-      if (fallbackTrigger === null && passAPrimary === "gemini") {
-        // BUDGET MODE: Gemini is the primary provider. Grok is never called.
-        // Enforce cumulative Gemini cap before every purchase.
-        try {
-          const geminiShape = geminiGrokSubstituteRequestShape(purchaseEnv);
-          const geminiBodyBytes = new TextEncoder().encode(
-            chatRequestBodyText(geminiShape, optionsForCall),
-          ).byteLength;
-          const geminiRates = GEMINI_OFFICIAL_RATES[DEFAULT_GEMINI_MODEL];
-          const geminiReservation = conservativeGeminiReservation(
-            geminiBodyBytes,
-            Math.max(0, Math.ceil(optionsForCall.maxTokens)),
-            geminiRates.inputUsdPerMTok,
-            geminiRates.outputUsdPerMTok,
-          );
-          await enforceGeminiCap(purchaseEnv.EVIDENCE, geminiMaxTotalUsd(purchaseEnv), geminiReservation);
-          const outcome = await geminiGrokSubstituteJson(purchaseEnv, {
-            ...optionsForCall,
-            callId: `${optionsForCall.callId}:gemini-primary`,
-          });
-          const usage = settlementUsage(runId, origin, issue, 1, outcome.usage);
-          purchasedUsages.push(usage);
-          calls.push(usage);
-          issuedCalls.push(usage);
-          accountingCalls.push(usage);
-          value = outcome.value;
-          rawModelOutput = outcome.value;
-          routeReceipt = { selected: "gemini-2.5-flash", trigger: null };
-          providerIndependence = "independent-gemini-substitute";
-        } catch (geminiPrimaryErr) {
-          // Gemini primary failure: typed Gemini failure falls to DeepSeek Flash
-          if (geminiPrimaryErr instanceof ModelCallError) {
-            const usage = settlementUsage(runId, origin, issue, 1, geminiPrimaryErr.usage);
-            purchasedUsages.push(usage);
-            calls.push(usage);
-            issuedCalls.push(usage);
-            accountingCalls.push(usage);
-          }
-          // Create a synthetic fallback trigger for the Flash path
-          if (
-            geminiPrimaryErr instanceof ModelCallError ||
-            geminiPrimaryErr instanceof ProviderCapExceededRefusal ||
-            geminiPrimaryErr instanceof ProviderLedgerCorrupt ||
-            geminiPrimaryErr instanceof MissingCredential
-          ) {
-            // Fall through: value remains null, DeepSeek Flash path below will handle it
-            fallbackTrigger = {
-              kind: GROK_FALLBACK_TRIGGER_VERSION,
-              failureKind: geminiPrimaryErr instanceof ModelCallError
-                ? geminiPrimaryErr.failureKind
-                : "provider-unavailable" as const,
-              httpStatus: geminiPrimaryErr instanceof ModelCallError
-                ? geminiPrimaryErr.httpStatus
-                : null,
-              grokModel: DEFAULT_GROK_MODEL,
-              grokUsageEventId: purchasedUsages.length > 0
-                ? (purchasedUsages[purchasedUsages.length - 1]!.eventId ?? `core-model-call/pass-a/${runId}/${origin}/issue-${issue}/receipt-1`)
-                : `core-model-call/pass-a/${runId}/${origin}/issue-${issue}/receipt-1`,
-              detail: `gemini-primary failed: ${geminiPrimaryErr instanceof Error ? geminiPrimaryErr.message.slice(0, 200) : String(geminiPrimaryErr)}`,
-            };
-          } else {
-            throw geminiPrimaryErr;
-          }
-        }
-      }
-
-      if (fallbackTrigger === null && passAPrimary !== "gemini") {
+      if (fallbackTrigger === null) {
         try {
           const outcome = await grokJson(purchaseEnv, optionsForCall);
           const usage = settlementUsage(runId, origin, issue, 1, outcome.usage);
@@ -1886,8 +1760,7 @@ export async function runPassA(
           // OUTPUT-CEILING TRUNCATION -> SPLIT (same provider keeps reading).
           // This intercepts before the substitution chain because splitting attacks
           // the CAUSE (window too large for the model's output budget), while
-          // substitution attacks availability — and the substitute has a similar
-          // output ceiling (measured: ~65k tokens on both grok-4.5 and gemini-2.5-flash).
+          // substitution attacks availability.
           if (isOutputCeilingTruncation(err) && w.length >= 2) {
             const truncUsage = settlementUsage(runId, origin, issue, 1, err.usage);
             purchasedUsages.push(truncUsage);
@@ -2129,109 +2002,21 @@ export async function runPassA(
       }
 
       if (fallbackTrigger !== null) {
-        // SUBSTITUTION CHAIN (owner-approved 15 Aug 2026):
-        // 1. Gemini gemini-2.5-flash — cross-family, preserves full independence
-        // 2. DeepSeek Flash — same family as pass B, reduces independence (existing path)
-        //
-        // Gemini is attempted first. If it fails with a typed eligible error, the existing
-        // DeepSeek Flash path fires as the last resort with its unchanged semantics.
-        //
-        // BUDGET MODE: when pass-A primary is "gemini", Gemini already failed as primary.
-        // Skip the Gemini substitute and go directly to DeepSeek Flash.
-        let substituteSucceeded = false;
-
-        let geminiAttempted = passAPrimary === "gemini";
-
-        if (passAPrimary !== "gemini") {
-          // Resolve Gemini key lazily — only when a Grok failure has already happened
-          try {
-            await resolveGeminiKey();
-            // Re-create the purchase env with the resolved Gemini key
-            purchaseEnv = await purchaseEnvFor(false, false);
-          } catch (geminiKeyErr) {
-            if (geminiKeyErr instanceof MissingCredential) {
-              // No Gemini key: fall through to DeepSeek Flash directly
-              geminiAttempted = false;
-            } else {
-              throw geminiKeyErr;
-            }
-          }
-        }
-
-        if (resolvedGeminiKey !== null && passAPrimary !== "gemini") try {
-          // ENFORCE cumulative Gemini cap BEFORE the purchase. A conservative reservation
-          // uses request-byte ceiling as input tokens and max_tokens as output tokens,
-          // mirroring how Grok reserves at its max-known rates.
-          const geminiShape = geminiGrokSubstituteRequestShape(purchaseEnv);
-          const geminiBodyBytes = new TextEncoder().encode(
-            chatRequestBodyText(geminiShape, optionsForCall),
-          ).byteLength;
-          const geminiRates = GEMINI_OFFICIAL_RATES[DEFAULT_GEMINI_MODEL];
-          const geminiReservation = conservativeGeminiReservation(
-            geminiBodyBytes,
-            Math.max(0, Math.ceil(optionsForCall.maxTokens)),
-            geminiRates.inputUsdPerMTok,
-            geminiRates.outputUsdPerMTok,
-          );
-          await enforceGeminiCap(purchaseEnv.EVIDENCE, geminiMaxTotalUsd(purchaseEnv), geminiReservation);
-
-          const geminiOutcome = await geminiGrokSubstituteJson(purchaseEnv, {
-            ...optionsForCall,
-            callId: `${optionsForCall.callId}:grok-gemini-substitute`,
-          });
-          const geminiUsage = settlementUsage(runId, origin, issue, 2, geminiOutcome.usage);
-          purchasedUsages.push(geminiUsage);
-          calls.push(geminiUsage);
-          issuedCalls.push(geminiUsage);
-          accountingCalls.push(geminiUsage);
-          value = geminiOutcome.value;
-          rawModelOutput = geminiOutcome.value;
-          routeReceipt = { selected: "gemini-2.5-flash", trigger: fallbackTrigger };
-          providerIndependence = "independent-gemini-substitute";
-          substituteSucceeded = true;
-          geminiAttempted = true;
-        } catch (geminiErr) {
-          geminiAttempted = true;
-          // Record the Gemini failure usage if it was a model call error
-          if (geminiErr instanceof ModelCallError) {
-            const geminiUsage = settlementUsage(runId, origin, issue, 2, geminiErr.usage);
-            purchasedUsages.push(geminiUsage);
-            calls.push(geminiUsage);
-            issuedCalls.push(geminiUsage);
-            accountingCalls.push(geminiUsage);
-          }
-          // Cap exceeded or ledger corrupt: typed refusal, fall through to DeepSeek Flash
-          if (geminiErr instanceof ProviderCapExceededRefusal) {
-            // Fall through to DeepSeek Flash — the run continues reduced, not killed
-          } else if (geminiErr instanceof ProviderLedgerCorrupt) {
-            // Corrupt ledger = fail closed for Gemini, fall through to DeepSeek Flash
-          } else if (geminiErr instanceof ModelCallError && grokFlashFallbackEligible(geminiErr)) {
-            // Fall through to DeepSeek Flash below
-          } else if (geminiErr instanceof MissingCredential) {
-            // No Gemini key: fall through to DeepSeek Flash
-          } else {
-            // Non-eligible Gemini error: fall through to DeepSeek Flash as last resort
-            // (semantic/parse errors on Gemini still allow DeepSeek Flash attempt)
-          }
-        }
-
-        if (!substituteSucceeded) {
-          // DeepSeek Flash as last resort — existing reduced-independence path, unchanged
-          const flashOutcome = await deepseekGrokFallbackJson(purchaseEnv, {
-            ...optionsForCall,
-            callId: `${optionsForCall.callId}:grok-fallback`,
-          });
-          const flashReceiptIndex = geminiAttempted ? 3 : 2;
-          const flashUsage = settlementUsage(runId, origin, issue, flashReceiptIndex, flashOutcome.usage);
-          purchasedUsages.push(flashUsage);
-          calls.push(flashUsage);
-          issuedCalls.push(flashUsage);
-          accountingCalls.push(flashUsage);
-          value = flashOutcome.value;
-          rawModelOutput = flashOutcome.value;
-          routeReceipt = { selected: "deepseek-v4-flash", trigger: fallbackTrigger };
-          providerIndependence = "reduced-same-provider-fallback";
-        }
+        // SUBSTITUTION: DeepSeek Flash — reduced independence (existing path, unchanged
+        // semantics). A typed Grok failure goes straight to Flash.
+        const flashOutcome = await deepseekGrokFallbackJson(purchaseEnv, {
+          ...optionsForCall,
+          callId: `${optionsForCall.callId}:grok-fallback`,
+        });
+        const flashUsage = settlementUsage(runId, origin, issue, 2, flashOutcome.usage);
+        purchasedUsages.push(flashUsage);
+        calls.push(flashUsage);
+        issuedCalls.push(flashUsage);
+        accountingCalls.push(flashUsage);
+        value = flashOutcome.value;
+        rawModelOutput = flashOutcome.value;
+        routeReceipt = { selected: "deepseek-v4-flash", trigger: fallbackTrigger };
+        providerIndependence = "reduced-same-provider-fallback";
       }
       if (value === null || routeReceipt === null) {
         throw new Error("pass-A provider route produced neither a primary nor a fallback outcome");
@@ -2392,21 +2177,13 @@ export async function runPassA(
       const attempts = issue;
       const nonRetryablePrimaryFailure =
         fallbackTrigger === null && err instanceof ModelCallError && !grokFlashFallbackEligible(err);
-      // BUDGET-MODE FAILURE LADDER (fix: 15 Aug 2026):
-      // Before this change, `!(err instanceof ModelCallError)` made EVERY semantic-output
-      // error unconditionally terminal on the FIRST attempt — even though the retry-counting
-      // logic at line ~2440 incremented `remaining`. The persisted `terminal: true` won
-      // because the next wave checked it before the attempt ceiling. In budget mode
-      // (gemini-primary), this killed the run after exactly one $0.005 call.
-      //
-      // The ladder is now provider-neutral and identical in grok-mode and budget-mode:
+      // FAILURE LADDER:
       //   (a) retry the window on the SAME provider up to maxIssues;
       //   (b) at retry exhaustion with a semantic-output failure + retained raw output
-      //       → item-level degradation (exclude invalid items, land the window);
-      //   (c) transport-class typed failures → DeepSeek Flash last resort;
+      //       -> item-level degradation (exclude invalid items, land the window);
+      //   (c) transport-class typed failures -> DeepSeek Flash last resort;
       //   (d) fully-unusable output after retries (degradedPrimaryOutput returns null)
-      //       → terminal.
-      // The MODE changes WHO reads; the ladder is the same.
+      //       -> terminal.
       const durableTerminal =
         nonRetryablePrimaryFailure || attempts >= maxIssues;
       // A failed window is an artifact too, so its re-purchases are bounded the same way a
@@ -2512,9 +2289,7 @@ export async function runPassA(
           const degradedWindow: PersistedWindow = {
             ...degraded.unit,
             usages: degradedUsages,
-            routeReceipt: passAPrimary === "gemini"
-              ? { selected: "gemini-2.5-flash" as const, trigger: null }
-              : { selected: "grok-4.5" as const, trigger: fallbackTrigger },
+            routeReceipt: { selected: "grok-4.5" as const, trigger: fallbackTrigger },
           };
           const degradedArtifact = JSON.stringify(
             {
@@ -2619,7 +2394,7 @@ export async function runPassA(
   if (
     windows.length > 1 && remaining === 0 && !terminalFailure &&
     failedUnits.length === 0 &&
-    (providerIndependence === "independent" || providerIndependence === "independent-gemini-substitute")
+    providerIndependence === "independent"
   ) {
     if (onUnitStart) {
       const nominated = new Set<string>();
@@ -2715,9 +2490,7 @@ export async function runPassA(
 
   return {
     pass: "A",
-    provider: passAPrimary === "gemini"
-      ? "gemini-primary/deepseek-flash-fallback"
-      : "grok-primary/gemini-substitute/deepseek-flash-fallback",
+    provider: "grok-primary/deepseek-flash-fallback",
     model,
     providerRouteIdentity,
     providerIndependence,
@@ -4007,10 +3780,9 @@ interface PassASynthesisContext {
   inputHash: string;
   /** Candidate catalogue alone, useful for diagnostics but never the purchase ceiling. */
   catalogueBytes: number;
-  /** Largest of the exact Grok, Gemini, and Flash serialized request bodies. */
+  /** Largest of the exact Grok and Flash serialized request bodies. */
   wireBytes: number;
   grokWireBytes: number;
-  geminiWireBytes: number;
   flashWireBytes: number;
   /** Closed refusal detail, null only when both exact provider bodies fit. */
   wireFailureDetail: string | null;
@@ -4208,7 +3980,7 @@ function passAUsagePosition(
 ): { unit: string; issue: number; receipt: number } | null {
   const escapedRunId = runId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = usage.eventId?.match(new RegExp(
-    `^core-model-call/pass-a/${escapedRunId}/(A(?:-w\\d+|-synthesis)?)/issue-(\\d+)/receipt-([123])$`,
+    `^core-model-call/pass-a/${escapedRunId}/(A(?:-w\\d+|-synthesis)?)/issue-(\\d+)/receipt-([12])$`,
   ));
   if (!match) return null;
   const unit = match[1]!;
@@ -4244,41 +4016,21 @@ function validatePassAUnitUsageCoherence(
   for (let index = 0; index < usages.length; index += 1) {
     const usage = usages[index]!;
     const position = positions[index]!;
-    // RECEIPT 1 — Grok primary (grok mode) OR Gemini primary (budget mode).
-    // The writer's two paths produce structurally distinct receipts:
-    //   grok mode:   callId = expectedCallId,                provider = grok, model = DEFAULT_GROK_MODEL
-    //   gemini mode: callId = expectedCallId:gemini-primary,  provider = gemini, model = gemini-2.5-flash
-    // Both are legitimate receipt-1 shapes. The callId suffix disambiguates.
+    // RECEIPT 1 — Grok primary.
     const isGrokPrimary =
       position.receipt === 1 &&
       usage.callId === expectedCallId &&
       usage.provider === 'grok' &&
       usage.model === DEFAULT_GROK_MODEL;
-    const isGeminiPrimary =
-      position.receipt === 1 &&
-      usage.callId === `${expectedCallId}:gemini-primary` &&
-      usage.provider === 'gemini' &&
-      usage.model === 'gemini-2.5-flash';
-    const isGeminiSubstitute =
-      position.receipt === 2 &&
-      usage.provider === 'gemini' &&
-      usage.model === 'gemini-2.5-flash' &&
-      usage.callId === `${expectedCallId}:grok-gemini-substitute`;
     const isFlashFallback =
       position.receipt === 2 &&
       usage.provider === 'deepseek' &&
       usage.model === 'deepseek-v4-flash' &&
       usage.callId === `${expectedCallId}:grok-fallback`;
-    const isFlashAfterGemini =
-      position.receipt === 3 &&
-      usage.provider === 'deepseek' &&
-      usage.model === 'deepseek-v4-flash' &&
-      usage.callId === `${expectedCallId}:grok-fallback`;
     if (
       usage.role !== expectedRole ||
-      (position.receipt === 1 && !isGrokPrimary && !isGeminiPrimary) ||
-      (position.receipt === 2 && !isGeminiSubstitute && !isFlashFallback) ||
-      (position.receipt === 3 && !isFlashAfterGemini)
+      (position.receipt === 1 && !isGrokPrimary) ||
+      (position.receipt === 2 && !isFlashFallback)
     ) return 'receipt role/call/provider is inconsistent with its settlement identity';
   }
   return null;
@@ -4830,7 +4582,7 @@ export async function runPassASynthesis(
 
   const pendingSubstituteSynthesis = existing?.kind === "failed" &&
     existing.fallbackTrigger !== null &&
-    !existing.usages.some((usage) => usage.provider === "deepseek" || usage.provider === "gemini");
+    !existing.usages.some((usage) => usage.provider === "deepseek");
   if (existing?.kind === "failed" && existing.attempts >= maxIssues && !pendingSubstituteSynthesis) {
     return synthesisOutcome("failed", {
       attempts: existing.attempts,
@@ -4859,30 +4611,20 @@ export async function runPassASynthesis(
   let fallbackTrigger = existing?.kind === "failed" ? existing.fallbackTrigger : null;
   const purchasedUsages: CallUsage[] = [];
   const calls = reusedCalls(priorUsages, "reused: prior cross-window synthesis purchase");
-  const passAPrimary = validatePassAPrimaryMode(env);
   let purchaseEnv: Env;
   try {
-    // BUDGET MODE ("gemini"): Grok is never called at synthesis; Gemini key is resolved
-    // eagerly. DeepSeek Flash remains the fallback for typed Gemini failures.
-    // GROK MODE: Grok key is resolved when no fallback trigger exists (fresh primary).
-    // The Gemini key is NOT resolved eagerly in Grok mode — the existing fallback path
-    // resolves it lazily inside purchasePassASynthesis, where a MissingCredential is
-    // caught and the code falls through to DeepSeek Flash (the same behavior as 683019b).
-    const grokKey = fallbackTrigger === null && passAPrimary !== "gemini"
+    // Grok key is resolved when no fallback trigger exists (fresh primary).
+    const grokKey = fallbackTrigger === null
       ? await keyFor(env, "grok") : null;
-    const geminiKey = passAPrimary === "gemini"
-      ? await keyForGemini(env) : null;
     const deepseekKey = await keyFor(env, "deepseek");
     purchaseEnv = {
       ...env,
       ...(grokKey !== null ? { XAI_API_KEY: grokKey } : {}),
-      ...(geminiKey !== null ? { GEMINI_API_KEY: geminiKey } : {}),
       DEEPSEEK_API_KEY: deepseekKey,
     };
   } catch (error) {
     if (!(error instanceof MissingCredential)) throw error;
-    const provider = error.binding === "XAI_API_KEY" ? "grok"
-      : error.binding === "GEMINI_API_KEY" ? "gemini" : "deepseek";
+    const provider: "grok" | "deepseek" = error.binding === "XAI_API_KEY" ? "grok" : "deepseek";
     const detail = `${error.binding} is unavailable after exact synthesis request preflight; ` +
       `no new provider request was issued for A-synthesis.`;
     return synthesisOutcome("failed", {
@@ -4945,70 +4687,8 @@ async function purchasePassASynthesis(
   try {
     let value: Record<string, unknown> | null = null;
     let routeReceipt: PassARouteReceipt | null = null;
-    const passAPrimary = validatePassAPrimaryMode(env);
-    if (fallbackTrigger === null && passAPrimary === "gemini") {
-      // BUDGET MODE: Gemini is the primary provider at synthesis. Grok is NEVER called.
-      // Enforce cumulative Gemini cap before every purchase (mirrors the window path).
-      try {
-        const geminiShape = geminiGrokSubstituteRequestShape(env);
-        const geminiBodyBytes = new TextEncoder().encode(
-          chatRequestBodyText(geminiShape, optionsForCall),
-        ).byteLength;
-        const geminiRates = GEMINI_OFFICIAL_RATES[DEFAULT_GEMINI_MODEL];
-        const geminiReservation = conservativeGeminiReservation(
-          geminiBodyBytes,
-          Math.max(0, Math.ceil(optionsForCall.maxTokens)),
-          geminiRates.inputUsdPerMTok,
-          geminiRates.outputUsdPerMTok,
-        );
-        await enforceGeminiCap(env.EVIDENCE, geminiMaxTotalUsd(env), geminiReservation);
-        const outcome = await geminiGrokSubstituteJson(env, {
-          ...optionsForCall,
-          callId: `${optionsForCall.callId}:gemini-primary`,
-        });
-        const usage = settlementUsage(runId, "A-synthesis", issue, 1, outcome.usage);
-        purchasedUsages.push(usage);
-        calls.push(usage);
-        value = outcome.value;
-        rawModelOutput = outcome.value;
-        routeReceipt = { selected: "gemini-2.5-flash", trigger: null };
-      } catch (geminiPrimaryErr) {
-        // Gemini primary failure: typed Gemini failure falls to DeepSeek Flash
-        if (geminiPrimaryErr instanceof ModelCallError) {
-          const usage = settlementUsage(runId, "A-synthesis", issue, 1, geminiPrimaryErr.usage);
-          purchasedUsages.push(usage);
-          calls.push(usage);
-        }
-        // Create a synthetic fallback trigger for the Flash path
-        if (
-          geminiPrimaryErr instanceof ModelCallError ||
-          geminiPrimaryErr instanceof ProviderCapExceededRefusal ||
-          geminiPrimaryErr instanceof ProviderLedgerCorrupt ||
-          geminiPrimaryErr instanceof MissingCredential
-        ) {
-          const triggerUsage = purchasedUsages.length > 0
-            ? purchasedUsages[purchasedUsages.length - 1]!
-            : null;
-          fallbackTrigger = {
-            kind: GROK_FALLBACK_TRIGGER_VERSION,
-            failureKind: geminiPrimaryErr instanceof ModelCallError
-              ? geminiPrimaryErr.failureKind
-              : "provider-unavailable" as ModelFailureKind,
-            httpStatus: geminiPrimaryErr instanceof ModelCallError
-              ? geminiPrimaryErr.httpStatus
-              : null,
-            grokModel: DEFAULT_GROK_MODEL,
-            grokUsageEventId: triggerUsage?.eventId ?? `synthetic-gemini-primary-refusal/${runId}/A-synthesis`,
-            detail: (geminiPrimaryErr instanceof Error
-              ? geminiPrimaryErr.message : String(geminiPrimaryErr)).slice(0, 400),
-          };
-          // Fall through: value remains null, DeepSeek Flash path below will handle it
-        } else {
-          throw geminiPrimaryErr;
-        }
-      }
-    } else if (fallbackTrigger === null) {
-      // GROK MODE: Grok is the primary provider at synthesis.
+    if (fallbackTrigger === null) {
+      // Grok is the primary provider at synthesis.
       try {
         const outcome = await grokJson(env, optionsForCall);
         const usage = settlementUsage(runId, "A-synthesis", issue, 1, outcome.usage);
@@ -5089,61 +4769,17 @@ async function purchasePassASynthesis(
     }
 
     if (fallbackTrigger !== null) {
-      // Same substitution chain as primary windows: Gemini first, DeepSeek Flash last resort
-      let substituteSucceeded = false;
-      try {
-        // ENFORCE cumulative Gemini cap BEFORE the synthesis purchase
-        const geminiShape = geminiGrokSubstituteRequestShape(env);
-        const geminiBodyBytes = new TextEncoder().encode(
-          chatRequestBodyText(geminiShape, optionsForCall),
-        ).byteLength;
-        const geminiRates = GEMINI_OFFICIAL_RATES[DEFAULT_GEMINI_MODEL];
-        const geminiReservation = conservativeGeminiReservation(
-          geminiBodyBytes,
-          Math.max(0, Math.ceil(optionsForCall.maxTokens)),
-          geminiRates.inputUsdPerMTok,
-          geminiRates.outputUsdPerMTok,
-        );
-        await enforceGeminiCap(env.EVIDENCE, geminiMaxTotalUsd(env), geminiReservation);
-
-        const geminiOutcome = await geminiGrokSubstituteJson(env, {
-          ...optionsForCall,
-          callId: `${optionsForCall.callId}:grok-gemini-substitute`,
-        });
-        const geminiUsage = settlementUsage(runId, "A-synthesis", issue, 2, geminiOutcome.usage);
-        purchasedUsages.push(geminiUsage);
-        calls.push(geminiUsage);
-        value = geminiOutcome.value;
-        rawModelOutput = geminiOutcome.value;
-        routeReceipt = { selected: "gemini-2.5-flash", trigger: fallbackTrigger };
-        substituteSucceeded = true;
-      } catch (geminiErr) {
-        if (geminiErr instanceof ModelCallError) {
-          const geminiUsage = settlementUsage(runId, "A-synthesis", issue, 2, geminiErr.usage);
-          purchasedUsages.push(geminiUsage);
-          calls.push(geminiUsage);
-        }
-        // Cap exceeded or ledger corrupt: typed refusal, fall through to DeepSeek Flash
-        if (geminiErr instanceof ProviderCapExceededRefusal) {
-          // Fall through to DeepSeek Flash — the run continues reduced, not killed
-        } else if (geminiErr instanceof ProviderLedgerCorrupt) {
-          // Corrupt ledger = fail closed for Gemini, fall through to DeepSeek Flash
-        }
-        // All other Gemini errors: fall through to DeepSeek Flash
-      }
-      if (!substituteSucceeded) {
-        const flashOutcome = await deepseekGrokFallbackJson(env, {
-          ...optionsForCall,
-          callId: `${optionsForCall.callId}:grok-fallback`,
-        });
-        const flashReceiptIndex = purchasedUsages.length > 1 ? 3 : 2;
-        const flashUsage = settlementUsage(runId, "A-synthesis", issue, flashReceiptIndex, flashOutcome.usage);
-        purchasedUsages.push(flashUsage);
-        calls.push(flashUsage);
-        value = flashOutcome.value;
-        rawModelOutput = flashOutcome.value;
-        routeReceipt = { selected: "deepseek-v4-flash", trigger: fallbackTrigger };
-      }
+      // DeepSeek Flash substitute — reduced independence (existing path, unchanged semantics).
+      const flashOutcome = await deepseekGrokFallbackJson(env, {
+        ...optionsForCall,
+        callId: `${optionsForCall.callId}:grok-fallback`,
+      });
+      const flashUsage = settlementUsage(runId, "A-synthesis", issue, 2, flashOutcome.usage);
+      purchasedUsages.push(flashUsage);
+      calls.push(flashUsage);
+      value = flashOutcome.value;
+      rawModelOutput = flashOutcome.value;
+      routeReceipt = { selected: "deepseek-v4-flash", trigger: fallbackTrigger };
     }
     if (value === null || routeReceipt === null) {
       throw new Error("pass-A synthesis route produced neither a primary nor a fallback outcome");
@@ -5193,7 +4829,7 @@ async function purchasePassASynthesis(
       },
     );
   } catch (error) {
-    // The exact Grok/Gemini + Flash bodies were preflighted before purchase. A missing secret is a
+    // The exact Grok + Flash bodies were preflighted before purchase. A missing secret is a
     // stage configuration refusal, not a paid/semantic synthesis attempt.
     if (error instanceof MissingCredential && purchasedUsages.length === 0) throw error;
     if (error instanceof PassASynthesisPersistenceError) {
@@ -5507,7 +5143,6 @@ async function buildPassASynthesisContext(
     maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
   };
   let grokWireBytes = 0;
-  let geminiWireBytes = 0;
   let flashWireBytes = 0;
   let wireBytes = 0;
   let wireFailureDetail: string | null;
@@ -5521,24 +5156,13 @@ async function buildPassASynthesisContext(
     );
     requestHash = `sha256:${await sha256Hex(JSON.stringify({ inputHash, wireFailureDetail }))}`;
   } else {
-    const isBudgetMode = validatePassAPrimaryMode(env) === "gemini";
     const grokBody = chatRequestBodyText(grokRequestShape(env), optionsForCall);
     const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall);
     grokWireBytes = utf8ByteLength(grokBody);
     flashWireBytes = utf8ByteLength(flashBody);
-    // Budget mode adds the Gemini body to the wire preflight and hash. Grok mode is
-    // byte-semantics-identical to 683019b: only grok + flash bodies participate.
-    let geminiBody: string | null = null;
-    if (isBudgetMode) {
-      geminiBody = chatRequestBodyText(geminiGrokSubstituteRequestShape(env), optionsForCall);
-      geminiWireBytes = utf8ByteLength(geminiBody);
-    }
-    wireBytes = isBudgetMode
-      ? Math.max(grokWireBytes, geminiWireBytes, flashWireBytes)
-      : Math.max(grokWireBytes, flashWireBytes);
+    wireBytes = Math.max(grokWireBytes, flashWireBytes);
     const preflightBodies: { route: string; bodyText: string }[] = [
       { route: "grok-4.5", bodyText: grokBody },
-      ...(geminiBody !== null ? [{ route: "gemini-2.5-flash", bodyText: geminiBody }] : []),
       { route: "deepseek-v4-flash", bodyText: flashBody },
     ];
     const wirePreflight = preflightExtractionRequestBodies(
@@ -5549,9 +5173,7 @@ async function buildPassASynthesisContext(
     wireFailureDetail = wirePreflight.ok
       ? null
       : extractionWireFailureDetail("A-synthesis", sourceBlockIds.length, wirePreflight);
-    requestHash = isBudgetMode
-      ? `sha256:${await sha256Hex(JSON.stringify({ grokBody, geminiBody, flashBody }))}`
-      : `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
+    requestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
   }
   const policyIdentity = [
     PASS_A_SYNTHESIS_VERSION,
@@ -5559,7 +5181,7 @@ async function buildPassASynthesisContext(
     `max-issues:${maxIssues}`,
   ].join("|");
   return {
-    parserVersion, inputJson, inputHash, catalogueBytes, wireBytes, grokWireBytes, geminiWireBytes, flashWireBytes,
+    parserVersion, inputJson, inputHash, catalogueBytes, wireBytes, grokWireBytes, flashWireBytes,
     wireFailureDetail, sourceBlockIds,
     requestHash, policyIdentity, maxBytes, maxIssues, optionsForCall,
     coverage, blocks, windowByBlock, evidenceBlockIds, evidenceSpanKeys, primaryCrossRefs,
@@ -6171,7 +5793,7 @@ export async function reconstructPassACompletedAuthority(
     routeReceipts.push(unit.routeReceipt);
     if (unit.routeReceipt.trigger !== null) {
       fallbackTriggers.push(unit.routeReceipt.trigger);
-      // A Gemini substitute preserves cross-family independence; only DeepSeek Flash reduces it.
+      // Only DeepSeek Flash reduces independence.
       if (unit.routeReceipt.selected === "deepseek-v4-flash") {
         const detail = `${origin} used same-family Flash fallback`;
         return invalid(detail, { unit: origin, blockIds, detail });
@@ -6223,7 +5845,7 @@ export async function reconstructPassACompletedAuthority(
     synthesisState = "ok";
   }
 
-  // Only DeepSeek Flash triggers reduce independence. Gemini triggers are cross-family.
+  // DeepSeek Flash triggers reduce independence.
   const hasFlashFallback = routeReceipts.some((receipt) => receipt.selected === "deepseek-v4-flash");
   if (hasFlashFallback) {
     return invalid("a primary window used same-family Flash fallback");
@@ -6245,21 +5867,14 @@ export async function reconstructPassACompletedAuthority(
     synthesisIssued: 0,
     deadlineHit: false,
   };
-  // Derive provider independence from route receipts
-  const reconstructedIndependence: PassAProviderIndependence =
-    fallbackTriggers.length === 0
-      ? "independent"
-      : routeReceipts.some((receipt) => receipt.selected === "gemini-2.5-flash")
-        ? "independent-gemini-substitute"
-        : "independent"; // All windows used Grok successfully (no DeepSeek Flash reached here)
+  // At this point, Flash fallback receipts have already been rejected above.
+  const reconstructedIndependence: PassAProviderIndependence = "independent";
   return {
     kind: "ok",
     value: {
       pass: "A",
-      provider: validatePassAPrimaryMode(env) === "gemini"
-        ? "gemini-primary/deepseek-flash-fallback"
-        : "grok-primary/gemini-substitute/deepseek-flash-fallback",
-      model: validatePassAPrimaryMode(env) === "gemini" ? DEFAULT_GEMINI_MODEL : DEFAULT_GROK_MODEL,
+      provider: "grok-primary/deepseek-flash-fallback",
+      model: DEFAULT_GROK_MODEL,
       providerRouteIdentity: passAPrimaryRouteIdentity(env),
       providerIndependence: reconstructedIndependence,
       routeReceipts,
@@ -6292,7 +5907,7 @@ function isCallUsage(value: unknown): value is CallUsage {
     typeof row.eventId === "string" && row.eventId.startsWith("core-model-call/pass-a/") &&
     typeof row.callId === "string" && row.callId.length > 0 &&
     typeof row.role === "string" && row.role.length > 0 &&
-    (row.provider === "grok" || row.provider === "deepseek" || row.provider === "gemini") &&
+    (row.provider === "grok" || row.provider === "deepseek") &&
     typeof row.model === "string" && row.model.length > 0 &&
     (row.status === "ok" || row.status === "parse-failed" || row.status === "error") &&
     finiteNonNegative(row.inputTokens) && finiteNonNegative(row.outputTokens) &&
@@ -6316,15 +5931,11 @@ function parseFallbackTrigger(value: unknown, usages: CallUsage[]): GrokFallback
     typeof row.detail !== "string" || row.detail.length === 0
   ) return null;
   const bound = usages.find((usage) => usage.eventId === row.grokUsageEventId);
-  // The bound usage is the receipt-1 that failed: either Grok primary (provider=grok,
-  // model=DEFAULT_GROK_MODEL) or Gemini primary (provider=gemini, model=gemini-2.5-flash,
-  // callId ending with :gemini-primary). Both are legitimate origins for a fallback trigger.
+  // The bound usage is the receipt-1 that failed: Grok primary (provider=grok,
+  // model=DEFAULT_GROK_MODEL).
   const isGrokOrigin = bound?.provider === "grok" && bound?.model === DEFAULT_GROK_MODEL;
-  const isGeminiPrimaryOrigin =
-    bound?.provider === "gemini" && bound?.model === "gemini-2.5-flash" &&
-    typeof bound?.callId === "string" && bound.callId.endsWith(":gemini-primary");
   if (
-    !bound || (!isGrokOrigin && !isGeminiPrimaryOrigin) || bound.status !== "error" ||
+    !bound || !isGrokOrigin || bound.status !== "error" ||
     (row.failureKind === "invalid-content" &&
       bound.usageSource === "unverified-model-rate-ceiling")
   ) return null;
@@ -6335,23 +5946,9 @@ function parseRouteReceipt(value: unknown, usages: CallUsage[]): PassARouteRecei
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const row = value as Partial<PassARouteReceipt>;
   if (row.selected === "grok-4.5" && row.trigger === null) {
-    return usages.some((usage) => usage.provider === "deepseek" || usage.provider === "gemini")
+    return usages.some((usage) => usage.provider === "deepseek")
       ? null
       : { selected: row.selected, trigger: null };
-  }
-  if (row.selected === "gemini-2.5-flash") {
-    if (row.trigger === null) {
-      // Gemini-primary: selected = gemini-2.5-flash with no trigger (no Grok was called).
-      return usages.some((usage) => usage.provider === "gemini" && usage.model === "gemini-2.5-flash")
-        ? { selected: row.selected, trigger: null }
-        : null;
-    }
-    // Gemini substitute (Grok-primary mode): Grok failed, trigger points to the Grok receipt.
-    const trigger = parseFallbackTrigger(row.trigger, usages);
-    if (trigger === null || !usages.some((usage) => usage.provider === "gemini" && usage.model === "gemini-2.5-flash")) {
-      return null;
-    }
-    return { selected: row.selected, trigger };
   }
   if (row.selected !== "deepseek-v4-flash") return null;
   const trigger = parseFallbackTrigger(row.trigger, usages);
@@ -6384,18 +5981,14 @@ function validatePassAFallbackUsageChain(
   if (triggerMatches.length !== 1) return "fallback trigger does not bind exactly one Grok receipt";
   const triggerUsage = triggerMatches[0]!;
   const triggerPosition = passAUsagePosition(triggerUsage, runId, unit);
-  // The trigger usage is receipt-1 from either Grok primary or Gemini primary.
+  // The trigger usage is receipt-1 from Grok primary.
   const isGrokTrigger = triggerUsage.provider === "grok" && triggerUsage.model === DEFAULT_GROK_MODEL;
-  const isGeminiPrimaryTrigger = triggerUsage.provider === "gemini" &&
-    triggerUsage.model === "gemini-2.5-flash" &&
-    typeof triggerUsage.callId === "string" && triggerUsage.callId.endsWith(":gemini-primary");
   if (
     triggerPosition === null || triggerPosition.receipt !== 1 ||
-    (!isGrokTrigger && !isGeminiPrimaryTrigger) ||
+    !isGrokTrigger ||
     triggerUsage.status !== "error"
   ) return "fallback trigger is not a bound receipt-1 error";
-  const primaryUsages = usages.filter((usage) =>
-    usage.provider === "grok" || (usage.provider === "gemini" && typeof usage.callId === "string" && usage.callId.endsWith(":gemini-primary")));
+  const primaryUsages = usages.filter((usage) => usage.provider === "grok");
   if (primaryUsages.length !== 1) return "fallback chain contains an extra primary purchase";
   if (triggerPosition.issue > attempts) return "fallback trigger issue exceeds retained attempts";
 
@@ -6452,24 +6045,9 @@ function validatePassARouteReceiptForUnit(
   const selected = okUsages[0]!;
   if (receipt.selected === "grok-4.5") {
     return selected.provider === "grok" && selected.model === DEFAULT_GROK_MODEL &&
-        !usages.some((usage) => usage.provider === "deepseek" || usage.provider === "gemini")
+        !usages.some((usage) => usage.provider === "deepseek")
       ? receipt
       : null;
-  }
-  if (receipt.selected === "gemini-2.5-flash") {
-    if (selected.provider !== "gemini" || selected.model !== "gemini-2.5-flash") return null;
-    if (receipt.trigger === null) {
-      // Gemini-primary: receipt-1 is Gemini with no trigger, callId ends with :gemini-primary.
-      // No other provider usages should exist (the whole chain was Gemini-only).
-      return typeof selected.callId === "string" && selected.callId.endsWith(":gemini-primary") &&
-        !usages.some((usage) => usage.provider === "grok" || usage.provider === "deepseek")
-        ? receipt
-        : null;
-    }
-    // Gemini substitute (Grok-primary mode): Grok failed, Gemini substituted, WITH trigger.
-    const triggerUsage = usages.find((usage) => usage.eventId === receipt.trigger!.grokUsageEventId);
-    if (!triggerUsage || triggerUsage.status !== "error") return null;
-    return receipt;
   }
   const selectedPosition = passAUsagePosition(selected, runId, unit);
   if (
@@ -6505,18 +6083,12 @@ export function validatePassAProviderState(value: unknown): PassAProviderIndepen
   if (parsedReceipts.some((receipt) => receipt === null)) return null;
   // Derive independence from the trigger and receipt combination:
   // - No triggers: independent
-  // - Triggers with Gemini receipts only: independent-gemini-substitute (cross-family)
   // - Triggers with DeepSeek Flash receipts: reduced-same-provider-fallback
   let derived: PassAProviderIndependence;
   if (triggers.length === 0) {
     derived = "independent";
   } else {
-    const hasDeepseekFlashReceipt = parsedReceipts.some(
-      (receipt) => receipt !== null && receipt.selected === "deepseek-v4-flash",
-    );
-    derived = hasDeepseekFlashReceipt
-      ? "reduced-same-provider-fallback"
-      : "independent-gemini-substitute";
+    derived = "reduced-same-provider-fallback";
   }
   return row["providerIndependence"] === derived ? derived : null;
 }
