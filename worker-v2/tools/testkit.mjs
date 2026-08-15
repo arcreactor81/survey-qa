@@ -197,6 +197,7 @@ export async function loadWorker() {
       `export * as chat from ${p("src/llm/chat.ts")};`,
       `export * as grok from ${p("src/llm/grok.ts")};`,
       `export * as deepseek from ${p("src/llm/deepseek.ts")};`,
+      `export * as gemini from ${p("src/llm/gemini.ts")};`,
       `export * as extractionWire from ${p("src/llm/extraction-wire.ts")};`,
       `export * as extractStage from ${p("src/workflow/stages/extract.ts")};`,
       `export * as gates from ${p("src/workflow/gates.ts")};`,

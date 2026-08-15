@@ -20,8 +20,8 @@ import { num, resolveSecret, type Env } from "../types/env";
 import type { CallUsage } from "../extract/types";
 
 export interface ProviderSpec {
-  /** `grok` | `deepseek` — also the AI Gateway provider path segment. */
-  provider: "grok" | "deepseek";
+  /** `grok` | `deepseek` | `gemini` — also the AI Gateway provider path segment. */
+  provider: "grok" | "deepseek" | "gemini";
   model: string;
   /** Gateway path suffix after the provider segment (grok needs `/v1`). */
   gatewaySuffix: string;
@@ -166,8 +166,10 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         `ALLOW_DIRECT_LLM_BASE_URL="true" only to bypass this deliberately.`,
     );
   }
+  // Gemini's AI Gateway provider path is "google-ai-studio", not "gemini".
+  const gatewayProvider = spec.provider === "gemini" ? "google-ai-studio" : spec.provider;
   const baseUrl = usingGateway
-    ? `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_ID}/${spec.provider}${spec.gatewaySuffix}`
+    ? `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT_ID}/${env.CF_AIG_GATEWAY_ID}/${gatewayProvider}${spec.gatewaySuffix}`
     : spec.directBaseUrl;
 
   const headers: Record<string, string> = {

@@ -176,6 +176,18 @@ export interface Env {
   /** "block-private" (default) | "allow-private" — outbound survey-URL target policy. */
   OUTBOUND_URL_POLICY?: string;
 
+  // --- Gemini extraction substitute (owner-approved 15 Aug 2026) ---
+  /** Pinned model for the Gemini Grok-substitute leg. Must be exactly gemini-2.5-flash. */
+  GEMINI_EXTRACTION_MODEL?: string;
+  /** Google AI Studio rate, USD per million input tokens, checked 15 Aug 2026. */
+  GEMINI_INPUT_USD_PER_MTOK?: string;
+  /** Google AI Studio rate, USD per million output tokens (includes thinking), checked 15 Aug 2026. */
+  GEMINI_OUTPUT_USD_PER_MTOK?: string;
+  /** Hard cumulative USD cap for all Gemini extraction spend. Owner-approved: USD 10. */
+  GEMINI_MAX_TOTAL_USD?: string;
+  /** Reasoning effort for Gemini extraction calls. Default: medium. */
+  GEMINI_REASONING_EFFORT?: string;
+
   // --- extraction models, prices and effort (each leg keeps its own name) ---
   GROK_MODEL?: string;
   GROK_REASONING_EFFORT?: string;

@@ -287,7 +287,15 @@
     "GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK": "12",
     "GROK_MAX_INPUT_USD_PER_MTOK": "4",
     "GROK_MAX_OUTPUT_USD_PER_MTOK": "12",
-    // Flash is the dormant Grok substitute; Pro is the ordinary independent pass B.
+    // Gemini is the FIRST cross-family Grok substitute (owner-approved 15 Aug 2026).
+    // Google AI Studio rates checked 15 Aug 2026: USD 0.15/Mtok input, USD 3.50/Mtok output.
+    // Thinking tokens billed at output rate. Hard cumulative cap: USD 10.
+    "GEMINI_EXTRACTION_MODEL": "gemini-2.5-flash",
+    "GEMINI_INPUT_USD_PER_MTOK": "0.15",
+    "GEMINI_OUTPUT_USD_PER_MTOK": "3.5",
+    "GEMINI_MAX_TOTAL_USD": "10",
+    "GEMINI_REASONING_EFFORT": "medium",
+    // Flash is the LAST-resort Grok substitute; Pro is the ordinary independent pass B.
     "DEEPSEEK_MODEL": "deepseek-v4-flash",
     "DEEPSEEK_CONTEXT_WINDOW_TOKENS": "1000000",
     "DEEPSEEK_REASONING_EFFORT": "medium",

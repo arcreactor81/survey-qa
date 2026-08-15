@@ -8,6 +8,7 @@
 
 import { num, type Env } from "../types/env";
 import { deepseekGrokFallbackIdentity } from "./deepseek";
+import { geminiGrokSubstituteIdentity } from "./gemini";
 import {
   chatJson,
   keyFor,
@@ -18,7 +19,7 @@ import {
 } from "./chat";
 
 export const DEFAULT_GROK_MODEL = "grok-4.6";
-export const GROK_FLASH_ROUTE_VERSION = "grok-flash-route/1.1.0";
+export const GROK_FLASH_ROUTE_VERSION = "grok-gemini-flash-route/1.0.0";
 export const GROK_RATE_BINDING_SCHEMA = "survey-qa-grok-rate-binding/1.0.0";
 export const GROK_RATE_POLICY = "max-known-text-tier/1.0.0";
 export type GrokRateSource = "owner-dashboard-copy" | "authenticated-xai-catalogue";
@@ -311,6 +312,7 @@ export function grokFlashRouteIdentity(env: Env): string {
     `long-output-usd-per-mtok:${env.GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK ?? "<unattested>"}`,
     `max-input-usd-per-mtok:${env.GROK_MAX_INPUT_USD_PER_MTOK ?? "<unattested>"}`,
     `max-output-usd-per-mtok:${env.GROK_MAX_OUTPUT_USD_PER_MTOK ?? "<unattested>"}`,
+    `gemini-substitute:${geminiGrokSubstituteIdentity(env)}`,
     `fallback:${deepseekGrokFallbackIdentity(env)}`,
   ].join("|");
 }

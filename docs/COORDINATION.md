@@ -212,11 +212,13 @@ text records an intermediate implementation, not the owner-approved production r
 - **Normal extraction:** Grok `grok-4.6` performs the whole-document/global-rule,
   cross-reference, and ambiguity pass; DeepSeek Pro performs the independent source-block/table
   and disposition pass.
-- **Grok fallback:** only a retained typed eligible Grok failure (quota/exhaustion, timeout/network,
-  provider unavailability, or bounded invalid/empty content under the exact returned model)
-  authorizes DeepSeek Flash to substitute for the Grok pass. DeepSeek Pro remains the block pass.
-  A Flash+Pro result is explicitly reduced provider independence because both calls are DeepSeek;
-  it must not masquerade as ordinary cross-provider corroboration.
+- **Grok fallback (updated 15 Aug 2026):** a retained typed eligible Grok failure (quota/exhaustion,
+  timeout/network, provider unavailability, or bounded invalid/empty content under the exact
+  returned model) first tries Gemini `gemini-2.5-flash` as a cross-family substitute. Gemini + 
+  DeepSeek Pro pass B preserves full provider-family independence. If Gemini also fails, DeepSeek
+  Flash substitutes as the last resort; a Flash+Pro result is explicitly reduced provider
+  independence because both calls are DeepSeek and must not masquerade as ordinary cross-provider
+  corroboration. Gemini spend is hard-capped at USD 10 cumulative.
 - **Exact identity:** the owner supplied the API-returned model id `grok-4.6`. Requests and
   receipts must require that exact returned identity; redirects or aliases are not 4.6 evidence.
 - **Paid-call authorization:** cumulative caps for this sprint are **USD 5 Grok/xAI**,
