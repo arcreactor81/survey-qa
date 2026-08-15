@@ -79,6 +79,7 @@ const FILES = [
   // window. It does not bite the small fixture, which is why it needed closing before a real
   // client questionnaire arrived. Evidence they can fail: `tools/mutate-passa.mjs`.
   "./tests/d22-passa-waves.test.mjs",
+  "./tests/d22-passa-split-oversized.test.mjs",
   "./tests/passa-cross-window-synthesis.test.mjs",
   "./tests/passa-primary-persistence.test.mjs",
   "./tests/cross-window-coverage-wire.test.mjs",

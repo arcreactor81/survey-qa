@@ -72,6 +72,13 @@ export class ModelCallError extends Error {
         : failureKind === "invalid-content"
           ? "provider-content"
           : "http-status",
+    /**
+     * True when `finish_reason: "length"` was the cause — the provider returned an incomplete
+     * JSON answer because the response hit the model's output-token ceiling. This is the
+     * discriminator that separates "window too large for the model to answer" from "model
+     * returned garbage": the former is fixable by splitting, the latter is not.
+     */
+    readonly truncatedAtOutputCeiling: boolean = false,
   ) {
     super(message);
     this.name = "ModelCallError";
@@ -204,6 +211,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
   let usedUnboundModelRateCeiling = false;
   let unverifiedReportedModel: string | null = null;
   let attemptsMade = 0;
+  let lastTruncatedAtOutputCeiling = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     attemptsMade = attempt;
@@ -261,6 +269,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastHttpStatus = res.status;
         lastFailureKind = failureKindForHttpStatus(res.status);
         lastFailureCause = "http-status";
+        lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
         // Auth, balance and invalid requests are properties shared by every retry.
         // Re-sending them cannot succeed and only multiplies a doomed purchase.
@@ -274,6 +283,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastDetail = `non-JSON transport body: ${rawBody.slice(0, 200)}`;
         lastFailureKind = "invalid-content";
         lastFailureCause = "provider-content";
+        lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
@@ -296,6 +306,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
           `reported ${JSON.stringify(reportedModel)}`;
         lastFailureKind = "invalid-content";
         lastFailureCause = "provider-content";
+        lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
@@ -308,6 +319,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastDetail = `truncated at max_tokens (${opts.maxTokens}); the JSON is incomplete`;
         lastFailureKind = "invalid-content";
         lastFailureCause = "provider-content";
+        lastTruncatedAtOutputCeiling = true;
         allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
@@ -316,6 +328,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastDetail = "empty content";
         lastFailureKind = "invalid-content";
         lastFailureCause = "provider-content";
+        lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
@@ -326,6 +339,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastDetail = `unparseable JSON: ${content.slice(0, 200)}`;
         lastFailureKind = "invalid-content";
         lastFailureCause = "provider-content";
+        lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
@@ -362,6 +376,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
       accountUsage(undefined);
       lastDetail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
       lastFailureKind = "timeout-or-network";
+      lastTruncatedAtOutputCeiling = false;
       lastFailureCause = isLocalDeadlineExpiry(err, attemptSignal) ? "local-deadline" : "network";
       if (lastFailureCause === "local-deadline") sawLocalDeadline = true;
       if (lastFailureCause !== "local-deadline") allFailuresWereLocalDeadlines = false;
@@ -398,7 +413,8 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
     ? "local-deadline"
     : sawLocalDeadline
       ? "mixed"
-      : lastFailureCause);
+      : lastFailureCause,
+  lastTruncatedAtOutputCeiling);
 }
 
 function failureKindForHttpStatus(status: number): ModelFailureKind {

@@ -73,6 +73,7 @@ import {
   grokFlashRouteIdentity,
   grokJson,
   grokRequestShape,
+  isOutputCeilingTruncation,
 } from "../llm/grok";
 import {
   deepseekGrokFallbackJson,
@@ -195,6 +196,90 @@ const windowPolicyIdentity = (env: Env): string =>
   `pass-a-window-policy/1.1.0|chars:${num(env.EXTRACT_PASS_A_WINDOW_CHARS, 90_000)}` +
   `|blocks:${num(env.EXTRACT_PASS_A_WINDOW_MAX_BLOCKS, 100)}` +
   `|max-issues:${Math.max(1, num(env.EXTRACT_PASS_A_WINDOW_MAX_ISSUES, 2))}`;
+
+// ---------------------------------------------------------------------------
+// SUB-WINDOW SPLIT ON OUTPUT-CEILING TRUNCATION
+//
+// DECISION TABLE (pass-a.ts window orchestration layer):
+//
+//   Failure kind                           | Remedy
+//   ----                                   | ------
+//   output-ceiling truncation              | SPLIT: divide the window into two halves along
+//     (finish_reason: "length")            |   block boundaries. Same provider reads each
+//                                          |   half; independence intact; attacks the CAUSE.
+//   other typed eligible failures          | existing substitution chain (Gemini -> Flash)
+//     (rate-limited, timeout, etc)         |
+//   sub-window still truncates             | split again, depth-bounded (max 3 levels)
+//   single-block sub-window truncates      | typed named refusal, counted, surfaced in
+//                                          |   documentReading limitations. Never silent.
+//
+// Sub-window durable identity:
+//   Parent A-w2 splits into A-w2.1 and A-w2.2
+//   A-w2.1 splits further into A-w2.1.1 and A-w2.1.2
+//   Maximum depth: 3 levels of splitting (enforced by MAX_SPLIT_DEPTH)
+// ---------------------------------------------------------------------------
+
+export const MAX_SPLIT_DEPTH = 3;
+
+/**
+ * Durable sub-window identity derived from a parent window name.
+ * A-w2 -> A-w2.1, A-w2.2
+ * A-w2.1 -> A-w2.1.1, A-w2.1.2
+ */
+export function subWindowOrigin(parentOrigin: string, half: 1 | 2): string {
+  return `${parentOrigin}.${half}`;
+}
+
+/**
+ * How deep is this sub-window? A-w2 = 0, A-w2.1 = 1, A-w2.1.2 = 2, etc.
+ */
+export function splitDepth(origin: string): number {
+  // Count dots after the initial "A-wN" prefix
+  const match = origin.match(/^A-w\d+/);
+  if (!match) return 0;
+  const suffix = origin.slice(match[0].length);
+  if (suffix.length === 0) return 0;
+  return suffix.split(".").length - 1;
+}
+
+/**
+ * Storage key for a sub-window. Uses the origin string (e.g. "A-w2.1") directly
+ * to form a unique, deterministic key under the run's pass-a namespace.
+ */
+const subWindowKey = (runId: string, origin: string) =>
+  k("runs", runId, "extraction", "pass-a", `sub-window-${origin.replace(/\./g, "-")}.json`);
+
+/**
+ * Split a block array into two halves along block boundaries.
+ * The split point is the midpoint of the block count, so both halves get
+ * roughly equal numbers of blocks. A single-block input cannot be split.
+ */
+export function splitBlocksInHalf(blocks: SourceBlock[]): [SourceBlock[], SourceBlock[]] | null {
+  if (blocks.length < 2) return null;
+  const mid = Math.ceil(blocks.length / 2);
+  return [blocks.slice(0, mid), blocks.slice(mid)];
+}
+
+export interface SplitEvent {
+  kind: "output-ceiling-split";
+  parentOrigin: string;
+  childOrigins: string[];
+  depth: number;
+  parentBlockCount: number;
+  childBlockCounts: number[];
+  /** The provider error that triggered this split. */
+  triggerDetail: string;
+}
+
+/** Typed refusal for a sub-window that cannot be split further. */
+export interface SplitExhaustionRefusal {
+  kind: "split-exhaustion-refusal";
+  origin: string;
+  blockIds: string[];
+  depth: number;
+  reason: "single-block-truncation" | "max-depth-exceeded";
+  detail: string;
+}
 
 /** One durable reconciliation unit, distinct from every independently read primary window. */
 export const passASynthesisKey = (runId: string) =>
@@ -369,6 +454,10 @@ export type PassAResult = PassResult & {
   issuedCalls: CallUsage[];
   /** Persisted receipts re-offered to the idempotent usage CAS after any restart. */
   accountingCalls: CallUsage[];
+  /** Named split events when a window was divided due to output-ceiling truncation. */
+  splitEvents: SplitEvent[];
+  /** Named refusals for sub-windows that could not be split further. */
+  splitExhaustionRefusals: SplitExhaustionRefusal[];
   terminalReasonCode?: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
   credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" | "gemini" };
 };
@@ -805,6 +894,415 @@ async function persistImmutableExtractionArtifact(
   }
 }
 
+/**
+ * Persisted sub-window artifact, read back on resume. Same shape as a primary window but
+ * stored under a sub-window key (e.g. sub-window-A-w2-1.json).
+ */
+interface PersistedSubWindow {
+  kind: "ok";
+  origin: string;
+  blockIds: string[];
+  globalRules: RawRequirement[];
+  crossRefs: CrossRef[];
+  ambiguities: RawAmbiguity[];
+  unverifiable: RawUnverifiable[];
+  primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[];
+  usages: CallUsage[];
+  routeReceipt: PassARouteReceipt;
+}
+
+interface FailedSubWindow {
+  kind: "failed";
+  origin: string;
+  blockIds: string[];
+  detail: string;
+  usages: CallUsage[];
+  terminal: boolean;
+  /** A split-exhaustion refusal: the sub-window could not be split further. */
+  splitExhaustion?: SplitExhaustionRefusal;
+}
+
+/**
+ * Attempt to read a sub-window artifact from persistent storage.
+ */
+async function readSubWindow(
+  env: Env,
+  runId: string,
+  origin: string,
+): Promise<PersistedSubWindow | FailedSubWindow | null> {
+  const key = subWindowKey(runId, origin);
+  const obj = await env.EVIDENCE.get(key);
+  if (!obj) return null;
+  try {
+    const text = await obj.text();
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (parsed["status"] === "failed") {
+      return {
+        kind: "failed",
+        origin: String(parsed["origin"] ?? origin),
+        blockIds: Array.isArray(parsed["blockIds"]) ? parsed["blockIds"] as string[] : [],
+        detail: String(parsed["detail"] ?? "unknown"),
+        usages: Array.isArray(parsed["usages"]) ? parsed["usages"].filter(isCallUsage) as CallUsage[] : [],
+        terminal: parsed["terminal"] === true,
+        ...(parsed["splitExhaustion"] ? { splitExhaustion: parsed["splitExhaustion"] as SplitExhaustionRefusal } : {}),
+      };
+    }
+    if (parsed["kind"] === "ok") {
+      return {
+        kind: "ok",
+        origin: String(parsed["origin"] ?? origin),
+        blockIds: Array.isArray(parsed["blockIds"]) ? parsed["blockIds"] as string[] : [],
+        globalRules: Array.isArray(parsed["globalRules"]) ? parsed["globalRules"] as RawRequirement[] : [],
+        crossRefs: Array.isArray(parsed["crossRefs"]) ? parsed["crossRefs"] as CrossRef[] : [],
+        ambiguities: Array.isArray(parsed["ambiguities"]) ? parsed["ambiguities"] as RawAmbiguity[] : [],
+        unverifiable: Array.isArray(parsed["unverifiable"]) ? parsed["unverifiable"] as RawUnverifiable[] : [],
+        primaryGroundingLimitations: Array.isArray(parsed["primaryGroundingLimitations"])
+          ? validatePassAPrimaryGroundingLimitations(parsed["primaryGroundingLimitations"])
+          : [],
+        usages: Array.isArray(parsed["usages"]) ? parsed["usages"].filter(isCallUsage) as CallUsage[] : [],
+        routeReceipt: parsed["routeReceipt"] as PassARouteReceipt,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist a sub-window artifact under its deterministic append-only key.
+ */
+async function persistSubWindow(
+  env: Env,
+  runId: string,
+  origin: string,
+  artifact: Record<string, unknown>,
+): Promise<void> {
+  const key = subWindowKey(runId, origin);
+  const body = JSON.stringify(artifact, null, 2);
+  const written = await env.EVIDENCE.put(key, body, {
+    httpMetadata: { contentType: "application/json" },
+    onlyIf: { etagDoesNotMatch: "*" },
+  });
+  if (written !== null) return;
+  // Already exists — check if it has the same bytes
+  const existing = await env.EVIDENCE.get(key);
+  if (existing && await existing.text() === body) return;
+  // Different bytes means a prior invocation wrote something else. Accept the existing one.
+}
+
+export interface SubWindowSplitResult {
+  /** True if all sub-windows landed successfully. */
+  ok: boolean;
+  /** Usages from all sub-window model calls. */
+  usages: CallUsage[];
+  /** Requirements from all landed sub-windows. */
+  globalRules: RawRequirement[];
+  crossRefs: CrossRef[];
+  ambiguities: RawAmbiguity[];
+  unverifiable: RawUnverifiable[];
+  primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[];
+  routeReceipts: PassARouteReceipt[];
+  fallbackTriggers: GrokFallbackTrigger[];
+  splitEvents: SplitEvent[];
+  splitExhaustionRefusals: SplitExhaustionRefusal[];
+  failedUnits: PassResult["failedUnits"];
+  /** All sub-window model calls that were actually purchased this invocation. */
+  issuedCalls: CallUsage[];
+  accountingCalls: CallUsage[];
+}
+
+/**
+ * Recursively read sub-windows, splitting on output-ceiling truncation.
+ *
+ * This function handles the split-on-truncation remedy at a single window level.
+ * It is called when a window's model call fails with `truncatedAtOutputCeiling`,
+ * and it splits the window's blocks in half and attempts to read each half.
+ *
+ * If a sub-window itself truncates, it is split again up to MAX_SPLIT_DEPTH.
+ * A single-block sub-window that truncates produces a typed named refusal.
+ */
+async function readSubWindowsWithSplit(
+  env: Env,
+  runId: string,
+  blocks: SourceBlock[],
+  parentOrigin: string,
+  documentName: string,
+  parserVersion: string,
+  providerRouteIdentity: string,
+  triggerDetail: string,
+  onProgress: ((msg: string) => Promise<void>) | undefined,
+): Promise<SubWindowSplitResult> {
+  const result: SubWindowSplitResult = {
+    ok: true,
+    usages: [],
+    globalRules: [],
+    crossRefs: [],
+    ambiguities: [],
+    unverifiable: [],
+    primaryGroundingLimitations: [],
+    routeReceipts: [],
+    fallbackTriggers: [],
+    splitEvents: [],
+    splitExhaustionRefusals: [],
+    failedUnits: [],
+    issuedCalls: [],
+    accountingCalls: [],
+  };
+
+  const depth = splitDepth(parentOrigin) + 1;
+
+  // Cannot split a single-block window
+  const halves = splitBlocksInHalf(blocks);
+  if (halves === null) {
+    const refusal: SplitExhaustionRefusal = {
+      kind: "split-exhaustion-refusal",
+      origin: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      depth: depth - 1,
+      reason: "single-block-truncation",
+      detail: `${parentOrigin}: output-ceiling truncation on a single-block window cannot be remedied by splitting. ` +
+        `The block (${blocks[0]?.blockId ?? "unknown"}) produces more output tokens than the model's ceiling.`,
+    };
+    result.ok = false;
+    result.splitExhaustionRefusals.push(refusal);
+    result.failedUnits.push({
+      unit: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      detail: refusal.detail,
+    });
+    // Persist the refusal
+    await persistSubWindow(env, runId, parentOrigin, {
+      origin: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      status: "failed",
+      terminal: true,
+      detail: refusal.detail,
+      usages: [],
+      splitExhaustion: refusal,
+    });
+    return result;
+  }
+
+  // Depth exceeded
+  if (depth > MAX_SPLIT_DEPTH) {
+    const refusal: SplitExhaustionRefusal = {
+      kind: "split-exhaustion-refusal",
+      origin: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      depth: depth - 1,
+      reason: "max-depth-exceeded",
+      detail: `${parentOrigin}: maximum split depth ${MAX_SPLIT_DEPTH} exceeded. ` +
+        `${blocks.length} blocks still produce too much output for the model's ceiling.`,
+    };
+    result.ok = false;
+    result.splitExhaustionRefusals.push(refusal);
+    result.failedUnits.push({
+      unit: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      detail: refusal.detail,
+    });
+    await persistSubWindow(env, runId, parentOrigin, {
+      origin: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      status: "failed",
+      terminal: true,
+      detail: refusal.detail,
+      usages: [],
+      splitExhaustion: refusal,
+    });
+    return result;
+  }
+
+  const [leftBlocks, rightBlocks] = halves;
+  const leftOrigin = subWindowOrigin(parentOrigin, 1);
+  const rightOrigin = subWindowOrigin(parentOrigin, 2);
+
+  const splitEvent: SplitEvent = {
+    kind: "output-ceiling-split",
+    parentOrigin,
+    childOrigins: [leftOrigin, rightOrigin],
+    depth,
+    parentBlockCount: blocks.length,
+    childBlockCounts: [leftBlocks.length, rightBlocks.length],
+    triggerDetail,
+  };
+  result.splitEvents.push(splitEvent);
+
+  if (onProgress) {
+    try {
+      await onProgress(
+        `pass A ${parentOrigin}: output-ceiling truncation, splitting into ${leftOrigin} (${leftBlocks.length} blocks) ` +
+        `and ${rightOrigin} (${rightBlocks.length} blocks) at depth ${depth}`,
+      );
+    } catch {
+      // Progress is observability only
+    }
+  }
+
+  // Attempt each half
+  for (const [subBlocks, subOrigin] of [[leftBlocks, leftOrigin], [rightBlocks, rightOrigin]] as const) {
+    // Check for existing persisted sub-window
+    const existing = await readSubWindow(env, runId, subOrigin);
+    if (existing?.kind === "ok") {
+      result.globalRules.push(...existing.globalRules);
+      result.crossRefs.push(...existing.crossRefs);
+      result.ambiguities.push(...existing.ambiguities);
+      result.unverifiable.push(...existing.unverifiable);
+      result.primaryGroundingLimitations.push(...existing.primaryGroundingLimitations);
+      result.routeReceipts.push(existing.routeReceipt);
+      result.accountingCalls.push(...existing.usages);
+      // Reclaimed at zero cost
+      for (const usage of existing.usages) {
+        result.usages.push({ ...usage, detail: "reused: persisted sub-window", costUsd: 0 });
+      }
+      if (onProgress) {
+        try { await onProgress(`pass A ${subOrigin}: reused persisted sub-window`); } catch { /* observability */ }
+      }
+      continue;
+    }
+    if (existing?.kind === "failed" && existing.terminal) {
+      result.ok = false;
+      result.failedUnits.push({
+        unit: subOrigin,
+        blockIds: existing.blockIds,
+        detail: existing.detail,
+      });
+      if (existing.splitExhaustion) {
+        result.splitExhaustionRefusals.push(existing.splitExhaustion);
+      }
+      result.accountingCalls.push(...existing.usages);
+      for (const usage of existing.usages) {
+        result.usages.push({ ...usage, detail: "reused: persisted failed sub-window", costUsd: 0 });
+      }
+      continue;
+    }
+
+    // Issue a new model call for this sub-window
+    const subBlockIds = subBlocks.map((b) => b.blockId);
+    const subLabel = `sub-window ${subOrigin} (${subBlockIds[0]}–${subBlockIds[subBlockIds.length - 1]})`;
+    const jsonl = buildBoundedSourceBlocksJsonl(subBlocks, extractionWirePolicy(env).maxInputBytes);
+    if (!jsonl.ok) {
+      const detail = `${subOrigin}: sub-window source blocks could not be serialized`;
+      result.ok = false;
+      result.failedUnits.push({ unit: subOrigin, blockIds: subBlockIds, detail });
+      await persistSubWindow(env, runId, subOrigin, {
+        origin: subOrigin, blockIds: subBlockIds, status: "failed",
+        terminal: true, detail, usages: [],
+      });
+      continue;
+    }
+
+    const subOptions = {
+      system: SYSTEM_A,
+      user: userMessageA(documentName, jsonl.text, subLabel),
+      maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
+      role: `extract-pass-a-${subOrigin.replace(/\./g, "-")}`,
+      callId: `call_a_${subOrigin.replace(/\./g, "_")}`,
+      maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
+    };
+
+    try {
+      const outcome = await grokJson(env, subOptions);
+      const usage: CallUsage = {
+        ...outcome.usage,
+        eventId: `core-model-call/pass-a/${runId}/${subOrigin}/issue-1/receipt-1`,
+      };
+      result.usages.push(usage);
+      result.issuedCalls.push(usage);
+      result.accountingCalls.push(usage);
+
+      const strict = strictPrimaryOutput(outcome.value, subOrigin);
+      const inspected = inspectPrimaryWindowGrounding({
+        kind: "ok",
+        ...strict,
+        primaryGroundingLimitations: [],
+        usages: [usage],
+        routeReceipt: { selected: "grok-4.6", trigger: null },
+      }, subBlocks, subOrigin);
+
+      const landed = inspected.unit;
+      result.globalRules.push(...landed.globalRules);
+      result.crossRefs.push(...landed.crossRefs);
+      result.ambiguities.push(...landed.ambiguities);
+      result.unverifiable.push(...landed.unverifiable);
+      result.primaryGroundingLimitations.push(...landed.primaryGroundingLimitations);
+      result.routeReceipts.push({ selected: "grok-4.6", trigger: null });
+
+      // Persist the successful sub-window
+      await persistSubWindow(env, runId, subOrigin, {
+        ...landed,
+        origin: subOrigin,
+        blockIds: subBlockIds,
+        parserVersion,
+        promptVersion: PROMPT_VERSION_A,
+        providerRouteIdentity,
+        modelOutput: outcome.value,
+      });
+
+      if (onProgress) {
+        try {
+          await onProgress(
+            `pass A ${subOrigin}: ${landed.globalRules.length} grounded rule(s), ` +
+            `${landed.crossRefs.length} cross-reference(s) over ${subBlockIds.length} block(s)`,
+          );
+        } catch { /* observability */ }
+      }
+    } catch (err) {
+      if (err instanceof ModelCallError && isOutputCeilingTruncation(err)) {
+        // Recursively split this sub-window
+        const subUsage: CallUsage = {
+          ...err.usage,
+          eventId: `core-model-call/pass-a/${runId}/${subOrigin}/issue-1/receipt-1`,
+        };
+        result.usages.push(subUsage);
+        result.issuedCalls.push(subUsage);
+        result.accountingCalls.push(subUsage);
+
+        const subResult = await readSubWindowsWithSplit(
+          env, runId, subBlocks, subOrigin, documentName,
+          parserVersion, providerRouteIdentity,
+          err.message.slice(0, 400), onProgress,
+        );
+        result.usages.push(...subResult.usages);
+        result.issuedCalls.push(...subResult.issuedCalls);
+        result.accountingCalls.push(...subResult.accountingCalls);
+        result.globalRules.push(...subResult.globalRules);
+        result.crossRefs.push(...subResult.crossRefs);
+        result.ambiguities.push(...subResult.ambiguities);
+        result.unverifiable.push(...subResult.unverifiable);
+        result.primaryGroundingLimitations.push(...subResult.primaryGroundingLimitations);
+        result.routeReceipts.push(...subResult.routeReceipts);
+        result.fallbackTriggers.push(...subResult.fallbackTriggers);
+        result.splitEvents.push(...subResult.splitEvents);
+        result.splitExhaustionRefusals.push(...subResult.splitExhaustionRefusals);
+        result.failedUnits.push(...subResult.failedUnits);
+        if (!subResult.ok) result.ok = false;
+      } else {
+        // Non-truncation failure: record as failed sub-window
+        const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
+        if (err instanceof ModelCallError) {
+          const usage: CallUsage = {
+            ...err.usage,
+            eventId: `core-model-call/pass-a/${runId}/${subOrigin}/issue-1/receipt-1`,
+          };
+          result.usages.push(usage);
+          result.issuedCalls.push(usage);
+          result.accountingCalls.push(usage);
+        }
+        result.ok = false;
+        result.failedUnits.push({ unit: subOrigin, blockIds: subBlockIds, detail });
+        await persistSubWindow(env, runId, subOrigin, {
+          origin: subOrigin, blockIds: subBlockIds, status: "failed",
+          terminal: true, detail, usages: [],
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
 export async function runPassA(
   env: Env,
   runId: string,
@@ -835,6 +1333,8 @@ export async function runPassA(
   const fallbackTriggers: GrokFallbackTrigger[] = [];
   const crossWindowLimitations: PassACrossWindowLimitation[] = [];
   const primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[] = [];
+  const splitEvents: SplitEvent[] = [];
+  const splitExhaustionRefusals: SplitExhaustionRefusal[] = [];
   let providerIndependence: PassAProviderIndependence = "independent";
   const model = DEFAULT_GROK_MODEL;
   let resolvedGrokKey: string | null = null;
@@ -1270,6 +1770,177 @@ export async function runPassA(
           routeReceipt = { selected: "grok-4.6", trigger: null };
         } catch (err) {
           if (!(err instanceof ModelCallError) || !grokFlashFallbackEligible(err)) throw err;
+
+          // OUTPUT-CEILING TRUNCATION -> SPLIT (same provider keeps reading).
+          // This intercepts before the substitution chain because splitting attacks
+          // the CAUSE (window too large for the model's output budget), while
+          // substitution attacks availability — and the substitute has a similar
+          // output ceiling (measured: ~65k tokens on both grok-4.6 and gemini-2.5-flash).
+          if (isOutputCeilingTruncation(err) && w.length >= 2) {
+            const truncUsage = settlementUsage(runId, origin, issue, 1, err.usage);
+            purchasedUsages.push(truncUsage);
+            calls.push(truncUsage);
+            issuedCalls.push(truncUsage);
+            accountingCalls.push(truncUsage);
+
+            const splitResult = await readSubWindowsWithSplit(
+              env, runId, w, origin, documentName,
+              parserVersion, providerRouteIdentity,
+              err.message.slice(0, 400), onProgress,
+            );
+            // Merge sub-window results into the main accumulators
+            for (const u of splitResult.usages) { calls.push(u); }
+            for (const u of splitResult.issuedCalls) { issuedCalls.push(u); }
+            for (const u of splitResult.accountingCalls) { accountingCalls.push(u); }
+            requirements.push(...splitResult.globalRules);
+            crossRefs.push(...splitResult.crossRefs);
+            ambiguities.push(...splitResult.ambiguities);
+            unverifiable.push(...splitResult.unverifiable);
+            primaryGroundingLimitations.push(...splitResult.primaryGroundingLimitations);
+            routeReceipts.push(...splitResult.routeReceipts);
+            fallbackTriggers.push(...splitResult.fallbackTriggers);
+            splitEvents.push(...splitResult.splitEvents);
+            splitExhaustionRefusals.push(...splitResult.splitExhaustionRefusals);
+            failedUnits.push(...splitResult.failedUnits);
+
+            if (splitResult.ok) {
+              // All sub-windows landed: parent window counts as complete.
+              // Persist a combined canonical window artifact so that synthesis
+              // and reconstruction can find this window's results at the expected key.
+              // The modelOutput is the combined sub-window results in the expected format.
+              const splitRouteReceipt: PassARouteReceipt = splitResult.routeReceipts.length > 0
+                ? splitResult.routeReceipts[0]!
+                : { selected: "grok-4.6", trigger: null };
+              const combinedModelOutput: Record<string, unknown> = {
+                global_rules: splitResult.globalRules.map((rule) => ({
+                  id: rule.id,
+                  construct: rule.construct,
+                  scope: rule.scope,
+                  quantifier: rule.quantifier,
+                  selector: rule.selector,
+                  exceptions: rule.exceptions,
+                  statement: rule.statement,
+                  doc_quote: rule.docQuote,
+                  block_ids: rule.blockIds,
+                  evidence_quotes: (rule.evidenceQuotes ?? []).map((eq) => ({
+                    block_id: eq.blockId,
+                    quote: eq.quote,
+                  })),
+                  browser_observable: rule.browserObservable,
+                  confidence: rule.confidence,
+                })),
+                cross_references: splitResult.crossRefs.map((xref) => ({
+                  id: xref.id,
+                  from_block: xref.fromBlock,
+                  target: xref.target,
+                  resolved_to_block: xref.resolvedToBlock,
+                  target_doc_quote: xref.targetDocQuote ?? null,
+                  statement: xref.statement,
+                  doc_quote: xref.docQuote,
+                })),
+                ambiguities: splitResult.ambiguities.map((a) => ({
+                  id: a.id,
+                  block_ids: a.blockIds,
+                  doc_quote: a.docQuote,
+                  evidence_quotes: (a.evidenceQuotes ?? []).map((eq) => ({
+                    block_id: eq.blockId,
+                    quote: eq.quote,
+                  })),
+                  reading_a: a.readingA,
+                  reading_b: a.readingB,
+                  why_ambiguous: a.whyAmbiguous,
+                  affects: a.affects,
+                })),
+                unverifiable_from_browser: splitResult.unverifiable.map((u) => ({
+                  id: u.id,
+                  block_ids: u.blockIds,
+                  doc_quote: u.docQuote,
+                  evidence_quotes: (u.evidenceQuotes ?? []).map((eq) => ({
+                    block_id: eq.blockId,
+                    quote: eq.quote,
+                  })),
+                  mandate: u.mandate,
+                  why_not_observable: u.whyNotObservable,
+                  browser_proxy_evidence: u.browserProxyEvidence,
+                })),
+              };
+
+              // The canonical window artifact's usages must include the initial truncation
+              // call that triggered the split. This call is a real purchase (charged to the
+              // ledger), but we mark it as "ok" in the canonical artifact because the window's
+              // logical output was recovered through sub-window splitting. The original error
+              // status is preserved in the splitEvidence for audit. Sub-window usages live in
+              // their own durable artifacts and are charged separately through the per-run ledger.
+              const canonicalUsages = [...priorUsages, ...purchasedUsages].map((u) => ({
+                ...u,
+                status: "ok" as const,
+                detail: `output-ceiling-split: original call truncated, recovered via sub-window split`,
+              }));
+              let splitLandedWindow = inspectPrimaryWindowGrounding({
+                kind: "ok",
+                ...strictPrimaryOutput(combinedModelOutput, origin),
+                primaryGroundingLimitations: [],
+                usages: canonicalUsages,
+                routeReceipt: splitRouteReceipt,
+              }, w, origin).unit;
+
+              const splitSuccessArtifact = JSON.stringify(
+                {
+                  windowId: origin,
+                  windowNumber: n,
+                  blockIds,
+                  parserVersion,
+                  promptVersion: PROMPT_VERSION_A,
+                  providerRouteIdentity,
+                  windowPolicyIdentity: windowPolicyIdentity(env),
+                  attempts: issue,
+                  modelOutput: combinedModelOutput,
+                  ...splitLandedWindow,
+                  splitEvidence: {
+                    kind: "output-ceiling-split",
+                    events: splitResult.splitEvents,
+                  },
+                },
+                null,
+                2,
+              );
+              try {
+                const retainedSplit = await persistPrimaryWindowArtifact(
+                  env, runId, n, w, parserVersion, origin,
+                  predecessorAuthority, splitSuccessArtifact,
+                  (artifact) => artifact.kind === "ok",
+                );
+                if (retainedSplit?.kind === "ok") {
+                  splitLandedWindow = retainedSplit;
+                }
+              } catch (persistErr) {
+                if (persistErr instanceof PassAPrimaryPersistenceError) {
+                  failedUnits.push({ unit: origin, blockIds, detail: persistErr.message.slice(0, 400) });
+                  terminalFailure = true;
+                  remaining += windows.length - (i + 1);
+                  continue;
+                }
+                throw persistErr;
+              }
+              landed += 1;
+              routeReceipts.push(splitRouteReceipt);
+              if (onProgress) {
+                try {
+                  await onProgress(
+                    `pass A ${origin}: split into sub-windows completed successfully`,
+                  );
+                } catch { /* observability */ }
+              }
+            } else {
+              // Some sub-windows failed: parent window is terminal
+              landed += 1;
+              terminalFailure = true;
+              remaining += windows.length - (i + 1);
+            }
+            // Whether success or failure, skip the rest of this window's processing
+            continue;
+          }
+
           const usage = settlementUsage(runId, origin, issue, 1, err.usage);
           purchasedUsages.push(usage);
           calls.push(usage);
@@ -1801,6 +2472,8 @@ export async function runPassA(
     slice,
     issuedCalls,
     accountingCalls,
+    splitEvents,
+    splitExhaustionRefusals,
     ...(terminalReasonCode ? { terminalReasonCode } : {}),
     ...(credentialRefusal ? { credentialRefusal } : {}),
   };
@@ -4828,6 +5501,8 @@ export async function reconstructPassACompletedAuthority(
       slice,
       issuedCalls: [],
       accountingCalls,
+      splitEvents: [],
+      splitExhaustionRefusals: [],
     },
   };
 }

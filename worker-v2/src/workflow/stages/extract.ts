@@ -341,6 +341,7 @@ const PASS_A_COMPLETION_KEYS = [
   "providerIndependence", "routeReceipts", "fallbackTriggers", "requirements", "ambiguities",
   "unverifiable", "dispositions", "constructs", "failedUnits", "calls", "crossRefs",
   "crossWindowLimitations", "primaryGroundingLimitations", "slice", "issuedCalls", "accountingCalls",
+  "splitEvents", "splitExhaustionRefusals",
 ] as const;
 
 const passACompletionProjection = (value: Record<string, unknown>): Record<string, unknown> => {
@@ -357,6 +358,7 @@ const passACompletionShapeClosed = (value: Record<string, unknown>): boolean =>
     "dispositions", "constructs", "failedUnits", "calls", "crossRefs", "crossWindowLimitations",
     "primaryGroundingLimitations",
     "issuedCalls", "accountingCalls",
+    "splitEvents", "splitExhaustionRefusals",
   ].every((key) => Array.isArray(value[key]));
 
 export async function validatePassAContinuationAuthority(

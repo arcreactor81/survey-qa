@@ -270,6 +270,19 @@ async function sha256Hex(value: string): Promise<string> {
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * True when the error is an output-ceiling truncation — the model returned `finish_reason:
+ * "length"`, meaning the window's faithful reading could not fit in the output-token budget.
+ * This is the ONLY failure kind where SPLITTING the window attacks the cause; substituting
+ * providers does not help because the cause is window size, not provider availability.
+ */
+export function isOutputCeilingTruncation(error: ModelCallError): boolean {
+  return (
+    error.failureKind === "invalid-content" &&
+    error.truncatedAtOutputCeiling === true
+  );
+}
+
 /** Only quota/exhaustion/non-response/unusable-output failures authorize Flash. */
 export function grokFlashFallbackEligible(error: ModelCallError): boolean {
   // `invalid-content` is eligible only after exact model identity was established. A missing,
