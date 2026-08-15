@@ -545,10 +545,10 @@ await runMutantSuite({
         "CAP_MODEL_CALLS on calls nobody ever made",
       file: STAGE,
       find:
-        "  // nobody ever made.\r\n" +
+        "  // nobody ever made.\n" +
         "  await chargeUsage(env, runId, result.accountingCalls, fence);",
       replace:
-        "  // nobody ever made.\r\n" +
+        "  // nobody ever made.\n" +
         "  await chargeUsage(env, runId, result.calls, fence);",
       kills: [HALF_READ],
     },
