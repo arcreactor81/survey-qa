@@ -13,7 +13,8 @@ export type PassAPrimaryGroundingReason =
   | "source-block-ownership-invalid"
   | "source-quote-not-exact"
   | "source-evidence-set-invalid"
-  | "grounded-row-linkage-incomplete";
+  | "grounded-row-linkage-incomplete"
+  | "structural-validation-failed";
 
 export interface PassAPrimaryGroundingLimitationWire {
   kind: typeof PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND;

@@ -34,6 +34,7 @@ const REASONS = new Set([
   "source-quote-not-exact",
   "source-evidence-set-invalid",
   "grounded-row-linkage-incomplete",
+  "structural-validation-failed",
 ]);
 const REASON_DETAILS = new Map([
   [
@@ -51,6 +52,10 @@ const REASON_DETAILS = new Map([
   [
     "grounded-row-linkage-incomplete",
     "a required grounded companion row was unavailable",
+  ],
+  [
+    "structural-validation-failed",
+    "the model output row failed structural validation and could not be decoded",
   ],
 ]);
 // These independent caps bound the public report even when a retained run contains many

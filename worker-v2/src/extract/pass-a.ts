@@ -80,6 +80,7 @@ import {
   deepseekGrokFallbackRequestShape,
 } from "../llm/deepseek";
 import {
+  geminiGrokSubstituteIdentity,
   geminiGrokSubstituteJson,
   geminiGrokSubstituteRequestShape,
   geminiMaxTotalUsd,
@@ -1303,6 +1304,32 @@ async function readSubWindowsWithSplit(
   return result;
 }
 
+/**
+ * Validated pass-A primary provider selection.
+ * "grok"   — default, current behavior: Grok primary with Gemini/Flash substitution chain.
+ * "gemini" — budget mode: Gemini gemini-2.5-flash is the primary, Grok is never called.
+ */
+export type PassAPrimaryMode = "grok" | "gemini";
+
+export function validatePassAPrimaryMode(env: Env): PassAPrimaryMode {
+  const raw = env.EXTRACT_PASS_A_PRIMARY ?? "grok";
+  if (raw !== "grok" && raw !== "gemini") {
+    throw new Error(
+      `EXTRACT_PASS_A_PRIMARY must be exactly "grok" or "gemini", got ${JSON.stringify(raw)}. ` +
+        `Any other value is refused at construction.`,
+    );
+  }
+  return raw;
+}
+
+export function passAPrimaryRouteIdentity(env: Env): string {
+  const mode = validatePassAPrimaryMode(env);
+  if (mode === "gemini") {
+    return `gemini-primary:${geminiGrokSubstituteIdentity(env)}|fallback:deepseek-flash`;
+  }
+  return grokFlashRouteIdentity(env);
+}
+
 export async function runPassA(
   env: Env,
   runId: string,
@@ -1312,8 +1339,9 @@ export async function runPassA(
   options?: PassASliceOptions,
   onUnitStart?: DocumentReadingUnitStartObserver,
 ): Promise<PassAResult> {
+  const passAPrimary = validatePassAPrimaryMode(env);
   const parserVersion = doc.parserVersion ?? DOCX_BLOCKS_VERSION;
-  const providerRouteIdentity = grokFlashRouteIdentity(env);
+  const providerRouteIdentity = passAPrimaryRouteIdentity(env);
   // Local, NOT module scope: one isolate serves many runs, and a module-level accumulator
   // would let two concurrent extractions read each other's cross-references.
   const crossRefs: CrossRef[] = [];
@@ -1336,7 +1364,7 @@ export async function runPassA(
   const splitEvents: SplitEvent[] = [];
   const splitExhaustionRefusals: SplitExhaustionRefusal[] = [];
   let providerIndependence: PassAProviderIndependence = "independent";
-  const model = DEFAULT_GROK_MODEL;
+  const model = passAPrimary === "gemini" ? DEFAULT_GEMINI_MODEL : DEFAULT_GROK_MODEL;
   let resolvedGrokKey: string | null = null;
   let resolvedDeepseekKey: string | null = null;
   let resolvedGeminiKey: string | null = null;
@@ -1728,10 +1756,18 @@ export async function runPassA(
       // credentials are resolved lazily inside the substitution path only when needed.
       // A retained fallback checkpoint needs only substitutes. The cloned env turns
       // subsequent client reads into side-effect-free string lookups.
-      purchaseEnv = await purchaseEnvFor(
-        !(existing?.kind === "failed" && existing.fallbackTrigger !== null),
-        true,
-      );
+      //
+      // BUDGET MODE ("gemini"): Grok is never called; Gemini key is resolved eagerly
+      // instead. DeepSeek Flash remains the fallback for typed Gemini failures.
+      if (passAPrimary === "gemini") {
+        await resolveGeminiKey();
+        purchaseEnv = await purchaseEnvFor(false, true);
+      } else {
+        purchaseEnv = await purchaseEnvFor(
+          !(existing?.kind === "failed" && existing.fallbackTrigger !== null),
+          true,
+        );
+      }
     } catch (error) {
       if (!(error instanceof MissingCredential)) throw error;
       credentialRefusal = {
@@ -1757,7 +1793,73 @@ export async function runPassA(
       let value: Record<string, unknown> | null = null;
       let routeReceipt: PassARouteReceipt | null = null;
 
-      if (fallbackTrigger === null) {
+      if (fallbackTrigger === null && passAPrimary === "gemini") {
+        // BUDGET MODE: Gemini is the primary provider. Grok is never called.
+        // Enforce cumulative Gemini cap before every purchase.
+        try {
+          const geminiShape = geminiGrokSubstituteRequestShape(purchaseEnv);
+          const geminiBodyBytes = new TextEncoder().encode(
+            chatRequestBodyText(geminiShape, optionsForCall),
+          ).byteLength;
+          const geminiRates = GEMINI_OFFICIAL_RATES[DEFAULT_GEMINI_MODEL];
+          const geminiReservation = conservativeGeminiReservation(
+            geminiBodyBytes,
+            Math.max(0, Math.ceil(optionsForCall.maxTokens)),
+            geminiRates.inputUsdPerMTok,
+            geminiRates.outputUsdPerMTok,
+          );
+          await enforceGeminiCap(purchaseEnv.EVIDENCE, geminiMaxTotalUsd(purchaseEnv), geminiReservation);
+          const outcome = await geminiGrokSubstituteJson(purchaseEnv, {
+            ...optionsForCall,
+            callId: `${optionsForCall.callId}:gemini-primary`,
+          });
+          const usage = settlementUsage(runId, origin, issue, 1, outcome.usage);
+          purchasedUsages.push(usage);
+          calls.push(usage);
+          issuedCalls.push(usage);
+          accountingCalls.push(usage);
+          value = outcome.value;
+          rawModelOutput = outcome.value;
+          routeReceipt = { selected: "gemini-2.5-flash", trigger: null };
+          providerIndependence = "independent-gemini-substitute";
+        } catch (geminiPrimaryErr) {
+          // Gemini primary failure: typed Gemini failure falls to DeepSeek Flash
+          if (geminiPrimaryErr instanceof ModelCallError) {
+            const usage = settlementUsage(runId, origin, issue, 1, geminiPrimaryErr.usage);
+            purchasedUsages.push(usage);
+            calls.push(usage);
+            issuedCalls.push(usage);
+            accountingCalls.push(usage);
+          }
+          // Create a synthetic fallback trigger for the Flash path
+          if (
+            geminiPrimaryErr instanceof ModelCallError ||
+            geminiPrimaryErr instanceof ProviderCapExceededRefusal ||
+            geminiPrimaryErr instanceof ProviderLedgerCorrupt ||
+            geminiPrimaryErr instanceof MissingCredential
+          ) {
+            // Fall through: value remains null, DeepSeek Flash path below will handle it
+            fallbackTrigger = {
+              kind: GROK_FALLBACK_TRIGGER_VERSION,
+              failureKind: geminiPrimaryErr instanceof ModelCallError
+                ? geminiPrimaryErr.failureKind
+                : "provider-unavailable" as const,
+              httpStatus: geminiPrimaryErr instanceof ModelCallError
+                ? geminiPrimaryErr.httpStatus
+                : null,
+              grokModel: DEFAULT_GROK_MODEL,
+              grokUsageEventId: purchasedUsages.length > 0
+                ? (purchasedUsages[purchasedUsages.length - 1]!.eventId ?? `core-model-call/pass-a/${runId}/${origin}/issue-${issue}/receipt-1`)
+                : `core-model-call/pass-a/${runId}/${origin}/issue-${issue}/receipt-1`,
+              detail: `gemini-primary failed: ${geminiPrimaryErr instanceof Error ? geminiPrimaryErr.message.slice(0, 200) : String(geminiPrimaryErr)}`,
+            };
+          } else {
+            throw geminiPrimaryErr;
+          }
+        }
+      }
+
+      if (fallbackTrigger === null && passAPrimary !== "gemini") {
         try {
           const outcome = await grokJson(purchaseEnv, optionsForCall);
           const usage = settlementUsage(runId, origin, issue, 1, outcome.usage);
@@ -2023,25 +2125,30 @@ export async function runPassA(
         //
         // Gemini is attempted first. If it fails with a typed eligible error, the existing
         // DeepSeek Flash path fires as the last resort with its unchanged semantics.
+        //
+        // BUDGET MODE: when pass-A primary is "gemini", Gemini already failed as primary.
+        // Skip the Gemini substitute and go directly to DeepSeek Flash.
         let substituteSucceeded = false;
 
-        let geminiAttempted = false;
+        let geminiAttempted = passAPrimary === "gemini";
 
-        // Resolve Gemini key lazily — only when a Grok failure has already happened
-        try {
-          await resolveGeminiKey();
-          // Re-create the purchase env with the resolved Gemini key
-          purchaseEnv = await purchaseEnvFor(false, false);
-        } catch (geminiKeyErr) {
-          if (geminiKeyErr instanceof MissingCredential) {
-            // No Gemini key: fall through to DeepSeek Flash directly
-            geminiAttempted = false;
-          } else {
-            throw geminiKeyErr;
+        if (passAPrimary !== "gemini") {
+          // Resolve Gemini key lazily — only when a Grok failure has already happened
+          try {
+            await resolveGeminiKey();
+            // Re-create the purchase env with the resolved Gemini key
+            purchaseEnv = await purchaseEnvFor(false, false);
+          } catch (geminiKeyErr) {
+            if (geminiKeyErr instanceof MissingCredential) {
+              // No Gemini key: fall through to DeepSeek Flash directly
+              geminiAttempted = false;
+            } else {
+              throw geminiKeyErr;
+            }
           }
         }
 
-        if (resolvedGeminiKey !== null) try {
+        if (resolvedGeminiKey !== null && passAPrimary !== "gemini") try {
           // ENFORCE cumulative Gemini cap BEFORE the purchase. A conservative reservation
           // uses request-byte ceiling as input tokens and max_tokens as output tokens,
           // mirroring how Grok reserves at its max-known rates.
@@ -2332,6 +2439,86 @@ export async function runPassA(
       failedUnits.push({ unit: origin, blockIds, detail });
       if (attempts < maxIssues && !nonRetryablePrimaryFailure) remaining += 1;
       else {
+        // ITEM-LEVEL DEGRADATION AT RETRY EXHAUSTION: when the window has exhausted its retry
+        // budget AND the error is a semantic-output failure with retained raw model output,
+        // try to salvage individually valid + grounded items rather than failing the whole
+        // window (and therefore the whole run). The grounding validation stays exactly as
+        // strict; only the consequence granularity changes from window to item.
+        const canDegrade =
+          !(err instanceof ModelCallError) && rawModelOutput !== null && durableTerminal;
+        const degraded = canDegrade
+          ? degradedPrimaryOutput(rawModelOutput!, w, origin)
+          : null;
+        if (degraded !== null) {
+          // Replace the failed artifact with a degraded success artifact that carries the
+          // salvaged items plus limitations. The failed artifact already persisted above is
+          // overwritten by a success artifact here.
+          const degradedWindow: PersistedWindow = {
+            ...degraded.unit,
+            usages: [...priorUsages, ...purchasedUsages],
+            routeReceipt: passAPrimary === "gemini"
+              ? { selected: "gemini-2.5-flash" as const, trigger: null }
+              : { selected: "grok-4.6" as const, trigger: fallbackTrigger },
+          };
+          const degradedArtifact = JSON.stringify(
+            {
+              windowId: origin,
+              windowNumber: n,
+              blockIds,
+              parserVersion,
+              promptVersion: PROMPT_VERSION_A,
+              providerRouteIdentity,
+              windowPolicyIdentity: windowPolicyIdentity(env),
+              attempts: issue,
+              modelOutput: rawModelOutput,
+              ...degradedWindow,
+            },
+            null,
+            2,
+          );
+          try {
+            const retained = await persistPrimaryWindowArtifact(
+              env,
+              runId,
+              n,
+              w,
+              parserVersion,
+              origin,
+              predecessorAuthority,
+              degradedArtifact,
+              (artifact) => artifact.kind === "ok",
+            );
+            if (retained?.kind === "ok") {
+              Object.assign(degradedWindow, retained);
+            }
+          } catch (degradedPersistError) {
+            if (!(degradedPersistError instanceof PassAPrimaryPersistenceError)) throw degradedPersistError;
+            // Degraded persistence failed — fall through to terminal failure
+          }
+          if (degradedWindow.kind === "ok") {
+            // Remove the failed-unit entry we pushed above; the window LANDED with degradation
+            failedUnits.pop();
+            landed += 1;
+            routeReceipts.push(degradedWindow.routeReceipt);
+            absorb(degradedWindow);
+            if (onProgress) {
+              try {
+                await onProgress(
+                  `pass A ${origin}: DEGRADED — ${degraded.degradedItemCount} of ` +
+                    `${degraded.totalItemCount} item(s) excluded, ` +
+                    `${degraded.totalItemCount - degraded.degradedItemCount} grounded item(s) retained, ` +
+                    `${degraded.limitations.length} limitation(s) counted`,
+                );
+              } catch {
+                // Observability only; the degraded artifact is already authoritative.
+              }
+            }
+            // The catch block always exits the window loop. Remaining unread windows are
+            // counted so the wave loop can schedule them in a later step.
+            remaining += windows.length - (i + 1);
+            break;
+          }
+        }
         landed += 1;
         terminalFailure = true;
       }
@@ -2451,7 +2638,9 @@ export async function runPassA(
 
   return {
     pass: "A",
-    provider: "grok-primary/gemini-substitute/deepseek-flash-fallback",
+    provider: passAPrimary === "gemini"
+      ? "gemini-primary/deepseek-flash-fallback"
+      : "grok-primary/gemini-substitute/deepseek-flash-fallback",
     model,
     providerRouteIdentity,
     providerIndependence,
@@ -3016,6 +3205,280 @@ function inspectPrimaryWindowGrounding(
   };
 }
 
+/**
+ * ITEM-LEVEL DEGRADATION: when a window's retry budget is exhausted for a semantic-output
+ * error, try to salvage individually valid + grounded items from the raw model output.
+ *
+ * The grounding VALIDATION stays exactly as strict. Only the CONSEQUENCE granularity changes:
+ * instead of failing the whole window (and therefore the whole run), each item that fails
+ * structural validation or grounding is excluded and counted as a named limitation, while
+ * every valid + grounded item survives into the landed window.
+ *
+ * Returns null when the raw output is unusable (not an object, missing arrays). Never returns
+ * a silent empty — when ALL items are excluded, the window still lands with zero items and
+ * the full limitation count.
+ */
+/** Test-only: expose strictPrimaryOutput so negative tests can prove it throws. */
+export const __test_strictPrimaryOutput = strictPrimaryOutput;
+
+export function degradedPrimaryOutput(
+  rawModelOutput: Record<string, unknown>,
+  source: SourceBlock[],
+  origin: string,
+): {
+  unit: PersistedWindow;
+  limitations: PassAPrimaryGroundingLimitationWire[];
+  degradedItemCount: number;
+  totalItemCount: number;
+} | null {
+  // Verify the raw output has the expected top-level arrays
+  const globalRows = rawModelOutput["global_rules"];
+  const xrefRows = rawModelOutput["cross_references"];
+  const ambiguityRows = rawModelOutput["ambiguities"];
+  const unverifiableRows = rawModelOutput["unverifiable_from_browser"];
+  if (
+    !Array.isArray(globalRows) && !Array.isArray(xrefRows) &&
+    !Array.isArray(ambiguityRows) && !Array.isArray(unverifiableRows)
+  ) {
+    return null;
+  }
+
+  const limitations: PassAPrimaryGroundingLimitationWire[] = [];
+  const byId = new Map(source.map((block) => [block.blockId, block]));
+  const ownedIds = (ids: readonly string[]): string[] =>
+    ids.filter((id) => byId.has(id));
+
+  let totalItemCount = 0;
+  let degradedItemCount = 0;
+
+  // Try each global rule individually
+  const globalRules: RawRequirement[] = [];
+  for (let index = 0; index < (Array.isArray(globalRows) ? globalRows.length : 0); index++) {
+    totalItemCount++;
+    const row = (globalRows as unknown[])[index];
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      degradedItemCount++;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "global-rule",
+        rowIndex: index + 1,
+        sourceBlockIds: [],
+        reason: "structural-validation-failed",
+      });
+      continue;
+    }
+    try {
+      const singleOutput = {
+        global_rules: [row],
+        cross_references: [],
+        ambiguities: [],
+        unverifiable_from_browser: [],
+      };
+      const strict = strictPrimaryOutput(singleOutput, origin);
+      const windowUnit: PersistedWindow = {
+        kind: "ok", ...strict,
+        primaryGroundingLimitations: [], usages: [],
+        routeReceipt: { selected: "grok-4.6", trigger: null },
+      };
+      const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
+      globalRules.push(...inspected.unit.globalRules);
+      limitations.push(...inspected.limitations);
+      if (inspected.limitations.length > 0) degradedItemCount++;
+    } catch {
+      degradedItemCount++;
+      const claimed = typeof row === "object" && row !== null && Array.isArray((row as Record<string, unknown>)["block_ids"])
+        ? ownedIds((row as Record<string, unknown>)["block_ids"] as string[])
+        : [];
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "global-rule",
+        rowIndex: index + 1,
+        sourceBlockIds: [...new Set(claimed)],
+        reason: "structural-validation-failed",
+      });
+    }
+  }
+
+  // Try each cross-reference individually
+  const crossRefs: CrossRef[] = [];
+  for (let index = 0; index < (Array.isArray(xrefRows) ? xrefRows.length : 0); index++) {
+    totalItemCount++;
+    const row = (xrefRows as unknown[])[index];
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      degradedItemCount++;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "cross-reference",
+        rowIndex: index + 1,
+        sourceBlockIds: [],
+        reason: "structural-validation-failed",
+      });
+      continue;
+    }
+    try {
+      const singleOutput = {
+        global_rules: [],
+        cross_references: [row],
+        ambiguities: [],
+        unverifiable_from_browser: [],
+      };
+      const strict = strictPrimaryOutput(singleOutput, origin);
+      const windowUnit: PersistedWindow = {
+        kind: "ok", ...strict,
+        primaryGroundingLimitations: [], usages: [],
+        routeReceipt: { selected: "grok-4.6", trigger: null },
+      };
+      const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
+      crossRefs.push(...inspected.unit.crossRefs);
+      limitations.push(...inspected.limitations);
+      if (inspected.limitations.length > 0) degradedItemCount++;
+    } catch {
+      degradedItemCount++;
+      const fromBlock = typeof row === "object" && row !== null
+        ? (row as Record<string, unknown>)["from_block"]
+        : null;
+      const claimed = typeof fromBlock === "string" && byId.has(fromBlock) ? [fromBlock] : [];
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "cross-reference",
+        rowIndex: index + 1,
+        sourceBlockIds: claimed,
+        reason: "structural-validation-failed",
+      });
+    }
+  }
+
+  // Try each ambiguity individually
+  const ambiguities: RawAmbiguity[] = [];
+  for (let index = 0; index < (Array.isArray(ambiguityRows) ? ambiguityRows.length : 0); index++) {
+    totalItemCount++;
+    const row = (ambiguityRows as unknown[])[index];
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      degradedItemCount++;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "ambiguity",
+        rowIndex: index + 1,
+        sourceBlockIds: [],
+        reason: "structural-validation-failed",
+      });
+      continue;
+    }
+    try {
+      const singleOutput = {
+        global_rules: [],
+        cross_references: [],
+        ambiguities: [row],
+        unverifiable_from_browser: [],
+      };
+      const strict = strictPrimaryOutput(singleOutput, origin);
+      const windowUnit: PersistedWindow = {
+        kind: "ok", ...strict,
+        primaryGroundingLimitations: [], usages: [],
+        routeReceipt: { selected: "grok-4.6", trigger: null },
+      };
+      const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
+      ambiguities.push(...inspected.unit.ambiguities);
+      limitations.push(...inspected.limitations);
+      if (inspected.limitations.length > 0) degradedItemCount++;
+    } catch {
+      degradedItemCount++;
+      const claimed = typeof row === "object" && row !== null && Array.isArray((row as Record<string, unknown>)["block_ids"])
+        ? ownedIds((row as Record<string, unknown>)["block_ids"] as string[])
+        : [];
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "ambiguity",
+        rowIndex: index + 1,
+        sourceBlockIds: [...new Set(claimed)],
+        reason: "structural-validation-failed",
+      });
+    }
+  }
+
+  // Try each unverifiable item individually
+  const unverifiable: RawUnverifiable[] = [];
+  for (let index = 0; index < (Array.isArray(unverifiableRows) ? unverifiableRows.length : 0); index++) {
+    totalItemCount++;
+    const row = (unverifiableRows as unknown[])[index];
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      degradedItemCount++;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "unverifiable",
+        rowIndex: index + 1,
+        sourceBlockIds: [],
+        reason: "structural-validation-failed",
+      });
+      continue;
+    }
+    try {
+      const singleOutput = {
+        global_rules: [],
+        cross_references: [],
+        ambiguities: [],
+        unverifiable_from_browser: [row],
+      };
+      const strict = strictPrimaryOutput(singleOutput, origin);
+      const windowUnit: PersistedWindow = {
+        kind: "ok", ...strict,
+        primaryGroundingLimitations: [], usages: [],
+        routeReceipt: { selected: "grok-4.6", trigger: null },
+      };
+      const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
+      unverifiable.push(...inspected.unit.unverifiable);
+      limitations.push(...inspected.limitations);
+      if (inspected.limitations.length > 0) degradedItemCount++;
+    } catch {
+      degradedItemCount++;
+      const claimed = typeof row === "object" && row !== null && Array.isArray((row as Record<string, unknown>)["block_ids"])
+        ? ownedIds((row as Record<string, unknown>)["block_ids"] as string[])
+        : [];
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "unverifiable",
+        rowIndex: index + 1,
+        sourceBlockIds: [...new Set(claimed)],
+        reason: "structural-validation-failed",
+      });
+    }
+  }
+
+  // Sort limitations in deterministic order
+  const rowKindOrder = new Map<PassAPrimaryGroundingRowKind, number>([
+    ["global-rule", 0], ["cross-reference", 1], ["ambiguity", 2], ["unverifiable", 3],
+  ]);
+  limitations.sort((left, right) =>
+    (rowKindOrder.get(left.rowKind)! - rowKindOrder.get(right.rowKind)!) ||
+    left.rowIndex - right.rowIndex
+  );
+  const validatedLimitations = validatePassAPrimaryGroundingLimitations(limitations);
+
+  return {
+    unit: {
+      kind: "ok",
+      globalRules,
+      crossRefs,
+      ambiguities,
+      unverifiable,
+      primaryGroundingLimitations: validatedLimitations,
+      usages: [],
+      routeReceipt: { selected: "grok-4.6", trigger: null },
+    },
+    limitations: validatedLimitations,
+    degradedItemCount,
+    totalItemCount,
+  };
+}
+
 function applySynthesisAdditions(
   requirements: RawRequirement[],
   crossRefs: CrossRef[],
@@ -3152,7 +3615,7 @@ async function readWindowArtifact(
     // A valid artifact from an old parser/prompt/route is a cache miss. Once those current
     // identities match, corruption is retained authority: absence and invalidity diverge.
     if (parsed["parserVersion"] !== parserVersion || parsed["promptVersion"] !== PROMPT_VERSION_A) return null;
-    if (parsed["providerRouteIdentity"] !== grokFlashRouteIdentity(env)) return null;
+    if (parsed["providerRouteIdentity"] !== passAPrimaryRouteIdentity(env)) return null;
     if (parsed["windowPolicyIdentity"] !== windowPolicyIdentity(env)) return null;
     if (parsed["windowId"] !== origin || parsed["windowNumber"] !== n) {
       return invalid("windowId/windowNumber do not match this exact window key", parsed);
@@ -3262,14 +3725,32 @@ async function readWindowArtifact(
     if (typeof modelOutput !== 'object' || modelOutput === null || Array.isArray(modelOutput)) {
       return invalid('successful artifact has no raw modelOutput authority', parsed);
     }
-    const strict = strictPrimaryOutput(modelOutput as Record<string, unknown>, origin);
-    const decoded = inspectPrimaryWindowGrounding({
-      kind: "ok",
-      ...strict,
-      primaryGroundingLimitations: [],
-      usages: usages as CallUsage[],
-      routeReceipt,
-    }, expectedBlocks, origin).unit;
+    // Try the strict path first; if it throws, fall back to degraded item-level re-decode.
+    let decoded: PersistedWindow;
+    try {
+      const strict = strictPrimaryOutput(modelOutput as Record<string, unknown>, origin);
+      decoded = inspectPrimaryWindowGrounding({
+        kind: "ok",
+        ...strict,
+        primaryGroundingLimitations: [],
+        usages: usages as CallUsage[],
+        routeReceipt,
+      }, expectedBlocks, origin).unit;
+    } catch {
+      // The raw model output fails strict whole-window decode. Try degraded per-item decode
+      // which is the path a retry-exhausted window uses to salvage individually valid items.
+      const degraded = degradedPrimaryOutput(
+        modelOutput as Record<string, unknown>, expectedBlocks, origin,
+      );
+      if (degraded === null) {
+        return invalid('raw modelOutput is not decodable even per-item', parsed);
+      }
+      decoded = {
+        ...degraded.unit,
+        usages: usages as CallUsage[],
+        routeReceipt,
+      };
+    }
     const storedLimitations = validatePassAPrimaryGroundingLimitations(
       parsed["primaryGroundingLimitations"],
     );
@@ -3514,7 +3995,7 @@ function synthesisArtifactEnvelope(
     schemaVersion: PASS_A_SYNTHESIS_VERSION,
     parserVersion: context.parserVersion,
     promptVersion: PROMPT_VERSION_A,
-    providerRouteIdentity: grokFlashRouteIdentity(env),
+    providerRouteIdentity: passAPrimaryRouteIdentity(env),
     inputHash: context.inputHash,
     requestHash: context.requestHash,
     policyIdentity: context.policyIdentity,
@@ -5109,7 +5590,7 @@ export async function reconstructPassAHistoricalProgressCensus(
     num(env.EXTRACT_PASS_A_WINDOW_CHARS, 90_000),
     num(env.EXTRACT_PASS_A_WINDOW_MAX_BLOCKS, 100),
   );
-  const routeIdentity = grokFlashRouteIdentity(env);
+  const routeIdentity = passAPrimaryRouteIdentity(env);
   const policyIdentity = windowPolicyIdentity(env);
   let historicalPromptIdentity: string | null = null;
 
@@ -5482,9 +5963,11 @@ export async function reconstructPassACompletedAuthority(
     kind: "ok",
     value: {
       pass: "A",
-      provider: "grok-primary/gemini-substitute/deepseek-flash-fallback",
-      model: DEFAULT_GROK_MODEL,
-      providerRouteIdentity: grokFlashRouteIdentity(env),
+      provider: validatePassAPrimaryMode(env) === "gemini"
+        ? "gemini-primary/deepseek-flash-fallback"
+        : "grok-primary/gemini-substitute/deepseek-flash-fallback",
+      model: validatePassAPrimaryMode(env) === "gemini" ? DEFAULT_GEMINI_MODEL : DEFAULT_GROK_MODEL,
+      providerRouteIdentity: passAPrimaryRouteIdentity(env),
       providerIndependence: reconstructedIndependence,
       routeReceipts,
       fallbackTriggers,

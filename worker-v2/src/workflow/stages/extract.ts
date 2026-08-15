@@ -42,12 +42,13 @@ import {
 } from "../../extract/document-semantics";
 import { MissingCredential } from "../../llm/chat";
 import { deepseekPassBIdentity } from "../../llm/deepseek";
-import { grokFlashRouteIdentity, grokRateAttestation } from "../../llm/grok";
+import { grokRateAttestation } from "../../llm/grok";
 import { EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED } from "../../llm/extraction-wire";
 import {
   runPassA,
   PASS_A_VERSION,
   reconstructPassACompletedAuthority,
+  passAPrimaryRouteIdentity,
   type CrossRef,
   type PassAProviderIndependence,
   type PassASlice,
@@ -1247,7 +1248,7 @@ async function readPassPayload(
     if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;
     if (pass === "a") {
       if (
-        parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
+        parsed.providerRouteIdentity !== passAPrimaryRouteIdentity(env) ||
         !passACompletionShapeClosed(parsed as unknown as Record<string, unknown>) ||
         !Array.isArray(parsed.failedUnits) || parsed.failedUnits.length > 0
       ) return null;
@@ -1318,7 +1319,7 @@ async function readPass(
     if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;
     if (pass === "a") {
       if (
-        parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
+        parsed.providerRouteIdentity !== passAPrimaryRouteIdentity(env) ||
         !passACompletionShapeClosed(parsed as unknown as Record<string, unknown>) ||
         !Array.isArray(parsed.failedUnits) || parsed.failedUnits.length > 0
       ) return null;

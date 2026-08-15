@@ -176,6 +176,17 @@ export interface Env {
   /** "block-private" (default) | "allow-private" — outbound survey-URL target policy. */
   OUTBOUND_URL_POLICY?: string;
 
+  // --- pass-A provider selection (owner-approved 15 Aug 2026) ---
+  /**
+   * Which provider runs pass A. Exactly two legal values:
+   *   "grok"   — current behavior, Grok primary with Gemini/Flash substitution chain
+   *   "gemini" — budget mode: pass A runs on Gemini gemini-2.5-flash, Grok is never called;
+   *              the existing USD 10 cumulative Gemini cap applies to EVERY pass-A call;
+   *              pass B stays DeepSeek Pro; provider-family independence is intact
+   * Any other value throws at construction.
+   */
+  EXTRACT_PASS_A_PRIMARY?: string;
+
   // --- Gemini extraction substitute (owner-approved 15 Aug 2026) ---
   /** Pinned model for the Gemini Grok-substitute leg. Must be exactly gemini-2.5-flash. */
   GEMINI_EXTRACTION_MODEL?: string;

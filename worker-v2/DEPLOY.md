@@ -1050,6 +1050,7 @@ const v=c.vars||{}; eq(v.V2_PREFIX,"v2/","wrong prefix");
 eq(v.CAP_STANDARD_MAX_USD,"5","source cap not $5");
 eq(v.CAP_WALL_CLOCK_MS,"14400000","wall cap not 4h"); eq(v.VISUAL_SHADOW_ENABLED,"false","visual enabled");
 if(Object.hasOwn(v,"DEV_SEED")) fail("DEV_SEED present");
+eq(v.EXTRACT_PASS_A_PRIMARY,"gemini","wrong Pass-A primary mode (budget mode requires gemini)");
 eq(v.GROK_MODEL,"grok-4.6","wrong normal Pass-A model");
 const grokRateBinding={
  GROK_RATE_BINDING_SCHEMA:"survey-qa-grok-rate-binding/1.0.0",

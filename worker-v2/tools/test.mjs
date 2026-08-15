@@ -86,6 +86,8 @@ const FILES = [
   "./tests/primary-grounding-coverage-wire.test.mjs",
   "./tests/passa-completion-shape.test.mjs",
   "./tests/passa-final-validity.test.mjs",
+  // Item-level grounding degradation and Gemini budget mode.
+  "./tests/grounding-degradation.test.mjs",
   // Terminal extraction refusals report durable operational evidence without inventing QA claims.
   // Malformed or missing receipts must leave no report pointer.
   "./tests/terminal-failure-report.test.mjs",
