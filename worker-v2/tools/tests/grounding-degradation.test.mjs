@@ -197,6 +197,40 @@ suite("Item-level grounding degradation — A-w10 regression fixture", () => {
     assertEq(result, null);
   });
 
+  test("negative fixture: a malformed root key (non-array) is unsalvageable even when siblings are valid", async () => {
+    const mod = await worker();
+    const source = makeSourceBlocks();
+    // Three valid empty arrays, one root key is a string instead of an array.
+    // This is an unsalvageable envelope, not an item-level failure.
+    const result = mod.passA.degradedPrimaryOutput(
+      {
+        global_rules: "not-an-array",
+        cross_references: [],
+        ambiguities: [],
+        unverifiable_from_browser: [],
+      },
+      source,
+      "A-w10",
+    );
+    assertEq(result, null, "a non-array root key makes the envelope unsalvageable");
+  });
+
+  test("negative fixture: a missing root key is unsalvageable even when siblings are valid arrays", async () => {
+    const mod = await worker();
+    const source = makeSourceBlocks();
+    // cross_references is missing entirely — only three of the four required keys present.
+    const result = mod.passA.degradedPrimaryOutput(
+      {
+        global_rules: [],
+        ambiguities: [],
+        unverifiable_from_browser: [],
+      },
+      source,
+      "A-w10",
+    );
+    assertEq(result, null, "a missing root key makes the envelope unsalvageable");
+  });
+
   test("negative fixture: removing degradation logic makes the exclusion test fail", async () => {
     // This test proves the degradation test CAN fail: if we feed the mixed output
     // through strictPrimaryOutput (the non-degraded path), it THROWS on the invalid

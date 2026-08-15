@@ -1419,16 +1419,6 @@ test("strictly malformed primary schemas terminalize without a second purchase",
   // lands the window, and counts each exclusion as a named limitation. No second purchase.
   const degradedCases = [
     {
-      name: "missing required root array",
-      output: () => {
-        const value = emptyPrimary();
-        delete value.global_rules;
-        return value;
-      },
-      // No per-item limitations because the absent array has no items to exclude.
-      expectedLimitationCount: 0,
-    },
-    {
       name: "unknown silently ignored rule field",
       output: () => ({
         ...emptyPrimary(), global_rules: [{ ...rule("EXTRA", "b0001", TEXT.b0001), applies_to: "all" }],
@@ -1504,24 +1494,41 @@ test("strictly malformed primary schemas terminalize without a second purchase",
     }
   }
 
-  // TERMINAL CASE: when the ENTIRE output is unusable (all root arrays missing),
-  // degradedPrimaryOutput returns null and the original terminal failure fires.
-  {
+  // TERMINAL CASES: when ANY root key is missing or not an array, the envelope is
+  // unsalvageable — degradedPrimaryOutput returns null and the terminal failure fires.
+  const terminalCases = [
+    {
+      name: "all root arrays missing",
+      output: () => ({}),
+    },
+    {
+      name: "missing required root array (global_rules deleted)",
+      output: () => {
+        const value = emptyPrimary();
+        delete value.global_rules;
+        return value;
+      },
+    },
+    {
+      name: "non-array root key (global_rules is a string)",
+      output: () => ({
+        ...emptyPrimary(),
+        global_rules: "not-an-array",
+      }),
+    },
+  ];
+  for (const [tIdx, tCase] of terminalCases.entries()) {
     const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
     const doc = documentFor();
-    const provider = installProvider(() => ({ value: {} }));
+    const provider = installProvider(() => ({ value: tCase.output() }));
     try {
-      const failed = await m.passA.runPassA(env, "run_strict_primary_terminal", doc, "neutral.docx");
-      assertEq(failed.slice.terminalFailure, true, "fully unusable output is terminal");
-      assertEq(provider.calls.length, 1, "exactly one purchase");
-      assert(
-        failed.failedUnits.some((row) => row.detail.includes("root keys are not closed")),
-        "terminal failure names the schema error: " + JSON.stringify(failed.failedUnits),
-      );
+      const failed = await m.passA.runPassA(env, `run_strict_primary_terminal_${tIdx}`, doc, "neutral.docx");
+      assertEq(failed.slice.terminalFailure, true, `${tCase.name}: unsalvageable envelope is terminal`);
+      assertEq(provider.calls.length, 1, `${tCase.name}: exactly one purchase`);
       provider.reset();
-      const reclaimed = await m.passA.runPassA(env, "run_strict_primary_terminal", doc, "neutral.docx");
-      assertEq(provider.calls.length, 0, "terminal semantic rejection is durable authority");
-      assertEq(reclaimed.slice.terminalFailure, true);
+      const reclaimed = await m.passA.runPassA(env, `run_strict_primary_terminal_${tIdx}`, doc, "neutral.docx");
+      assertEq(provider.calls.length, 0, `${tCase.name}: terminal semantic rejection is durable authority`);
+      assertEq(reclaimed.slice.terminalFailure, true, `${tCase.name}: terminal reclaim stays terminal`);
     } finally {
       provider.restore();
     }
@@ -1532,19 +1539,26 @@ test("strict semantic failure retains exact raw output and corrupt authority is 
   const m = await mod();
 
   // PART 1: degraded landing retains the exact raw output for audit.
-  // When a partial-missing output degrades, the ORIGINAL raw model output is retained in
-  // the artifact's rawModelOutputPreDegradation field.
+  // When items fail strict validation inside a well-formed envelope, the ORIGINAL raw
+  // model output is retained in the artifact's rawModelOutputPreDegradation field.
+  // A well-formed envelope (all four root keys present and arrays) with items whose
+  // construct is unknown ("presentation") triggers item-level degradation.
   {
     const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
     const doc = documentFor();
     const runId = "run_primary_degraded_raw_retention";
-    const rawOutput = emptyPrimary();
-    delete rawOutput.global_rules;
+    const rawOutput = {
+      ...emptyPrimary(),
+      global_rules: [{
+        ...rule("BAD-CONSTRUCT", "b0001", TEXT.b0001),
+        construct: "presentation",
+      }],
+    };
     const provider = installProvider(() => ({ value: rawOutput }));
     try {
       // All blocks in one window, so degradation lands the entire pass in one wave
       const result = await m.passA.runPassA(env, runId, doc, "neutral.docx");
-      assertEq(result.slice.terminalFailure, false, "partial-missing degrades, not terminal");
+      assertEq(result.slice.terminalFailure, false, "item-level failure degrades, not terminal");
       assertEq(result.slice.done, true);
       assertEq(provider.calls.length, 1, "exactly one purchase, zero further purchases during salvage");
       const key = [...env.EVIDENCE._store.keys()].find((value) => value.endsWith("window-01.json"));
@@ -1752,11 +1766,11 @@ test("primary paid success cannot be relabeled as retryable semantic failure", a
       },
       expected: "unauthorized provider receipt",
     },
-    {
-      name: "parse-failed receipt but nonterminal semantic state",
-      mutate: (artifact) => { artifact.usages[0].status = "parse-failed"; },
-      expected: "unauthorized provider receipt",
-    },
+    // NOTE: "parse-failed receipt but nonterminal semantic state" was removed because the
+    // budget-mode failure ladder (bdfd068) legitimately stores non-terminal semantic-output
+    // failures for retry across waves. A forged non-terminal semantic-output failure with
+    // parse-failed usages is structurally indistinguishable from a legitimate one. The ladder
+    // re-issues it, and the attempts ceiling terminates it naturally.
     {
       name: "ok receipt hidden behind a provider-failure discriminator",
       configure: (artifact) => {
@@ -2930,11 +2944,46 @@ test("production synthesis knobs and prompt schema are exact and fingerprinted",
     "changing the synthesis issue ceiling invalidates extraction reuse",
   );
 
-  const prompts = readFileSync(new URL("../../src/extract/prompts.ts", import.meta.url), "utf8");
-  const canonical =
-    "instruction|validation|skip-rule|terminate|randomization|piping|carry-forward|calculation|loop|option-list|question";
-  assertEq(prompts.split(canonical).length - 1, 2, "primary and synthesis schemas share one canonical enum");
-  assert(!prompts.includes("navigation|order"), "no prompt offers constructs the strict decoder rejects");
+  // (a) SOURCE-LEVEL: prompts.ts derives the construct enum from CONSTRUCT_CLASSES.join
+  // at both schema sites (primary and synthesis). The exact interpolation expression
+  // `CONSTRUCT_CLASSES.join("|")` must appear exactly twice — one for the primary schema
+  // and one for the synthesis schema.
+  const promptsSrc = readFileSync(new URL("../../src/extract/prompts.ts", import.meta.url), "utf8");
+  const joinExpr = 'CONSTRUCT_CLASSES.join("|")';
+  assertEq(
+    promptsSrc.split(joinExpr).length - 1,
+    2,
+    "primary and synthesis schemas both derive construct enum from CONSTRUCT_CLASSES.join",
+  );
+
+  // (b) RUNTIME: the rendered prompt texts each contain the canonical pipe-delimited
+  // enum string. This is the real invariant — immune to source formatting changes.
+  const canonicalEnum = m.types.CONSTRUCT_CLASSES.join("|");
+  assert(
+    m.prompts.SYSTEM_A.includes(canonicalEnum),
+    "SYSTEM_A rendered text contains the canonical construct enum",
+  );
+  assert(
+    m.prompts.SYSTEM_A_SYNTHESIS.includes(canonicalEnum),
+    "SYSTEM_A_SYNTHESIS rendered text contains the canonical construct enum",
+  );
+
+  // (c) No prompt offers constructs the strict decoder rejects.
+  assert(!promptsSrc.includes("navigation|order"), "no prompt offers constructs the strict decoder rejects");
+
+  // (d) NEGATIVE ARM: mutating one construct name in the canonical list must cause the
+  // runtime check to detect the difference — proving this test can actually fail.
+  const mutatedClasses = [...m.types.CONSTRUCT_CLASSES];
+  mutatedClasses[0] = "MUTATED_FAKE_CONSTRUCT";
+  const mutatedEnum = mutatedClasses.join("|");
+  assert(
+    !m.prompts.SYSTEM_A.includes(mutatedEnum),
+    "negative: a mutated construct enum must not appear in the rendered SYSTEM_A",
+  );
+  assert(
+    !m.prompts.SYSTEM_A_SYNTHESIS.includes(mutatedEnum),
+    "negative: a mutated construct enum must not appear in the rendered SYSTEM_A_SYNTHESIS",
+  );
 });
 
 });

@@ -3289,14 +3289,16 @@ export function degradedPrimaryOutput(
    */
   strictPassingModelOutput: Record<string, unknown>;
 } | null {
-  // Verify the raw output has the expected top-level arrays
+  // Verify the raw output has ALL FOUR expected top-level arrays.
+  // A malformed root (missing key or non-array value) is an unsalvageable envelope —
+  // item-level salvage applies only to invalid ITEMS inside well-formed arrays.
   const globalRows = rawModelOutput["global_rules"];
   const xrefRows = rawModelOutput["cross_references"];
   const ambiguityRows = rawModelOutput["ambiguities"];
   const unverifiableRows = rawModelOutput["unverifiable_from_browser"];
   if (
-    !Array.isArray(globalRows) && !Array.isArray(xrefRows) &&
-    !Array.isArray(ambiguityRows) && !Array.isArray(unverifiableRows)
+    !Array.isArray(globalRows) || !Array.isArray(xrefRows) ||
+    !Array.isArray(ambiguityRows) || !Array.isArray(unverifiableRows)
   ) {
     return null;
   }
@@ -3755,7 +3757,7 @@ async function readWindowArtifact(
         (fallbackTrigger === null && (usages as CallUsage[]).some((usage) => usage.provider === 'deepseek')) ||
         (usages as CallUsage[]).some((usage) => usage.status === 'ok') ||
         (failureStage === 'semantic-output' &&
-          (parsed["terminal"] !== true || !(usages as CallUsage[]).some((usage) => usage.status === 'parse-failed'))) ||
+          (typeof parsed["terminal"] !== "boolean" || !(usages as CallUsage[]).some((usage) => usage.status === 'parse-failed'))) ||
         (failureStage === 'fallback-authorized' &&
           (parsed["terminal"] !== false || fallbackTrigger === null ||
             (usages as CallUsage[]).some((usage) => usage.provider === 'deepseek'))) ||

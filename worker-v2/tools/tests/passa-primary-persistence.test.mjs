@@ -773,6 +773,16 @@ test("exhausted success storage stops the real stage, charges once, and Workflow
 });
 
 test("malformed model output still lands as terminal semantic evidence and is never re-bought", async () => {
+  // Under the budget-mode failure ladder (bdfd068), a malformed envelope (non-array root
+  // key) is retried across waves before terminalizing. EXTRACT_PASS_A_WINDOW_MAX_ISSUES = 2
+  // means the window gets two issues (attempts) across two runPassA invocations (each wave
+  // processes a window once). Both parse-fail because the envelope precondition (all four
+  // roots must be arrays) rejects the output. After the second wave exhausts the budget,
+  // degradedPrimaryOutput returns null (unsalvageable envelope), and the artifact becomes
+  // terminal.
+  //
+  // The REPLAY invocation must buy NOTHING — the never-re-bought-after-terminal property
+  // is the point of this test.
   const m = await mod();
   const evidence = memoryR2();
   const rawOutput = {
@@ -783,26 +793,48 @@ test("malformed model output still lands as terminal semantic evidence and is ne
   };
   const provider = stubPrimaryProvider(rawOutput);
   const env = primaryEnv(evidence);
+  // maxIssues = max(1, EXTRACT_PASS_A_WINDOW_MAX_ISSUES) = max(1, 2) = 2
+  // Each runPassA wave buys once per window; two waves exhaust the budget.
+  const expectedPurchases = 2;
   try {
-    const first = await m.passA.runPassA(
+    // WAVE 1: first attempt. The artifact is stored as non-terminal (attempt 1 < maxIssues 2).
+    const wave1 = await m.passA.runPassA(
       env,
       "run_passa_semantic_control",
       singleBlockDocument(),
       "synthetic.docx",
     );
-    assertEq(first.failedUnits.length, 1, "semantic failure remains visible and counted");
-    assertEq(first.calls[0].status, "parse-failed", "only semantic rejection relabels the receipt");
+    assertEq(wave1.failedUnits.length, 1, "wave 1: semantic failure remains visible and counted");
+    assertEq(wave1.calls.length, 1, "wave 1: one purchase in the first wave");
+    assertEq(wave1.calls[0].status, "parse-failed", "wave 1: semantic rejection relabels the receipt");
+    assertEq(provider.calls(), 1, "wave 1: exactly one provider call so far");
 
-    const stored = await onlyArtifact(evidence);
+    // WAVE 2: second attempt exhausts the budget. The artifact becomes terminal because
+    // attempts (2) >= maxIssues (2) and degradedPrimaryOutput returns null (unsalvageable).
+    const wave2 = await m.passA.runPassA(
+      env,
+      "run_passa_semantic_control",
+      singleBlockDocument(),
+      "synthetic.docx",
+    );
+    assertEq(wave2.failedUnits.length, 1, "wave 2: semantic failure remains visible and counted");
+    assertEq(provider.calls(), expectedPurchases, "wave 2: exactly two provider calls total");
+
+    // Two artifacts in the store: the canonical window key (terminal, wave 2) and the
+    // history archive of wave 1's non-terminal predecessor. Read the canonical key directly.
+    const canonicalKey = "v2/runs/run_passa_semantic_control/extraction/pass-a/window-01.json";
+    const stored = await evidence.get(canonicalKey).then((o) => o.json());
     assertEq(stored.status, "failed", "semantic evidence has the failed discriminator");
     assertEq(stored.failureStage, "semantic-output", "semantic evidence keeps its exact failure class");
-    assertEq(stored.terminal, true, "the durable semantic artifact is terminal authority");
+    assertEq(stored.terminal, true, "the durable semantic artifact is terminal authority at exhaustion");
+    assertEq(stored.attempts, 2, "the terminal artifact records both attempts");
     assertEq(
       JSON.stringify(stored.modelOutput),
       JSON.stringify(rawOutput),
       "the rejected raw output is retained exactly for strict replay",
     );
 
+    // REPLAY: the terminal artifact is cached. No new purchases.
     const replay = await m.passA.runPassA(
       env,
       "run_passa_semantic_control",
@@ -810,7 +842,7 @@ test("malformed model output still lands as terminal semantic evidence and is ne
       "synthetic.docx",
     );
     assertEq(replay.slice.terminalFailure, true, "strict replay preserves terminal authority");
-    assertEq(provider.calls(), 1, "semantic evidence is not re-bought");
+    assertEq(provider.calls(), expectedPurchases, "semantic evidence is not re-bought after terminal");
   } finally {
     provider.restore();
   }
