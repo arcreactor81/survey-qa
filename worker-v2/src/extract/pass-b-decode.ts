@@ -17,7 +17,7 @@ import {
   type SourceBlock,
 } from "./types";
 
-export const PASS_B_DECODER_VERSION = "pass-b-strict-output/1.1.0";
+export const PASS_B_DECODER_VERSION = "pass-b-strict-output/1.2.0";
 
 export class PassBOutputInvalid extends Error {
   constructor(detail: string) {
@@ -116,13 +116,22 @@ function nullablePositiveInteger(value: unknown, label: string): number | null {
   return value as number;
 }
 
+const EXPANSION_KNOWN_KEYS = new Set(["kind", "route_answers", "max_length", "min_selections", "max_selections"]);
+
 function expansion(value: unknown, label: string): RawExpansion | null {
   if (value === null) return null;
   const row = object(value, label);
-  exactKeys(row, ["kind", "route_answers", "max_length", "min_selections", "max_selections"], label);
+  // Reject unknown keys (the exactKeys spirit: no keys outside the five). Absent keys
+  // are normalized below rather than rejected — our internal envelope convention is not
+  // document truth, and rejecting an absent key destroys a paid, semantically correct answer.
+  for (const key of Object.keys(row)) {
+    if (!EXPANSION_KNOWN_KEYS.has(key)) fail(`${label} has unknown field "${key}"`); // mutation-anchor: expansion-unknown-key-rejection
+  }
   const kind = nonempty(row["kind"], `${label}.kind`);
   if (!EXPANSION_KINDS.has(kind)) fail(`${label}.kind is not a closed expansion kind`);
-  const routeAnswers = rows(row["route_answers"], `${label}.route_answers`).map((answer, index) => {
+  // Absent or null route_answers normalizes to []; non-array non-null is still rejected.
+  const rawRouteAnswers = row["route_answers"] ?? null;
+  const routeAnswers = (rawRouteAnswers === null ? [] : rows(rawRouteAnswers, `${label}.route_answers`)).map((answer, index) => {
     const answerLabel = `${label}.route_answers[${index}]`;
     exactKeys(answer, ["code", "label", "destination"], answerLabel);
     const code = nullableString(answer["code"], `${answerLabel}.code`);
@@ -131,9 +140,10 @@ function expansion(value: unknown, label: string): RawExpansion | null {
     if (code === null && text === null) fail(`${answerLabel} must name a code or label`);
     return { code, label: text, destination };
   });
-  const maxLength = nullablePositiveInteger(row["max_length"], `${label}.max_length`);
-  const minSelections = nullablePositiveInteger(row["min_selections"], `${label}.min_selections`);
-  const maxSelections = nullablePositiveInteger(row["max_selections"], `${label}.max_selections`);
+  // Absent numeric fields normalize to null.
+  const maxLength = nullablePositiveInteger(row["max_length"] ?? null, `${label}.max_length`);
+  const minSelections = nullablePositiveInteger(row["min_selections"] ?? null, `${label}.min_selections`);
+  const maxSelections = nullablePositiveInteger(row["max_selections"] ?? null, `${label}.max_selections`);
   if (minSelections !== null && maxSelections !== null && minSelections > maxSelections) {
     fail(`${label}.min_selections exceeds max_selections`);
   }
@@ -347,4 +357,187 @@ export function decodePassBOutput(
     }
   }
   return decoded;
+}
+
+/**
+ * Per-obligation salvage for a budget-exhausted semantic failure.
+ *
+ * Re-runs the strict decoder per item: keeps every obligation, ambiguity, and unverifiable
+ * row that passes validation; drops each failing one as a counted limitation with a closed
+ * machine reason. Dispositions and the construct checklist must survive intact — without
+ * them the chunk has no coverage story and stays terminal.
+ *
+ * Returns null if salvage is not viable (dispositions or checklist fail).
+ */
+export interface SalvageResult {
+  decoded: DecodedPassBOutput;
+  /** The model output with only the salvaged items, suitable for the degraded artifact. */
+  modelOutput: Record<string, unknown>;
+  limitations: Array<{
+    unit: string;
+    rowIndex: number;
+    rowKind: "obligation" | "ambiguity" | "unverifiable";
+    reason: "obligation-malformed" | "root-malformed";
+  }>;
+}
+
+export function salvagePassBOutput(
+  raw: Record<string, unknown>,
+  unitId: string,
+  sourceBlocks: readonly SourceBlock[],
+  evidenceSourceBlocks: readonly SourceBlock[] = sourceBlocks,
+): SalvageResult | null {
+  // The root must be an object with the expected chunk_id.
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  if (raw["chunk_id"] !== unitId) return null;
+
+  const allowedBlockIds = sourceBlocks.map((block) => block.blockId);
+  const allowed = new Set(allowedBlockIds);
+  const sourceById = new Map(sourceBlocks.map((block) => [block.blockId, block]));
+  const evidenceById = new Map([
+    ...sourceBlocks.map((block) => [block.blockId, block] as const),
+    ...evidenceSourceBlocks.map((block) => [block.blockId, block] as const),
+  ]);
+
+  // Non-negotiable: dispositions and checklist must validate intact.
+  let validDispositions: BlockDisposition[];
+  let validConstructs: ConstructVerdict[];
+  try {
+    if (!Array.isArray(raw["block_dispositions"])) return null;
+    validDispositions = dispositions(raw["block_dispositions"], allowed);
+    if (!Array.isArray(raw["construct_checklist"])) return null;
+    validConstructs = constructs(raw["construct_checklist"], allowed);
+  } catch {
+    return null; // No coverage story — chunk stays terminal.
+  }
+
+  const limits: SalvageResult["limitations"] = [];
+  const goodObligations: RawRequirement[] = [];
+  const rawObligations = Array.isArray(raw["obligations"]) ? raw["obligations"] : null;
+  if (rawObligations === null) {
+    limits.push({ unit: unitId, rowIndex: 0, rowKind: "obligation", reason: "root-malformed" }); // mutation-anchor: salvage-limitation-counting
+  } else {
+    for (let i = 0; i < rawObligations.length; i++) {
+      try {
+        const item = object(rawObligations[i], `obligations[${i}]`);
+        const decoded = obligation(item, i, unitId, sourceById);
+        goodObligations.push(decoded);
+      } catch {
+        limits.push({ unit: unitId, rowIndex: i, rowKind: "obligation", reason: "obligation-malformed" });
+      }
+    }
+  }
+
+  const goodAmbiguities: RawAmbiguity[] = [];
+  const rawAmbig = Array.isArray(raw["ambiguities"]) ? raw["ambiguities"] : null;
+  if (rawAmbig === null) {
+    limits.push({ unit: unitId, rowIndex: 0, rowKind: "ambiguity", reason: "root-malformed" });
+  } else {
+    for (let i = 0; i < rawAmbig.length; i++) {
+      try {
+        const item = object(rawAmbig[i], `ambiguities[${i}]`);
+        const row = ambiguities([item], evidenceById);
+        goodAmbiguities.push(...row);
+      } catch {
+        limits.push({ unit: unitId, rowIndex: i, rowKind: "ambiguity", reason: "obligation-malformed" });
+      }
+    }
+  }
+
+  const goodUnverifiable: RawUnverifiable[] = [];
+  const rawUnv = Array.isArray(raw["unverifiable_from_browser"]) ? raw["unverifiable_from_browser"] : null;
+  if (rawUnv === null) {
+    limits.push({ unit: unitId, rowIndex: 0, rowKind: "unverifiable", reason: "root-malformed" });
+  } else {
+    for (let i = 0; i < rawUnv.length; i++) {
+      try {
+        const item = object(rawUnv[i], `unverifiable_from_browser[${i}]`);
+        const row = unverifiable([item], sourceById);
+        goodUnverifiable.push(...row);
+      } catch {
+        limits.push({ unit: unitId, rowIndex: i, rowKind: "unverifiable", reason: "obligation-malformed" });
+      }
+    }
+  }
+
+  // Validate cross-row invariant: obligation with browser_observable=none must link to unverifiable.
+  const finalObligations: RawRequirement[] = [];
+  for (let i = 0; i < goodObligations.length; i++) {
+    const req = goodObligations[i]!;
+    if (req.browserObservable !== "none") {
+      finalObligations.push(req);
+      continue;
+    }
+    const linked = goodUnverifiable.some((row) =>
+      row.docQuote === req.docQuote &&
+      (row.blockIds ?? []).some((blockId) => req.blockIds.includes(blockId)));
+    if (linked) {
+      finalObligations.push(req);
+    } else {
+      limits.push({ unit: unitId, rowIndex: i, rowKind: "obligation", reason: "obligation-malformed" });
+    }
+  }
+
+  // Build the degraded model output (the strict-passing subset).
+  const degradedModelOutput: Record<string, unknown> = {
+    chunk_id: unitId,
+    obligations: finalObligations.map((req) => ({
+      id: req.id,
+      construct: req.construct,
+      scope: req.scope,
+      quantifier: req.quantifier,
+      selector: req.selector,
+      exceptions: req.exceptions,
+      statement: req.statement,
+      doc_quote: req.docQuote,
+      block_ids: req.blockIds,
+      evidence_quotes: (req.evidenceQuotes ?? []).map((eq) => ({ block_id: eq.blockId, quote: eq.quote })),
+      browser_observable: req.browserObservable,
+      confidence: req.confidence,
+      expansion: req.expansion === null ? null : {
+        kind: req.expansion.kind,
+        route_answers: req.expansion.routeAnswers.map((a) => ({
+          code: a.code,
+          label: a.label,
+          destination: a.destination,
+        })),
+        max_length: req.expansion.maxLength,
+        min_selections: req.expansion.minSelections,
+        max_selections: req.expansion.maxSelections,
+      },
+    })),
+    block_dispositions: raw["block_dispositions"],
+    construct_checklist: raw["construct_checklist"],
+    ambiguities: goodAmbiguities.map((a) => ({
+      id: a.id,
+      block_ids: a.blockIds,
+      evidence_quotes: (a.evidenceQuotes ?? []).map((eq) => ({ block_id: eq.blockId, quote: eq.quote })),
+      doc_quote: a.docQuote,
+      reading_a: a.readingA,
+      reading_b: a.readingB,
+      why_ambiguous: a.whyAmbiguous,
+      affects: a.affects,
+    })),
+    unverifiable_from_browser: goodUnverifiable.map((u) => ({
+      id: u.id,
+      block_ids: u.blockIds,
+      evidence_quotes: (u.evidenceQuotes ?? []).map((eq) => ({ block_id: eq.blockId, quote: eq.quote })),
+      doc_quote: u.docQuote,
+      mandate: u.mandate,
+      why_not_observable: u.whyNotObservable,
+      browser_proxy_evidence: u.browserProxyEvidence,
+    })),
+  };
+
+  return {
+    decoded: {
+      obligations: finalObligations,
+      dispositions: validDispositions,
+      constructs: validConstructs,
+      ambiguities: goodAmbiguities,
+      unverifiable: goodUnverifiable,
+    },
+    modelOutput: degradedModelOutput,
+    limitations: limits,
+  };
 }

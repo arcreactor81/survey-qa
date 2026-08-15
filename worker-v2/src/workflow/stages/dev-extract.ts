@@ -72,8 +72,8 @@ interface ExtractBody {
   documentSemanticsProfile?: DocumentSemanticsProfile;
   /** Override the Grok model for THIS call only — the A/B knob. */
   grokModel?: string;
-  /** Run pass A only. Used for model comparison; never seals anything. */
-  passOnly?: "A";
+  /** Run a single pass only. Used for model comparison; never seals anything. */
+  passOnly?: "A" | "B";
   /**
    * Wait for the whole extraction inside the HTTP response. Default FALSE, and the default
    * is not a preference: a full extraction is one whole-document call plus one call per
@@ -344,6 +344,17 @@ async function runExtraction(
       documentSha256,
     );
     await emit({ event: "pass-B", state: "finished", summary: passB });
+    if (body.passOnly === "B") {
+      return await persist(env, runId, {
+        runId,
+        mode: "pass-B-only",
+        model: deepseekContinuityIdentity(runEnv),
+        elapsedMs: Date.now() - startedAt,
+        passA,
+        passB,
+        passBKey: extractionPassKey(runId, "b"),
+      });
+    }
     if (passB.state !== "evaluated") {
       return await persist(env, runId, {
         runId,

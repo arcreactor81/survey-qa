@@ -47,7 +47,7 @@ export const PROMPT_VERSION_A = "v2-extract-pass-a/1.10.0";
 // routing/termination authority while withholding them from respondent option labels.
 // 1.5.0 moves chunks, context and ledger sweeps to the same lossless source-block JSONL seam;
 // no model-visible newline marker can differ from the exact source string the ledger checks.
-export const PROMPT_VERSION_B = "v2-extract-pass-b/1.5.0";
+export const PROMPT_VERSION_B = "v2-extract-pass-b/1.6.0";
 
 const SHARED_GROUND_RULES = `BINDING GROUND RULE
 The questionnaire document is the SOLE source of truth. You have never seen the implemented
@@ -336,10 +336,13 @@ Then produce THREE things, all mandatory:
    the document states it independently. Otherwise surface the ambiguity instead of guessing
    the cell's scope or ownership.
    When the document ENUMERATES something an implementation must be driven through, fill in
-   "expansion" so the case can be materialized without guessing:
-     - a routing rule: every answer code/label that triggers it and where each one lands;
-     - a stated input bound: "max_length";
-     - a selection rule: "min_selections" / "max_selections".
+   "expansion" with an object containing EXACTLY these five keys, always all present:
+     "kind" — one of: route, boundary, option-set, rendered-state, copy, configuration;
+     "route_answers" — an array of answer objects; use [] when the obligation has no routing;
+     "max_length" — a positive integer, or null when the document states no such bound;
+     "min_selections" — a positive integer, or null when not stated;
+     "max_selections" — a positive integer, or null when not stated.
+   No other keys. Never invent values: a field the document does not state stays null or [].
    Leave "expansion" null when the document enumerates nothing. NEVER invent codes.
 
 2. "block_dispositions" — EXACTLY ONE ENTRY FOR EVERY BLOCK ID IN YOUR CHUNK, including the
@@ -377,11 +380,11 @@ SCHEMA
       "browser_observable": "full|partial|none",
       "confidence": 0.0,
       "expansion": {
-        "kind": "route|boundary|option-set|rendered-state|copy|configuration",
+        "kind": "route",
         "route_answers": [{ "code": "3", "label": "Every day", "destination": "Q4" }],
-        "max_length": 250,
-        "min_selections": 1,
-        "max_selections": 3
+        "max_length": null,
+        "min_selections": null,
+        "max_selections": null
       }
     }
   ],

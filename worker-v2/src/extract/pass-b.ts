@@ -81,6 +81,7 @@ import {
   decodePassBOutput,
   PASS_B_DECODER_VERSION,
   PassBOutputInvalid,
+  salvagePassBOutput,
 } from "./pass-b-decode";
 import { k } from "../keys";
 import {
@@ -89,7 +90,7 @@ import {
   type DocumentReadingUnitStartObserver,
 } from "../observability/document-reading";
 
-export { decodePassBOutput, PASS_B_DECODER_VERSION, PassBOutputInvalid };
+export { decodePassBOutput, PASS_B_DECODER_VERSION, PassBOutputInvalid, salvagePassBOutput };
 
 export const PASS_B_VERSION = PROMPT_VERSION_B;
 
@@ -171,6 +172,14 @@ async function reportProgress(
   }
 }
 
+/** A per-obligation limitation from salvage: closed machine reason, never model text. */
+export interface PassBLimitation {
+  unit: string;
+  rowIndex: number;
+  rowKind: "obligation" | "ambiguity" | "unverifiable";
+  reason: "obligation-malformed" | "root-malformed";
+}
+
 export type PassBResult = PassResult & {
   /** Exact same-provider model plan that every persisted unit must match. */
   providerPlanIdentity: string;
@@ -184,7 +193,9 @@ export type PassBResult = PassResult & {
   issuedCalls: CallUsage[];
   /** All persisted receipts offered to the idempotent core settlement CAS. */
   accountingCalls: CallUsage[];
-  terminalReasonCode?: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+  /** Obligations/items dropped as named limitations during per-item salvage. */
+  limitations: PassBLimitation[];
+  terminalReasonCode?: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED | string;
   credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "deepseek" };
 };
 
@@ -501,7 +512,7 @@ export async function runPassB(
     for (const block of [...owned, ...contextBlocks]) byId.set(block.blockId, block);
     return [...byId.values()];
   };
-  const chunkRequestFor = (chunk: Chunk) => {
+  const chunkRequestFor = (chunk: Chunk, priorFailureDetail?: string) => {
     const blockIds = chunk.blocks.map((block) => block.blockId);
     const overlapsContext = blockIds.some((id) => contextIds.has(id));
     const includesContext = !overlapsContext && contextBlocks.length > 0;
@@ -528,15 +539,21 @@ export async function runPassB(
       };
     }
     const context = includesContext && boundedContextJsonl.ok ? boundedContextJsonl.text : null;
+    let userText = userMessageB(
+      documentName,
+      chunk.id,
+      ownedJsonl.text,
+      context,
+      blockIds,
+    );
+    // B2: echo the validator error on retry so the model can correct its output.
+    if (priorFailureDetail) {
+      const bounded = priorFailureDetail.slice(0, 400);
+      userText += `\n\nPREVIOUS ATTEMPT REJECTED\nYour previous answer for this chunk was rejected by the output validator with: ${bounded}\nEmit the corrected JSON object; change nothing that was not named.`;
+    }
     const optionsForCall = {
       system: SYSTEM_B,
-      user: userMessageB(
-        documentName,
-        chunk.id,
-        ownedJsonl.text,
-        context,
-        blockIds,
-      ),
+      user: userText,
       maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
       role: `extract-pass-b-${chunk.id}`,
       callId: `call_b_${chunk.n}`,
@@ -544,45 +561,18 @@ export async function runPassB(
     };
     return { ok: true as const, blockIds, evidenceBlocks, optionsForCall };
   };
-  // EXTRACTION_WIRE_PREFLIGHT_BEFORE_CHUNK_FANOUT: every canonical chunk body is measured
-  // before the concurrent queue exists. One later oversized/escaped row therefore prevents
-  // all new chunk purchases in this wave instead of being found after earlier workers spend.
-  const chunkWireChecks = new Map<number,
-    | { ok: true; requestHash: string }
-    | { ok: false; detail: string }
-  >();
-  for (const chunk of chunks) {
-    const request = chunkRequestFor(chunk);
-    if (!request.ok) {
-      chunkWireChecks.set(chunk.n, { ok: false, detail: request.detail });
-      continue;
-    }
-    const bodyText = chatRequestBodyText(deepseekPassBRequestShape(env), request.optionsForCall);
-    const check = preflightExtractionRequestBodies(env, [{
-      route: "deepseek-v4-pro",
-      bodyText,
-    }]);
-    chunkWireChecks.set(
-      chunk.n,
-      check.ok
-        ? { ok: true, requestHash: `sha256:${await sha256Hex(bodyText)}` }
-        : {
-            ok: false,
-            detail: extractionWireFailureDetail(chunk.id, request.blockIds.length, check),
-          },
-    );
-  }
-
   const requirements: RawRequirement[] = [];
   const ambiguities: PassResult["ambiguities"] = [];
   const unverifiable: PassResult["unverifiable"] = [];
   const dispositions: PassResult["dispositions"] = [];
   const constructs: PassResult["constructs"] = [];
   const failedUnits: PassResult["failedUnits"] = [];
+  const limitations: PassBLimitation[] = [];
   const calls: CallUsage[] = [];
   const issuedCalls: CallUsage[] = [];
   const accountingCalls: CallUsage[] = [];
-  let terminalReasonCode: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED | undefined;
+  let terminalSemanticFailures = 0;
+  let terminalReasonCode: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED | string | undefined;
   let credentialRefusal: PassBResult["credentialRefusal"];
   let deepseekPurchaseEnv: Env | null = null;
   const resolveDeepseekPurchaseEnv = async (): Promise<Env> => {
@@ -632,6 +622,57 @@ export async function runPassB(
     }
   };
 
+  // B2: PRE-SCAN for prior semantic failures so the preflight includes the echo.
+  // This is a lightweight R2 read pass that gathers only the failure details needed to
+  // build the retry request bodies with the echoed validator error.
+  const maxIssuesForPrescan = Math.max(1, num(env.EXTRACT_CHUNK_MAX_ISSUES, 2));
+  const priorFailureDetailByChunk = new Map<number, string>();
+  for (const chunk of chunks) {
+    const includesContext = !chunk.blocks.some((b) => contextIds.has(b.blockId)) && contextBlocks.length > 0;
+    const read = await readChunkWithAuthority(
+      env, runId, chunk.n, chunk.blocks, evidenceBlocksFor(chunk.blocks, includesContext), parserVersion,
+    );
+    if (
+      read.artifact?.kind === "failed" &&
+      !read.artifact.terminal &&
+      read.artifact.attempts < maxIssuesForPrescan &&
+      read.artifact.detail
+    ) {
+      priorFailureDetailByChunk.set(chunk.n, read.artifact.detail);
+    }
+  }
+
+  // EXTRACTION_WIRE_PREFLIGHT_BEFORE_CHUNK_FANOUT: every canonical chunk body is measured
+  // before the concurrent queue exists. One later oversized/escaped row therefore prevents
+  // all new chunk purchases in this wave instead of being found after earlier workers spend.
+  // The pre-scan above populated priorFailureDetailByChunk so retried chunks include
+  // the echoed validator error in their preflighted bytes — the same bytes the hash pins.
+  const chunkWireChecks = new Map<number,
+    | { ok: true; requestHash: string }
+    | { ok: false; detail: string }
+  >();
+  for (const chunk of chunks) {
+    const request = chunkRequestFor(chunk, priorFailureDetailByChunk.get(chunk.n));
+    if (!request.ok) {
+      chunkWireChecks.set(chunk.n, { ok: false, detail: request.detail });
+      continue;
+    }
+    const bodyText = chatRequestBodyText(deepseekPassBRequestShape(env), request.optionsForCall);
+    const check = preflightExtractionRequestBodies(env, [{
+      route: "deepseek-v4-pro",
+      bodyText,
+    }]);
+    chunkWireChecks.set(
+      chunk.n,
+      check.ok
+        ? { ok: true, requestHash: `sha256:${await sha256Hex(bodyText)}` }
+        : {
+            ok: false,
+            detail: extractionWireFailureDetail(chunk.id, request.blockIds.length, check),
+          },
+    );
+  }
+
   // THE DEADLINE, AND THE ONE EXCEPTION TO IT. `issued === 0` keeps the first call of every
   // slice unconditional: a slice that issues nothing makes no progress, and a wave loop over
   // slices that make no progress runs its whole budget of steps without moving. Guaranteed
@@ -643,8 +684,22 @@ export async function runPassB(
   let issued = 0;
   let deadlineHit = false;
   let terminalFailure = false;
+  let failureRateExceeded = false;
+  /** Paid targets preserved only as conflict evidence receive no landed/coverage credit. */
+  let persistenceConflictFailures = 0;
   const mayIssue = (): boolean => {
-    if (terminalFailure) return false;
+    // Infrastructure failures (persistence conflict, wire ceiling) stop immediately.
+    if (persistenceConflictFailures > 0) return false;
+    if (failureRateExceeded) return false;
+    // Semantic/provider terminal failures use the 20% guardrail: stop only when terminal
+    // failures exceed 20% of the total chunk count. Below that, continue — each purchase
+    // is persisted and reusable on resume, and the existing ledger sweep may claim the
+    // dead chunks' blocks. // mutation-anchor: failure-rate-guardrail
+    if (terminalSemanticFailures > Math.ceil(chunks.length * 0.2)) {
+      failureRateExceeded = true;
+      terminalReasonCode = "PASS_B_FAILURE_RATE_EXCEEDED";
+      return false;
+    }
     if (issued === 0) return true;
     if (now() < deadlineAt) return true;
     deadlineHit = true;
@@ -814,8 +869,11 @@ export async function runPassB(
     }
   }
   const concurrency = Math.max(1, num(env.EXTRACT_CHUNK_CONCURRENCY, 3));
-  const queue = pendingChunkWireFailure === null && !terminalFailure && credentialRefusal === undefined ? [...todo] : [];
-  const deferred: Chunk[] = pendingChunkWireFailure === null && !terminalFailure && credentialRefusal === undefined
+  // Infrastructure failures (wire ceiling, persistence conflict, credential) block issuing;
+  // semantic terminal failures are handled by mayIssue's 20% guardrail at dequeue time.
+  const infrastructureBlock = pendingChunkWireFailure !== null || persistenceConflictFailures > 0 || credentialRefusal !== undefined;
+  const queue = !infrastructureBlock ? [...todo] : [];
+  const deferred: Chunk[] = !infrastructureBlock
     ? []
     : pendingChunkWireFailure === null
       ? [...todo]
@@ -827,14 +885,12 @@ export async function runPassB(
    * can never become a loop.
    */
   let retriableFailures = 0;
-  /** Paid targets preserved only as conflict evidence receive no landed/coverage credit. */
-  let persistenceConflictFailures = 0;
   // Per invocation/wave only. `finally` empties the set after every unit, so a failed
   // callback or provider call cannot leak concurrency into a later or resumed wave.
   const activeChunkReads = new Set<number>();
 
   const runChunk = async (chunk: Chunk): Promise<void> => {
-    const request = chunkRequestFor(chunk);
+    const request = chunkRequestFor(chunk, priorFailureDetailByChunk.get(chunk.n));
     if (!request.ok) {
       throw new Error(`PASS_B_WIRE_PREFLIGHT_DRIFT: ${chunk.id} became oversized after all-chunk preflight`);
     }
@@ -933,7 +989,7 @@ export async function runPassB(
         unresolvedFor(blockIds, persistence.detail);
         await reportProgress(
           onProgress,
-          `pass B ${chunk.id}: FAILED â€” paid artifact retained without canonical or coverage authority`,
+          `pass B ${chunk.id}: FAILED â€" paid artifact retained without canonical or coverage authority`,
         );
         return;
       }
@@ -970,57 +1026,138 @@ export async function runPassB(
       issuedCalls.push(...failureUsages);
       accountingCalls.push(...failureUsages);
       const attempts = priorAttempts + 1;
-      const terminal = semanticFailure || attempts >= maxIssues;
-      if (terminal) terminalFailure = true;
-      const failureBody = JSON.stringify(
-        {
-          chunkId: chunk.id,
-          blockIds,
-          evidenceBlockIds: evidenceBlocks.map((block) => block.blockId),
-          parserVersion,
-          promptVersion: PROMPT_VERSION_B,
-          providerPlanIdentity,
-          decoderIdentity: PASS_B_DECODER_VERSION,
-          status: "failed",
-          attempts,
-          usages: [...priorUsages, ...failureUsages],
-          failureStage: semanticFailure ? "semantic-output" : "provider",
-          terminal,
-          modelOutput: semanticFailure ? rawModelOutput : null,
-          detail,
-        },
-        null,
-        2,
-      );
-      const persistence = await persistPassBPaidUnitArtifact(
-        env,
-        chunk.id,
-        {
-          canonicalKey: chunkKey(runId, chunk.n),
-          historyKey: (digest) => chunkHistoryKey(runId, chunk.n, digest),
-          conflictKey: (digest) => chunkCasConflictKey(runId, chunk.n, digest),
-        },
-        predecessor,
-        failureBody,
-      );
-      if (!persistence.ok) {
+      const terminal = attempts >= maxIssues; // mutation-anchor: semantic-failure-not-instantly-terminal
+      if (terminal) {
+        terminalSemanticFailures += semanticFailure ? 1 : 0;
         terminalFailure = true;
-        persistenceConflictFailures += 1;
-        failedUnits.push({ unit: chunk.id, blockIds, detail: persistence.detail });
-        unresolvedFor(blockIds, persistence.detail);
+      }
+      // B3: per-obligation salvage at retry exhaustion for semantic failures.
+      let salvaged = false;
+      if (terminal && semanticFailure && rawModelOutput !== null) {
+        try {
+          const salvageResult = salvagePassBOutput(
+            rawModelOutput, chunk.id, chunk.blocks, evidenceBlocks,
+          );
+          if (salvageResult !== null) {
+            // Salvage succeeded: persist a degraded success artifact.
+            const degradedUsages = failureUsages.map((usage) => ({
+              ...usage,
+              status: "ok" as const,
+              detail: `degraded: ${salvageResult.limitations.length} obligation(s) dropped`,
+            }));
+            calls.push(...degradedUsages);
+            issuedCalls.push(...degradedUsages);
+            accountingCalls.push(...degradedUsages);
+            const degradedBody = JSON.stringify(
+              {
+                chunkId: chunk.id,
+                blockIds,
+                evidenceBlockIds: evidenceBlocks.map((block) => block.blockId),
+                parserVersion,
+                promptVersion: PROMPT_VERSION_B,
+                providerPlanIdentity,
+                decoderIdentity: PASS_B_DECODER_VERSION,
+                status: "ok",
+                attempts,
+                usages: [...priorUsages, ...degradedUsages],
+                modelOutput: salvageResult.modelOutput,
+                rawModelOutputPreDegradation: rawModelOutput,
+                obligations: salvageResult.decoded.obligations,
+                dispositions: salvageResult.decoded.dispositions,
+                constructs: salvageResult.decoded.constructs,
+                ambiguities: salvageResult.decoded.ambiguities,
+                unverifiable: salvageResult.decoded.unverifiable,
+                limitations: salvageResult.limitations,
+              },
+              null,
+              2,
+            );
+            const persistence = await persistPassBPaidUnitArtifact(
+              env,
+              chunk.id,
+              {
+                canonicalKey: chunkKey(runId, chunk.n),
+                historyKey: (digest) => chunkHistoryKey(runId, chunk.n, digest),
+                conflictKey: (digest) => chunkCasConflictKey(runId, chunk.n, digest),
+              },
+              predecessor,
+              degradedBody,
+            );
+            if (persistence.ok) {
+              salvaged = true;
+              requirements.push(...salvageResult.decoded.obligations);
+              dispositions.push(...salvageResult.decoded.dispositions);
+              constructs.push(...salvageResult.decoded.constructs);
+              ambiguities.push(...salvageResult.decoded.ambiguities);
+              unverifiable.push(...salvageResult.decoded.unverifiable);
+              limitations.push(...salvageResult.limitations);
+              // Remove from failed units tracking since salvage landed.
+              terminalSemanticFailures -= 1;
+              terminalFailure = terminalSemanticFailures > 0 || persistenceConflictFailures > 0;
+              await reportProgress(onProgress,
+                `pass B ${chunk.id}: SALVAGED ${salvageResult.decoded.obligations.length} obligations, ` +
+                  `${salvageResult.limitations.length} limitation(s) — ${publicFailureDetail}`,
+              );
+            }
+          }
+        } catch {
+          // Salvage errors fall through to the normal terminal path.
+        }
+      }
+      if (!salvaged) {
+        const failureBody = JSON.stringify(
+          {
+            chunkId: chunk.id,
+            blockIds,
+            evidenceBlockIds: evidenceBlocks.map((block) => block.blockId),
+            parserVersion,
+            promptVersion: PROMPT_VERSION_B,
+            providerPlanIdentity,
+            decoderIdentity: PASS_B_DECODER_VERSION,
+            status: "failed",
+            attempts,
+            usages: [...priorUsages, ...failureUsages],
+            failureStage: semanticFailure ? "semantic-output" : "provider",
+            terminal,
+            modelOutput: semanticFailure ? rawModelOutput : null,
+            detail,
+          },
+          null,
+          2,
+        );
+        const persistence = await persistPassBPaidUnitArtifact(
+          env,
+          chunk.id,
+          {
+            canonicalKey: chunkKey(runId, chunk.n),
+            historyKey: (digest) => chunkHistoryKey(runId, chunk.n, digest),
+            conflictKey: (digest) => chunkCasConflictKey(runId, chunk.n, digest),
+          },
+          predecessor,
+          failureBody,
+        );
+        if (!persistence.ok) {
+          terminalFailure = true;
+          persistenceConflictFailures += 1;
+          failedUnits.push({ unit: chunk.id, blockIds, detail: persistence.detail });
+          unresolvedFor(blockIds, persistence.detail);
+          await reportProgress(
+            onProgress,
+            `pass B ${chunk.id}: FAILED — paid artifact retained without canonical or coverage authority`,
+          );
+          return;
+        }
+        failedUnits.push({ unit: chunk.id, blockIds, detail });
+        unresolvedFor(blockIds, `chunk ${chunk.id} failed: ${detail}`);
+        if (!terminal) retriableFailures += 1;
+        const willRetry = !terminal;
         await reportProgress(
           onProgress,
-          `pass B ${chunk.id}: FAILED â€” paid artifact retained without canonical or coverage authority`,
+          willRetry
+            ? `pass B ${chunk.id}: FAILED (attempt ${attempts} of ${maxIssues}) — will retry — ${publicFailureDetail}`
+            : `pass B ${chunk.id}: FAILED (attempt ${attempts} of ${maxIssues}) — TERMINAL — ${publicFailureDetail}`,
         );
-        return;
       }
-      failedUnits.push({ unit: chunk.id, blockIds, detail });
-      unresolvedFor(blockIds, `chunk ${chunk.id} failed: ${detail}`);
-      if (!terminal) retriableFailures += 1;
-      await reportProgress(
-        onProgress,
-        `pass B ${chunk.id}: FAILED (attempt ${attempts} of ${maxIssues}) — ${publicFailureDetail}`,
-      );
     }
     } finally {
       activeChunkReads.delete(chunk.n);
@@ -1067,7 +1204,10 @@ export async function runPassB(
   let sweepCallsIssued = 0;
   let sweepRemaining = 0;
 
-  if (chunksRemaining === 0 && !terminalFailure && failedUnits.length === 0) {
+  // Run the sweep when all chunks are accounted for (ok, degraded, or terminal), even
+  // with terminal failed units. The dead chunks' blocks are unaccounted and the sweep is
+  // their built-in second read. Only infrastructure failures block the sweep.
+  if (chunksRemaining === 0 && persistenceConflictFailures === 0 && !failureRateExceeded) {
     const unaccounted = unaccountedBlocks(doc.blocks, requirements, dispositions);
     const sweepCount = Math.min(
       Math.max(0, Math.floor(sweepMax)),
@@ -1396,7 +1536,7 @@ export async function runPassB(
           sweepRemaining += Math.max(0, sweepPlans.length - i);
           await reportProgress(
             onProgress,
-            `pass B ${sweepId}: FAILED â€” paid artifact retained without canonical or coverage authority`,
+            `pass B ${sweepId}: FAILED â€" paid artifact retained without canonical or coverage authority`,
           );
           break;
         }
@@ -1424,7 +1564,7 @@ export async function runPassB(
         issuedCalls.push(...failureUsages);
         accountingCalls.push(...failureUsages);
         const attempts = priorAttempts + 1;
-        const terminal = semanticFailure || attempts >= maxIssues;
+        const terminal = attempts >= maxIssues; // sweep mirrors chunk: semantic failure is not instantly terminal
         if (terminal) terminalFailure = true;
         // A failed sweep call is an artifact too, so its retries are bounded the same way a
         // chunk's are rather than being re-bought once per wave.
@@ -1466,15 +1606,18 @@ export async function runPassB(
           sweepRemaining += Math.max(0, sweepPlans.length - i);
           await reportProgress(
             onProgress,
-            `pass B ${sweepId}: FAILED â€” paid artifact retained without canonical or coverage authority`,
+            `pass B ${sweepId}: FAILED â€" paid artifact retained without canonical or coverage authority`,
           );
           break;
         }
         failedUnits.push({ unit: sweepId, blockIds: [...allowed], detail });
         if (!terminal) sweepRemaining += 1;
+        const sweepWillRetry = !terminal;
         await reportProgress(
           onProgress,
-          `pass B ${sweepId}: FAILED (attempt ${attempts} of ${maxIssues}) — ${publicFailureDetail}`,
+          sweepWillRetry
+            ? `pass B ${sweepId}: FAILED (attempt ${attempts} of ${maxIssues}) — will retry — ${publicFailureDetail}`
+            : `pass B ${sweepId}: FAILED (attempt ${attempts} of ${maxIssues}) — TERMINAL — ${publicFailureDetail}`,
         );
         if (terminal) break;
       }
@@ -1490,7 +1633,7 @@ export async function runPassB(
   calls.sort((a, b) => a.callId.localeCompare(b.callId));
 
   const slice: PassBSlice = {
-    done: chunksRemaining === 0 && sweepRemaining === 0 && !terminalFailure && failedUnits.length === 0,
+    done: chunksRemaining === 0 && sweepRemaining === 0 && persistenceConflictFailures === 0 && !failureRateExceeded, // mutation-anchor: done-does-not-require-zero-failed-units
     chunksTotal: chunks.length,
     chunksLanded: landed,
     chunksIssued: issued - sweepCallsIssued,
@@ -1512,6 +1655,7 @@ export async function runPassB(
     dispositions,
     constructs,
     failedUnits,
+    limitations,
     calls,
     slice,
     issuedCalls,
@@ -1557,6 +1701,7 @@ export async function reconstructPassBCompletedAuthority(
   const ambiguities: PassResult["ambiguities"] = [];
   const unverifiable: PassResult["unverifiable"] = [];
   const accountingCalls: CallUsage[] = [];
+  const reconstructionFailedUnits: PassResult["failedUnits"] = [];
   let chunksLanded = 0;
   let expectedSweepCalls = 0;
   let sweepsLanded = 0;
@@ -1595,10 +1740,15 @@ export async function reconstructPassBCompletedAuthority(
     accountingCalls.push(...unit.usages);
     chunksLanded += 1;
     if (unit.kind === "failed") {
-      return invalid(
-        `${chunk.id} retains failed authority: ${unit.detail}`,
-        { unit: chunk.id, blockIds: chunk.blocks.map((block) => block.blockId), detail: unit.detail },
-      );
+      // Terminal-failed chunks are accepted as part of a completed pass. Their blocks are
+      // left unaccounted and will be picked up by the sweep or the final residual check.
+      const blockIds = chunk.blocks.map((block) => block.blockId);
+      reconstructionFailedUnits.push({ unit: chunk.id, blockIds, detail: unit.detail });
+      // Mark blocks as unresolved so they appear in the unaccounted set for the sweep.
+      for (const id of blockIds) {
+        dispositions.push({ blockId: id, disposition: "unresolved", reason: `chunk ${chunk.id} failed: ${unit.detail}` });
+      }
+      continue;
     }
     requirements.push(...unit.obligations);
     dispositions.push(...unit.dispositions);
@@ -1681,7 +1831,7 @@ export async function reconstructPassBCompletedAuthority(
     chunksRemaining: 0,
     sweepCallsIssued: 0,
     sweepRemaining: 0,
-    terminalFailure: false,
+    terminalFailure: reconstructionFailedUnits.length > 0,
     deadlineHit: false,
   };
   const value: PassBCompletedAuthority = {
@@ -1694,7 +1844,8 @@ export async function reconstructPassBCompletedAuthority(
     unverifiable,
     dispositions,
     constructs,
-    failedUnits: [],
+    failedUnits: reconstructionFailedUnits,
+    limitations: [],
     calls: accountingCalls,
     slice,
     issuedCalls: [],
@@ -2014,17 +2165,19 @@ async function readUnit(
         return invalid("failed artifact retains a successful provider receipt");
       }
       if (parsed["failureStage"] === "semantic-output") {
-        if (parsed["terminal"] !== true ||
-            typeof parsed["modelOutput"] !== "object" || parsed["modelOutput"] === null ||
+        if (typeof parsed["modelOutput"] !== "object" || parsed["modelOutput"] === null ||
             Array.isArray(parsed["modelOutput"]) ||
             !(usages as CallUsage[]).some((usage) => usage.status === "parse-failed")) {
-          return invalid("semantic failure lacks terminal raw-output/parse-failed authority");
+          return invalid("semantic failure lacks raw-output/parse-failed authority");
         }
-        try {
-          decodePassBOutput(parsed["modelOutput"], unitId, sourceBlocks, evidenceSourceBlocks);
-          return invalid("semantic-failure raw output now decodes successfully");
-        } catch (error) {
-          if (!(error instanceof PassBOutputInvalid)) throw error;
+        // A non-terminal semantic failure is retryable; only terminal ones must still fail decode.
+        if (parsed["terminal"] === true) {
+          try {
+            decodePassBOutput(parsed["modelOutput"], unitId, sourceBlocks, evidenceSourceBlocks);
+            return invalid("semantic-failure raw output now decodes successfully");
+          } catch (error) {
+            if (!(error instanceof PassBOutputInvalid)) throw error;
+          }
         }
       } else if (!wireCeiling && parsed["modelOutput"] !== null) {
         return invalid("provider failure must not claim a decoded model output");
