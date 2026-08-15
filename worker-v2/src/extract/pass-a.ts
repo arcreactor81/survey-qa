@@ -3947,9 +3947,10 @@ interface PassASynthesisContext {
   inputHash: string;
   /** Candidate catalogue alone, useful for diagnostics but never the purchase ceiling. */
   catalogueBytes: number;
-  /** Larger of the exact Grok and Flash serialized request bodies. */
+  /** Largest of the exact Grok, Gemini, and Flash serialized request bodies. */
   wireBytes: number;
   grokWireBytes: number;
+  geminiWireBytes: number;
   flashWireBytes: number;
   /** Closed refusal detail, null only when both exact provider bodies fit. */
   wireFailureDetail: string | null;
@@ -4798,18 +4799,27 @@ export async function runPassASynthesis(
   let fallbackTrigger = existing?.kind === "failed" ? existing.fallbackTrigger : null;
   const purchasedUsages: CallUsage[] = [];
   const calls = reusedCalls(priorUsages, "reused: prior cross-window synthesis purchase");
+  const passAPrimary = validatePassAPrimaryMode(env);
   let purchaseEnv: Env;
   try {
-    const grokKey = fallbackTrigger === null ? await keyFor(env, "grok") : null;
+    // BUDGET MODE ("gemini"): Grok is never called at synthesis; Gemini key is resolved
+    // eagerly. DeepSeek Flash remains the fallback for typed Gemini failures.
+    // GROK MODE: Grok key is resolved when no fallback trigger exists (fresh primary).
+    const grokKey = fallbackTrigger === null && passAPrimary !== "gemini"
+      ? await keyFor(env, "grok") : null;
+    const geminiKey = passAPrimary === "gemini" || fallbackTrigger !== null
+      ? await keyForGemini(env) : null;
     const deepseekKey = await keyFor(env, "deepseek");
     purchaseEnv = {
       ...env,
       ...(grokKey !== null ? { XAI_API_KEY: grokKey } : {}),
+      ...(geminiKey !== null ? { GEMINI_API_KEY: geminiKey } : {}),
       DEEPSEEK_API_KEY: deepseekKey,
     };
   } catch (error) {
     if (!(error instanceof MissingCredential)) throw error;
-    const provider = error.binding === "XAI_API_KEY" ? "grok" : "deepseek";
+    const provider = error.binding === "XAI_API_KEY" ? "grok"
+      : error.binding === "GEMINI_API_KEY" ? "gemini" : "deepseek";
     const detail = `${error.binding} is unavailable after exact synthesis request preflight; ` +
       `no new provider request was issued for A-synthesis.`;
     return synthesisOutcome("failed", {
@@ -4872,7 +4882,70 @@ async function purchasePassASynthesis(
   try {
     let value: Record<string, unknown> | null = null;
     let routeReceipt: PassARouteReceipt | null = null;
-    if (fallbackTrigger === null) {
+    const passAPrimary = validatePassAPrimaryMode(env);
+    if (fallbackTrigger === null && passAPrimary === "gemini") {
+      // BUDGET MODE: Gemini is the primary provider at synthesis. Grok is NEVER called.
+      // Enforce cumulative Gemini cap before every purchase (mirrors the window path).
+      try {
+        const geminiShape = geminiGrokSubstituteRequestShape(env);
+        const geminiBodyBytes = new TextEncoder().encode(
+          chatRequestBodyText(geminiShape, optionsForCall),
+        ).byteLength;
+        const geminiRates = GEMINI_OFFICIAL_RATES[DEFAULT_GEMINI_MODEL];
+        const geminiReservation = conservativeGeminiReservation(
+          geminiBodyBytes,
+          Math.max(0, Math.ceil(optionsForCall.maxTokens)),
+          geminiRates.inputUsdPerMTok,
+          geminiRates.outputUsdPerMTok,
+        );
+        await enforceGeminiCap(env.EVIDENCE, geminiMaxTotalUsd(env), geminiReservation);
+        const outcome = await geminiGrokSubstituteJson(env, {
+          ...optionsForCall,
+          callId: `${optionsForCall.callId}:gemini-primary`,
+        });
+        const usage = settlementUsage(runId, "A-synthesis", issue, 1, outcome.usage);
+        purchasedUsages.push(usage);
+        calls.push(usage);
+        value = outcome.value;
+        rawModelOutput = outcome.value;
+        routeReceipt = { selected: "gemini-2.5-flash", trigger: null };
+      } catch (geminiPrimaryErr) {
+        // Gemini primary failure: typed Gemini failure falls to DeepSeek Flash
+        if (geminiPrimaryErr instanceof ModelCallError) {
+          const usage = settlementUsage(runId, "A-synthesis", issue, 1, geminiPrimaryErr.usage);
+          purchasedUsages.push(usage);
+          calls.push(usage);
+        }
+        // Create a synthetic fallback trigger for the Flash path
+        if (
+          geminiPrimaryErr instanceof ModelCallError ||
+          geminiPrimaryErr instanceof ProviderCapExceededRefusal ||
+          geminiPrimaryErr instanceof ProviderLedgerCorrupt ||
+          geminiPrimaryErr instanceof MissingCredential
+        ) {
+          const triggerUsage = purchasedUsages.length > 0
+            ? purchasedUsages[purchasedUsages.length - 1]!
+            : null;
+          fallbackTrigger = {
+            kind: GROK_FALLBACK_TRIGGER_VERSION,
+            failureKind: geminiPrimaryErr instanceof ModelCallError
+              ? geminiPrimaryErr.failureKind
+              : "provider-unavailable" as ModelFailureKind,
+            httpStatus: geminiPrimaryErr instanceof ModelCallError
+              ? geminiPrimaryErr.httpStatus
+              : null,
+            grokModel: DEFAULT_GROK_MODEL,
+            grokUsageEventId: triggerUsage?.eventId ?? `synthetic-gemini-primary-refusal/${runId}/A-synthesis`,
+            detail: (geminiPrimaryErr instanceof Error
+              ? geminiPrimaryErr.message : String(geminiPrimaryErr)).slice(0, 400),
+          };
+          // Fall through: value remains null, DeepSeek Flash path below will handle it
+        } else {
+          throw geminiPrimaryErr;
+        }
+      }
+    } else if (fallbackTrigger === null) {
+      // GROK MODE: Grok is the primary provider at synthesis.
       try {
         const outcome = await grokJson(env, optionsForCall);
         const usage = settlementUsage(runId, "A-synthesis", issue, 1, outcome.usage);
@@ -5057,7 +5130,7 @@ async function purchasePassASynthesis(
       },
     );
   } catch (error) {
-    // The exact Grok + Flash bodies were preflighted before purchase. A missing secret is a
+    // The exact Grok/Gemini + Flash bodies were preflighted before purchase. A missing secret is a
     // stage configuration refusal, not a paid/semantic synthesis attempt.
     if (error instanceof MissingCredential && purchasedUsages.length === 0) throw error;
     if (error instanceof PassASynthesisPersistenceError) {
@@ -5371,6 +5444,7 @@ async function buildPassASynthesisContext(
     maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
   };
   let grokWireBytes = 0;
+  let geminiWireBytes = 0;
   let flashWireBytes = 0;
   let wireBytes = 0;
   let wireFailureDetail: string | null;
@@ -5385,14 +5459,17 @@ async function buildPassASynthesisContext(
     requestHash = `sha256:${await sha256Hex(JSON.stringify({ inputHash, wireFailureDetail }))}`;
   } else {
     const grokBody = chatRequestBodyText(grokRequestShape(env), optionsForCall);
+    const geminiBody = chatRequestBodyText(geminiGrokSubstituteRequestShape(env), optionsForCall);
     const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall);
     grokWireBytes = utf8ByteLength(grokBody);
+    geminiWireBytes = utf8ByteLength(geminiBody);
     flashWireBytes = utf8ByteLength(flashBody);
-    wireBytes = Math.max(grokWireBytes, flashWireBytes);
+    wireBytes = Math.max(grokWireBytes, geminiWireBytes, flashWireBytes);
     const wirePreflight = preflightExtractionRequestBodies(
       env,
       [
         { route: "grok-4.6", bodyText: grokBody },
+        { route: "gemini-2.5-flash", bodyText: geminiBody },
         { route: "deepseek-v4-flash", bodyText: flashBody },
       ],
       { name: "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES", maxBytes },
@@ -5400,7 +5477,7 @@ async function buildPassASynthesisContext(
     wireFailureDetail = wirePreflight.ok
       ? null
       : extractionWireFailureDetail("A-synthesis", sourceBlockIds.length, wirePreflight);
-    requestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
+    requestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, geminiBody, flashBody }))}`;
   }
   const policyIdentity = [
     PASS_A_SYNTHESIS_VERSION,
@@ -5408,7 +5485,7 @@ async function buildPassASynthesisContext(
     `max-issues:${maxIssues}`,
   ].join("|");
   return {
-    parserVersion, inputJson, inputHash, catalogueBytes, wireBytes, grokWireBytes, flashWireBytes,
+    parserVersion, inputJson, inputHash, catalogueBytes, wireBytes, grokWireBytes, geminiWireBytes, flashWireBytes,
     wireFailureDetail, sourceBlockIds,
     requestHash, policyIdentity, maxBytes, maxIssues, optionsForCall,
     coverage, blocks, windowByBlock, evidenceBlockIds, evidenceSpanKeys, primaryCrossRefs,

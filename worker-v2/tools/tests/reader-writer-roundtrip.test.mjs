@@ -447,6 +447,109 @@ test("corrupted blockIds artifact is rejected as invalid", async () => {
 });
 
 // ===========================================================================
+suite("Reader-writer round-trip — gemini-primary SYNTHESIS artifact", () => {
+
+test("gemini-primary synthesis artifact round-trips through the reconstruction reader", async () => {
+  const m = await mod();
+  const env = geminiEnv({
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1",
+    EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "45000",
+    EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES: "2",
+    EXTRACT_MAX_OUTPUT_TOKENS: "32000",
+    GEMINI_EXTRACTION_MODEL: "gemini-2.5-flash",
+    GEMINI_INPUT_USD_PER_MTOK: "0.15",
+    GEMINI_OUTPUT_USD_PER_MTOK: "3.5",
+    GEMINI_REASONING_EFFORT: "medium",
+  });
+  const TEXT_B1 = "Apply the rule named Omega for respondents in the premium group.";
+  const TEXT_B2 = "Omega means Continue stays disabled until an answer is selected.";
+  const blocks = [
+    { blockId: "b0001", kind: "paragraph", text: TEXT_B1,
+      origin: "body", section: "Rules", coords: null, tableId: null },
+    { blockId: "b0002", kind: "paragraph", text: TEXT_B2,
+      origin: "body", section: "Rules", coords: null, tableId: null },
+  ];
+  const doc = docFor(blocks, m.docxBlocks.DOCX_BLOCKS_VERSION);
+  const runId = "run_synth_roundtrip_gemini";
+
+  const emptyPrimary = {
+    global_rules: [], cross_references: [], ambiguities: [], unverifiable_from_browser: [],
+  };
+  const xref = {
+    id: "XREF-01", from_block: "b0001", target: "Omega",
+    resolved_to_block: null, target_doc_quote: null,
+    statement: "The text refers to Omega.", doc_quote: TEXT_B1,
+  };
+  const emptySynthesis = {
+    global_rules: [], cross_reference_resolutions: [], ambiguities: [], unverifiable_from_browser: [],
+  };
+
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    const metadata = JSON.parse(String(init.headers?.["cf-aig-metadata"] ?? "{}"));
+    const role = String(metadata.role ?? "");
+    const user = String(body.messages[1].content);
+    const wMatch = user.match(/window (\d+) of (\d+)/);
+    const unit = role === "extract-pass-a-synthesis" ? "A-synthesis"
+      : wMatch ? `A-w${wMatch[1]}` : "A";
+    calls.push({ unit, model: body.model });
+    const value = unit === "A-w1"
+      ? { ...emptyPrimary, cross_references: [xref] }
+      : unit === "A-synthesis"
+        ? emptySynthesis
+        : emptyPrimary;
+    return new Response(JSON.stringify({
+      model: body.model,
+      usage: { prompt_tokens: 1000, completion_tokens: 500 },
+      choices: [{ message: { content: JSON.stringify(value) }, finish_reason: "stop" }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  try {
+    // Land primary windows
+    const first = await m.passA.runPassA(
+      env, runId, doc, "neutral.docx", async () => {}, { budgetMs: 600_000 },
+    );
+    assertEq(first.slice.windowsRemaining, 0, "all windows landed");
+    assertEq(first.slice.synthesisState, "pending", "synthesis pending");
+
+    // Run synthesis
+    const done = await m.passA.runPassA(
+      env, runId, doc, "neutral.docx", async () => {}, { budgetMs: 600_000 },
+    );
+    assertEq(done.slice.done, true, "run completed");
+    assertEq(done.slice.synthesisState, "ok", "synthesis ok");
+
+    // Verify Gemini was used (not Grok)
+    const synthCalls = calls.filter((c) => c.unit === "A-synthesis");
+    assertEq(synthCalls.length, 1, "one synthesis call");
+    assertEq(synthCalls[0].model, "gemini-2.5-flash", "synthesis used Gemini");
+
+    // Reclaim: the stored artifact must round-trip through the reader
+    calls.length = 0;
+    const reclaimed = await m.passA.runPassA(env, runId, doc, "neutral.docx");
+    assertEq(calls.length, 0, "reclaim issues zero provider requests");
+    assertEq(reclaimed.slice.done, true, "reclaim succeeds");
+    assertEq(reclaimed.slice.synthesisState, "ok", "synthesis still ok on reclaim");
+
+    // Full reconstruction also accepts the artifact
+    const authority = await m.passA.reconstructPassACompletedAuthority(env, runId, doc, "neutral.docx");
+    assertEq(authority.kind, "ok",
+      `reconstruction must accept gemini-primary synthesis. Got: ${authority.kind}: ${authority.detail ?? ""}`);
+    assert(
+      !authority.detail?.includes("PASS_A_WINDOW_ARTIFACT_INVALID"),
+      `no corruption detected. Got: ${authority.detail ?? "(none)"}`,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+});
+
+// ===========================================================================
 suite("Reader-writer round-trip — parseFallbackTrigger Gemini-primary", () => {
 
 test("fallback trigger from Gemini-primary failure is accepted", async () => {
