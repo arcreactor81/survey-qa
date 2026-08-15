@@ -2366,7 +2366,7 @@ test("corrupt or incoherent retained synthesis authority terminalizes with zero 
     },
     {
       name: "wrong synthesis model",
-      mutate: (row) => { row.usages[0].model = "grok-4.5"; },
+      mutate: (row) => { row.usages[0].model = "grok-4.6"; },
       expected: "receipt role/call/provider is inconsistent",
     },
     {
