@@ -39,6 +39,8 @@ function completionPayload(mod, env, extra = {}) {
     slice: completedSlice,
     issuedCalls: [],
     accountingCalls: [],
+    splitEvents: [],
+    splitExhaustionRefusals: [],
     ...extra,
   };
 }
