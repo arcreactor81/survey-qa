@@ -370,7 +370,7 @@
     // One durable Grok reconciliation reads ALL primary candidate rows plus only their exact
     // nominated quote spans. This is explicitly candidate-dependent, not whole-source
     // discovery. It never truncates a candidate/span; oversize wire input is a named failure.
-    "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES": "45000",
+    "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES": "120000",
     // The synthesis artifact carries this whole-run purchase count across waves/recovery.
     "EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES": "2",
 

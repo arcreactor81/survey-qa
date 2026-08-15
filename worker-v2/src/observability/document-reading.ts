@@ -1,4 +1,7 @@
-import { EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED } from "../llm/extraction-wire";
+import {
+  EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+  EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED,
+} from "../llm/extraction-wire";
 
 /**
  * Privacy-safe, durable progress for reading the submitted questionnaire.
@@ -191,7 +194,8 @@ export function selectExtractionFailureReason(...values: unknown[]): string | nu
 export function publicExtractionFailureDetail(value: unknown): string {
   const reasonCode = safeReasonCode(value);
   const reason = reasonCode.toLowerCase();
-  if (reason === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) {
+  if (reason === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED ||
+      reason === EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED) {
     return "A document-reading unit exceeded the configured safe input limit; this refusal issued no new credential lookup or provider request.";
   }
   if (reason.includes("ungrounded") || reason.includes("grounding")) {
@@ -557,9 +561,10 @@ function wireCeilingLimitations(
   reasonCode: string | null | undefined,
   sourceContext: DocumentReadingSourceContext | null | undefined,
 ): DocumentReadingLimitation[] {
-  if (reasonCode !== EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) return [];
+  if (reasonCode !== EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED &&
+      reasonCode !== EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED) return [];
   return [{
-    code: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+    code: reasonCode,
     count: sourceContext?.blockCount ?? 0,
     detail:
       "Every source block owned by the refused unit remains counted. No input was truncated, " +

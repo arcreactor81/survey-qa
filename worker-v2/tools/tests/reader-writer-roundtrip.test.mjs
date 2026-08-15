@@ -453,7 +453,7 @@ test("gemini-primary synthesis artifact round-trips through the reconstruction r
   const m = await mod();
   const env = geminiEnv({
     EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1",
-    EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "45000",
+    EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "120000",
     EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES: "2",
     EXTRACT_MAX_OUTPUT_TOKENS: "32000",
     GEMINI_EXTRACTION_MODEL: "gemini-2.5-flash",

@@ -1075,7 +1075,7 @@ for(const [key,expected] of Object.entries(grokRateBinding)) eq(v[key],expected,
 eq(v.DEEPSEEK_CONTEXT_WINDOW_TOKENS,"1000000","wrong DeepSeek V4 context-window attestation");
 eq(v.EXTRACT_MODEL_INPUT_MAX_BYTES,"450000","wrong extraction request-body ceiling");
 eq(v.EXTRACT_MAX_OUTPUT_TOKENS,"32000","wrong extraction output-token ceiling");
-eq(v.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES,"45000","wrong Pass-A synthesis catalogue ceiling");
+eq(v.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES,"120000","wrong Pass-A synthesis catalogue ceiling");
 eq(v.GEMINI_EXTRACTION_MODEL,"gemini-2.5-flash","wrong Gemini extraction model"); eq(v.GEMINI_INPUT_USD_PER_MTOK,"0.15","wrong Gemini input rate");
 eq(v.GEMINI_OUTPUT_USD_PER_MTOK,"3.5","wrong Gemini output rate"); eq(v.GEMINI_MAX_TOTAL_USD,"10","wrong Gemini cumulative cap");
 eq(v.GEMINI_REASONING_EFFORT,"medium","wrong Gemini reasoning effort");

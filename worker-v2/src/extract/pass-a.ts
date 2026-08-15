@@ -103,6 +103,9 @@ import {
 } from "../llm/chat";
 import {
   EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+  EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED,
+  type ExtractionSizeRefusalCode,
+  extractionCatalogueExceededDetail,
   extractionWireFailureDetail,
   extractionWirePolicy,
   extractionWirePreSerializationFailureDetail,
@@ -386,7 +389,7 @@ export interface PassASynthesisOutcome {
   fallbackTrigger: GrokFallbackTrigger | null;
   failedUnit: PassResult["failedUnits"][number] | null;
   limitation: PassACrossWindowLimitation | null;
-  terminalReasonCode?: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+  terminalReasonCode?: ExtractionSizeRefusalCode;
   credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" | "gemini" };
 }
 
@@ -459,7 +462,7 @@ export type PassAResult = PassResult & {
   splitEvents: SplitEvent[];
   /** Named refusals for sub-windows that could not be split further. */
   splitExhaustionRefusals: SplitExhaustionRefusal[];
-  terminalReasonCode?: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+  terminalReasonCode?: ExtractionSizeRefusalCode;
   credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" | "gemini" };
 };
 
@@ -1494,7 +1497,7 @@ export async function runPassA(
     windows.length > 1 ? "waiting-for-windows" : "not-required";
   let synthesisIssued = 0;
   let synthesisAttempts = 0;
-  let terminalReasonCode: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED | undefined;
+  let terminalReasonCode: ExtractionSizeRefusalCode | undefined;
   let credentialRefusal: PassAResult["credentialRefusal"];
 
   // WINDOWS ARE WALKED IN DOCUMENT ORDER, ONE AT A TIME. See the header for why this pass
@@ -2766,6 +2769,8 @@ interface FailedWindowArtifact {
   terminal: boolean;
   /** Derived only from a strictly decoded zero-receipt wire-ceiling artifact/sidecar. */
   wireCeiling: boolean;
+  /** Derived only from a strictly decoded zero-receipt catalogue-exceeded artifact. */
+  catalogueExceeded: boolean;
 }
 
 interface InvalidWindowArtifact {
@@ -3702,6 +3707,7 @@ async function readWindow(
     fallbackTrigger: main.fallbackTrigger,
     terminal: true,
     wireCeiling: true,
+    catalogueExceeded: false,
     detail: sidecar.detail,
   };
 }
@@ -3846,6 +3852,7 @@ async function readWindowArtifact(
       return rememberPassAWindowStorageAuthority<FailedWindowArtifact>({
         kind: "failed", attempts: attempts as number, detail: parsed["detail"], usages: usages as CallUsage[],
         fallbackTrigger, terminal: parsed["terminal"], wireCeiling: failureStage === "wire-ceiling",
+        catalogueExceeded: false,
       }, storageAuthority);
     }
     if (
@@ -4012,8 +4019,10 @@ interface PassASynthesisContext {
   grokWireBytes: number;
   geminiWireBytes: number;
   flashWireBytes: number;
-  /** Closed refusal detail, null only when both exact provider bodies fit. */
+  /** Closed refusal detail, null only when both the catalogue and exact provider bodies fit. */
   wireFailureDetail: string | null;
+  /** True when wireFailureDetail is a catalogue-bound refusal (not a wire-ceiling refusal). */
+  isCatalogueRefusal: boolean;
   /** Every source block whose exact span is owned by this synthesis unit. */
   sourceBlockIds: string[];
   requestHash: string;
@@ -4066,6 +4075,7 @@ type PersistedPassASynthesis =
       fallbackTrigger: GrokFallbackTrigger | null;
       terminal: boolean;
       wireCeiling: boolean;
+      catalogueExceeded: boolean;
       detail: string;
     }
   | {
@@ -4337,7 +4347,8 @@ async function readPassASynthesis(
     );
   }
   if (
-    main?.kind !== "failed" || main.wireCeiling || main.attempts < 1 || main.terminal
+    main?.kind !== "failed" || main.wireCeiling || main.catalogueExceeded ||
+    main.attempts < 1 || main.terminal
   ) {
     return invalid("it has no valid retryable paid main synthesis artifact beneath it");
   }
@@ -4348,6 +4359,7 @@ async function readPassASynthesis(
     fallbackTrigger: main.fallbackTrigger,
     terminal: true,
     wireCeiling: true,
+    catalogueExceeded: false,
     detail: sidecar.detail,
   };
 }
@@ -4422,11 +4434,13 @@ async function readPassASynthesisArtifact(
       const failureStage = parsed["failureStage"];
       if (
         failureStage !== "input-grounding" && failureStage !== "wire-ceiling" &&
+        failureStage !== "catalogue-exceeded" &&
         failureStage !== "fallback-authorized" && failureStage !== "provider" &&
         failureStage !== "semantic-output"
       ) return invalidSynthesisArtifact(runId, 'failureStage is missing or invalid', parsed);
       const zeroReceiptStage =
-        failureStage === "input-grounding" || failureStage === "wire-ceiling";
+        failureStage === "input-grounding" || failureStage === "wire-ceiling" ||
+        failureStage === "catalogue-exceeded";
       const fallbackChainFailure = fallbackTrigger === null ? null : validatePassAFallbackUsageChain(
         usages as CallUsage[], runId, 'A-synthesis', attempts as number, fallbackTrigger,
         failureStage === "fallback-authorized" ? "pending" :
@@ -4441,6 +4455,8 @@ async function readPassASynthesisArtifact(
         (zeroReceiptStage && (attempts as number) !== 0) ||
         (failureStage === "wire-ceiling" &&
           !parsed["detail"].startsWith(`${EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED}:`)) ||
+        (failureStage === "catalogue-exceeded" &&
+          !parsed["detail"].startsWith(`${EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED}:`)) ||
         ((attempts as number) > 0 && usages.length === 0) ||
         parsed["routeReceipt"] !== undefined ||
         (failureStage === "provider" && fallbackTrigger === null && parsed["terminal"] !== true) ||
@@ -4498,6 +4514,7 @@ async function readPassASynthesisArtifact(
         fallbackTrigger,
         terminal: parsed["terminal"],
         wireCeiling: failureStage === "wire-ceiling",
+        catalogueExceeded: failureStage === "catalogue-exceeded",
         detail: parsed["detail"],
       }, storageAuthority);
     }
@@ -4781,16 +4798,22 @@ export async function runPassASynthesis(
       failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail: existing.detail },
       ...(existing.wireCeiling
         ? { terminalReasonCode: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED }
+        : existing.catalogueExceeded
+        ? { terminalReasonCode: EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED }
         : {}),
     });
   }
 
   if (context.wireFailureDetail !== null) {
     const detail = context.wireFailureDetail;
+    const sizeReasonCode: ExtractionSizeRefusalCode = context.isCatalogueRefusal
+      ? EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED
+      : EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+    const failureStage = context.isCatalogueRefusal ? "catalogue-exceeded" : "wire-ceiling";
     const wireBody = JSON.stringify({
       ...synthesisArtifactEnvelope(env, context),
       status: "failed", attempts: 0, usages: [], fallbackTrigger: null, terminal: true,
-      failureStage: "wire-ceiling", detail,
+      failureStage, detail,
     }, null, 2);
     await persistImmutableExtractionArtifact(
       env,
@@ -4806,7 +4829,7 @@ export async function runPassASynthesis(
       accountingCalls: existing?.usages ?? [],
       fallbackTrigger: existing?.fallbackTrigger ?? null,
       failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail },
-      terminalReasonCode: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+      terminalReasonCode: sizeReasonCode,
     });
   }
 
@@ -5487,7 +5510,7 @@ async function buildPassASynthesisContext(
         primaryArtifactChainHash,
       }
     : {
-        refusal: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+        refusal: EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED,
         proof: {
           phase: boundedInput.phase,
           maxBytes: boundedInput.maxBytes,
@@ -5511,14 +5534,16 @@ async function buildPassASynthesisContext(
   let flashWireBytes = 0;
   let wireBytes = 0;
   let wireFailureDetail: string | null;
+  let isCatalogueRefusal = false;
   let requestHash: string;
   if (!boundedInput.ok) {
-    wireFailureDetail = extractionWirePreSerializationFailureDetail(
+    wireFailureDetail = extractionCatalogueExceededDetail(
       "A-synthesis",
       sourceBlockIds.length,
       boundedInput,
       "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES",
     );
+    isCatalogueRefusal = true;
     requestHash = `sha256:${await sha256Hex(JSON.stringify({ inputHash, wireFailureDetail }))}`;
   } else {
     const isBudgetMode = validatePassAPrimaryMode(env) === "gemini";
@@ -5541,10 +5566,15 @@ async function buildPassASynthesisContext(
       ...(geminiBody !== null ? [{ route: "gemini-2.5-flash", bodyText: geminiBody }] : []),
       { route: "deepseek-v4-flash", bodyText: flashBody },
     ];
+    // The catalogue bound (EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES) already governs catalogue
+    // size via buildBoundedJsonText above. The wire preflight gates only the universal
+    // EXTRACT_MODEL_INPUT_MAX_BYTES ceiling — exactly like every primary-window call and
+    // pass-B chunk. No additionalLimit: the double-limit that joint-refused bodies above
+    // ~83% catalogue utilization is the root cause of the gap-zone refusal in
+    // v2r_01m037ywk446xxmbtmwmvpp2jt.
     const wirePreflight = preflightExtractionRequestBodies(
       env,
       preflightBodies,
-      { name: "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES", maxBytes },
     );
     wireFailureDetail = wirePreflight.ok
       ? null
@@ -5560,7 +5590,7 @@ async function buildPassASynthesisContext(
   ].join("|");
   return {
     parserVersion, inputJson, inputHash, catalogueBytes, wireBytes, grokWireBytes, geminiWireBytes, flashWireBytes,
-    wireFailureDetail, sourceBlockIds,
+    wireFailureDetail, isCatalogueRefusal, sourceBlockIds,
     requestHash, policyIdentity, maxBytes, maxIssues, optionsForCall,
     coverage, blocks, windowByBlock, evidenceBlockIds, evidenceSpanKeys, primaryCrossRefs,
   };
