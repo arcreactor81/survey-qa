@@ -465,7 +465,7 @@ test("the full Workflow terminalizes synthesis wire overflow before purchase and
     const cp = (await m.checkpoint.loadCheckpoint(env, ctx.runId)).checkpoint;
     assertEq(
       cp.completion.reasonCode,
-      "extraction-model-input-wire-ceiling-exceeded",
+      "extraction-pass-a-synthesis-catalogue-exceeded",
       `synthesis overflow reason; detail=${cp.error}`,
     );
     assertEq(

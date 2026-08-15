@@ -27,7 +27,10 @@ import {
   withoutDocumentSourceContext,
   type DocumentReadingProgress,
 } from "../observability/document-reading";
-import { EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED } from "../llm/extraction-wire";
+import {
+  EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+  EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED,
+} from "../llm/extraction-wire";
 
 export const TERMINAL_FAILURE_REPORT_KIND = "survey-qa-v2-operational-failure-report" as const;
 export const TERMINAL_FAILURE_REPORT_SCHEMA = "v2-operational-failure-report/1.2.0" as const;
@@ -482,11 +485,12 @@ export async function buildAndStoreTerminalFailureReport(env: Env, runId: string
       detail: "These primary reading windows were not durably accounted for and are explicitly unread/not covered.",
     }] : []),
     ...(documentReading?.limitations ?? []),
-    ...(reasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED &&
+    ...((reasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED ||
+         reasonCode === EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED) &&
         !(documentReading?.limitations ?? []).some(
-          (entry) => entry.code === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+          (entry) => entry.code === reasonCode,
         ) ? [{
-          code: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+          code: reasonCode,
           count: affectedWireBlockCount,
           detail:
             "The entire refused document-reading unit remains counted. No source was truncated, " +

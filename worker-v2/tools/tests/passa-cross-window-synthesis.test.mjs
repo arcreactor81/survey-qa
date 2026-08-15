@@ -73,7 +73,7 @@ function envFor(overrides = {}) {
     EXTRACT_PASS_A_WINDOW_CHARS: "999999",
     EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1",
     EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "1",
-    EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "45000",
+    EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "120000",
     EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES: "2",
     EXTRACT_MAX_ATTEMPTS: "1",
     EXTRACT_MAX_OUTPUT_TOKENS: "32000",
@@ -2118,11 +2118,11 @@ test("the exact serialized provider request is gated before any synthesis purcha
     assertEq(failed.slice.done, true, "the terminal refusal leaves no resumable synthesis work");
     assertEq(failed.slice.synthesisState, "failed", "terminal completion is a refusal, never a Pass-A seal");
     assertEq(failed.slice.synthesisAttempts, 0, "a zero-purchase refusal does not invent an attempt");
-    assertEq(failed.terminalReasonCode, "extraction-model-input-wire-ceiling-exceeded");
+    assertEq(failed.terminalReasonCode, "extraction-pass-a-synthesis-catalogue-exceeded");
     assert(
       failed.failedUnits.some((row) =>
-        row.detail.startsWith("extraction-model-input-wire-ceiling-exceeded:") &&
-        row.detail.includes("canonical inner source payload alone")),
+        row.detail.startsWith("extraction-pass-a-synthesis-catalogue-exceeded:") &&
+        row.detail.includes("candidate catalogue")),
       JSON.stringify(failed.failedUnits),
     );
     const artifactKey = m.passA.passASynthesisKey(runId);
@@ -2130,7 +2130,7 @@ test("the exact serialized provider request is gated before any synthesis purcha
     const artifact = JSON.parse(artifactBytes);
     assertEq(artifact.attempts, 0);
     assertEq(artifact.usages.length, 0);
-    assertEq(artifact.failureStage, "wire-ceiling");
+    assertEq(artifact.failureStage, "catalogue-exceeded");
     assertEq(Object.hasOwn(artifact, "modelOutput"), false);
 
     provider.reset();
@@ -2138,7 +2138,7 @@ test("the exact serialized provider request is gated before any synthesis purcha
     assertEq(provider.calls.length, 0, "the durable pre-purchase refusal is not rediscovered or re-bought");
     assertEq(secretReads, 0, "re-entry reclaims the refusal before credential access");
     assertEq(reclaimed.slice.synthesisAttempts, 0);
-    assertEq(reclaimed.terminalReasonCode, "extraction-model-input-wire-ceiling-exceeded");
+    assertEq(reclaimed.terminalReasonCode, "extraction-pass-a-synthesis-catalogue-exceeded");
     assertEq(await (await env.EVIDENCE.get(artifactKey)).text(), artifactBytes, "re-entry preserves exact bytes");
   } finally {
     provider.restore();
@@ -2828,7 +2828,7 @@ test("same-run synthesis request or policy identity drift is terminal, never a f
     await landPrimaryWindows(m, env, runId, doc, provider);
     await m.passA.runPassA(env, runId, doc, "neutral.docx");
     const before = await (await env.EVIDENCE.get(m.passA.passASynthesisKey(runId))).text();
-    env.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES = "44999";
+    env.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES = "119999";
     provider.reset();
     const refused = await m.passA.runPassA(env, runId, doc, "neutral.docx");
     assertEq(provider.calls.length, 0, "policy drift cannot overwrite exact-key paid authority");
@@ -2961,7 +2961,7 @@ test("developer resume rejects same-parsed different source bytes without overwr
 test("production synthesis knobs and prompt schema are exact and fingerprinted", async () => {
   const m = await mod();
   const wrangler = readFileSync(new URL("../../wrangler.jsonc", import.meta.url), "utf8");
-  assert(/"EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES"\s*:\s*"45000"/.test(wrangler));
+  assert(/"EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES"\s*:\s*"120000"/.test(wrangler));
   assert(/"EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES"\s*:\s*"2"/.test(wrangler));
   assert(m.contractReuse.EXTRACTION_POLICY_KEYS.includes("EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES"));
   assert(m.contractReuse.EXTRACTION_POLICY_KEYS.includes("EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES"));
@@ -2969,9 +2969,9 @@ test("production synthesis knobs and prompt schema are exact and fingerprinted",
   const fingerprint = await m.contractReuse.extractionPolicyFingerprint(base);
   assert(
     fingerprint !== await m.contractReuse.extractionPolicyFingerprint(envFor({
-      EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "44999",
+      EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "119999",
     })),
-    "changing the exact wire ceiling invalidates extraction reuse",
+    "changing the exact catalogue ceiling invalidates extraction reuse",
   );
   assert(
     fingerprint !== await m.contractReuse.extractionPolicyFingerprint(envFor({

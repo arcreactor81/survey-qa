@@ -13,6 +13,12 @@ import type { Env } from "../types/env";
 
 export const EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED =
   "extraction-model-input-wire-ceiling-exceeded" as const;
+export const EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED =
+  "extraction-pass-a-synthesis-catalogue-exceeded" as const;
+/** Any size-based extraction refusal code that prevents a provider call. */
+export type ExtractionSizeRefusalCode =
+  | typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED
+  | typeof EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED;
 export const DEFAULT_EXTRACTION_MODEL_INPUT_MAX_BYTES = 450_000;
 export const DEFAULT_EXTRACTION_MAX_OUTPUT_TOKENS = 32_000;
 export const DEEPSEEK_V4_CONTEXT_WINDOW_TOKENS = 1_000_000;
@@ -254,6 +260,27 @@ export function extractionWirePreSerializationFailureDetail(
     `alone is at least ${proof.provenUtf8ByteLowerBound} UTF-8 byte(s) ` +
     `(${proof.phase}). All ${ownedBlockCount} owned source block id(s) remain counted; no source ` +
     `was truncated, no coverage was awarded, and no credential or provider request was issued ` +
+    `for this refusal.`
+  );
+}
+
+/**
+ * Closed refusal detail when the synthesis candidate catalogue itself exceeds its dedicated
+ * cap (EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES). Distinguished from the wire-ceiling refusal
+ * because this is the catalogue-only bound, not the universal serialized-body ceiling.
+ */
+export function extractionCatalogueExceededDetail(
+  unit: string,
+  ownedBlockCount: number,
+  proof: { provenUtf8ByteLowerBound: number; maxBytes: number; phase: string },
+  appliedLimitName: string,
+): string {
+  return (
+    `${EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED}: ${unit} candidate catalogue ` +
+    `alone is at least ${proof.provenUtf8ByteLowerBound} UTF-8 byte(s) ` +
+    `(${proof.phase}), above ${appliedLimitName}=${proof.maxBytes}. ` +
+    `All ${ownedBlockCount} owned source block id(s) remain counted; no source was ` +
+    `truncated, no coverage was awarded, and no credential or provider request was issued ` +
     `for this refusal.`
   );
 }

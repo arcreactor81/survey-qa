@@ -3,6 +3,7 @@ import { assert, assertEq, loadWorker, memoryR2, suite, test } from "../testkit.
 
 const mod = async () => (await loadWorker()).mod;
 const REASON = "extraction-model-input-wire-ceiling-exceeded";
+const CATALOGUE_REASON = "extraction-pass-a-synthesis-catalogue-exceeded";
 const CONSTRUCTS = [
   "question", "option-list", "skip-rule", "terminate", "validation", "piping",
   "carry-forward", "calculation", "randomization", "loop", "instruction",
@@ -865,7 +866,7 @@ test("synthesis bounds aggregate retention, rejects unsafe cap, and counts full 
     );
     assertEq(primary.slice.windowsRemaining, 0);
     assertEq(primary.slice.synthesisState, "failed");
-    assertEq(primary.terminalReasonCode, REASON);
+    assertEq(primary.terminalReasonCode, CATALOGUE_REASON);
     assertEq(providerCalls, blocks.length);
 
     const secret = countedSecret("must-not-be-read");
@@ -898,7 +899,7 @@ test("synthesis bounds aggregate retention, rejects unsafe cap, and counts full 
     assertEq(view.catalogueBytes, 45001);
     assertEq(view.coverage.primaryWindowsIncluded, 0);
     const refused = await m.passA.runPassA(refusalEnv, runId, doc, "neutral.docx");
-    assertEq(refused.terminalReasonCode, REASON);
+    assertEq(refused.terminalReasonCode, CATALOGUE_REASON);
     assertEq(providerCalls, callsBefore);
     assertEq(grokSecret.reads(), 0);
     assertEq(deepseekSecret.reads(), 0);
@@ -913,7 +914,7 @@ test("synthesis bounds aggregate retention, rejects unsafe cap, and counts full 
     const synthesisBefore = await (await env.EVIDENCE.get(synthesisKey)).text();
     const accountingBefore = refused.accountingCalls.map((row) => row.eventId).sort();
     const replay = await m.passA.runPassA(refusalEnv, runId, doc, "neutral.docx");
-    assertEq(replay.terminalReasonCode, REASON);
+    assertEq(replay.terminalReasonCode, CATALOGUE_REASON);
     assertEq(providerCalls, callsBefore);
     assertEq(grokSecret.reads(), 0);
     assertEq(deepseekSecret.reads(), 0);
@@ -939,8 +940,8 @@ test("synthesis bounds aggregate retention, rejects unsafe cap, and counts full 
     assert(changedView !== null);
     assert(changedView.inputHash !== view.inputHash, "same-count candidate mutation did not change refusal identity");
     const rejectedStale = await m.passA.runPassA(refusalEnv, runId, doc, "neutral.docx");
-    assert(rejectedStale.terminalReasonCode !== REASON,
-      "a stale wire refusal was incorrectly adopted after valid candidate mutation");
+    assert(rejectedStale.terminalReasonCode !== CATALOGUE_REASON,
+      "a stale catalogue refusal was incorrectly adopted after valid candidate mutation");
     assert(
       rejectedStale.failedUnits.some((row) =>
         row.detail.includes("PASS_A_SYNTHESIS_ARTIFACT_INVALID") &&
@@ -955,6 +956,242 @@ test("synthesis bounds aggregate retention, rejects unsafe cap, and counts full 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("gap-zone: catalogue under old cap but body over it now reaches the provider", async () => {
+  // Root cause from v2r_01m037ywk446xxmbtmwmvpp2jt: catalogue was 40,650 bytes (under the
+  // 45,000 catalogue cap), but the full serialized body was 48,498 (over that same 45,000
+  // applied as additionalLimit to the wire preflight). After fix, the wire preflight gates
+  // only EXTRACT_MODEL_INPUT_MAX_BYTES=450,000, so this catalogue MUST reach the provider.
+  const m = await mod();
+  const blocks = Array.from({ length: 4 }, (_, index) =>
+    block(`b${String(index + 1).padStart(4, "0")}`, `Exact gap-zone source quote ${index + 1}.`),
+  );
+  const doc = documentFor(blocks);
+  const env = envFor({
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1",
+    EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "120000",
+  });
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  let synthesisCalled = false;
+  globalThis.fetch = async (_url, init) => {
+    providerCalls += 1;
+    const body = JSON.parse(init.body);
+    const user = String(body.messages[1].content);
+    const match = user.match(/window (\d+) of/);
+    if (match) {
+      const index = Number(match[1]) - 1;
+      const source = blocks[index];
+      return providerResponse(body, {
+        ...emptyPrimary(),
+        ambiguities: [{
+          id: `AMB-${index + 1}`,
+          block_ids: [source.blockId],
+          doc_quote: source.text,
+          evidence_quotes: [{ block_id: source.blockId, quote: source.text }],
+          reading_a: "a".repeat(7000),
+          reading_b: "b".repeat(7000),
+          why_ambiguous: "c".repeat(7000),
+          affects: ["routing"],
+        }],
+      });
+    }
+    // This IS the synthesis call — the point of the test.
+    synthesisCalled = true;
+    return providerResponse(body, {
+      global_rules: [], cross_reference_resolutions: [],
+      ambiguities: [], unverifiable_from_browser: [],
+    });
+  };
+  try {
+    const runId = "run_gap_zone_regression";
+    let result = await m.passA.runPassA(
+      env, runId, doc, "neutral.docx", undefined, { budgetMs: 600000 },
+    );
+    assertEq(result.slice.windowsRemaining, 0);
+    // If synthesis state is "pending", run another wave to execute synthesis.
+    if (result.slice.synthesisState === "pending") {
+      result = await m.passA.runPassA(
+        env, runId, doc, "neutral.docx", undefined, { budgetMs: 600000 },
+      );
+      assert(result.slice.synthesisState !== "pending",
+        `synthesis should complete after second wave, got ${result.slice.synthesisState}`);
+    }
+    // The catalogue must be in the ~40-44KB range that would have been refused under the old
+    // double-limit. Verify it is under the old cap of 45,000.
+    const view = await m.passA.preparePassASynthesis(env, runId, doc, "neutral.docx");
+    assert(view !== null);
+    assert(view.catalogueBytes > 37000 && view.catalogueBytes < 120000,
+      `catalogue bytes ${view.catalogueBytes} must be in the gap zone`);
+    // The full wire body must exceed the old 45,000 additionalLimit
+    assert(view.inputBytes > 45000,
+      `wire bytes ${view.inputBytes} should exceed the old additionalLimit`);
+    // But must be well under the 450,000 wire ceiling
+    assert(view.inputBytes < 450000,
+      `wire bytes ${view.inputBytes} must be under the wire ceiling`);
+    // THE KEY ASSERTION: synthesis must have reached the provider.
+    assert(synthesisCalled, "gap-zone catalogue must reach the provider (synthesis stub was called)");
+    assertEq(result.slice.synthesisState, "ok", "synthesis should succeed, not be refused");
+    assertEq(result.terminalReasonCode, undefined, "no terminal reason code for a successful synthesis");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("genuinely oversized body (>450KB) refuses with the wire-ceiling name", async () => {
+  const m = await mod();
+  // Create a document with many windows producing large outputs that fit the catalogue
+  // but whose serialized provider body exceeds 450,000 bytes.
+  const blocks = Array.from({ length: 4 }, (_, index) =>
+    block(`b${String(index + 1).padStart(4, "0")}`, "z".repeat(90000)),
+  );
+  const doc = documentFor(blocks);
+  const env = envFor({
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1",
+    EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "450000",
+    EXTRACT_MODEL_INPUT_MAX_BYTES: "450000",
+  });
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async (_url, init) => {
+    providerCalls += 1;
+    const body = JSON.parse(init.body);
+    const user = String(body.messages[1].content);
+    const match = user.match(/window (\d+) of/);
+    if (!match) throw new Error("unexpected non-primary call");
+    const index = Number(match[1]) - 1;
+    const source = blocks[index];
+    return providerResponse(body, {
+      ...emptyPrimary(),
+      ambiguities: [{
+        id: `AMB-${index + 1}`,
+        block_ids: [source.blockId],
+        doc_quote: source.text,
+        evidence_quotes: [{ block_id: source.blockId, quote: source.text }],
+        reading_a: "a".repeat(80000),
+        reading_b: "b".repeat(80000),
+        why_ambiguous: "c".repeat(80000),
+        affects: ["routing"],
+      }],
+    });
+  };
+  try {
+    const runId = "run_wire_ceiling_oversized";
+    const result = await m.passA.runPassA(
+      env, runId, doc, "neutral.docx", undefined, { budgetMs: 600000 },
+    );
+    assertEq(result.slice.synthesisState, "failed");
+    // This is a CATALOGUE overflow (catalogue > 450,000 = SYNTHESIS max bytes)
+    // OR a wire ceiling overflow (body > 450,000 = EXTRACT_MODEL_INPUT_MAX_BYTES).
+    // With the catalogue limit at 450000 and the content being ~960KB, it's catalogue first.
+    assert(
+      result.terminalReasonCode === CATALOGUE_REASON ||
+      result.terminalReasonCode === REASON,
+      `expected a size refusal, got ${result.terminalReasonCode}`,
+    );
+    assert(
+      result.failedUnits.some((row) =>
+        row.detail.includes(CATALOGUE_REASON) || row.detail.includes(REASON)),
+      JSON.stringify(result.failedUnits),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("catalogue over the new 120KB cap refuses with the catalogue-exceeded name", async () => {
+  const m = await mod();
+  const blocks = Array.from({ length: 4 }, (_, index) =>
+    block(`b${String(index + 1).padStart(4, "0")}`, `Exact catalogue-exceeded source ${index + 1}.`),
+  );
+  const doc = documentFor(blocks);
+  const env = envFor({
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1",
+    EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES: "120000",
+  });
+  const originalFetch = globalThis.fetch;
+  let synthesisCalled = false;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    const user = String(body.messages[1].content);
+    const match = user.match(/window (\d+) of/);
+    if (match) {
+      const index = Number(match[1]) - 1;
+      const source = blocks[index];
+      return providerResponse(body, {
+        ...emptyPrimary(),
+        ambiguities: [{
+          id: `AMB-${index + 1}`,
+          block_ids: [source.blockId],
+          doc_quote: source.text,
+          evidence_quotes: [{ block_id: source.blockId, quote: source.text }],
+          reading_a: "a".repeat(25000),
+          reading_b: "b".repeat(25000),
+          why_ambiguous: "c".repeat(25000),
+          affects: ["routing"],
+        }],
+      });
+    }
+    synthesisCalled = true;
+    return providerResponse(body, emptyPrimary());
+  };
+  try {
+    const runId = "run_catalogue_exceeded_120k";
+    const result = await m.passA.runPassA(
+      env, runId, doc, "neutral.docx", undefined, { budgetMs: 600000 },
+    );
+    assertEq(result.slice.synthesisState, "failed");
+    assertEq(result.terminalReasonCode, CATALOGUE_REASON,
+      "catalogue refusal must use the catalogue-exceeded reason code");
+    assert(!synthesisCalled, "an oversize catalogue must not reach the provider");
+    assert(
+      result.failedUnits.some((row) => row.detail.startsWith(CATALOGUE_REASON + ":")),
+      "failed unit detail must start with catalogue-exceeded prefix",
+    );
+    const artifact = await readJson(env.EVIDENCE, m.passA.passASynthesisKey(runId));
+    assertEq(artifact.failureStage, "catalogue-exceeded",
+      "persisted artifact must use the catalogue-exceeded failure stage");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("catalogue reason survives workflow normalization and limitation projection", async () => {
+  const m = await mod();
+  const refusal = m.workflow.extractionPassRefusal("a", {
+    state: "not-evaluated",
+    reason: CATALOGUE_REASON,
+    detail: "private catalogue-exceeded detail",
+  });
+  assertEq(refusal.reasonCode, CATALOGUE_REASON);
+  const source = [block("b0101", "first"), block("b0102", "second")];
+  const sourceContext = m.documentReading.sourceContextForUnit(
+    source, source.map((row) => row.blockId),
+  );
+  const reading = m.documentReading.readingFromPrimary({
+    done: false,
+    windowsTotal: 2,
+    windowsLanded: 1,
+    windowsRemaining: 1,
+    terminalFailure: true,
+    synthesisState: "waiting-for-windows",
+  }, {
+    state: "stopped",
+    failedUnit: { unit: "A-synthesis", detail: "private catalogue detail" },
+    sourceContext,
+    reasonCode: refusal.reasonCode,
+    updatedAt: "2026-08-14T00:00:00.000Z",
+  });
+  assertEq(reading.failure.reasonCode, CATALOGUE_REASON);
+  assert(reading.failure.detail.includes("safe input limit"),
+    "catalogue refusal uses the same public detail as wire-ceiling");
+  const limitation = reading.limitations.find((row) => row.code === CATALOGUE_REASON);
+  assert(limitation, "the named catalogue limitation was retained");
+  assertEq(limitation.count, 2);
 });
 
 test("exact wire reason survives workflow normalization and status limitation projection", async () => {

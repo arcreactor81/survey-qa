@@ -43,7 +43,10 @@ import {
 import { MissingCredential } from "../../llm/chat";
 import { deepseekPassBIdentity } from "../../llm/deepseek";
 import { grokRateAttestation } from "../../llm/grok";
-import { EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED } from "../../llm/extraction-wire";
+import {
+  EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+  EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED,
+} from "../../llm/extraction-wire";
 import {
   runPassA,
   PASS_A_VERSION,
@@ -636,11 +639,12 @@ export async function stagePassASlice(
       blockIds: [],
       detail: "the terminal Pass-A unit did not retain a detailed failure row",
     };
-    if (result.terminalReasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) {
+    if (result.terminalReasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED ||
+        result.terminalReasonCode === EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED) {
       return {
         result: stageNotEvaluated<PassSummary>(
-          EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
-          publicExtractionFailureDetail(EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED),
+          result.terminalReasonCode,
+          publicExtractionFailureDetail(result.terminalReasonCode),
         ),
         slice: result.slice,
         terminal: true,
@@ -912,6 +916,8 @@ export async function stagePassBSlice(
   if (result.slice.terminalFailure || result.failedUnits.length > 0) {
     const reason = result.terminalReasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED
       ? EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED
+      : result.terminalReasonCode === EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED
+      ? EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED
       : "PASS_B_UNIT_FAILURES";
     return {
       result: stageNotEvaluated<PassSummary>(

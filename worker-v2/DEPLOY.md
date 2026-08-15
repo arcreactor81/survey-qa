@@ -1074,7 +1074,7 @@ for(const [key,expected] of Object.entries(grokRateBinding)) eq(v[key],expected,
 eq(v.DEEPSEEK_CONTEXT_WINDOW_TOKENS,"1000000","wrong DeepSeek V4 context-window attestation");
 eq(v.EXTRACT_MODEL_INPUT_MAX_BYTES,"450000","wrong extraction request-body ceiling");
 eq(v.EXTRACT_MAX_OUTPUT_TOKENS,"32000","wrong extraction output-token ceiling");
-eq(v.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES,"45000","wrong Pass-A synthesis catalogue ceiling");
+eq(v.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES,"120000","wrong Pass-A synthesis catalogue ceiling");
 eq(v.DEEPSEEK_MODEL,"deepseek-v4-flash","wrong eligible Grok-fallback model"); eq(v.DEEPSEEK_INPUT_USD_PER_MTOK,"0.14","wrong Flash input rate");
 eq(v.DEEPSEEK_OUTPUT_USD_PER_MTOK,"0.28","wrong Flash output rate"); eq(v.DEEPSEEK_FALLBACK_MODE,"on-error","wrong DeepSeek route mode");
 eq(v.DEEPSEEK_FALLBACK_MODEL,"deepseek-v4-pro","wrong normal Pass-B model"); eq(v.DEEPSEEK_FALLBACK_MAX_ATTEMPTS,"1","unbounded Pass-B attempts");

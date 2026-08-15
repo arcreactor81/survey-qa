@@ -152,7 +152,10 @@ import {
   type ExtractionInputs,
 } from "../store/contract-reuse";
 import { PROMPT_VERSION_A, PROMPT_VERSION_B } from "../extract/prompts";
-import { EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED } from "../llm/extraction-wire";
+import {
+  EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+  EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED,
+} from "../llm/extraction-wire";
 import { docxBlocksVersion } from "../extract/docx-blocks";
 import {
   publicExtractionFailureDetail,
@@ -395,10 +398,11 @@ export function extractionPassRefusal(
       detail: publicExtractionFailureDetail(DOCUMENT_SOURCE_AUTHORITY_INVALID),
     };
   }
-  if (result.reason === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) {
+  if (result.reason === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED ||
+      result.reason === EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED) {
     return {
-      reasonCode: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
-      detail: publicExtractionFailureDetail(EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED),
+      reasonCode: result.reason,
+      detail: publicExtractionFailureDetail(result.reason),
     };
   }
   const normalized = result.reason
