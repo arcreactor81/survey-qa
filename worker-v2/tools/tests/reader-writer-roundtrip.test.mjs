@@ -598,3 +598,279 @@ test("fallback trigger from Gemini-primary failure is accepted", async () => {
 });
 
 });
+
+// ===========================================================================
+suite("Reader-writer round-trip — degraded artifact with item-level limitations", () => {
+
+/**
+ * Exercises the REAL degradation write path (degradedPrimaryOutput) and verifies the
+ * persisted artifact round-trips through the strict reader (readWindowArtifact) on
+ * reclaim. This is the mechanism that w5/w8 real outputs exercise: structural-validation-
+ * failed rows are removed from the stored modelOutput but their limitations survive re-read.
+ */
+
+test("degraded artifact with structural-validation-failed limitations round-trips through readWindowArtifact", async () => {
+  const m = await mod();
+  const env = geminiEnv();
+  // Use a focused two-block source with one valid + one invalid-construct rule.
+  // Single-window doc: origin is "A" (not "A-w1").
+  const source = [
+    { blockId: "b0001", kind: "paragraph", text: "Block 1 content. Every question is compulsory.",
+      origin: "body", section: "Questions", coords: null, tableId: null },
+    { blockId: "b0002", kind: "paragraph", text: "Block 2 content. Every question is compulsory.",
+      origin: "body", section: "Questions", coords: null, tableId: null },
+  ];
+  const origin = "A";
+  // Model output with one valid rule and one invalid construct ("ordering")
+  const rawModelOutput = {
+    global_rules: [
+      {
+        id: "GLOB-01", construct: "instruction", scope: "survey", quantifier: "every",
+        selector: null, exceptions: [],
+        statement: "Every question must be answered.",
+        doc_quote: "Block 1 content. Every question is compulsory.",
+        block_ids: ["b0001"],
+        evidence_quotes: [{ block_id: "b0001", quote: "Block 1 content. Every question is compulsory." }],
+        browser_observable: "full", confidence: 0.95,
+      },
+      {
+        id: "GLOB-02", construct: "ordering", scope: "survey", quantifier: "every",
+        selector: null, exceptions: [],
+        statement: "Questions must follow document order.",
+        doc_quote: "Block 2 content. Every question is compulsory.",
+        block_ids: ["b0002"],
+        evidence_quotes: [{ block_id: "b0002", quote: "Block 2 content. Every question is compulsory." }],
+        browser_observable: "full", confidence: 0.9,
+      },
+    ],
+    cross_references: [],
+    ambiguities: [],
+    unverifiable_from_browser: [],
+  };
+
+  // Verify strict validation throws (precondition)
+  let strictThrew = false;
+  try { m.passA.__test_strictPrimaryOutput(rawModelOutput, origin); } catch { strictThrew = true; }
+  assert(strictThrew, "strict validation must throw on 'ordering' construct");
+
+  // Degrade: salvage the valid rule, exclude the invalid one
+  const degraded = m.passA.degradedPrimaryOutput(rawModelOutput, source, origin);
+  assert(degraded !== null, "degradation must salvage the valid rule");
+  assert(degraded.limitations.length >= 1, "at least one limitation");
+  assert(degraded.limitations.some(l => l.reason === "structural-validation-failed"),
+    "structural-validation-failed limitation must exist");
+
+  // Build the degraded artifact as the writer would. The artifact carries TWO usage entries
+  // (one per attempt) because attempts=2 requires receipts for issue 1 and issue 2.
+  // Single-window doc uses role "extract-pass-a" and callId "call_a_1".
+  const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
+  const runId = "run_degraded_roundtrip_test";
+  const r1 = `core-model-call/pass-a/${runId}/${origin}/issue-1/receipt-1`;
+  const r2 = `core-model-call/pass-a/${runId}/${origin}/issue-2/receipt-1`;
+  const artifact = {
+    windowId: origin, windowNumber: 1,
+    blockIds: source.map(b => b.blockId),
+    parserVersion: pv, promptVersion: m.passA.PASS_A_VERSION,
+    providerRouteIdentity: m.passA.passAPrimaryRouteIdentity(env),
+    windowPolicyIdentity: policyId(env),
+    kind: "ok", attempts: 2,
+    modelOutput: degraded.strictPassingModelOutput,
+    rawModelOutputPreDegradation: rawModelOutput,
+    ...degraded.unit,
+    usages: [
+      {
+        eventId: r1, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
+        provider: "gemini", model: "gemini-2.5-flash", status: "parse-failed",
+        inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
+        attempts: 1, usageSource: "provider-reported",
+        detail: "semantic output rejected: PASS_A_WINDOW_OUTPUT_INVALID: unknown construct \"ordering\"",
+      },
+      {
+        eventId: r2, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
+        provider: "gemini", model: "gemini-2.5-flash", status: "ok",
+        inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
+        attempts: 1, usageSource: "provider-reported",
+        detail: "degraded: 1 of 2 items excluded",
+      },
+    ],
+    routeReceipt: { selected: "gemini-2.5-flash", trigger: null },
+  };
+
+  // Seed as a single-window document (blocks = source only)
+  await seed(m, env, runId, 1, artifact);
+  const singleWindowBlocks = source;
+  const result = await reconstruct(m, env, runId, singleWindowBlocks, pv);
+  // Single window, no synthesis needed -> should be "ok" if the reader accepts the artifact
+  assertEq(result.kind, "ok",
+    `degraded artifact must round-trip. Got: ${result.kind}: ${result.detail ?? ""}`);
+  assert(!result.detail?.includes("PASS_A_WINDOW_ARTIFACT_INVALID"),
+    `no corruption detected. Got: ${result.detail ?? "(none)"}`);
+  // The surviving limitation must be present in the reconstructed authority
+  assert(result.value.primaryGroundingLimitations.length >= 1,
+    "limitations must survive round-trip");
+  assert(result.value.primaryGroundingLimitations.some(l => l.reason === "structural-validation-failed"),
+    "structural-validation-failed must survive round-trip");
+});
+
+test("degraded artifact with root-malformed + structural-validation-failed round-trips", async () => {
+  const m = await mod();
+  const env = geminiEnv();
+  const source = [
+    { blockId: "b0001", kind: "paragraph", text: "Block 1 content. Every question is compulsory.",
+      origin: "body", section: "Questions", coords: null, tableId: null },
+  ];
+  const origin = "A";
+  // Model output with one valid rule but cross_references is a STRING (root-malformed)
+  const rawModelOutput = {
+    global_rules: [{
+      id: "GLOB-01", construct: "instruction", scope: "survey", quantifier: "every",
+      selector: null, exceptions: [],
+      statement: "Every question must be answered.",
+      doc_quote: "Block 1 content. Every question is compulsory.",
+      block_ids: ["b0001"],
+      evidence_quotes: [{ block_id: "b0001", quote: "Block 1 content. Every question is compulsory." }],
+      browser_observable: "full", confidence: 0.95,
+    }],
+    cross_references: "not-an-array",
+    ambiguities: [],
+    unverifiable_from_browser: [],
+  };
+
+  const degraded = m.passA.degradedPrimaryOutput(rawModelOutput, source, origin);
+  assert(degraded !== null, "degradation must salvage with root-malformed");
+  assert(degraded.limitations.some(l => l.reason === "root-malformed"),
+    "root-malformed limitation must exist");
+
+  const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
+  const runId = "run_root_malformed_roundtrip";
+  const r1 = `core-model-call/pass-a/${runId}/${origin}/issue-1/receipt-1`;
+  const r2 = `core-model-call/pass-a/${runId}/${origin}/issue-2/receipt-1`;
+  const artifact = {
+    windowId: origin, windowNumber: 1,
+    blockIds: source.map(b => b.blockId),
+    parserVersion: pv, promptVersion: m.passA.PASS_A_VERSION,
+    providerRouteIdentity: m.passA.passAPrimaryRouteIdentity(env),
+    windowPolicyIdentity: policyId(env),
+    kind: "ok", attempts: 2,
+    modelOutput: degraded.strictPassingModelOutput,
+    rawModelOutputPreDegradation: rawModelOutput,
+    ...degraded.unit,
+    usages: [
+      {
+        eventId: r1, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
+        provider: "gemini", model: "gemini-2.5-flash", status: "parse-failed",
+        inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
+        attempts: 1, usageSource: "provider-reported",
+        detail: "semantic output rejected",
+      },
+      {
+        eventId: r2, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
+        provider: "gemini", model: "gemini-2.5-flash", status: "ok",
+        inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
+        attempts: 1, usageSource: "provider-reported",
+        detail: "degraded: 1 of 2 items excluded",
+      },
+    ],
+    routeReceipt: { selected: "gemini-2.5-flash", trigger: null },
+  };
+
+  await seed(m, env, runId, 1, artifact);
+  const result = await reconstruct(m, env, runId, source, pv);
+  assertEq(result.kind, "ok",
+    `root-malformed degraded artifact must round-trip. Got: ${result.kind}: ${result.detail ?? ""}`);
+  assert(result.value.primaryGroundingLimitations.some(l => l.reason === "root-malformed"),
+    "root-malformed must survive round-trip");
+});
+
+test("TAMPERING: modifying modelOutput of degraded artifact is still rejected", async () => {
+  const m = await mod();
+  const env = geminiEnv();
+  const source = [
+    { blockId: "b0001", kind: "paragraph", text: "Block 1 content. Every question is compulsory.",
+      origin: "body", section: "Questions", coords: null, tableId: null },
+    { blockId: "b0002", kind: "paragraph", text: "Block 2 content. Every question is compulsory.",
+      origin: "body", section: "Questions", coords: null, tableId: null },
+  ];
+  const origin = "A";
+  const rawModelOutput = {
+    global_rules: [
+      {
+        id: "GLOB-01", construct: "instruction", scope: "survey", quantifier: "every",
+        selector: null, exceptions: [],
+        statement: "Every question must be answered.",
+        doc_quote: "Block 1 content. Every question is compulsory.",
+        block_ids: ["b0001"],
+        evidence_quotes: [{ block_id: "b0001", quote: "Block 1 content. Every question is compulsory." }],
+        browser_observable: "full", confidence: 0.95,
+      },
+      {
+        id: "GLOB-02", construct: "ordering", scope: "survey", quantifier: "every",
+        selector: null, exceptions: [],
+        statement: "Questions must follow document order.",
+        doc_quote: "Block 2 content. Every question is compulsory.",
+        block_ids: ["b0002"],
+        evidence_quotes: [{ block_id: "b0002", quote: "Block 2 content. Every question is compulsory." }],
+        browser_observable: "full", confidence: 0.9,
+      },
+    ],
+    cross_references: [],
+    ambiguities: [],
+    unverifiable_from_browser: [],
+  };
+
+  const degraded = m.passA.degradedPrimaryOutput(rawModelOutput, source, origin);
+  assert(degraded !== null, "precondition");
+
+  const pv = m.docxBlocks.DOCX_BLOCKS_VERSION;
+  const runId = "run_tampered_degraded";
+  const r1 = `core-model-call/pass-a/${runId}/${origin}/issue-1/receipt-1`;
+  const r2 = `core-model-call/pass-a/${runId}/${origin}/issue-2/receipt-1`;
+  const artifact = {
+    windowId: origin, windowNumber: 1,
+    blockIds: source.map(b => b.blockId),
+    parserVersion: pv, promptVersion: m.passA.PASS_A_VERSION,
+    providerRouteIdentity: m.passA.passAPrimaryRouteIdentity(env),
+    windowPolicyIdentity: policyId(env),
+    kind: "ok", attempts: 2,
+    modelOutput: degraded.strictPassingModelOutput,
+    rawModelOutputPreDegradation: rawModelOutput,
+    ...degraded.unit,
+    usages: [
+      {
+        eventId: r1, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
+        provider: "gemini", model: "gemini-2.5-flash", status: "parse-failed",
+        inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
+        attempts: 1, usageSource: "provider-reported",
+        detail: "semantic output rejected",
+      },
+      {
+        eventId: r2, callId: "call_a_1:gemini-primary", role: "extract-pass-a",
+        provider: "gemini", model: "gemini-2.5-flash", status: "ok",
+        inputTokens: 9000, outputTokens: 1200, costUsd: 0.006, latencyMs: 30000,
+        attempts: 1, usageSource: "provider-reported",
+        detail: "degraded: 1 of 2 items excluded",
+      },
+    ],
+    routeReceipt: { selected: "gemini-2.5-flash", trigger: null },
+  };
+
+  // TAMPER: modify the surviving rule's id in globalRules to simulate content injection.
+  // The stored typed content has the original rule id, but modelOutput now carries a
+  // different id. The subset check must catch this: the stored globalRules[0].id no longer
+  // appears in the re-decoded set from modelOutput.
+  artifact.globalRules = [{
+    ...artifact.globalRules[0],
+    id: "INJECTED-FAKE",
+    statement: "Fabricated rule injected by tampering.",
+  }];
+
+  await seed(m, env, runId, 1, artifact);
+  const result = await reconstruct(m, env, runId, source, pv);
+  assertEq(result.kind, "invalid", "tampered degraded artifact must be rejected");
+  assert(
+    result.detail.includes("PASS_A_WINDOW_ARTIFACT_INVALID"),
+    `tampering must be caught. Got: ${result.detail}`,
+  );
+});
+
+});

@@ -98,6 +98,8 @@ import {
   type RunCheckpoint,
   type RunFailure,
   type TestCompletion,
+  unavailableContract,
+  zeroCounts,
 } from "../types/contracts";
 import { mintPlanRevisionId, recoveryInstanceId } from "../ids";
 import type { ContractRevision, ContractSourceInput, RunClosure } from "../types/record";
@@ -2908,6 +2910,17 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 // to say why.
                 ph.reasonCode = ph.reasonCode ?? failure.reasonCode;
               }
+            }
+
+            // EXTRACTION-UNIT CRASH: the crash happened mid-extraction. The failure-report
+            // authorizer requires contract.state "unavailable" with zeroed counts, and
+            // completion.report "building" to authorize a durable failure report. Without
+            // this, the crash leaves the run in "extracting" and the report is refused with
+            // "failure-report-not-authorized", producing a dead run with no explanation.
+            if (extractionUnitCrash) {
+              d.contract = unavailableContract();
+              d.counts = zeroCounts();
+              d.completion.report = "building";
             }
 
             // `onUnitStart` is durable before a provider purchase. If any uncaught failure

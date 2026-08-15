@@ -120,7 +120,7 @@ function validateTerminalExtractionCheckpoint(runId: string, cp: RunCheckpoint):
     cp.contract.contractHash !== null ||
     cp.contract.total !== null
   ) {
-    return "checkpoint claims a contract identity/denominator despite the pre-record extraction refusal";
+    return "checkpoint claims a contract identity/denominator despite the terminal extraction failure";
   }
   const countKeys = Object.keys(cp.counts ?? {});
   if (
@@ -128,17 +128,24 @@ function validateTerminalExtractionCheckpoint(runId: string, cp: RunCheckpoint):
     countKeys.some((key) => !(COVERAGE_BUCKETS as readonly string[]).includes(key)) ||
     COVERAGE_BUCKETS.some((bucket) => cp.counts?.[bucket] !== 0)
   ) {
-    return "checkpoint carries non-zero or malformed QA coverage despite the pre-execution extraction refusal";
+    return "checkpoint carries non-zero or malformed QA coverage despite the terminal extraction failure";
   }
-  if (
-    cp.currentAttempt !== null ||
-    cp.execution !== null ||
-    cp.attempts?.started !== 0 ||
-    cp.attempts?.completed !== 0 ||
-    cp.usage?.toolCalls?.used !== 0 ||
-    cp.usage?.browserSessions?.used !== 0
-  ) {
-    return "checkpoint carries execution activity despite the pre-execution extraction refusal";
+  // MID-EXECUTION EXTRACTION CRASH (extraction-unit-crashed): the crash happened after
+  // extraction work was underway, so the checkpoint legitimately carries execution activity
+  // (model calls, attempts, wall-clock usage). Pre-execution refusals (any other extraction-*
+  // reason) must still have zero execution activity.
+  const midExecutionCrash = reason === "extraction-unit-crashed";
+  if (!midExecutionCrash) {
+    if (
+      cp.currentAttempt !== null ||
+      cp.execution !== null ||
+      cp.attempts?.started !== 0 ||
+      cp.attempts?.completed !== 0 ||
+      cp.usage?.toolCalls?.used !== 0 ||
+      cp.usage?.browserSessions?.used !== 0
+    ) {
+      return "checkpoint carries execution activity despite the pre-execution extraction refusal";
+    }
   }
   const later = new Set(["planning", "executing", "verifying", "adjudicating"]);
   if (cp.phases.some((phase) => later.has(phase.name) && phase.state !== "pending")) {

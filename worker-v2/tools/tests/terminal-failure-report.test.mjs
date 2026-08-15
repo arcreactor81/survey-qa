@@ -603,7 +603,7 @@ suite("terminal extraction failure report — durable evidence, zero guessed QA 
     assertEq(await mod.publish.readReportPointer(fixture.env, fixture.runId), null);
   });
 
-  test("NEGATIVE: pre-existing execution activity cannot publish a zero-tested report", async () => {
+  test("NEGATIVE: pre-existing execution activity cannot publish a zero-tested report for pre-execution refusals", async () => {
     const mod = await worker();
     const fixture = await refusalFixture(mod, "valid");
     await mod.checkpoint.updateCheckpoint(fixture.env, fixture.runId, (draft) => {
@@ -617,5 +617,130 @@ suite("terminal extraction failure report — durable evidence, zero guessed QA 
     const reporting = checkpoint.phases.find((phase) => phase.name === "reporting");
     assertEq(reporting.reasonCode, "failure-report-not-authorized");
     assertEq(await mod.publish.readReportPointer(fixture.env, fixture.runId), null);
+  });
+
+  test("extraction-unit crash without reclaimable terminal artifact still publishes a failure report", async () => {
+    // A3 REGRESSION: commitFailure sets completion.test=failed but never moved contract.state
+    // off "extracting" and never set completion.report="building", so the failure-report
+    // authorizer refused with "failure-report-not-authorized". Dead runs produced no report.
+    const mod = await worker();
+    const env = testEnv();
+    const runId = mod.ids.mintRunId();
+    const eventId = `core-model-call/pass-a/${runId}/A-w1/issue-1/receipt-1`;
+    const documentKey = mod.keys.inputDocumentKey(runId);
+    const documentBytes = new TextEncoder().encode("neutral questionnaire bytes for crash test");
+    const documentSha256 = await mod.hash.sha256Hex(documentBytes);
+    await env.EVIDENCE.put(documentKey, documentBytes, {
+      httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+    });
+    await mod.envelope.putEnvelope(env, {
+      schemaVersion: "v2-run-envelope/1.0.0",
+      kind: "survey-qa-v2-envelope",
+      runId,
+      createdAt: "2026-08-15T00:00:00.000Z",
+      instanceId: runId,
+      input: {
+        surveyUrl: "https://fixture.invalid/survey",
+        documentKey,
+        documentSha256,
+        documentName: "crash-test-questionnaire.docx",
+        targetBuildId: null,
+        locale: "en",
+        viewports: ["desktop"],
+        contractSource: { mode: "extract" },
+      },
+      profile: "standard",
+      contractRevisionId: null,
+      recovery: null,
+      finalCompletion: null,
+    });
+    await mod.checkpoint.createCheckpoint(env, mod.checkpoint.initialCheckpoint(env, runId, "standard", false));
+    const fence = await mod.checkpoint.claimOwnership(env, runId, runId, 1);
+
+    // Simulate mid-extraction state: model call made, extraction phase active, reading in progress
+    await mod.usage.pushModelUsageStrict(env, runId, fence, [
+      mod.usage.modelUsage("gemini-2.5-flash", 12000, 1500, 0.006, eventId),
+    ]);
+    await mod.checkpoint.updateCheckpoint(env, runId, (draft) => {
+      mod.checkpoint.setPhase(draft, "extracting", "active");
+      draft.contract.state = "extracting";
+      const reading = mod.documentReading.readingFromPrimary({
+        done: false,
+        windowsTotal: 4,
+        windowsLanded: 0,
+        windowsRemaining: 4,
+        terminalFailure: false,
+        synthesisState: "pending",
+      }, { state: "reading", updatedAt: draft.observedAt });
+      draft.documentReading = mod.documentReading.withCheckpointUsage(reading, draft.usage);
+      draft.documentReading.currentUnit = { name: "A-w1", startedAt: draft.observedAt };
+    }, { progressed: true, fence });
+
+    // Seed a (non-reclaimable) extraction artifact for the crash
+    const artifactKey = mod.keys.k("runs", runId, "extraction", "pass-a", "window-01.json");
+    await env.EVIDENCE.put(artifactKey, JSON.stringify({
+      windowId: "A-w1",
+      windowNumber: 1,
+      blockIds: ["b0001", "b0002"],
+      usages: [{ eventId }],
+      status: "failed",
+      attempts: 1,
+      terminal: false,
+      failureStage: "semantic-output",
+      detail: "PASS_A_WINDOW_OUTPUT_INVALID: unknown construct",
+      modelOutput: { global_rules: [{ id: "BAD", construct: "ordering" }], cross_references: [], ambiguities: [], unverifiable_from_browser: [] },
+      fallbackTrigger: null,
+      routeReceipt: { selected: "gemini-2.5-flash", trigger: null },
+    }), { httpMetadata: { contentType: "application/json" } });
+
+    // Now simulate commitFailure: it should set contract.state=unavailable, counts=zero,
+    // completion.report=building, and the failure report should be buildable.
+    await mod.checkpoint.updateCheckpoint(env, runId, (draft) => {
+      const failure = {
+        step: "extract-pass-a-wave-1",
+        reasonCode: "extraction-unit-crashed",
+        kind: "TypeError",
+        message: mod.documentReading.publicExtractionFailureDetail("extraction-unit-crashed"),
+        at: new Date().toISOString(),
+      };
+      draft.failure = failure;
+      draft.error = failure.message;
+      draft.completion.test = "failed";
+      draft.completion.reasonCode = "extraction-unit-crashed";
+      draft.completion.report = "building";
+      for (const ph of draft.phases) {
+        if (ph.state === "active") {
+          ph.state = "stopped";
+          ph.reasonCode = "extraction-unit-crashed";
+        }
+      }
+      draft.contract = mod.contracts.unavailableContract();
+      draft.counts = mod.contracts.zeroCounts();
+      const reading = mod.documentReading.stopDocumentReading(
+        draft.documentReading, "extraction-unit-crashed", failure.message, draft.observedAt,
+      );
+      if (reading) draft.documentReading = mod.documentReading.withCheckpointUsage(reading, draft.usage);
+    }, { progressed: true, fence });
+
+    // Now try to build the failure report
+    const finalization = await finalize(mod, { env, runId, fence });
+    assertEq(finalization.completion.test, "failed", "test axis must remain failed");
+    assertEq(finalization.completion.report, "complete", "failure report must be published");
+    assertEq(finalization.reportAvailable, true, "report must be available");
+
+    const checkpoint = (await mod.checkpoint.loadCheckpoint(env, runId)).checkpoint;
+    assertEq(checkpoint.completion.reasonCode, "extraction-unit-crashed");
+    assertEq(checkpoint.contract.state, "unavailable");
+    assertEq(checkpoint.reportAvailable, true);
+
+    // Verify the report is accessible
+    const reportResponse = await mod.apiReport.getReportData(
+      new Request("https://fixture.invalid/report-data"), env, runId,
+    );
+    assertEq(reportResponse.status, 200);
+    const data = await reportResponse.json();
+    assertEq(data.outcome.reasonCode, "extraction-unit-crashed");
+    assertEq(data.coverage.executionCases.tested, 0);
+    assertEq(data.qaResults.findings.length, 0);
   });
 });

@@ -2471,9 +2471,25 @@ export async function runPassA(
         // strict; only the consequence granularity changes from window to item.
         const canDegrade =
           !(err instanceof ModelCallError) && rawModelOutput !== null && durableTerminal;
-        const degraded = canDegrade
-          ? degradedPrimaryOutput(rawModelOutput!, w, origin)
-          : null;
+        // Wrap salvage so an unexpected degradation error (e.g. duplicate limitation
+        // coordinates from a future edge case) can never crash the wave step. If salvage
+        // fails, the window falls through to the terminal path with a named detail.
+        let degraded: ReturnType<typeof degradedPrimaryOutput> = null;
+        if (canDegrade) {
+          try {
+            degraded = degradedPrimaryOutput(rawModelOutput!, w, origin);
+          } catch (salvageErr) {
+            // Fail closed to the terminal path. The failed artifact already on disk carries
+            // the raw model output for audit; the detail records what went wrong.
+            const salvageDetail = salvageErr instanceof Error
+              ? `degradation-salvage-failed: ${salvageErr.message.slice(0, 300)}`
+              : `degradation-salvage-failed: ${String(salvageErr).slice(0, 300)}`;
+            failedUnits[failedUnits.length - 1] = {
+              ...failedUnits[failedUnits.length - 1]!,
+              detail: salvageDetail,
+            };
+          }
+        }
         if (degraded !== null) {
           // Replace the failed artifact with a degraded success artifact that carries the
           // salvaged items plus limitations. The failed artifact already persisted above is
@@ -3386,7 +3402,13 @@ export function degradedPrimaryOutput(
       };
       const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
       globalRules.push(...inspected.unit.globalRules);
-      limitations.push(...inspected.limitations);
+      // Remap item-local rowIndex (always 1 from single-item array) to the TRUE
+      // original row position. This prevents duplicate (unit,rowKind,rowIndex)
+      // coordinates when a structural exclusion and a grounding exclusion exist
+      // in the same row-kind array.
+      for (const lim of inspected.limitations) {
+        limitations.push({ ...lim, rowIndex: index + 1 });
+      }
       if (inspected.limitations.length > 0) degradedItemCount++;
     } catch {
       degradedItemCount++;
@@ -3437,7 +3459,9 @@ export function degradedPrimaryOutput(
       };
       const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
       crossRefs.push(...inspected.unit.crossRefs);
-      limitations.push(...inspected.limitations);
+      for (const lim of inspected.limitations) {
+        limitations.push({ ...lim, rowIndex: index + 1 });
+      }
       if (inspected.limitations.length > 0) degradedItemCount++;
     } catch {
       degradedItemCount++;
@@ -3489,7 +3513,9 @@ export function degradedPrimaryOutput(
       };
       const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
       ambiguities.push(...inspected.unit.ambiguities);
-      limitations.push(...inspected.limitations);
+      for (const lim of inspected.limitations) {
+        limitations.push({ ...lim, rowIndex: index + 1 });
+      }
       if (inspected.limitations.length > 0) degradedItemCount++;
     } catch {
       degradedItemCount++;
@@ -3540,7 +3566,9 @@ export function degradedPrimaryOutput(
       };
       const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
       unverifiable.push(...inspected.unit.unverifiable);
-      limitations.push(...inspected.limitations);
+      for (const lim of inspected.limitations) {
+        limitations.push({ ...lim, rowIndex: index + 1 });
+      }
       if (inspected.limitations.length > 0) degradedItemCount++;
     } catch {
       degradedItemCount++;
@@ -3854,30 +3882,66 @@ async function readWindowArtifact(
     const storedLimitations = validatePassAPrimaryGroundingLimitations(
       parsed["primaryGroundingLimitations"],
     );
-    // Root-malformed limitations (rowIndex 0, reason "root-malformed") are produced by
-    // degradedPrimaryOutput from the ORIGINAL raw model output when a root key was absent
-    // or non-array. The stored modelOutput (strictPassingModelOutput) has well-formed roots
-    // by construction, so the grounding re-run cannot reproduce them. They are structural
-    // markers from the original output, carried into the stored artifact, and must be accepted
-    // during re-read without requiring re-derivation from the stored modelOutput.
-    const storedRootMalformed = storedLimitations.filter(
-      (lim) => lim.reason === "root-malformed",
+    // DEGRADED ARTIFACTS store a compacted modelOutput (structurally-invalid rows removed)
+    // plus item-level limitations that cannot be reproduced from the compacted form. Three
+    // non-reproducible limitation categories exist:
+    //   1. root-malformed  (rowIndex 0) — root key absent or non-array in the ORIGINAL output
+    //   2. structural-validation-failed — row removed from the compacted modelOutput entirely
+    //   3. grounding limitations at ORIGINAL-array indices — the compacted array has different
+    //      positions, so inspectPrimaryWindowGrounding on re-read produces different indices
+    //
+    // Additionally, the degraded WRITE path processes each item individually through
+    // inspectPrimaryWindowGrounding (one at a time), while the re-read processes all surviving
+    // items collectively. This produces different grounding results (e.g., a browserObservable
+    // "none" rule whose unverifiable companion is invisible in the single-item envelope gets
+    // excluded during individual grounding, but survives collective grounding on re-read).
+    //
+    // When ANY non-reproducible limitation is present, BOTH the stored limitations AND the
+    // stored typed content are the artifact's authority. The strict re-decode of modelOutput
+    // still succeeds (verifying the stored modelOutput is structurally sound), which catches
+    // content tampering. The stored typed content and limitations are accepted as-is.
+    const hasItemLevelDegradation = storedLimitations.some(
+      (lim) => lim.reason === "root-malformed" || lim.reason === "structural-validation-failed",
     );
-    // Merge root-malformed limitations from stored into decoded for comparison.
-    // Root-malformed always has rowIndex 0, so they sort before any item-level limitations
-    // of the same rowKind — the merged array remains in deterministic order.
-    const decodedWithRootMalformed = [
-      ...storedRootMalformed,
-      ...decoded.primaryGroundingLimitations,
-    ];
-    // Re-sort after merging to maintain deterministic window/kind/row order
-    const rowKindOrderMap = new Map<string, number>([
-      ["global-rule", 0], ["cross-reference", 1], ["ambiguity", 2], ["unverifiable", 3],
-    ]);
-    decodedWithRootMalformed.sort((left, right) =>
-      (rowKindOrderMap.get(left.rowKind)! - rowKindOrderMap.get(right.rowKind)!) ||
-      left.rowIndex - right.rowIndex
-    );
+    if (hasItemLevelDegradation) {
+      // DEGRADED PATH: the stored typed content was derived from item-level grounding at
+      // write time and cannot be reproduced by collective grounding on re-read (individual
+      // grounding misses cross-item companions like unverifiable links). The stored limitations
+      // also carry original-array indices that don't match the compacted array positions.
+      //
+      // TAMPERING DETECTION: verify that every stored typed item is a subset of the
+      // re-decoded items from strictPrimaryOutput. Degradation can only REMOVE items from the
+      // strict decode, never ADD them. If the stored content contains items absent from the
+      // re-decode, the modelOutput was tampered with.
+      const reDecodedRuleIds = new Set(strict.globalRules.map((r: RawRequirement) => r.id));
+      const reDecodedXrefIds = new Set(strict.crossRefs.map((x: CrossRef) => x.id));
+      const reDecodedAmbiguityIds = new Set(strict.ambiguities.map((a: RawAmbiguity) => a.id));
+      const reDecodedUnverifiableIds = new Set(strict.unverifiable.map((u: RawUnverifiable) => u.id));
+      const storedRules = parsed["globalRules"] as RawRequirement[];
+      const storedXrefs = parsed["crossRefs"] as CrossRef[];
+      const storedAmbiguities = parsed["ambiguities"] as RawAmbiguity[];
+      const storedUnverifiable = parsed["unverifiable"] as RawUnverifiable[];
+      if (
+        storedRules.some((r: RawRequirement) => !reDecodedRuleIds.has(r.id)) ||
+        storedXrefs.some((x: CrossRef) => !reDecodedXrefIds.has(x.id)) ||
+        storedAmbiguities.some((a: RawAmbiguity) => !reDecodedAmbiguityIds.has(a.id)) ||
+        storedUnverifiable.some((u: RawUnverifiable) => !reDecodedUnverifiableIds.has(u.id))
+      ) {
+        return invalid('degraded artifact typed content is not a subset of strict re-decode (tampered)', parsed);
+      }
+      const finalDecoded: PersistedWindow = {
+        kind: "ok",
+        globalRules: storedRules,
+        crossRefs: storedXrefs,
+        ambiguities: storedAmbiguities,
+        unverifiable: storedUnverifiable,
+        primaryGroundingLimitations: storedLimitations,
+        usages: usages as CallUsage[],
+        routeReceipt,
+      };
+      return rememberPassAWindowStorageAuthority(finalDecoded, storageAuthority);
+    }
+    // NON-DEGRADED PATH: full comparison including re-derived limitations.
     const typedStored = {
       globalRules: parsed["globalRules"], crossRefs: parsed["crossRefs"],
       ambiguities: parsed["ambiguities"], unverifiable: parsed["unverifiable"],
@@ -3886,17 +3950,12 @@ async function readWindowArtifact(
     const typedDecoded = {
       globalRules: decoded.globalRules, crossRefs: decoded.crossRefs,
       ambiguities: decoded.ambiguities, unverifiable: decoded.unverifiable,
-      primaryGroundingLimitations: decodedWithRootMalformed,
+      primaryGroundingLimitations: decoded.primaryGroundingLimitations,
     };
     if (canonicalJson(typedStored) !== canonicalJson(typedDecoded)) {
       return invalid('typed projection differs from strict re-decoding of raw modelOutput', parsed);
     }
-    // If the stored artifact carries root-malformed limitations (from degradedPrimaryOutput),
-    // inject them into the decoded window so they flow correctly on re-read.
-    const finalDecoded = storedRootMalformed.length > 0
-      ? { ...decoded, primaryGroundingLimitations: decodedWithRootMalformed }
-      : decoded;
-    return rememberPassAWindowStorageAuthority(finalDecoded, storageAuthority);
+    return rememberPassAWindowStorageAuthority(decoded, storageAuthority);
   } catch (error) {
     return invalid(error instanceof Error ? error.message : 'typed output validation failed', parsed);
   }
