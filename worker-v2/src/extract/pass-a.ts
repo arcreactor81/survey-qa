@@ -2602,7 +2602,8 @@ export async function runPassA(
   // otherwise one step could contain two over-budget calls while its timeout protects one.
   if (
     windows.length > 1 && remaining === 0 && !terminalFailure &&
-    failedUnits.length === 0 && providerIndependence === "independent"
+    failedUnits.length === 0 &&
+    (providerIndependence === "independent" || providerIndependence === "independent-gemini-substitute")
   ) {
     if (onUnitStart) {
       const nominated = new Set<string>();
@@ -4805,9 +4806,12 @@ export async function runPassASynthesis(
     // BUDGET MODE ("gemini"): Grok is never called at synthesis; Gemini key is resolved
     // eagerly. DeepSeek Flash remains the fallback for typed Gemini failures.
     // GROK MODE: Grok key is resolved when no fallback trigger exists (fresh primary).
+    // The Gemini key is NOT resolved eagerly in Grok mode — the existing fallback path
+    // resolves it lazily inside purchasePassASynthesis, where a MissingCredential is
+    // caught and the code falls through to DeepSeek Flash (the same behavior as 683019b).
     const grokKey = fallbackTrigger === null && passAPrimary !== "gemini"
       ? await keyFor(env, "grok") : null;
-    const geminiKey = passAPrimary === "gemini" || fallbackTrigger !== null
+    const geminiKey = passAPrimary === "gemini"
       ? await keyForGemini(env) : null;
     const deepseekKey = await keyFor(env, "deepseek");
     purchaseEnv = {
@@ -5458,26 +5462,37 @@ async function buildPassASynthesisContext(
     );
     requestHash = `sha256:${await sha256Hex(JSON.stringify({ inputHash, wireFailureDetail }))}`;
   } else {
+    const isBudgetMode = validatePassAPrimaryMode(env) === "gemini";
     const grokBody = chatRequestBodyText(grokRequestShape(env), optionsForCall);
-    const geminiBody = chatRequestBodyText(geminiGrokSubstituteRequestShape(env), optionsForCall);
     const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall);
     grokWireBytes = utf8ByteLength(grokBody);
-    geminiWireBytes = utf8ByteLength(geminiBody);
     flashWireBytes = utf8ByteLength(flashBody);
-    wireBytes = Math.max(grokWireBytes, geminiWireBytes, flashWireBytes);
+    // Budget mode adds the Gemini body to the wire preflight and hash. Grok mode is
+    // byte-semantics-identical to 683019b: only grok + flash bodies participate.
+    let geminiBody: string | null = null;
+    if (isBudgetMode) {
+      geminiBody = chatRequestBodyText(geminiGrokSubstituteRequestShape(env), optionsForCall);
+      geminiWireBytes = utf8ByteLength(geminiBody);
+    }
+    wireBytes = isBudgetMode
+      ? Math.max(grokWireBytes, geminiWireBytes, flashWireBytes)
+      : Math.max(grokWireBytes, flashWireBytes);
+    const preflightBodies: { route: string; bodyText: string }[] = [
+      { route: "grok-4.6", bodyText: grokBody },
+      ...(geminiBody !== null ? [{ route: "gemini-2.5-flash", bodyText: geminiBody }] : []),
+      { route: "deepseek-v4-flash", bodyText: flashBody },
+    ];
     const wirePreflight = preflightExtractionRequestBodies(
       env,
-      [
-        { route: "grok-4.6", bodyText: grokBody },
-        { route: "gemini-2.5-flash", bodyText: geminiBody },
-        { route: "deepseek-v4-flash", bodyText: flashBody },
-      ],
+      preflightBodies,
       { name: "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES", maxBytes },
     );
     wireFailureDetail = wirePreflight.ok
       ? null
       : extractionWireFailureDetail("A-synthesis", sourceBlockIds.length, wirePreflight);
-    requestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, geminiBody, flashBody }))}`;
+    requestHash = isBudgetMode
+      ? `sha256:${await sha256Hex(JSON.stringify({ grokBody, geminiBody, flashBody }))}`
+      : `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
   }
   const policyIdentity = [
     PASS_A_SYNTHESIS_VERSION,
