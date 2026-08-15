@@ -3,9 +3,9 @@ export const GROK_RATE_ATTESTATION_SCHEMA = "survey-qa-grok-rate-attestation/1.0
 export const XAI_CATALOGUE_ORIGIN = "https://api.x.ai";
 // xAI documents this as the full language-model schema. `/v1/models/{id}` is deliberately not
 // used: it is the minimal model view and does not define the full long-context fields.
-export const XAI_CATALOGUE_PATH = "/v1/language-models/grok-4.6";
+export const XAI_CATALOGUE_PATH = "/v1/language-models/grok-4.5";
 export const XAI_CATALOGUE_URL = `${XAI_CATALOGUE_ORIGIN}${XAI_CATALOGUE_PATH}`;
-export const EXACT_GROK_MODEL = "grok-4.6";
+export const EXACT_GROK_MODEL = "grok-4.5";
 export const EXACT_XAI_OWNER = "xai";
 export const MAX_CATALOGUE_BYTES = 16 * 1024;
 type Json = null | boolean | number | string | Json[] | { readonly [key: string]: Json };
@@ -41,7 +41,7 @@ export function parseGrokRateCatalogue(body: string, observedAt: string): GrokRa
   if (!isRfc3339Utc(observedAt)) refuse("RATE_CATALOGUE_TIME_INVALID", "observation time is not canonical UTC RFC3339");
   const row = asRecord(parseUniqueJson(body), "$", MODEL_KEYS);
   const id = requiredString(row, "id", "$"), object = requiredString(row, "object", "$"), ownedBy = requiredString(row, "owned_by", "$");
-  if (id !== EXACT_GROK_MODEL || object !== "model" || ownedBy !== EXACT_XAI_OWNER) refuse("RATE_CATALOGUE_IDENTITY_INVALID", "catalogue model identity is not exact grok-4.6/xai/model");
+  if (id !== EXACT_GROK_MODEL || object !== "model" || ownedBy !== EXACT_XAI_OWNER) refuse("RATE_CATALOGUE_IDENTITY_INVALID", "catalogue model identity is not exact grok-4.5/xai/model");
   const created = requiredNonNegativeInteger(row, "created", "$"), base = tokenRates(row, "", "$"), threshold = requiredNonNegativeInteger(row, "long_context_threshold", "$"), searchTicksPerSearch = requiredNonNegativeInteger(row, "search_price", "$");
   const rawTextRates = longTextRates(row, "$"), effectiveRates = threshold === 0 ? null : effectiveLongRates(base, rawTextRates);
   if (threshold === 0 && rawTextRates !== null) refuse("RATE_CATALOGUE_LONG_CONTEXT_INVALID", "a no-tier model may not declare long-context text prices");

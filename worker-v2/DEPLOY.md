@@ -20,9 +20,9 @@ newer promotions and must not be edited until a real promotion completes.
 | Standard source cap | exactly **$5** in the frozen config and authenticated policy |
 | Wall cap | exactly **14,400,000 ms** (4 hours) |
 | Source-map boundary | top-level `upload_source_maps` is exactly boolean `false`; fresh pinned-Wrangler outdirs contain zero maps and supersede prior map-bearing evidence |
-| Normal extraction topology | exact `grok-4.6` Pass A + `deepseek-v4-pro` Pass B |
+| Normal extraction topology | exact `grok-4.5` Pass A + `deepseek-v4-pro` Pass B |
 | Eligible Pass-A fallback | retained eligible typed Grok failure only -> `deepseek-v4-flash`; Flash+Pro is reduced same-provider independence and must not seal as normal corroboration |
-| Grok rate prerequisite | exact 16-field `survey-qa-grok-rate-binding/1.0.0` binding for `grok-4.6`: source `owner-dashboard-copy`; policy `max-known-text-tier/1.0.0`; observed **2026-08-13**; canonical SHA-256 `be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5`; 500K context; 200K long-context threshold; <=200K input/cached/output **$2/$0.50/$6 per Mtok**; >200K **$4/$1/$12 per Mtok**; max-known reservation **$4/$12 per Mtok** |
+| Grok rate prerequisite | exact 16-field `survey-qa-grok-rate-binding/1.0.0` binding for `grok-4.5`: source `owner-console-confirmation`; policy `max-known-text-tier/1.0.0`; observed **2026-08-15**; canonical SHA-256 `9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e`; 500K context; 200K long-context threshold; <=200K input/cached/output **$2/$0.30/$6 per Mtok**; >200K **$4/$0.60/$12 per Mtok**; max-known reservation **$4/$12 per Mtok** |
 | Secrets Store bindings | ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, XAI_API_KEY |
 | Direct secret names | RECORD_SIGNING_KEY, RECORD_SIGNING_KEY_ID, JUDGEMENT_SIGNING_KEY, JUDGEMENT_SIGNING_KEY_ID |
 
@@ -1050,22 +1050,22 @@ const v=c.vars||{}; eq(v.V2_PREFIX,"v2/","wrong prefix");
 eq(v.CAP_STANDARD_MAX_USD,"5","source cap not $5");
 eq(v.CAP_WALL_CLOCK_MS,"14400000","wall cap not 4h"); eq(v.VISUAL_SHADOW_ENABLED,"false","visual enabled");
 if(Object.hasOwn(v,"DEV_SEED")) fail("DEV_SEED present");
-eq(v.EXTRACT_PASS_A_PRIMARY,"gemini","wrong Pass-A primary mode (budget mode requires gemini)");
-eq(v.GROK_MODEL,"grok-4.6","wrong normal Pass-A model");
+eq(v.EXTRACT_PASS_A_PRIMARY,"grok","wrong Pass-A primary mode");
+eq(v.GROK_MODEL,"grok-4.5","wrong normal Pass-A model");
 const grokRateBinding={
  GROK_RATE_BINDING_SCHEMA:"survey-qa-grok-rate-binding/1.0.0",
  GROK_RATE_POLICY:"max-known-text-tier/1.0.0",
- GROK_RATE_SOURCE:"owner-dashboard-copy",
- GROK_RATE_ATTESTED_MODEL:"grok-4.6",
- GROK_RATE_ATTESTED_AT:"2026-08-13",
- GROK_RATE_RECEIPT_SHA256:"be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+ GROK_RATE_SOURCE:"owner-console-confirmation",
+ GROK_RATE_ATTESTED_MODEL:"grok-4.5",
+ GROK_RATE_ATTESTED_AT:"2026-08-15",
+ GROK_RATE_RECEIPT_SHA256:"9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
  GROK_CONTEXT_WINDOW_TOKENS:"500000",
  GROK_INPUT_USD_PER_MTOK:"2",
- GROK_CACHED_INPUT_USD_PER_MTOK:"0.5",
+ GROK_CACHED_INPUT_USD_PER_MTOK:"0.3",
  GROK_OUTPUT_USD_PER_MTOK:"6",
  GROK_LONG_CONTEXT_THRESHOLD_TOKENS:"200000",
  GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK:"4",
- GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK:"1",
+ GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK:"0.6",
  GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK:"12",
  GROK_MAX_INPUT_USD_PER_MTOK:"4",
  GROK_MAX_OUTPUT_USD_PER_MTOK:"12"

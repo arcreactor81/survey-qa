@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Mutation evidence for the reviewed Grok 4.6 tier binding and max-tier flat ledger. */
+/** Mutation evidence for the reviewed Grok 4.5 tier binding and max-tier flat ledger. */
 
 import { runMutantSuite } from "./mutate-runner.mjs";
 
@@ -99,8 +99,8 @@ await runMutantSuite({
       breaks: "an unreviewed source label can activate paid calls",
       file: GROK,
       find:
-        '  if (value === "owner-dashboard-copy" || value === "authenticated-xai-catalogue") return value;',
-      replace: '  if (value !== undefined) return "owner-dashboard-copy";',
+        '  if (value === "owner-dashboard-copy" || value === "owner-console-confirmation" || value === "authenticated-xai-catalogue") return value;',
+      replace: '  if (value !== undefined) return "owner-console-confirmation";',
       kills: [REFUSE],
     },
     {

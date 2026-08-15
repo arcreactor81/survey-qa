@@ -18,11 +18,11 @@ import {
   type ProviderSpec,
 } from "./chat";
 
-export const DEFAULT_GROK_MODEL = "grok-4.6";
+export const DEFAULT_GROK_MODEL = "grok-4.5";
 export const GROK_FLASH_ROUTE_VERSION = "grok-gemini-flash-route/1.0.0";
 export const GROK_RATE_BINDING_SCHEMA = "survey-qa-grok-rate-binding/1.0.0";
 export const GROK_RATE_POLICY = "max-known-text-tier/1.0.0";
-export type GrokRateSource = "owner-dashboard-copy" | "authenticated-xai-catalogue";
+export type GrokRateSource = "owner-dashboard-copy" | "owner-console-confirmation" | "authenticated-xai-catalogue";
 
 interface CanonicalRate {
   usdPerMTok: number;
@@ -63,18 +63,18 @@ function canonicalInteger(value: string | undefined, name: string, allowZero: bo
 }
 
 function rateSource(value: string | undefined): GrokRateSource {
-  if (value === "owner-dashboard-copy" || value === "authenticated-xai-catalogue") return value;
+  if (value === "owner-dashboard-copy" || value === "owner-console-confirmation" || value === "authenticated-xai-catalogue") return value;
   throw new Error("GROK_RATE_SOURCE must name the closed reviewed evidence channel");
 }
 
 function observation(value: string | undefined, source: GrokRateSource): string {
   const observedAt = value ?? "";
-  if (source === "owner-dashboard-copy") {
+  if (source === "owner-dashboard-copy" || source === "owner-console-confirmation") {
     if (
       !/^\d{4}-\d{2}-\d{2}$/.test(observedAt) ||
       new Date(observedAt + "T00:00:00.000Z").toISOString().slice(0, 10) !== observedAt
     ) {
-      throw new Error("owner-dashboard-copy requires an exact canonical observation date");
+      throw new Error(source + " requires an exact canonical observation date");
     }
     return observedAt;
   }
@@ -286,7 +286,7 @@ export function isOutputCeilingTruncation(error: ModelCallError): boolean {
 /** Only quota/exhaustion/non-response/unusable-output failures authorize Flash. */
 export function grokFlashFallbackEligible(error: ModelCallError): boolean {
   // `invalid-content` is eligible only after exact model identity was established. A missing,
-  // redirected, or aliased response model is not evidence that grok-4.6 produced unusable
+  // redirected, or aliased response model is not evidence that grok-4.5 produced unusable
   // content, so it cannot authorize a purchase from another provider.
   if (error.failureKind === "invalid-content") {
     return error.usage.usageSource !== "unverified-model-rate-ceiling";

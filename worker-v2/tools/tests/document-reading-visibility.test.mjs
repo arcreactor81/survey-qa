@@ -31,7 +31,7 @@ function historicalUsage(runId, windowNumber, status = "ok") {
     callId: `call_a_${windowNumber}`,
     role: `extract-pass-a-w${windowNumber}`,
     provider: "grok",
-    model: "grok-4.6",
+    model: "grok-4.5",
     status,
     inputTokens: 100,
     outputTokens: 20,
@@ -73,7 +73,7 @@ function historicalSuccess(mod, env, doc, runId, windowNumber, promptVersion) {
     unverifiable: [],
     primaryGroundingLimitations: [],
     usages: [historicalUsage(runId, windowNumber)],
-    routeReceipt: { selected: "grok-4.6", trigger: null },
+    routeReceipt: { selected: "grok-4.5", trigger: null },
   };
 }
 

@@ -68,20 +68,20 @@ function envFor(overrides = {}) {
     XAI_API_KEY: "test-xai-key",
     DEEPSEEK_API_KEY: "test-deepseek-key",
     GEMINI_API_KEY: "test-gemini-key",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -179,7 +179,7 @@ function installProvider(responder) {
   return {
     calls,
     count: (unit) => calls.filter((call) => call.unit === unit).length,
-    grokCalls: () => calls.filter((call) => call.model === "grok-4.6"),
+    grokCalls: () => calls.filter((call) => call.model === "grok-4.5"),
     geminiCalls: () => calls.filter((call) => call.model === "gemini-2.5-flash"),
     synthesisCalls: () => calls.filter((call) => call.unit === "A-synthesis"),
     reset: () => { calls.length = 0; },
@@ -359,7 +359,7 @@ test("grok-mode synthesis unchanged (regression)", async () => {
     // The synthesis call must have used Grok
     const synthCalls = provider.synthesisCalls();
     assertEq(synthCalls.length, 1, "one synthesis call");
-    assertEq(synthCalls[0].model, "grok-4.6", "synthesis used Grok (not Gemini)");
+    assertEq(synthCalls[0].model, "grok-4.5", "synthesis used Grok (not Gemini)");
 
     // The synthesis callId should NOT have :gemini-primary
     const synthUsages = done.issuedCalls.filter(
@@ -369,9 +369,9 @@ test("grok-mode synthesis unchanged (regression)", async () => {
     assertEq(synthUsages[0].provider, "grok", "synthesis usage is Grok");
     assertEq(synthUsages[0].callId, "call_a_synthesis", "no callId suffix in grok mode");
 
-    // Route receipt is grok-4.6
-    const synthReceipt = done.routeReceipts.find((r) => r.selected === "grok-4.6");
-    assert(synthReceipt !== null, "synthesis route receipt is grok-4.6");
+    // Route receipt is grok-4.5
+    const synthReceipt = done.routeReceipts.find((r) => r.selected === "grok-4.5");
+    assert(synthReceipt !== null, "synthesis route receipt is grok-4.5");
   } finally {
     provider.restore();
   }
@@ -384,7 +384,7 @@ test("budget-mode: Grok is UNREACHABLE from the synthesis path (stub proves zero
   const runId = "run_budget_synth_no_grok";
   const grokInvocations = [];
   const provider = installProvider(({ unit, model }) => {
-    if (model === "grok-4.6") {
+    if (model === "grok-4.5") {
       grokInvocations.push({ unit, model });
     }
     if (unit !== "A-synthesis") return { value: { ...emptyPrimary(), cross_references: unit === "A-w1" ? [xref("XREF-01", "b0001", TEXT.b0001)] : [] } };

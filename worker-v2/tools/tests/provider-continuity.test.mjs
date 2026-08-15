@@ -27,20 +27,20 @@ function env(overrides = {}) {
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     EXTRACT_MAX_ATTEMPTS: "1",
     DEEPSEEK_FALLBACK_MAX_ATTEMPTS: "1",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -386,7 +386,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
 
     const httpTimeout = new m.chat.ModelCallError(
       "fixture HTTP 408",
-      { callId: "c", role: "r", provider: "grok", model: "grok-4.6", status: "error",
+      { callId: "c", role: "r", provider: "grok", model: "grok-4.5", status: "error",
         inputTokens: 1, outputTokens: 1, costUsd: 1, latencyMs: 1, attempts: 1 },
       "timeout-or-network",
       408,
@@ -434,7 +434,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
           () => m.chat.chatJson(
             {
               provider: "grok",
-              model: "grok-4.6",
+              model: "grok-4.5",
               gatewaySuffix: "/v1",
               directBaseUrl: "https://fixture.invalid",
               apiKey: "fixture",
@@ -476,7 +476,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
         const error = await assertThrows(
           () => m.chat.chatJson(
             {
-              provider: "grok", model: "grok-4.6", gatewaySuffix: "/v1",
+              provider: "grok", model: "grok-4.5", gatewaySuffix: "/v1",
               directBaseUrl: "https://fixture.invalid", apiKey: "fixture",
               inputUsdPerMTok: 1, outputUsdPerMTok: 1, extraBody: {},
             },
@@ -916,7 +916,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
   });
 });
 
-suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigger", () => {
+suite("PROVIDER ACTIVATION - Grok 4.5 + Pro, Flash only behind a retained trigger", () => {
   const extractionEnv = (overrides = {}) => env({
     EXTRACT_PASS_A_WINDOW_CHARS: "999999",
     EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "1",
@@ -926,7 +926,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
     ...overrides,
   });
 
-  test("normal extraction buys exact Grok 4.6 plus Pro and zero Flash requests", async () => {
+  test("normal extraction buys exact Grok 4.5 plus Pro and zero Flash requests", async () => {
     const m = await mod();
     const value = extractionEnv();
     const stub = stubSequence([
@@ -937,7 +937,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       const passA = await m.passA.runPassA(value, "run_normal_route", oneBlockDocument(), "fixture.docx");
       const passB = await m.passB.runPassB(value, "run_normal_route", oneBlockDocument(), "fixture.docx");
       assertEq(stub.requests.length, 2);
-      assertEq(stub.requests[0].body.model, "grok-4.6");
+      assertEq(stub.requests[0].body.model, "grok-4.5");
       assertEq(stub.requests[1].body.model, "deepseek-v4-pro");
       assertEq(stub.requests.filter((request) => request.body.model === "deepseek-v4-flash").length, 0);
       assertEq(passA.providerIndependence, "independent");
@@ -946,7 +946,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
         ...passA,
         providerIndependence: "reduced-same-provider-fallback",
       }), null, "a stored independence label cannot override its trigger denominator");
-      assertEq(passA.routeReceipts[0].selected, "grok-4.6");
+      assertEq(passA.routeReceipts[0].selected, "grok-4.5");
       assertEq(passB.model, m.deepseek.deepseekPassBIdentity(value));
       approx(passA.issuedCalls[0].costUsd, 0.00064, "Grok conservative max-tier cost receipt");
       approx(passB.issuedCalls[0].costUsd, 0.0001218, "exact Pro receipt");
@@ -971,7 +971,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       try {
         const result = await m.passA.runPassA(value, `run_eligible_${label}`, oneBlockDocument(), "fixture.docx");
         assertEq(stub.requests.length, 2, `${label} makes one Grok and one Flash request`);
-        assertEq(stub.requests[0].body.model, "grok-4.6");
+        assertEq(stub.requests[0].body.model, "grok-4.5");
         assertEq(stub.requests[1].body.model, "deepseek-v4-flash");
         assertEq(result.providerIndependence, "reduced-same-provider-fallback");
         assertEq(m.passA.validatePassAProviderState(result), "reduced-same-provider-fallback");
@@ -994,7 +994,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       try {
         const result = await m.passA.runPassA(value, `run_ineligible_${status}`, oneBlockDocument(), "fixture.docx");
         assertEq(stub.requests.length, 1, `HTTP ${status} must not activate Flash`);
-        assertEq(stub.requests[0].body.model, "grok-4.6");
+        assertEq(stub.requests[0].body.model, "grok-4.5");
         assertEq(result.routeReceipts.length, 0);
         assertEq(result.failedUnits.length, 1);
         const key = m.keys.k("runs", `run_ineligible_${status}`, "extraction", "pass-a", "window-01.json");
@@ -1009,7 +1009,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
 
   test("a missing or mismatched Grok response model cannot authorize Flash", async () => {
     const m = await mod();
-    for (const reportedModel of [undefined, "grok-4.6-latest", "grok-4.5"]) {
+    for (const reportedModel of [undefined, "grok-4.5-latest", "grok-4.6"]) {
       const value = extractionEnv({ EVIDENCE: memoryR2() });
       const stub = stubSequence([
         () => chatResponse(reportedModel, passAPayload(), 10, 5),
@@ -1075,7 +1075,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       assertEq(stub.requests.length, 1, "the injected crash happens before Flash");
       const resumed = await m.passA.runPassA(value, "run_restart_trigger", oneBlockDocument(), "fixture.docx");
       assertEq(stub.requests.length, 2, "restart buys only the pending Flash request");
-      assertEq(stub.requests[0].body.model, "grok-4.6");
+      assertEq(stub.requests[0].body.model, "grok-4.5");
       assertEq(stub.requests[1].body.model, "deepseek-v4-flash");
       assertEq(resumed.routeReceipts[0].selected, "deepseek-v4-flash");
       assertEq(resumed.accountingCalls.length, 2);
@@ -1089,15 +1089,15 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
     }
   });
 
-  test("Grok 4.6 rate/model attestation fails before any request", async () => {
+  test("Grok 4.5 rate/model attestation fails before any request", async () => {
     const m = await mod();
-    const alias = "grok-4.6-latest";
+    const alias = "grok-4.5-latest";
     const ownerReceipt = m.grok.grokRateReceiptCanonicalText(extractionEnv());
-    const aliasReceipt = ownerReceipt.replace('"model":"grok-4.6"', '"model":"grok-4.6-latest"');
+    const aliasReceipt = ownerReceipt.replace('"model":"grok-4.5"', '"model":"grok-4.5-latest"');
     assert(aliasReceipt !== ownerReceipt, "alias fixture must alter canonical model identity");
     const aliasDigest = createHash("sha256").update(aliasReceipt, "utf8").digest("hex");
     for (const override of [
-      { GROK_RATE_ATTESTED_MODEL: "grok-4.5" },
+      { GROK_RATE_ATTESTED_MODEL: "grok-4.6" },
       { GROK_RATE_ATTESTED_AT: "" },
       { GROK_INPUT_USD_PER_MTOK: undefined },
       {
@@ -1169,14 +1169,14 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       kind: m.passA.GROK_FALLBACK_TRIGGER_VERSION,
       failureKind: "rate-limited",
       httpStatus: 429,
-      grokModel: "grok-4.6",
+      grokModel: "grok-4.5",
       grokUsageEventId: grokEventId,
       detail: "fixture quota trigger",
     };
     const calls = [
       {
         eventId: grokEventId, callId: "call_a_1", role: "extract-pass-a", provider: "grok",
-        model: "grok-4.6", status: "error", inputTokens: 10, outputTokens: 10,
+        model: "grok-4.5", status: "error", inputTokens: 10, outputTokens: 10,
         costUsd: 0.00018, latencyMs: 0, attempts: 1, usageSource: "conservative-ceiling",
       },
       {
@@ -1193,7 +1193,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       providerIndependence: "reduced-same-provider-fallback",
       pass: "A",
       provider: "grok-primary/deepseek-flash-fallback",
-      model: "grok-4.6",
+      model: "grok-4.5",
       requirements: [], ambiguities: [], unverifiable: [], dispositions: [], constructs: [],
       failedUnits: [], calls, crossRefs: [],
       routeReceipts: [{ selected: "deepseek-v4-flash", trigger }],

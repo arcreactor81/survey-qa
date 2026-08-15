@@ -164,7 +164,7 @@ methods, not success verdicts.** Neither means that a survey passed QA.
 
 ### Pass A: cross-cutting document read
 
-Normal Pass A uses exact `grok-4.6`. It reads the entire questionnaire for survey-wide rules and
+Normal Pass A uses exact `grok-4.5`. It reads the entire questionnaire for survey-wide rules and
 cross-references: requirements such as “every question must…”, exceptions, global routing
 conventions, and other statements a question-by-question reader is structurally likely to miss.
 Pass A emits raw requirements, ambiguities, browser-unverifiable mandates, and resolved/unresolved
@@ -219,13 +219,13 @@ unavailability, timeout/network, quota exhaustion, or invalid/empty returned con
 model identity). It substitutes DeepSeek Flash for Pass A while DeepSeek Pro remains Pass B. A
 Flash+Pro result is deliberately marked reduced same-provider independence and cannot pose as normal
 cross-provider corroboration. The paid-call prerequisite is the exact 16-field
-`survey-qa-grok-rate-binding/1.0.0` binding for `grok-4.6`: source `owner-dashboard-copy`, policy
-`max-known-text-tier/1.0.0`, observed 13 August 2026, canonical SHA-256
-`be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5`, 500K context, and a 200K
-long-context threshold. Input/cached-input/output rates are $2/$0.50/$6 per Mtok at or below 200K
-and $4/$1/$12 above 200K; the max-known reservation is $4/$12 per Mtok. A future authenticated
+`survey-qa-grok-rate-binding/1.0.0` binding for `grok-4.5`: source `owner-console-confirmation`, policy
+`max-known-text-tier/1.0.0`, observed 15 August 2026, canonical SHA-256
+`9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e`, 500K context, and a 200K
+long-context threshold. Input/cached-input/output rates are $2/$0.30/$6 per Mtok at or below 200K
+and $4/$0.60/$12 above 200K; the max-known reservation is $4/$12 per Mtok. A future authenticated
 exact-model catalogue receipt is an independent cross-check only, not the provenance of this
-owner-dashboard-copy binding or a release prerequisite. No 4.5 rate is reused.
+owner-console-confirmation binding or a release prerequisite. No 4.6 rate is reused.
 
 In short:
 
@@ -636,7 +636,7 @@ configuration behind a live run.
 | Area | Current capability | Named limit / next closure |
 |---|---|---|
 | DOCX | Accepted-view OOXML blocks, tables, notes, headers/footers, comments, alt text, formatting evidence, and coverage accounting | Auto-numbering semantics, unresolved styles/themes, and some OOXML constructs remain reported gaps; neutral default semantics and the shop-grey profile are under final release-blocking audit |
-| Extraction | Normal exact `grok-4.6` global pass plus DeepSeek Pro block pass, the reviewed exact 16-field owner-dashboard-copy Grok rate binding, persisted/resumable units, merge/diff/ledger/expansion, and a fail-closed seal | A qualifying typed Grok failure can use Flash for Pass A only; Flash+Pro has reduced same-provider independence and cannot seal as normal corroboration. An authenticated exact-model catalogue receipt remains a future independent cross-check, not a release prerequisite |
+| Extraction | Normal exact `grok-4.5` global pass plus DeepSeek Pro block pass, the reviewed exact 16-field owner-console-confirmation Grok rate binding, persisted/resumable units, merge/diff/ledger/expansion, and a fail-closed seal | A qualifying typed Grok failure can use Flash for Pass A only; Flash+Pro has reduced same-provider independence and cannot seal as normal corroboration. An authenticated exact-model catalogue receipt remains a future independent cross-check, not a release prerequisite |
 | Planning | Deterministic floor plus bounded exploration; denominator locked to the seal; multi-path seeding has A-G GO for its declared capability | Pairwise/multiselect and other unsupported seed classes remain named/withheld |
 | Browser | Real Browser Rendering, screen/PNG/accessibility capture, scoped actions, value setting, radio/checkbox/grid/allocation, and full-identity native single-select support | Desktop only; custom widgets, native multi-select, drag/drop, back navigation, and independent repeats are not certified |
 | Verification | Deterministic tri-state route, boundary, and option-set predicates | Other case kinds remain insufficient; the model verifier is unwired |

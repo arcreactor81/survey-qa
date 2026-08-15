@@ -167,7 +167,7 @@ export interface GrokFallbackTrigger {
 }
 
 export interface PassARouteReceipt {
-  selected: "grok-4.6" | "gemini-2.5-flash" | "deepseek-v4-flash";
+  selected: "grok-4.5" | "gemini-2.5-flash" | "deepseek-v4-flash";
   trigger: GrokFallbackTrigger | null;
 }
 
@@ -1219,7 +1219,7 @@ async function readSubWindowsWithSplit(
         ...strict,
         primaryGroundingLimitations: [],
         usages: [usage],
-        routeReceipt: { selected: "grok-4.6", trigger: null },
+        routeReceipt: { selected: "grok-4.5", trigger: null },
       }, subBlocks, subOrigin);
 
       const landed = inspected.unit;
@@ -1228,7 +1228,7 @@ async function readSubWindowsWithSplit(
       result.ambiguities.push(...landed.ambiguities);
       result.unverifiable.push(...landed.unverifiable);
       result.primaryGroundingLimitations.push(...landed.primaryGroundingLimitations);
-      result.routeReceipts.push({ selected: "grok-4.6", trigger: null });
+      result.routeReceipts.push({ selected: "grok-4.5", trigger: null });
 
       // Persist the successful sub-window
       await persistSubWindow(env, runId, subOrigin, {
@@ -1431,7 +1431,7 @@ export async function runPassA(
       maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
     };
     const check = preflightExtractionRequestBodies(env, [
-      { route: "grok-4.6", bodyText: chatRequestBodyText(grokRequestShape(env), optionsForCall) },
+      { route: "grok-4.5", bodyText: chatRequestBodyText(grokRequestShape(env), optionsForCall) },
       {
         route: "gemini-2.5-flash",
         bodyText: chatRequestBodyText(geminiGrokSubstituteRequestShape(env), optionsForCall),
@@ -1879,7 +1879,7 @@ export async function runPassA(
           accountingCalls.push(usage);
           value = outcome.value;
           rawModelOutput = outcome.value;
-          routeReceipt = { selected: "grok-4.6", trigger: null };
+          routeReceipt = { selected: "grok-4.5", trigger: null };
         } catch (err) {
           if (!(err instanceof ModelCallError) || !grokFlashFallbackEligible(err)) throw err;
 
@@ -1887,7 +1887,7 @@ export async function runPassA(
           // This intercepts before the substitution chain because splitting attacks
           // the CAUSE (window too large for the model's output budget), while
           // substitution attacks availability — and the substitute has a similar
-          // output ceiling (measured: ~65k tokens on both grok-4.6 and gemini-2.5-flash).
+          // output ceiling (measured: ~65k tokens on both grok-4.5 and gemini-2.5-flash).
           if (isOutputCeilingTruncation(err) && w.length >= 2) {
             const truncUsage = settlementUsage(runId, origin, issue, 1, err.usage);
             purchasedUsages.push(truncUsage);
@@ -1922,7 +1922,7 @@ export async function runPassA(
               // The modelOutput is the combined sub-window results in the expected format.
               const splitRouteReceipt: PassARouteReceipt = splitResult.routeReceipts.length > 0
                 ? splitResult.routeReceipts[0]!
-                : { selected: "grok-4.6", trigger: null };
+                : { selected: "grok-4.5", trigger: null };
               const combinedModelOutput: Record<string, unknown> = {
                 global_rules: splitResult.globalRules.map((rule) => ({
                   id: rule.id,
@@ -2514,7 +2514,7 @@ export async function runPassA(
             usages: degradedUsages,
             routeReceipt: passAPrimary === "gemini"
               ? { selected: "gemini-2.5-flash" as const, trigger: null }
-              : { selected: "grok-4.6" as const, trigger: fallbackTrigger },
+              : { selected: "grok-4.5" as const, trigger: fallbackTrigger },
           };
           const degradedArtifact = JSON.stringify(
             {
@@ -3398,7 +3398,7 @@ export function degradedPrimaryOutput(
       const windowUnit: PersistedWindow = {
         kind: "ok", ...strict,
         primaryGroundingLimitations: [], usages: [],
-        routeReceipt: { selected: "grok-4.6", trigger: null },
+        routeReceipt: { selected: "grok-4.5", trigger: null },
       };
       const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
       globalRules.push(...inspected.unit.globalRules);
@@ -3455,7 +3455,7 @@ export function degradedPrimaryOutput(
       const windowUnit: PersistedWindow = {
         kind: "ok", ...strict,
         primaryGroundingLimitations: [], usages: [],
-        routeReceipt: { selected: "grok-4.6", trigger: null },
+        routeReceipt: { selected: "grok-4.5", trigger: null },
       };
       const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
       crossRefs.push(...inspected.unit.crossRefs);
@@ -3509,7 +3509,7 @@ export function degradedPrimaryOutput(
       const windowUnit: PersistedWindow = {
         kind: "ok", ...strict,
         primaryGroundingLimitations: [], usages: [],
-        routeReceipt: { selected: "grok-4.6", trigger: null },
+        routeReceipt: { selected: "grok-4.5", trigger: null },
       };
       const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
       ambiguities.push(...inspected.unit.ambiguities);
@@ -3562,7 +3562,7 @@ export function degradedPrimaryOutput(
       const windowUnit: PersistedWindow = {
         kind: "ok", ...strict,
         primaryGroundingLimitations: [], usages: [],
-        routeReceipt: { selected: "grok-4.6", trigger: null },
+        routeReceipt: { selected: "grok-4.5", trigger: null },
       };
       const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
       unverifiable.push(...inspected.unit.unverifiable);
@@ -3605,7 +3605,7 @@ export function degradedPrimaryOutput(
       unverifiable,
       primaryGroundingLimitations: validatedLimitations,
       usages: [],
-      routeReceipt: { selected: "grok-4.6", trigger: null },
+      routeReceipt: { selected: "grok-4.5", trigger: null },
     },
     limitations: validatedLimitations,
     degradedItemCount,
@@ -5016,7 +5016,7 @@ async function purchasePassASynthesis(
         calls.push(usage);
         value = outcome.value;
         rawModelOutput = outcome.value;
-        routeReceipt = { selected: "grok-4.6", trigger: null };
+        routeReceipt = { selected: "grok-4.5", trigger: null };
       } catch (error) {
         if (!(error instanceof ModelCallError) || !grokFlashFallbackEligible(error)) throw error;
         const usage = settlementUsage(runId, "A-synthesis", issue, 1, error.usage);
@@ -5537,7 +5537,7 @@ async function buildPassASynthesisContext(
       ? Math.max(grokWireBytes, geminiWireBytes, flashWireBytes)
       : Math.max(grokWireBytes, flashWireBytes);
     const preflightBodies: { route: string; bodyText: string }[] = [
-      { route: "grok-4.6", bodyText: grokBody },
+      { route: "grok-4.5", bodyText: grokBody },
       ...(geminiBody !== null ? [{ route: "gemini-2.5-flash", bodyText: geminiBody }] : []),
       { route: "deepseek-v4-flash", bodyText: flashBody },
     ];
@@ -6334,7 +6334,7 @@ function parseFallbackTrigger(value: unknown, usages: CallUsage[]): GrokFallback
 function parseRouteReceipt(value: unknown, usages: CallUsage[]): PassARouteReceipt | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const row = value as Partial<PassARouteReceipt>;
-  if (row.selected === "grok-4.6" && row.trigger === null) {
+  if (row.selected === "grok-4.5" && row.trigger === null) {
     return usages.some((usage) => usage.provider === "deepseek" || usage.provider === "gemini")
       ? null
       : { selected: row.selected, trigger: null };
@@ -6450,7 +6450,7 @@ function validatePassARouteReceiptForUnit(
   const okUsages = usages.filter((usage) => usage.status === "ok");
   if (okUsages.length !== 1) return null;
   const selected = okUsages[0]!;
-  if (receipt.selected === "grok-4.6") {
+  if (receipt.selected === "grok-4.5") {
     return selected.provider === "grok" && selected.model === DEFAULT_GROK_MODEL &&
         !usages.some((usage) => usage.provider === "deepseek" || usage.provider === "gemini")
       ? receipt

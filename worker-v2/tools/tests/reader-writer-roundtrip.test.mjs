@@ -2,7 +2,7 @@
  * READER / WRITER ROUND-TRIP PROPERTY TESTS
  *
  * ROOT CAUSE: validatePassAUnitUsageCoherence required receipt-1 to carry Grok's callId
- * and provider identity (callId=call_a_N, provider=grok, model=grok-4.6). In Gemini-primary
+ * and provider identity (callId=call_a_N, provider=grok, model=grok-4.5). In Gemini-primary
  * (budget) mode, receipt-1 is written with callId=call_a_N:gemini-primary, provider=gemini,
  * model=gemini-2.5-flash. The coherence check rejected every Gemini-primary artifact as
  * "receipt role/call/provider is inconsistent with its settlement identity", the reader
@@ -66,20 +66,20 @@ function baseProviderEnv(overrides = {}) {
     DEEPSEEK_API_KEY: "test-deepseek-key",
     GEMINI_API_KEY: "test-gemini-key",
     GEMINI_MAX_TOTAL_USD: "10",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -291,11 +291,11 @@ test("ok artifact (Grok-primary) round-trips", async () => {
 
   await seed(m, env, V31_RUN_ID, 1, okArtifact(m, env, {
     origin: "A-w1", windowNumber: 1,
-    provider: "grok", callIdSuffix: "", model: "grok-4.6", selected: "grok-4.6",
+    provider: "grok", callIdSuffix: "", model: "grok-4.5", selected: "grok-4.5",
   }));
   await seed(m, env, V31_RUN_ID, 2, okArtifact(m, env, {
     origin: "A-w2", windowNumber: 2,
-    provider: "grok", callIdSuffix: "", model: "grok-4.6", selected: "grok-4.6",
+    provider: "grok", callIdSuffix: "", model: "grok-4.5", selected: "grok-4.5",
   }));
 
   const result = await reconstruct(m, env, V31_RUN_ID, blocks, pv);
@@ -354,7 +354,7 @@ test("failed-terminal provider failure (Gemini-primary + DeepSeek fallback) roun
     ],
     fallbackTrigger: {
       kind: "grok-flash-fallback-trigger/1.0.0", failureKind: "timeout-or-network",
-      httpStatus: 500, grokModel: "grok-4.6", grokUsageEventId: r1,
+      httpStatus: 500, grokModel: "grok-4.5", grokUsageEventId: r1,
       detail: "gemini-primary failed: 500",
     },
     terminal: true, failureStage: "provider",
@@ -379,7 +379,7 @@ test("failed semantic-output (Grok-primary) round-trips", async () => {
   await seed(m, env, V31_RUN_ID, 1,
     failedSemanticArtifact(m, env, {
       origin: "A-w1", windowNumber: 1,
-      provider: "grok", callIdSuffix: "", model: "grok-4.6",
+      provider: "grok", callIdSuffix: "", model: "grok-4.5",
     }));
 
   const result = await reconstruct(m, env, V31_RUN_ID, blocks, pv);
@@ -581,7 +581,7 @@ test("fallback trigger from Gemini-primary failure is accepted", async () => {
     ],
     fallbackTrigger: {
       kind: "grok-flash-fallback-trigger/1.0.0", failureKind: "rate-limited",
-      httpStatus: 429, grokModel: "grok-4.6", grokUsageEventId: r1,
+      httpStatus: 429, grokModel: "grok-4.5", grokUsageEventId: r1,
       detail: "gemini-primary failed: rate-limited",
     },
     terminal: true, failureStage: "provider",

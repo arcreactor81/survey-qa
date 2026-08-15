@@ -470,11 +470,11 @@ const FILES = [
   // Evidence these can fail: each test documents what mutation makes it fail; the negative
   // fixture proves the enforcement check is structurally capable of failing.
   "./tests/provider-spend-ledger.test.mjs",
-  // Exact grok-4.6 owner-dashboard tier binding. Production has a flat ledger, so it
+  // Exact grok-4.5 owner-console-confirmed tier binding. Production has a flat ledger, so it
   // conservatively charges max(base,long), and every malformed/zero/mixed binding refuses
   // before Secrets Store or network I/O. Evidence: tools/mutate-grok-cost-policy.mjs.
   "./tests/grok-cost-policy.test.mjs",
-  // The only authority allowed to attach a price to exact grok-4.6: a fixed, authenticated,
+  // The only authority allowed to attach a price to exact grok-4.5: a fixed, authenticated,
   // no-inference catalogue GET with a closed sanitised receipt.  It is deliberately not a
   // production config writer; operator review is a separate step.
   "./tests/grok-rate-attestation.test.mjs",

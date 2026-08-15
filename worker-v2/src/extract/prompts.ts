@@ -33,7 +33,10 @@ import { CONSTRUCT_CLASSES } from "./types";
 // Gemini systematically invented plausible construct names outside the closed set ("ordering",
 // "presentation"), causing semantic-output failures. The eleven allowed values are now
 // enumerated with a statement that any other value invalidates the item.
-export const PROMPT_VERSION_A = "v2-extract-pass-a/1.9.0";
+// 1.10.0 adds an explicit imperative scope constraint: scope must be "survey" or
+// "section:<name>"; question-level rules belong to pass B; any other scope value invalidates
+// the item. The 4.5 A/B's one failure was question:* scope leaking into pass A output.
+export const PROMPT_VERSION_A = "v2-extract-pass-a/1.10.0";
 // v2-extract-pass-b/1.2.0 — This constant is also the version gate
 // on every persisted pass-B artifact (chunks, sweeps, the whole-pass payload), so it covers
 // what pass B COMPUTES from a parse, not just the words it sends: 1.2.0 restricts the
@@ -160,6 +163,11 @@ ${CONSTRUCT_CLASSES.map((c) => `  - "${c}"`).join("\n")}
 Any item whose "construct" value is not in this list is invalid and will be discarded.
 Do not invent construct names. If a rule does not fit any listed construct, use "instruction".
 
+IMPERATIVE SCOPE CONSTRAINT
+The "scope" field must be exactly "survey" or "section:<name>". Question-level rules
+(scope "question:<id>") belong to pass B, not this pass. Any item whose scope is not
+"survey" or "section:<name>" is invalid and will be discarded.
+
 SCHEMA
 {
   "global_rules": [
@@ -245,6 +253,9 @@ must equal one of those exact evidence quotes. Runtime rejects the row if any id
 any quote is inexact, or all ids belong to one window.
 
 The "construct" field must be exactly one of: ${CONSTRUCT_CLASSES.join(", ")}. No other value is valid.
+
+The "scope" field must be exactly "survey" or "section:<name>". Question-level scope
+("question:<id>") belongs to pass B; any other scope value invalidates the item.
 
 Return one JSON object:
 {

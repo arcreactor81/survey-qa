@@ -1,6 +1,6 @@
 # DeepSeek model check: is v4-flash "even stronger than v4-pro"?
 
-> Implementation update, 13 August 2026: normal Pass A uses exact `grok-4.6`; only a
+> Implementation update, 13 August 2026: normal Pass A uses exact `grok-4.5`; only a
 > retained eligible typed Grok failure may substitute `deepseek-v4-flash` for Pass A.
 > Ordinary Pass B calls `deepseek-v4-pro` directly. Flash+Pro has reduced same-provider
 > independence and cannot seal as normal corroboration. See
