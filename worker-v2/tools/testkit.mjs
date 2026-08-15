@@ -249,6 +249,7 @@ export async function loadWorker() {
       // Operator-source projection is in a standalone CLI module. Export it through this
       // same bundle so privacy mutants are scored against rewritten code, not a disk import.
       `export * as sourceBlockOutput from ${p("tools/source-block-output.mjs")};`,
+      `export * as providerSpendLedger from ${p("src/store/provider-spend-ledger.ts")};`,
       `export * as env from ${p("src/types/env.ts")};`,
     ].join("\n"),
     "utf8",

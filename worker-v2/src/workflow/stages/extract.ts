@@ -31,6 +31,10 @@ import { extractionDiffKey, extractionPassKey, k, sourceLedgerKey } from "../../
 import { canonicalJson, sha256Hex } from "../../store/hash";
 import { type Fence } from "../../store/checkpoint";
 import { pushModelUsageStrict, modelUsage } from "../../store/usage";
+import {
+  recordProviderSpend,
+  type ProviderName,
+} from "../../store/provider-spend-ledger";
 import { docxBlocksVersion, parseDocxBlocks } from "../../extract/docx-blocks";
 import {
   DOCUMENT_SEMANTICS_NONE,
@@ -249,6 +253,30 @@ async function chargeUsage(env: Env, runId: string, calls: CallUsage[], fence: F
     fence,
     calls.map((c) => modelUsage(c.model, c.inputTokens, c.outputTokens, c.costUsd, c.eventId)),
   );
+  // RECORD each provider's spend into the cumulative cross-run ledger. This is
+  // AFTER the per-run settlement above, using the SAME USD figure the run ledger
+  // records. A ledger write failure becomes a named, counted limitation — loud,
+  // never silent, never fatal to the run.
+  const KNOWN: Set<string> = new Set(["grok", "deepseek", "gemini"]);
+  for (const c of calls) {
+    if (!KNOWN.has(c.provider)) continue;
+    const result = await recordProviderSpend(env.EVIDENCE, {
+      provider: c.provider as ProviderName,
+      costUsd: c.costUsd,
+      model: c.model,
+      runId,
+      eventId: c.eventId ?? c.callId,
+    });
+    if (result === null) {
+      // Recording failed. This is a named limitation, not a fatal error.
+      // The run continues with its per-run ledger intact. Log the failure
+      // so it is visible in operational monitoring.
+      console.error(
+        `provider-spend-ledger: failed to record ${c.provider} spend ` +
+          `$${c.costUsd} for run ${runId} event ${c.eventId ?? c.callId}`,
+      );
+    }
+  }
 }
 
 const summarize = (result: PassResult, hash: string): PassSummary => ({

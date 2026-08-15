@@ -455,6 +455,10 @@ const FILES = [
   // Gemini pass-A substitute: cross-family Grok substitute (owner-approved 15 Aug 2026).
   // Evidence these can fail: typed-trigger, identity-mismatch, cap, fallthrough, config-gate.
   "./tests/gemini-pass-a-substitute.test.mjs",
+  // Provider cumulative spend ledger: cross-run accounting and Gemini USD 10 cap enforcement.
+  // Evidence these can fail: each test documents what mutation makes it fail; the negative
+  // fixture proves the enforcement check is structurally capable of failing.
+  "./tests/provider-spend-ledger.test.mjs",
   // Exact grok-4.6 owner-dashboard tier binding. Production has a flat ledger, so it
   // conservatively charges max(base,long), and every malformed/zero/mixed binding refuses
   // before Secrets Store or network I/O. Evidence: tools/mutate-grok-cost-policy.mjs.

@@ -81,8 +81,17 @@ import {
 import {
   geminiGrokSubstituteJson,
   geminiGrokSubstituteRequestShape,
+  geminiMaxTotalUsd,
   keyForGemini,
+  GEMINI_OFFICIAL_RATES,
+  DEFAULT_GEMINI_MODEL,
 } from "../llm/gemini";
+import {
+  enforceGeminiCap,
+  ProviderCapExceededRefusal,
+  ProviderLedgerCorrupt,
+  conservativeGeminiReservation,
+} from "../store/provider-spend-ledger";
 import {
   chatRequestBodyText,
   keyFor,
@@ -1362,6 +1371,22 @@ export async function runPassA(
         }
 
         if (resolvedGeminiKey !== null) try {
+          // ENFORCE cumulative Gemini cap BEFORE the purchase. A conservative reservation
+          // uses request-byte ceiling as input tokens and max_tokens as output tokens,
+          // mirroring how Grok reserves at its max-known rates.
+          const geminiShape = geminiGrokSubstituteRequestShape(purchaseEnv);
+          const geminiBodyBytes = new TextEncoder().encode(
+            chatRequestBodyText(geminiShape, optionsForCall),
+          ).byteLength;
+          const geminiRates = GEMINI_OFFICIAL_RATES[DEFAULT_GEMINI_MODEL];
+          const geminiReservation = conservativeGeminiReservation(
+            geminiBodyBytes,
+            Math.max(0, Math.ceil(optionsForCall.maxTokens)),
+            geminiRates.inputUsdPerMTok,
+            geminiRates.outputUsdPerMTok,
+          );
+          await enforceGeminiCap(purchaseEnv.EVIDENCE, geminiMaxTotalUsd(purchaseEnv), geminiReservation);
+
           const geminiOutcome = await geminiGrokSubstituteJson(purchaseEnv, {
             ...optionsForCall,
             callId: `${optionsForCall.callId}:grok-gemini-substitute`,
@@ -1387,8 +1412,12 @@ export async function runPassA(
             issuedCalls.push(geminiUsage);
             accountingCalls.push(geminiUsage);
           }
-          // If Gemini failed with an eligible error, fall through to DeepSeek Flash
-          if (geminiErr instanceof ModelCallError && grokFlashFallbackEligible(geminiErr)) {
+          // Cap exceeded or ledger corrupt: typed refusal, fall through to DeepSeek Flash
+          if (geminiErr instanceof ProviderCapExceededRefusal) {
+            // Fall through to DeepSeek Flash — the run continues reduced, not killed
+          } else if (geminiErr instanceof ProviderLedgerCorrupt) {
+            // Corrupt ledger = fail closed for Gemini, fall through to DeepSeek Flash
+          } else if (geminiErr instanceof ModelCallError && grokFlashFallbackEligible(geminiErr)) {
             // Fall through to DeepSeek Flash below
           } else if (geminiErr instanceof MissingCredential) {
             // No Gemini key: fall through to DeepSeek Flash
@@ -3631,6 +3660,20 @@ async function purchasePassASynthesis(
       // Same substitution chain as primary windows: Gemini first, DeepSeek Flash last resort
       let substituteSucceeded = false;
       try {
+        // ENFORCE cumulative Gemini cap BEFORE the synthesis purchase
+        const geminiShape = geminiGrokSubstituteRequestShape(env);
+        const geminiBodyBytes = new TextEncoder().encode(
+          chatRequestBodyText(geminiShape, optionsForCall),
+        ).byteLength;
+        const geminiRates = GEMINI_OFFICIAL_RATES[DEFAULT_GEMINI_MODEL];
+        const geminiReservation = conservativeGeminiReservation(
+          geminiBodyBytes,
+          Math.max(0, Math.ceil(optionsForCall.maxTokens)),
+          geminiRates.inputUsdPerMTok,
+          geminiRates.outputUsdPerMTok,
+        );
+        await enforceGeminiCap(env.EVIDENCE, geminiMaxTotalUsd(env), geminiReservation);
+
         const geminiOutcome = await geminiGrokSubstituteJson(env, {
           ...optionsForCall,
           callId: `${optionsForCall.callId}:grok-gemini-substitute`,
@@ -3648,7 +3691,13 @@ async function purchasePassASynthesis(
           purchasedUsages.push(geminiUsage);
           calls.push(geminiUsage);
         }
-        // Fall through to DeepSeek Flash
+        // Cap exceeded or ledger corrupt: typed refusal, fall through to DeepSeek Flash
+        if (geminiErr instanceof ProviderCapExceededRefusal) {
+          // Fall through to DeepSeek Flash — the run continues reduced, not killed
+        } else if (geminiErr instanceof ProviderLedgerCorrupt) {
+          // Corrupt ledger = fail closed for Gemini, fall through to DeepSeek Flash
+        }
+        // All other Gemini errors: fall through to DeepSeek Flash
       }
       if (!substituteSucceeded) {
         const flashOutcome = await deepseekGrokFallbackJson(env, {

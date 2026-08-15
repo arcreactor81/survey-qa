@@ -274,6 +274,15 @@ export const evidenceCatalogKey = (runId: string, evidenceId: string) =>
   k("runs", runId, "evidence", `${evidenceId}.json`);
 export const evidenceCatalogPrefix = (runId: string) => k("runs", runId, "evidence") + "/";
 
+/**
+ * CUMULATIVE CROSS-RUN PROVIDER SPEND LEDGER — one object for the entire Worker lifetime.
+ *
+ * This is the durable authority for how much has been spent on each LLM provider across
+ * ALL runs, ever. The Gemini USD 10 cap reads from this object before every Gemini purchase.
+ * The key is intentionally OUTSIDE any run prefix so it is never deleted by run cleanup.
+ */
+export const providerCumulativeSpendKey = () => k("ledger", "provider-cumulative-spend.json");
+
 export const sweeperCursorKey = () => k("sweeper", "audit-cursor.json");
 export const retentionReportKey = (isoDay: string) => k("sweeper", "retention", `${isoDay}.json`);
 
