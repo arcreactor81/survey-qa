@@ -1,14 +1,15 @@
 /**
- * D47 — ONE SCREEN, THREE BOUND REPRESENTATIONS.
+ * D47 — ONE SCREEN, FOUR BOUND REPRESENTATIONS.
  *
- * The visual reader cannot safely reconcile a PNG, DOM projection and accessibility tree if
- * they are merely adjacent files. These tests exercise the real capture writer and real walk:
- * exact hashes/media types/epoch metadata pair them, Puppeteer's live `elementHandle()` never
- * reaches JSON, and every missing or truncated modality is named and counted.
+ * The visual reader cannot safely reconcile a PNG, PDF rendition, DOM projection and
+ * accessibility tree if they are merely adjacent files. These tests exercise the real capture
+ * writer and real walk: exact hashes/media types/epoch metadata pair them, Puppeteer's live
+ * `elementHandle()` never reaches JSON, and every missing or truncated modality is named and
+ * counted.
  *
- * The negative page is the evidence this gate can fail: screenshot, geometry and AX capture all
- * fail independently while the screen JSON still lands. If any catch becomes silent, its exact
- * failure kind/count assertion goes red.
+ * The negative page is the evidence this gate can fail: screenshot, geometry, AX and PDF
+ * capture all fail independently while the screen JSON still lands. If any catch becomes
+ * silent, its exact failure kind/count assertion goes red.
  */
 
 import { assert, assertEq, suite, test } from "../testkit.mjs";
@@ -65,6 +66,43 @@ const axTree = () => ({
   ],
 });
 
+/** Minimal PDF bytes for the CDP stub — enough to pass the non-empty check. */
+const STUB_PDF_BYTES = new TextEncoder().encode("%PDF-1.4-D47-STUB");
+
+/**
+ * A minimal CDP session stub that satisfies the bounded print protocol contract.
+ *
+ * Handles: Runtime.evaluate (font ready), Page.printToPDF (stream handle),
+ * IO.read (returns STUB_PDF_BYTES in one chunk with eof), IO.close, and detach().
+ */
+function stubCDPSession() {
+  const HANDLE = "stub-pdf-handle-d47";
+  let detached = false;
+  return {
+    async send(method, params) {
+      if (detached) throw new Error("CDP session already detached");
+      if (method === "Runtime.evaluate") {
+        return { result: { type: "boolean", value: true } };
+      }
+      if (method === "Page.printToPDF") {
+        return { stream: HANDLE };
+      }
+      if (method === "IO.read") {
+        // base64-encode the stub bytes so the decoder exercises the real path.
+        const b64 = btoa(String.fromCharCode(...STUB_PDF_BYTES));
+        return { data: b64, base64Encoded: true, eof: true };
+      }
+      if (method === "IO.close") {
+        return {};
+      }
+      throw new Error(`CDP stub received unexpected method: ${method}`);
+    },
+    async detach() {
+      detached = true;
+    },
+  };
+}
+
 function goodPage(s = screen()) {
   const snapshotOptions = [];
   return {
@@ -95,6 +133,13 @@ function goodPage(s = screen()) {
   };
 }
 
+/** goodPage WITH a working createCDPSession so PDF capture succeeds end to end. */
+function goodPageWithCDP(s = screen()) {
+  const page = goodPage(s);
+  page.createCDPSession = async () => stubCDPSession();
+  return page;
+}
+
 const cap = (env, runId) => ({ env, runId, attemptId: ATTEMPT_ID, pathId: PATH_ID, witnesses: [] });
 
 suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", () => {
@@ -114,7 +159,7 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
       { width: 1280, height: 900 },
     );
 
-    assertEq(epoch.kind, "v2-screen-capture-epoch/1.0.0");
+    assertEq(epoch.kind, "v2-screen-capture-epoch/1.1.0");
     assert(/^epoch_[a-f0-9]{24}$/.test(epoch.epochId), `epoch id is not opaque: ${epoch.epochId}`);
     const identityInputs = [
       runId,
@@ -148,7 +193,15 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
     assertEq(epoch.geometry.deviceScaleFactor, 1.25);
     assertEq(epoch.geometry.scrollY, 240);
     assertEq(epoch.geometry.source, "browser");
-    assertEq(epoch.captureFailureCount, 0, JSON.stringify(epoch.captureFailures));
+
+    // goodPage() has no createCDPSession, so the PDF modality is the one named failure.
+    assertEq(epoch.captureFailureCount, 1, JSON.stringify(epoch.captureFailures));
+    assertEq(epoch.captureFailures.length, 1);
+    assertEq(epoch.captureFailures[0].kind, "pdf-api-unavailable");
+    assert("pdf" in epoch, "v1.1.0 epoch must carry a pdf field");
+    assertEq(epoch.pdf.status, "failed");
+    assertEq(epoch.pdf.failure.kind, "pdf-api-unavailable");
+
     assertEq(epoch.screenshot.status, "captured");
     assertEq(epoch.accessibility.status, "captured");
     assertEq(epoch.accessibility.completeness, "complete");
@@ -204,7 +257,7 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
     );
   });
 
-  test("failed geometry, PNG and AX are three explicit failures; screen JSON is not lost", async () => {
+  test("failed geometry, PNG, AX and PDF are four explicit failures; screen JSON is not lost", async () => {
     const mod = await worker();
     const env = testEnv();
     const runId = mod.ids.mintRunId();
@@ -216,6 +269,7 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
         throw new Error("PNG transport down");
       },
       // accessibility is ABSENT on purpose — not a null/empty tree.
+      // createCDPSession is ABSENT on purpose — the PDF modality must name its own failure.
     };
     const epoch = await mod.driver.captureScreenEpoch(
       page,
@@ -226,15 +280,24 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
       { width: 1024, height: 768 },
     );
 
+    assertEq(epoch.kind, "v2-screen-capture-epoch/1.1.0");
     assertEq(epoch.screenJson.kind, "screen-json");
     assertEq(epoch.geometry.source, "configured-fallback");
     assertEq(epoch.geometry.deviceScaleFactor, null);
     assertEq(epoch.screenshot.status, "failed");
     assertEq(epoch.accessibility.status, "failed");
-    assertEq(epoch.captureFailureCount, 3, JSON.stringify(epoch.captureFailures));
+    assert("pdf" in epoch, "v1.1.0 epoch must carry a pdf field");
+    assertEq(epoch.pdf.status, "failed");
+    assertEq(epoch.pdf.failure.kind, "pdf-api-unavailable");
+    assertEq(epoch.captureFailureCount, 4, JSON.stringify(epoch.captureFailures));
     assertEq(
       epoch.captureFailures.map((f) => f.kind).sort().join(","),
-      ["accessibility-api-unavailable", "capture-metadata-failed", "screenshot-capture-failed"].sort().join(","),
+      [
+        "accessibility-api-unavailable",
+        "capture-metadata-failed",
+        "pdf-api-unavailable",
+        "screenshot-capture-failed",
+      ].sort().join(","),
     );
     const catalog = await mod.evidence.listCatalog(env, runId);
     assertEq(catalog.length, 1, "only the successfully captured screen JSON should be catalogued");
@@ -267,14 +330,78 @@ suite("D47 — the real walker preserves legacy ids and adds paired epochs", () 
 
     assertEq(obs.screenCaptureCount, 2, JSON.stringify(obs.screenCaptures));
     assertEq(new Set(obs.screenCaptures.map((epoch) => epoch.epochId)).size, 2, "slot must participate in opaque epoch identity");
-    assertEq(obs.captureFailureCount, 0, JSON.stringify(obs.captureFailures));
+
+    // goodPage() has no createCDPSession: each of the 2 epochs ("before" and "final") carries
+    // exactly one pdf-api-unavailable failure. That is 2 total, asserted by kind and count.
+    assertEq(obs.captureFailureCount, 2, JSON.stringify(obs.captureFailures));
+    assertEq(obs.captureFailures.length, 2);
+    for (const failure of obs.captureFailures) {
+      assertEq(failure.kind, "pdf-api-unavailable", `unexpected capture failure kind: ${failure.kind}`);
+    }
+    for (const epoch of obs.screenCaptures) {
+      assertEq(epoch.kind, "v2-screen-capture-epoch/1.1.0");
+      assert("pdf" in epoch, "v1.1.0 epoch must carry a pdf field");
+      assertEq(epoch.pdf.status, "failed");
+      assertEq(epoch.pdf.failure.kind, "pdf-api-unavailable");
+    }
+
     assertEq(obs.steps.length, 1);
     const evidence = obs.steps[0].evidence;
     assertEq(evidence.screenCaptures.length, 2);
     assertEq(evidence.screenshots.length, 2, "the legacy list remains and now names both exact screen epochs");
     assertEq(evidence.screenBefore, evidence.screenCaptures[0].screenJson.evidenceId);
     assertEq(evidence.screenAfterAdvance, evidence.screenCaptures[1].screenJson.evidenceId);
-    assertEq(evidence.captureFailureCount, 0);
-    assertEq(evidence.captureFailures.length, 0, "present-and-empty means this reader checked every modality");
+    // Step-level failure count matches the walk-level total for this single-step walk.
+    assertEq(evidence.captureFailureCount, 2);
+    assertEq(evidence.captureFailures.length, 2, "each slot's pdf-api-unavailable failure is explicit");
+    for (const failure of evidence.captureFailures) {
+      assertEq(failure.kind, "pdf-api-unavailable");
+    }
+  });
+});
+
+suite("D47 — PDF capture success path via CDP session stub", () => {
+  test("a page with createCDPSession produces a captured PDF ref with correct media type and hash", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const runId = mod.ids.mintRunId();
+    const rendered = screen();
+    const page = goodPageWithCDP(rendered);
+
+    const epoch = await mod.driver.captureScreenEpoch(
+      page,
+      cap(env, runId),
+      rendered,
+      "before",
+      5,
+      { width: 1280, height: 900 },
+    );
+
+    assertEq(epoch.kind, "v2-screen-capture-epoch/1.1.0");
+    // All four modalities succeeded: zero capture failures.
+    assertEq(epoch.captureFailureCount, 0, JSON.stringify(epoch.captureFailures));
+    assertEq(epoch.captureFailures.length, 0);
+
+    // Screenshot and AX still work.
+    assertEq(epoch.screenshot.status, "captured");
+    assertEq(epoch.accessibility.status, "captured");
+
+    // PDF succeeded: typed ref with the correct kind, media type and a real content hash.
+    assert("pdf" in epoch, "v1.1.0 epoch must carry a pdf field");
+    assertEq(epoch.pdf.status, "captured");
+    assertEq(epoch.pdf.ref.kind, "rendered-pdf");
+    assertEq(epoch.pdf.ref.mediaType, "application/pdf");
+    assert(/^[a-f0-9]{64}$/.test(epoch.pdf.ref.contentHash), `PDF ref missing sha256: ${epoch.pdf.ref.contentHash}`);
+    assert(epoch.pdf.ref.size > 0, "PDF ref size must be positive");
+
+    // The PDF evidence must resolve in the immutable catalogue.
+    const entry = await mod.evidence.getCatalogEntry(env, runId, epoch.pdf.ref.evidenceId);
+    assert(entry, "the PDF ref must resolve in the immutable catalogue");
+    const verified = await mod.evidence.getVerifiedEvidence(env, entry);
+    assert(verified.bytes.byteLength > 0, "verified PDF bytes must be non-empty");
+
+    // All four refs have distinct evidence ids.
+    const allRefs = [epoch.screenJson, epoch.screenshot.ref, epoch.accessibility.ref, epoch.pdf.ref];
+    assertEq(new Set(allRefs.map((r) => r.evidenceId)).size, 4, "all four modality refs must have distinct evidence ids");
   });
 });
