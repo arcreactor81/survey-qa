@@ -394,7 +394,7 @@ suite("terminal extraction failure report — durable evidence, zero guessed QA 
     });
     const genericRefusal = mod.workflow.extractionPassRefusal("a", {
       state: "not-evaluated",
-      reason: "PASS_A_WINDOW_FAILURES",
+      reason: "WINDOW_FAILURES",
       detail: WIRE_PRIVATE_SENTINEL,
     });
     assertEq(exactRefusal.reasonCode, WIRE_REASON);

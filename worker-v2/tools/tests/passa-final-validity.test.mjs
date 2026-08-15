@@ -193,7 +193,7 @@ test("mixed success plus a failed window leaves no final Pass-A payload", async 
     );
     assertEq(outcome.terminal, true, "a shared nonretryable provider failure is terminal, not a new wave");
     assertEq(outcome.result.state, "not-evaluated");
-    assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES");
+    assertEq(outcome.result.reason, "WINDOW_FAILURES");
     assert(outcome.slice.windowsRemaining > 0, "unread tail windows remain explicitly counted");
     assert(transport.requests.some((row) => row.window === 1), "a healthy window really succeeded");
     assert(transport.requests.some((row) => row.window === 2), "a different window really failed");
@@ -222,7 +222,7 @@ test("a retained nonretryable Pass-A failure is never re-bought after the stage 
       m.docxBlocks.DOCUMENT_SEMANTICS_NONE, ctx.documentSha256,
     );
     assertEq(outcome.result.state, "not-evaluated");
-    assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES");
+    assertEq(outcome.result.reason, "WINDOW_FAILURES");
     assertEq(first.requests.length, 1, "the first shared failure stops before later windows");
     const windowKey = [...env.EVIDENCE._store.keys()].find((key) => key.endsWith("window-01.json"));
     const artifact = JSON.parse(await (await env.EVIDENCE.get(windowKey)).text());
@@ -241,7 +241,7 @@ test("a retained nonretryable Pass-A failure is never re-bought after the stage 
       m.docxBlocks.DOCUMENT_SEMANTICS_NONE, ctx.documentSha256,
     );
     assertEq(outcome.result.state, "not-evaluated");
-    assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES");
+    assertEq(outcome.result.reason, "WINDOW_FAILURES");
     assertEq(resumed.requests.length, 0, "the terminal artifact is durable authority across a retry");
     assert(outcome.slice.windowsRemaining > 0, "resume retains the unread denominator");
   } finally {
@@ -306,7 +306,7 @@ test("fallback authority without a usable Flash receipt is a window failure, not
     assertEq(first.requests.map((row) => row.model).join(","), "grok-4.5,deepseek-v4-flash",
       "the primary trigger and failed substitute are both real transport attempts");
     assertEq(outcome.result.state, "not-evaluated");
-    assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES",
+    assertEq(outcome.result.reason, "WINDOW_FAILURES",
       "authorizing fallback is not evidence that a same-family substitute landed");
     assertEq(outcome.slice.terminalFailure, true);
     assertEq(outcome.slice.done, false);
@@ -321,7 +321,7 @@ test("fallback authority without a usable Flash receipt is a window failure, not
       m.docxBlocks.DOCUMENT_SEMANTICS_NONE, ctx.documentSha256,
     );
     assertEq(resumed.requests.length, 0, "the retained terminal artifact is reclaimed without a new purchase");
-    assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES",
+    assertEq(outcome.result.reason, "WINDOW_FAILURES",
       "reclaim still distinguishes failed fallback authority from landed Flash");
   } finally {
     resumed.restore();
@@ -503,7 +503,7 @@ test("a retained summary-only reduced-independence payload is immutable invalid 
     assertEq(transport.requests.length, 0, "resume neither re-buys Pass A nor purchases DeepSeek Pro Pass B");
     assertEq(step.calls.filter((name) => name.startsWith("extract-pass-b-wave-")).length, 0);
     const cp = (await m.checkpoint.loadCheckpoint(env, ctx.runId)).checkpoint;
-    assertEq(cp.completion.reasonCode, "extraction-pass-a-pass-a-completion-artifact-invalid");
+    assertEq(cp.completion.reasonCode, "extraction-pass-a-completion-artifact-invalid");
   } finally {
     transport.restore();
   }
@@ -539,7 +539,7 @@ test("occupied all-failed and mixed-failed final keys are immutable terminal aut
         m.docxBlocks.DOCUMENT_SEMANTICS_NONE, ctx.documentSha256,
       );
       assertEq(outcome.result.state, "not-evaluated", label + ": occupied invalid final is refused");
-      assertEq(outcome.result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+      assertEq(outcome.result.reason, "COMPLETION_ARTIFACT_INVALID");
       assertEq(transport.requests.length, 0, label + ": immutable authority forbids duplicate model work");
       const obj = await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "a"));
       assertEq(await obj.text(), original, label + ": invalid occupied bytes are never overwritten");
@@ -572,7 +572,7 @@ test("consolidation refuses a current mixed-failed Pass-A payload", async () => 
     `sha256:${"0".repeat(64)}`,
   );
   assertEq(outcome.state, "not-evaluated", "failed Pass-A bytes are not consolidation input");
-  assertEq(outcome.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID", "the invalid completion authority is named");
+  assertEq(outcome.reason, "COMPLETION_ARTIFACT_INVALID", "the invalid completion authority is named");
   assert(outcome.detail.includes("PASS_A_COMPLETED_ARTIFACT_INVALID"), "the refusal binds the retained A bytes");
   assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(ctx.runId)), null, "no merged artifact is written");
 });
@@ -631,7 +631,7 @@ test("a changed completed Pass-A hash blocks Pass B before any provider request"
       ctx.documentSha256,
     );
     assertEq(passB.result.state, "not-evaluated");
-    assertEq(passB.result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(passB.result.reason, "COMPLETION_ARTIFACT_INVALID");
     assertEq(transport.requests.length, 0, "the independent A hash check runs before any Pass-B credential/provider I/O");
     assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "b")), null);
     assertEq(await (await env.EVIDENCE.get(passAKey)).text(), corrupted, "invalid completion bytes are not rewritten");

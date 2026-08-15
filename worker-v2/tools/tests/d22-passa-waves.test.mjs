@@ -824,7 +824,7 @@ test("(a) the STAGE refuses to evaluate an unfinished pass A, and evaluates the 
     // it finds, with no way to tell a whole read from a partial one.
     assertEq(first.slice.done, false, "a zero-budget wave over a five-window document cannot finish it");
     assertEq(first.result.state, "not-evaluated", "an unfinished pass is NOT an evaluated pass");
-    assertEq(first.result.reason, "PASS_A_INCOMPLETE", "and it says which incompleteness");
+    assertEq(first.result.reason, "INCOMPLETE", "and it says which incompleteness");
     assertEq(
       await env.EVIDENCE.get(m.keys.extractionPassKey(runId, "a")),
       null,
@@ -1251,7 +1251,7 @@ test("D51-d occupied stale whole-pass A is immutable terminal authority", async 
       documentSha256,
     );
     assertEq(outcome.result.state, "not-evaluated", "occupied stale completion is terminal");
-    assertEq(outcome.result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(outcome.result.reason, "COMPLETION_ARTIFACT_INVALID");
     assertEq(provider.requests.length, 0, "an immutable final key never authorizes duplicate spend");
     assertEq(
       await (await env.EVIDENCE.get(m.keys.extractionPassKey(runId, "a"))).text(),

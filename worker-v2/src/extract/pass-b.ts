@@ -243,7 +243,7 @@ export type PassBAuthorityReconstruction =
 export const PASS_B_COMPLETION_KEYS = [
   "parserVersion", "promptVersion", "pass", "provider", "model", "providerPlanIdentity",
   "requirements", "ambiguities", "unverifiable", "dispositions", "constructs", "failedUnits",
-  "calls", "slice", "issuedCalls", "accountingCalls",
+  "limitations", "calls", "slice", "issuedCalls", "accountingCalls",
 ] as const;
 
 /** One shared closed projection for stage reads and exact reconstruction comparison. */
@@ -259,7 +259,7 @@ export function passBCompletionShapeClosed(value: Record<string, unknown>): bool
   return JSON.stringify(actualKeys) === JSON.stringify(expectedKeys) &&
     [
       "requirements", "ambiguities", "unverifiable", "dispositions", "constructs",
-      "failedUnits", "calls", "issuedCalls", "accountingCalls",
+      "failedUnits", "limitations", "calls", "issuedCalls", "accountingCalls",
     ].every((key) => Array.isArray(value[key]));
 }
 
@@ -704,12 +704,13 @@ export async function runPassB(
   const mayIssue = (): boolean => {
     // Infrastructure failures (persistence conflict, wire ceiling) stop immediately.
     if (persistenceConflictFailures > 0) return false;
+    if (terminalReasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) return false;
     if (failureRateExceeded) return false;
-    // Semantic/provider terminal failures use the 20% guardrail: stop only when terminal
-    // failures exceed 20% of the total chunk count. Below that, continue — each purchase
+    // All terminal failures (semantic + provider) use the 20% guardrail: stop only when
+    // terminal failures exceed 20% of the total chunk count. Below that, continue — each purchase
     // is persisted and reusable on resume, and the existing ledger sweep may claim the
     // dead chunks' blocks. // mutation-anchor: failure-rate-guardrail
-    if (terminalSemanticFailures > Math.ceil(chunks.length * PASS_B_TERMINAL_FAILURE_RATE_THRESHOLD)) {
+    if ((terminalSemanticFailures + terminalProviderFailures) > Math.ceil(chunks.length * PASS_B_TERMINAL_FAILURE_RATE_THRESHOLD)) {
       failureRateExceeded = true;
       terminalReasonCode = "PASS_B_FAILURE_RATE_EXCEEDED";
       return false;
@@ -866,7 +867,7 @@ export async function runPassB(
       `pass B ${chunk.id}: FAILED — ${publicExtractionFailureDetail(detail)}`,
     );
   }
-  if (pendingChunkWireFailure === null && !terminalFailure && todo.length > 0) {
+  if (pendingChunkWireFailure === null && !failureRateExceeded && persistenceConflictFailures === 0 && terminalReasonCode !== EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED && todo.length > 0) {
     try {
       await resolveDeepseekPurchaseEnv();
     } catch (error) {
@@ -1228,7 +1229,7 @@ export async function runPassB(
   // Run the sweep when all chunks are accounted for (ok, degraded, or terminal), even
   // with terminal failed units. The dead chunks' blocks are unaccounted and the sweep is
   // their built-in second read. Only infrastructure failures block the sweep.
-  if (chunksRemaining === 0 && persistenceConflictFailures === 0 && !failureRateExceeded) {
+  if (chunksRemaining === 0 && persistenceConflictFailures === 0 && !failureRateExceeded && terminalReasonCode !== EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) {
     const unaccounted = unaccountedBlocks(doc.blocks, requirements, dispositions);
     const sweepCount = Math.min(
       Math.max(0, Math.floor(sweepMax)),
@@ -1654,7 +1655,7 @@ export async function runPassB(
   calls.sort((a, b) => a.callId.localeCompare(b.callId));
 
   const slice: PassBSlice = {
-    done: chunksRemaining === 0 && sweepRemaining === 0 && persistenceConflictFailures === 0 && !failureRateExceeded, // mutation-anchor: done-does-not-require-zero-failed-units
+    done: chunksRemaining === 0 && sweepRemaining === 0 && persistenceConflictFailures === 0 && !failureRateExceeded && terminalReasonCode !== EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED, // mutation-anchor: done-does-not-require-zero-failed-units
     chunksTotal: chunks.length,
     chunksLanded: landed,
     chunksIssued: issued - sweepCallsIssued,

@@ -622,7 +622,9 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
     ]);
     try {
       const result = await m.passB.runPassB(value, "run_failed_receipts", oneBlockDocument(), "fixture.docx");
-      assertEq(result.slice.done, false, "terminally failed unit cannot authorize a completed pass");
+      // B4: the walk completes even with terminal failed units. The failed unit's blocks
+      // remain unresolved and ride the payload as named limitations.
+      assertEq(result.slice.done, true, "B4: the walk completes despite a terminally failed chunk");
       assertEq(result.slice.terminalFailure, true, "terminal failure is accounted rather than retried forever");
       assertEq(result.issuedCalls.length, 1);
       const key = m.keys.k("runs", "run_failed_receipts", "extraction", "pass-b", "chunk-01.json");
@@ -656,7 +658,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
       assertEq(first.slice.done, false);
       assertEq(first.issuedCalls.length, 1);
       const second = await m.passB.runPassB(value, "run_retry_receipts", oneBlockDocument(), "fixture.docx");
-      assertEq(second.slice.done, false);
+      // B4: done=true even with terminal failures (no sweep, no remaining chunks).
+      assertEq(second.slice.done, true);
       assertEq(second.slice.terminalFailure, true);
       assertEq(second.issuedCalls.length, 1, "only the new retry purchase is charged this wave");
       assertEq(second.calls.length, 2, "prior receipt remains visible as zero-cost reclaimed provenance");
@@ -860,7 +863,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
         m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256,
       );
       assertEq(changed.result.state, "not-evaluated");
-      assertEq(changed.result.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+      assertEq(changed.result.reason, "COMPLETION_ARTIFACT_INVALID");
       assertEq(replay.requests.length, 0, "changed-plan occupied authority is refused without a re-buy");
       assertEq(
         await (await shared.get(m.keys.extractionPassKey(runId, "b"))).text(),
@@ -1223,7 +1226,7 @@ suite("PROVIDER ACTIVATION - Grok 4.5 + Pro, Flash only behind a retained trigge
       `sha256:${"0".repeat(64)}`,
     );
     assertEq(result.state, "not-evaluated");
-    assertEq(result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(result.reason, "COMPLETION_ARTIFACT_INVALID");
     assert(result.detail.includes("PASS_A_COMPLETED_ARTIFACT_INVALID"));
   });
 });

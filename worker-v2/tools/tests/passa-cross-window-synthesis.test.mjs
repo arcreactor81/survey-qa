@@ -2871,7 +2871,7 @@ test("developer extraction refuses a multiwindow document before Pass B while sy
     assertEq(resultResponse.status, 200);
     const result = await resultResponse.json();
     assertEq(result.mode, "pass-B-refused");
-    assertEq(result.reason, "PASS_A_INCOMPLETE");
+    assertEq(result.reason, "INCOMPLETE");
     assert(result.detail.includes("no Pass-B purchase was made"));
     assert(
       provider.calls.filter((call) => call.unit.startsWith("A-w")).length > 1,

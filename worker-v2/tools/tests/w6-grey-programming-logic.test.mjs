@@ -489,7 +489,7 @@ suite("W6 — grey programming logic is provenance, not an option label", () => 
       assertEq(shop.result.state, "not-evaluated", "cross-profile payload is not reused");
       assertEq(
         shop.result.reason,
-        "PASS_A_COMPLETION_ARTIFACT_INVALID",
+        "COMPLETION_ARTIFACT_INVALID",
         "an occupied final key is immutable terminal authority under the wrong semantics profile",
       );
       assertEq(calls.length, 0, "profile mismatch cannot buy or overwrite same-run authority");

@@ -724,7 +724,7 @@ test("exhausted success storage stops the real stage, charges once, and Workflow
     const first = await executeWave();
     assertEq(first.terminal, true, "storage exhaustion returns instead of throwing into step retries");
     assertEq(first.result.state, "not-evaluated", "the stage publishes no extracted authority");
-    assertEq(first.result.reason, "PASS_A_WINDOW_FAILURES", "the terminal stage stop is named");
+    assertEq(first.result.reason, "WINDOW_FAILURES", "the terminal stage stop is named");
     assertEq(first.slice.terminalFailure, true, "the paid window stops all later purchases");
     assertEq(first.slice.windowsLanded, 0, "a missing artifact receives no landed credit");
     assertEq(first.slice.windowsRemaining, 1, "the unread current window remains counted");
@@ -763,7 +763,7 @@ test("exhausted success storage stops the real stage, charges once, and Workflow
     );
 
     const cached = await executeWave();
-    assertEq(cached.result.reason, "PASS_A_WINDOW_FAILURES", "Workflow re-entry reuses the terminal step result");
+    assertEq(cached.result.reason, "WINDOW_FAILURES", "Workflow re-entry reuses the terminal step result");
     assertEq(provider.calls(), 1, "cached Workflow re-entry performs zero provider calls");
     const checkpointAfterReentry = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint;
     assertEq(checkpointAfterReentry.usage.modelCalls.used, 1, "cached re-entry does not charge twice");
