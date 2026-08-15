@@ -254,7 +254,7 @@ function installProvider(canned, log, findings) {
     const entry = { seq: log.length + 1, unit, kind, role, model, url: u.slice(0, 110) };
     log.push(entry);
 
-    if (model === "grok-4.6") {
+    if (model === "grok-4.5") {
       findings.push({
         kind: "grok-call-in-budget-mode",
         detail: `A Grok purchase was issued in budget mode: unit=${unit} role=${role}. The owner Grok freeze forbids this.`,
@@ -338,21 +338,21 @@ function productionEnv() {
     V2_RUN_WORKFLOW: { async get() { throw new Error("instance.not_found"); }, async create() {} },
 
     EXTRACT_PASS_A_PRIMARY: "gemini",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_REASONING_EFFORT: "high",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
