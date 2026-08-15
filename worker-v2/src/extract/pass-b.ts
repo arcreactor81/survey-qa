@@ -94,6 +94,19 @@ export { decodePassBOutput, PASS_B_DECODER_VERSION, PassBOutputInvalid, salvageP
 
 export const PASS_B_VERSION = PROMPT_VERSION_B;
 
+/**
+ * When the fraction of terminally-failed chunks exceeds this threshold the pass
+ * stops issuing new chunks and seals with PASS_B_FAILURE_RATE_EXCEEDED.
+ *
+ * Rationale (from the production incident analysis): the run that prompted this
+ * fix measured 3/67 = 4.5% terminal failures from prompt/validator mismatch.
+ * That was systematic but low enough that salvage or a retry with echo would
+ * recover most of them. Past 20% the read is suspect — the model is consistently
+ * producing output the decoder cannot use, and each additional purchase is more
+ * likely to waste money than to land usable obligations.
+ */
+export const PASS_B_TERMINAL_FAILURE_RATE_THRESHOLD = 0.2;
+
 /** Where each chunk lands the instant it returns. */
 const chunkKey = (runId: string, n: number) =>
   k("runs", runId, "extraction", "pass-b", `chunk-${String(n).padStart(2, "0")}.json`);
@@ -572,6 +585,7 @@ export async function runPassB(
   const issuedCalls: CallUsage[] = [];
   const accountingCalls: CallUsage[] = [];
   let terminalSemanticFailures = 0;
+  let terminalProviderFailures = 0;
   let terminalReasonCode: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED | string | undefined;
   let credentialRefusal: PassBResult["credentialRefusal"];
   let deepseekPurchaseEnv: Env | null = null;
@@ -695,7 +709,7 @@ export async function runPassB(
     // failures exceed 20% of the total chunk count. Below that, continue — each purchase
     // is persisted and reusable on resume, and the existing ledger sweep may claim the
     // dead chunks' blocks. // mutation-anchor: failure-rate-guardrail
-    if (terminalSemanticFailures > Math.ceil(chunks.length * 0.2)) {
+    if (terminalSemanticFailures > Math.ceil(chunks.length * PASS_B_TERMINAL_FAILURE_RATE_THRESHOLD)) {
       failureRateExceeded = true;
       terminalReasonCode = "PASS_B_FAILURE_RATE_EXCEEDED";
       return false;
@@ -1022,13 +1036,11 @@ export async function runPassB(
         : err instanceof ModelCallError
           ? settlementUsages(runId, chunk.id, priorAttempts + 1, [err.usage])
           : [];
-      calls.push(...failureUsages);
-      issuedCalls.push(...failureUsages);
-      accountingCalls.push(...failureUsages);
       const attempts = priorAttempts + 1;
       const terminal = attempts >= maxIssues; // mutation-anchor: semantic-failure-not-instantly-terminal
       if (terminal) {
         terminalSemanticFailures += semanticFailure ? 1 : 0;
+        terminalProviderFailures += semanticFailure ? 0 : 1;
         terminalFailure = true;
       }
       // B3: per-obligation salvage at retry exhaustion for semantic failures.
@@ -1039,7 +1051,10 @@ export async function runPassB(
             rawModelOutput, chunk.id, chunk.blocks, evidenceBlocks,
           );
           if (salvageResult !== null) {
-            // Salvage succeeded: persist a degraded success artifact.
+            // Salvage succeeded: replace parse-failed usages with ok (degraded).
+            // Push only the degraded usages — not the original failureUsages —
+            // so a single purchase is never double-counted. Matches pass A's
+            // usage-status restoration pattern (spec B3).
             const degradedUsages = failureUsages.map((usage) => ({
               ...usage,
               status: "ok" as const,
@@ -1093,7 +1108,7 @@ export async function runPassB(
               limitations.push(...salvageResult.limitations);
               // Remove from failed units tracking since salvage landed.
               terminalSemanticFailures -= 1;
-              terminalFailure = terminalSemanticFailures > 0 || persistenceConflictFailures > 0;
+              terminalFailure = terminalSemanticFailures > 0 || terminalProviderFailures > 0 || persistenceConflictFailures > 0;
               await reportProgress(onProgress,
                 `pass B ${chunk.id}: SALVAGED ${salvageResult.decoded.obligations.length} obligations, ` +
                   `${salvageResult.limitations.length} limitation(s) — ${publicFailureDetail}`,
@@ -1105,6 +1120,12 @@ export async function runPassB(
         }
       }
       if (!salvaged) {
+        // Salvage did not run or did not succeed — record the original failure usages.
+        // This is the only path that pushes failureUsages; the salvage-success path
+        // pushes degradedUsages instead. Neither path pushes both.
+        calls.push(...failureUsages);
+        issuedCalls.push(...failureUsages);
+        accountingCalls.push(...failureUsages);
         const failureBody = JSON.stringify(
           {
             chunkId: chunk.id,

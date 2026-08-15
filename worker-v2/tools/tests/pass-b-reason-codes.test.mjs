@@ -10,11 +10,10 @@ import { assert, assertEq, loadWorker, suite, test } from "../testkit.mjs";
 
 const mod = async () => (await loadWorker()).mod;
 
-suite("pass-B reason codes", async () => {
-  const m = await mod();
-
+suite("pass-B reason codes", () => {
   test("UNIT_FAILURES maps to extraction-pass-b-unit-failures without doubling", async () => {
     // mutation-anchor: reason-code-no-double-prefix
+    const m = await mod();
     const result = { state: "not-evaluated", reason: "UNIT_FAILURES" };
     const refusal = m.workflow.extractionPassRefusal("b", result);
     assert(refusal !== null, "refusal must be produced for not-evaluated result");
@@ -22,6 +21,7 @@ suite("pass-B reason codes", async () => {
   });
 
   test("INCOMPLETE maps to extraction-pass-b-incomplete without doubling", async () => {
+    const m = await mod();
     const result = { state: "not-evaluated", reason: "INCOMPLETE" };
     const refusal = m.workflow.extractionPassRefusal("b", result);
     assert(refusal !== null);
@@ -29,6 +29,7 @@ suite("pass-B reason codes", async () => {
   });
 
   test("COMPLETION_ARTIFACT_INVALID maps to extraction-pass-a-completion-artifact-invalid", async () => {
+    const m = await mod();
     const result = { state: "not-evaluated", reason: "COMPLETION_ARTIFACT_INVALID" };
     const refusal = m.workflow.extractionPassRefusal("a", result);
     assert(refusal !== null);
@@ -36,6 +37,7 @@ suite("pass-B reason codes", async () => {
   });
 
   test("no emitted reason code has a doubled pass prefix", async () => {
+    const m = await mod();
     const reasons = [
       "UNIT_FAILURES",
       "INCOMPLETE",

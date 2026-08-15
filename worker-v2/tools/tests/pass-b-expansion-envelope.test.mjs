@@ -66,13 +66,12 @@ function fullPayload(unit, blockIds, expansionValue) {
   };
 }
 
-suite("pass-B expansion envelope normalization", async () => {
-  const m = await mod();
-
+suite("pass-B expansion envelope normalization", () => {
   // --- POSITIVE: shapes that must now decode ---
 
   test("kind-only expansion (the C02 shape) decodes after normalization", async () => {
     // mutation-anchor: expansion-unknown-key-rejection
+    const m = await mod();
     const raw = fullPayload("UNIT1", ["b0001"], { kind: "configuration" });
     const decoded = m.passB.decodePassBOutput(raw, "UNIT1", [sourceBlock("b0001")]);
     assertEq(decoded.obligations[0].expansion.kind, "configuration");
@@ -81,6 +80,7 @@ suite("pass-B expansion envelope normalization", async () => {
   });
 
   test("per-kind route fields (the C08 route shape) decode after normalization", async () => {
+    const m = await mod();
     const raw = fullPayload("UNIT1", ["b0001"], {
       kind: "route",
       route_answers: [{ code: "1", label: "No", destination: "END" }],
@@ -92,6 +92,7 @@ suite("pass-B expansion envelope normalization", async () => {
   });
 
   test("per-kind boundary fields (the C08 boundary shape) decode after normalization", async () => {
+    const m = await mod();
     const raw = fullPayload("UNIT1", ["b0001"], {
       kind: "boundary",
       min_selections: 1,
@@ -105,6 +106,7 @@ suite("pass-B expansion envelope normalization", async () => {
   });
 
   test("all five keys with route_answers: null (the C09 shape) decode after normalization", async () => {
+    const m = await mod();
     const raw = fullPayload("UNIT1", ["b0001"], {
       kind: "option-set",
       route_answers: null,
@@ -121,36 +123,40 @@ suite("pass-B expansion envelope normalization", async () => {
 
   test("unknown key in expansion still rejects", async () => {
     // mutation-anchor: expansion-unknown-key-rejection
+    const m = await mod();
     const raw = fullPayload("UNIT1", ["b0001"], {
       kind: "route",
       surprise: 1,
     });
     assertThrows(
       () => m.passB.decodePassBOutput(raw, "UNIT1", [sourceBlock("b0001")]),
-      /unknown field/,
+      "unknown field",
     );
   });
 
   test("invalid kind still rejects", async () => {
+    const m = await mod();
     const raw = fullPayload("UNIT1", ["b0001"], { kind: "fabricated" });
     assertThrows(
       () => m.passB.decodePassBOutput(raw, "UNIT1", [sourceBlock("b0001")]),
-      /closed expansion kind/,
+      "closed expansion kind",
     );
   });
 
   test("non-array non-null route_answers still rejects", async () => {
+    const m = await mod();
     const raw = fullPayload("UNIT1", ["b0001"], {
       kind: "route",
       route_answers: "TERMINATE",
     });
     assertThrows(
       () => m.passB.decodePassBOutput(raw, "UNIT1", [sourceBlock("b0001")]),
-      /must be an array/,
+      "must be an array",
     );
   });
 
   test("min_selections > max_selections still rejects", async () => {
+    const m = await mod();
     const raw = fullPayload("UNIT1", ["b0001"], {
       kind: "boundary",
       min_selections: 5,
@@ -158,7 +164,7 @@ suite("pass-B expansion envelope normalization", async () => {
     });
     assertThrows(
       () => m.passB.decodePassBOutput(raw, "UNIT1", [sourceBlock("b0001")]),
-      /min_selections exceeds max_selections/,
+      "min_selections exceeds max_selections",
     );
   });
 });

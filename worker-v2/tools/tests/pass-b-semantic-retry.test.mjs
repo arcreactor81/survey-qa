@@ -17,41 +17,49 @@ const CONSTRUCTS = [
   "piping", "carry-forward", "calculation", "randomization", "loop", "instruction",
 ];
 
-const TEXT = { b0001: "Alpha question must be answered." };
-
-function sourceBlock(blockId) {
-  return {
-    blockId,
-    kind: "paragraph",
-    text: TEXT[blockId],
-    origin: "body",
-    section: "Questions",
-    coords: null,
-    tableId: null,
-    formatting: {},
-    semanticSpans: [],
-  };
+/**
+ * Extract block ID -> text map from the request's source blocks JSONL.
+ */
+function extractBlockTexts(userMessage) {
+  const texts = new Map();
+  const patterns = [
+    /===== YOUR SOURCE BLOCKS JSONL[^=]*=====\n([\s\S]*?)\n===== END YOUR SOURCE BLOCKS JSONL =====/,
+    /===== UNACCOUNTED SOURCE BLOCKS JSONL =====\n([\s\S]*?)\n===== END UNACCOUNTED SOURCE BLOCKS JSONL =====/,
+  ];
+  for (const pattern of patterns) {
+    const m = userMessage.match(pattern);
+    if (m) {
+      for (const line of m[1].split("\n").filter(Boolean)) {
+        try { const parsed = JSON.parse(line); if (parsed.block_id && parsed.text) texts.set(parsed.block_id, parsed.text); } catch { /* skip */ }
+      }
+    }
+  }
+  return texts;
 }
 
-function validPayload(unit, blockIds) {
+function validPayload(unit, blockIds, textMap) {
   const cited = blockIds;
   return {
     chunk_id: unit,
-    obligations: blockIds.map((id, index) => ({
-      id: `${unit}-R${index + 1}`,
-      construct: "question",
-      scope: `question:${id}`,
-      quantifier: "every",
-      selector: id,
-      exceptions: [],
-      statement: "The question must be asked.",
-      doc_quote: TEXT[id],
-      block_ids: [id],
-      evidence_quotes: [{ block_id: id, quote: TEXT[id] }],
-      browser_observable: "full",
-      confidence: 0.9,
-      expansion: null,
-    })),
+    obligations: blockIds.map((id, index) => {
+      const fullText = (textMap && textMap.get(id)) || `Block ${id} must be answered.`;
+      const quote = fullText.slice(0, Math.max(10, fullText.length));
+      return {
+        id: `${unit}-R${index + 1}`,
+        construct: "question",
+        scope: `question:${id}`,
+        quantifier: "every",
+        selector: id,
+        exceptions: [],
+        statement: "The question must be asked.",
+        doc_quote: quote,
+        block_ids: [id],
+        evidence_quotes: [{ block_id: id, quote }],
+        browser_observable: "full",
+        confidence: 0.9,
+        expansion: null,
+      };
+    }),
     block_dispositions: blockIds.map((id) => ({
       block_id: id,
       disposition: "normative",
@@ -148,11 +156,10 @@ async function passABed(m) {
   return { ...bed, passAHash: passA.result.value.hash };
 }
 
-suite("pass-B semantic retry", async () => {
-  const m = await mod();
-
+suite("pass-B semantic retry", () => {
   test("semantic failure on attempt 1 yields terminal: false and retry with echoed error", async () => {
     // mutation-anchor: semantic-failure-not-instantly-terminal
+    const m = await mod();
     const bed = await passABed(m);
     const { env, runId, documentKey, documentSha256, fence, passAHash } = bed;
 
@@ -165,10 +172,17 @@ suite("pass-B semantic retry", async () => {
       const user = String(body.messages[1].content);
       capturedBodies.push(user);
       const unit = (user.match(/Your chunk id for this call is: (\S+)/) ?? [])[1];
-      const declared = (user.match(/Your chunk contains exactly \d+ blocks: ([^\n]+)/) ?? [])[1] ?? "";
-      const blockIds = declared.split(",").map((v) => v.trim()).filter(Boolean);
+      const isSweep = user.includes("LEDGER SWEEP");
+      const textMap = extractBlockTexts(user);
+      let blockIds;
+      if (isSweep) {
+        blockIds = [...textMap.keys()];
+      } else {
+        const declared = (user.match(/Your chunk contains exactly \d+ blocks: ([^\n]+)/) ?? [])[1] ?? "";
+        blockIds = declared.split(",").map((v) => v.trim()).filter(Boolean);
+      }
 
-      if (callCount === 1) {
+      if (callCount === 1 && !isSweep) {
         // First attempt: return invalid output (missing required field).
         return new Response(JSON.stringify({
           model: body.model,
@@ -179,12 +193,12 @@ suite("pass-B semantic retry", async () => {
           }],
         }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      // Second attempt: valid output.
+      // Second attempt and sweeps: valid output.
       return new Response(JSON.stringify({
         model: body.model,
         usage: { prompt_tokens: 100, completion_tokens: 50 },
         choices: [{
-          message: { content: JSON.stringify(validPayload(unit, blockIds)) },
+          message: { content: JSON.stringify(validPayload(unit, blockIds, textMap)) },
           finish_reason: "stop",
         }],
       }), { status: 200, headers: { "content-type": "application/json" } });

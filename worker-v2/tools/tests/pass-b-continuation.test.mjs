@@ -18,30 +18,59 @@ const CONSTRUCTS = [
   "piping", "carry-forward", "calculation", "randomization", "loop", "instruction",
 ];
 
-const TEXT = {
-  b0001: "Alpha question must be answered.",
-  b0002: "Beta question must be answered.",
-  b0003: "Gamma question must be answered.",
-};
+/**
+ * Extract block ID -> text map from the request's source blocks JSONL.
+ * Works for both chunk prompts (YOUR SOURCE BLOCKS) and sweep prompts
+ * (UNACCOUNTED SOURCE BLOCKS).
+ */
+function extractBlockTexts(userMessage) {
+  const texts = new Map();
+  const patterns = [
+    /===== YOUR SOURCE BLOCKS JSONL[^=]*=====\n([\s\S]*?)\n===== END YOUR SOURCE BLOCKS JSONL =====/,
+    /===== UNACCOUNTED SOURCE BLOCKS JSONL =====\n([\s\S]*?)\n===== END UNACCOUNTED SOURCE BLOCKS JSONL =====/,
+  ];
+  for (const pattern of patterns) {
+    const m = userMessage.match(pattern);
+    if (m) {
+      for (const line of m[1].split("\n").filter(Boolean)) {
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.block_id && parsed.text) texts.set(parsed.block_id, parsed.text);
+        } catch { /* skip unparseable lines */ }
+      }
+    }
+  }
+  return texts;
+}
 
-function validPayload(unit, blockIds) {
+/**
+ * Build a valid pass-B response for the given blocks. The `textMap` carries the
+ * actual source block text so evidence_quotes pass the decoder's grounding check.
+ */
+function validPayload(unit, blockIds, textMap) {
   return {
     chunk_id: unit,
-    obligations: blockIds.map((id, index) => ({
-      id: `${unit}-R${index + 1}`,
-      construct: "question",
-      scope: `question:${id}`,
-      quantifier: "every",
-      selector: id,
-      exceptions: [],
-      statement: "The question must be asked.",
-      doc_quote: TEXT[id],
-      block_ids: [id],
-      evidence_quotes: [{ block_id: id, quote: TEXT[id] }],
-      browser_observable: "full",
-      confidence: 0.9,
-      expansion: null,
-    })),
+    obligations: blockIds.map((id, index) => {
+      // Use the first 40 chars of the actual block text as the evidence quote,
+      // which is guaranteed to be an exact span of the source.
+      const fullText = textMap.get(id) ?? `Block ${id}`;
+      const quote = fullText.slice(0, Math.max(10, fullText.length));
+      return {
+        id: `${unit}-R${index + 1}`,
+        construct: "question",
+        scope: `question:${id}`,
+        quantifier: "every",
+        selector: id,
+        exceptions: [],
+        statement: "The question must be asked.",
+        doc_quote: quote,
+        block_ids: [id],
+        evidence_quotes: [{ block_id: id, quote }],
+        browser_observable: "full",
+        confidence: 0.9,
+        expansion: null,
+      };
+    }),
     block_dispositions: blockIds.map((id) => ({
       block_id: id,
       disposition: blockIds.length > 0 ? "normative" : "non-normative",
@@ -138,11 +167,66 @@ async function passABed(m, env) {
   return { ...bed, passAHash: passA.result.value.hash };
 }
 
-suite("pass-B continuation after terminal failure", async () => {
-  const m = await mod();
+suite("pass-B continuation after terminal failure", () => {
+  test("failures past ceil(0.2 * N) stop issuing with PASS_B_FAILURE_RATE_EXCEEDED", async () => {
+    // mutation-anchor: failure-rate-guardrail
+    // Every chunk fails with bad output. Once terminal failures exceed 20% of
+    // total chunks, the guardrail fires and the remaining chunks are never issued.
+    const m = await mod();
+    const env = envFor({ EXTRACT_CHUNK_MAX_ISSUES: "1", EXTRACT_CHUNK_CONCURRENCY: "1" });
+    const bed = await passABed(m, env);
+    const { runId, documentKey, documentSha256, fence, passAHash } = bed;
+
+    let callCount = 0;
+    const original = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => {
+      callCount++;
+      const body = JSON.parse(init.body);
+      const user = String(body.messages[1].content);
+      const unit = (user.match(/Your chunk id for this call is: (\S+)/) ?? [])[1];
+      // Every chunk returns invalid output.
+      return new Response(JSON.stringify({
+        model: body.model,
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
+        choices: [{
+          message: { content: JSON.stringify({ chunk_id: unit, bad: true }) },
+          finish_reason: "stop",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    try {
+      const result = await m.extractStage.stagePassBSlice(
+        env, runId, documentKey, "questionnaire.docx", fence, async () => {}, {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256,
+      );
+
+      // The threshold is ceil(N * 0.2). After that many terminal failures,
+      // the guardrail must stop issuing — so not all chunks get called.
+      const threshold = Math.ceil(result.slice.chunksTotal * 0.2);
+      assert(
+        callCount <= threshold + 1,
+        `guardrail must stop issuing after ~${threshold} failures, but ${callCount} calls were made`,
+      );
+      // The stage remaps PASS_B_FAILURE_RATE_EXCEEDED to FAILURE_RATE_EXCEEDED.
+      assertEq(
+        result.result.reason,
+        "FAILURE_RATE_EXCEEDED",
+        "reason code must be FAILURE_RATE_EXCEEDED",
+      );
+      assertEq(result.slice.done, false, "slice.done must be false when guardrail fires");
+      assert(
+        result.slice.chunksRemaining > 0,
+        "some chunks must remain un-issued after guardrail fires",
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
 
   test("one terminal chunk does not stop other chunks from issuing", async () => {
     // mutation-anchor: done-does-not-require-zero-failed-units
+    const m = await mod();
     const env = envFor({ EXTRACT_CHUNK_MAX_ISSUES: "1" });
     const bed = await passABed(m, env);
     const { runId, documentKey, documentSha256, fence, passAHash } = bed;
@@ -154,11 +238,19 @@ suite("pass-B continuation after terminal failure", async () => {
       const body = JSON.parse(init.body);
       const user = String(body.messages[1].content);
       const unit = (user.match(/Your chunk id for this call is: (\S+)/) ?? [])[1];
-      const declared = (user.match(/Your chunk contains exactly \d+ blocks: ([^\n]+)/) ?? [])[1] ?? "";
-      const blockIds = declared.split(",").map((v) => v.trim()).filter(Boolean);
+      const isSweep = user.includes("LEDGER SWEEP");
+      const textMap = extractBlockTexts(user);
 
-      // First chunk always fails.
-      if (callIndex === 1) {
+      let blockIds;
+      if (isSweep) {
+        blockIds = [...textMap.keys()];
+      } else {
+        const declared = (user.match(/Your chunk contains exactly \d+ blocks: ([^\n]+)/) ?? [])[1] ?? "";
+        blockIds = declared.split(",").map((v) => v.trim()).filter(Boolean);
+      }
+
+      // First chunk call (not sweep) always fails.
+      if (callIndex === 1 && !isSweep) {
         return new Response(JSON.stringify({
           model: body.model,
           usage: { prompt_tokens: 100, completion_tokens: 50 },
@@ -168,12 +260,12 @@ suite("pass-B continuation after terminal failure", async () => {
           }],
         }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      // All other chunks succeed.
+      // All other chunks and all sweeps succeed.
       return new Response(JSON.stringify({
         model: body.model,
         usage: { prompt_tokens: 100, completion_tokens: 50 },
         choices: [{
-          message: { content: JSON.stringify(validPayload(unit, blockIds)) },
+          message: { content: JSON.stringify(validPayload(unit, blockIds, textMap)) },
           finish_reason: "stop",
         }],
       }), { status: 200, headers: { "content-type": "application/json" } });
@@ -192,10 +284,7 @@ suite("pass-B continuation after terminal failure", async () => {
       // all chunks are accounted for (ok or terminal-failed).
       // The result may be not-evaluated if the reconstruction fails, but
       // the slice.done tells us the walk completed.
-      assert(
-        result.slice.done || result.slice.chunksRemaining === 0,
-        "all chunks must be accounted for",
-      );
+      assertEq(result.slice.done, true, "slice.done must be true when all chunks are accounted for");
     } finally {
       globalThis.fetch = original;
     }

@@ -509,6 +509,15 @@ const FILES = [
   // Mutation execution is closed over exact declared guard names, and the release runbook
   // accounts for every harness separately from the shared library.
   "./tests/mutation-execution-contract.test.mjs",
+  // Pass-B failure ladder: expansion envelope normalization, semantic retry with echo,
+  // per-obligation salvage, continuation past terminal chunks (including the 20% rate
+  // guardrail), and reason-code deduplication. Each test has a mutation anchor that
+  // identifies the line whose removal turns the test red.
+  "./tests/pass-b-expansion-envelope.test.mjs",
+  "./tests/pass-b-semantic-retry.test.mjs",
+  "./tests/pass-b-obligation-salvage.test.mjs",
+  "./tests/pass-b-continuation.test.mjs",
+  "./tests/pass-b-reason-codes.test.mjs",
 ];
 
 export async function runVerification({

@@ -35,10 +35,9 @@ function sourceBlock(blockId) {
   };
 }
 
-suite("pass-B obligation salvage", async () => {
-  const m = await mod();
-
+suite("pass-B obligation salvage", () => {
   test("salvage keeps valid obligations and counts bad ones as limitations", async () => {
+    const m = await mod();
     // mutation-anchor: salvage-limitation-counting
     const blocks = [sourceBlock("b0001"), sourceBlock("b0002")];
     const raw = {
@@ -107,6 +106,7 @@ suite("pass-B obligation salvage", async () => {
   });
 
   test("salvage refused when dispositions are incomplete", async () => {
+    const m = await mod();
     const blocks = [sourceBlock("b0001"), sourceBlock("b0002")];
     const raw = {
       chunk_id: "UNIT1",
