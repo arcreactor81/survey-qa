@@ -772,17 +772,21 @@ test("exhausted success storage stops the real stage, charges once, and Workflow
   }
 });
 
-test("malformed model output still lands as terminal semantic evidence and is never re-bought", async () => {
-  // Under the budget-mode failure ladder (bdfd068), a malformed envelope (non-array root
-  // key) is retried across waves before terminalizing. EXTRACT_PASS_A_WINDOW_MAX_ISSUES = 2
-  // means the window gets two issues (attempts) across two runPassA invocations (each wave
-  // processes a window once). Both parse-fail because the envelope precondition (all four
-  // roots must be arrays) rejects the output. After the second wave exhausts the budget,
-  // degradedPrimaryOutput returns null (unsalvageable envelope), and the artifact becomes
-  // terminal.
+test("malformed root output lands degraded with a counted structural limitation and is never re-bought", async () => {
+  // Under the per-root ruling, a single malformed root key (non-array) with three valid
+  // empty-array siblings is retriable across waves. EXTRACT_PASS_A_WINDOW_MAX_ISSUES = 2
+  // means two attempts across two runPassA invocations.
   //
-  // The REPLAY invocation must buy NOTHING — the never-re-bought-after-terminal property
-  // is the point of this test.
+  // Wave 1: attempt 1 < maxIssues 2, so durableTerminal = false. The strict validation
+  // throws (the raw output is not valid), but it's not terminal — stored as non-terminal
+  // failed artifact. Degradation is NOT attempted (requires durableTerminal).
+  //
+  // Wave 2: attempt 2 >= maxIssues 2, so durableTerminal = true. Strict validation throws
+  // again, canDegrade = true, degradedPrimaryOutput is called. With one bad root and three
+  // valid empty roots, it returns a degraded result (not null). The window LANDS as degraded,
+  // carrying one root-malformed limitation.
+  //
+  // REPLAY: the landed artifact is reclaimed at zero cost. No further purchases.
   const m = await mod();
   const evidence = memoryR2();
   const rawOutput = {
@@ -793,11 +797,9 @@ test("malformed model output still lands as terminal semantic evidence and is ne
   };
   const provider = stubPrimaryProvider(rawOutput);
   const env = primaryEnv(evidence);
-  // maxIssues = max(1, EXTRACT_PASS_A_WINDOW_MAX_ISSUES) = max(1, 2) = 2
-  // Each runPassA wave buys once per window; two waves exhaust the budget.
   const expectedPurchases = 2;
   try {
-    // WAVE 1: first attempt. The artifact is stored as non-terminal (attempt 1 < maxIssues 2).
+    // WAVE 1: first attempt — non-terminal semantic failure, retriable.
     const wave1 = await m.passA.runPassA(
       env,
       "run_passa_semantic_control",
@@ -809,40 +811,54 @@ test("malformed model output still lands as terminal semantic evidence and is ne
     assertEq(wave1.calls[0].status, "parse-failed", "wave 1: semantic rejection relabels the receipt");
     assertEq(provider.calls(), 1, "wave 1: exactly one provider call so far");
 
-    // WAVE 2: second attempt exhausts the budget. The artifact becomes terminal because
-    // attempts (2) >= maxIssues (2) and degradedPrimaryOutput returns null (unsalvageable).
+    // WAVE 2: second attempt exhausts the budget. degradedPrimaryOutput returns a degraded
+    // result (one bad root, three valid roots). The window LANDS as degraded.
     const wave2 = await m.passA.runPassA(
       env,
       "run_passa_semantic_control",
       singleBlockDocument(),
       "synthetic.docx",
     );
-    assertEq(wave2.failedUnits.length, 1, "wave 2: semantic failure remains visible and counted");
+    assertEq(wave2.failedUnits.length, 0, "wave 2: degraded window is not a failed unit");
+    assertEq(wave2.slice.terminalFailure, false, "wave 2: degraded, not terminal");
+    assertEq(wave2.slice.done, true, "wave 2: the degraded window lands and completes the pass");
     assertEq(provider.calls(), expectedPurchases, "wave 2: exactly two provider calls total");
 
-    // Two artifacts in the store: the canonical window key (terminal, wave 2) and the
-    // history archive of wave 1's non-terminal predecessor. Read the canonical key directly.
+    // The canonical artifact is now a degraded success, carrying the raw output pre-degradation.
     const canonicalKey = "v2/runs/run_passa_semantic_control/extraction/pass-a/window-01.json";
     const stored = await evidence.get(canonicalKey).then((o) => o.json());
-    assertEq(stored.status, "failed", "semantic evidence has the failed discriminator");
-    assertEq(stored.failureStage, "semantic-output", "semantic evidence keeps its exact failure class");
-    assertEq(stored.terminal, true, "the durable semantic artifact is terminal authority at exhaustion");
-    assertEq(stored.attempts, 2, "the terminal artifact records both attempts");
+    assertEq(stored.kind, "ok", "the degraded artifact has success kind");
     assertEq(
-      JSON.stringify(stored.modelOutput),
+      JSON.stringify(stored.rawModelOutputPreDegradation),
       JSON.stringify(rawOutput),
-      "the rejected raw output is retained exactly for strict replay",
+      "the original raw output is retained for audit",
     );
+    // The root-malformed limitation is visible in the artifact
+    const rootLims = stored.primaryGroundingLimitations.filter(
+      (lim) => lim.reason === "root-malformed",
+    );
+    assertEq(rootLims.length, 1, "exactly one root-malformed limitation in the artifact");
+    assertEq(rootLims[0].rowKind, "global-rule", "limitation names the bad root");
+    assertEq(rootLims[0].rowIndex, 0, "category-level rowIndex");
 
-    // REPLAY: the terminal artifact is cached. No new purchases.
+    // The limitation flows to the completion record
+    assertEq(
+      wave2.primaryGroundingLimitations.length,
+      1,
+      "limitation flows to completion",
+    );
+    assertEq(wave2.primaryGroundingLimitations[0].reason, "root-malformed");
+
+    // REPLAY: the landed degraded artifact is reclaimed. No new purchases.
     const replay = await m.passA.runPassA(
       env,
       "run_passa_semantic_control",
       singleBlockDocument(),
       "synthetic.docx",
     );
-    assertEq(replay.slice.terminalFailure, true, "strict replay preserves terminal authority");
-    assertEq(provider.calls(), expectedPurchases, "semantic evidence is not re-bought after terminal");
+    assertEq(replay.slice.terminalFailure, false, "replay preserves degraded (not terminal) authority");
+    assertEq(replay.slice.done, true, "replay completes");
+    assertEq(provider.calls(), expectedPurchases, "degraded evidence is not re-bought after landing");
   } finally {
     provider.restore();
   }

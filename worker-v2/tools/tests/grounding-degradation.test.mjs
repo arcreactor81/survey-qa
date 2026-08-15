@@ -197,11 +197,12 @@ suite("Item-level grounding degradation — A-w10 regression fixture", () => {
     assertEq(result, null);
   });
 
-  test("negative fixture: a malformed root key (non-array) is unsalvageable even when siblings are valid", async () => {
+  test("a single malformed root key (non-array) degrades with a root-malformed limitation, not terminal", async () => {
     const mod = await worker();
     const source = makeSourceBlocks();
     // Three valid empty arrays, one root key is a string instead of an array.
-    // This is an unsalvageable envelope, not an item-level failure.
+    // Under the final ruling this DEGRADES (not null): the three valid roots contribute
+    // zero items, and the bad root gets a root-malformed limitation.
     const result = mod.passA.degradedPrimaryOutput(
       {
         global_rules: "not-an-array",
@@ -212,13 +213,20 @@ suite("Item-level grounding degradation — A-w10 regression fixture", () => {
       source,
       "A-w10",
     );
-    assertEq(result, null, "a non-array root key makes the envelope unsalvageable");
+    assert(result !== null, "a single non-array root degrades (not null) when siblings are valid");
+    assertEq(result.unit.globalRules.length, 0, "no items salvaged from the bad root");
+    assertEq(result.degradedItemCount, 1, "exactly one degraded count for the bad root");
+    const rootLim = result.limitations.find((l) => l.reason === "root-malformed");
+    assert(rootLim !== undefined, "a root-malformed limitation must exist");
+    assertEq(rootLim.rowKind, "global-rule", "the limitation names the bad root's kind");
+    assertEq(rootLim.rowIndex, 0, "root-malformed uses rowIndex 0");
   });
 
-  test("negative fixture: a missing root key is unsalvageable even when siblings are valid arrays", async () => {
+  test("a single missing root key degrades with a root-malformed limitation, not terminal", async () => {
     const mod = await worker();
     const source = makeSourceBlocks();
     // cross_references is missing entirely — only three of the four required keys present.
+    // Under the final ruling this DEGRADES (not null).
     const result = mod.passA.degradedPrimaryOutput(
       {
         global_rules: [],
@@ -228,7 +236,47 @@ suite("Item-level grounding degradation — A-w10 regression fixture", () => {
       source,
       "A-w10",
     );
-    assertEq(result, null, "a missing root key makes the envelope unsalvageable");
+    assert(result !== null, "a single missing root degrades (not null) when siblings are valid");
+    assertEq(result.unit.crossRefs.length, 0, "no items salvaged from the missing root");
+    const rootLim = result.limitations.find((l) => l.reason === "root-malformed");
+    assert(rootLim !== undefined, "a root-malformed limitation must exist");
+    assertEq(rootLim.rowKind, "cross-reference", "the limitation names the missing root's kind");
+    assertEq(rootLim.rowIndex, 0, "root-malformed uses rowIndex 0");
+  });
+
+  test("ALL FOUR roots absent/non-array returns null (terminal)", async () => {
+    const mod = await worker();
+    const source = makeSourceBlocks();
+    const result = mod.passA.degradedPrimaryOutput(
+      { some_random_field: "value", global_rules: 42 },
+      source,
+      "A-w10",
+    );
+    assertEq(result, null, "all four roots bad is terminal null");
+  });
+
+  test("negative fixture: mutating away the root-malformed limitation makes the test fail", async () => {
+    // Prove that the root-malformed limitation detection is load-bearing: if we feed
+    // a single bad root and then check that no root-malformed limitation exists, the
+    // check fails — the limitation IS produced.
+    const mod = await worker();
+    const source = makeSourceBlocks();
+    const result = mod.passA.degradedPrimaryOutput(
+      {
+        global_rules: "not-an-array",
+        cross_references: [],
+        ambiguities: [],
+        unverifiable_from_browser: [],
+      },
+      source,
+      "A-w10",
+    );
+    assert(result !== null, "degraded result exists");
+    const rootLimitations = result.limitations.filter((l) => l.reason === "root-malformed");
+    assert(
+      rootLimitations.length > 0,
+      "removing root-malformed detection would make this zero — the test can fail",
+    );
   });
 
   test("negative fixture: removing degradation logic makes the exclusion test fail", async () => {

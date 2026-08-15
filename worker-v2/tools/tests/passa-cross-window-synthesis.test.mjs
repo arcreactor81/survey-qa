@@ -1372,6 +1372,14 @@ test("completed authority names the exact strict-schema failure and unread remai
       assertEq(result.slice.windowsLanded, 11, "all windows land including the degraded one");
       assertEq(result.slice.windowsRemaining, 0);
       assertEq(result.requirements.length, 0, "no items from any window (all return empty)");
+      // The degraded window must carry the root-malformed limitation for the missing global_rules
+      const rootMalformed = result.primaryGroundingLimitations.filter(
+        (lim) => lim.reason === "root-malformed",
+      );
+      assertEq(rootMalformed.length, 1, "exactly one root-malformed limitation for the missing root");
+      assertEq(rootMalformed[0].unit, "A-w3", "the root-malformed limitation names the degraded window");
+      assertEq(rootMalformed[0].rowKind, "global-rule", "the root-malformed limitation names the bad root's kind");
+      assertEq(rootMalformed[0].rowIndex, 0, "root-malformed uses rowIndex 0 (category-level)");
     } finally {
       provider.restore();
     }
@@ -1494,15 +1502,30 @@ test("strictly malformed primary schemas terminalize without a second purchase",
     }
   }
 
-  // TERMINAL CASES: when ANY root key is missing or not an array, the envelope is
-  // unsalvageable — degradedPrimaryOutput returns null and the terminal failure fires.
-  const terminalCases = [
-    {
-      name: "all root arrays missing",
-      output: () => ({}),
-    },
+  // TERMINAL: only when ALL FOUR roots are absent/non-array is the envelope truly unsalvageable.
+  {
+    const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
+    const doc = documentFor();
+    const provider = installProvider(() => ({ value: {} }));
+    try {
+      const failed = await m.passA.runPassA(env, "run_strict_primary_terminal_all", doc, "neutral.docx");
+      assertEq(failed.slice.terminalFailure, true, "all root arrays missing: unsalvageable envelope is terminal");
+      assertEq(provider.calls.length, 1, "all root arrays missing: exactly one purchase");
+      provider.reset();
+      const reclaimed = await m.passA.runPassA(env, "run_strict_primary_terminal_all", doc, "neutral.docx");
+      assertEq(provider.calls.length, 0, "all root arrays missing: terminal semantic rejection is durable authority");
+      assertEq(reclaimed.slice.terminalFailure, true, "all root arrays missing: terminal reclaim stays terminal");
+    } finally {
+      provider.restore();
+    }
+  }
+
+  // DEGRADED (not terminal): a single missing or non-array root key degrades with a
+  // root-malformed limitation; the other three valid (empty) roots contribute zero items.
+  const degradedRootCases = [
     {
       name: "missing required root array (global_rules deleted)",
+      expectedRowKind: "global-rule",
       output: () => {
         const value = emptyPrimary();
         delete value.global_rules;
@@ -1511,24 +1534,37 @@ test("strictly malformed primary schemas terminalize without a second purchase",
     },
     {
       name: "non-array root key (global_rules is a string)",
+      expectedRowKind: "global-rule",
       output: () => ({
         ...emptyPrimary(),
         global_rules: "not-an-array",
       }),
     },
   ];
-  for (const [tIdx, tCase] of terminalCases.entries()) {
+  for (const [dIdx, dCase] of degradedRootCases.entries()) {
     const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "100" });
     const doc = documentFor();
-    const provider = installProvider(() => ({ value: tCase.output() }));
+    const provider = installProvider(() => ({ value: dCase.output() }));
     try {
-      const failed = await m.passA.runPassA(env, `run_strict_primary_terminal_${tIdx}`, doc, "neutral.docx");
-      assertEq(failed.slice.terminalFailure, true, `${tCase.name}: unsalvageable envelope is terminal`);
-      assertEq(provider.calls.length, 1, `${tCase.name}: exactly one purchase`);
+      const result = await m.passA.runPassA(env, `run_strict_primary_degraded_root_${dIdx}`, doc, "neutral.docx");
+      assertEq(result.slice.terminalFailure, false, `${dCase.name}: partial missing root degrades, not terminal`);
+      assertEq(result.slice.done, true, `${dCase.name}: degraded window lands and pass completes`);
+      assertEq(provider.calls.length, 1, `${dCase.name}: exactly one purchase, zero further during salvage`);
+      assertEq(result.failedUnits.length, 0, `${dCase.name}: degraded window is not a failed unit`);
+      assertEq(
+        result.primaryGroundingLimitations.length,
+        1,
+        `${dCase.name}: exactly one root-malformed limitation`,
+      );
+      assertEq(result.primaryGroundingLimitations[0].reason, "root-malformed", dCase.name);
+      assertEq(result.primaryGroundingLimitations[0].rowKind, dCase.expectedRowKind, dCase.name);
+      assertEq(result.primaryGroundingLimitations[0].rowIndex, 0, dCase.name);
+      // Reentry reclaims the degraded artifact at zero cost
       provider.reset();
-      const reclaimed = await m.passA.runPassA(env, `run_strict_primary_terminal_${tIdx}`, doc, "neutral.docx");
-      assertEq(provider.calls.length, 0, `${tCase.name}: terminal semantic rejection is durable authority`);
-      assertEq(reclaimed.slice.terminalFailure, true, `${tCase.name}: terminal reclaim stays terminal`);
+      const reclaimed = await m.passA.runPassA(env, `run_strict_primary_degraded_root_${dIdx}`, doc, "neutral.docx");
+      assertEq(provider.calls.length, 0, `${dCase.name}: degraded artifact is durable — reclaimed, not re-bought`);
+      assertEq(reclaimed.slice.done, true, dCase.name);
+      assertEq(reclaimed.slice.terminalFailure, false, `${dCase.name}: reclaim stays degraded, not terminal`);
     } finally {
       provider.restore();
     }

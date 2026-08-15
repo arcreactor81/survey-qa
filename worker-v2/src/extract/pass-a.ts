@@ -3289,17 +3289,20 @@ export function degradedPrimaryOutput(
    */
   strictPassingModelOutput: Record<string, unknown>;
 } | null {
-  // Verify the raw output has ALL FOUR expected top-level arrays.
-  // A malformed root (missing key or non-array value) is an unsalvageable envelope —
-  // item-level salvage applies only to invalid ITEMS inside well-formed arrays.
+  // Handle each of the four roots independently:
+  //   well-formed array  -> existing per-item salvage (unchanged)
+  //   absent OR non-array -> record ONE category-level "root-malformed" limitation for that root
+  //                          and salvage nothing from it. NEVER silent.
+  //   return null (terminal) ONLY when ALL FOUR roots are absent/non-array.
   const globalRows = rawModelOutput["global_rules"];
   const xrefRows = rawModelOutput["cross_references"];
   const ambiguityRows = rawModelOutput["ambiguities"];
   const unverifiableRows = rawModelOutput["unverifiable_from_browser"];
-  if (
-    !Array.isArray(globalRows) || !Array.isArray(xrefRows) ||
-    !Array.isArray(ambiguityRows) || !Array.isArray(unverifiableRows)
-  ) {
+  const globalOk = Array.isArray(globalRows);
+  const xrefOk = Array.isArray(xrefRows);
+  const ambiguityOk = Array.isArray(ambiguityRows);
+  const unverifiableOk = Array.isArray(unverifiableRows);
+  if (!globalOk && !xrefOk && !ambiguityOk && !unverifiableOk) {
     return null;
   }
 
@@ -3310,6 +3313,28 @@ export function degradedPrimaryOutput(
 
   let totalItemCount = 0;
   let degradedItemCount = 0;
+
+  // Record category-level root-malformed limitations for absent/non-array roots.
+  // Each bad root contributes ONE limitation and ONE degradedItemCount.
+  const rootKindMap: [boolean, PassAPrimaryGroundingRowKind][] = [
+    [globalOk, "global-rule"],
+    [xrefOk, "cross-reference"],
+    [ambiguityOk, "ambiguity"],
+    [unverifiableOk, "unverifiable"],
+  ];
+  for (const [ok, rowKind] of rootKindMap) {
+    if (!ok) {
+      degradedItemCount++;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind,
+        rowIndex: 0,
+        sourceBlockIds: [],
+        reason: "root-malformed",
+      });
+    }
+  }
 
   // Raw rows that passed per-item strict structural validation (for synthetic modelOutput)
   const strictPassingGlobalRules: unknown[] = [];
@@ -3818,6 +3843,30 @@ async function readWindowArtifact(
     const storedLimitations = validatePassAPrimaryGroundingLimitations(
       parsed["primaryGroundingLimitations"],
     );
+    // Root-malformed limitations (rowIndex 0, reason "root-malformed") are produced by
+    // degradedPrimaryOutput from the ORIGINAL raw model output when a root key was absent
+    // or non-array. The stored modelOutput (strictPassingModelOutput) has well-formed roots
+    // by construction, so the grounding re-run cannot reproduce them. They are structural
+    // markers from the original output, carried into the stored artifact, and must be accepted
+    // during re-read without requiring re-derivation from the stored modelOutput.
+    const storedRootMalformed = storedLimitations.filter(
+      (lim) => lim.reason === "root-malformed",
+    );
+    // Merge root-malformed limitations from stored into decoded for comparison.
+    // Root-malformed always has rowIndex 0, so they sort before any item-level limitations
+    // of the same rowKind — the merged array remains in deterministic order.
+    const decodedWithRootMalformed = [
+      ...storedRootMalformed,
+      ...decoded.primaryGroundingLimitations,
+    ];
+    // Re-sort after merging to maintain deterministic window/kind/row order
+    const rowKindOrderMap = new Map<string, number>([
+      ["global-rule", 0], ["cross-reference", 1], ["ambiguity", 2], ["unverifiable", 3],
+    ]);
+    decodedWithRootMalformed.sort((left, right) =>
+      (rowKindOrderMap.get(left.rowKind)! - rowKindOrderMap.get(right.rowKind)!) ||
+      left.rowIndex - right.rowIndex
+    );
     const typedStored = {
       globalRules: parsed["globalRules"], crossRefs: parsed["crossRefs"],
       ambiguities: parsed["ambiguities"], unverifiable: parsed["unverifiable"],
@@ -3826,12 +3875,17 @@ async function readWindowArtifact(
     const typedDecoded = {
       globalRules: decoded.globalRules, crossRefs: decoded.crossRefs,
       ambiguities: decoded.ambiguities, unverifiable: decoded.unverifiable,
-      primaryGroundingLimitations: decoded.primaryGroundingLimitations,
+      primaryGroundingLimitations: decodedWithRootMalformed,
     };
     if (canonicalJson(typedStored) !== canonicalJson(typedDecoded)) {
       return invalid('typed projection differs from strict re-decoding of raw modelOutput', parsed);
     }
-    return rememberPassAWindowStorageAuthority(decoded, storageAuthority);
+    // If the stored artifact carries root-malformed limitations (from degradedPrimaryOutput),
+    // inject them into the decoded window so they flow correctly on re-read.
+    const finalDecoded = storedRootMalformed.length > 0
+      ? { ...decoded, primaryGroundingLimitations: decodedWithRootMalformed }
+      : decoded;
+    return rememberPassAWindowStorageAuthority(finalDecoded, storageAuthority);
   } catch (error) {
     return invalid(error instanceof Error ? error.message : 'typed output validation failed', parsed);
   }

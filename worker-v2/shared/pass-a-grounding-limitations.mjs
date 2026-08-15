@@ -35,6 +35,7 @@ const REASONS = new Set([
   "source-evidence-set-invalid",
   "grounded-row-linkage-incomplete",
   "structural-validation-failed",
+  "root-malformed",
 ]);
 const REASON_DETAILS = new Map([
   [
@@ -56,6 +57,10 @@ const REASON_DETAILS = new Map([
   [
     "structural-validation-failed",
     "the model output row failed structural validation and could not be decoded",
+  ],
+  [
+    "root-malformed",
+    "the top-level root key was absent or not an array, so no items could be salvaged from that category",
   ],
 ]);
 // These independent caps bound the public report even when a retained run contains many
@@ -112,8 +117,14 @@ export function validatePassAPrimaryGroundingLimitation(value) {
       `PASS_A_PRIMARY_GROUNDING_LIMITATION_INVALID: rowKind must be one of ${ROW_KINDS.join(", ")}`,
     );
   }
-  if (!Number.isSafeInteger(value.rowIndex) || value.rowIndex < 1) {
-    throw new TypeError("PASS_A_PRIMARY_GROUNDING_LIMITATION_INVALID: rowIndex must be 1-based");
+  if (!Number.isSafeInteger(value.rowIndex) || value.rowIndex < 0) {
+    throw new TypeError("PASS_A_PRIMARY_GROUNDING_LIMITATION_INVALID: rowIndex must be 0 (category-level) or 1-based");
+  }
+  if (value.rowIndex === 0 && value.reason !== "root-malformed") {
+    throw new TypeError("PASS_A_PRIMARY_GROUNDING_LIMITATION_INVALID: rowIndex 0 is reserved for root-malformed category-level limitations");
+  }
+  if (value.reason === "root-malformed" && value.rowIndex !== 0) {
+    throw new TypeError("PASS_A_PRIMARY_GROUNDING_LIMITATION_INVALID: root-malformed limitations must use rowIndex 0");
   }
   if (!Array.isArray(value.sourceBlockIds)) {
     throw new TypeError("PASS_A_PRIMARY_GROUNDING_LIMITATION_INVALID: sourceBlockIds must be an array");

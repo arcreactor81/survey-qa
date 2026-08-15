@@ -14,7 +14,8 @@ export type PassAPrimaryGroundingReason =
   | "source-quote-not-exact"
   | "source-evidence-set-invalid"
   | "grounded-row-linkage-incomplete"
-  | "structural-validation-failed";
+  | "structural-validation-failed"
+  | "root-malformed";
 
 export interface PassAPrimaryGroundingLimitationWire {
   kind: typeof PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND;
