@@ -484,8 +484,8 @@ await runMutantSuite({
       name: "a fallback chain may contain another Grok purchase",
       breaks: "one trigger can hide an independently purchased intervening Grok leg",
       file: PASS_A,
-      find: 'if (grokUsages.length !== 1) return "fallback chain contains an extra Grok purchase";',
-      replace: 'if (false) return "fallback chain contains an extra Grok purchase";',
+      find: 'if (primaryUsages.length !== 1) return "fallback chain contains an extra primary purchase";',
+      replace: 'if (false) return "fallback chain contains an extra primary purchase";',
       kills: [FALLBACK_CHAIN],
     },
     {

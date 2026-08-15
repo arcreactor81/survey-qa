@@ -4183,6 +4183,21 @@ function validatePassAUnitUsageCoherence(
   for (let index = 0; index < usages.length; index += 1) {
     const usage = usages[index]!;
     const position = positions[index]!;
+    // RECEIPT 1 — Grok primary (grok mode) OR Gemini primary (budget mode).
+    // The writer's two paths produce structurally distinct receipts:
+    //   grok mode:   callId = expectedCallId,                provider = grok, model = DEFAULT_GROK_MODEL
+    //   gemini mode: callId = expectedCallId:gemini-primary,  provider = gemini, model = gemini-2.5-flash
+    // Both are legitimate receipt-1 shapes. The callId suffix disambiguates.
+    const isGrokPrimary =
+      position.receipt === 1 &&
+      usage.callId === expectedCallId &&
+      usage.provider === 'grok' &&
+      usage.model === DEFAULT_GROK_MODEL;
+    const isGeminiPrimary =
+      position.receipt === 1 &&
+      usage.callId === `${expectedCallId}:gemini-primary` &&
+      usage.provider === 'gemini' &&
+      usage.model === 'gemini-2.5-flash';
     const isGeminiSubstitute =
       position.receipt === 2 &&
       usage.provider === 'gemini' &&
@@ -4200,8 +4215,7 @@ function validatePassAUnitUsageCoherence(
       usage.callId === `${expectedCallId}:grok-fallback`;
     if (
       usage.role !== expectedRole ||
-      (position.receipt === 1 && usage.callId !== expectedCallId) ||
-      (position.receipt === 1 && (usage.provider !== 'grok' || usage.model !== DEFAULT_GROK_MODEL)) ||
+      (position.receipt === 1 && !isGrokPrimary && !isGeminiPrimary) ||
       (position.receipt === 2 && !isGeminiSubstitute && !isFlashFallback) ||
       (position.receipt === 3 && !isFlashAfterGemini)
     ) return 'receipt role/call/provider is inconsistent with its settlement identity';
@@ -6151,9 +6165,15 @@ function parseFallbackTrigger(value: unknown, usages: CallUsage[]): GrokFallback
     typeof row.detail !== "string" || row.detail.length === 0
   ) return null;
   const bound = usages.find((usage) => usage.eventId === row.grokUsageEventId);
+  // The bound usage is the receipt-1 that failed: either Grok primary (provider=grok,
+  // model=DEFAULT_GROK_MODEL) or Gemini primary (provider=gemini, model=gemini-2.5-flash,
+  // callId ending with :gemini-primary). Both are legitimate origins for a fallback trigger.
+  const isGrokOrigin = bound?.provider === "grok" && bound?.model === DEFAULT_GROK_MODEL;
+  const isGeminiPrimaryOrigin =
+    bound?.provider === "gemini" && bound?.model === "gemini-2.5-flash" &&
+    typeof bound?.callId === "string" && bound.callId.endsWith(":gemini-primary");
   if (
-    !bound || bound.provider !== "grok" || bound.status !== "error" ||
-    bound.model !== DEFAULT_GROK_MODEL ||
+    !bound || (!isGrokOrigin && !isGeminiPrimaryOrigin) || bound.status !== "error" ||
     (row.failureKind === "invalid-content" &&
       bound.usageSource === "unverified-model-rate-ceiling")
   ) return null;
@@ -6169,6 +6189,13 @@ function parseRouteReceipt(value: unknown, usages: CallUsage[]): PassARouteRecei
       : { selected: row.selected, trigger: null };
   }
   if (row.selected === "gemini-2.5-flash") {
+    if (row.trigger === null) {
+      // Gemini-primary: selected = gemini-2.5-flash with no trigger (no Grok was called).
+      return usages.some((usage) => usage.provider === "gemini" && usage.model === "gemini-2.5-flash")
+        ? { selected: row.selected, trigger: null }
+        : null;
+    }
+    // Gemini substitute (Grok-primary mode): Grok failed, trigger points to the Grok receipt.
     const trigger = parseFallbackTrigger(row.trigger, usages);
     if (trigger === null || !usages.some((usage) => usage.provider === "gemini" && usage.model === "gemini-2.5-flash")) {
       return null;
@@ -6206,13 +6233,19 @@ function validatePassAFallbackUsageChain(
   if (triggerMatches.length !== 1) return "fallback trigger does not bind exactly one Grok receipt";
   const triggerUsage = triggerMatches[0]!;
   const triggerPosition = passAUsagePosition(triggerUsage, runId, unit);
+  // The trigger usage is receipt-1 from either Grok primary or Gemini primary.
+  const isGrokTrigger = triggerUsage.provider === "grok" && triggerUsage.model === DEFAULT_GROK_MODEL;
+  const isGeminiPrimaryTrigger = triggerUsage.provider === "gemini" &&
+    triggerUsage.model === "gemini-2.5-flash" &&
+    typeof triggerUsage.callId === "string" && triggerUsage.callId.endsWith(":gemini-primary");
   if (
     triggerPosition === null || triggerPosition.receipt !== 1 ||
-    triggerUsage.provider !== "grok" || triggerUsage.model !== DEFAULT_GROK_MODEL ||
+    (!isGrokTrigger && !isGeminiPrimaryTrigger) ||
     triggerUsage.status !== "error"
-  ) return "fallback trigger is not a bound Grok receipt-1 error";
-  const grokUsages = usages.filter((usage) => usage.provider === "grok");
-  if (grokUsages.length !== 1) return "fallback chain contains an extra Grok purchase";
+  ) return "fallback trigger is not a bound receipt-1 error";
+  const primaryUsages = usages.filter((usage) =>
+    usage.provider === "grok" || (usage.provider === "gemini" && typeof usage.callId === "string" && usage.callId.endsWith(":gemini-primary")));
+  if (primaryUsages.length !== 1) return "fallback chain contains an extra primary purchase";
   if (triggerPosition.issue > attempts) return "fallback trigger issue exceeds retained attempts";
 
   const flashRows = usages.flatMap((usage) => {
@@ -6273,11 +6306,16 @@ function validatePassARouteReceiptForUnit(
       : null;
   }
   if (receipt.selected === "gemini-2.5-flash") {
-    // Gemini substitute: the selected usage must be gemini, receipt position 2, with a trigger
-    if (
-      selected.provider !== "gemini" || selected.model !== "gemini-2.5-flash" ||
-      receipt.trigger === null
-    ) return null;
+    if (selected.provider !== "gemini" || selected.model !== "gemini-2.5-flash") return null;
+    if (receipt.trigger === null) {
+      // Gemini-primary: receipt-1 is Gemini with no trigger, callId ends with :gemini-primary.
+      // No other provider usages should exist (the whole chain was Gemini-only).
+      return typeof selected.callId === "string" && selected.callId.endsWith(":gemini-primary") &&
+        !usages.some((usage) => usage.provider === "grok" || usage.provider === "deepseek")
+        ? receipt
+        : null;
+    }
+    // Gemini substitute (Grok-primary mode): Grok failed, Gemini substituted, WITH trigger.
     const triggerUsage = usages.find((usage) => usage.eventId === receipt.trigger!.grokUsageEventId);
     if (!triggerUsage || triggerUsage.status !== "error") return null;
     return receipt;

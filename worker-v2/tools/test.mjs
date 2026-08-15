@@ -91,6 +91,11 @@ const FILES = [
   // Slice-level terminality derives from durable window terminality.
   // v30 regression: terminal:false on the artifact must produce terminalFailure:false on the slice.
   "./tests/slice-terminality.test.mjs",
+  // Reader-writer round-trip: every writer-producible artifact variant (ok, failed-retryable,
+  // failed-terminal, degraded, wire-ceiling) must read back without becoming kind:"invalid".
+  // v31 regression: Gemini-primary receipt-1 was rejected by the Grok-only coherence validator.
+  // Pinned fixture: the real v31 artifact bytes from production R2.
+  "./tests/reader-writer-roundtrip.test.mjs",
   // Terminal extraction refusals report durable operational evidence without inventing QA claims.
   // Malformed or missing receipts must leave no report pointer.
   "./tests/terminal-failure-report.test.mjs",
