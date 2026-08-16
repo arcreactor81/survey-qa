@@ -231,7 +231,7 @@ await runMutantSuite({
       find: "failedUnits.push({ unit: chunk.id, blockIds, detail });",
       replace: "terminalFailure = false;",
       kills: [
-        "a malformed second row terminalizes the whole chunk, keeps its paid receipt, and never sweeps or shortens",
+        "a terminal unsalvageable chunk is counted in failedUnits and the sweep still covers its blocks",
       ],
     },
     {

@@ -751,18 +751,31 @@ test("mutating a retained successful unit invalidates reconstruction with zero f
     artifact.obligations = [];
     await env.EVIDENCE.put(key, JSON.stringify(artifact));
 
+    // A: reconstruction must detect the typed-array mismatch without any provider call.
     provider.reset();
     const authority = await m.passB.reconstructPassBCompletedAuthority(env, runId, doc);
-    assertEq(provider.requests.length, 0);
+    assertEq(provider.requests.length, 0, "reconstruction never crosses the provider boundary");
     assertEq(authority.kind, "invalid");
-    // B4: the mutated chunk becomes a failed unit in reconstruction. The sweep tries to
-    // cover its blocks, finds no sweep artifact, and returns invalid. The detail names
-    // the sweep's absence rather than the chunk's corruption.
     assert(
       authority.detail.includes("PASS_B_COMPLETED_ARTIFACT_INVALID"),
       "the invalid completion authority is named",
     );
     assertEq(authority.slice.terminalFailure, true);
+
+    // B: a resumed run must treat the corruption as terminal, NOT as a cache miss
+    // that authorizes a second provider purchase. If readUnit returns null instead
+    // of invalid, runPassB puts the chunk into the todo queue and re-buys it.
+    provider.reset();
+    const resumed = await m.passB.runPassB(env, runId, doc, "ignored.docx");
+    assertEq(
+      provider.requests.filter((r) => !r.startsWith("SWEEP")).length, 0,
+      "typed-array corruption must not become a cache miss that re-buys the chunk",
+    );
+    assertEq(resumed.slice.terminalFailure, true);
+    assert(
+      resumed.failedUnits.some((row) => row.detail.includes("PASS_B_UNIT_ARTIFACT_INVALID")),
+      "the corruption is a named terminal failure, not a silent cache eviction",
+    );
   } finally {
     provider.restore();
   }

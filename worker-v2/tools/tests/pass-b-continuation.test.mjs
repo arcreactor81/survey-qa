@@ -224,6 +224,111 @@ suite("pass-B continuation after terminal failure", () => {
     }
   });
 
+  test("a terminal unsalvageable chunk is counted in failedUnits and the sweep still covers its blocks", async () => {
+    // Survivor 1 anchor: the property is that a chunk whose only attempt is
+    // rejected AND whose output cannot be salvaged must remain named in failedUnits,
+    // counted in the failure-rate guardrail, and marked terminal — even though the
+    // walk continues and the sweep re-reads its blocks.
+    //
+    // The mutation "a terminal chunk failure is forgotten before the sweep" replaces
+    // failedUnits.push(...) with terminalFailure = false. Under that mutation:
+    //   (a) the dead chunk vanishes from failedUnits,
+    //   (b) terminalFailure is reset, and
+    //   (c) the sweep still runs — but the failure is laundered.
+    //
+    // This test calls runPassB directly so it can inspect the in-memory result
+    // arrays (failedUnits, slice.terminalFailure) rather than the stage wrapper.
+    const m = await mod();
+    const env = envFor({
+      EXTRACT_CHUNK_MAX_ISSUES: "1",
+      EXTRACT_CHUNK_CONCURRENCY: "1",
+      EXTRACT_SWEEP_MAX_CALLS: "3",
+    });
+
+    const runId = m.ids.mintRunId();
+    const doc = m.docxBlocks.parseDocxBlocks(
+      readFileSync(new URL("../../../public/sample/questionnaire.docx", import.meta.url)),
+    );
+    // The document must have at least 2 chunks (EXTRACT_CHUNK_MAX_BLOCKS=1 gives one
+    // block per chunk, so any multi-block document qualifies).
+    const chunks = m.passB.chunkBlocks(doc.blocks, 1000, 1);
+    assert(chunks.length >= 2, "fixture document must produce at least two chunks");
+
+    let chunkCalls = 0;
+    let sweepCalls = 0;
+    const original = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      const user = String(body.messages[1].content);
+      const unit = (user.match(/Your chunk id for this call is: (\S+)/) ?? [])[1];
+      const isSweep = user.includes("LEDGER SWEEP");
+      const textMap = extractBlockTexts(user);
+
+      if (isSweep) {
+        sweepCalls++;
+        const blockIds = [...textMap.keys()];
+        return new Response(JSON.stringify({
+          model: body.model,
+          usage: { prompt_tokens: 100, completion_tokens: 50 },
+          choices: [{
+            message: { content: JSON.stringify(validPayload(unit, blockIds, textMap)) },
+            finish_reason: "stop",
+          }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      chunkCalls++;
+      const declared = (user.match(/Your chunk contains exactly \d+ blocks: ([^\n]+)/) ?? [])[1] ?? "";
+      const blockIds = declared.split(",").map((v) => v.trim()).filter(Boolean);
+
+      // The first chunk returns completely invalid output: no dispositions, no
+      // construct_checklist. The decoder throws PassBOutputInvalid. Salvage also
+      // returns null because block_dispositions is not an array.
+      if (chunkCalls === 1) {
+        return new Response(JSON.stringify({
+          model: body.model,
+          usage: { prompt_tokens: 100, completion_tokens: 50 },
+          choices: [{
+            message: { content: JSON.stringify({ chunk_id: unit, garbage: true }) },
+            finish_reason: "stop",
+          }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      // All other chunks succeed.
+      return new Response(JSON.stringify({
+        model: body.model,
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
+        choices: [{
+          message: { content: JSON.stringify(validPayload(unit, blockIds, textMap)) },
+          finish_reason: "stop",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    try {
+      const result = await m.passB.runPassB(env, runId, doc, "ignored.docx");
+
+      // All chunks were called — the terminal failure did not block issuing.
+      assert(chunkCalls > 1, "more than one chunk must have been called");
+      // The sweep must have run over the dead chunk's blocks.
+      assert(sweepCalls > 0, "the sweep must cover the dead chunk's unaccounted blocks");
+      // The dead chunk must be NAMED in failedUnits (not silently dropped).
+      assert(
+        result.failedUnits.length > 0,
+        "the terminally-failed chunk must appear in failedUnits",
+      );
+      // slice.terminalFailure must be true — the terminal failure must not be cleared.
+      assertEq(
+        result.slice.terminalFailure, true,
+        "terminalFailure must stay true when a chunk is terminally failed",
+      );
+      // The walk completes (all chunks accounted for, sweep ran).
+      assertEq(result.slice.done, true, "slice.done must be true when all units are accounted for");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   test("one terminal chunk does not stop other chunks from issuing", async () => {
     // mutation-anchor: done-does-not-require-zero-failed-units
     const m = await mod();
