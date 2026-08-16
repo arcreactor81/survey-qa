@@ -843,6 +843,15 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
 
   const acquireTimeoutMs = num((env as unknown as { EXEC_ACQUIRE_TIMEOUT_MS?: string }).EXEC_ACQUIRE_TIMEOUT_MS, 45_000);
   const walkTimeoutMs = num((env as unknown as { EXEC_WALK_TIMEOUT_MS?: string }).EXEC_WALK_TIMEOUT_MS, 150_000);
+  // PER-CASE TIME BUDGET. One stuck walk must not eat the batch: each case gets its own wall-
+  // clock cap. The per-case timeout is the TIGHTER of (a) the explicit per-case budget and
+  // (b) the legacy walk timeout, so it never exceeds what the old code allowed. Exceeding it
+  // produces outcome "per-case-timeout" — a named, counted limitation the batch loop continues
+  // past, just as it continues past a browser-hung walk.
+  const perCaseTimeoutMs = Math.min(
+    num((env as unknown as { EXEC_PER_CASE_TIMEOUT_MS?: string }).EXEC_PER_CASE_TIMEOUT_MS, 45_000),
+    walkTimeoutMs,
+  );
 
   let handle: SessionHandle;
   try {
@@ -888,9 +897,34 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
   let steps = 0;
   let stopReason: string | null = null;
 
+  // MINIMUM BATCH RESIDUAL GUARD (first real walk, analysis class b).
+  //
+  // All 7 time-caps on the first real walk were walks started with 1.1-56s of leftover
+  // batch budget. A walk started with less budget than it needs is structurally doomed:
+  // it burns an exploration slot or a path attempt, records zero steps, and produces
+  // outcome "time-cap" — wasted work that is indistinguishable from a real timeout.
+  //
+  // The minimum residual is the per-case timeout: a walk that cannot run for at least
+  // perCaseTimeoutMs has no chance of completing even a single healthy screen sequence.
+  // When the remaining batch budget falls below this floor, the batch ends and hands
+  // the remaining work to the next batch, which starts with a full budget.
+  const minBatchResidualMs = perCaseTimeoutMs;
+
   try {
     for (const item of work) {
       if (pathsWalked >= maxAttempts || Date.now() >= batchDeadline) break;
+
+      // DON'T-START GUARD: do not begin a walk when the remaining batch budget is
+      // below the minimum residual. The analysis measured all 7 time-caps as walks
+      // started with 1.1-56s of leftover budget against walks that need 52-95s.
+      const remainingBudgetMs = batchDeadline - Date.now();
+      if (remainingBudgetMs < minBatchResidualMs) {
+        console.log(
+          `v2 exec batch ${args.batch}: skipping ${item.path.id} — only ${remainingBudgetMs}ms ` +
+            `of batch budget remains, below the ${minBatchResidualMs}ms minimum residual`,
+        );
+        break;
+      }
 
       const attemptId = mintAttemptId();
       await updateCheckpoint(
@@ -968,10 +1002,19 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
 
       let obs: PathObservation;
       let browserHung = false;
+      let perCaseTimedOut = false;
       try {
-        obs = await withTimeout(walkOnce(progress.shimRequired && allowShim), walkTimeoutMs, `walk ${item.path.id}`);
+        obs = await withTimeout(walkOnce(progress.shimRequired && allowShim), perCaseTimeoutMs, `walk ${item.path.id}`);
       } catch (err) {
-        browserHung = err instanceof BrowserTimeout;
+        // A BrowserTimeout from the per-case budget means the walk exceeded its time cap.
+        // The outcome is labelled "per-case-timeout" (not "error"), but the SESSION may still
+        // be wedged — a genuinely stuck browser manifests as a timeout too. Feeding the flag
+        // into browserHung keeps the session-recycling mechanism alive: the downstream check
+        // marks the session wedged, gives the path ONE retry on a fresh session (via the
+        // hungPaths guard), and breaks the batch if the hang persists. Without this, a wedged
+        // browser burns the full batch budget timing out each remaining walk at perCaseTimeoutMs.
+        perCaseTimedOut = err instanceof BrowserTimeout;
+        browserHung = perCaseTimedOut;
         obs = {
           kind: "v2-path-observation/1.0.0",
           runId: args.runId,
@@ -985,8 +1028,8 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
           wallMs: 0,
           plannedWitnesses: [],
           steps: [],
-          outcome: browserHung ? "browser-hung" : "error",
-          outcomeDetail: String(err).slice(0, 500),
+          outcome: perCaseTimedOut ? "per-case-timeout" : "error",
+          outcomeDetail: perCaseTimedOut ? `walk exceeded its per-case budget of ${perCaseTimeoutMs}ms` : String(err).slice(0, 500),
           shimmed: false,
           shimNote: null,
           loadFailure: null,
@@ -1239,14 +1282,16 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         );
 
         let retryHung = false;
+        let retryPerCaseTimedOut = false;
         try {
           obs = await withTimeout(
             walkOnce(progress.shimRequired && allowShim, retryAttemptId, retryCap, ordinal),
-            walkTimeoutMs,
+            perCaseTimeoutMs,
             `walk ${item.path.id} pivot ${ordinal}`,
           );
         } catch (err) {
-          retryHung = err instanceof BrowserTimeout;
+          retryPerCaseTimedOut = err instanceof BrowserTimeout;
+          retryHung = retryPerCaseTimedOut;
           obs = {
             kind: "v2-path-observation/1.0.0",
             runId: args.runId,
@@ -1260,8 +1305,8 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
             wallMs: 0,
             plannedWitnesses: [],
             steps: [],
-            outcome: retryHung ? "browser-hung" : "error",
-            outcomeDetail: String(err).slice(0, 500),
+            outcome: retryPerCaseTimedOut ? "per-case-timeout" : "error",
+            outcomeDetail: retryPerCaseTimedOut ? `walk exceeded its per-case budget of ${perCaseTimeoutMs}ms` : String(err).slice(0, 500),
             shimmed: false,
             shimNote: null,
             loadFailure: null,

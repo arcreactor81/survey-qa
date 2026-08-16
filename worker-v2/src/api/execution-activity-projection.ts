@@ -52,6 +52,7 @@ const PUBLIC_OUTCOMES = new Set([
   "time-cap",
   "load-crash",
   "browser-hung",
+  "per-case-timeout",
   "cycle-detected",
   "error",
 ]);

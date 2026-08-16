@@ -112,6 +112,7 @@ const EXPECTED_STATIC_VARS = Object.freeze({
   EXEC_MAX_BATCHES: "200",
   EXEC_MAX_EXPLORATION: "0",
   EXEC_MAX_STEPS_PER_PATH: "40",
+  EXEC_PER_CASE_TIMEOUT_MS: "120000", // v38+: raised from 45s after first real walk measured 52-95s healthy walks
   EXEC_WALK_TIMEOUT_MS: "150000",
   EXTRACTION_MODEL: "claude-sonnet-4-6",
   EXTRACT_BUDGET_FRACTION: "0.5",

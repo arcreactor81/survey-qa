@@ -121,8 +121,8 @@ await runMutantSuite({
         "a disqualification page thanks you too, so this is what happens whenever the completion test " +
         "runs first — the respondent turned away and the respondent who finished become one record",
       file: DR,
-      find: '      kind: "screened-out",',
-      replace: '      kind: "completed",',
+      find: '      kind: "screened-out", // wording-matched screen-out (arm 2)',
+      replace: '      kind: "completed", // wording-matched screen-out (arm 2)',
       kills: ["THE ORDERING THAT MATTERS: a screen-out page THANKS YOU TOO, and is not a completion"],
     },
     {

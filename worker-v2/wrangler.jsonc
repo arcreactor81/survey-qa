@@ -191,6 +191,18 @@
     "EXEC_ADVANCE_TIMEOUT_MS": "3500", // how long a screen may take to change after Next
     "EXEC_ACQUIRE_TIMEOUT_MS": "45000", // a reconnect to a wedged session never returns
     "EXEC_WALK_TIMEOUT_MS": "150000", // one walk, bounded; a hang is a named outcome
+    // PER-CASE TIME BUDGET (defect 5 from the 12-Aug audit, amended after the first real
+    // walk). The first real walk measured healthy three-screen walks at 52-95s wall-clock
+    // on real Confirmit pages. The original 45s default would have killed most of those
+    // walks as "per-case-timeout" with zero steps and no evidence — strictly worse than
+    // the v37 behaviour it replaced. 120s accommodates real-world latency while the
+    // per-case timeout remains the TIGHTER of this value and EXEC_WALK_TIMEOUT_MS (150s).
+    // One walk at 120s is the full batch budget, but the don't-start guard (see
+    // execute-batch.ts) prevents walks from beginning when the remaining batch budget is
+    // below the per-case timeout — the fix the first real walk's data actually asks for.
+    // Exceeding it produces outcome "per-case-timeout" — a named, counted limitation that
+    // never kills the batch or the run.
+    "EXEC_PER_CASE_TIMEOUT_MS": "120000",
     "BROWSER_COMPAT_SHIMS": "auto", // "auto" | "off" — see browser/page-script.ts HISTORY_SHIM
 
     // ---- run caps (proposal §5; each keeps its own name and denominator) ----

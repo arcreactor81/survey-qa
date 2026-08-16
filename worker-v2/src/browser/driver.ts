@@ -2595,6 +2595,192 @@ export function survivalAvoidLabels(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// OPTION-LINKED SPECIFY INPUTS — structural detection
+// ---------------------------------------------------------------------------
+
+/**
+ * DOES A LABEL SUGGEST "SPECIFY" / "OTHER" WORDING?
+ *
+ * ASSUMPTION STATED (CLAUDE.md north star): Confirmit, Decipher and Qualtrics all use
+ * variations of "Other (Please Specify)", "Other, specify", "Other:", etc. for their
+ * open-ended option text boxes. This is a convention, not a standard. A platform that
+ * names its specify box something else (a different language, "Please elaborate") will
+ * not be caught here, and the input will be filled normally — the old behaviour, which
+ * is wrong only when filling auto-selects a parent option. When uncertain, prefer not
+ * catching: the cost of a false negative (filling an unlinked input) is one wasted
+ * answer; the cost of a false positive (refusing to fill a standalone text input) is
+ * a required field left blank that blocks the survey.
+ */
+const SPECIFY_LABEL_RE = /\b(specify|other\b.*specify|please\s+specify|open[\s-]?ended|andere|précis)/i;
+
+/**
+ * Detect text inputs that are ASSOCIATED with a choice option.
+ *
+ * Returns a Map from text-input control index to the option control index it is
+ * associated with. Three independent structural signals, any one sufficient:
+ *
+ *   (a) LABEL CONTAINMENT: the text input's own label contains specify/other wording
+ *       AND its idx is within 2 of an option in any group on this screen (DOM adjacency
+ *       corroborates the label — a standalone "Other" text field with no nearby radio is
+ *       not option-linked);
+ *   (b) SHARED NAME PREFIX: the text input's `name` attribute shares a non-trivial prefix
+ *       with an option group's `name` (e.g. "S10_other" shares prefix "S10" with the
+ *       "S10" radio group);
+ *   (c) IDX ADJACENCY WITH SPECIFY LABEL: the text input is immediately adjacent (idx
+ *       difference <= 1) to the LAST option in a group whose label matches specify wording.
+ *
+ * When multiple signals point to different options, the nearest one wins. When NO signal
+ * fires, the input is not in the map and will be filled normally.
+ */
+export function detectOptionLinkedSpecifyInputs(screen: RenderedScreen): Map<number, number> {
+  const result = new Map<number, number>();
+  const textControls = screen.controls.filter(
+    (c) => c.visible && !c.disabled && !c.readOnly && isTextEntry(c.type),
+  );
+  if (textControls.length === 0 || screen.optionGroups.length === 0) return result;
+
+  // Build a flat list of all option indices across all groups
+  const allOptionIdxs = new Set<number>();
+  for (const g of screen.optionGroups) {
+    for (const o of g.options) allOptionIdxs.add(o.idx);
+  }
+
+  for (const tc of textControls) {
+    let bestOptionIdx: number | null = null;
+    let bestDistance = Infinity;
+
+    // Signal (a): specify-like label AND DOM adjacency to an option
+    if (SPECIFY_LABEL_RE.test(tc.label)) {
+      for (const g of screen.optionGroups) {
+        for (const o of g.options) {
+          const dist = Math.abs(tc.idx - o.idx);
+          if (dist <= 2 && dist < bestDistance) {
+            bestDistance = dist;
+            bestOptionIdx = o.idx;
+          }
+        }
+      }
+    }
+
+    // Signal (b): shared name prefix with an option group.
+    //
+    // The text control's name starts with the group name followed by a separator
+    // character (underscore, dot, hyphen, colon, bracket, dollar). Examples:
+    //   "S10_other" starts with group "S10" + separator "_"  -> match
+    //   "Q5_specify" starts with group "Q5" + separator "_"  -> match
+    //   "comment" does NOT start with group "Q1"             -> no match
+    //
+    // The previous approach (strip trailing non-alpha from both names, compare)
+    // broke on short group names: "Q5" stripped to "Q" (length 1), failing a
+    // minimum-length guard, so the documented example never matched.
+    if (bestOptionIdx === null && tc.name) {
+      for (const g of screen.optionGroups) {
+        const groupName = g.name === "(unnamed)" ? null : g.name;
+        if (!groupName || groupName.length < 1) continue;
+        const tcLower = tc.name.toLowerCase();
+        const gLower = groupName.toLowerCase();
+        const sepChar = tcLower.length > gLower.length ? tcLower[gLower.length] : undefined;
+        if (
+          sepChar !== undefined &&
+          tcLower.startsWith(gLower) &&
+          /[_\-.:$[\]]/.test(sepChar)
+        ) {
+          // Find the nearest option in this group
+          for (const o of g.options) {
+            const dist = Math.abs(tc.idx - o.idx);
+            if (dist < bestDistance) {
+              bestDistance = dist;
+              bestOptionIdx = o.idx;
+            }
+          }
+        }
+      }
+    }
+
+    // Signal (c): adjacent to the LAST option in a group whose label is specify-like
+    if (bestOptionIdx === null) {
+      for (const g of screen.optionGroups) {
+        const lastOpt = g.options[g.options.length - 1];
+        if (!lastOpt) continue;
+        if (SPECIFY_LABEL_RE.test(lastOpt.label) && Math.abs(tc.idx - lastOpt.idx) <= 1) {
+          bestOptionIdx = lastOpt.idx;
+          bestDistance = Math.abs(tc.idx - lastOpt.idx);
+        }
+      }
+    }
+
+    if (bestOptionIdx !== null) {
+      result.set(tc.idx, bestOptionIdx);
+    }
+  }
+  return result;
+}
+
+/**
+ * VERIFY CHOICE GROUPS AFTER ALL INTERACTIONS — before advancing.
+ *
+ * THE DEFECT THIS CLOSES: after clicking an option AND filling text inputs, the checked
+ * state of a choice group may have changed due to platform auto-selection (e.g. filling
+ * an "Other (Please Specify)" text box auto-selects its parent radio). This re-reads the
+ * choice groups from the post-action screen and compares with what the walker clicked.
+ *
+ * A mismatch is a named, evidenced observation recording BOTH hypotheses:
+ *   - the walker's own side effect (filling a linked specify input)
+ *   - a site behaviour (the platform auto-selected on text input)
+ * The walk does NOT silently advance a wrong answer.
+ */
+export function verifyChoiceGroupsAfterInteraction(
+  before: RenderedScreen,
+  afterAction: RenderedScreen,
+  actions: PerformedAction[],
+): PerformedAction[] {
+  const observations: PerformedAction[] = [];
+
+  // Find click-option actions that recorded exact-choice-readback with a specific checked idx
+  const clickActions = actions.filter(
+    (a) => a.ok && a.kind === "click-option" && a.choiceReadback,
+  );
+  if (clickActions.length === 0) return observations;
+
+  // For each option group on the after-action screen, check if its checked state still
+  // matches what the click actions established
+  for (const afterGroup of afterAction.optionGroups) {
+    if (afterGroup.kind !== "radio") continue; // checkboxes accumulate, not overwrite
+    const checkedAfter = afterGroup.options.filter((o) => o.checked).map((o) => o.idx);
+    // Find the click action that targeted this group
+    const groupClick = clickActions.find((a) =>
+      afterGroup.options.some((o) => o.idx === a.targetIdx),
+    );
+    if (!groupClick || !groupClick.choiceReadback || groupClick.targetIdx === null) continue;
+    const intendedIdx: number = groupClick.targetIdx;
+    // If the clicked option is no longer the one checked, something changed it
+    if (checkedAfter.length > 0 && !checkedAfter.includes(intendedIdx)) {
+      const checkedLabels = afterGroup.options
+        .filter((o) => o.checked)
+        .map((o) => `#${o.idx} "${o.label.slice(0, 60)}"`)
+        .join(", ");
+      const intendedLabel = groupClick.targetLabel ?? `#${intendedIdx}`;
+      observations.push({
+        kind: "click-option",
+        targetIdx: intendedIdx,
+        targetLabel: intendedLabel,
+        targetCode: groupClick.targetCode,
+        value: null,
+        ok: false,
+        detail:
+          `choice-group-verification-mismatch: the walker clicked option #${intendedIdx} ` +
+          `("${intendedLabel}") and verified it was checked, but after all interactions the ` +
+          `group's checked state is now [${checkedLabels}] — possible causes: (a) filling a ` +
+          `linked specify/other text input auto-selected its parent option, overwriting the ` +
+          `planned selection; (b) a platform-side behaviour changed the selection. This ` +
+          `mismatch is recorded, not silently submitted`,
+      });
+    }
+  }
+  return observations;
+}
+
 /** Apply one decision to the screen in front of us. Returns what was actually done. */
 async function applyDecision(
   page: PageLike,
@@ -3108,6 +3294,38 @@ async function applyDecision(
   //
   // The set is now every VALUE control plus the two we deliberately refuse, because a refusal
   // that is never reached is never recorded. `fillRefusalFor` decides which is which.
+
+  // ---- OPTION-LINKED SPECIFY INPUTS: detect and skip ----
+  //
+  // THE DEFECT THIS CLOSES (all 433 cases on the first real walk, analysis class d): a text
+  // input bound to a choice option (Confirmit's "Other (Please Specify)") auto-selects its
+  // parent option when filled. The navigator-default filler typed "QA-PROBE" into it, Confirmit
+  // auto-checked "Other", and the already-selected role radio was silently overwritten. Every
+  // path terminated at the screener.
+  //
+  // DETECTION IS STRUCTURAL — three independent signals, any one sufficient:
+  //   (a) LABEL + ADJACENCY: the text input's label contains "specify"/"other" wording AND
+  //       its idx is within 2 of an option in any group (DOM adjacency corroborates the label);
+  //   (b) SHARED NAME PREFIX: the text input's `name` starts with an option group's `name`
+  //       followed by a separator (e.g. "S10_other" starts with group "S10" + "_");
+  //   (c) IDX ADJACENCY WITH SPECIFY LABEL: the text input is immediately adjacent (idx
+  //       difference <= 1) to the LAST option in a group whose label matches specify wording.
+  //
+  // ASSUMPTION STATED (CLAUDE.md north star): these heuristics detect the common pattern where
+  // a text input is structurally associated with a choice option. When the association is
+  // UNCERTAIN (none of the signals fire), the input is filled normally — the old behaviour.
+  // When association IS detected but the plan did not select that option, the input is NOT
+  // filled, and the skip is recorded as a named observation. This is the direction the failure
+  // has to point: not filling an unassociated input leaves the screen as-is; filling an
+  // associated one overwrites an already-made selection.
+  const optionLinkedSpecifyIdxs = detectOptionLinkedSpecifyInputs(screen);
+  // Which option indices in any group were actually selected (clicked) by the actions above?
+  const clickedOptionIdxs = new Set(
+    actions
+      .filter((a) => a.ok && (a.kind === "click-option" || a.kind === "select-grid-cell"))
+      .map((a) => a.targetIdx),
+  );
+
   const valueControls = screen.controls.filter(
     (c) => c.visible && !c.disabled && !c.readOnly && (isValueEntry(c.type) || fillRefusalFor(c.type) !== null),
   );
@@ -3115,6 +3333,31 @@ async function applyDecision(
     // Already claimed by the constant-sum pass above — answered as a group, or named
     // unfillable as a group. Either way this loop has nothing to add.
     if (allocationClaimed.has(c.idx)) continue;
+
+    // ---- OPTION-LINKED SPECIFY: do not fill unless its parent option IS the selection ----
+    //
+    // A text input bound to a choice option (e.g. "Other (Please Specify)") auto-selects
+    // its parent option when filled. When the plan gave no explicit text_entry for this
+    // screen, fill the specify box ONLY if its parent option was actually selected.
+    const linkedOption = optionLinkedSpecifyIdxs.get(c.idx);
+    if (linkedOption !== undefined && decision?.text_entry?.value === undefined) {
+      if (!clickedOptionIdxs.has(linkedOption)) {
+        actions.push({
+          kind: "refuse-fill",
+          targetIdx: c.idx,
+          targetLabel: c.label,
+          targetCode: null,
+          value: null,
+          ok: true, // the REFUSAL succeeded — not filling is the correct act
+          detail:
+            `option-linked-specify-skip: this text input is associated with option #${linkedOption} ` +
+            `which is NOT the selected answer — filling it would auto-select that option and overwrite ` +
+            `the already-made choice`,
+        });
+        continue;
+      }
+    }
+
     // ---- a control this harness will not, or cannot, answer ----
     const refusal = fillRefusalFor(c.type);
     if (refusal) {
@@ -3402,6 +3645,18 @@ const SCREENOUT_MARKERS: readonly RegExp[] = [
   /\bquota\s+(is\s+)?(full|closed)\b/i,
   /\bwe\s+are\s+(unable|not\s+able)\s+to\s+(continue|proceed)\b/i,
   /\bthank\s+you\s+for\s+your\s+interest\b/i,
+  // ASSUMPTION STATED: "unable/not able to accept" in a context of participation/research is a
+  // screen-out, not a completion. The Confirmit termination page says "we are unable to accept
+  // your offer to participate" — which the verb-family above did not cover because it required
+  // "continue" or "proceed". The wider verb family "accept" is platform-neutral: Decipher,
+  // Qualtrics and Confirmit all use it in decline-to-participate wording. A false positive on a
+  // genuine completion page would require the word "accept" in a turn-away sentence, which
+  // completion pages do not carry (they say "received" or "recorded", never "accept").
+  /\b(unable|not\s+able)\s+to\s+accept\b/i,
+  // ASSUMPTION STATED: "terminated" as a status word (often in Confirmit debug output or
+  // vendor-stamped terminal pages). Generalizable: any survey whose terminal page contains a
+  // status label reading "terminated" is reporting a screen-out, not a completion.
+  /\bstatus[:\s]+terminated\b/i,
 ];
 
 const COMPLETION_MARKERS: readonly RegExp[] = [
@@ -3419,6 +3674,77 @@ const firstMatch = (text: string, res: readonly RegExp[]): string | null => {
   }
   return null;
 };
+
+/**
+ * IS THIS CONTROL A PLATFORM NAVIGATION WIDGET — NOT A SURVEY QUESTION?
+ *
+ * ASSUMPTION STATED (CLAUDE.md north star): platform-chrome/navigation widgets live
+ * OUTSIDE the question form and serve navigation, not data collection. The test link's
+ * "QUESTION SKIP MENU" dropdown is the measured example: a `<select>` whose options
+ * are question identifiers or URLs, sitting outside any question scope, that the
+ * structural terminal-page arm must not count as "answerable".
+ *
+ * THREE STRUCTURAL SIGNALS, any one sufficient:
+ *
+ *   (a) JUMP SEMANTICS: a `<select>` whose option codes or labels are predominantly
+ *       URLs, question references (Q1, S10, etc.), or page numbers — navigation
+ *       destinations, not survey answers;
+ *   (b) UNLABELLED BY QUESTION: the control has no label or its label matches common
+ *       navigation wording ("skip", "jump", "go to", "navigate", "question menu");
+ *   (c) OUTSIDE THE QUESTION FORM: the control's name or id contains "skip", "jump",
+ *       "nav", "menu", "goto" — platform-side naming conventions for navigation
+ *       widgets, not survey question controls.
+ *
+ * When uncertain, the control is kept as answerable — the wording markers remain the
+ * primary arm, and a false negative here only means the structural corroboration does
+ * not fire, which is the safe direction (the ending stays `unclassified` rather than
+ * being wrongly classified as `screened-out`).
+ */
+export function isPlatformNavigationWidget(
+  c: ControlState,
+  _screen: RenderedScreen,
+): boolean {
+  // Only select controls can be navigation jump menus
+  if (c.type !== "select" && c.tag !== "select") return false;
+
+  const options = c.options ?? [];
+
+  // Signal (a): jump semantics — options that look like question IDs, URLs, or page numbers
+  if (options.length >= 2) {
+    const jumpLike = options.filter((o) => {
+      const code = String(o.code ?? "");
+      const label = String(o.label ?? "");
+      // URL-shaped: starts with http, #, or /
+      if (/^(https?:|#|\/)/.test(code) || /^(https?:|#|\/)/.test(label)) return true;
+      // Question-id-shaped: Q1, S10, P3, etc. — a letter followed by digits
+      if (/^[A-Za-z]\d+$/.test(code.trim())) return true;
+      // Page-number-shaped: pure digits in the code AND the label is also numeric
+      // or matches the code. Survey answer dropdowns have numeric codes ("1"-"5")
+      // but descriptive labels ("Strongly agree"); a navigation page selector's
+      // label IS the page number. Without corroboration from the label, a numeric
+      // code alone is not a navigation signal — it is the norm for Likert scales,
+      // rating questions, and numbered-choice dropdowns across all survey platforms.
+      if (/^\d+$/.test(code.trim()) && code.trim().length <= 4) {
+        const tLabel = label.trim();
+        if (/^\d+$/.test(tLabel) || tLabel === code.trim()) return true;
+      }
+      return false;
+    });
+    // If more than half the usable options look like navigation destinations, it is a jump menu
+    const usable = options.filter((o) => !o.disabled && o.hidden !== true && o.placeholder !== true);
+    if (usable.length > 0 && jumpLike.length > usable.length / 2) return true;
+  }
+
+  // Signal (b): navigation wording in the label
+  const label = (c.label ?? "").toLowerCase();
+  if (/\b(skip|jump|go\s*to|navigate|question\s*(skip\s*)?menu)\b/.test(label)) return true;
+
+  // Signal (c): platform naming in the name/id attributes
+  const nameOrId = `${c.name ?? ""} ${c.id ?? ""}`.toLowerCase();
+  if (/\b(skip|jump|nav|menu|goto)\b/.test(nameOrId)) return true;
+
+  return false;
+}
 
 /**
  * TYPE THE ENDING OF THIS WALK FROM WHAT THE FINAL SCREEN SHOWED.
@@ -3476,7 +3802,9 @@ export function classifyEnding(
 
   const advance = nextButton(final);
   const answerable = final.controls.filter(
-    (c) => !c.disabled && !c.readOnly && (c.operable ?? c.visible) && (isValueEntry(c.type) || c.type === "radio" || c.type === "checkbox" || c.type === "select"),
+    (c) => !c.disabled && !c.readOnly && (c.operable ?? c.visible) &&
+      (isValueEntry(c.type) || c.type === "radio" || c.type === "checkbox" || c.type === "select") &&
+      !isPlatformNavigationWidget(c, final),
   );
   /**
    * THE PROVENANCE LINE THAT TRAVELS WITH EVERY ENDING. Not decoration: the fix that widened
@@ -3535,13 +3863,48 @@ export function classifyEnding(
   }
 
   // ---- 2. turned away ----
+  // STRUCTURAL TERMINAL-PAGE SIGNAL (ASSUMPTION STATED): a page that has no forward control, no
+  // answerable controls, and whose ONLY visible buttons are back-classified is structurally a
+  // rejection page — the survey is saying "you cannot go forward, you can only go back". This
+  // is platform-neutral: Confirmit, Qualtrics and Decipher all produce this shape on their
+  // disqualification pages. A genuine completion page typically has NO visible buttons at all
+  // (the survey is done) or has a "close" / "redirect" button, never a back button.
+  //
+  // This signal is a CORROBORATOR that elevates an `unclassified` ending to `screened-out` when
+  // wording markers are absent but the structure says "terminal rejection". It is NOT used alone
+  // when the page also carries completion wording or a full progress indicator — those take
+  // priority in arm 3.
+  const visibleButtons = final.buttons.filter((b) => b.visible && !b.disabled);
+  const onlyBackVisible = visibleButtons.length > 0 && visibleButtons.every((b) => b.role === "back");
+
   if (screenout) {
+    return {
+      kind: "screened-out", // wording-matched screen-out (arm 2)
+      evidence: [
+        `no enabled control advances the final screen`,
+        `the final screen says: "${screenout}"`,
+        ...(onlyBackVisible ? [`structural corroboration: the only visible button(s) are back controls — the page offers no way forward`] : []),
+        ...(completion ? [`it also carries completion wording ("${completion}") — screen-out pages usually thank you too, which is why that is not read as a completion`] : []),
+        ...provenance,
+      ],
+    };
+  }
+
+  // ---- 2b. structural screen-out: no wording matched, but the page's shape says "turned away" ----
+  // WHEN THIS FIRES: no wording marker matched, no completion wording matched, the page has no
+  // progress indicator reading full, and the only visible buttons are back controls with zero
+  // answerable controls. This is a rejection page that used wording this reader does not know —
+  // a different language, a bare "Session closed", an image — and the structure is what names it.
+  // Without this arm, such a page would be `unclassified` and a reader would have to re-open the
+  // screen capture to discover it was a screen-out.
+  if (onlyBackVisible && answerable.length === 0 && !completion && !progressFull) {
     return {
       kind: "screened-out",
       evidence: [
         `no enabled control advances the final screen`,
-        `the final screen says: "${screenout}"`,
-        ...(completion ? [`it also carries completion wording ("${completion}") — screen-out pages usually thank you too, which is why that is not read as a completion`] : []),
+        `no screen-out wording matched, but structural signals indicate a rejection page: ` +
+          `the only visible button(s) are back controls and the page has no answerable controls`,
+        `this classification is structural, not textual — the wording on this page is not in this reader's lexicon`,
         ...provenance,
       ],
     };
@@ -3880,6 +4243,28 @@ export async function walkPath(
       );
       stepReadFailures.push(failure);
       afterAction = null;
+    }
+
+    // ---- POST-INTERACTION CHOICE VERIFICATION ----
+    //
+    // THE DEFECT THIS CLOSES (analysis class d): after all interactions, the checked option
+    // may differ from what the walker intended — a side-effect of typing into a specify box
+    // (or any other platform behaviour). Re-read the choice groups and compare: a mismatch
+    // is a named observation (possible site defect OR walker side effect — both hypotheses
+    // recorded) and the walk records the discrepancy rather than silently advancing a wrong
+    // answer.
+    if (afterAction) {
+      const choiceVerifications = verifyChoiceGroupsAfterInteraction(before, afterAction, actions);
+      for (const v of choiceVerifications) {
+        actions.push(v);
+        if (!v.ok) {
+          recordReaderLimitation(
+            "choice-group-state-changed-after-interaction",
+            v.detail ?? "choice group state changed after interaction",
+            1,
+          );
+        }
+      }
     }
 
     const navigation = resolveAdvanceControl(afterAction ?? before);

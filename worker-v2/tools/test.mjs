@@ -522,7 +522,18 @@ const FILES = [
   "./tests/pass-b-continuation.test.mjs",
   "./tests/pass-b-reason-codes.test.mjs",
   "./tests/pass-b-real-replay.test.mjs",
+  // The bounded pool behind the derive-fanout-scale fix, tested against the REAL module.
   "./tests/concurrent-pool.test.mjs",
+  // passOnly:"B" guard: refuse when no persisted evaluated pass-A authority exists,
+  // proceed (zero Grok calls) when it does. The refusal test FAILS on the code before
+  // the guard because stagePassA was called unconditionally and bought Grok.
+  "./tests/dev-extract-passb-guard.test.mjs",
+  // D56 — THE FIRST REAL BROWSER WALK'S THREE AMENDMENTS. Option-linked specify fill (the
+  // 433-case killer), timeout+batch-residual guard, and structural terminal-page arm. Each
+  // test is written to FAIL on the pre-fix behaviour. Evidence they can fail: the fixtures
+  // replicate the captured shapes generically, and the isPlatformNavigationWidget and
+  // detectOptionLinkedSpecifyInputs tests cover both the positive and negative directions.
+  "./tests/d56-walker-first-real-walk-fixes.test.mjs",
 ];
 
 export async function runVerification({

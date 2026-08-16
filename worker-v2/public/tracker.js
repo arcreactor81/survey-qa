@@ -1610,6 +1610,7 @@
       "time-cap": "Stopped at the walk time limit",
       "load-crash": "Page crashed while loading",
       "browser-hung": "Browser stopped responding",
+      "per-case-timeout": "Walk exceeded its per-case time budget",
       "cycle-detected": "Repeated transition cycle detected",
       error: "Walker error",
       unrecognized: "Unrecognised recorded outcome"
