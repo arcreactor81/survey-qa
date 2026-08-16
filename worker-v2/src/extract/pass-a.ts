@@ -356,6 +356,17 @@ export interface PassASynthesisAdditions {
   crossRefs: CrossRef[];
   ambiguities: RawAmbiguity[];
   unverifiable: RawUnverifiable[];
+  /**
+   * Well-formed synthesis resolutions DROPPED because their cross-reference was already
+   * resolved by its primary window. The window read the source bytes; synthesis sees only
+   * the candidate catalogue, so the window's resolution is the retained authority. Recorded,
+   * never silent: each drop is counted into the cross-window limitation detail.
+   */
+  droppedReResolutions: {
+    handle: string;
+    windowResolvedToBlock: string;
+    synthesisResolvedToBlock: string;
+  }[];
 }
 
 export interface PassASynthesisOutcome {
@@ -3899,6 +3910,7 @@ const emptySynthesisAdditions = (): PassASynthesisAdditions => ({
   crossRefs: [],
   ambiguities: [],
   unverifiable: [],
+  droppedReResolutions: [],
 });
 
 function synthesisOutcome(
@@ -4213,8 +4225,11 @@ async function readPassASynthesisArtifact(
         parsed["routeReceipt"] !== undefined ||
         (failureStage === "provider" && fallbackTrigger === null && parsed["terminal"] !== true) ||
         (usages as CallUsage[]).some((usage) => usage.status === "ok") ||
+        // The retry ladder persists a NON-terminal semantic rejection while the issue budget
+        // remains (terminal only at exhaustion), so coherence requires a boolean terminal
+        // flag plus the rejected receipt — never `terminal === true` unconditionally.
         (failureStage === "semantic-output" &&
-          (parsed["terminal"] !== true || !(usages as CallUsage[]).some((usage) => usage.status === "parse-failed"))) ||
+          (typeof parsed["terminal"] !== "boolean" || !(usages as CallUsage[]).some((usage) => usage.status === "parse-failed"))) ||
         (failureStage === "fallback-authorized" &&
           (parsed["terminal"] !== false || fallbackTrigger === null ||
             (usages as CallUsage[]).some((usage) => usage.provider === "deepseek"))) ||
@@ -4877,7 +4892,11 @@ async function purchasePassASynthesis(
       const index = calls.findIndex((usage) => usage.eventId === selected.eventId);
       if (index >= 0) calls[index] = purchasedUsages[purchasedUsages.length - 1]!;
     }
-    const terminal = semanticFailure || (
+    // A semantic rejection consumes the synthesis issue budget instead of terminalizing on
+    // attempt 1 — the same ladder pass-A windows and pass-B chunks already have. The resume
+    // path above (attempts >= maxIssues) is the authority on exhaustion; run v36
+    // (v2r_01m04d7383hcmczq6df0c0xpxv) died because this line said `semanticFailure ||`.
+    const terminal = (semanticFailure && issue >= maxIssues) || (
       error instanceof ModelCallError &&
       ((fallbackTrigger === null && !grokFlashFallbackEligible(error)) || issue >= maxIssues)
     );
@@ -5225,6 +5244,13 @@ function synthesisLimitation(
   const synthesisAdditions =
     additions.globalRules.length + additions.crossRefs.length +
     additions.ambiguities.length + additions.unverifiable.length;
+  const droppedNote = additions.droppedReResolutions.length === 0
+    ? ""
+    : ` It DROPPED ${additions.droppedReResolutions.length} well-formed cross-reference re-resolution(s) whose ` +
+      `reference a primary window had already resolved (window authority retained): ` +
+      additions.droppedReResolutions
+        .map((d) => `${d.handle} (window ${d.windowResolvedToBlock}, synthesis attempted ${d.synthesisResolvedToBlock})`)
+        .join("; ") + ".";
   return {
     kind: "pass-a-cross-window-candidate-dependence",
     windowsTotal: coverage.primaryWindowsTotal,
@@ -5239,7 +5265,8 @@ function synthesisLimitation(
       `${coverage.sourceEvidenceSpansIncluded} exact candidate quote span(s) from ` +
       `${coverage.sourceEvidenceBlocksIncluded} of ${coverage.sourceBlocksTotal} block(s). It did not inspect ` +
       `unsupplied text inside represented blocks or the ${coverage.sourceBlocksOmitted} block(s) no primary reader ` +
-      `nominated. This is never whole-source cross-window discovery, even when the omitted-block count is zero.`,
+      `nominated. This is never whole-source cross-window discovery, even when the omitted-block count is zero.` +
+      droppedNote,
   };
 }
 
@@ -5406,6 +5433,7 @@ export function validatePassASynthesisOutput(
   }
 
   const crossRefs: CrossRef[] = [];
+  const additionsDroppedReResolutions: PassASynthesisAdditions["droppedReResolutions"] = [];
   const resolvedHandles = new Set<string>();
   for (const raw of strictModelRows(value["cross_reference_resolutions"], "cross_reference_resolutions")) {
     strictSynthesisKeys(raw, [
@@ -5424,10 +5452,25 @@ export function validatePassASynthesisOutput(
     const matches = context.primaryCrossRefs.filter((entry) => entry.handle === sourceXrefHandle);
     const primary = matches.length === 1 ? matches[0]!.row : null;
     if (
-      !primary || primary.fromBlock === null || primary.resolvedToBlock !== null ||
+      !primary || primary.fromBlock === null ||
       resolvedToBlock.length === 0 || statement.length === 0
     ) {
       throw new Error("PASS_A_SYNTHESIS_OUTPUT_INVALID: cross-reference resolution has no exact primary source");
+    }
+    if (primary.resolvedToBlock !== null) {
+      // The primary window already resolved this reference from the source bytes; synthesis
+      // sees only the candidate catalogue, so the window's resolution is the retained
+      // authority. Run-to-run variance makes this row APPEAR (run v36: one read's window 10
+      // resolved A-w10:x:007, another read's window left it open, and the identical synthesis
+      // move was legal in one run and fatal in the other). A well-formed conflicting
+      // re-resolution is therefore dropped as a COUNTED entry — never a wholesale rejection
+      // that strands every other grounded row in the output.
+      additionsDroppedReResolutions.push({
+        handle: sourceXrefHandle,
+        windowResolvedToBlock: primary.resolvedToBlock,
+        synthesisResolvedToBlock: resolvedToBlock,
+      });
+      continue;
     }
     const blockIds = uniqueStrings([primary.fromBlock, resolvedToBlock]);
     const evidenceQuotes = synthesisEvidence(raw, blockIds, context);
@@ -5510,7 +5553,7 @@ export function validatePassASynthesisOutput(
     unverifiable.push({ ...row, blockIds, evidenceQuotes });
   }
 
-  return { globalRules, crossRefs, ambiguities, unverifiable };
+  return { globalRules, crossRefs, ambiguities, unverifiable, droppedReResolutions: additionsDroppedReResolutions };
 }
 
 const STALE_PASS_A_PROMPT_IDENTITY = /^v2-extract-pass-a\/\d+\.\d+\.\d+$/;

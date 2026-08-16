@@ -395,6 +395,146 @@ test("a relation split across windows is added once and resolves the qualified p
   }
 });
 
+test("a synthesis re-resolution of a window-resolved xref is dropped and counted, never fatal", async () => {
+  // Run v2r_01m04d7383hcmczq6df0c0xpxv died because one window resolved a cross-reference
+  // and synthesis re-resolved it: the whole synthesis output was rejected and 65 grounded
+  // window rules were stranded. The class fix: window authority is retained, the conflicting
+  // row is DROPPED as a counted entry, and every other grounded row survives.
+  const m = await mod();
+  // Two blocks per window so w1 can resolve its reference WITHIN its own window — only
+  // within-window resolutions survive into the synthesis catalogue as resolved (a window's
+  // cross-window claim is downgraded to an unresolved question, by design).
+  const env = envFor({ EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "2" });
+  const B3 = "The Omega addendum applies to the third section.";
+  const doc = documentFor([TEXT.b0001, TEXT.b0002, B3]);
+  const runId = "run_synthesis_conflict_drop";
+  const provider = installProvider(({ unit }) => {
+    if (unit === "A-w1") {
+      return {
+        value: {
+          ...emptyPrimary(),
+          cross_references: [{
+            id: "XR-RESOLVED", from_block: "b0001", target: "Omega", resolved_to_block: "b0002",
+            target_doc_quote: TEXT.b0002, statement: "Omega is defined in the target block.",
+            doc_quote: TEXT.b0001,
+          }],
+        },
+      };
+    }
+    if (unit === "A-w2") {
+      return { value: { ...emptyPrimary(), cross_references: [xref("XR-OPEN", "b0003", B3)] } };
+    }
+    return {
+      value: {
+        ...emptySynthesis(),
+        cross_reference_resolutions: [
+          {
+            source_xref_handle: "A-w2:x:001",
+            resolved_to_block: "b0001",
+            statement: "The open reference resolves to the premium-group rule block.",
+            evidence_quotes: [
+              { block_id: "b0003", quote: B3 },
+              { block_id: "b0001", quote: TEXT.b0001 },
+            ],
+          },
+          {
+            source_xref_handle: "A-w1:x:001",
+            resolved_to_block: "b0001",
+            statement: "A conflicting re-resolution of an already window-resolved reference.",
+            evidence_quotes: [{ block_id: "b0001", quote: TEXT.b0001 }],
+          },
+        ],
+      },
+    };
+  });
+  try {
+    await landPrimaryWindows(m, env, runId, doc, provider, async () => {});
+    const done = await m.passA.runPassA(env, runId, doc, "neutral.docx", async () => {}, { budgetMs: 600_000 });
+    assertEq(done.slice.synthesisState, "ok", "a conflicting row must not reject the whole synthesis");
+    assertEq(done.slice.done, true, "the pass completes with the drop counted");
+    assertEq(provider.count("A-synthesis"), 1, "no retry was needed for a drop-and-count");
+    const windowResolved = done.crossRefs.find((row) => row.sourceXrefHandle === "A-w1:x:001" || row.id === "XR-RESOLVED");
+    assertEq(windowResolved?.resolvedToBlock, "b0002", "the window's own resolution is the retained authority");
+    const synthesisResolved = done.crossRefs.find((row) => row.sourceXrefHandle === "A-w2:x:001");
+    assertEq(synthesisResolved?.resolvedToBlock, "b0001", "the legal resolution in the same output still lands");
+    const limitation = done.crossWindowLimitations.find((row) =>
+      row.kind === "pass-a-cross-window-candidate-dependence");
+    assert(limitation !== undefined, "candidate dependence limitation is always present");
+    assert(
+      limitation.detail.includes("DROPPED 1") && limitation.detail.includes("A-w1:x:001"),
+      `the drop is counted and named, never silent: ${limitation.detail}`,
+    );
+  } finally {
+    provider.restore();
+  }
+});
+
+test("a semantic synthesis rejection consumes the issue budget instead of terminalizing attempt 1", async () => {
+  // The same no-retry class that killed pass-A windows and pass-B chunks killed synthesis in
+  // run v2r_01m04d7383hcmczq6df0c0xpxv: attempts=1, terminal=true, budget of 2 never consulted.
+  const m = await mod();
+  const env = envFor();
+  const doc = documentFor();
+  const runId = "run_synthesis_semantic_retry";
+  let synthesisCalls = 0;
+  const provider = installProvider(({ unit }) => {
+    if (unit === "A-w1") {
+      return { value: { ...emptyPrimary(), cross_references: [xref("XR-OPEN", "b0001", TEXT.b0001)] } };
+    }
+    if (unit === "A-w2") {
+      return { value: { ...emptyPrimary(), global_rules: [rule("GLOB-02", "b0002", TEXT.b0002)] } };
+    }
+    synthesisCalls += 1;
+    if (synthesisCalls === 1) {
+      return {
+        value: {
+          ...emptySynthesis(),
+          cross_reference_resolutions: [{
+            source_xref_handle: "A-w9:x:999",
+            resolved_to_block: "b0002",
+            statement: "A resolution for a handle no primary window ever emitted.",
+            evidence_quotes: [{ block_id: "b0002", quote: TEXT.b0002 }],
+          }],
+        },
+      };
+    }
+    return {
+      value: {
+        ...emptySynthesis(),
+        cross_reference_resolutions: [{
+          source_xref_handle: "A-w1:x:001",
+          resolved_to_block: "b0002",
+          statement: "Omega requires an answer before Continue becomes enabled.",
+          evidence_quotes: [
+            { block_id: "b0001", quote: TEXT.b0001 },
+            { block_id: "b0002", quote: TEXT.b0002 },
+          ],
+        }],
+      },
+    };
+  });
+  try {
+    await landPrimaryWindows(m, env, runId, doc, provider, async () => {});
+    const afterFirst = await m.passA.runPassA(env, runId, doc, "neutral.docx", async () => {}, { budgetMs: 600_000 });
+    assertEq(provider.count("A-synthesis"), 1, "the first synthesis purchase happened");
+    assert(
+      afterFirst.slice.synthesisState !== "failed",
+      `a semantic rejection on attempt 1 of 2 must not be terminal (got ${afterFirst.slice.synthesisState})`,
+    );
+    assertEq(afterFirst.slice.done, false, "the pass is not done while a retry is owed");
+    assertEq(afterFirst.slice.terminalFailure ?? false, false, "no terminal failure inside the budget");
+    const afterRetry = await m.passA.runPassA(env, runId, doc, "neutral.docx", async () => {}, { budgetMs: 600_000 });
+    assertEq(provider.count("A-synthesis"), 2, "the retry consumed the second and last issue");
+    assertEq(afterRetry.slice.synthesisState, "ok", "the retry landed");
+    assertEq(afterRetry.slice.done, true);
+    assertEq(afterRetry.slice.synthesisAttempts, 2, "both purchases are durably counted");
+    const resolved = afterRetry.crossRefs.find((row) => row.sourceXrefHandle === "A-w1:x:001");
+    assertEq(resolved?.resolvedToBlock, "b0002", "the retried synthesis resolution landed");
+  } finally {
+    provider.restore();
+  }
+});
+
 test("withholding an earlier xref preserves the surviving source handle through synthesis", async () => {
   const m = await mod();
   const env = envFor();
@@ -2015,7 +2155,11 @@ test("malformed or ungrounded synthesis rows terminalize and are never re-bought
 
   const m = await mod();
   for (const [index, fixture] of cases.entries()) {
-    const env = envFor();
+    // Budget 1: with the retry ladder, a semantic rejection terminalizes only at issue-budget
+    // exhaustion. Budget 1 makes attempt 1 the exhaustion point, so every terminality and
+    // no-rebuy property this test pins still holds exactly. The budgeted-retry behavior has
+    // its own test ("consumes the issue budget instead of terminalizing attempt 1").
+    const env = envFor({ EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES: "1" });
     const doc = documentFor();
     const runId = `run_synthesis_invalid_${index}`;
     const provider = installProvider(({ unit }) => ({
@@ -2314,6 +2458,9 @@ test("corrupt or incoherent retained synthesis authority terminalizes with zero 
       expected: "failed-artifact state is incoherent",
     },
     {
+      // The retry ladder made nonterminal semantic failures legitimate, so the forgery is now
+      // caught one guard later: a semantic rejection MUST retain the raw rejected output for
+      // replay/reclaim, and this laundered artifact has none. Same refusal, same zero-rebuy.
       name: "semantic parse failure relabeled nonterminal",
       mutate: (row) => {
         row.status = "failed";
@@ -2325,7 +2472,7 @@ test("corrupt or incoherent retained synthesis authority terminalizes with zero 
         delete row.routeReceipt;
         delete row.modelOutput;
       },
-      expected: "failed-artifact state is incoherent",
+      expected: "no retained raw modelOutput",
     },
     {
       name: "ok receipt hidden behind provider-failure state",
@@ -2683,7 +2830,9 @@ test("a different valid synthesis CAS winner is never overwritten and exact losi
 
 test("strict synthesis semantic failure retains exact raw output and re-decodes it on reclaim", async () => {
   const m = await mod();
-  const env = envFor();
+  // Budget 1: terminality at exhaustion (see the malformed-rows test note); the raw-output
+  // retention and reclaim semantics this test pins are unchanged by the retry ladder.
+  const env = envFor({ EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES: "1" });
   const doc = documentFor();
   const runId = "run_synthesis_raw_semantic_authority";
   const rejectedOutput = synthesisWithRule({
