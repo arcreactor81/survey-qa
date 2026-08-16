@@ -176,7 +176,7 @@
     // ---- browser session policy (spike-derived) ----
     "BROWSER_KEEP_ALIVE_MS": "600000", // idle timeout, refreshed by every batch
     "SESSION_MAX_AGE_MS": "480000", // proactively recycle before the observed ~11min wall
-    "EXEC_BATCH_MAX_MS": "120000", // wall-clock budget for ONE execute-batch step
+    "EXEC_BATCH_MAX_MS": "300000", // wall-clock budget for ONE execute-batch step. MUST exceed EXEC_PER_CASE_TIMEOUT_MS plus the batch-residual minimum, or the residual guard refuses every walk (run v2r_01m05358wjeprcr01r5r3nn1vy: 120000==120000 started ZERO walks). The config-arithmetic test pins this relationship.
     "EXEC_BATCH_MAX_ATTEMPTS": "4", // attempts committed per durable checkpoint
     "EXEC_MAX_BATCHES": "200", // hard stop on the batch loop
 

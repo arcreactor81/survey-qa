@@ -353,6 +353,27 @@ suite("amendment 1: option-linked specify fill", () => {
 // ===========================================================================
 
 suite("amendment 2: timeout and batch residual", () => {
+  test("the batch budget strictly exceeds the per-case timeout so a walk can ever start", async () => {
+    // Run v2r_01m05358wjeprcr01r5r3nn1vy started ZERO walks: EXEC_PER_CASE_TIMEOUT_MS was
+    // raised to 120000 while EXEC_BATCH_MAX_MS stayed 120000, and the batch-residual guard
+    // (whose minimum residual IS the per-case timeout) refused every walk before it began.
+    // This is the config-arithmetic relationship as a check that can fail: the batch must
+    // fit at least one full case plus overhead, in EVERY config that declares both.
+    const { readFileSync, readdirSync } = await import("fs");
+    const configs = ["wrangler.jsonc", ...readdirSync(".").filter((f) => f.startsWith("wrangler.arm-") && f.endsWith(".jsonc"))];
+    const OVERHEAD_MS = 30_000; // navigation/setup slack per batch, matched to acquire+advance budgets
+    for (const f of configs) {
+      const content = readFileSync(f, "utf8");
+      const perCase = content.match(/"EXEC_PER_CASE_TIMEOUT_MS"\s*:\s*"(\d+)"/);
+      const batch = content.match(/"EXEC_BATCH_MAX_MS"\s*:\s*"(\d+)"/);
+      assert(perCase && batch, `${f} must declare both EXEC_PER_CASE_TIMEOUT_MS and EXEC_BATCH_MAX_MS`);
+      assert(
+        Number(batch[1]) >= Number(perCase[1]) + OVERHEAD_MS,
+        `${f}: EXEC_BATCH_MAX_MS (${batch[1]}) must be >= EXEC_PER_CASE_TIMEOUT_MS (${perCase[1]}) + ${OVERHEAD_MS}ms overhead, or the residual guard starts zero walks`,
+      );
+    }
+  });
+
   test("EXEC_PER_CASE_TIMEOUT_MS is 120000 in wrangler.jsonc", async () => {
     const { readFileSync } = await import("fs");
     const wrangler = readFileSync("wrangler.jsonc", "utf8");
