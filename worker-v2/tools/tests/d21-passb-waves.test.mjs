@@ -499,8 +499,21 @@ test("terminal Pass-B refusal keeps raw provider evidence internal across status
       documentSha256,
     );
     assertEq(stage.result.state, "not-evaluated");
-    assertEq(stage.result.reason, "PASS_B_UNIT_FAILURES");
-    assert(stage.failedUnit.detail.includes(sentinel), "the retained internal evidence must contain the sentinel");
+    // With B4, the walk completes (done=true) even with terminal failed units. Reconstruction
+    // then fails because unaccounted blocks cannot be covered (sweep capacity is zero).
+    assertEq(stage.result.reason, "COMPLETION_ARTIFACT_INVALID");
+    // The sentinel is still retained in the chunk artifact in R2 — verify internal evidence
+    // is kept without leaking into the stage result.
+    const chunkKeys = await env.EVIDENCE.list({
+      prefix: m.keys.k("runs", runId, "extraction", "pass-b") + "/",
+    });
+    const chunkArtifacts = await Promise.all(
+      chunkKeys.objects.filter((o) => o.key.includes("chunk-")).map(async (o) => {
+        const obj = await env.EVIDENCE.get(o.key);
+        return obj ? await obj.text() : "";
+      }),
+    );
+    assert(chunkArtifacts.some((text) => text.includes(sentinel)), "the retained internal evidence must contain the sentinel in the chunk artifact");
     assert(!stage.result.detail.includes(sentinel), "the stage refusal prose must be closed");
 
     const refusal = m.workflow.extractionPassRefusal("b", stage.result);
@@ -802,7 +815,7 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
         documentSha256,
       );
       assertEq(outcome.result.state, "not-evaluated", "the stale occupied whole Pass-B key is refused");
-      assertEq(outcome.result.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+      assertEq(outcome.result.reason, "COMPLETION_ARTIFACT_INVALID");
       assertEq(provider.requests.length, 0, "immutable invalid whole-pass authority buys nothing");
       assertEq(
         JSON.stringify(await d51Read(env, m.keys.extractionPassKey(runId, "b"))),
@@ -852,7 +865,7 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
         documentSha256,
       );
       assertEq(missingOutcome.result.state, "not-evaluated", "occupied invalid authority is terminal before cache rebuild");
-      assertEq(missingOutcome.result.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+      assertEq(missingOutcome.result.reason, "COMPLETION_ARTIFACT_INVALID");
       assertEq(missingOutcome.slice.terminalFailure, true, "the refusal is a named terminal slice");
       assertEq(missingProvider.requests.length, 0, "occupied invalid authority authorizes no replacement purchase");
       assertEq(
@@ -1172,7 +1185,7 @@ test("D51-e consolidation refuses stale pass A or pass B payloads", async () => 
       `sha256:${await m.hash.sha256Hex(staleABody)}`, `sha256:${"b".repeat(64)}`,
     );
     assertEq(staleA.state, "not-evaluated", "stale pass A cannot be merged");
-    assertEq(staleA.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(staleA.reason, "COMPLETION_ARTIFACT_INVALID");
     assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(runId)), null, "stale pass A writes no merged artifact");
   }
 
@@ -1194,7 +1207,7 @@ test("D51-e consolidation refuses stale pass A or pass B payloads", async () => 
       `sha256:${await m.hash.sha256Hex(staleBBody)}`,
     );
     assertEq(staleB.state, "not-evaluated", "stale pass B cannot be merged");
-    assertEq(staleB.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+    assertEq(staleB.reason, "COMPLETION_ARTIFACT_INVALID");
     assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(runId)), null, "stale pass B writes no merged artifact");
   }
 });
@@ -1289,7 +1302,9 @@ test("a chunk that keeps FAILING is re-bought a bounded number of times, not onc
     }
 
     assertEq(provider.countFor(doomed), 2, `the failing chunk must be bought EXACTLY twice, was bought ${provider.countFor(doomed)}`);
-    assertEq(last.slice.done, false, "a terminally failed chunk cannot be called a completed pass");
+    // With B4, the walk completes even with terminal failed units. The failed chunk's blocks
+    // remain unresolved and ride the payload as named limitations.
+    assertEq(last.slice.done, true, "B4: the walk completes despite a terminally failed chunk");
     assertEq(last.slice.terminalFailure, true, "the bounded refusal is terminal rather than another retry");
     assert(
       last.failedUnits.some((f) => f.unit === doomed),
@@ -1467,7 +1482,7 @@ test("(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the fi
     // it finds, with no way to tell a whole read from a partial one.
     assertEq(first.slice.done, false, "a zero-budget wave over a real questionnaire cannot finish it");
     assertEq(first.result.state, "not-evaluated", "an unfinished pass is NOT an evaluated pass");
-    assertEq(first.result.reason, "PASS_B_INCOMPLETE", "and it says which incompleteness");
+    assertEq(first.result.reason, "INCOMPLETE", "and it says which incompleteness");
     assertEq(
       await env.EVIDENCE.get(m.keys.extractionPassKey(runId, "b")),
       null,

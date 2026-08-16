@@ -83,7 +83,7 @@ suite("Pass-A completion top-level shape is closed", () => {
     );
 
     assertEq(checked.result.state, "not-evaluated");
-    assertEq(checked.result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(checked.result.reason, "COMPLETION_ARTIFACT_INVALID");
     assert(
       checked.reads.every((key) => key === checked.key),
       `closed-shape refusal must precede unit reconstruction; reads=${checked.reads.join(",")}`,
@@ -101,7 +101,7 @@ suite("Pass-A completion top-level shape is closed", () => {
     );
 
     assertEq(checked.result.state, "not-evaluated");
-    assertEq(checked.result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(checked.result.reason, "COMPLETION_ARTIFACT_INVALID");
     assert(
       checked.reads.some((key) => key !== checked.key),
       "the no-extra control must pass the top-level shape gate and attempt strict unit reconstruction",

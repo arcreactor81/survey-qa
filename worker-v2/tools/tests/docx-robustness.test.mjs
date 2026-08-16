@@ -171,7 +171,7 @@ suite("MODEL SOURCE JSONL — exact text and structural metadata share one seam"
     const jsonl = mod.encodeSourceBlocksJsonl([block]);
 
     assertEq(p.PROMPT_VERSION_A, "v2-extract-pass-a/1.10.0");
-    assertEq(p.PROMPT_VERSION_B, "v2-extract-pass-b/1.5.0");
+    assertEq(p.PROMPT_VERSION_B, "v2-extract-pass-b/1.6.0");
     for (const system of [p.SYSTEM_A, p.SYSTEM_B]) {
       assert(system.includes('after decoding a row, its "text" value is the exact source string'));
       assert(system.includes('"source_subrole"') && system.includes('"semantic_spans"'));

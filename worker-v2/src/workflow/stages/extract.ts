@@ -374,21 +374,21 @@ export async function validatePassAContinuationAuthority(
 ): Promise<StageResult<PassSummary>> {
   if (!/^sha256:[0-9a-f]{64}$/.test(expectedPassAHash)) {
     return stageNotEvaluated<PassSummary>(
-      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_A_COMPLETED_ARTIFACT_INVALID: a durable evaluated Pass-A hash is required before any continuation.",
     );
   }
   const obj = await env.EVIDENCE.get(extractionPassKey(runId, "a"));
   if (!obj) {
     return stageNotEvaluated<PassSummary>(
-      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_A_COMPLETED_ARTIFACT_INVALID: durable Pass-A completion bytes are missing.",
     );
   }
   const actual = `sha256:${await sha256Hex(await obj.arrayBuffer())}`;
   if (actual !== expectedPassAHash) {
     return stageNotEvaluated<PassSummary>(
-      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       `PASS_A_COMPLETED_ARTIFACT_INVALID: durable Pass-A hash ${expectedPassAHash} no longer binds ` +
         `current bytes ${actual}. No Pass-B purchase is authorized.`,
     );
@@ -397,7 +397,7 @@ export async function validatePassAContinuationAuthority(
     env, runId, "a", doc.parserVersion ?? docxBlocksVersion(DOCUMENT_SEMANTICS_NONE), documentName, doc,
   ) ??
     stageNotEvaluated<PassSummary>(
-      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_A_COMPLETED_ARTIFACT_INVALID: the retained completion bytes do not exactly match " +
         "current window/synthesis authority. No Pass-B purchase is authorized.",
     );
@@ -412,14 +412,14 @@ async function validatePassBCompletionAuthority(
 ): Promise<StageResult<PassSummary>> {
   if (!/^sha256:[0-9a-f]{64}$/.test(expectedPassBHash)) {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_B_COMPLETED_ARTIFACT_INVALID: a durable evaluated Pass-B hash is required before consolidation.",
     );
   }
   const obj = await env.EVIDENCE.get(extractionPassKey(runId, "b"));
   if (!obj) {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_B_COMPLETED_ARTIFACT_INVALID: durable Pass-B completion bytes are missing.",
     );
   }
@@ -427,7 +427,7 @@ async function validatePassBCompletionAuthority(
   const actualHash = `sha256:${await sha256Hex(bytes)}`;
   if (actualHash !== expectedPassBHash) {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       `PASS_B_COMPLETED_ARTIFACT_INVALID: durable Pass-B hash ${expectedPassBHash} no longer binds ` +
         `current bytes ${actualHash}. Consolidation is not authorized.`,
     );
@@ -435,8 +435,8 @@ async function validatePassBCompletionAuthority(
   const authority = await reconstructPassBCompletedAuthority(env, runId, doc, documentName);
   if (authority.kind !== "ok") {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
-      publicExtractionFailureDetail("PASS_B_COMPLETION_ARTIFACT_INVALID"),
+      "COMPLETION_ARTIFACT_INVALID",
+      publicExtractionFailureDetail("COMPLETION_ARTIFACT_INVALID"),
     );
   }
   let parsed: Record<string, unknown>;
@@ -446,7 +446,7 @@ async function validatePassBCompletionAuthority(
     parsed = value as Record<string, unknown>;
   } catch {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_B_COMPLETED_ARTIFACT_INVALID: durable completion JSON is malformed.",
     );
   }
@@ -456,7 +456,7 @@ async function validatePassBCompletionAuthority(
     canonicalJson(passBCompletionProjection(parsed)) !== canonicalJson(passBCompletionProjection(expected))
   ) {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_B_COMPLETED_ARTIFACT_INVALID: completion projection differs from strict unit reconstruction.",
     );
   }
@@ -566,8 +566,8 @@ export async function stagePassASlice(
     const slice = authority.kind === "invalid" ? authority.slice : authority.value.slice;
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_A_COMPLETION_ARTIFACT_INVALID",
-        publicExtractionFailureDetail("PASS_A_COMPLETION_ARTIFACT_INVALID"),
+        "COMPLETION_ARTIFACT_INVALID",
+        publicExtractionFailureDetail("COMPLETION_ARTIFACT_INVALID"),
       ),
       slice,
       terminal: true,
@@ -655,8 +655,8 @@ export async function stagePassASlice(
     if (result.slice.synthesisState === "failed" || first.unit === "A-synthesis") {
       return {
         result: stageNotEvaluated<PassSummary>(
-          "PASS_A_SYNTHESIS_FAILURE",
-          publicExtractionFailureDetail("PASS_A_SYNTHESIS_FAILURE"),
+          "SYNTHESIS_FAILURE",
+          publicExtractionFailureDetail("SYNTHESIS_FAILURE"),
         ),
         slice: result.slice,
         terminal: true,
@@ -666,8 +666,8 @@ export async function stagePassASlice(
     }
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_A_WINDOW_FAILURES",
-        publicExtractionFailureDetail("PASS_A_WINDOW_FAILURES"),
+        "WINDOW_FAILURES",
+        publicExtractionFailureDetail("WINDOW_FAILURES"),
       ),
       slice: result.slice,
       terminal: true,
@@ -692,7 +692,7 @@ export async function stagePassASlice(
         `an unread window states.`;
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_A_INCOMPLETE",
+        "INCOMPLETE",
         detail,
       ),
       slice: result.slice,
@@ -701,15 +701,15 @@ export async function stagePassASlice(
   }
 
   if (result.failedUnits.length > 0) {
-    throw new Error(publicExtractionFailureDetail("PASS_A_WINDOW_FAILURES"));
+    throw new Error(publicExtractionFailureDetail("WINDOW_FAILURES"));
   }
 
   const authority = await reconstructPassACompletedAuthority(env, runId, doc, documentName);
   if (authority.kind === "invalid") {
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_A_COMPLETION_ARTIFACT_INVALID",
-        publicExtractionFailureDetail("PASS_A_COMPLETION_ARTIFACT_INVALID"),
+        "COMPLETION_ARTIFACT_INVALID",
+        publicExtractionFailureDetail("COMPLETION_ARTIFACT_INVALID"),
       ),
       slice: authority.slice,
       terminal: true,
@@ -731,7 +731,7 @@ export async function stagePassASlice(
     if (existing === null || await existing.text() !== body) {
       return {
         result: stageNotEvaluated<PassSummary>(
-          "PASS_A_COMPLETION_ARTIFACT_INVALID",
+          "COMPLETION_ARTIFACT_INVALID",
           "PASS_A_COMPLETED_ARTIFACT_IMMUTABLE: the completion key already exists with different bytes. " +
             "The existing authority was not overwritten and no Pass-B purchase was authorized.",
         ),
@@ -878,8 +878,8 @@ export async function stagePassBSlice(
     const authority = await reconstructPassBCompletedAuthority(env, runId, doc, documentName);
     return {
       result: stageNotEvaluated(
-        "PASS_B_COMPLETION_ARTIFACT_INVALID",
-        publicExtractionFailureDetail("PASS_B_COMPLETION_ARTIFACT_INVALID"),
+        "COMPLETION_ARTIFACT_INVALID",
+        publicExtractionFailureDetail("COMPLETION_ARTIFACT_INVALID"),
       ),
       slice: authority.kind === "invalid" ? authority.slice : authority.value.slice,
     };
@@ -913,12 +913,17 @@ export async function stagePassBSlice(
     };
   }
 
-  if (result.slice.terminalFailure || result.failedUnits.length > 0) {
+  // Infrastructure-terminal: wire ceiling, credential, persistence conflict, or failure rate exceeded.
+  // A walk that completed (done=true) with terminal units but whose ledger closes continues
+  // to reconstruction below — the failed units and limitation rows ride in the payload.
+  if (!result.slice.done && (result.slice.terminalFailure || result.failedUnits.length > 0)) {
     const reason = result.terminalReasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED
       ? EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED
       : result.terminalReasonCode === EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED
       ? EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED
-      : "PASS_B_UNIT_FAILURES";
+      : result.terminalReasonCode === "PASS_B_FAILURE_RATE_EXCEEDED"
+        ? "FAILURE_RATE_EXCEEDED"
+        : "UNIT_FAILURES"; // mutation-anchor: reason-code-no-double-prefix
     return {
       result: stageNotEvaluated<PassSummary>(
         reason,
@@ -933,7 +938,7 @@ export async function stagePassBSlice(
   if (!result.slice.done) {
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_B_INCOMPLETE",
+        "INCOMPLETE",
         `pass B has ${result.slice.chunksRemaining} of ${result.slice.chunksTotal} chunk(s) and ` +
           `${result.slice.sweepRemaining} ledger-sweep call(s) still owed after this wave. Nothing is persisted ` +
           `under the pass key until the walk is whole: a partial pass merged as if it were complete would seal a ` +
@@ -947,8 +952,8 @@ export async function stagePassBSlice(
   if (authority.kind === "invalid") {
     return {
       result: stageNotEvaluated(
-        "PASS_B_COMPLETION_ARTIFACT_INVALID",
-        publicExtractionFailureDetail("PASS_B_COMPLETION_ARTIFACT_INVALID"),
+        "COMPLETION_ARTIFACT_INVALID",
+        publicExtractionFailureDetail("COMPLETION_ARTIFACT_INVALID"),
       ),
       slice: authority.slice,
     };
@@ -963,7 +968,7 @@ export async function stagePassBSlice(
     if (existing === null || await existing.text() !== authority.body) {
       return {
         result: stageNotEvaluated(
-          "PASS_B_COMPLETION_ARTIFACT_INVALID",
+          "COMPLETION_ARTIFACT_INVALID",
           "PASS_B_COMPLETED_ARTIFACT_IMMUTABLE: the completion key already exists with different bytes. " +
             "The existing authority was not overwritten.",
         ),

@@ -4,7 +4,7 @@
  * MEASURED FAILURE: run v2r_01m02f7dnzxgb8rdpveh8ayd51 (v30), window A-w1 on Gemini.
  * The persisted artifact was correct: status=failed, failureStage=semantic-output,
  * terminal:false, attempts:1. Yet the run terminalized immediately with
- * PASS_A_WINDOW_FAILURES because the SLICE-level terminalFailure was true,
+ * WINDOW_FAILURES because the SLICE-level terminalFailure was true,
  * contradicting the artifact. This suite pins the invariant: a non-terminal
  * window artifact must produce a non-terminal slice, and a terminal artifact
  * must produce a terminal slice.
@@ -299,10 +299,10 @@ async function stageBed(overrides = {}) {
 // ===========================================================================
 suite("Slice terminality derives from durable window terminality — stage boundary", () => {
 
-test("semantic failure on attempt 1 yields PASS_A_INCOMPLETE (not PASS_A_WINDOW_FAILURES), attempt 2 succeeds", async () => {
+test("semantic failure on attempt 1 yields INCOMPLETE (not WINDOW_FAILURES), attempt 2 succeeds", async () => {
   // The v30 regression: window A-w1 fails semantically (unknown construct "ordering")
   // on the first attempt. The persisted artifact is correct: terminal:false, attempts:1.
-  // The STAGE must return PASS_A_INCOMPLETE with terminal:false, NOT PASS_A_WINDOW_FAILURES.
+  // The STAGE must return INCOMPLETE with terminal:false, NOT WINDOW_FAILURES.
   // The second wave re-issues the window, which succeeds.
   const { m, env, runId, fence } = await stageBed({
     EXTRACT_PASS_A_WINDOW_CHARS: "1000",
@@ -321,15 +321,15 @@ test("semantic failure on attempt 1 yields PASS_A_INCOMPLETE (not PASS_A_WINDOW_
     const { documentKey, documentSha256 } = await seedDocument(m, env, runId);
     const beat = async () => {};
 
-    // WAVE 1: the first attempt fails semantically. Stage must return PASS_A_INCOMPLETE.
+    // WAVE 1: the first attempt fails semantically. Stage must return INCOMPLETE.
     const wave1 = await m.extractStage.stagePassASlice(
       env, runId, documentKey, "questionnaire.docx", fence, beat,
       { budgetMs: 0 },
       "none/1.0.0", documentSha256,
     );
     assertEq(wave1.result.state, "not-evaluated", "wave 1: result is not-evaluated");
-    assertEq(wave1.result.reason, "PASS_A_INCOMPLETE",
-      "wave 1: reason is PASS_A_INCOMPLETE, NOT PASS_A_WINDOW_FAILURES");
+    assertEq(wave1.result.reason, "INCOMPLETE",
+      "wave 1: reason is INCOMPLETE, NOT WINDOW_FAILURES");
     assertEq(wave1.terminal, false,
       "wave 1: the stage reports terminal:false so the wave loop continues");
     assertEq(wave1.slice.terminalFailure, false,
@@ -393,15 +393,15 @@ test("semantic failure on BOTH attempts with salvageable output: degradation lan
       // Degradation succeeded: the pass completed with limitations.
       assertEq(out.slice.terminalFailure, false,
         "degradation-landed pass has no terminal failure");
-    } else if (out.result.reason === "PASS_A_INCOMPLETE") {
+    } else if (out.result.reason === "INCOMPLETE") {
       // Still making progress — A-w1 was degraded but other windows remain
       assertEq(out.slice.terminalFailure, false,
         "incomplete pass with degraded window has no terminal failure");
     } else {
       // If for some reason the degradation path is not taken at the stage level,
-      // verify the failure is terminal ONLY with PASS_A_WINDOW_FAILURES
+      // verify the failure is terminal ONLY with WINDOW_FAILURES
       assert(
-        out.result.reason === "PASS_A_WINDOW_FAILURES",
+        out.result.reason === "WINDOW_FAILURES",
         `unexpected terminal reason: ${out.result.reason}`,
       );
     }
@@ -410,7 +410,7 @@ test("semantic failure on BOTH attempts with salvageable output: degradation lan
   }
 });
 
-test("unsalvageable raw output at retry exhaustion: PASS_A_WINDOW_FAILURES, terminal:true", async () => {
+test("unsalvageable raw output at retry exhaustion: WINDOW_FAILURES, terminal:true", async () => {
   // Both attempts return completely unusable output (no valid root arrays).
   // degradedPrimaryOutput returns null. The window is terminally failed.
   const { m, env, runId, fence } = await stageBed({
@@ -441,8 +441,8 @@ test("unsalvageable raw output at retry exhaustion: PASS_A_WINDOW_FAILURES, term
       if (waves > 60) throw new Error("pass A never terminated");
     } while (!out.terminal);
 
-    assertEq(out.result.reason, "PASS_A_WINDOW_FAILURES",
-      "unsalvageable exhaustion produces PASS_A_WINDOW_FAILURES");
+    assertEq(out.result.reason, "WINDOW_FAILURES",
+      "unsalvageable exhaustion produces WINDOW_FAILURES");
     assertEq(out.terminal, true,
       "unsalvageable exhaustion is terminal");
     assertEq(out.slice.terminalFailure, true,
