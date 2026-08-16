@@ -183,11 +183,18 @@ await runMutantSuite({
       kills: [TELEMETRY],
     },
     {
+      // Re-anchored 16 Aug 2026: the pass-B failure ladder rewrote the failure-write's
+      // surrounding lines; the carried-forward property itself is unchanged. Single-line
+      // anchor per this file's doctrine (the old three-line anchor went BROKEN-ANCHOR in
+      // the v36/v37 trailing fences).
       name: "prior failed receipts are not carried forward",
       breaks: "a later retry overwrites the earlier paid receipt chain",
       file: PASS_B,
-      find: '          status: "failed",\n          attempts,\n          usages: [...priorUsages, ...failureUsages],',
-      replace: '          status: "failed",\n          attempts,\n          usages: failureUsages,',
+      // The failure-write line now appears twice (chunk + sweep paths share the shape), so
+      // the mutation empties the chunk path's prior-usage FETCH instead — same property
+      // (prior paid receipts survive into every later write), unique single-line anchor.
+      find: "  const priorUsages = priorUsagesByChunk.get(chunk.n) ?? [];",
+      replace: "  const priorUsages = [];",
       kills: [RETAINED],
     },
     {
