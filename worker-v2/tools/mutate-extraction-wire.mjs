@@ -23,8 +23,13 @@ await runMutantSuite({
     {
       name: "retained terminal chunk no longer blocks credential resolution",
       breaks: "re-entry touches Secrets Store for earlier missing work despite durable terminal authority",
+      // Re-anchored 16 Aug 2026: the failure ladder split the old blanket !terminalFailure
+      // gate. Model-output terminality deliberately no longer blocks credentials (surviving
+      // chunks still get bought); what must keep blocking is durable INFRASTRUCTURE
+      // authority — rate exceeded, persistence conflict, wire ceiling. The mutation removes
+      // exactly those three guards.
       file: PASS_B,
-      find: "if (pendingChunkWireFailure === null && !terminalFailure && todo.length > 0) {",
+      find: "if (pendingChunkWireFailure === null && !failureRateExceeded && persistenceConflictFailures === 0 && terminalReasonCode !== EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED && todo.length > 0) {",
       replace: "if (pendingChunkWireFailure === null && todo.length > 0) {",
       kills: [CHUNK],
     },
