@@ -352,6 +352,72 @@ suite("amendment 1: option-linked specify fill", () => {
 // AMENDMENT 2: TIMEOUT REGRESSION + DON'T-START GUARD
 // ===========================================================================
 
+suite("amendment 2c: a hung screen read becomes a recorded outcome, never a silent stall", () => {
+  // The 2026-08-17 run hung EVERY walk that crossed the screener (12/12 crossing attempts)
+  // and the per-case axe destroyed each observation: 0 screens, wallMs=0, no evidence of
+  // where. A page call that never resolves must instead REJECT within the read bound, flow
+  // into the existing screen-read-failed path, and return an observation that says so.
+  test("a never-resolving screen read rejects at readTimeoutMs and the walk returns an error observation", async () => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const hangingPage = {
+      async goto() {},
+      async evaluate(script) {
+        if (typeof script === "string" && script.includes("screenSignature")) {
+          return new Promise(() => {}); // the wedge: a read that never resolves
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return [];
+      },
+      async screenshot() {
+        throw new Error("no screenshot in this harness");
+      },
+      async setViewport() {},
+      on() {},
+      async close() {},
+      async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const t0 = Date.now();
+    const walkPromise = mod.driver.walkPath(
+      hangingPage,
+      { id: "path_d56hang", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey",
+        runId,
+        planRevisionId: "plan_d56hang01",
+        attemptId: "att_d56hang00001",
+        tier: 1,
+        maxSteps: 3,
+        deadline: Date.now() + 60_000,
+        viewport: { width: 1280, height: 900 },
+        applyHistoryShim: false,
+        advanceTimeoutMs: 200,
+        readTimeoutMs: 400,
+      },
+      { env, runId, attemptId: "att_d56hang00001", pathId: "path_d56hang", witnesses: [] },
+    );
+    // The race is the test's own axe: an UNBOUNDED read makes walkPath never return, and
+    // this must be a clean named failure, not a hung test process.
+    const obs = await Promise.race([
+      walkPromise,
+      new Promise((resolve) => setTimeout(() => resolve("WALK-NEVER-RETURNED"), 20_000)),
+    ]);
+    assert(obs !== "WALK-NEVER-RETURNED", "walkPath hung past the read bound instead of recording the hang");
+    const elapsed = Date.now() - t0;
+    assert(elapsed < 20_000, `the walk must return at the read bound, not hang (took ${elapsed}ms)`);
+    assertEq(obs.outcome, "error", `a hung read must be a recorded outcome, got ${obs.outcome}`);
+    assert(
+      String(obs.outcomeDetail).includes("hung"),
+      `the outcome must NAME the hang: ${obs.outcomeDetail}`,
+    );
+    assert(obs.captureFailureCount >= 1, "the hang must be a counted capture failure");
+  });
+});
+
 suite("amendment 2b: the walk deadline returns partials before the axe destroys them", () => {
   // Runs v2r_01m05wjkybhr6cfcggpgrerfqr (v40) and v2r_01m067zf40z4788yb60c380vgp (v41)
   // recorded 27 walks as 0-screen "per-case-timeout" rows with wallMs=0 and NO evidence of

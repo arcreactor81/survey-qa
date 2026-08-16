@@ -142,6 +142,8 @@ export interface WalkOptions {
   applyHistoryShim: boolean;
   /** ms to wait for the screen to change after pressing Next before calling it blocked. */
   advanceTimeoutMs: number;
+  /** Bound on ONE screen read before it is recorded as hung (default READ_SCREEN_TIMEOUT_MS). */
+  readTimeoutMs?: number;
   /**
    * BOUNDED SCREEN-OUT RETRY: which deterministic filler variant this walk uses. 0 (or
    * absent) is today's defaults, byte-for-byte; `execute-batch.ts` sets the durable pivot
@@ -473,6 +475,34 @@ export function matchDecision(
 
 async function read(page: PageLike): Promise<RenderedScreen> {
   return (await page.evaluate(READ_SCREEN)) as RenderedScreen;
+}
+
+/**
+ * A screen read that HANGS (a wedged page or a CDP call that never resolves) must become a
+ * rejection the step loop's existing screen-read-failed path can record — steps so far
+ * retained, outcome "error", capture failure counted — never a silent stall that only the
+ * per-case axe can end by destroying the whole observation. Measured healthy reads take
+ * ~300ms; the bound is two orders of magnitude above that. The 2026-08-17 run
+ * v2r_01m067zf40z4788yb60c380vgp hung EVERY walk that crossed the screener (12 of 12
+ * crossing attempts, 0 screens recorded) while every walk ending at the screener returned —
+ * a deterministic stall somewhere in the crossing step this bound exists to name.
+ */
+export const READ_SCREEN_TIMEOUT_MS = 30_000;
+
+function boundedRead(page: PageLike, ms: number, what: string): Promise<RenderedScreen> {
+  return new Promise<RenderedScreen>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${what} hung for ${ms}ms without resolving`)), ms);
+    read(page).then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
 }
 
 const READ_CAPTURE_GEOMETRY = String.raw`(() => {
@@ -4135,7 +4165,7 @@ export async function walkPath(
 
     let before: RenderedScreen;
     try {
-      before = await read(page);
+      before = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read before step ${stepIndex}`);
     } catch (err) {
       recordCaptureFailure(
         captureFailureRow(
@@ -4283,7 +4313,7 @@ export async function walkPath(
     const stepReadFailures: ScreenCaptureFailure[] = [];
     let afterAction: RenderedScreen | null = null;
     try {
-      afterAction = await read(page);
+      afterAction = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read after acting on step ${stepIndex}`);
     } catch (err) {
       const failure = recordCaptureFailure(
         captureFailureRow(
@@ -4447,7 +4477,10 @@ export async function walkPath(
     while (Date.now() < waitUntil) {
       await sleep(180);
       try {
-        after = await read(page);
+        // The poll read's bound is its own remaining window: a hung read must not hold the
+        // advance wait past `advanceTimeoutMs`, and a rejection here is already a counted,
+        // survivable poll failure.
+        after = await boundedRead(page, Math.max(1_000, waitUntil - Date.now()), `advance poll read on step ${stepIndex}`);
       } catch (err) {
         pollReadFailureCount += 1;
         lastPollReadFailure = err;
@@ -4592,7 +4625,7 @@ export async function walkPath(
       const recoveryReadFailures: ScreenCaptureFailure[] = [];
       let recoveryBaseline: RenderedScreen | null = null;
       try {
-        recoveryBaseline = await read(page);
+        recoveryBaseline = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `recovery baseline read on step ${stepIndex}`);
       } catch (err) {
         recoveryReadFailures.push(recordCaptureFailure(
           captureFailureRow(
@@ -4626,7 +4659,7 @@ export async function walkPath(
       if (recoveryClicked) await sleep(600);
       let recovered: RenderedScreen | null = null;
       try {
-        recovered = await read(page);
+        recovered = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `recovery read on step ${stepIndex}`);
       } catch (err) {
         const failure = recordCaptureFailure(
           captureFailureRow(

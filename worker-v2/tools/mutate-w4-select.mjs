@@ -175,5 +175,28 @@ await runMutantSuite({
       replace: `      const transitionKey = JSON.stringify([transitionBase]);`,
       kills: ["the same directed transition traversed twice stops as a named cycle before the screen cap"],
     },
+    {
+      name: "the before-step screen read loses its hang bound (the 2026-08-17 stall reopened)",
+      breaks:
+        "hang visibility. A page call that never resolves stalls walkPath silently until the " +
+        "per-case axe destroys the whole observation — the exact pattern that zeroed all 12 " +
+        "screener-crossing walks on run v2r_01m067zf40z4788yb60c380vgp with no evidence of " +
+        "where they hung",
+      file: DR,
+      find: "      before = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read before step ${stepIndex}`);",
+      replace: "      before = await read(page);",
+      kills: ["a never-resolving screen read rejects at readTimeoutMs and the walk returns an error observation"],
+    },
+    {
+      name: "boundedRead's timer stops rejecting (a bound in name only)",
+      breaks:
+        "the same guarantee one level down: the wrapper exists, the timeout fires, and " +
+        "nothing happens — the read hangs exactly as if unbounded, while the code reads as " +
+        "protected",
+      file: DR,
+      find: "    const t = setTimeout(() => reject(new Error(`${what} hung for ${ms}ms without resolving`)), ms);",
+      replace: "    const t = setTimeout(() => {}, ms);",
+      kills: ["a never-resolving screen read rejects at readTimeoutMs and the walk returns an error observation"],
+    },
   ],
 });
