@@ -722,19 +722,65 @@ export interface SurvivalHintStamp {
   /** The document's wording, when a decision on the same carrier already carries it. */
   question_text?: string;
   avoid_labels: string[];
+  /** Labels the document states CONTINUE the survey — same channel, same evidence boundary. */
+  prefer_labels?: string[];
 }
 
 const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 ? v : null);
+
+/**
+ * A sealed route case's destination, read from TYPED fields only. This exists because the
+ * prose miners above it starve together: `buildTerminals` resolves a trigger only against a
+ * question's MINED option list, so a question whose options never mined (measured on the
+ * 2026-08-16 live run: S10 — 9 sealed terminate routes, 0 mined options, 0 hints stamped,
+ * every navigator-default walk screened out) contributes nothing, even though the sealed
+ * contract states the trigger verbatim in `routeAnswer.label`. A route case IS a resolved
+ * trigger: question = `targetQuestionId`, answer = `routeAnswer.label`, destination = the
+ * requirement's facet — `terminate` (a documented screen-out) or `skip-rule` (a documented
+ * continue). No prose is read; a route under any OTHER facet is skipped, never guessed.
+ */
+export interface SealedRouteDestination {
+  question: string;
+  label: string;
+  kind: "terminate" | "continue";
+}
+
+export function sealedRouteDestinations(revision: {
+  requirements: ScopedRequirement[];
+  facetInstances: FacetInstance[];
+}): SealedRouteDestination[] {
+  const facetByLineage = new Map<string, string>();
+  for (const r of revision.requirements) facetByLineage.set(r.requirementLineageId, r.facet);
+  const out: SealedRouteDestination[] = [];
+  for (const fi of revision.facetInstances) {
+    if (fi.case?.kind !== "route") continue;
+    const question = nonEmpty(fi.targetQuestionId);
+    const label = nonEmpty(fi.case.routeAnswer?.label ?? null);
+    if (!question || !label) continue;
+    const facet = facetByLineage.get(fi.requirementLineageId);
+    if (facet === "terminate") out.push({ question, label, kind: "terminate" });
+    else if (facet === "skip-rule") out.push({ question, label, kind: "continue" });
+  }
+  return out;
+}
 
 /**
  * EVERY documented terminate trigger the model states at label level, per question — plus
  * the screen-outs that could NOT be resolved to a label, which are the stamp's own named
  * shortfall. Reads the three places `plan-core.js` emits trigger data (options[].terminates,
  * questions[].terminates, model.terminals) and dedupes; `buildTerminals` already folds the
- * first two into each other, so the union is defensive, not doctrinal.
+ * first two into each other, so the union is defensive, not doctrinal. Sealed route
+ * destinations are the fourth source and the only TYPED one: their terminate labels join
+ * `avoid`, their continue labels build `prefer` — minus any label the same question also
+ * documents as terminating, because a contract that states both ways is a conflict to
+ * sit out, not a hint to gamble on.
  */
-export function survivalAvoidIndex(model: unknown): {
+export function survivalAvoidIndex(
+  model: unknown,
+  routes: readonly SealedRouteDestination[] = [],
+): {
   avoid: Map<string, string[]>;
+  prefer: Map<string, string[]>;
   unstampable: Array<{ terminal: string; question: string | null; why: string }>;
 } {
   const avoid = new Map<string, string[]>();
@@ -782,7 +828,16 @@ export function survivalAvoidIndex(model: unknown): {
     }
     for (const a of answers) put(tq, a);
   }
-  return { avoid, unstampable };
+  for (const r of routes) if (r.kind === "terminate") put(r.question, r.label);
+  const prefer = new Map<string, string[]>();
+  for (const r of routes) {
+    if (r.kind !== "continue") continue;
+    if ((avoid.get(r.question) ?? []).includes(r.label)) continue;
+    const held = prefer.get(r.question) ?? [];
+    if (!held.includes(r.label)) held.push(r.label);
+    prefer.set(r.question, held);
+  }
+  return { avoid, prefer, unstampable };
 }
 
 /**
@@ -803,18 +858,23 @@ export function survivalAvoidIndex(model: unknown): {
 export function stampSurvivalHints(
   carriers: Array<{ decisions?: PlannedDecision[]; [k: string]: unknown }>,
   model: unknown,
+  routes: readonly SealedRouteDestination[] = [],
 ): {
   decisionsStamped: number;
   pathsStamped: number;
   /** question id -> the labels stamped, for the report and the tests. */
-  questions: Array<{ question: string; avoid_labels: string[] }>;
+  questions: Array<{ question: string; avoid_labels: string[]; prefer_labels?: string[] }>;
   /** Documented screen-outs this pass could NOT steer around, each with the reason. */
   unstampable: Array<{ terminal: string; question: string | null; why: string }>;
 } {
-  const { avoid, unstampable } = survivalAvoidIndex(model);
+  const { avoid, prefer, unstampable } = survivalAvoidIndex(model, routes);
+  // One row per hinted question, avoid-map order first, prefer-only questions after —
+  // both insertion-ordered from deterministic inputs, so a replan is byte-stable.
+  const hintedQuestions: string[] = [...avoid.keys()];
+  for (const q of prefer.keys()) if (!hintedQuestions.includes(q)) hintedQuestions.push(q);
   let decisionsStamped = 0;
   let pathsStamped = 0;
-  for (const carrier of avoid.size > 0 ? carriers : []) {
+  for (const carrier of hintedQuestions.length > 0 ? carriers : []) {
     if (!carrier || typeof carrier !== "object") continue;
     if (carrier["terminated_at"] != null) continue;
     const adjacency = carrier["adjacency"] as { side?: unknown } | null | undefined;
@@ -829,17 +889,21 @@ export function stampSurvivalHints(
     }
     for (const d of decisions) {
       if (!d || d.case_action) continue;
-      const labels = avoid.get(String(d.question ?? ""));
-      if (!labels || labels.length === 0) continue;
-      d.avoid_labels = [...labels];
+      const q = String(d.question ?? "");
+      const labels = avoid.get(q);
+      const liked = prefer.get(q);
+      if ((!labels || labels.length === 0) && (!liked || liked.length === 0)) continue;
+      if (labels && labels.length > 0) d.avoid_labels = [...labels];
+      if (liked && liked.length > 0) d.prefer_labels = [...liked];
       decisionsStamped += 1;
     }
     // Path-level hints cover the screens NO decision binds; the driver matches them by
     // offered-label overlap only. Emitted in model question order, so a replan is byte-stable.
-    const hints: SurvivalHintStamp[] = [...avoid.entries()].map(([question, labels]) => ({
+    const hints: SurvivalHintStamp[] = hintedQuestions.map((question) => ({
       question,
       ...(wordingByQuestion.has(question) ? { question_text: wordingByQuestion.get(question)! } : {}),
-      avoid_labels: [...labels],
+      avoid_labels: [...(avoid.get(question) ?? [])],
+      ...(prefer.has(question) ? { prefer_labels: [...prefer.get(question)!] } : {}),
     }));
     if (hints.length > 0) {
       carrier["survival_hints"] = hints;
@@ -849,7 +913,11 @@ export function stampSurvivalHints(
   return {
     decisionsStamped,
     pathsStamped,
-    questions: [...avoid.entries()].map(([question, labels]) => ({ question, avoid_labels: [...labels] })),
+    questions: hintedQuestions.map((question) => ({
+      question,
+      avoid_labels: [...(avoid.get(question) ?? [])],
+      ...(prefer.has(question) ? { prefer_labels: [...prefer.get(question)!] } : {}),
+    })),
     unstampable,
   };
 }
@@ -990,7 +1058,11 @@ export async function planStage(
   // (so per-case clones inherit). Hints are INPUT, never EVIDENCE: `avoid_labels` /
   // `survival_hints` are unhashed, gate-invisible fields the driver reads only to pick
   // among its own navigator-default fillers. See `stampSurvivalHints`.
-  const survival = stampSurvivalHints([...plan.floor.paths, ...plan.exploration.queue], plan.model);
+  const survival = stampSurvivalHints(
+    [...plan.floor.paths, ...plan.exploration.queue],
+    plan.model,
+    sealedRouteDestinations(revision),
+  );
 
   // ---- assignment: mandatory execution case -> the floor path that witnesses it ----
   const witnessMap: Record<string, string> = (plan.floor.coverage.witness_map ?? {}) as Record<string, string>;

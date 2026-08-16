@@ -331,6 +331,109 @@ suite("D54 — survival hints reach UNBOUND screens through the path, by offered
   });
 });
 
+/* ============================================================ 2b. documented CONTINUE answers (prefer_labels) */
+
+/**
+ * The measured 2026-08-16 shape: a screener whose position-1 AND position-2 fates differ —
+ * position 1 is a documented terminator, position 2 is undocumented (could terminate too),
+ * position 3 is the answer the document STATES continues the survey.
+ */
+const screenerScreen = () =>
+  screen("S10. Which of the following best describes your current role?", {
+    optionGroups: [
+      {
+        name: "S10",
+        kind: "radio",
+        options: [option(0, "Physician"), option(1, "Office Manager"), option(2, "Director of ops")],
+      },
+    ],
+  });
+
+const boundScreenerDecision = (over = {}) => ({
+  question: "S10",
+  select: [],
+  source: "default:navigator-discretion",
+  ...over,
+});
+
+suite("D54 — a documented CONTINUE answer outranks first-non-flagged, and never overrules avoid", () => {
+  test("THE MEASURED DEFECT, other half: the filler takes the documented continue answer, not the nearest unflagged", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, advancing(screenerScreen()), {
+      decisions: [boundScreenerDecision({ avoid_labels: ["Physician"], prefer_labels: ["Director of ops"] })],
+    });
+
+    const clicks = optionClicks(obs);
+    assertEq(clicks.length, 1, JSON.stringify(obs.steps[0]?.actions));
+    // First-non-flagged would click "Office Manager" — an option the document says nothing
+    // about, which on the live run was ALSO a terminator. The documented continue wins.
+    assertEq(clicks[0].targetLabel, "Director of ops", `the default clicked "${clicks[0].targetLabel}"`);
+    assert(
+      clicks[0].detail.startsWith('navigator-default:documented-continue-option("Director of ops"'),
+      `the documented-continue pick is not named: ${clicks[0].detail}`,
+    );
+    assert(clicks[0].detail.startsWith("navigator-default"), "provenance prefix lost");
+    assert(obs.navigatorDefaultAnswerCount >= 1, "a prefer-steered filler is still an invented answer");
+  });
+
+  test("prefer alone steers — no avoid labels required", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, advancing(screenerScreen()), {
+      decisions: [boundScreenerDecision({ prefer_labels: ["Director of ops"] })],
+    });
+
+    const clicks = optionClicks(obs);
+    assertEq(clicks[0].targetLabel, "Director of ops");
+    assert(
+      clicks[0].detail.startsWith('navigator-default:documented-continue-option("Director of ops") ('),
+      clicks[0].detail,
+    );
+  });
+
+  test("prefer NEVER overrules avoid: a label stamped both ways is not clicked", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    // Adversarial stamp (the planner's index drops conflicts, but the driver must not trust
+    // that): the preferred label is also flagged. The pick falls back to first-non-flagged.
+    const { obs } = await walk(mod, env, advancing(screenerScreen()), {
+      decisions: [boundScreenerDecision({ avoid_labels: ["Physician"], prefer_labels: ["Physician"] })],
+    });
+
+    const clicks = optionClicks(obs);
+    assertEq(clicks[0].targetLabel, "Office Manager", `the flagged prefer was honoured: ${clicks[0].detail}`);
+    assert(clicks[0].detail.startsWith("navigator-default:first-non-flagged-option"), clicks[0].detail);
+  });
+
+  test("an UNBOUND screen consumes path-level prefer by the same offered-label overlap", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, advancing(screenerScreen()), {
+      decisions: [],
+      survival_hints: [{ question: "S10", avoid_labels: ["Physician"], prefer_labels: ["Director of ops"] }],
+    });
+
+    assertEq(obs.steps[0].decisionQuestion, null, "hints must never bind identity");
+    const clicks = optionClicks(obs);
+    assertEq(clicks[0].targetLabel, "Director of ops");
+    assertEq(JSON.stringify(obs.steps[0].requestedButNotOffered), JSON.stringify([]));
+  });
+
+  test("a prefer-only hint row whose labels overlap nothing offered does not apply", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, advancing(screenerScreen()), {
+      decisions: [],
+      survival_hints: [{ question: "S9", avoid_labels: [], prefer_labels: ["Purple hats"] }],
+    });
+
+    const clicks = optionClicks(obs);
+    assertEq(clicks[0].targetIdx, 0);
+    assert(clicks[0].detail.startsWith("navigator-default:first-option ("), clicks[0].detail);
+  });
+});
+
 /* ============================================================ 3. the ONLY consumer is the option default */
 
 suite("D54 — survival hints have exactly one consumer: grid and value fillers ignore them", () => {

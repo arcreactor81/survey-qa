@@ -2549,6 +2549,8 @@ export interface SurvivalHint {
   question?: string;
   question_text?: string;
   avoid_labels: string[];
+  /** Labels the document states CONTINUE the survey; same channel, same boundary. */
+  prefer_labels?: string[];
 }
 
 /** Non-empty strings only; everything else in a hint row is noise, never a crash. */
@@ -2563,9 +2565,14 @@ export function survivalHintsOf(path: unknown): SurvivalHint[] {
   for (const row of raw) {
     if (!row || typeof row !== "object") continue;
     const labels = hintLabels((row as Record<string, unknown>)["avoid_labels"]);
-    if (labels.length === 0) continue;
+    const liked = hintLabels((row as Record<string, unknown>)["prefer_labels"]);
+    if (labels.length === 0 && liked.length === 0) continue;
     const q = (row as Record<string, unknown>)["question"];
-    out.push({ ...(typeof q === "string" ? { question: q } : {}), avoid_labels: labels });
+    out.push({
+      ...(typeof q === "string" ? { question: q } : {}),
+      avoid_labels: labels,
+      ...(liked.length > 0 ? { prefer_labels: liked } : {}),
+    });
   }
   return out;
 }
@@ -2591,6 +2598,36 @@ export function survivalAvoidLabels(
     if (labels.length === 0) continue;
     if (!labels.some((a) => offered.some((o) => labelMatches(o, a)))) continue;
     for (const l of labels) if (!out.includes(l)) out.push(l);
+  }
+  return out;
+}
+
+/**
+ * The prefer labels in force for THIS screen — `survivalAvoidLabels`' twin for the labels
+ * the document states CONTINUE the survey. Same precedence (a bound decision speaks for
+ * itself; an unbound screen consults the path's hints) and the SAME applicability rule: a
+ * path-level hint row speaks only when its own labels overlap what the screen OFFERS —
+ * avoid and prefer together, since either half identifies the row's screen. Same evidence
+ * boundary too: a prefer label re-orders which invented answer the option default clicks,
+ * never joins `select`, and never overrides an avoid flag (a label both stamped and flagged
+ * is a conflict the index already resolved by dropping it from prefer).
+ */
+export function survivalPreferLabels(
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+  screen: RenderedScreen,
+): string[] {
+  if (decision) return hintLabels((decision as Record<string, unknown>)["prefer_labels"]);
+  if (pathHints.length === 0) return [];
+  const offered = screen.optionGroups.flatMap((g) => g.options.map((o) => o.label));
+  if (offered.length === 0) return [];
+  const out: string[] = [];
+  for (const hint of pathHints) {
+    const liked = hintLabels(hint?.prefer_labels);
+    if (liked.length === 0) continue;
+    const rowLabels = [...hintLabels(hint?.avoid_labels), ...liked];
+    if (!rowLabels.some((a) => offered.some((o) => labelMatches(o, a)))) continue;
+    for (const l of liked) if (!out.includes(l)) out.push(l);
   }
   return out;
 }
@@ -2836,9 +2873,11 @@ async function applyDecision(
   }));
   const hasRequestedNativeSelectMatch = selectOwners.some((owner) => owner.controlIdxs.length > 0);
   // ---- survival hints in force here: consumed ONLY by the option default below ----
-  // Computed once, up front, so the ONE-consumer rule is auditable: `avoid` appears in the
-  // option default and nowhere else. See `survivalAvoidLabels` for the evidence boundary.
+  // Computed once, up front, so the ONE-consumer rule is auditable: `avoid` and `prefer`
+  // appear in the option default and nowhere else. See `survivalAvoidLabels` /
+  // `survivalPreferLabels` for the evidence boundary.
   const avoid = survivalAvoidLabels(decision, pathHints, screen);
+  const prefer = survivalPreferLabels(decision, pathHints, screen);
 
   // ---- constant-sum ("allocate 100 points") groups: claimed BEFORE the grid and value passes ----
   //
@@ -3098,7 +3137,16 @@ async function applyDecision(
         if (g.kind === "radio") continue;
         break;
       }
-      const preferred = avoid.length > 0 ? g.options.find((o) => answerable(o) && !flagged(o)) : first;
+      // A documented CONTINUE answer outranks first-non-flagged: when the plan knows an
+      // answer the document states keeps the survey going, the filler takes it instead of
+      // betting on whichever unflagged option is closest to position 1 — undocumented
+      // options can terminate too. Never an avoid-flagged option: prefer re-orders among
+      // survivors, it does not overrule a documented screen-out.
+      const preferredByDoc =
+        prefer.length > 0
+          ? g.options.find((o) => answerable(o) && !flagged(o) && prefer.some((p) => labelMatches(o.label, p)))
+          : undefined;
+      const preferred = preferredByDoc ?? (avoid.length > 0 ? g.options.find((o) => answerable(o) && !flagged(o)) : first);
       const chosen = preferred ?? first;
       // The labels actually steered around, in DOM order — named in the detail so a reader
       // can see WHY this filler is not position-1. Empty when the pick equals position-1.
@@ -3118,13 +3166,17 @@ async function applyDecision(
         targetCode: chosen.code,
         value: null,
         ok: r.ok && exactChoiceReadback(chosen.idx, g.kind, choiceReadback, g),
-        // BOTH shapes keep the `navigator-default:` prefix — countDefaults and the ending's
+        // ALL shapes keep the `navigator-default:` prefix — countDefaults and the ending's
         // provenance line key off it, and a hint-steered filler is still an invented answer.
         detail:
-          avoided.length > 0
-            ? `navigator-default:first-non-flagged-option(avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}) (` +
-              choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`
-            : `navigator-default:first-option (` + choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`,
+          preferredByDoc && chosen === preferredByDoc
+            ? `navigator-default:documented-continue-option(${JSON.stringify(chosen.label)}${
+                avoided.length > 0 ? `; avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}` : ""
+              }) (` + choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`
+            : avoided.length > 0
+              ? `navigator-default:first-non-flagged-option(avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}) (` +
+                choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`
+              : `navigator-default:first-option (` + choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`,
         choiceReadback,
       });
       if (g.kind === "radio") continue;

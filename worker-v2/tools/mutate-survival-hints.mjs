@@ -29,8 +29,8 @@ await runMutantSuite({
         "gate's denominator moves on stimulus metadata), and changes pathSignature (two " +
         "identical experiments stop being the same experiment)",
       file: PLAN,
-      find: "      d.avoid_labels = [...labels];",
-      replace: "      d.select = [...labels];",
+      find: "      if (labels && labels.length > 0) d.avoid_labels = [...labels];",
+      replace: "      if (labels && labels.length > 0) d.select = [...labels];",
       kills: [
         "stamping is SIGNATURE-NEUTRAL: pathSignature is byte-identical before and after",
         "a stamped discretion decision stays INVISIBLE to the exercised gate",
@@ -76,6 +76,69 @@ await runMutantSuite({
       replace:
         '      const cell = wantedCell ?? row.cells.find((x) => !(x.column && avoid.some((a) => labelMatches(x.column ?? "", a)))) ?? row.cells[0];',
       kills: ["the grid default ignores hints: cells[0] is clicked even when its column is a flagged label"],
+    },
+    {
+      name: "sealed terminate routes are mined as CONTINUE destinations (the facet swap)",
+      breaks:
+        "the typed source's one semantic bit. A route case whose requirement facet is " +
+        "`terminate` states a documented screen-out; reading it as a continue answer would " +
+        "PREFER the exact labels the document says end the interview — the walker would be " +
+        "steered INTO every documented screen-out instead of around them",
+      file: PLAN,
+      find: '    if (facet === "terminate") out.push({ question, label, kind: "terminate" });',
+      replace: '    if (facet === "terminate") out.push({ question, label, kind: "continue" });',
+      kills: [
+        "typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped",
+        "THE MEASURED STARVATION: empty model + sealed routes still stamps avoid AND prefer",
+      ],
+    },
+    {
+      name: "the stamp stops writing `prefer_labels` (the starvation half-reopened)",
+      breaks:
+        "the continue channel. The sealed contract can state the ONE answer that keeps a " +
+        "screener walk alive; dropping the stamp sends every navigator-default walk back to " +
+        "first-non-flagged roulette on undocumented options — the exact 2026-08-16 outcome " +
+        "where 60 of 83 walks screened out at the first role question",
+      file: PLAN,
+      find: "      if (liked && liked.length > 0) d.prefer_labels = [...liked];",
+      replace: "      void liked;",
+      kills: ["THE MEASURED STARVATION: empty model + sealed routes still stamps avoid AND prefer"],
+    },
+    {
+      name: "a label the contract states BOTH ways is preferred anyway (conflict guard dropped)",
+      breaks:
+        "the conflict rule. A contract that states a label terminates AND continues is a " +
+        "contradiction to sit out; gambling on the continue reading would click a label the " +
+        "document also says ends the interview, on the plan's own authority",
+      file: PLAN,
+      find: "    if ((avoid.get(r.question) ?? []).includes(r.label)) continue;",
+      replace: "    // (conflict guard dropped by mutant)",
+      kills: ["a label the contract states BOTH ways lands in avoid, never in prefer"],
+    },
+    {
+      name: "the driver's documented-continue pick stops honouring avoid flags",
+      breaks:
+        "prefer-never-overrules-avoid. The planner's index drops conflicted labels, but the " +
+        "driver must not TRUST the stamp: an adversarial or stale plan artifact could carry a " +
+        "label in both lists, and honouring prefer over avoid clicks a documented terminator",
+      file: DR,
+      find: "          ? g.options.find((o) => answerable(o) && !flagged(o) && prefer.some((p) => labelMatches(o.label, p)))",
+      replace: "          ? g.options.find((o) => answerable(o) && prefer.some((p) => labelMatches(o.label, p)))",
+      kills: ["prefer NEVER overrules avoid: a label stamped both ways is not clicked"],
+    },
+    {
+      name: "the driver stops consuming `prefer_labels` entirely",
+      breaks:
+        "the continue channel's driver half. The plan stamps the documented continue answer " +
+        "and the option default ignores it — first-non-flagged roulette on undocumented " +
+        "options again, indistinguishable from the fix never shipping",
+      file: DR,
+      find: "  const prefer = survivalPreferLabels(decision, pathHints, screen);",
+      replace: "  const prefer = [];",
+      kills: [
+        "THE MEASURED DEFECT, other half: the filler takes the documented continue answer, not the nearest unflagged",
+        "an UNBOUND screen consumes path-level prefer by the same offered-label overlap",
+      ],
     },
   ],
 });

@@ -647,6 +647,133 @@ suite("D36 — survival hints: stamped from the model's own terminate data, addi
 });
 
 // ===========================================================================
+// 6b. SEALED ROUTE DESTINATIONS — the TYPED trigger source the prose miners starve without
+// ===========================================================================
+//
+// Measured on the 2026-08-16 live run: the sealed contract stated 9 terminating S10 role
+// labels and 2 continue labels as ROUTE cases (`case.kind: "route"`, requirement facet
+// `terminate` / `skip-rule`, `routeAnswer.label` verbatim), but S10 mined ZERO options, so
+// `buildTerminals` resolved nothing, zero hints were stamped, and every navigator-default
+// walk answered the screener position-1 and screened out. These tests pin the typed path:
+// route cases feed the hint index DIRECTLY, with no option list and no prose in between.
+
+const routeRevision = (over = {}) => ({
+  requirements: [
+    { requirementLineageId: "REQ-T", facet: "terminate" },
+    { requirementLineageId: "REQ-C", facet: "skip-rule" },
+    { requirementLineageId: "REQ-X", facet: "piping" },
+  ],
+  facetInstances: [
+    {
+      facetInstanceId: "fi_term",
+      requirementLineageId: "REQ-T",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "17", label: "Physician" } },
+    },
+    {
+      facetInstanceId: "fi_cont",
+      requirementLineageId: "REQ-C",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "19", label: "Director of Population Health" } },
+    },
+    // A route under any OTHER facet states a destination this pass must not guess about.
+    {
+      facetInstanceId: "fi_pipe",
+      requirementLineageId: "REQ-X",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "20", label: "Piped Role" } },
+    },
+    // Typed-field hygiene: no question, no label, or not a route => never a destination.
+    {
+      facetInstanceId: "fi_noq",
+      requirementLineageId: "REQ-T",
+      targetQuestionId: null,
+      case: { kind: "route", routeAnswer: { code: "1", label: "Orphan" } },
+    },
+    {
+      facetInstanceId: "fi_nolabel",
+      requirementLineageId: "REQ-T",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "2", label: "  " } },
+    },
+    {
+      facetInstanceId: "fi_notroute",
+      requirementLineageId: "REQ-T",
+      targetQuestionId: "S10",
+      case: { kind: "rendered-state", routeAnswer: { code: "3", label: "Rendered" } },
+    },
+  ],
+  ...over,
+});
+
+/** A model that mined NOTHING — the exact starvation measured on the live run. */
+const emptyModel = () => ({ questions: [], terminals: [] });
+
+suite("D36 — sealed route destinations feed survival hints without the prose miners", () => {
+  test("typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped", async () => {
+    const mod = await worker();
+    const routes = mod.plan.sealedRouteDestinations(routeRevision());
+    assertEq(
+      JSON.stringify(routes),
+      JSON.stringify([
+        { question: "S10", label: "Physician", kind: "terminate" },
+        { question: "S10", label: "Director of Population Health", kind: "continue" },
+      ]),
+    );
+  });
+
+  test("THE MEASURED STARVATION: empty model + sealed routes still stamps avoid AND prefer", async () => {
+    const mod = await worker();
+    const p = survivalPath({
+      decisions: [{ question: "S10", select: [], source: "default:navigator-discretion" }],
+    });
+    const result = mod.plan.stampSurvivalHints([p], emptyModel(), mod.plan.sealedRouteDestinations(routeRevision()));
+
+    assertEq(JSON.stringify(p.decisions[0].avoid_labels), JSON.stringify(["Physician"]));
+    assertEq(JSON.stringify(p.decisions[0].prefer_labels), JSON.stringify(["Director of Population Health"]));
+    assertEq(
+      JSON.stringify(p.survival_hints),
+      JSON.stringify([
+        { question: "S10", avoid_labels: ["Physician"], prefer_labels: ["Director of Population Health"] },
+      ]),
+    );
+    assertEq(result.decisionsStamped, 1);
+    assertEq(result.pathsStamped, 1);
+    assertEq(
+      JSON.stringify(result.questions),
+      JSON.stringify([
+        { question: "S10", avoid_labels: ["Physician"], prefer_labels: ["Director of Population Health"] },
+      ]),
+    );
+  });
+
+  test("a label the contract states BOTH ways lands in avoid, never in prefer", async () => {
+    const mod = await worker();
+    const conflicted = routeRevision();
+    conflicted.facetInstances.push({
+      facetInstanceId: "fi_conflict",
+      requirementLineageId: "REQ-T",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "19", label: "Director of Population Health" } },
+    });
+    const { avoid, prefer } = mod.plan.survivalAvoidIndex(emptyModel(), mod.plan.sealedRouteDestinations(conflicted));
+    assert(avoid.get("S10").includes("Director of Population Health"), "the terminate reading must win");
+    assertEq(prefer.get("S10"), undefined, "a conflicted label must not be preferred");
+  });
+
+  test("routes compose with the model's own triggers instead of replacing them", async () => {
+    const mod = await worker();
+    const { avoid, prefer } = mod.plan.survivalAvoidIndex(
+      survivalModel(),
+      mod.plan.sealedRouteDestinations(routeRevision()),
+    );
+    assertEq(JSON.stringify(avoid.get("S3")), JSON.stringify(["Market research"]));
+    assertEq(JSON.stringify(avoid.get("S10")), JSON.stringify(["Physician"]));
+    assertEq(JSON.stringify(prefer.get("S10")), JSON.stringify(["Director of Population Health"]));
+  });
+});
+
+// ===========================================================================
 // 7. CONTRACT IDENTITY INCLUDES THE SEMANTICS, NOT JUST THE ROW IDS
 // ===========================================================================
 
