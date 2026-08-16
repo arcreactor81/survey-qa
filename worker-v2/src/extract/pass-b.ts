@@ -1722,6 +1722,7 @@ export async function reconstructPassBCompletedAuthority(
   const constructs: PassResult["constructs"] = [];
   const ambiguities: PassResult["ambiguities"] = [];
   const unverifiable: PassResult["unverifiable"] = [];
+  const reconstructedLimitations: PassBLimitation[] = [];
   const accountingCalls: CallUsage[] = [];
   const reconstructionFailedUnits: PassResult["failedUnits"] = [];
   let chunksLanded = 0;
@@ -1777,6 +1778,7 @@ export async function reconstructPassBCompletedAuthority(
     constructs.push(...unit.constructs);
     ambiguities.push(...unit.ambiguities);
     unverifiable.push(...unit.unverifiable);
+    reconstructedLimitations.push(...unit.limitations);
   }
 
   const unaccounted = unaccountedBlocks(doc.blocks, requirements, dispositions);
@@ -1825,6 +1827,7 @@ export async function reconstructPassBCompletedAuthority(
     dispositions.push(...unit.dispositions);
     ambiguities.push(...unit.ambiguities);
     unverifiable.push(...unit.unverifiable);
+    reconstructedLimitations.push(...unit.limitations);
   }
 
   const residual = unaccountedBlocks(doc.blocks, requirements, dispositions);
@@ -1867,7 +1870,7 @@ export async function reconstructPassBCompletedAuthority(
     dispositions,
     constructs,
     failedUnits: reconstructionFailedUnits,
-    limitations: [],
+    limitations: reconstructedLimitations,
     calls: accountingCalls,
     slice,
     issuedCalls: [],
@@ -1931,6 +1934,7 @@ interface PersistedChunk {
   constructs: PassResult["constructs"];
   ambiguities: PassResult["ambiguities"];
   unverifiable: PassResult["unverifiable"];
+  limitations: PassBLimitation[];
   usages: CallUsage[];
 }
 
@@ -2232,6 +2236,21 @@ async function readUnit(
       JSON.stringify(parsed["ambiguities"]) !== JSON.stringify(output.ambiguities) ||
       JSON.stringify(parsed["unverifiable"]) !== JSON.stringify(output.unverifiable)
     ) return invalid("persisted typed arrays do not exactly reconstruct from raw model output");
+    // Limitations are written by salvage (per-item degradation). Absent means none.
+    const storedLimitations: PassBLimitation[] = [];
+    if (Array.isArray(parsed["limitations"])) {
+      for (const raw of parsed["limitations"]) {
+        if (
+          typeof raw === "object" && raw !== null && !Array.isArray(raw) &&
+          typeof (raw as Record<string, unknown>)["unit"] === "string" &&
+          Number.isSafeInteger((raw as Record<string, unknown>)["rowIndex"]) &&
+          typeof (raw as Record<string, unknown>)["rowKind"] === "string" &&
+          typeof (raw as Record<string, unknown>)["reason"] === "string"
+        ) {
+          storedLimitations.push(raw as PassBLimitation);
+        }
+      }
+    }
     return {
       kind: "ok",
       obligations: output.obligations,
@@ -2239,6 +2258,7 @@ async function readUnit(
       constructs: output.constructs,
       ambiguities: output.ambiguities,
       unverifiable: output.unverifiable,
+      limitations: storedLimitations,
       usages: usages as CallUsage[],
     };
   } catch (error) {
