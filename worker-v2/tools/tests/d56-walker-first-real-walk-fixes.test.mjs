@@ -384,7 +384,7 @@ suite("amendment 2: timeout and batch residual", () => {
     const batch = wrangler.match(/"EXEC_BATCH_MAX_MS"\s*:\s*"(\d+)"/);
     assert(batch, "EXEC_BATCH_MAX_MS must be declared");
     const src = readFileSync("src/workflow/run-workflow.ts", "utf8");
-    const policy = src.match(/const BATCH_POLICY = \{[^}]*timeout: "(\d+) minutes?"/);
+    const policy = src.match(/const BATCH_POLICY = .*timeout: "(\d+) minutes?"/);
     assert(policy, "BATCH_POLICY must declare a minutes-denominated timeout");
     const stepMs = Number(policy[1]) * 60_000;
     const SLACK_MS = 120_000; // session acquire (<=45s) + retry-on-fresh-session + commit
