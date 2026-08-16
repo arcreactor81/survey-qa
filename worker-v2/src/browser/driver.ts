@@ -2663,22 +2663,35 @@ export function detectOptionLinkedSpecifyInputs(screen: RenderedScreen): Map<num
       }
     }
 
-    // Signal (b): shared name prefix with an option group
+    // Signal (b): shared name prefix with an option group.
+    //
+    // The text control's name starts with the group name followed by a separator
+    // character (underscore, dot, hyphen, colon, bracket, dollar). Examples:
+    //   "S10_other" starts with group "S10" + separator "_"  -> match
+    //   "Q5_specify" starts with group "Q5" + separator "_"  -> match
+    //   "comment" does NOT start with group "Q1"             -> no match
+    //
+    // The previous approach (strip trailing non-alpha from both names, compare)
+    // broke on short group names: "Q5" stripped to "Q" (length 1), failing a
+    // minimum-length guard, so the documented example never matched.
     if (bestOptionIdx === null && tc.name) {
-      const tcPrefix = tc.name.replace(/[\d_\-.:$[\]]+$/, "");
-      if (tcPrefix.length >= 2) {
-        for (const g of screen.optionGroups) {
-          const groupName = g.name === "(unnamed)" ? null : g.name;
-          if (!groupName) continue;
-          const gPrefix = groupName.replace(/[\d_\-.:$[\]]+$/, "");
-          if (gPrefix.length >= 2 && tcPrefix.toLowerCase() === gPrefix.toLowerCase()) {
-            // Find the nearest option in this group
-            for (const o of g.options) {
-              const dist = Math.abs(tc.idx - o.idx);
-              if (dist < bestDistance) {
-                bestDistance = dist;
-                bestOptionIdx = o.idx;
-              }
+      for (const g of screen.optionGroups) {
+        const groupName = g.name === "(unnamed)" ? null : g.name;
+        if (!groupName || groupName.length < 1) continue;
+        const tcLower = tc.name.toLowerCase();
+        const gLower = groupName.toLowerCase();
+        const sepChar = tcLower.length > gLower.length ? tcLower[gLower.length] : undefined;
+        if (
+          sepChar !== undefined &&
+          tcLower.startsWith(gLower) &&
+          /[_\-.:$[\]]/.test(sepChar)
+        ) {
+          // Find the nearest option in this group
+          for (const o of g.options) {
+            const dist = Math.abs(tc.idx - o.idx);
+            if (dist < bestDistance) {
+              bestDistance = dist;
+              bestOptionIdx = o.idx;
             }
           }
         }
@@ -3291,13 +3304,12 @@ async function applyDecision(
   // path terminated at the screener.
   //
   // DETECTION IS STRUCTURAL — three independent signals, any one sufficient:
-  //   (a) LABEL CONTAINMENT: the text input's label contains "specify", "other", or "please
-  //       specify" — the wording convention Confirmit, Decipher and Qualtrics all use;
-  //   (b) DOM ADJACENCY: the text input shares the same `name` prefix as an option group, OR
-  //       its idx is within 1 of an option in any group (option rows typically contain both
-  //       the radio/checkbox and its specify box);
-  //   (c) ARIA/FOR LINKAGE: the text input's `id` appears in an option's `ariaLabel` or vice
-  //       versa, or they share a `<label>` scope.
+  //   (a) LABEL + ADJACENCY: the text input's label contains "specify"/"other" wording AND
+  //       its idx is within 2 of an option in any group (DOM adjacency corroborates the label);
+  //   (b) SHARED NAME PREFIX: the text input's `name` starts with an option group's `name`
+  //       followed by a separator (e.g. "S10_other" starts with group "S10" + "_");
+  //   (c) IDX ADJACENCY WITH SPECIFY LABEL: the text input is immediately adjacent (idx
+  //       difference <= 1) to the LAST option in a group whose label matches specify wording.
   //
   // ASSUMPTION STATED (CLAUDE.md north star): these heuristics detect the common pattern where
   // a text input is structurally associated with a choice option. When the association is
@@ -3706,8 +3718,16 @@ export function isPlatformNavigationWidget(
       if (/^(https?:|#|\/)/.test(code) || /^(https?:|#|\/)/.test(label)) return true;
       // Question-id-shaped: Q1, S10, P3, etc. — a letter followed by digits
       if (/^[A-Za-z]\d+$/.test(code.trim())) return true;
-      // Page-number-shaped: pure digits in the code
-      if (/^\d+$/.test(code.trim()) && code.trim().length <= 4) return true;
+      // Page-number-shaped: pure digits in the code AND the label is also numeric
+      // or matches the code. Survey answer dropdowns have numeric codes ("1"-"5")
+      // but descriptive labels ("Strongly agree"); a navigation page selector's
+      // label IS the page number. Without corroboration from the label, a numeric
+      // code alone is not a navigation signal — it is the norm for Likert scales,
+      // rating questions, and numbered-choice dropdowns across all survey platforms.
+      if (/^\d+$/.test(code.trim()) && code.trim().length <= 4) {
+        const tLabel = label.trim();
+        if (/^\d+$/.test(tLabel) || tLabel === code.trim()) return true;
+      }
       return false;
     });
     // If more than half the usable options look like navigation destinations, it is a jump menu
