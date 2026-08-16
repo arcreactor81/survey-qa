@@ -144,6 +144,8 @@ export interface WalkOptions {
   advanceTimeoutMs: number;
   /** Bound on ONE screen read before it is recorded as hung (default READ_SCREEN_TIMEOUT_MS). */
   readTimeoutMs?: number;
+  /** Bound on EVERY page call before it rejects as hung (default PAGE_CALL_TIMEOUT_MS). */
+  pageCallTimeoutMs?: number;
   /**
    * BOUNDED SCREEN-OUT RETRY: which deterministic filler variant this walk uses. 0 (or
    * absent) is today's defaults, byte-for-byte; `execute-batch.ts` sets the durable pivot
@@ -489,10 +491,25 @@ async function read(page: PageLike): Promise<RenderedScreen> {
  */
 export const READ_SCREEN_TIMEOUT_MS = 30_000;
 
-function boundedRead(page: PageLike, ms: number, what: string): Promise<RenderedScreen> {
-  return new Promise<RenderedScreen>((resolve, reject) => {
+/**
+ * NO PAGE CALL MAY HANG A WALK — the invariant, at its one seam. The 2026-08-17 runs proved
+ * the hang class survives point-fixes: with all five screen READS bounded, the first v42
+ * walk still hung and was zeroed, because clicks, choice readbacks and screenshot captures
+ * are page calls too, and any of them can wedge on a dead target after a navigation
+ * (Browser Rendering holds the connection; the call never resolves). walkPath therefore
+ * wraps its page so EVERY promise-returning method rejects after this bound instead of
+ * hanging; each call site's existing failure path (a click records ok:false, a capture
+ * records a counted failure, a read records screen-read-failed) absorbs the rejection. The
+ * bound sits above every legitimate call duration (goto's own timeout is 45s) and below the
+ * per-case axe, so a wedged call degrades the STEP while the walk still returns evidence.
+ */
+export const PAGE_CALL_TIMEOUT_MS = 60_000;
+
+/** The one timer every hang bound shares: resolve/reject passthrough, reject after ms. */
+function boundPromise<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`${what} hung for ${ms}ms without resolving`)), ms);
-    read(page).then(
+    p.then(
       (v) => {
         clearTimeout(t);
         resolve(v);
@@ -503,6 +520,41 @@ function boundedRead(page: PageLike, ms: number, what: string): Promise<Rendered
       },
     );
   });
+}
+
+export function boundPageCalls(page: PageLike, ms: number): PageLike {
+  const boundMethods = <T extends object>(obj: T, label: string): T =>
+    new Proxy(obj, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        const name = String(prop);
+        // Nested method-bearing objects are page-call surfaces too (`accessibility.snapshot`).
+        if (name === "accessibility" && value && typeof value === "object") {
+          return boundMethods(value as object, `${label}.accessibility`);
+        }
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          const out = (value as (...a: unknown[]) => unknown).apply(obj, args);
+          if (!out || typeof (out as Promise<unknown>).then !== "function") return out;
+          let p = boundPromise(out as Promise<unknown>, ms, `${label}.${name}`);
+          // Element handles returned by `$$` carry their own page calls (click/type/focus);
+          // a wedged handle call hangs a walk exactly as a wedged page call does.
+          if (name === "$$") {
+            p = p.then((handles) =>
+              Array.isArray(handles)
+                ? handles.map((h) => (h && typeof h === "object" ? boundMethods(h as object, `${label}.handle`) : h))
+                : handles,
+            );
+          }
+          return p;
+        };
+      },
+    });
+  return boundMethods(page as object, "page") as PageLike;
+}
+
+function boundedRead(page: PageLike, ms: number, what: string): Promise<RenderedScreen> {
+  return boundPromise(read(page), ms, what);
 }
 
 const READ_CAPTURE_GEOMETRY = String.raw`(() => {
@@ -4039,6 +4091,9 @@ export async function walkPath(
   opts: WalkOptions,
   cap: CaptureContext,
 ): Promise<PathObservation> {
+  // The no-page-call-may-hang invariant is applied HERE, not at each call site, so every
+  // caller and every future page call inherits it. See boundPageCalls.
+  page = boundPageCalls(page, opts.pageCallTimeoutMs ?? PAGE_CALL_TIMEOUT_MS);
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
   const pageErrors: string[] = [];

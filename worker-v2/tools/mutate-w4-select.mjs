@@ -188,15 +188,30 @@ await runMutantSuite({
       kills: ["a never-resolving screen read rejects at readTimeoutMs and the walk returns an error observation"],
     },
     {
-      name: "boundedRead's timer stops rejecting (a bound in name only)",
+      name: "walkPath stops wrapping its page (the page-call bound in force nowhere)",
       breaks:
-        "the same guarantee one level down: the wrapper exists, the timeout fires, and " +
-        "nothing happens — the read hangs exactly as if unbounded, while the code reads as " +
-        "protected",
+        "the no-page-call-may-hang invariant at its one seam. With reads bounded but " +
+        "clicks/readbacks/captures raw, the first v42 walk still hung and was zeroed — " +
+        "the exact gap this wrapper closes",
+      file: DR,
+      find: "  page = boundPageCalls(page, opts.pageCallTimeoutMs ?? PAGE_CALL_TIMEOUT_MS);",
+      replace: "  void boundPageCalls;",
+      kills: ["ANY hung page call — screenshot, not a read — still returns a walk, via the page-call bound"],
+    },
+    {
+      name: "the shared hang timer stops rejecting (every bound becomes a bound in name only)",
+      breaks:
+        "the guarantee one level down for BOTH consumers: boundedRead and boundPageCalls " +
+        "share one boundPromise, so a timer that fires and does nothing re-opens every hang " +
+        "at once — reads, clicks, readbacks and captures all wedge exactly as before while " +
+        "the code reads as protected",
       file: DR,
       find: "    const t = setTimeout(() => reject(new Error(`${what} hung for ${ms}ms without resolving`)), ms);",
       replace: "    const t = setTimeout(() => {}, ms);",
-      kills: ["a never-resolving screen read rejects at readTimeoutMs and the walk returns an error observation"],
+      kills: [
+        "a never-resolving screen read rejects at readTimeoutMs and the walk returns an error observation",
+        "ANY hung page call — screenshot, not a read — still returns a walk, via the page-call bound",
+      ],
     },
   ],
 });

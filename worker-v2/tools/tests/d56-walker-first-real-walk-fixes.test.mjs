@@ -416,6 +416,74 @@ suite("amendment 2c: a hung screen read becomes a recorded outcome, never a sile
     );
     assert(obs.captureFailureCount >= 1, "the hang must be a counted capture failure");
   });
+
+  test("ANY hung page call — screenshot, not a read — still returns a walk, via the page-call bound", async () => {
+    // The first v42 walk proved the read bounds alone are not the class: it hung with all
+    // five reads bounded, because clicks/readbacks/captures are page calls too. walkPath
+    // wraps the page so EVERY promise-returning method rejects at pageCallTimeoutMs.
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const screenJson = {
+      url: "https://fixture.invalid/survey",
+      title: "S1",
+      questionText: "S1. A question?",
+      grid: null,
+      collectedErrors: [],
+      readerLimitations: [],
+      controls: [],
+      optionGroups: [],
+      buttons: [],
+      validationMessages: [],
+      progress: { present: false, value: null },
+      counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:hangcap",
+    };
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        if (typeof script === "string" && script.includes("screenSignature")) return screenJson;
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return [];
+      },
+      screenshot() {
+        return new Promise(() => {}); // the wedge, this time in the capture channel
+      },
+      async setViewport() {},
+      on() {},
+      async close() {},
+      async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const t0 = Date.now();
+    const obs = await Promise.race([
+      mod.driver.walkPath(
+        page,
+        { id: "path_d56hangcap", decisions: [], witnesses: [] },
+        {
+          surveyUrl: "https://fixture.invalid/survey",
+          runId,
+          planRevisionId: "plan_d56hang02",
+          attemptId: "att_d56hang00002",
+          tier: 1,
+          maxSteps: 1,
+          deadline: Date.now() + 60_000,
+          viewport: { width: 1280, height: 900 },
+          applyHistoryShim: false,
+          advanceTimeoutMs: 200,
+          pageCallTimeoutMs: 400,
+        },
+        { env, runId, attemptId: "att_d56hang00002", pathId: "path_d56hangcap", witnesses: [] },
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("WALK-NEVER-RETURNED"), 20_000)),
+    ]);
+    assert(obs !== "WALK-NEVER-RETURNED", "a hung screenshot hung the whole walk — the page-call bound is not in force");
+    assert(Date.now() - t0 < 20_000, "the walk must return promptly once the hung call rejects");
+    assert(Array.isArray(obs.steps) && obs.steps.length >= 1, "the walk's steps must survive a hung capture");
+    assert(obs.captureFailureCount >= 1, "the hung capture must be a counted capture failure");
+  });
 });
 
 suite("amendment 2b: the walk deadline returns partials before the axe destroys them", () => {
