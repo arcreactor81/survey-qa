@@ -293,6 +293,63 @@ async function runExtraction(
 ): Promise<Response> {
   const fence = await claimOwnership(env, runId, runId, 0);
   const documentSemanticsProfile = envelope.input.documentSemanticsProfile ?? DOCUMENT_SEMANTICS_NONE;
+
+  // ── PASS-B-ONLY GUARD ─────────────────────────────────────────────────
+  //
+  // When passOnly is "B", the caller wants ONLY a DeepSeek pass-B run against an
+  // EXISTING pass-A authority. If no persisted evaluated pass-A authority exists,
+  // refuse immediately — making zero provider calls, zero credential resolutions,
+  // zero wire calls — rather than falling through to stagePassA, which would buy
+  // Grok against an owner-capped budget the caller intended to preserve.
+  //
+  // The reuse path inside stagePassA already avoids re-buying when the artifact
+  // exists, but the guard prevents entering stagePassA AT ALL when it cannot
+  // succeed: a missing artifact means stagePassA falls through to runPassA, and
+  // that resolves credentials and calls Grok.
+  if (body.passOnly === "B") {
+    const hasRunId = typeof body.runId === "string" && isV2RunId(body.runId);
+    if (!hasRunId) {
+      await emit({ event: "pass-B-only-refused", reason: "no-run-id" });
+      return await persist(env, runId, {
+        runId,
+        mode: "pass-B-only-refused",
+        reason: "passOnly:B requires a runId pointing to an existing run with a persisted evaluated pass-A authority; no valid runId was provided",
+        detail: "Zero provider, credential, or wire calls were made.",
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
+    const passAKey = extractionPassKey(runId, "a");
+    const passAObj = await env.EVIDENCE.get(passAKey);
+    if (!passAObj) {
+      await emit({ event: "pass-B-only-refused", reason: "no-pass-a-artifact" });
+      return await persist(env, runId, {
+        runId,
+        mode: "pass-B-only-refused",
+        reason: `no persisted pass-A authority at ${passAKey} — the resumed run has no evaluated pass-A completion to reuse`,
+        detail: "Zero provider, credential, or wire calls were made.",
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
+    let passAEvaluated = false;
+    try {
+      const parsed = JSON.parse(await passAObj.text()) as Record<string, unknown>;
+      passAEvaluated = Array.isArray(parsed.requirements);
+    } catch { /* malformed artifact — not evaluated */ }
+    if (!passAEvaluated) {
+      await emit({ event: "pass-B-only-refused", reason: "pass-a-not-evaluated" });
+      return await persist(env, runId, {
+        runId,
+        mode: "pass-B-only-refused",
+        reason: "persisted pass-A artifact exists but is not an evaluated completion (no requirements array found in the payload)",
+        detail: "Zero provider, credential, or wire calls were made.",
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
+    // The persisted evaluated pass-A authority exists. Proceed: stagePassA's
+    // idempotent reuse path will return it at zero cost, then stagePassB runs
+    // and buys only DeepSeek.
+  }
+
   try {
     const passA = await (async () => {
       await emit({ event: "pass-A", state: "started", model: body.grokModel ?? env.GROK_MODEL ?? "grok-4.3" });

@@ -519,6 +519,10 @@ const FILES = [
   "./tests/pass-b-continuation.test.mjs",
   "./tests/pass-b-reason-codes.test.mjs",
   "./tests/pass-b-real-replay.test.mjs",
+  // passOnly:"B" guard: refuse when no persisted evaluated pass-A authority exists,
+  // proceed (zero Grok calls) when it does. The refusal test FAILS on the code before
+  // the guard because stagePassA was called unconditionally and bought Grok.
+  "./tests/dev-extract-passb-guard.test.mjs",
 ];
 
 export async function runVerification({
