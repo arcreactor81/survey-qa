@@ -73,6 +73,7 @@ import { limitationsFromPassAPayload } from "../../../shared/cross-window-limita
 import { primaryGroundingLimitationsFromPassAPayload } from "../../../shared/pass-a-grounding-limitations.mjs";
 import type { FacetInstance, ScopedRequirement } from "../../types/record";
 import { stageEvaluated, stageNotEvaluated, type GateProof, type StageResult } from "../gates";
+import { writeRunChecklist } from "./checklist-store";
 import {
   publicExtractionFailureDetail,
   sourceContextForUnit,
@@ -1093,6 +1094,48 @@ export async function stageConsolidate(
   await env.EVIDENCE.put(extractionDiffKey(runId), diffBody, { httpMetadata: { contentType: "application/json" } });
   await env.EVIDENCE.put(sourceLedgerKey(runId), ledgerBody, { httpMetadata: { contentType: "application/json" } });
   await env.EVIDENCE.put(previewKey(runId), previewBody, { httpMetadata: { contentType: "application/json" } });
+
+  // AMBIGUITY FUNNEL FIX: write the extraction's own checklist with all diff ambiguities so
+  // the assembler can derive AmbiguityRecords from them. Without this, diff ambiguities live
+  // only in the unsealed diff artifact and the assembler's deriveAmbiguities sees zero
+  // readings. The audit measured 90 diff ambiguities reaching neither the sealed record nor
+  // the report — this is the structural fix.
+  const checklist = {
+    schema_version: "v2-extraction-checklist/1.0.0",
+    provenance: {
+      projectedFrom: "extraction-consolidation",
+      diffHash: `sha256:${await sha256Hex(diffBody)}`,
+      note: "written by stageConsolidate so diff ambiguities reach the sealed record",
+    },
+    obligations: requirements.map((r) => ({
+      id: r.requirementLineageId,
+      category: r.facet,
+      doc_quote: r.displayQuote ?? "",
+      statement: r.normativeStatement ?? "",
+      browser_observable: r.testability === "browser-observable" ? "full" : "none",
+    })),
+    ambiguities: diff.ambiguities.map((a) => ({
+      id: a.id,
+      doc_quote: a.quote,
+      reading_a: a.readingA,
+      reading_b: a.readingB,
+      why_ambiguous: `competing readings: ${a.readingA.slice(0, 80)} vs ${a.readingB.slice(0, 80)}`,
+      affects: a.affects,
+    })),
+    unverifiable_from_browser: diff.notBrowserVerifiable.map((u) => ({
+      id: u.id,
+      doc_quote: "",
+      mandate: u.mandate,
+      why_not_observable: u.why,
+      browser_proxy_evidence: u.proxy,
+    })),
+    counts: {
+      obligations: requirements.length,
+      ambiguities: diff.ambiguities.length,
+      unverifiable: diff.notBrowserVerifiable.length,
+    },
+  };
+  await writeRunChecklist(env, runId, checklist);
 
   const summary: ConsolidationSummary = {
     mergedHash: `sha256:${await sha256Hex(mergedBody)}`,
