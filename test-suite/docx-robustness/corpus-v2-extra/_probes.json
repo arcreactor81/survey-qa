@@ -233,5 +233,54 @@
         "severity": "requirement"
       }
     ]
+  },
+  {
+    "file": "32-vmerge-inheritance.docx",
+    "hazard": "vertically merged action cells spanning multiple option rows — the class that caused 8 screener rules to be silently lost",
+    "truth": "each continuation row in a vertical merge inherits the anchor cell's content as a separately addressable block marked vmerge-inherited",
+    "probes": [
+      {
+        "kind": "present",
+        "text": "[vmerge-inherited: [TERMINATE]]",
+        "why": "shape 1: a 2-row merge inherits the anchor's TERMINATE to the continuation row",
+        "severity": "requirement"
+      },
+      {
+        "kind": "regex",
+        "text": "r4c4\\).*vmerge-inherited.*TERMINATE",
+        "why": "the inherited TERMINATE is at row 4 col 4 — the Hospital row, not just the anchor row",
+        "severity": "requirement"
+      },
+      {
+        "kind": "regex",
+        "text": "r4c3\\).*vmerge-inherited.*TERMINATE IMMEDIATELY",
+        "why": "shape 2: the first continuation row of a 7-row merge inherits TERMINATE IMMEDIATELY",
+        "severity": "requirement"
+      },
+      {
+        "kind": "regex",
+        "text": "r9c3\\).*vmerge-inherited.*TERMINATE IMMEDIATELY",
+        "why": "the last continuation row of a 7-row merge also inherits TERMINATE IMMEDIATELY",
+        "severity": "requirement"
+      },
+      {
+        "kind": "regex",
+        "text": "r3c4\\).*vmerge-inherited.*TERMINATE IMMEDIATELY",
+        "why": "shape 3: a continuation row in a 3-row merge inherits the anchor's content",
+        "severity": "requirement"
+      },
+      {
+        "kind": "present",
+        "text": "(cell r3c3) [TERMINATE IMMEDIATELY]",
+        "why": "the anchor cell itself is an ordinary table-cell block, not marked as inherited",
+        "severity": "requirement"
+      },
+      {
+        "kind": "present",
+        "text": "vmerge-inherited from r3c3 cell r9c3",
+        "why": "the last continuation row of a 7-row merge has correct inheritance provenance in the origin",
+        "severity": "requirement"
+      }
+    ]
   }
 ]

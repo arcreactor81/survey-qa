@@ -486,6 +486,9 @@ const FILES = [
   // correct when the SEAL still reads it, not when the parser test passes.
   // Evidence they can fail: `tools/mutate-docx-blocks.mjs`.
   "./tests/docx-robustness.test.mjs",
+  // D56 — merged-cell inheritance, gate strengthening, ambiguity funnel, entailed over-claims.
+  // The four fixes the anti-gaslight audit demands, proved on synthetic fixtures.
+  "./tests/d56-merged-cell-inheritance.test.mjs",
   "./tests/bounded-source-block-jsonl.test.mjs",
   "./tests/model-input-wire-ceiling.test.mjs",
   // COMMENT REVIEWER IDENTITY IS NOT SOURCE AUTHORITY. The parser currently carries it in

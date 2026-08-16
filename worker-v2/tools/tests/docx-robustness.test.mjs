@@ -277,11 +277,11 @@ suite("DOCX READER — the hostile corpus is a permanent gate", () => {
     );
   });
 
-  test("the fixtures the frozen corpus lacks — gridSpan header, gridBefore, ruby, dropdown values, declared header row — score 31/31", async () => {
+  test("the fixtures the frozen corpus lacks — gridSpan header, gridBefore, ruby, dropdown values, declared header row — score 38/38", async () => {
     const run = scoreSuite(await parser(), SUITES.find((s) => s.id === "corpus-v2-extra"), { write: false });
     assert(run !== null, "corpus-v2-extra is missing");
-    assertEq(run.score.total, 31, "corpus-v2-extra must still carry 31 probes");
-    assertEq(run.score.passed, 31, `failing: ${run.score.failing.join(" | ")}`);
+    assertEq(run.score.total, 38, "corpus-v2-extra must still carry 38 probes");
+    assertEq(run.score.passed, 38, `failing: ${run.score.failing.join(" | ")}`);
   });
 
   test("EVERY document in both corpora parses or refuses LOUDLY — never empty and quiet", async () => {
@@ -422,6 +422,10 @@ suite("DOCX READER — one named guard per fix", () => {
       doc.coverage.problems.some((p) => /TABLE_VERTICAL_MERGE_PRESENT/.test(p)),
       "the vertical-merge limitation was not counted",
     );
+    // 1.8.0: inherited blocks are emitted at continuation rows
+    const inherited = doc.blocks.filter((b) => b.sourceSubrole === "vmerge-inherited");
+    assert(inherited.length > 0, "no vmerge-inherited blocks were emitted for continuation rows");
+    assert(inherited.every((b) => b.origin.includes("vmerge-inherited from")), "inherited blocks lack origin provenance");
   });
 
   test("a late w:tblHeader repeat flag is ignored and reported, never treated as semantic th/scope", async () => {
