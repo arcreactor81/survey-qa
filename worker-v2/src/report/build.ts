@@ -31,6 +31,7 @@
 import type { Env } from "../types/env";
 import { edgeCoverageKey, flagLanesKey, judgementKey, recordKey } from "../keys";
 import { assertCatalogBinding, EvidenceIntegrityFailure, getVerifiedEvidence, listCatalog } from "../store/evidence";
+import { mapConcurrent, R2_READ_CONCURRENCY } from "../store/concurrent-pool";
 import { loadCheckpoint } from "../store/checkpoint";
 import { getEnvelope } from "../store/envelope";
 import { ContractRevisionTampered, getContractRevision } from "../store/contract-revision";
@@ -1145,28 +1146,38 @@ async function auditEvidence(
       cited.push(id);
     }
   }
+  // PHASE 1 (sequential, no I/O): apply priority-ordered byte and entry budgets to decide
+  // WHICH entries will be re-hashed. Budget accounting must be sequential because the
+  // priority order from `citedEvidenceIds` determines what goes unchecked on a large run.
+  const toVerify: Array<{ entry: EvidenceCatalogEntry; href: string }> = [];
   for (const id of cited) {
     const e = byId.get(id);
     if (!e) continue;
-    const put = (v: { state: string; href?: string; note?: string }) => audit.set(e.evidenceId, v);
     const href = `/api/v2/runs/${runId}/evidence/${e.evidenceId}/content`;
     if (entryBudget <= 0 || e.size > byteBudget) {
       // Say "not audited", never "verified". An unchecked artifact is not a checked one.
-      put({ state: "missing", note: "not audited at render time: byte budget exhausted" });
+      audit.set(e.evidenceId, { state: "missing", note: "not audited at render time: byte budget exhausted" });
       continue;
     }
     entryBudget -= 1;
     byteBudget -= e.size;
+    toVerify.push({ entry: e, href });
+  }
+
+  // PHASE 2 (bounded concurrency): the actual R2 reads, overlapped. Each task runs its own
+  // integrity re-hash; the results are written into the audit map by evidenceId so the
+  // caller sees the same outcome regardless of completion order.
+  await mapConcurrent(toVerify, R2_READ_CONCURRENCY, async ({ entry, href }) => {
     try {
-      await getVerifiedEvidence(env, e);
-      put({ state: "verified", href });
+      await getVerifiedEvidence(env, entry);
+      audit.set(entry.evidenceId, { state: "verified", href });
     } catch (err) {
-      put({
+      audit.set(entry.evidenceId, {
         state: err instanceof EvidenceIntegrityFailure ? "mismatch" : "missing",
         note: err instanceof Error ? err.message : String(err),
       });
     }
-  }
+  });
   return audit;
 }
 

@@ -20,6 +20,7 @@ import { getEnvelope } from "../../store/envelope";
 import { loadCheckpoint } from "../../store/checkpoint";
 import { getContractRevision } from "../../store/contract-revision";
 import { getVerifiedEvidence, listCatalog } from "../../store/evidence";
+import { mapConcurrent, R2_READ_CONCURRENCY } from "../../store/concurrent-pool";
 import type { ContractRevision, EvidenceCatalogEntry, Observation, RunEnvelopeV2 } from "../../types/record";
 import type { RunCheckpoint } from "../../types/contracts";
 
@@ -162,13 +163,15 @@ export async function loadArtifactBytes(
     .map(([name, refs]) => ({ name, refs }));
   if (collisions.length > 0) throw new ArtifactNameCollision(collisions);
 
-  const out: Array<{ name: string; bytes: Uint8Array }> = [];
-  for (const entry of evidence) {
+  // BOUNDED CONCURRENCY — the sequential loop this replaces cost ~46ms * N entries
+  // wall-clock, growing linearly with survey size. Each task still runs its own integrity
+  // re-hash (getVerifiedEvidence), and input-order is preserved so the caller's basename
+  // collision check sees entries in the same sequence.
+  return mapConcurrent(evidence, R2_READ_CONCURRENCY, async (entry) => {
     const ref = entry.artifactRef ?? entry.sourceEvidenceId ?? entry.evidenceId;
     const { bytes } = await getVerifiedEvidence(env, entry);
-    out.push({ name: String(ref).split("/").pop() ?? entry.evidenceId, bytes });
-  }
-  return out;
+    return { name: String(ref).split("/").pop() ?? entry.evidenceId, bytes };
+  });
 }
 
 /**

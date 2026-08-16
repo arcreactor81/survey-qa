@@ -519,6 +519,12 @@ const FILES = [
   "./tests/pass-b-continuation.test.mjs",
   "./tests/pass-b-reason-codes.test.mjs",
   "./tests/pass-b-real-replay.test.mjs",
+  // THE BOUNDED-CONCURRENCY POOL behind the derive-fanout-scale fix. Three properties
+  // proven with tests that can fail: order preserved (reversed completion delays), bound
+  // respected (high-water-mark instrumentation), one rejection propagates (deliberate throw).
+  // The wiring into listCatalog/loadArtifactBytes/auditEvidence is proven by the existing
+  // d30 and d34 suites staying green with the pool integrated.
+  "./tests/concurrent-pool.test.mjs",
 ];
 
 export async function runVerification({
