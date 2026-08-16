@@ -522,6 +522,7 @@ const FILES = [
   "./tests/pass-b-continuation.test.mjs",
   "./tests/pass-b-reason-codes.test.mjs",
   "./tests/pass-b-real-replay.test.mjs",
+  "./tests/concurrent-pool.test.mjs",
 ];
 
 export async function runVerification({
