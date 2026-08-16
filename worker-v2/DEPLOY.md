@@ -1079,6 +1079,7 @@ eq(v.DEEPSEEK_MODEL,"deepseek-v4-flash","wrong eligible Grok-fallback model"); e
 eq(v.DEEPSEEK_OUTPUT_USD_PER_MTOK,"0.28","wrong Flash output rate"); eq(v.DEEPSEEK_FALLBACK_MODE,"on-error","wrong DeepSeek route mode");
 eq(v.DEEPSEEK_FALLBACK_MODEL,"deepseek-v4-pro","wrong normal Pass-B model"); eq(v.DEEPSEEK_FALLBACK_MAX_ATTEMPTS,"1","unbounded Pass-B attempts");
 eq(v.DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK,"0.435","wrong Pro input rate"); eq(v.DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK,"0.87","wrong Pro output rate");
+eq(v.EXEC_PER_CASE_TIMEOUT_MS,"45000","wrong per-case execution timeout"); // v38: walker per-case time budget
 if(c.durable_objects||c.d1_databases||c.migrations) fail("unexpected state or migration binding");
 console.log("v2 release config gate: PASS");
 '@
