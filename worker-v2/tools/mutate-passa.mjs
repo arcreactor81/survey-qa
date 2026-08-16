@@ -608,5 +608,35 @@ await runMutantSuite({
       replace: "void reportingFence;",
       kills: [FAILURE_REPORTS],
     },
+    {
+      name: "a semantic synthesis rejection is instantly terminal again",
+      breaks:
+        "the exact bug that killed run v2r_01m04d7383hcmczq6df0c0xpxv: one imperfect combine " +
+        "answer dies on attempt 1 with the issue budget of 2 never consulted",
+      file: PASS_A,
+      find: "const terminal = (semanticFailure && issue >= maxIssues) || (",
+      replace: "const terminal = semanticFailure || (",
+      kills: ["a semantic synthesis rejection consumes the issue budget instead of terminalizing attempt 1"],
+    },
+    {
+      name: "a conflicting re-resolution rejects the whole synthesis again",
+      breaks:
+        "run-to-run variance in one window's resolution state kills the run and strands every " +
+        "grounded window rule, instead of dropping one counted row",
+      file: PASS_A,
+      find: "if (primary.resolvedToBlock !== null) {",
+      replace: "if (primary.resolvedToBlock !== null) { throw new Error(\"PASS_A_SYNTHESIS_OUTPUT_INVALID: cross-reference resolution has no exact primary source\"); }\n    if (false) {",
+      kills: ["a synthesis re-resolution of a window-resolved xref is dropped and counted, never fatal"],
+    },
+    {
+      name: "the dropped re-resolution is no longer counted",
+      breaks:
+        "the drop happens but leaves no counted trace — a silently-short limitation, the exact " +
+        "failure mode the standing rules forbid",
+      file: PASS_A,
+      find: "      additionsDroppedReResolutions.push({",
+      replace: "      void ({",
+      kills: ["a synthesis re-resolution of a window-resolved xref is dropped and counted, never fatal"],
+    },
   ],
 });
