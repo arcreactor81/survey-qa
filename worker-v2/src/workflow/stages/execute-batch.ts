@@ -61,6 +61,32 @@ import {
 
 export const execProgressKey = (runId: string) => k("runs", runId, "execution", "progress.json");
 
+/**
+ * How much of the per-case budget is reserved for walkPath to WRAP UP (classify the ending,
+ * assemble the observation) after its step loop exits at the walk deadline. The floor in
+ * `walkDeadlineFor` keeps a pathological config (grace >= budget) from zeroing walk time.
+ */
+export const PER_CASE_WRAPUP_GRACE_MS = 20_000;
+
+/**
+ * The wall-clock deadline handed to ONE walk. Strictly tighter than the per-case axe by the
+ * wrap-up grace, so a walk that merely runs long exits its own step loop and RETURNS a
+ * "time-cap" partial observation — steps recorded, ending classified, evidence kept — while
+ * the withTimeout axe fires only on a genuine hang between deadline checks. The 2026-08-16/17
+ * runs recorded 27 walks as 0-screen "per-case-timeout" rows with wallMs=0 and no evidence of
+ * where they hung, because only the observation-destroying axe enforced the budget.
+ */
+export function walkDeadlineFor(
+  batchDeadline: number,
+  now: number,
+  batchMaxMs: number,
+  perCaseTimeoutMs: number,
+  graceMs: number = PER_CASE_WRAPUP_GRACE_MS,
+): number {
+  const walkBudgetMs = Math.max(perCaseTimeoutMs - graceMs, Math.floor(perCaseTimeoutMs / 2));
+  return Math.min(batchDeadline, now + batchMaxMs, now + walkBudgetMs);
+}
+
 // ---------------------------------------------------------------------------
 // THE EXECUTOR'S STOP-REASON VOCABULARY — all of it, in one place.
 //
@@ -983,7 +1009,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
               attemptId: walkAttemptId,
               tier: item.tier,
               maxSteps,
-              deadline: Math.min(batchDeadline, Date.now() + num(env.EXEC_BATCH_MAX_MS, 120_000)),
+              deadline: walkDeadlineFor(batchDeadline, Date.now(), num(env.EXEC_BATCH_MAX_MS, 120_000), perCaseTimeoutMs),
               viewport: { width: 1280, height: 900 },
               applyHistoryShim: shim,
               advanceTimeoutMs,

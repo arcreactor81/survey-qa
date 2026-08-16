@@ -99,5 +99,43 @@ await runMutantSuite({
         "THE LANDING GATE, LIVE: the two attempts' artifact basenames are disjoint sets, and the retry's are non-empty",
       ],
     },
+    {
+      name: "the walk deadline reverts to batch-only (the axe destroys long walks again)",
+      breaks:
+        "evidence preservation under the per-case budget. With the walk deadline no tighter " +
+        "than the batch budget, a walk that merely runs long is killed by withTimeout, which " +
+        "throws the whole observation away — the 2026-08-16/17 pattern of 0-screen " +
+        "'per-case-timeout' rows with wallMs=0 and no evidence of where the walk hung",
+      file: EB,
+      find: "  return Math.min(batchDeadline, now + batchMaxMs, now + walkBudgetMs);",
+      replace: "  return Math.min(batchDeadline, now + batchMaxMs);",
+      kills: ["for every shipped config, the walk deadline beats the per-case axe by a positive margin"],
+    },
+    {
+      name: "the wrap-up grace collapses to zero (partials lose their time to be assembled)",
+      breaks:
+        "the margin between walkPath's own exit and the axe. With no grace, the step loop " +
+        "runs until the exact axe instant and the wrap-up (ending classification, observation " +
+        "assembly) races a timeout it can only lose",
+      file: EB,
+      find: "  const walkBudgetMs = Math.max(perCaseTimeoutMs - graceMs, Math.floor(perCaseTimeoutMs / 2));",
+      replace: "  const walkBudgetMs = perCaseTimeoutMs;",
+      kills: ["for every shipped config, the walk deadline beats the per-case axe by a positive margin"],
+    },
+    {
+      name: "the half-budget floor is dropped (a big grace zeroes the walk)",
+      breaks:
+        "the floor that keeps a pathological grace config from handing walkPath a deadline " +
+        "in the past — zero screens forever, config-dependent and silent",
+      file: EB,
+      find: "  const walkBudgetMs = Math.max(perCaseTimeoutMs - graceMs, Math.floor(perCaseTimeoutMs / 2));",
+      replace: "  const walkBudgetMs = perCaseTimeoutMs - graceMs;",
+      kills: ["a pathological grace can never zero the walk's own time"],
+    },
+    // NOT A MUTANT, STATED: the walkOnce CALL SITE (deadline: walkDeadlineFor(...)) is
+    // pinned by a d56 test that reads execute-batch.ts from DISK — this harness rewrites
+    // sources in esbuild's load step, in memory, so no mutant here can make that test fail.
+    // The call site's regression net is the disk-read pin plus review; the function's
+    // arithmetic is covered by the three mutants above.
   ],
 });

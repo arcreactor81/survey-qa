@@ -352,6 +352,62 @@ suite("amendment 1: option-linked specify fill", () => {
 // AMENDMENT 2: TIMEOUT REGRESSION + DON'T-START GUARD
 // ===========================================================================
 
+suite("amendment 2b: the walk deadline returns partials before the axe destroys them", () => {
+  // Runs v2r_01m05wjkybhr6cfcggpgrerfqr (v40) and v2r_01m067zf40z4788yb60c380vgp (v41)
+  // recorded 27 walks as 0-screen "per-case-timeout" rows with wallMs=0 and NO evidence of
+  // where they hung — the per-case budget was enforced ONLY by withTimeout, which throws
+  // the whole observation away. The walk deadline handed to walkPath must be strictly
+  // tighter than the axe, so a long walk exits its own loop as a "time-cap" partial
+  // observation and the axe fires only on a genuine hang.
+  test("for every shipped config, the walk deadline beats the per-case axe by a positive margin", async () => {
+    const { mod } = await loadWorker();
+    const { readFileSync, readdirSync } = await import("fs");
+    const configs = ["wrangler.jsonc", ...readdirSync(".").filter((f) => f.startsWith("wrangler.arm-") && f.endsWith(".jsonc"))];
+    for (const f of configs) {
+      const content = readFileSync(f, "utf8");
+      const perCase = Number(content.match(/"EXEC_PER_CASE_TIMEOUT_MS"\s*:\s*"(\d+)"/)?.[1]);
+      const batch = Number(content.match(/"EXEC_BATCH_MAX_MS"\s*:\s*"(\d+)"/)?.[1]);
+      assert(Number.isFinite(perCase) && Number.isFinite(batch), `${f} must declare both budgets`);
+      const now = 1_000_000;
+      const deadline = mod.executeBatch.walkDeadlineFor(Number.POSITIVE_INFINITY, now, batch, perCase);
+      const margin = now + perCase - deadline;
+      assert(margin > 0, `${f}: the walk deadline must be strictly before the ${perCase}ms axe (margin ${margin}ms)`);
+      assert(
+        margin >= Math.min(mod.executeBatch.PER_CASE_WRAPUP_GRACE_MS, Math.ceil(perCase / 2)),
+        `${f}: the wrap-up margin (${margin}ms) is thinner than the grace contract`,
+      );
+      assert(deadline - now >= Math.floor(perCase / 2), `${f}: the walk keeps at least half the per-case budget`);
+    }
+  });
+
+  test("the walk invocation actually threads the per-case budget into walkPath's deadline", async () => {
+    // The arithmetic above is only real if the walkOnce call site USES it — a revert to the
+    // batch-only deadline would pass every unit test while the axe goes back to destroying
+    // observations. The call shape is pinned at source level, the same way the BATCH_POLICY
+    // step timeout is pinned in run-workflow.ts.
+    const { readFileSync } = await import("fs");
+    const src = readFileSync("src/workflow/stages/execute-batch.ts", "utf8");
+    assert(
+      /deadline: walkDeadlineFor\(batchDeadline, Date\.now\(\), num\(env\.EXEC_BATCH_MAX_MS, 120_000\), perCaseTimeoutMs\)/.test(src),
+      "walkOnce must hand walkPath a deadline computed by walkDeadlineFor over the per-case budget",
+    );
+  });
+
+  test("a pathological grace can never zero the walk's own time", async () => {
+    const { mod } = await loadWorker();
+    const now = 5_000;
+    const d = mod.executeBatch.walkDeadlineFor(Number.POSITIVE_INFINITY, now, 300_000, 10_000, 999_999);
+    assertEq(d - now, 5_000, "grace >= budget must floor at half the per-case budget, never zero");
+  });
+
+  test("the batch deadline still wins when it is the tighter bound", async () => {
+    const { mod } = await loadWorker();
+    const now = 0;
+    const d = mod.executeBatch.walkDeadlineFor(now + 30_000, now, 300_000, 120_000);
+    assertEq(d, 30_000, "a nearly-exhausted batch must bound the walk below the per-case budget");
+  });
+});
+
 suite("amendment 2: timeout and batch residual", () => {
   test("the batch budget strictly exceeds the per-case timeout so a walk can ever start", async () => {
     // Run v2r_01m05358wjeprcr01r5r3nn1vy started ZERO walks: EXEC_PER_CASE_TIMEOUT_MS was
