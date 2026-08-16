@@ -897,9 +897,34 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
   let steps = 0;
   let stopReason: string | null = null;
 
+  // MINIMUM BATCH RESIDUAL GUARD (first real walk, analysis class b).
+  //
+  // All 7 time-caps on the first real walk were walks started with 1.1-56s of leftover
+  // batch budget. A walk started with less budget than it needs is structurally doomed:
+  // it burns an exploration slot or a path attempt, records zero steps, and produces
+  // outcome "time-cap" — wasted work that is indistinguishable from a real timeout.
+  //
+  // The minimum residual is the per-case timeout: a walk that cannot run for at least
+  // perCaseTimeoutMs has no chance of completing even a single healthy screen sequence.
+  // When the remaining batch budget falls below this floor, the batch ends and hands
+  // the remaining work to the next batch, which starts with a full budget.
+  const minBatchResidualMs = perCaseTimeoutMs;
+
   try {
     for (const item of work) {
       if (pathsWalked >= maxAttempts || Date.now() >= batchDeadline) break;
+
+      // DON'T-START GUARD: do not begin a walk when the remaining batch budget is
+      // below the minimum residual. The analysis measured all 7 time-caps as walks
+      // started with 1.1-56s of leftover budget against walks that need 52-95s.
+      const remainingBudgetMs = batchDeadline - Date.now();
+      if (remainingBudgetMs < minBatchResidualMs) {
+        console.log(
+          `v2 exec batch ${args.batch}: skipping ${item.path.id} — only ${remainingBudgetMs}ms ` +
+            `of batch budget remains, below the ${minBatchResidualMs}ms minimum residual`,
+        );
+        break;
+      }
 
       const attemptId = mintAttemptId();
       await updateCheckpoint(
