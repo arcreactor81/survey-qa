@@ -843,6 +843,15 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
 
   const acquireTimeoutMs = num((env as unknown as { EXEC_ACQUIRE_TIMEOUT_MS?: string }).EXEC_ACQUIRE_TIMEOUT_MS, 45_000);
   const walkTimeoutMs = num((env as unknown as { EXEC_WALK_TIMEOUT_MS?: string }).EXEC_WALK_TIMEOUT_MS, 150_000);
+  // PER-CASE TIME BUDGET. One stuck walk must not eat the batch: each case gets its own wall-
+  // clock cap. The per-case timeout is the TIGHTER of (a) the explicit per-case budget and
+  // (b) the legacy walk timeout, so it never exceeds what the old code allowed. Exceeding it
+  // produces outcome "per-case-timeout" — a named, counted limitation the batch loop continues
+  // past, just as it continues past a browser-hung walk.
+  const perCaseTimeoutMs = Math.min(
+    num((env as unknown as { EXEC_PER_CASE_TIMEOUT_MS?: string }).EXEC_PER_CASE_TIMEOUT_MS, 45_000),
+    walkTimeoutMs,
+  );
 
   let handle: SessionHandle;
   try {
@@ -968,10 +977,18 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
 
       let obs: PathObservation;
       let browserHung = false;
+      let perCaseTimedOut = false;
       try {
-        obs = await withTimeout(walkOnce(progress.shimRequired && allowShim), walkTimeoutMs, `walk ${item.path.id}`);
+        obs = await withTimeout(walkOnce(progress.shimRequired && allowShim), perCaseTimeoutMs, `walk ${item.path.id}`);
       } catch (err) {
-        browserHung = err instanceof BrowserTimeout;
+        // A BrowserTimeout from the per-case budget is NOT a browser hang — the browser is
+        // healthy, the walk simply exceeded its individual time budget. The session does not
+        // need recycling and the path does not need a hung-path retry. Only a timeout that
+        // exceeds BOTH the per-case budget AND the legacy walk timeout indicates a genuinely
+        // wedged browser (in practice this cannot happen because perCaseTimeoutMs <= walkTimeoutMs,
+        // but the semantic distinction is preserved for clarity).
+        perCaseTimedOut = err instanceof BrowserTimeout;
+        browserHung = false;
         obs = {
           kind: "v2-path-observation/1.0.0",
           runId: args.runId,
@@ -985,8 +1002,8 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
           wallMs: 0,
           plannedWitnesses: [],
           steps: [],
-          outcome: browserHung ? "browser-hung" : "error",
-          outcomeDetail: String(err).slice(0, 500),
+          outcome: perCaseTimedOut ? "per-case-timeout" : "error",
+          outcomeDetail: perCaseTimedOut ? `walk exceeded its per-case budget of ${perCaseTimeoutMs}ms` : String(err).slice(0, 500),
           shimmed: false,
           shimNote: null,
           loadFailure: null,
@@ -1239,14 +1256,16 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         );
 
         let retryHung = false;
+        let retryPerCaseTimedOut = false;
         try {
           obs = await withTimeout(
             walkOnce(progress.shimRequired && allowShim, retryAttemptId, retryCap, ordinal),
-            walkTimeoutMs,
+            perCaseTimeoutMs,
             `walk ${item.path.id} pivot ${ordinal}`,
           );
         } catch (err) {
-          retryHung = err instanceof BrowserTimeout;
+          retryPerCaseTimedOut = err instanceof BrowserTimeout;
+          retryHung = false;
           obs = {
             kind: "v2-path-observation/1.0.0",
             runId: args.runId,
@@ -1260,8 +1279,8 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
             wallMs: 0,
             plannedWitnesses: [],
             steps: [],
-            outcome: retryHung ? "browser-hung" : "error",
-            outcomeDetail: String(err).slice(0, 500),
+            outcome: retryPerCaseTimedOut ? "per-case-timeout" : "error",
+            outcomeDetail: retryPerCaseTimedOut ? `walk exceeded its per-case budget of ${perCaseTimeoutMs}ms` : String(err).slice(0, 500),
             shimmed: false,
             shimNote: null,
             loadFailure: null,

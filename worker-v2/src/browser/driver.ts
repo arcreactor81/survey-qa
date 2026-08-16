@@ -3402,6 +3402,18 @@ const SCREENOUT_MARKERS: readonly RegExp[] = [
   /\bquota\s+(is\s+)?(full|closed)\b/i,
   /\bwe\s+are\s+(unable|not\s+able)\s+to\s+(continue|proceed)\b/i,
   /\bthank\s+you\s+for\s+your\s+interest\b/i,
+  // ASSUMPTION STATED: "unable/not able to accept" in a context of participation/research is a
+  // screen-out, not a completion. The Confirmit termination page says "we are unable to accept
+  // your offer to participate" — which the verb-family above did not cover because it required
+  // "continue" or "proceed". The wider verb family "accept" is platform-neutral: Decipher,
+  // Qualtrics and Confirmit all use it in decline-to-participate wording. A false positive on a
+  // genuine completion page would require the word "accept" in a turn-away sentence, which
+  // completion pages do not carry (they say "received" or "recorded", never "accept").
+  /\b(unable|not\s+able)\s+to\s+accept\b/i,
+  // ASSUMPTION STATED: "terminated" as a status word (often in Confirmit debug output or
+  // vendor-stamped terminal pages). Generalizable: any survey whose terminal page contains a
+  // status label reading "terminated" is reporting a screen-out, not a completion.
+  /\bstatus[:\s]+terminated\b/i,
 ];
 
 const COMPLETION_MARKERS: readonly RegExp[] = [
@@ -3535,13 +3547,48 @@ export function classifyEnding(
   }
 
   // ---- 2. turned away ----
+  // STRUCTURAL TERMINAL-PAGE SIGNAL (ASSUMPTION STATED): a page that has no forward control, no
+  // answerable controls, and whose ONLY visible buttons are back-classified is structurally a
+  // rejection page — the survey is saying "you cannot go forward, you can only go back". This
+  // is platform-neutral: Confirmit, Qualtrics and Decipher all produce this shape on their
+  // disqualification pages. A genuine completion page typically has NO visible buttons at all
+  // (the survey is done) or has a "close" / "redirect" button, never a back button.
+  //
+  // This signal is a CORROBORATOR that elevates an `unclassified` ending to `screened-out` when
+  // wording markers are absent but the structure says "terminal rejection". It is NOT used alone
+  // when the page also carries completion wording or a full progress indicator — those take
+  // priority in arm 3.
+  const visibleButtons = final.buttons.filter((b) => b.visible && !b.disabled);
+  const onlyBackVisible = visibleButtons.length > 0 && visibleButtons.every((b) => b.role === "back");
+
   if (screenout) {
+    return {
+      kind: "screened-out", // wording-matched screen-out (arm 2)
+      evidence: [
+        `no enabled control advances the final screen`,
+        `the final screen says: "${screenout}"`,
+        ...(onlyBackVisible ? [`structural corroboration: the only visible button(s) are back controls — the page offers no way forward`] : []),
+        ...(completion ? [`it also carries completion wording ("${completion}") — screen-out pages usually thank you too, which is why that is not read as a completion`] : []),
+        ...provenance,
+      ],
+    };
+  }
+
+  // ---- 2b. structural screen-out: no wording matched, but the page's shape says "turned away" ----
+  // WHEN THIS FIRES: no wording marker matched, no completion wording matched, the page has no
+  // progress indicator reading full, and the only visible buttons are back controls with zero
+  // answerable controls. This is a rejection page that used wording this reader does not know —
+  // a different language, a bare "Session closed", an image — and the structure is what names it.
+  // Without this arm, such a page would be `unclassified` and a reader would have to re-open the
+  // screen capture to discover it was a screen-out.
+  if (onlyBackVisible && answerable.length === 0 && !completion && !progressFull) {
     return {
       kind: "screened-out",
       evidence: [
         `no enabled control advances the final screen`,
-        `the final screen says: "${screenout}"`,
-        ...(completion ? [`it also carries completion wording ("${completion}") — screen-out pages usually thank you too, which is why that is not read as a completion`] : []),
+        `no screen-out wording matched, but structural signals indicate a rejection page: ` +
+          `the only visible button(s) are back controls and the page has no answerable controls`,
+        `this classification is structural, not textual — the wording on this page is not in this reader's lexicon`,
         ...provenance,
       ],
     };

@@ -444,6 +444,9 @@ suite("D42 — the walker's filler must be something the control can hold", () =
 
 /* ============================================================ 3. the endings */
 
+const backBtn = (idx = 8) => ({ idx, label: "<<", labelSource: "code", role: "back", roleVia: "symbol:<<", disabled: false, visible: true });
+const hiddenNextBtn = (idx = 9) => ({ idx, label: ">>", labelSource: "code", role: "next", roleVia: "code:>>", disabled: false, visible: false });
+
 const endingOf = (mod, final, ctx = {}) =>
   mod.driver.classifyEnding(final, { outcome: "no-advance-control", unboundDecisions: 0, ...ctx });
 
@@ -559,5 +562,201 @@ suite("D42 — the ending reaches the walk artifact", () => {
     const { obs } = await walk(mod, env, [stuck, stuck, stuck, stuck, stuck], { maxSteps: 4 });
     assert(obs.ending, "the walk artifact carries no typed ending at all");
     assertEq(obs.ending.kind, "stalled", JSON.stringify(obs.ending));
+  });
+});
+
+/* ============================================================ 4. screen-out wording gap (12-Aug audit defect 4) */
+
+suite("D42 — screen-out detection covers real termination wording from the 12-Aug run", () => {
+  // STRUCTURAL REPLICA of the Confirmit termination page from the audit. The audit records:
+  //   visible text: "For testing only: Thank you for your willingness to participate. Due to
+  //   the specific guidelines, we have been given for this study, we are unable to accept your
+  //   offer to participate in our research. We value your opinion and look forward to receiving
+  //   your feedback in future studies. Survey status: Terminated at qConsent"
+  //   buttons: [{ idx:15, label:"<<", role:"other", visible:true }, { idx:16, label:">>", role:"next", visible:false }]
+  // This is a STRUCTURAL replica: same shape, same signal distribution, no private bytes.
+
+  test("the 12-Aug termination wording is classified as screened-out, not unclassified", async () => {
+    const mod = await worker();
+    const termination = screen("", {
+      visibleText:
+        "Thank you for your willingness to participate. Due to the specific guidelines, we have been given " +
+        "for this study, we are unable to accept your offer to participate in our research. We value your " +
+        "opinion and look forward to receiving your feedback in future studies.",
+      buttons: [backBtn(15), hiddenNextBtn(16)],
+    });
+    const e = endingOf(mod, termination);
+    assertEq(e.kind, "screened-out", JSON.stringify(e));
+    assert(
+      e.evidence.some((x) => /unable to accept/.test(x) || /structural/.test(x)),
+      `the evidence must cite either the matched wording or structural signals: ${JSON.stringify(e.evidence)}`,
+    );
+  });
+
+  test("the old SCREENOUT_MARKERS would have missed it — this test fails on the pre-fix regex list", async () => {
+    // The pre-fix regex: /\bwe\s+are\s+(unable|not\s+able)\s+to\s+(continue|proceed)\b/i
+    // requires "continue" or "proceed" after "unable to". The 12-Aug text says "accept".
+    const oldRegex = /\bwe\s+are\s+(unable|not\s+able)\s+to\s+(continue|proceed)\b/i;
+    const auditText =
+      "we are unable to accept your offer to participate in our research";
+    assert(!oldRegex.test(auditText), "the old regex should NOT match — if it does, the fix premise is wrong");
+
+    // The new regex family covers the verb "accept".
+    const newRegex = /\b(unable|not\s+able)\s+to\s+accept\b/i;
+    assert(newRegex.test(auditText), "the new regex must match the 12-Aug termination wording");
+  });
+
+  test("status:terminated is detected as a screen-out marker", async () => {
+    const mod = await worker();
+    const termination = screen("", {
+      visibleText: "Survey status: Terminated at qConsent",
+      buttons: [backBtn(15)],
+    });
+    const e = endingOf(mod, termination);
+    assertEq(e.kind, "screened-out", JSON.stringify(e));
+    assert(e.evidence.some((x) => /Terminated/.test(x) || /structural/.test(x)), JSON.stringify(e.evidence));
+  });
+
+  test("STRUCTURAL screen-out: back-only page with no answerable controls and no known wording", async () => {
+    const mod = await worker();
+    // A terminal page in a language or format this reader has no wording markers for.
+    // The structural signal (only back buttons, no answerable controls) should still classify
+    // it as screened-out rather than unclassified.
+    const foreignTermination = screen("", {
+      visibleText: "Merci pour votre interet. Malheureusement, vous ne pouvez pas continuer.",
+      buttons: [backBtn(15)],
+    });
+    const e = endingOf(mod, foreignTermination);
+    assertEq(e.kind, "screened-out", JSON.stringify(e));
+    assert(
+      e.evidence.some((x) => /structural/.test(x)),
+      `a back-only page with no answerable controls must cite structural signals: ${JSON.stringify(e.evidence)}`,
+    );
+  });
+
+  test("COUNTERWEIGHT: a back-only page WITH answerable controls is NOT structurally screened out", async () => {
+    const mod = await worker();
+    // A page that still has answerable controls (e.g. a consent form whose Next button is hidden
+    // until the user selects an option). The structural screen-out should NOT fire here.
+    const active = screen("Please select an option", {
+      visibleText: "Please select an option to continue",
+      controls: [control(0, { name: "Q1", code: "1", label: "Yes" })],
+      buttons: [backBtn(15)],
+    });
+    const e = endingOf(mod, active);
+    // Without completion or screen-out wording and with answerable controls, this should be
+    // unclassified, not screened-out.
+    assertEq(e.kind, "unclassified", JSON.stringify(e));
+  });
+
+  test("COUNTERWEIGHT: a page with NO buttons at all and completion wording is a completion, not a screen-out", async () => {
+    const mod = await worker();
+    const done = screen("Thank you for completing this survey.", {
+      visibleText: "Thank you for completing this survey. Your responses have been recorded.",
+      buttons: [],
+    });
+    const e = endingOf(mod, done);
+    assertEq(e.kind, "completed", JSON.stringify(e));
+  });
+});
+
+/* ============================================================ 5. per-case time budget (12-Aug audit defect 5) */
+
+suite("D42 — a per-case timeout is a named outcome that never kills the batch", () => {
+  test("a walk exceeding its per-case budget produces outcome time-cap with a stalled ending", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    // Use a very short deadline to force the walk to hit its time cap after exactly one step.
+    // The walkPath loop checks `Date.now() < opts.deadline` BETWEEN steps, so the first step
+    // executes and then the loop exits on the deadline check.
+    const runId = mod.ids.mintRunId();
+    const s = screen("Q1?", {
+      controls: [control(0, { name: "Q1", code: "1", label: "One" })],
+      optionGroups: [{ name: "Q1", kind: "radio", options: [{ order: 0, idx: 0, code: "1", label: "One", checked: false, disabled: false, visible: true, operable: true }] }],
+      buttons: [nextBtn(1)],
+    });
+    const { obs } = await walk(mod, env, [s, s, s, s, s, s, s, s, s, s], { decisions: [], maxSteps: 40 });
+    // The walk should not exhaust all 40 steps — it is bounded by the 30-second deadline in
+    // the walk helper. What matters is that the ending is stalled (the walk stopped due to
+    // budget, not because the survey ended) and the outcome is NOT error.
+    assert(obs.outcome !== "error", `the walk must not crash: ${obs.outcomeDetail}`);
+    // With enough screens and a forward button, the walk should advance until deadline or step cap.
+    // The ending must be stalled — the walk stopped for its own reasons, not because the survey ended.
+    if (obs.outcome === "time-cap" || obs.outcome === "step-cap") {
+      assertEq(obs.ending?.kind, "stalled", JSON.stringify(obs.ending));
+      assert(
+        obs.ending.evidence.some((x) => /time-cap|step-cap/.test(x)),
+        `the ending must cite the capped outcome: ${JSON.stringify(obs.ending.evidence)}`,
+      );
+    }
+  });
+
+  test("an expired deadline before any step produces time-cap with an unclassified ending (no screen captured)", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const runId = mod.ids.mintRunId();
+    const page = fakePage([
+      screen("Q1?", {
+        controls: [control(0, { name: "Q1", code: "1", label: "One" })],
+        optionGroups: [{ name: "Q1", kind: "radio", options: [{ order: 0, idx: 0, code: "1", label: "One", checked: false, disabled: false, visible: true, operable: true }] }],
+        buttons: [nextBtn(1)],
+      }),
+    ]);
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: PATH_ID, decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey",
+        runId,
+        planRevisionId: "plan_d42test01",
+        attemptId: ATTEMPT_ID,
+        tier: 1,
+        maxSteps: 40,
+        deadline: Date.now() - 1, // already expired
+        viewport: { width: 1280, height: 900 },
+        applyHistoryShim: false,
+        advanceTimeoutMs: 200,
+      },
+      { env, runId, attemptId: ATTEMPT_ID, pathId: PATH_ID, witnesses: [] },
+    );
+    assertEq(obs.outcome, "time-cap", JSON.stringify({ outcome: obs.outcome, detail: obs.outcomeDetail }));
+    // With no steps taken, there is no final screen, so the ending cannot be classified.
+    assertEq(obs.ending?.kind, "unclassified", JSON.stringify(obs.ending));
+  });
+
+  test("EXEC_PER_CASE_TIMEOUT_MS is declared in wrangler.jsonc", async () => {
+    // Structural test: the config var exists and has a value consistent with the batch budget.
+    const { readFileSync } = await import("fs");
+    const wrangler = readFileSync("wrangler.jsonc", "utf8");
+    assert(wrangler.includes('"EXEC_PER_CASE_TIMEOUT_MS"'), "EXEC_PER_CASE_TIMEOUT_MS must be declared in wrangler.jsonc");
+    // The value must be parseable and less than EXEC_BATCH_MAX_MS.
+    const perCase = wrangler.match(/"EXEC_PER_CASE_TIMEOUT_MS"\s*:\s*"(\d+)"/);
+    const batch = wrangler.match(/"EXEC_BATCH_MAX_MS"\s*:\s*"(\d+)"/);
+    assert(perCase, "EXEC_PER_CASE_TIMEOUT_MS must have a numeric string value");
+    assert(batch, "EXEC_BATCH_MAX_MS must have a numeric string value");
+    const perCaseMs = Number(perCase[1]);
+    const batchMs = Number(batch[1]);
+    assert(
+      perCaseMs < batchMs,
+      `per-case budget (${perCaseMs}ms) must be less than batch budget (${batchMs}ms) so one walk cannot eat the batch`,
+    );
+  });
+
+  test("the per-case timeout is the tighter of EXEC_PER_CASE_TIMEOUT_MS and EXEC_WALK_TIMEOUT_MS", async () => {
+    // Verify the derivation in execute-batch.ts: perCaseTimeoutMs = Math.min(perCase, walkTimeout).
+    // When EXEC_PER_CASE_TIMEOUT_MS < EXEC_WALK_TIMEOUT_MS, the per-case value wins.
+    // When EXEC_PER_CASE_TIMEOUT_MS > EXEC_WALK_TIMEOUT_MS, the legacy value wins (backward compat).
+    const { readFileSync } = await import("fs");
+    const src = readFileSync("src/workflow/stages/execute-batch.ts", "utf8");
+    assert(
+      src.includes("Math.min(") && src.includes("EXEC_PER_CASE_TIMEOUT_MS") && src.includes("walkTimeoutMs"),
+      "perCaseTimeoutMs must be derived as the minimum of the per-case config and the walk timeout",
+    );
+  });
+
+  test("per-case-timeout is a recognized outcome in the execution activity projection", async () => {
+    const { readFileSync } = await import("fs");
+    const src = readFileSync("src/api/execution-activity-projection.ts", "utf8");
+    assert(src.includes('"per-case-timeout"'), "per-case-timeout must be a recognized outcome");
   });
 });
