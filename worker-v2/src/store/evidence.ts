@@ -18,7 +18,6 @@ import type { EvidenceCatalogEntry } from "../types/record";
 import { evidenceBlobKey, evidenceCatalogKey, evidenceCatalogPrefix } from "../keys";
 import { assertV2RunId, evidenceIdFor } from "../ids";
 import { sha256Hex } from "./hash";
-import { mapConcurrent, R2_READ_CONCURRENCY } from "./concurrent-pool";
 
 export class EvidenceIntegrityFailure extends Error {
   constructor(evidenceId: string, expected: string, actual: string) {
@@ -181,28 +180,17 @@ export async function getBoundCatalogEntry(
 
 export async function listCatalog(env: Env, runId: string): Promise<EvidenceCatalogEntry[]> {
   assertV2RunId(runId);
-  // PHASE 1: collect all keys. The LIST itself is paginated but each page is one subrequest,
-  // so collecting keys is cheap. The expensive part is the per-key GET in phase 2.
-  const keys: string[] = [];
+  const out: EvidenceCatalogEntry[] = [];
   let cursor: string | undefined;
   do {
     const page = await env.EVIDENCE.list({ prefix: evidenceCatalogPrefix(runId), cursor, limit: 1000 });
-    for (const obj of page.objects) keys.push(obj.key);
+    for (const obj of page.objects) {
+      const body = await env.EVIDENCE.get(obj.key);
+      if (body) out.push(await assertCatalogBinding(runId, JSON.parse(await body.text()) as EvidenceCatalogEntry));
+    }
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
-
-  // PHASE 2: fetch and bind every entry with bounded concurrency.
-  //
-  // The sequential loop this replaces cost ~46ms * N entries wall-clock, which exceeded the
-  // 3-minute step timeout on a 1,700-entry catalogue. Bounded concurrency overlaps the R2
-  // round-trips while preserving: (a) input-order results, (b) per-entry binding assertions,
-  // (c) loud failure on any bad entry. The subrequest COUNT is unchanged.
-  const results = await mapConcurrent(keys, R2_READ_CONCURRENCY, async (key) => {
-    const body = await env.EVIDENCE.get(key);
-    if (!body) return null;
-    return assertCatalogBinding(runId, JSON.parse(await body.text()) as EvidenceCatalogEntry);
-  });
-  return results.filter((e): e is EvidenceCatalogEntry => e !== null);
+  return out;
 }
 
 /**

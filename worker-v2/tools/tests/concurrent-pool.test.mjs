@@ -15,6 +15,9 @@
  *      Mutant: one task throws; the caller must see that error, not a silent partial result.
  */
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import * as esbuild from "esbuild";
 import { suite, test, assert, assertEq } from "../testkit.mjs";
 
 /** Deep-equal for arrays of primitives, since testkit's assertEq is strict reference. */
@@ -26,40 +29,36 @@ function assertArrayEq(actual, expected, message) {
   );
 }
 
-/**
- * Reference implementation of mapConcurrent, identical to store/concurrent-pool.ts.
- * Tested here directly; the wiring into listCatalog/loadArtifactBytes/auditEvidence is
- * proven by the existing d30/d34 suites staying green with the pool integrated.
- */
-async function mapConcurrent(items, concurrency, fn) {
-  if (items.length === 0) return [];
-  if (concurrency < 1) throw new Error(`mapConcurrent: concurrency must be >= 1, got ${concurrency}`);
-
-  const results = new Array(items.length);
-  let nextIndex = 0;
-  let firstError = null;
-
-  const runNext = async () => {
-    while (nextIndex < items.length && firstError === null) {
-      const i = nextIndex++;
-      try {
-        results[i] = await fn(items[i], i);
-      } catch (err) {
-        if (firstError === null) firstError = { error: err };
-        return;
-      }
-    }
-  };
-
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    () => runNext(),
-  );
-  await Promise.all(workers);
-
-  if (firstError !== null) throw firstError.error;
-  return results;
-}
+// THE REAL MODULE, not a copy. This file originally carried a hand-copied "reference
+// implementation" of mapConcurrent — a test structurally incapable of catching a regression
+// in the shipped pool. It now bundles src/store/concurrent-pool.ts itself (same pattern as
+// bounded-source-block-jsonl.test.mjs), so a behavior change in the real module is a
+// behavior change in these tests.
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const WORKER_ROOT = path.resolve(HERE, "../..");
+const poolPath = JSON.stringify(
+  path.join(WORKER_ROOT, "src/store/concurrent-pool.ts").replace(/\\/g, "/"),
+);
+const built = await esbuild.build({
+  stdin: {
+    contents: `export * from ${poolPath};`,
+    loader: "ts",
+    resolveDir: WORKER_ROOT,
+  },
+  bundle: true,
+  format: "esm",
+  write: false,
+  platform: "neutral",
+});
+const poolModule = await import(
+  `data:text/javascript;base64,${Buffer.from(built.outputFiles[0].contents).toString("base64")}`
+);
+const { mapConcurrent, R2_READ_CONCURRENCY } = poolModule;
+assert(typeof mapConcurrent === "function", "the real mapConcurrent is importable");
+assert(
+  Number.isInteger(R2_READ_CONCURRENCY) && R2_READ_CONCURRENCY >= 1,
+  "the real R2_READ_CONCURRENCY constant is exported and sane",
+);
 
 // ---------------------------------------------------------------------------
 // 1. ORDER PRESERVED — results match input order even when tasks complete out of order

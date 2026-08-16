@@ -336,17 +336,7 @@ const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "5 m
  * this buys is that a retry now has a real chance of being a new invocation instead of a
  * certainty of being the dead one.
  */
-/**
- * 5-MINUTE TIMEOUT: headroom on top of the bounded-concurrency fix, not the fix itself.
- *
- * The original 3-minute cap was exceeded on v2r_01m04jhrymz7wh490kq5jxke65 because
- * sequential R2 GETs at ~46ms each took 156s+ before any computation. The real fix is
- * bounded-concurrent R2 reads (store/concurrent-pool.ts), which bring the I/O phase from
- * O(N * latency) to O(N/concurrency * latency). The extra 2 minutes are for surveys larger
- * than anything tested so far — a safety margin, not a replacement for fixing the fan-out.
- * The retry shape (3 retries, 30s exponential backoff) is unchanged.
- */
-const DERIVE_POLICY = { retries: { limit: 3, delay: "30 seconds", backoff: "exponential" }, timeout: "5 minutes" } as const;
+const DERIVE_POLICY = { retries: { limit: 3, delay: "30 seconds", backoff: "exponential" }, timeout: "3 minutes" } as const;
 const REPORT_POLICY = { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" } as const;
 
 /** Reason codes a run terminates with. Named so the report can say which. */
