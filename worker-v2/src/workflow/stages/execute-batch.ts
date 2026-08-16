@@ -981,14 +981,15 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       try {
         obs = await withTimeout(walkOnce(progress.shimRequired && allowShim), perCaseTimeoutMs, `walk ${item.path.id}`);
       } catch (err) {
-        // A BrowserTimeout from the per-case budget is NOT a browser hang — the browser is
-        // healthy, the walk simply exceeded its individual time budget. The session does not
-        // need recycling and the path does not need a hung-path retry. Only a timeout that
-        // exceeds BOTH the per-case budget AND the legacy walk timeout indicates a genuinely
-        // wedged browser (in practice this cannot happen because perCaseTimeoutMs <= walkTimeoutMs,
-        // but the semantic distinction is preserved for clarity).
+        // A BrowserTimeout from the per-case budget means the walk exceeded its time cap.
+        // The outcome is labelled "per-case-timeout" (not "error"), but the SESSION may still
+        // be wedged — a genuinely stuck browser manifests as a timeout too. Feeding the flag
+        // into browserHung keeps the session-recycling mechanism alive: the downstream check
+        // marks the session wedged, gives the path ONE retry on a fresh session (via the
+        // hungPaths guard), and breaks the batch if the hang persists. Without this, a wedged
+        // browser burns the full batch budget timing out each remaining walk at perCaseTimeoutMs.
         perCaseTimedOut = err instanceof BrowserTimeout;
-        browserHung = false;
+        browserHung = perCaseTimedOut;
         obs = {
           kind: "v2-path-observation/1.0.0",
           runId: args.runId,
@@ -1265,7 +1266,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
           );
         } catch (err) {
           retryPerCaseTimedOut = err instanceof BrowserTimeout;
-          retryHung = false;
+          retryHung = retryPerCaseTimedOut;
           obs = {
             kind: "v2-path-observation/1.0.0",
             runId: args.runId,

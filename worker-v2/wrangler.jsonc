@@ -198,7 +198,7 @@
     // latency, while keeping a single stuck walk from consuming more than ~38% of a batch.
     // Exceeding it produces outcome "per-case-timeout" — a named, counted limitation that
     // never kills the batch or the run.
-    "EXEC_PER_CASE_TIMEOUT_MS": "45000"
+    "EXEC_PER_CASE_TIMEOUT_MS": "45000",
     "BROWSER_COMPAT_SHIMS": "auto", // "auto" | "off" — see browser/page-script.ts HISTORY_SHIM
 
     // ---- run caps (proposal §5; each keeps its own name and denominator) ----
