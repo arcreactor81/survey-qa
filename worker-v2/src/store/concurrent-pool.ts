@@ -67,7 +67,7 @@ export async function mapConcurrent<T, R>(
       // eslint-disable-next-line no-await-in-loop — intentional: each worker awaits one
       // task at a time while other workers proceed in parallel.
       try {
-        results[i] = await fn(items[i], i);
+        results[i] = await fn(items[i]!, i);
       } catch (err) {
         if (firstError === null) firstError = { error: err };
         return;
@@ -84,6 +84,10 @@ export async function mapConcurrent<T, R>(
   );
   await Promise.all(workers);
 
-  if (firstError !== null) throw firstError.error;
+  // TypeScript's control-flow analysis cannot track that `firstError` was mutated inside
+  // the async `runNext` closure across the `await`. Cast to defeat the incorrect narrowing
+  // to `never` — the runtime value IS `{ error: unknown } | null` at this point.
+  const settled = firstError as { error: unknown } | null;
+  if (settled !== null) throw settled.error;
   return results;
 }
