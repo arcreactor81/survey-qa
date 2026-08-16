@@ -252,6 +252,8 @@ export async function loadWorker() {
       `export * as sourceBlockOutput from ${p("tools/source-block-output.mjs")};`,
       `export * as providerSpendLedger from ${p("src/store/provider-spend-ledger.ts")};`,
       `export * as env from ${p("src/types/env.ts")};`,
+      // The dev-extract route handler — tested by the passOnly:B guard suite.
+      `export * as devExtractRoute from ${p("src/workflow/stages/dev-extract.ts")};`,
     ].join("\n"),
     "utf8",
   );
