@@ -2544,11 +2544,12 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
    * index can point at a revision but can never BE one — a poisoned entry costs a wasted lookup,
    * never a denominator nobody sealed.
    *
-   * WHAT IT DELIBERATELY DOES NOT COPY: the extraction's ambiguity readings. Production
-   * extraction writes no run checklist today (`writeRunChecklist` has one caller, and it is dev
-   * seeding), so there is nothing to carry across — and a reused revision keeps its ambiguities
-   * as sealed tokens exactly as a freshly-extracted one does. The record says
-   * `readingsAvailable: false` in both cases, which is the same true sentence.
+   * WHAT IT DELIBERATELY DOES NOT COPY: the extraction's ambiguity readings. Since the
+   * ambiguity-funnel fix (16 Aug 2026), production extraction DOES write the run checklist
+   * during consolidation (`writeRunChecklist` now has two callers: dev seeding and
+   * stageConsolidate) — but a REUSED revision still keeps its ambiguities as sealed tokens
+   * exactly as a freshly-extracted one does; the adopting run does not re-derive readings it
+   * never performed. `readingsAvailable` reports what is actually on file either way.
    */
   private async adoptReusableContract(
     step: WorkflowStep,
