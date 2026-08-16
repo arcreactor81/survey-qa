@@ -374,6 +374,26 @@ suite("amendment 2: timeout and batch residual", () => {
     }
   });
 
+  test("the workflow step axe clears the batch budget with slack for acquire and commit", async () => {
+    // The sibling inversion of the per-case-vs-batch bug, one level up: BATCH_POLICY's step
+    // timeout equaled EXEC_BATCH_MAX_MS exactly (run v2r_01m05bh8scxkebmqd7h9wmmf5z walked
+    // zero screens — the engine axed every batch mid-walk before commit). The whole family
+    // of nested budgets must strictly widen: per-case < batch < step.
+    const { readFileSync } = await import("fs");
+    const wrangler = readFileSync("wrangler.jsonc", "utf8");
+    const batch = wrangler.match(/"EXEC_BATCH_MAX_MS"\s*:\s*"(\d+)"/);
+    assert(batch, "EXEC_BATCH_MAX_MS must be declared");
+    const src = readFileSync("src/workflow/run-workflow.ts", "utf8");
+    const policy = src.match(/const BATCH_POLICY = \{[^}]*timeout: "(\d+) minutes?"/);
+    assert(policy, "BATCH_POLICY must declare a minutes-denominated timeout");
+    const stepMs = Number(policy[1]) * 60_000;
+    const SLACK_MS = 120_000; // session acquire (<=45s) + retry-on-fresh-session + commit
+    assert(
+      stepMs >= Number(batch[1]) + SLACK_MS,
+      `BATCH_POLICY step timeout (${stepMs}ms) must be >= EXEC_BATCH_MAX_MS (${batch[1]}) + ${SLACK_MS}ms slack, or the step axe kills batches mid-walk`,
+    );
+  });
+
   test("EXEC_PER_CASE_TIMEOUT_MS is 120000 in wrangler.jsonc", async () => {
     const { readFileSync } = await import("fs");
     const wrangler = readFileSync("wrangler.jsonc", "utf8");

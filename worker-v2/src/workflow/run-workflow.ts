@@ -318,7 +318,12 @@ export async function launchVisualShadowAfterCoreFinalization(
  *  This policy still covers the steps that really are one bounded unit of work — the
  *  deterministic merge/diff/plan steps. */
 const EXTRACT_POLICY = { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "8 minutes" } as const;
-const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "5 minutes" } as const;
+// The step axe must clear the batch's own work budget PLUS session-acquisition and commit
+// slack. When EXEC_BATCH_MAX_MS rose to 300000 (16 Aug), this stayed "5 minutes" — exactly
+// equal — and the engine killed every batch mid-walk before anything committed (run
+// v2r_01m05bh8scxkebmqd7h9wmmf5z: sessions churning, walks recording zero screens). The
+// d56 config-arithmetic test pins step-timeout >= EXEC_BATCH_MAX_MS + 120s slack.
+const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "8 minutes" } as const;
 /**
  * THE JUDGING STAGES. `delay` is 30 seconds and NOT 5 for a reason that is not politeness.
  *
