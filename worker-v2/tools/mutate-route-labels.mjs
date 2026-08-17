@@ -25,7 +25,7 @@ await runMutantSuite({
         "click documented screen-out answers",
       file: PLAN,
       find: '    if (facet === "terminate") out.push({ question, label, kind: "terminate" });',
-      replace: '    // (terminate mining dropped by mutant)',
+      replace: '    if (false && facet === "terminate") out.push({ question, label, kind: "terminate" });',
       kills: [
         "extracts terminate destinations with verbatim labels",
         "terminate routes become avoid entries",
@@ -39,7 +39,7 @@ await runMutantSuite({
         "get no positive steering",
       file: PLAN,
       find: '    else if (facet === "skip-rule") out.push({ question, label, kind: "continue" });',
-      replace: '    // (skip-rule mining dropped by mutant)',
+      replace: '    else if (false && facet === "skip-rule") out.push({ question, label, kind: "continue" });',
       kills: [
         "extracts continue destinations with verbatim labels",
         "continue routes become prefer entries",

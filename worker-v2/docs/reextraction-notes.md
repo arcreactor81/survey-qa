@@ -45,9 +45,13 @@ A new named transformation `cleanRenderingArtifacts` in `src/extract/anchor-clea
   rendering words), the cleaning is wrong; the count makes the loss visible and the pattern is
   in a named data set, not buried in a regex.
 
-The cleaner is called during pass-B obligation decoding (in `pass-b-decode.ts`) on each decoded
-obligation's `doc_quote` and `statement` fields. The total count of stripped artifacts is returned
-alongside the decoded obligations and surfaced in the extraction report as a named count.
+**The cleaner is NOT yet wired into the extraction pipeline.** It exists as a tested utility
+(`cleanRenderingArtifacts`, `cleanBatch`) with its vocabulary and counting contract pinned, but
+`pass-b-decode.ts` does not call it. Wiring it in means choosing which fields get cleaned (route
+labels? doc quotes? statements?), bumping the decode version so persisted artifacts are not
+silently reinterpreted, and surfacing the count in the extraction report. That decision is left
+for after the first re-extraction run's output shows whether pollution actually survives the new
+prompts — wiring a cleaner nothing needs would be dead weight in the seal path.
 
 ### 3. Schema/parsing: no changes needed
 
