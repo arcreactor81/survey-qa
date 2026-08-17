@@ -1354,6 +1354,350 @@ details.tech { margin: 12px 0 0; }
   content: " This browser could not unpack it. Every requirement is in the Full check tab.";
 }
 
+/* ---------- Direction 2: KPI strip ---------- */
+.v2-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+  margin: 20px 0 24px;
+}
+.v2-kpi {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px 14px;
+  box-shadow: var(--shadow-sm);
+}
+.v2-kpi-label {
+  font-family: var(--mono);
+  font-size: .65rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.v2-kpi-value {
+  font-family: var(--serif);
+  font-size: 2.4rem;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+.v2-kpi-sub {
+  font-size: .72rem;
+  color: var(--muted);
+  margin-top: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.v2-kpi--fail .v2-kpi-value { color: var(--bad); }
+.v2-kpi--neutral .v2-kpi-value { color: var(--ink); }
+
+/* ---------- Direction 2: consequence cards ---------- */
+.v2-consequence-card {
+  background: var(--bad-bg);
+  border: 1px solid var(--bad-border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 12px;
+}
+.v2-consequence-id {
+  font-family: var(--mono);
+  font-size: .65rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--bad);
+  margin-bottom: 4px;
+}
+.v2-consequence-text {
+  font-size: .88rem;
+  color: var(--ink);
+  line-height: 1.55;
+}
+.v2-consequence-ref {
+  font-size: .72rem;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+/* ---------- Direction 2: scope tiles ---------- */
+.v2-scope-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+@media (max-width: 600px) { .v2-scope-grid { grid-template-columns: 1fr; } }
+.v2-scope-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+}
+.v2-scope-label {
+  font-family: var(--mono);
+  font-size: .65rem;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.v2-scope-value {
+  font-family: var(--serif);
+  font-size: 2rem;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.v2-scope-detail {
+  font-size: .78rem;
+  color: var(--muted);
+  margin-top: 5px;
+  line-height: 1.5;
+}
+
+/* ---------- Direction 2: trust strip ---------- */
+.v2-trust-strip {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 18px 0 20px;
+}
+.v2-trust-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: .72rem;
+  font-family: var(--mono);
+  letter-spacing: .03em;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+}
+.v2-trust-badge--ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+.v2-trust-badge--warn { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.v2-trust-badge--neutral { background: var(--neutral-bg); border-color: var(--neutral-border); color: var(--muted); }
+
+/* ---------- Direction 2: not-tested section ---------- */
+.v2-not-tested {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 20px;
+}
+.v2-not-tested h3 {
+  font-family: var(--mono);
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.v2-not-tested-list { list-style: none; padding-left: 0; font-size: .86rem; }
+.v2-not-tested-list li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.v2-not-tested-list li:last-child { border-bottom: none; }
+.v2-state-chip {
+  font-family: var(--mono);
+  font-size: .6rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--neutral-bg);
+  border: 1px solid var(--neutral-border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.v2-state-chip--blocked { background: var(--amber-bg); border-color: var(--amber-border); color: var(--amber); }
+.v2-state-chip--budget { background: var(--info-bg); border-color: var(--info-border); color: var(--info); }
+.v2-state-chip--time { background: var(--info-bg); border-color: var(--info-border); color: var(--info); }
+
+/* ---------- Direction 2: finding cards (provenance diff) ---------- */
+.v2-finding-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 22px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-sm);
+}
+.v2-finding-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.v2-finding-title {
+  font-size: .98rem;
+  font-weight: 600;
+  color: var(--ink);
+  flex: 1;
+  min-width: 180px;
+}
+.v2-prov {
+  margin: 12px 0;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.v2-prov-line { padding: 9px 12px; font-size: .82rem; }
+.v2-prov-label {
+  display: block;
+  font-family: var(--mono);
+  font-size: .58rem;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.v2-prov-spec { background: var(--ok-bg); border-bottom: 1px solid var(--border); }
+.v2-prov-site { background: var(--bad-bg); }
+.v2-prov-quote {
+  font-family: var(--mono);
+  font-size: .76rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.v2-finding-consequence {
+  font-size: .86rem;
+  color: var(--text);
+  margin: 8px 0;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+.v2-finding-refs {
+  font-size: .72rem;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+/* ---------- Direction 2: evidence sidebar ---------- */
+.v2-evidence-sidebar {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-top: 20px;
+}
+.v2-evidence-sidebar h3 {
+  font-family: var(--mono);
+  font-size: .65rem;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.v2-filmstrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+.v2-filmstrip-thumb {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface-2);
+  aspect-ratio: 16/10;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.v2-filmstrip-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.v2-filmstrip-thumb .v2-placeholder {
+  font-family: var(--mono);
+  font-size: .62rem;
+  color: var(--muted);
+  text-align: center;
+  padding: 6px;
+}
+.v2-filmstrip-label {
+  font-family: var(--mono);
+  font-size: .58rem;
+  color: var(--muted);
+  margin-top: 3px;
+  text-align: center;
+}
+
+/* ---------- Direction 2: limitations panel ---------- */
+.v2-limitations {
+  background: var(--surface-3);
+  border-top: 1px solid var(--border);
+  padding: 12px 18px;
+  margin-top: 24px;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.v2-limitations-title {
+  font-family: var(--mono);
+  font-size: .65rem;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.v2-lim-list {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.v2-lim-item {
+  font-size: .78rem;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.v2-lim-count {
+  font-family: var(--mono);
+  font-size: .65rem;
+  font-weight: 600;
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--radius-pill);
+  padding: 1px 6px;
+}
+
+/* ---------- Direction 2: section headings ---------- */
+.v2-section-kicker {
+  font-family: var(--mono);
+  font-size: .65rem;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--kicker);
+  margin-bottom: 3px;
+}
+.v2-section-title {
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  color: var(--ink);
+  margin-bottom: 14px;
+}
+.v2-section-lead {
+  font-size: .86rem;
+  color: var(--muted);
+  margin: -8px 0 14px;
+  max-width: 62ch;
+}
+
 /* ---------- print ---------- *
  * Default: the Summary only — a decision summary is what a reader prints.
  * "Print or save the full check" adds .print-register and prints the register
