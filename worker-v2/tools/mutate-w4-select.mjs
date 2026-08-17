@@ -199,6 +199,22 @@ await runMutantSuite({
       kills: ["ANY hung page call — screenshot, not a read — still returns a walk, via the page-call bound"],
     },
     {
+      name: "the post-advance epoch dedup stops happening (a third of every step's capture cost returns)",
+      breaks:
+        "the pace fix. The post-advance epoch duplicates the next step's before-epoch — the " +
+        "v44 clocks measured the three-epoch capture at ~21s of every ~28s step. Without the " +
+        "dedup every mid-walk step pays for the duplicate again",
+      file: DR,
+      find: "    lastAdvancedEpochSkipped = Boolean(afterWasRead && after && advanced && walkWillContinue);",
+      replace: "    lastAdvancedEpochSkipped = false;",
+      kills: ["an advanced step mid-walk records before+after-action only, and the walk's last screen arrives as a final-slot epoch"],
+    },
+    // NOT A MUTANT, STATED: the per-step reset of lastAdvancedEpochSkipped is defence in
+    // depth, not load-bearing — the post-loop backfill ALSO requires the last step's
+    // screenAfterAdvance, which is null on every early-exit step, so a stale flag cannot
+    // change behaviour and no test can kill its removal. Verified by running the campaign
+    // with that mutant: SURVIVED against a correct test, for exactly this reason.
+    {
       name: "the shared hang timer stops rejecting (every bound becomes a bound in name only)",
       breaks:
         "the guarantee one level down for BOTH consumers: boundedRead and boundPageCalls " +

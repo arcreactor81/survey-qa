@@ -555,6 +555,158 @@ suite("amendment 2d: every step says where its time went (phaseMs)", () => {
   });
 });
 
+suite("amendment 2e: the post-advance epoch is deduped mid-walk and backfilled at walk end", () => {
+  // The v44 phase clocks measured epoch capture at ~21s of every ~28s step; one third of it
+  // was the post-advance epoch — the SAME screen the next step captures as its before-epoch
+  // a second later. Mid-walk it is skipped; a walk that ENDS on an advanced screen gets that
+  // final screen backfilled under the "final" slot so no terminal state loses its visual.
+  test("an advanced step mid-walk records before+after-action only, and the walk's last screen arrives as a final-slot epoch", async () => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const mkScreen = (sig, q) => ({
+      url: "https://fixture.invalid/survey",
+      title: q,
+      questionText: `${q}. A question?`,
+      grid: null,
+      collectedErrors: [],
+      readerLimitations: [],
+      controls: [],
+      optionGroups: [],
+      buttons: [{ idx: 0, label: "Next", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+      validationMessages: [],
+      progress: { present: false, value: null },
+      counts: { controls: 1, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: sig,
+    });
+    const terminal = mkScreen("sig:B", "S2");
+    terminal.buttons = []; // no forward control: the walk ends on screen B with its own final epoch
+    const reads = [mkScreen("sig:A", "S1"), mkScreen("sig:A", "S1"), terminal, terminal, terminal];
+    let last = reads[0];
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        if (typeof script === "string" && script.includes("screenSignature")) {
+          if (reads.length > 0) last = reads.shift();
+          return last;
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return Array.from({ length: 4 }, () => ({ async click() {}, async type() {}, async focus() {} }));
+      },
+      async screenshot() {
+        return new TextEncoder().encode("PNG-D56");
+      },
+      async setViewport() {},
+      on() {},
+      async close() {},
+      async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56dedup", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey",
+        runId,
+        planRevisionId: "plan_d56dedup1",
+        attemptId: "att_d56dedup001",
+        tier: 1,
+        maxSteps: 5,
+        deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 },
+        applyHistoryShim: false,
+        advanceTimeoutMs: 1_000,
+      },
+      { env, runId, attemptId: "att_d56dedup001", pathId: "path_d56dedup", witnesses: [] },
+    );
+    assertEq(obs.steps.length, 2, `two steps walked (outcome ${obs.outcome}: ${obs.outcomeDetail})`);
+    assertEq(obs.steps[0].advanced, true, "step 0 must have advanced");
+    const step0Slots = (obs.steps[0].evidence?.screenCaptures ?? []).map((e) => e.slot);
+    assert(!step0Slots.includes("advanced"), `mid-walk advanced epoch must be deduped, got slots ${JSON.stringify(step0Slots)}`);
+    assert(step0Slots.includes("before"), "step 0 keeps its before epoch");
+    const step1Slots = (obs.steps[1].evidence?.screenCaptures ?? []).map((e) => e.slot);
+    assert(step1Slots.includes("final"), `the terminal screen keeps its own final epoch, got ${JSON.stringify(step1Slots)}`);
+    // The dedup bookkeeping must reset per step: no spurious post-loop backfill of screen B
+    // under step 0's index after step 1 already captured it.
+    const walkSlots = (obs.screenCaptures ?? []).map((e) => `${e.slot}@${e.stepIndex}`);
+    assertEq(
+      walkSlots.filter((s) => s.startsWith("final@")).length,
+      1,
+      `exactly one final epoch, got ${JSON.stringify(walkSlots)}`,
+    );
+  });
+
+  test("a walk that ENDS on an advanced step keeps that screen's epoch (no dedup at walk end)", async () => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const mkScreen = (sig, q) => ({
+      url: "https://fixture.invalid/survey",
+      title: q,
+      questionText: `${q}. A question?`,
+      grid: null,
+      collectedErrors: [],
+      readerLimitations: [],
+      controls: [],
+      optionGroups: [],
+      buttons: [{ idx: 0, label: "Next", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+      validationMessages: [],
+      progress: { present: false, value: null },
+      counts: { controls: 1, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: sig,
+    });
+    const reads = [mkScreen("sig:A", "S1"), mkScreen("sig:A", "S1"), mkScreen("sig:B", "S2")];
+    let last = reads[0];
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        if (typeof script === "string" && script.includes("screenSignature")) {
+          if (reads.length > 0) last = reads.shift();
+          return last;
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return Array.from({ length: 4 }, () => ({ async click() {}, async type() {}, async focus() {} }));
+      },
+      async screenshot() {
+        return new TextEncoder().encode("PNG-D56");
+      },
+      async setViewport() {},
+      on() {},
+      async close() {},
+      async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56dedup2", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey",
+        runId,
+        planRevisionId: "plan_d56dedup2",
+        attemptId: "att_d56dedup002",
+        tier: 1,
+        maxSteps: 1,
+        deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 },
+        applyHistoryShim: false,
+        advanceTimeoutMs: 1_000,
+      },
+      { env, runId, attemptId: "att_d56dedup002", pathId: "path_d56dedup2", witnesses: [] },
+    );
+    assertEq(obs.steps.length, 1);
+    assertEq(obs.steps[0].advanced, true, `the step must have advanced (outcome ${obs.outcome})`);
+    const slots = (obs.steps[0].evidence?.screenCaptures ?? []).map((e) => e.slot);
+    assert(
+      slots.includes("advanced"),
+      `a walk ending on an advanced step keeps that screen's epoch, got ${JSON.stringify(slots)}`,
+    );
+  });
+});
+
 suite("amendment 2b: the walk deadline returns partials before the axe destroys them", () => {
   // Runs v2r_01m05wjkybhr6cfcggpgrerfqr (v40) and v2r_01m067zf40z4788yb60c380vgp (v41)
   // recorded 27 walks as 0-screen "per-case-timeout" rows with wallMs=0 and NO evidence of
@@ -658,10 +810,10 @@ suite("amendment 2: timeout and batch residual", () => {
     const wrangler = readFileSync("wrangler.jsonc", "utf8");
     const perCase = wrangler.match(/"EXEC_PER_CASE_TIMEOUT_MS"\s*:\s*"(\d+)"/);
     assert(perCase, "EXEC_PER_CASE_TIMEOUT_MS must be declared");
-    assertEq(perCase[1], "540000", "EXEC_PER_CASE_TIMEOUT_MS must be 540000");
+    assertEq(perCase[1], "1800000", "EXEC_PER_CASE_TIMEOUT_MS must be 540000");
   });
 
-  test("all arm configs agree on EXEC_PER_CASE_TIMEOUT_MS=540000", async () => {
+  test("all arm configs agree on EXEC_PER_CASE_TIMEOUT_MS=1800000", async () => {
     const { readFileSync, readdirSync } = await import("fs");
     const armFiles = readdirSync(".").filter((f) => f.startsWith("wrangler.arm-") && f.endsWith(".jsonc"));
     assert(armFiles.length > 0, "there must be at least one arm config");
@@ -669,25 +821,25 @@ suite("amendment 2: timeout and batch residual", () => {
       const content = readFileSync(f, "utf8");
       const perCase = content.match(/"EXEC_PER_CASE_TIMEOUT_MS"\s*:\s*"(\d+)"/);
       assert(perCase, `${f} must declare EXEC_PER_CASE_TIMEOUT_MS`);
-      assertEq(perCase[1], "540000", `${f} must have EXEC_PER_CASE_TIMEOUT_MS=540000`);
+      assertEq(perCase[1], "1800000", `${f} must have EXEC_PER_CASE_TIMEOUT_MS=1800000`);
     }
   });
 
-  test("DEPLOY.md config gate pins EXEC_PER_CASE_TIMEOUT_MS to 540000", async () => {
+  test("DEPLOY.md config gate pins EXEC_PER_CASE_TIMEOUT_MS to 1800000", async () => {
     const { readFileSync } = await import("fs");
     const deploy = readFileSync("DEPLOY.md", "utf8");
     assert(
-      deploy.includes('eq(v.EXEC_PER_CASE_TIMEOUT_MS,"540000"'),
-      "DEPLOY.md must pin EXEC_PER_CASE_TIMEOUT_MS to 540000",
+      deploy.includes('eq(v.EXEC_PER_CASE_TIMEOUT_MS,"1800000"'),
+      "DEPLOY.md must pin EXEC_PER_CASE_TIMEOUT_MS to 1800000",
     );
   });
 
-  test("EXPECTED_STATIC_VARS pins EXEC_PER_CASE_TIMEOUT_MS to 540000", async () => {
+  test("EXPECTED_STATIC_VARS pins EXEC_PER_CASE_TIMEOUT_MS to 1800000", async () => {
     const { readFileSync } = await import("fs");
     const canary = readFileSync("tools/assert-no-active-canary-workflows.mjs", "utf8");
     assert(
-      canary.includes('EXEC_PER_CASE_TIMEOUT_MS: "540000"'),
-      "EXPECTED_STATIC_VARS must pin EXEC_PER_CASE_TIMEOUT_MS to 540000",
+      canary.includes('EXEC_PER_CASE_TIMEOUT_MS: "1800000"'),
+      "EXPECTED_STATIC_VARS must pin EXEC_PER_CASE_TIMEOUT_MS to 1800000",
     );
   });
 

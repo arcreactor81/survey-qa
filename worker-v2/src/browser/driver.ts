@@ -4187,6 +4187,9 @@ export async function walkPath(
   // a screenSignature, and revisits may answer them differently; neither is collapsed here.
   const traversedTransitions = new Map<string, number>();
   const recentTransitionBases: string[] = [];
+  // Whether the LAST step's post-advance epoch was deduped into "the next step's before".
+  // A walk that then ends without a next step owes that final screen a backfill capture.
+  let lastAdvancedEpochSkipped = false;
   let remaining: PlannedDecision[] = Array.isArray(path.decisions) ? [...path.decisions] : [];
   // EVERY question on this walk, including the ones already answered. A screen naming a
   // question whose decision has been used is evidence about which screen this is NOT, and the
@@ -4227,6 +4230,10 @@ export async function walkPath(
   while (stepIndex < opts.maxSteps && Date.now() < opts.deadline && outcome !== "error") {
     const stepT0 = Date.now();
     const errAt = pageErrors.length;
+    // Reset per step: only the dedup site below may set this, so an early-exit branch
+    // (no-advance, blocked, load-crash) can never leave a stale skip from a PRIOR step
+    // and trigger a spurious backfill after the loop.
+    lastAdvancedEpochSkipped = false;
     // Per-phase wall clocks — see StepObservation.phaseMs. Accumulated, never inferred.
     let phaseReadMs = 0;
     let phaseActMs = 0;
@@ -4609,23 +4616,8 @@ export async function walkPath(
     const afterWasRead = after !== null;
     if (!after) after = afterAction;
 
-    // Never pair a CURRENT PNG/AX tree with the stale `afterAction` JSON fallback. If every
-    // post-submit read failed, the missing epoch is named above and `afterEv` stays null.
-    const afterCapture = afterWasRead && after
-      ? recordEpoch(
-          await timed(
-            () => captureScreenEpoch(page, cap, after!, advanced ? "advanced" : "blocked", stepIndex, opts.viewport),
-            (ms) => (phaseCaptureMs += ms),
-          ),
-        )
-      : null;
-    const afterEv = afterCapture?.screenJson.evidenceId ?? null;
-    const stepCaptures = [
-      beforeCapture,
-      ...(afterActionCapture ? [afterActionCapture] : []),
-      ...(afterCapture ? [afterCapture] : []),
-    ];
-
+    // Cycle detection FIRST: whether this transition repeats decides whether the walk
+    // continues, and that decision feeds the epoch dedup directly below.
     let repeatedTransition: { firstStep: number; from: string; to: string } | null = null;
     if (advanced && after) {
       const transitionBase = JSON.stringify([
@@ -4647,6 +4639,33 @@ export async function walkPath(
       recentTransitionBases.push(transitionBase);
       if (recentTransitionBases.length > 2) recentTransitionBases.shift();
     }
+
+    // THE POST-ADVANCE EPOCH IS THE NEXT STEP'S BEFORE-EPOCH — the same screen, captured
+    // twice about a second apart. The v44 phase clocks measured epoch capture at ~21s of
+    // every ~28s step, one third of it this duplicate, so mid-walk it is SKIPPED: the next
+    // iteration's before-epoch is the visual evidence for this screen. A walk that ENDS on
+    // an advanced screen has no next iteration — the post-loop backfill below captures that
+    // final screen instead (tracked by lastAdvancedEpochSkipped). A BLOCKED screen keeps
+    // its epoch here: it is this step's terminal visual state, owned by no later step.
+    const walkWillContinue =
+      advanced && !repeatedTransition && stepIndex + 1 < opts.maxSteps && Date.now() < opts.deadline;
+    lastAdvancedEpochSkipped = Boolean(afterWasRead && after && advanced && walkWillContinue);
+    // Never pair a CURRENT PNG/AX tree with the stale `afterAction` JSON fallback. If every
+    // post-submit read failed, the missing epoch is named above and `afterEv` stays null.
+    const afterCapture = afterWasRead && after && !lastAdvancedEpochSkipped
+      ? recordEpoch(
+          await timed(
+            () => captureScreenEpoch(page, cap, after!, advanced ? "advanced" : "blocked", stepIndex, opts.viewport),
+            (ms) => (phaseCaptureMs += ms),
+          ),
+        )
+      : null;
+    const afterEv = afterCapture?.screenJson.evidenceId ?? null;
+    const stepCaptures = [
+      beforeCapture,
+      ...(afterActionCapture ? [afterActionCapture] : []),
+      ...(afterCapture ? [afterCapture] : []),
+    ];
 
     steps.push({
       stepIndex,
@@ -4846,6 +4865,19 @@ export async function walkPath(
   if (outcome === "completed" && Date.now() >= opts.deadline) {
     outcome = "time-cap";
     outcomeDetail = "walk hit its wall-clock budget";
+  }
+
+  // BACKFILL THE FINAL SCREEN'S EPOCH. When the last step ADVANCED, its post-advance epoch
+  // was deduped on the promise that the next step's before-epoch would capture the same
+  // screen — but the walk ended, so no next step exists and the promise must be kept here.
+  // The page still shows that screen (nothing acted after the advance), so this is the same
+  // capture at the same moment class, under the existing "final" slot.
+  if (lastAdvancedEpochSkipped) {
+    const lastStep = steps[steps.length - 1];
+    const finalScreen = lastStep?.screenAfterAdvance;
+    if (lastStep && finalScreen) {
+      recordEpoch(await captureScreenEpoch(page, cap, finalScreen, "final", lastStep.stepIndex, opts.viewport));
+    }
   }
 
   // HOW THIS WALK ENDED, typed from the final screen. Computed for EVERY outcome, not only the
