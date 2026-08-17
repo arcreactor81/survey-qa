@@ -863,3 +863,94 @@ suite("Planner contract identity: semantic rows, not ids alone", () => {
     assertEq(mod.plan.hashContract(contract), pipelineHashContract(contract));
   });
 });
+
+// ===========================================================================
+// 8. THE PLANNER'S INVENTED MULTI-SELECT DEFAULT PREFERS THE EXCLUSIVE NONE-OPTION
+// ===========================================================================
+
+const exclusionContract = (multi) => ({
+  obligations: [
+    {
+      id: "OBL-X-01",
+      category: "question",
+      statement: 'The survey contains question S9: "Do any of the following apply to you?"',
+      doc_quote: "S9",
+      stimulus: [],
+      expected_observable: "S9 is shown.",
+      browser_observable: "full",
+    },
+    ...(multi
+      ? [
+          {
+            id: "OBL-X-02",
+            category: "instruction",
+            statement: "S9 permits multiple selections; a respondent may select more than one option.",
+            doc_quote: "Select all that apply.",
+            stimulus: [],
+            expected_observable: "",
+            browser_observable: "full",
+          },
+        ]
+      : []),
+    {
+      id: "OBL-X-03",
+      category: "option-set",
+      statement: 'S9 has an option with code 1 and label "An advertising agency".',
+      doc_quote: "1 An advertising agency",
+      stimulus: [],
+      expected_observable: "",
+      browser_observable: "full",
+    },
+    {
+      id: "OBL-X-04",
+      category: "option-set",
+      statement: 'S9 has an option with code 2 and label "A pharmaceutical company".',
+      doc_quote: "2 A pharmaceutical company",
+      stimulus: [],
+      expected_observable: "",
+      browser_observable: "full",
+    },
+    {
+      id: "OBL-X-05",
+      category: "option-set",
+      statement: 'S9 has an option with code 3 and label "None of the above".',
+      doc_quote: "3 None of the above",
+      stimulus: [],
+      expected_observable: "",
+      browser_observable: "full",
+    },
+  ],
+});
+
+const s9DecisionFor = async (multi) => {
+  const mod = await worker();
+  const plan = mod.plan.planFromContract(exclusionContract(multi), {
+    run: "d36x",
+    source: "d36x",
+    contractStatus: "authoritative",
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  for (const entry of plan.floor.paths) {
+    for (const d of entry.decisions ?? []) if (d.question === "S9") return d;
+  }
+  return null;
+};
+
+suite("D36 — an invented multi-select default is the exclusive none-option (the planner half)", () => {
+  test("THE MEASURED SHAPE: a multi-select exclusion question defaults to None of the above, named as such", async () => {
+    // Live 2026-08-17: the planner's first-usable default put a disqualifying affiliation
+    // into `select` for the S50 exclusion screener; plan answers replay identically on
+    // every attempt, so every walk and every pivot died there.
+    const d = await s9DecisionFor(true);
+    assert(d, "the trunk path must carry an S9 decision");
+    assertEq(JSON.stringify(d.select), JSON.stringify(["None of the above"]));
+    assertEq(d.source, "default:exclusive-none-option");
+  });
+
+  test("INERT ON SINGLE-SELECT: without the multi flag the default stays first-non-terminating", async () => {
+    const d = await s9DecisionFor(false);
+    assert(d, "the trunk path must carry an S9 decision");
+    assertEq(d.source, "default:first-non-terminating");
+    assertEq(JSON.stringify(d.select), JSON.stringify(["An advertising agency"]));
+  });
+});
