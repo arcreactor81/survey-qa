@@ -836,3 +836,69 @@ suite("D42 — consecutive same-shaped questions are distinguishable advances", 
     );
   });
 });
+
+suite("D42 — consecutive text-only screens are distinguishable advances", () => {
+  // Measured 2026-08-18, run v2r_01m08r1rvjkkne4sdhr18a42pf walk 2: the "you have
+  // qualified" interstitial (iCongo) and the section intro behind it (iSecA) are both
+  // control-less Next-only screens with identical structure — identical screenSignature,
+  // identical (empty) question identity, progress rendered as unparsed prose — so the
+  // real advance between them read as "did not advance" and the walk stalled at the
+  // main body's doorstep. On a control-less screen only the text can move, and only
+  // navigation can move it.
+  const infoScreen = (text) =>
+    screen("", {
+      signature: "sig:info-shape",
+      controls: [],
+      buttons: [{ idx: 3, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true }],
+    });
+
+  test("THE MEASURED SHAPE: identical signatures, zero controls, different prose => info-screen-text-changed fires", async () => {
+    const mod = await worker();
+    const congrats = infoScreen();
+    congrats.visibleText = "Survey progress: 2% iCongo Congratulations, you have qualified for our research";
+    const intro = infoScreen();
+    intro.visibleText = "Survey progress: 3% iSecA Throughout this survey, we will focus on pediatric patients";
+    const signals = mod.driver.advanceSignals(congrats, intro);
+    assert(!signals.includes("screen-signature-changed"), "the fixture must reproduce the identical-signature shape");
+    assert(!signals.includes("question-identity-changed"), "control-less screens carry no question identity to change");
+    assert(
+      signals.includes("info-screen-text-changed"),
+      `the advance between text-only screens must be detectable: ${JSON.stringify(signals)}`,
+    );
+  });
+
+  test("a RE-READ of the same text-only screen is not an advance", async () => {
+    const mod = await worker();
+    const a = infoScreen();
+    a.visibleText = "Survey progress: 2% iCongo Congratulations, you have qualified";
+    const b = infoScreen();
+    b.visibleText = "Survey progress: 2% iCongo Congratulations, you have qualified";
+    const signals = mod.driver.advanceSignals(a, b);
+    assert(
+      !signals.includes("info-screen-text-changed"),
+      `an unmoved info screen must not read as an advance: ${JSON.stringify(signals)}`,
+    );
+  });
+
+  test("THE GATE: a screen WITH controls whose prose changes (validation re-render) never fires the text signal", async () => {
+    const mod = await worker();
+    const mkAnswerable = (visibleText) =>
+      screen("", {
+        signature: "sig:answerable",
+        controls: [
+          { idx: 5, tag: "input", type: "text", name: "Q1_1", id: null, code: null, label: "Amount", text: "", checked: null, value: "", valueIsUserSupplied: false, disabled: false, required: true, visible: true, operable: true, placeholder: null, maxlength: null, readOnly: false },
+        ],
+        buttons: [{ idx: 7, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true }],
+      });
+    const before = mkAnswerable();
+    before.visibleText = "Q1. How many?";
+    const after = mkAnswerable();
+    after.visibleText = "Please review your responses. Q1. How many?";
+    after.validationMessages = ["Please review your responses."];
+    const signals = mod.driver.advanceSignals(before, after);
+    assert(
+      !signals.includes("info-screen-text-changed"),
+      `a validation re-render of an answerable screen must never fire the text signal: ${JSON.stringify(signals)}`,
+    );
+  });
+});

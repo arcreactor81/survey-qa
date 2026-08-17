@@ -536,7 +536,8 @@ export type AdvanceSignal =
   | "question-identity-changed"
   | "url-changed"
   | "history-length-changed"
-  | "progress-value-increased";
+  | "progress-value-increased"
+  | "info-screen-text-changed";
 
 /**
  * A DECISION THE DRIVER DECLINED TO BIND TO THE SCREEN IN FRONT OF IT.

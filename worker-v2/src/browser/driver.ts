@@ -3812,6 +3812,23 @@ export function advanceSignals(before: RenderedScreen, after: RenderedScreen): A
   const out: AdvanceSignal[] = [];
   if (after.screenSignature !== before.screenSignature) out.push("screen-signature-changed");
   if (questionIdentityOf(after) !== questionIdentityOf(before)) out.push("question-identity-changed");
+  // TEXT-ONLY SCREENS HAVE ONLY THEIR TEXT AS IDENTITY. Two consecutive control-less
+  // interstitials (the live iCongo "you have qualified" -> iSecA section intro, measured
+  // 2026-08-18 run v2r_01m08r1rvjkkne4sdhr18a42pf walk 2) rendered identical structure —
+  // identical screenSignature, identical (empty) question identity, progress text the
+  // reader could not parse as a widget — and every advance between them read as "did not
+  // advance" while the real survey moved on. On a screen with NO interactive controls,
+  // nothing the walker does can change the text except actual navigation, so a text
+  // change IS movement. Gated to control-less pairs: a validation re-render of an
+  // answerable screen can never fake an advance through this signal. Stated limitation:
+  // a self-updating control-less screen (a ticking counter) would also register; that
+  // failure mode is visible in evidence as an advance whose screens share their prose.
+  if (
+    before.controls.length === 0 &&
+    after.controls.length === 0 &&
+    ((before.questionText ?? "") !== (after.questionText ?? "") ||
+      (before.visibleText ?? "") !== (after.visibleText ?? ""))
+  ) out.push("info-screen-text-changed");
   if (after.url !== before.url) out.push("url-changed");
   if (
     before.historyLength !== null && before.historyLength !== undefined &&

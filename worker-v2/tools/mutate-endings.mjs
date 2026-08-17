@@ -175,5 +175,29 @@ await runMutantSuite({
       replace: "  if (false) {",
       kills: ["screen-out wording + a rendered advance the walk MEASURED inert (outcome blocked) => screened-out"],
     },
+    {
+      name: "the info-screen text signal is removed (walks stall at the qualification doorstep again)",
+      breaks:
+        "advance detection on control-less interstitials: the live iCongo -> iSecA pair " +
+        "renders identical structure, so with this signal gone every advance between " +
+        "text-only screens reads 'did not advance' and the walk burns its steps at the " +
+        "main body's doorstep — run v2r_01m08r1rvjkkne4sdhr18a42pf walk 2, measured 18 Aug",
+      file: DR,
+      find: '  ) out.push("info-screen-text-changed");',
+      replace: '  ) void 0;',
+      kills: ["THE MEASURED SHAPE: identical signatures, zero controls, different prose => info-screen-text-changed fires"],
+    },
+    {
+      name: "the info-screen signal loses its control-less gate (validation re-renders fake advances)",
+      breaks:
+        "the false-advance protection: with the gate gone, ANY prose change fires the " +
+        "signal — a validation message appearing on an answerable screen would read as " +
+        "an advance, resurrecting the exact failure class the identity signal was built " +
+        "to prevent",
+      file: DR,
+      find: "    before.controls.length === 0 &&\n    after.controls.length === 0 &&",
+      replace: "    true &&\n    true &&",
+      kills: ["THE GATE: a screen WITH controls whose prose changes (validation re-render) never fires the text signal"],
+    },
   ],
 });
