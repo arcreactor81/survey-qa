@@ -181,6 +181,7 @@ $MutationHarnesses = @(
   "mutate-report-case-identity.mjs",
   "mutate-report-defects.mjs",
   "mutate-report-fanout.mjs",
+  "mutate-route-labels.mjs",
   "mutate-screenout-retry.mjs",
   "mutate-source-block-output-privacy.mjs",
   "mutate-source-roles.mjs",
@@ -196,7 +197,7 @@ $MutationHarnesses = @(
 $MutationLibraries = @(
   "mutate-runner.mjs"
 )
-if ($MutationHarnesses.Count -ne 42 -or $MutationLibraries.Count -ne 1) {
+if ($MutationHarnesses.Count -ne 43 -or $MutationLibraries.Count -ne 1) {
   throw "Mutation manifest cardinality changed"
 }
 $MutationDeclared = @($MutationHarnesses + $MutationLibraries)

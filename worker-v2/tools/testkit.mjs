@@ -187,6 +187,8 @@ export async function loadWorker() {
       // export, which is why the gate can never read a stale build artifact.
       `export * as docxBlocks from ${p("src/extract/docx-blocks.ts")};`,
       `export * as prompts from ${p("src/extract/prompts.ts")};`,
+      `export * as coerce from ${p("src/extract/coerce.ts")};`,
+      `export * as anchorCleaner from ${p("src/extract/anchor-cleaner.ts")};`,
       `export * as types from ${p("src/extract/types.ts")};`,
       // D27 needs the REAL identity mint: the collision it reproduces is minted in the
       // merge and only OBSERVED in the expander, so a fixture requirement row would test
