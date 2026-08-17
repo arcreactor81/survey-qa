@@ -2936,15 +2936,17 @@ async function applyDecision(
   /** BOUNDED SCREEN-OUT RETRY filler variant (WalkOptions.variant). 0 = today's defaults. */
   variant = 0,
   /**
-   * RECOVERY AFTER A VALIDATION REJECTION: bypass the already-answered skip in the value
-   * loop. The site's own validation message is ground truth that whatever the fields hold
-   * is NOT an answer — measured live 2026-08-17 (S70 "Years at organization"): the page
-   * pre-fills "-", the reader's valueIsUserSupplied believes it, the value loop skips the
-   * field as answered, and validation says "Please enter a number." forever. Re-typing a
-   * value the walker itself already derived is idempotent, so the bypass is safe for the
-   * fields this walk actually filled.
+   * RECOVERY AFTER A VALIDATION REJECTION: the failed advance's validation messages, empty
+   * when this is not a recovery. Non-empty does two things in the value loop: (1) bypasses
+   * the already-answered skip — the site's own validation is ground truth that whatever the
+   * fields hold is NOT an answer (measured live 2026-08-17, S70 "Years at organization":
+   * the page pre-fills "-", valueIsUserSupplied believes it, and validation says "Please
+   * enter a number." forever); (2) STEERS the derivation — the first recovery re-typed the
+   * text probe into that semantically numeric text input and was rejected again, so when
+   * the message demands a number, a text input derives a small integer instead of prose
+   * (a linguistic convention, stated; the message is quoted in the receipt).
    */
-  revalidateValues = false,
+  revalidateValidation: readonly string[] = [],
 ): Promise<{ actions: PerformedAction[]; notOffered: string[]; unfillable: UnfillableControl[] }> {
   const actions: PerformedAction[] = [];
   const notOffered: string[] = [];
@@ -3630,11 +3632,20 @@ async function applyDecision(
     // skip off `value.length > 0` would skip every slider on every survey for ever and record
     // the screen as answered. `valueIsUserSupplied` is the reader's answer to exactly that;
     // where it is absent (an older reader) the old test is the honest fallback.
-    const alreadyAnswered = revalidateValues ? false : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));
+    const alreadyAnswered =
+      revalidateValidation.length > 0 ? false : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));
     if (alreadyAnswered) continue;
 
     const planned = decision?.text_entry?.value;
-    const derived = navigatorValueFor(c, variant);
+    // The validation message steers the recovery derivation: "Please enter a number." on a
+    // text-typed input means the probe text can never land. A small positive integer is the
+    // least-committed number for a field whose bounds the markup does not declare.
+    const numericDemanded =
+      revalidateValidation.length > 0 && revalidateValidation.some((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m));
+    const derived =
+      numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== "number"
+        ? { value: "1", how: `the site's validation demands a number (${JSON.stringify(revalidateValidation.find((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m)))})`, via: "type" as const }
+        : navigatorValueFor(c, variant);
     if (planned === undefined && !derived) {
       // NO RULE IS NOT "NOTHING TO ANSWER". The type is one the reader classes as fillable and
       // this harness has no value for it — said out loud rather than passed over.
@@ -4842,8 +4853,9 @@ export async function walkPath(
         stepVariant,
         // The advance failed AND the site printed validation messages: whatever the value
         // fields hold is not an answer, so the recovery's value loop must re-derive rather
-        // than trust the already-answered skip. See applyDecision.revalidateValues.
-        ((after ?? before)?.validationMessages ?? []).length > 0,
+        // than trust the already-answered skip — steered by the messages themselves. See
+        // applyDecision.revalidateValidation.
+        (after ?? before)?.validationMessages ?? [],
       );
       const recoveryReadFailures: ScreenCaptureFailure[] = [];
       let recoveryBaseline: RenderedScreen | null = null;

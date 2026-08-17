@@ -1149,14 +1149,22 @@ suite("amendment 4: a validation rejection overrides the already-answered skip o
       },
       { env, runId, attemptId: "att_d56reval001", pathId: "path_d56reval", witnesses: [] },
     );
-    const recoveryFills = (obs.steps[0]?.recovery?.actions ?? [])
-      .concat(obs.steps[0]?.actions ?? [])
-      .filter((a) => (a.kind === "type-text" || a.kind === "set-value") && a.targetIdx === 0 && a.ok);
+    const allActions = obs.steps.flatMap((s) => s.actions ?? []);
+    const fills = allActions.filter((a) => (a.kind === "type-text" || a.kind === "set-value") && a.targetIdx === 0 && a.ok);
     assert(
-      recoveryFills.length >= 1 || typed.length >= 1,
-      `the validation-rejected placeholder must be re-typed on recovery; actions: ${JSON.stringify(
-        (obs.steps[0]?.recovery?.actions ?? []).map((a) => a.kind),
-      )} step actions: ${JSON.stringify((obs.steps[0]?.actions ?? []).map((a) => a.kind))}`,
+      fills.length >= 1 || typed.length >= 1,
+      `the validation-rejected placeholder must be re-typed on recovery; actions: ${JSON.stringify(allActions.map((a) => a.kind))}`,
+    );
+    // "Please enter a number." must STEER the derivation: the first live recovery re-typed
+    // the text probe and was rejected again. A number, never prose.
+    const values = fills.map((a) => a.value).concat(typed);
+    assert(
+      values.some((v) => /^\d+$/.test(String(v ?? ""))),
+      `the recovery must derive a NUMBER for a number-demanding validation, typed: ${JSON.stringify(values)}`,
+    );
+    assert(
+      !values.includes("QA-PROBE"),
+      `the text probe cannot answer a number-demanding field, typed: ${JSON.stringify(values)}`,
     );
   });
 });

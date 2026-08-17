@@ -206,8 +206,19 @@ await runMutantSuite({
         "while validation says 'Please enter a number.' — the walk blocks at that screen " +
         "with 48 screens behind it, as measured live",
       file: DR,
-      find: "    const alreadyAnswered = revalidateValues ? false : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));",
-      replace: "    const alreadyAnswered = c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0);",
+      find: "      revalidateValidation.length > 0 ? false : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));",
+      replace: "      c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0);",
+      kills: ["a pre-filled placeholder that validation rejects gets re-typed by the recovery pass"],
+    },
+    {
+      name: "the validation message stops steering the recovery derivation (probe text into number fields again)",
+      breaks:
+        "the second half of the S70 stall: the recovery re-types but derives the TEXT probe " +
+        "for a semantically numeric text input, and 'Please enter a number.' rejects it " +
+        "forever — measured on the v54 run's step 48.5",
+      file: DR,
+      find: "      numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== \"number\"",
+      replace: "      false",
       kills: ["a pre-filled placeholder that validation rejects gets re-typed by the recovery pass"],
     },
     {
