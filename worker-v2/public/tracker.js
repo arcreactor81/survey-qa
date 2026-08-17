@@ -2445,6 +2445,14 @@
 
     root.appendChild(card);
 
+    // Direction 2: phase timing strip — between the card and the activity feed.
+    var phaseStrip = renderPhaseTimingStrip(view);
+    if (phaseStrip) root.appendChild(phaseStrip);
+
+    // Direction 2: depth indicators — unique screens and return visits.
+    var depth = renderDepthIndicators(view);
+    if (depth) root.appendChild(depth);
+
     // Document reading has its own fixed denominators and durable unit identities. Keep it
     // default-visible and separate from both QA coverage and browser movement.
     if (transportState(view) !== "not-found") root.appendChild(renderDocumentReading(view));
@@ -2454,6 +2462,10 @@
     // a checked case; placing these numbers in one progress meter would erase that distinction.
     var activity = renderBrowserActivity(view);
     if (activity) root.appendChild(activity);
+
+    // Direction 2: walk timeline with per-walk detail and mini filmstrips.
+    var walkTl = renderWalkTimeline(view);
+    if (walkTl) root.appendChild(walkTl);
 
     var screens = renderScreenEvidence(view);
     if (screens) root.appendChild(screens);
@@ -2493,6 +2505,238 @@
       if (!isFinite(st)) continue;
       elapsedNodes[j].textContent = clockMs(Math.max(0, nowMs - st));
     }
+  }
+
+  // ---------------------------------------------------------------- Direction 2: walk timeline
+  //
+  // A vertical feed of completed walks, each showing ordinal, outcome badge, step
+  // count, screen-change count, wall time, credited execution cases, and a mini
+  // filmstrip placeholder (the screens API handles actual images in watch.js).
+  // Mid-run, when the walk-artifact-index is missing, the filmstrip degrades to a
+  // text note — the normal mid-run condition, not an error.
+
+  var OUTCOME_WORDS = {
+    completed: { label: "Completed", cls: "walk-outcome--completed" },
+    "no-advance-control": { label: "No advance control", cls: "walk-outcome--blocked" },
+    blocked: { label: "Blocked", cls: "walk-outcome--blocked" },
+    "blocked-after-probe": { label: "Blocked after probe", cls: "walk-outcome--blocked" },
+    "step-cap": { label: "Step cap", cls: "walk-outcome--step-cap" },
+    "time-cap": { label: "Time cap", cls: "walk-outcome--step-cap" },
+    "load-crash": { label: "Load crash", cls: "walk-outcome--blocked" },
+    "browser-hung": { label: "Browser hung", cls: "walk-outcome--blocked" },
+    "per-case-timeout": { label: "Timeout", cls: "walk-outcome--step-cap" },
+    "cycle-detected": { label: "Cycle detected", cls: "walk-outcome--blocked" },
+    error: { label: "Error", cls: "walk-outcome--blocked" }
+  };
+
+  function renderWalkTimeline(view) {
+    var execution = view.execution;
+    if (!execution) return null;
+    var walks = execution.walks;
+    if (!Array.isArray(walks) || walks.length === 0) return null;
+
+    var section = el("section", { cls: "walk-timeline-section" });
+    section.appendChild(el("div", { cls: "section-label", text: "Walk timeline · most recent first" }));
+
+    var list = el("ul", { cls: "walk-timeline-list" });
+    // walks are already in order from the execution-activity projection (last N walks).
+    // Render most-recent first.
+    var reversed = walks.slice().reverse();
+    for (var i = 0; i < reversed.length; i++) {
+      var w = reversed[i];
+      var ow = OUTCOME_WORDS[w.outcome] || { label: w.outcome || "unknown", cls: "walk-outcome--blocked" };
+
+      var header = el("div", { cls: "walk-entry__header" }, [
+        el("span", { cls: "walk-entry__ordinal", text: "Walk " + (w.ordinal || (reversed.length - i)) }),
+        el("span", { cls: "walk-entry__outcome " + ow.cls, text: ow.label }),
+        el("span", { cls: "walk-entry__stats" }, [
+          el("span", { text: intOr(w.steps, "?") + " steps" }),
+          el("span", { text: intOr(w.screensAdvanced, "?") + " screen changes" }),
+          el("span", { text: clockMs(w.wallMs || 0) })
+        ])
+      ]);
+
+      var entry = el("li", { cls: "walk-entry" }, [header]);
+
+      // Credited execution cases
+      var cases = Array.isArray(w.caseIds) ? w.caseIds : [];
+      if (cases.length > 0) {
+        var caseRow = el("div", { cls: "walk-entry__cases" });
+        for (var c = 0; c < Math.min(cases.length, 8); c++) {
+          caseRow.appendChild(el("span", { cls: "walk-entry__case-chip", text: cases[c] }));
+        }
+        if (cases.length > 8) {
+          caseRow.appendChild(el("span", { cls: "walk-entry__case-chip walk-entry__case-chip--more", text: "+" + (cases.length - 8) + " more" }));
+        }
+        entry.appendChild(caseRow);
+      }
+
+      // Mini filmstrip placeholder — walk.js handles actual image loading
+      // from the screens API. The artifact state tells us whether images
+      // are available.
+      var artifact = w.artifact;
+      if (artifact && artifact.state === "inspected" && typeof artifact.screenCaptureEpochs === "number" && artifact.screenCaptureEpochs > 0) {
+        var strip = el("div", { cls: "walk-entry__filmstrip" });
+        var count = Math.min(artifact.screenCaptureEpochs, 5);
+        for (var s = 0; s < count; s++) {
+          strip.appendChild(el("div", { cls: "walk-entry__thumb" }, [
+            el("span", { text: "Step " + (s + 1) })
+          ]));
+        }
+        entry.appendChild(strip);
+      } else if (artifact && (artifact.state === "not-yet-indexed" || artifact.state === "unresolved")) {
+        entry.appendChild(el("p", { cls: "walk-entry__filmstrip-note", text: "Screenshots available after run completes." }));
+      } else if (w.outcome === "blocked" || w.outcome === "load-crash" || w.outcome === "error") {
+        entry.appendChild(el("p", {
+          cls: "walk-entry__filmstrip-note",
+          text: "Walk stopped — " + (ow.label.toLowerCase()) + "."
+        }));
+      }
+
+      list.appendChild(entry);
+    }
+    section.appendChild(list);
+    return section;
+  }
+
+  // ---------------------------------------------------------------- Direction 2: phase timing strip
+  //
+  // A horizontal stacked bar showing the six phases' wall-clock proportions.
+  // Completed phases show duration; the active phase pulses. Derived from
+  // status.phases[].startedAt / endedAt (the Direction 2 API addition).
+
+  function renderPhaseTimingStrip(view) {
+    var status = view.status;
+    if (!status || !Array.isArray(status.phases)) return null;
+
+    var reported = {};
+    status.phases.forEach(function (p) { if (p && p.name) reported[p.name] = p; });
+
+    // Check if any phase has timing data (startedAt/endedAt are the new fields)
+    var hasTimingData = false;
+    status.phases.forEach(function (p) {
+      if (p && (p.startedAt || p.endedAt)) hasTimingData = true;
+    });
+    if (!hasTimingData) return null;
+
+    var segments = [];
+    var legendItems = [];
+    var nowMs = ms(view.now) || Date.now();
+
+    PHASES.forEach(function (def) {
+      var p = reported[def.name];
+      if (!p) return;
+      var key = p.state && PHASE_STATE[p.state] ? p.state : "unknown";
+      var startMs = p.startedAt ? ms(p.startedAt) : null;
+      var endMs = p.endedAt ? ms(p.endedAt) : null;
+      var durationMs = null;
+
+      if (startMs != null && endMs != null) {
+        durationMs = endMs - startMs;
+      } else if (startMs != null && p.state === "active") {
+        durationMs = nowMs - startMs;
+      }
+
+      var durationText = durationMs != null ? clockMs(durationMs) : null;
+      var flexValue = durationMs != null ? Math.max(1, Math.round(durationMs / 1000)) : 1;
+
+      var segClass = "phase-timing-seg";
+      if (key === "complete") segClass += " phase-timing-seg--done";
+      else if (key === "active") segClass += " phase-timing-seg--active";
+      else if (key === "pending" || key === "unknown") segClass += " phase-timing-seg--pending";
+      else segClass += " phase-timing-seg--done";
+
+      segments.push({
+        label: def.label,
+        cls: segClass,
+        flex: flexValue,
+        duration: durationText,
+        state: key,
+        phaseDef: def
+      });
+
+      var glyphCls = key === "complete" || key === "stopped" || key === "skipped"
+        ? "phase-glyph--done"
+        : key === "active" ? "phase-glyph--active" : "phase-glyph--pending";
+      var glyph = key === "complete" || key === "stopped" || key === "skipped"
+        ? "✓"
+        : key === "active" ? "●" : "○";
+
+      legendItems.push(el("div", { cls: "phase-timing-item" }, [
+        el("span", { cls: "phase-glyph " + glyphCls, text: glyph }),
+        el("span", { cls: "phase-timing-name", text: def.label }),
+        durationText ? el("span", { cls: "phase-timing-time num", text: durationText }) : null
+      ]));
+    });
+
+    if (!segments.length) return null;
+
+    var bar = el("div", { cls: "phase-timing-bar" });
+    segments.forEach(function (seg) {
+      var s = el("div", {
+        cls: seg.cls,
+        attrs: { title: seg.label + (seg.duration ? ": " + seg.duration : ": pending") }
+      });
+      s.style.flex = String(seg.flex);
+      if (seg.duration && seg.flex > 5) {
+        s.textContent = seg.label.substring(0, 6);
+      }
+      bar.appendChild(s);
+    });
+
+    var section = el("section", { cls: "phase-timing-section" });
+    section.appendChild(el("div", { cls: "section-label", text: "Phase timeline" }));
+    section.appendChild(bar);
+    section.appendChild(el("div", { cls: "phase-timing-legend" }, legendItems));
+    return section;
+  }
+
+  // ---------------------------------------------------------------- Direction 2: depth indicators
+  //
+  // Two compact stat tiles: unique screens observed and return visits.
+  // These already exist in the execution-activity response totals.
+
+  function renderDepthIndicators(view) {
+    var execution = view.execution;
+    if (!execution) return null;
+    var totals = execution.totals || {};
+
+    var unique = totals.uniqueStableScreensObserved;
+    var returns = totals.returnScreenChangesObserved;
+    var origins = Array.isArray(totals.visitedOrigins) ? totals.visitedOrigins : [];
+
+    if (typeof unique !== "number" && typeof returns !== "number" && !origins.length) return null;
+
+    var tiles = [];
+    if (typeof unique === "number") {
+      tiles.push(el("div", { cls: "depth-tile" }, [
+        el("div", { cls: "depth-tile__label", text: "Unique screens" }),
+        el("div", { cls: "depth-tile__value num", text: String(unique) }),
+        el("div", { cls: "depth-tile__sub", text: totals.uniqueStableScreensExact
+          ? "All walk artifacts inspected"
+          : "Lower bound — not all artifacts inspected" })
+      ]));
+    }
+    if (typeof returns === "number") {
+      tiles.push(el("div", { cls: "depth-tile" }, [
+        el("div", { cls: "depth-tile__label", text: "Return visits" }),
+        el("div", { cls: "depth-tile__value num", text: String(returns) }),
+        el("div", { cls: "depth-tile__sub", text: "Screen changes returning to a screen already seen" })
+      ]));
+    }
+    if (origins.length) {
+      tiles.push(el("div", { cls: "depth-tile" }, [
+        el("div", { cls: "depth-tile__label", text: "Visited origins" }),
+        el("div", { cls: "depth-tile__value num", text: String(origins.length) }),
+        el("div", { cls: "depth-tile__sub", text: origins.slice(0, 3).join(", ") +
+          (origins.length > 3 ? " and " + (origins.length - 3) + " more" : "") })
+      ]));
+    }
+
+    var section = el("section", { cls: "depth-section" });
+    section.appendChild(el("div", { cls: "section-label", text: "Depth indicators" }));
+    section.appendChild(el("div", { cls: "depth-tiles" }, tiles));
+    return section;
   }
 
   global.SurveyQATracker = {

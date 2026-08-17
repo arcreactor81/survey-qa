@@ -1546,6 +1546,104 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .motion-toggle:hover { border-color: var(--accent); }
 
 /* =====================================================================
+ * REGION 5b — Direction 2 progress page components.
+ * Walk timeline, phase timing strip, depth indicators.
+ * ===================================================================== */
+
+/* --- phase timing strip --- */
+.phase-timing-section { margin: 18px 0; }
+.phase-timing-bar {
+  display: flex; height: 26px;
+  border-radius: var(--radius-sm); overflow: hidden;
+  margin-bottom: 8px; border: 1px solid var(--border);
+}
+.phase-timing-seg {
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 8px; letter-spacing: .04em;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 5px;
+  color: var(--ink);
+}
+.phase-timing-seg--done { background: var(--ok-bg); }
+.phase-timing-seg--active { background: var(--accent); color: var(--paper); }
+.phase-timing-seg--pending { background: var(--surface-2); color: var(--muted); }
+.phase-timing-legend {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.phase-timing-item { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.phase-glyph { font-size: 12px; width: 14px; text-align: center; }
+.phase-glyph--done { color: var(--ok); }
+.phase-glyph--active { color: var(--accent); }
+.phase-glyph--pending { color: var(--muted); }
+.phase-timing-name { color: var(--text); }
+.phase-timing-time { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
+/* --- depth indicators --- */
+.depth-section { margin: 18px 0; }
+.depth-tiles {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;
+}
+.depth-tile {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px; box-shadow: var(--shadow-sm);
+}
+.depth-tile__label {
+  font-family: var(--mono); font-size: 9px; text-transform: uppercase;
+  letter-spacing: .1em; color: var(--muted); margin-bottom: 3px;
+}
+.depth-tile__value {
+  font-family: "Instrument Serif", var(--serif); font-size: 28px;
+  color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.depth-tile__sub { font-size: 10px; color: var(--muted); margin-top: 3px; }
+
+/* --- walk timeline --- */
+.walk-timeline-section { margin: 22px 0; }
+.walk-timeline-list { list-style: none; padding: 0; }
+.walk-entry {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 16px; margin-bottom: 10px; box-shadow: var(--shadow-sm);
+}
+.walk-entry__header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.walk-entry__ordinal {
+  font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--ink);
+}
+.walk-entry__outcome {
+  font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
+  padding: 2px 7px; border-radius: var(--radius-pill);
+}
+.walk-outcome--completed { background: var(--ok-bg); border: 1px solid var(--ok-border); color: var(--ok); }
+.walk-outcome--blocked { background: var(--amber-bg); border: 1px solid var(--amber-border); color: var(--amber); }
+.walk-outcome--step-cap { background: var(--info-bg); border: 1px solid var(--info-border); color: var(--info); }
+.walk-entry__stats {
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  display: flex; gap: 10px;
+}
+.walk-entry__cases {
+  margin-top: 5px; display: flex; gap: 3px; flex-wrap: wrap;
+}
+.walk-entry__case-chip {
+  font-family: var(--mono); font-size: 8px; padding: 1px 5px;
+  background: var(--ok-bg); border: 1px solid var(--ok-border); border-radius: 3px; color: var(--ok);
+}
+.walk-entry__case-chip--more {
+  background: var(--surface-2); border-color: var(--border); color: var(--muted);
+}
+.walk-entry__filmstrip {
+  display: flex; gap: 5px; margin-top: 8px; overflow-x: auto; padding-bottom: 3px;
+}
+.walk-entry__thumb {
+  width: 90px; min-width: 90px; aspect-ratio: 16/10;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 8px; color: var(--muted); text-align: center; padding: 3px;
+}
+.walk-entry__filmstrip-note {
+  font-size: 10px; color: var(--muted); font-style: italic; margin-top: 5px;
+}
+
+/* =====================================================================
  * REGION 6 — print. Warnings and denominators must survive export.
  * ===================================================================== */
 @media print {
