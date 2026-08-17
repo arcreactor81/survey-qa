@@ -1324,11 +1324,21 @@ export async function captureScreenEpoch(
     geometryAttempt.failure.stepIndex = stepIndex;
     geometryAttempt.failure.slot = slot;
   }
-  const screenshotAttempt = await shoot(page);
-  const screenshotAttemptedAt = new Date().toISOString();
-  const accessibilityPrepared = await prepareAccessibility(page, stepIndex, slot);
-  const pdfAttemptedAt = new Date().toISOString();
-  const pdfAttempt = await capturePdfBytes(page, geometryAttempt.geometry);
+  // THE THREE HEAVY PROTOCOL CALLS RUN CONCURRENTLY. Each is a READ of the same settled
+  // page — a PNG, the AX tree, a PDF print — and the v44 phase clocks measured them at
+  // ~21s of every ~28s step when made back-to-back (three epochs per step, ~7s per epoch,
+  // sequential inside each). Concurrency also NARROWS the startedAt/endedAt window the
+  // epoch claims its modalities were captured within — the pairing gets more atomic, not
+  // less. Geometry stays first: the PDF print takes its page dimensions from it.
+  const [screenshotSettled, accessibilityPrepared, pdfSettled] = await Promise.all([
+    shoot(page).then((attempt) => ({ attempt, attemptedAt: new Date().toISOString() })),
+    prepareAccessibility(page, stepIndex, slot),
+    capturePdfBytes(page, geometryAttempt.geometry).then((attempt) => ({ attempt, attemptedAt: new Date().toISOString() })),
+  ]);
+  const screenshotAttempt = screenshotSettled.attempt;
+  const screenshotAttemptedAt = screenshotSettled.attemptedAt;
+  const pdfAttempt = pdfSettled.attempt;
+  const pdfAttemptedAt = pdfSettled.attemptedAt;
   // End the browser capture window before writing anything to evidence storage.
   const endedAt = new Date().toISOString();
 

@@ -405,3 +405,46 @@ suite("D47 — PDF capture success path via CDP session stub", () => {
     assertEq(new Set(allRefs.map((r) => r.evidenceId)).size, 4, "all four modality refs must have distinct evidence ids");
   });
 });
+
+/* ============================================================ capture concurrency
+ *
+ * The v44 phase clocks measured epoch capture at ~21s of every ~28s step: three heavy
+ * protocol reads (PNG, full AX tree, PDF print) made back-to-back, three epochs per step.
+ * The three reads now run CONCURRENTLY — each reads the same settled page, and the
+ * narrower startedAt..endedAt window makes the epoch's pairing claim MORE atomic. This
+ * pins the concurrency with injected latency: sequential would pay the SUM of the delays,
+ * concurrent pays roughly the slowest one.
+ */
+
+suite("D47 — the three heavy capture reads run concurrently, not back-to-back", () => {
+  test("an epoch over a slow page costs ~max(delays), not their sum", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const runId = mod.ids.mintRunId();
+    const rendered = screen();
+    const DELAY = 400;
+    const page = goodPage(rendered);
+    const slow = (v) => new Promise((resolve) => setTimeout(() => resolve(v), DELAY));
+    page.screenshot = () => slow(new TextEncoder().encode("PNG-D47"));
+    page.accessibility = { async snapshot() { return slow(axTree()); } };
+    page.createCDPSession = async () => stubCDPSession(); // PDF path exercised too
+
+    const t0 = Date.now();
+    const epoch = await mod.driver.captureScreenEpoch(
+      page,
+      cap(env, runId),
+      rendered,
+      "before",
+      1,
+      { width: 1280, height: 900 },
+    );
+    const elapsed = Date.now() - t0;
+
+    assertEq(epoch.screenshot.status, "captured", "the slow screenshot must still capture");
+    assertEq(epoch.accessibility.status, "captured", "the slow AX snapshot must still capture");
+    assert(
+      elapsed < DELAY * 2,
+      `two ${DELAY}ms reads cost ${elapsed}ms — back-to-back again; concurrent capture must pay ~max, not the sum`,
+    );
+  });
+});
