@@ -486,6 +486,75 @@ suite("amendment 2c: a hung screen read becomes a recorded outcome, never a sile
   });
 });
 
+suite("amendment 2d: every step says where its time went (phaseMs)", () => {
+  // The 2026-08-17 deep walks cost ~19s per screen while the same screens read locally in
+  // ~1.5s. The pace work needs MEASURED waste, not inferred waste: each step now records
+  // read/act/advance/capture wall clocks, additively.
+  test("a walked step carries phaseMs with all four phases, bounded by the step's wallMs", async () => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const screenJson = {
+      url: "https://fixture.invalid/survey",
+      title: "S1",
+      questionText: "S1. A question?",
+      grid: null,
+      collectedErrors: [],
+      readerLimitations: [],
+      controls: [],
+      optionGroups: [],
+      buttons: [],
+      validationMessages: [],
+      progress: { present: false, value: null },
+      counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:phase",
+    };
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        if (typeof script === "string" && script.includes("screenSignature")) return screenJson;
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return [];
+      },
+      async screenshot() {
+        throw new Error("no screenshot in this harness");
+      },
+      async setViewport() {},
+      on() {},
+      async close() {},
+      async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56phase", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey",
+        runId,
+        planRevisionId: "plan_d56phase1",
+        attemptId: "att_d56phase0001",
+        tier: 1,
+        maxSteps: 1,
+        deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 },
+        applyHistoryShim: false,
+        advanceTimeoutMs: 200,
+      },
+      { env, runId, attemptId: "att_d56phase0001", pathId: "path_d56phase", witnesses: [] },
+    );
+    assert(obs.steps.length >= 1, "the walk must record at least one step");
+    const s = obs.steps[0];
+    assert(s.phaseMs && typeof s.phaseMs === "object", "phaseMs must be present on a current walker's step");
+    for (const k of ["read", "act", "advance", "capture"]) {
+      assert(Number.isFinite(s.phaseMs[k]) && s.phaseMs[k] >= 0, `phaseMs.${k} must be a non-negative number`);
+    }
+    const sum = s.phaseMs.read + s.phaseMs.act + s.phaseMs.advance + s.phaseMs.capture;
+    assert(sum <= s.wallMs + 5, `phase clocks (${sum}ms) must not exceed the step's wallMs (${s.wallMs}ms)`);
+  });
+});
+
 suite("amendment 2b: the walk deadline returns partials before the axe destroys them", () => {
   // Runs v2r_01m05wjkybhr6cfcggpgrerfqr (v40) and v2r_01m067zf40z4788yb60c380vgp (v41)
   // recorded 27 walks as 0-screen "per-case-timeout" rows with wallMs=0 and NO evidence of
@@ -584,15 +653,15 @@ suite("amendment 2: timeout and batch residual", () => {
     );
   });
 
-  test("EXEC_PER_CASE_TIMEOUT_MS is 120000 in wrangler.jsonc", async () => {
+  test("EXEC_PER_CASE_TIMEOUT_MS is 540000 in wrangler.jsonc", async () => {
     const { readFileSync } = await import("fs");
     const wrangler = readFileSync("wrangler.jsonc", "utf8");
     const perCase = wrangler.match(/"EXEC_PER_CASE_TIMEOUT_MS"\s*:\s*"(\d+)"/);
     assert(perCase, "EXEC_PER_CASE_TIMEOUT_MS must be declared");
-    assertEq(perCase[1], "120000", "EXEC_PER_CASE_TIMEOUT_MS must be 120000");
+    assertEq(perCase[1], "540000", "EXEC_PER_CASE_TIMEOUT_MS must be 540000");
   });
 
-  test("all arm configs agree on EXEC_PER_CASE_TIMEOUT_MS=120000", async () => {
+  test("all arm configs agree on EXEC_PER_CASE_TIMEOUT_MS=540000", async () => {
     const { readFileSync, readdirSync } = await import("fs");
     const armFiles = readdirSync(".").filter((f) => f.startsWith("wrangler.arm-") && f.endsWith(".jsonc"));
     assert(armFiles.length > 0, "there must be at least one arm config");
@@ -600,25 +669,25 @@ suite("amendment 2: timeout and batch residual", () => {
       const content = readFileSync(f, "utf8");
       const perCase = content.match(/"EXEC_PER_CASE_TIMEOUT_MS"\s*:\s*"(\d+)"/);
       assert(perCase, `${f} must declare EXEC_PER_CASE_TIMEOUT_MS`);
-      assertEq(perCase[1], "120000", `${f} must have EXEC_PER_CASE_TIMEOUT_MS=120000`);
+      assertEq(perCase[1], "540000", `${f} must have EXEC_PER_CASE_TIMEOUT_MS=540000`);
     }
   });
 
-  test("DEPLOY.md config gate pins EXEC_PER_CASE_TIMEOUT_MS to 120000", async () => {
+  test("DEPLOY.md config gate pins EXEC_PER_CASE_TIMEOUT_MS to 540000", async () => {
     const { readFileSync } = await import("fs");
     const deploy = readFileSync("DEPLOY.md", "utf8");
     assert(
-      deploy.includes('eq(v.EXEC_PER_CASE_TIMEOUT_MS,"120000"'),
-      "DEPLOY.md must pin EXEC_PER_CASE_TIMEOUT_MS to 120000",
+      deploy.includes('eq(v.EXEC_PER_CASE_TIMEOUT_MS,"540000"'),
+      "DEPLOY.md must pin EXEC_PER_CASE_TIMEOUT_MS to 540000",
     );
   });
 
-  test("EXPECTED_STATIC_VARS pins EXEC_PER_CASE_TIMEOUT_MS to 120000", async () => {
+  test("EXPECTED_STATIC_VARS pins EXEC_PER_CASE_TIMEOUT_MS to 540000", async () => {
     const { readFileSync } = await import("fs");
     const canary = readFileSync("tools/assert-no-active-canary-workflows.mjs", "utf8");
     assert(
-      canary.includes('EXEC_PER_CASE_TIMEOUT_MS: "120000"'),
-      "EXPECTED_STATIC_VARS must pin EXEC_PER_CASE_TIMEOUT_MS to 120000",
+      canary.includes('EXEC_PER_CASE_TIMEOUT_MS: "540000"'),
+      "EXPECTED_STATIC_VARS must pin EXEC_PER_CASE_TIMEOUT_MS to 540000",
     );
   });
 

@@ -4217,10 +4217,26 @@ export async function walkPath(
   while (stepIndex < opts.maxSteps && Date.now() < opts.deadline && outcome !== "error") {
     const stepT0 = Date.now();
     const errAt = pageErrors.length;
+    // Per-phase wall clocks — see StepObservation.phaseMs. Accumulated, never inferred.
+    let phaseReadMs = 0;
+    let phaseActMs = 0;
+    let phaseAdvanceMs = 0;
+    let phaseCaptureMs = 0;
+    const timed = async <T>(fn: () => Promise<T>, add: (ms: number) => void): Promise<T> => {
+      const t = Date.now();
+      try {
+        return await fn();
+      } finally {
+        add(Date.now() - t);
+      }
+    };
 
     let before: RenderedScreen;
     try {
-      before = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read before step ${stepIndex}`);
+      before = await timed(
+        () => boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read before step ${stepIndex}`),
+        (ms) => (phaseReadMs += ms),
+      );
     } catch (err) {
       recordCaptureFailure(
         captureFailureRow(
@@ -4297,7 +4313,7 @@ export async function walkPath(
     }
 
     const beforeCapture = recordEpoch(
-      await captureScreenEpoch(page, cap, before, "before", stepIndex, opts.viewport),
+      await timed(() => captureScreenEpoch(page, cap, before, "before", stepIndex, opts.viewport), (ms) => (phaseCaptureMs += ms)),
     );
     const beforeEv = beforeCapture.screenJson.evidenceId;
 
@@ -4345,6 +4361,7 @@ export async function walkPath(
         consoleErrors: consoleErrors.slice(),
         evidence: stepEvidence(beforeEv, null, [beforeCapture]),
         wallMs: Date.now() - stepT0,
+        phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
       });
       outcome = initialStop.kind;
       outcomeDetail = initialStop.detail;
@@ -4361,14 +4378,20 @@ export async function walkPath(
     if (matched) remaining.splice(matched.index, 1);
     bindingRefusalCount += binding.refusals.length;
 
-    const { actions, notOffered, unfillable } = await applyDecision(page, before, decision, pathHints, fillerVariant);
+    const { actions, notOffered, unfillable } = await timed(
+      () => applyDecision(page, before, decision, pathHints, fillerVariant),
+      (ms) => (phaseActMs += ms),
+    );
     for (const u of unfillable) unfillableControls.push({ ...u, stepIndex });
     countDefaults(actions);
 
     const stepReadFailures: ScreenCaptureFailure[] = [];
     let afterAction: RenderedScreen | null = null;
     try {
-      afterAction = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read after acting on step ${stepIndex}`);
+      afterAction = await timed(
+        () => boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read after acting on step ${stepIndex}`),
+        (ms) => (phaseReadMs += ms),
+      );
     } catch (err) {
       const failure = recordCaptureFailure(
         captureFailureRow(
@@ -4408,13 +4431,17 @@ export async function walkPath(
     const nb = navigation.kind === "unique" ? navigation.control : null;
     const afterActionCapture = afterAction
       ? recordEpoch(
-          await captureScreenEpoch(
-            page,
-            cap,
-            afterAction,
-            navigation.kind === "none" ? "final" : "after-action",
-            stepIndex,
-            opts.viewport,
+          await timed(
+            () =>
+              captureScreenEpoch(
+                page,
+                cap,
+                afterAction!,
+                navigation.kind === "none" ? "final" : "after-action",
+                stepIndex,
+                opts.viewport,
+              ),
+            (ms) => (phaseCaptureMs += ms),
           ),
         )
       : null;
@@ -4447,6 +4474,7 @@ export async function walkPath(
         consoleErrors: consoleErrors.slice(),
         evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
         wallMs: Date.now() - stepT0,
+        phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
       });
       outcome = NAVIGATION_FORWARD_AMBIGUOUS;
       outcomeDetail = detail;
@@ -4484,6 +4512,7 @@ export async function walkPath(
         consoleErrors: consoleErrors.slice(),
         evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
         wallMs: Date.now() - stepT0,
+        phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
       });
       outcome = "no-advance-control";
       // NAME THE UNANSWERED CONTROL, OR THIS SENTENCE IS A NORMAL ENDING.
@@ -4503,6 +4532,7 @@ export async function walkPath(
       break;
     }
 
+    const tAdvance0 = Date.now();
     const clickRes = await clickIdx(page, nb.idx);
     actions.push({
       kind: "click-next",
@@ -4565,6 +4595,7 @@ export async function walkPath(
       const receipt = [...actions].reverse().find((action) => action.kind === "click-next");
       if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${movementSignals.join("+")}`;
     }
+    phaseAdvanceMs += Date.now() - tAdvance0;
     const afterWasRead = after !== null;
     if (!after) after = afterAction;
 
@@ -4572,7 +4603,10 @@ export async function walkPath(
     // post-submit read failed, the missing epoch is named above and `afterEv` stays null.
     const afterCapture = afterWasRead && after
       ? recordEpoch(
-          await captureScreenEpoch(page, cap, after, advanced ? "advanced" : "blocked", stepIndex, opts.viewport),
+          await timed(
+            () => captureScreenEpoch(page, cap, after!, advanced ? "advanced" : "blocked", stepIndex, opts.viewport),
+            (ms) => (phaseCaptureMs += ms),
+          ),
         )
       : null;
     const afterEv = afterCapture?.screenJson.evidenceId ?? null;
@@ -4630,6 +4664,7 @@ export async function walkPath(
       consoleErrors: consoleErrors.slice(),
       evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
       wallMs: Date.now() - stepT0,
+      phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
     });
 
     if (repeatedTransition) {

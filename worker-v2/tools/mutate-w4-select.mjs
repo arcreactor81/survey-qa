@@ -183,8 +183,8 @@ await runMutantSuite({
         "screener-crossing walks on run v2r_01m067zf40z4788yb60c380vgp with no evidence of " +
         "where they hung",
       file: DR,
-      find: "      before = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read before step ${stepIndex}`);",
-      replace: "      before = await read(page);",
+      find: "        () => boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read before step ${stepIndex}`),",
+      replace: "        () => read(page),",
       kills: ["a never-resolving screen read rejects at readTimeoutMs and the walk returns an error observation"],
     },
     {

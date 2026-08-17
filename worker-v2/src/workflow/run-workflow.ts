@@ -323,7 +323,7 @@ const EXTRACT_POLICY = { retries: { limit: 2, delay: "15 seconds", backoff: "lin
 // equal — and the engine killed every batch mid-walk before anything committed (run
 // v2r_01m05bh8scxkebmqd7h9wmmf5z: sessions churning, walks recording zero screens). The
 // d56 config-arithmetic test pins step-timeout >= EXEC_BATCH_MAX_MS + 120s slack.
-const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "8 minutes" } as const;
+const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "12 minutes" } as const;
 /**
  * THE JUDGING STAGES. `delay` is 30 seconds and NOT 5 for a reason that is not politeness.
  *

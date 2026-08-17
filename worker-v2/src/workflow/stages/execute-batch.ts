@@ -35,7 +35,6 @@ import type { ExecutionCursor } from "../../types/contracts";
 import {
   acquireSession,
   applySessionToCursor,
-  releaseSession,
   retireSession,
   sessionExpired,
   type SessionHandle,
@@ -1441,21 +1440,24 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
     }
   };
 
-  if (sessionWedged || done) {
-    await closeSession(() => retireSession(handle), "session close");
-    await updateCheckpoint(
-      env,
-      args.runId,
-      (d) => {
-        if (!d.execution) return false;
-        d.execution = { ...d.execution, sessionId: null, sessionOpenedAt: null };
-        return true;
-      },
-      { fence: args.fence },
-    );
-  } else {
-    await closeSession(() => releaseSession(handle), "session disconnect");
-  }
+  // EVERY BATCH RETURNS ITS BROWSER — reuse across batches ended with the long-walk
+  // budgets (2026-08-17). A walk may now run ~9 minutes, and the platform enforces a
+  // measured ~11-minute total-session wall (run-records PLANNING-cloudflare-limits): a
+  // walk starting on a session another batch already aged would hit that wall mid-walk,
+  // which is exactly the destroyed-evidence class the budget raise exists to close. A
+  // fresh launch per batch costs one session create (rate limit 1/s, billed by the same
+  // browser-hours either way) and buys every batch the full wall.
+  await closeSession(() => retireSession(handle), "session close");
+  await updateCheckpoint(
+    env,
+    args.runId,
+    (d) => {
+      if (!d.execution) return false;
+      d.execution = { ...d.execution, sessionId: null, sessionOpenedAt: null };
+      return true;
+    },
+    { fence: args.fence },
+  );
 
   // Every planned walk has been attempted and mandatory cases are still owed an observation.
   // WHOSE FAULT THAT IS is a question about evidence, not about the pending count — see

@@ -762,6 +762,15 @@ export interface StepObservation {
     captureFailureCount?: number;
   };
   wallMs: number;
+  /**
+   * WHERE THE STEP'S TIME WENT, measured, not inferred. `read` covers the screen-JSON
+   * reads (before + after-action), `act` the interaction pass, `advance` the Next press
+   * through the movement poll, `capture` the screenshot/AX epoch captures. The remainder
+   * of `wallMs` is binding/verification/bookkeeping. Absent on artifacts from before the
+   * field existed; added 2026-08-17 to aim the pace work at measured waste (steps were
+   * costing ~19s while the same screens read locally in ~1.5s).
+   */
+  phaseMs?: { read: number; act: number; advance: number; capture: number };
 }
 
 export interface PathObservation {

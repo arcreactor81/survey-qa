@@ -176,7 +176,7 @@
     // ---- browser session policy (spike-derived) ----
     "BROWSER_KEEP_ALIVE_MS": "600000", // idle timeout, refreshed by every batch
     "SESSION_MAX_AGE_MS": "480000", // proactively recycle before the observed ~11min wall
-    "EXEC_BATCH_MAX_MS": "300000", // wall-clock budget for ONE execute-batch step. MUST exceed EXEC_PER_CASE_TIMEOUT_MS plus the batch-residual minimum, or the residual guard refuses every walk (run v2r_01m05358wjeprcr01r5r3nn1vy: 120000==120000 started ZERO walks). The config-arithmetic test pins this relationship.
+    "EXEC_BATCH_MAX_MS": "600000", // wall-clock budget for ONE execute-batch step. MUST exceed EXEC_PER_CASE_TIMEOUT_MS plus the batch-residual minimum, or the residual guard refuses every walk (run v2r_01m05358wjeprcr01r5r3nn1vy: 120000==120000 started ZERO walks). The config-arithmetic test pins this relationship.
     "EXEC_BATCH_MAX_ATTEMPTS": "4", // attempts committed per durable checkpoint
     "EXEC_MAX_BATCHES": "200", // hard stop on the batch loop
 
@@ -187,22 +187,21 @@
     // The t1-easy plan queues 76 entries (~13 screens each); 24 is a few minutes of
     // walking. Set it to 0 to run the contractual floor and nothing else.
     "EXEC_MAX_EXPLORATION": "24",
-    "EXEC_MAX_STEPS_PER_PATH": "40", // a survey that never terminates must not hang a batch
+    "EXEC_MAX_STEPS_PER_PATH": "80", // a survey that never terminates must not hang a batch
     "EXEC_ADVANCE_TIMEOUT_MS": "3500", // how long a screen may take to change after Next
     "EXEC_ACQUIRE_TIMEOUT_MS": "45000", // a reconnect to a wedged session never returns
-    "EXEC_WALK_TIMEOUT_MS": "150000", // one walk, bounded; a hang is a named outcome
-    // PER-CASE TIME BUDGET (defect 5 from the 12-Aug audit, amended after the first real
-    // walk). The first real walk measured healthy three-screen walks at 52-95s wall-clock
-    // on real Confirmit pages. The original 45s default would have killed most of those
-    // walks as "per-case-timeout" with zero steps and no evidence — strictly worse than
-    // the v37 behaviour it replaced. 120s accommodates real-world latency while the
-    // per-case timeout remains the TIGHTER of this value and EXEC_WALK_TIMEOUT_MS (150s).
-    // One walk at 120s is the full batch budget, but the don't-start guard (see
-    // execute-batch.ts) prevents walks from beginning when the remaining batch budget is
-    // below the per-case timeout — the fix the first real walk's data actually asks for.
-    // Exceeding it produces outcome "per-case-timeout" — a named, counted limitation that
-    // never kills the batch or the run.
-    "EXEC_PER_CASE_TIMEOUT_MS": "120000",
+    "EXEC_WALK_TIMEOUT_MS": "600000", // one walk, bounded; a hang is a named outcome
+    // PER-CASE TIME BUDGET (owner directive, 17-Aug: a walk that is PROGRESSING must not be
+    // cut). The 2026-08-17 runs measured deep walks at ~19s per screen; at 120s that capped
+    // every walk at 3-6 of the instrument's ~35 questions. 540s (9 min) lets a walk cover
+    // the full instrument at the measured pace, and stays inside the observed ~11-minute
+    // total-session wall (run-records PLANNING-cloudflare-limits) because every batch now
+    // starts a FRESH browser session (execute-batch retires the session at every batch
+    // end). The per-case timeout remains the TIGHTER of this value and
+    // EXEC_WALK_TIMEOUT_MS; the walk itself exits ~20s earlier (walkDeadlineFor's wrap-up
+    // grace) and returns a "time-cap" PARTIAL observation, so the outer axe fires only on
+    // a genuine hang. The batch-residual guard means one long walk can own a whole batch.
+    "EXEC_PER_CASE_TIMEOUT_MS": "540000",
     "BROWSER_COMPAT_SHIMS": "auto", // "auto" | "off" — see browser/page-script.ts HISTORY_SHIM
 
     // ---- run caps (proposal §5; each keeps its own name and denominator) ----

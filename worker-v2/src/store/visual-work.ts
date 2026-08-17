@@ -1339,6 +1339,7 @@ function validateStepsEnvelope(value: unknown, path: string): void {
       "consoleErrors",
       "evidence",
       "wallMs",
+      "phaseMs",
     ]);
     for (const key of Object.keys(step)) if (!allowed.has(key)) invalid(`${stepPath}.${key}`, "unknown step field");
     for (const required of [

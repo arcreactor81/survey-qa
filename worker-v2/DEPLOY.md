@@ -1079,7 +1079,7 @@ eq(v.DEEPSEEK_MODEL,"deepseek-v4-flash","wrong eligible Grok-fallback model"); e
 eq(v.DEEPSEEK_OUTPUT_USD_PER_MTOK,"0.28","wrong Flash output rate"); eq(v.DEEPSEEK_FALLBACK_MODE,"on-error","wrong DeepSeek route mode");
 eq(v.DEEPSEEK_FALLBACK_MODEL,"deepseek-v4-pro","wrong normal Pass-B model"); eq(v.DEEPSEEK_FALLBACK_MAX_ATTEMPTS,"1","unbounded Pass-B attempts");
 eq(v.DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK,"0.435","wrong Pro input rate"); eq(v.DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK,"0.87","wrong Pro output rate");
-eq(v.EXEC_PER_CASE_TIMEOUT_MS,"120000","wrong per-case execution timeout"); // v38+: raised from 45s after first real walk measured 52-95s healthy walks
+eq(v.EXEC_PER_CASE_TIMEOUT_MS,"540000","wrong per-case execution timeout"); // v44: 9-min walks under the ~11-min session wall (owner: a progressing walk is never cut)
 if(c.durable_objects||c.d1_databases||c.migrations) fail("unexpected state or migration binding");
 console.log("v2 release config gate: PASS");
 '@
