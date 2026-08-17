@@ -17,6 +17,11 @@ import { buildDecisionSummary } from "./plain-language.mjs";
 import { renderSummaryView } from "./render-summary.mjs";
 import { renderFullCheckView, buildRegisterCsv } from "./render-full-check.mjs";
 import {
+  renderV2SummaryEnrichment,
+  renderV2FindingsView,
+  renderV2LimitationsPanel,
+} from "./render-v2-views.mjs";
+import {
   COVERAGE_ORDER,
   COVERAGE_LABEL,
   COVERAGE_GLYPH,
@@ -2792,8 +2797,10 @@ ${renderFailClosed(view)}
   <main id="main" class="views">
     <section class="view" data-view="summary" id="summary-view" aria-label="Summary">
       ${renderSummaryView(view, summary)}
+      ${renderV2SummaryEnrichment(view)}
     </section>
     <section class="view" data-view="full" id="full-check" aria-label="Full check">
+      ${renderV2FindingsView(view)}
       ${renderFullCheckView(view, summary)}
     </section>
     <section class="view" data-view="audit" id="audit-trail" aria-label="Audit trail">
