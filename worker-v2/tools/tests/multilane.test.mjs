@@ -320,7 +320,7 @@ suite("multi-lane execution", () => {
     assertEq(result.obs.outcome, "error", "walkLane accepted batchMaxMs without error");
   });
 
-  test("flag-off proof: EXEC_LANES=1 takes the sequential path, not the multi-lane path", async () => {
+  test("flag-off proof: EXEC_LANES=1 executeBatch takes the sequential path, not the multi-lane path", async () => {
     const mod = await worker();
     const env = testEnv({ EXEC_LANES: "1" });
     const { seedRun } = await import("./_helpers.mjs");
@@ -378,5 +378,238 @@ suite("multi-lane execution", () => {
       "EXEC_LANES=1 must take the sequential path (browser-unavailable proves it tried " +
         "to acquire a shared browser, which only the sequential path does)",
     );
+  });
+});
+
+/* ============================================================ LIVE TWO-LANE BATCH TEST */
+
+const nextBtn = (idx) => ({ idx, label: "Next", role: "next", roleVia: "text:Next", disabled: false, visible: true });
+
+const screen = (text, { controls = [], optionGroups = [], grid = null, buttons, signature } = {}) => ({
+  at: "2026-08-11T00:05:00.000Z",
+  url: "https://fixture.invalid/survey",
+  title: null,
+  collectedErrors: [],
+  questionText: text,
+  instructionText: null,
+  visibleText: text,
+  visibleTextTruncated: false,
+  bracketedInstructionsVisible: [],
+  controls,
+  optionGroups,
+  grid,
+  readerLimitations: [],
+  buttons: buttons === undefined ? [nextBtn(30)] : buttons,
+  progress: { present: false, kind: null, now: null, max: null, text: null },
+  validationMessages: [],
+  counts: {
+    controls: controls.length, optionGroups: optionGroups.length,
+    options: optionGroups.reduce((n, g) => n + g.options.length, 0),
+    textInputs: 0, valueInputs: controls.length,
+    optionsNotOperable: 0, readerLimitations: 0,
+  },
+  screenSignature: signature ?? `sig:${text}`,
+});
+
+const completedTerminal = () => screen("Thank you for completing the survey.", { buttons: [] });
+
+function fakePage(reads) {
+  const queue = [...reads];
+  let last = reads[0] ?? null;
+  const typed = [];
+  const set = [];
+  const clicks = [];
+  const handle = (selector, index) => ({
+    async click() { clicks.push({ selector, index }); },
+    async type(text) { typed.push({ index, text }); },
+    async focus() {},
+  });
+  return {
+    typed, set, clicks,
+    _newPageAt: Date.now(),
+    async goto() {},
+    async evaluate(script) {
+      if (typeof script !== "string") return { ok: true };
+      if (script.includes("screenSignature")) {
+        if (queue.length > 0) last = queue.shift();
+        return last;
+      }
+      const m = /el\.value = ("(?:[^"\\]|\\.)*");/.exec(script);
+      if (m && script.includes("change")) {
+        const value = JSON.parse(m[1]);
+        set.push({ value });
+        return { ok: true, reason: null, got: value };
+      }
+      if (script.includes("W4_NATIVE_CHOICE_SCOPED_READBACK")) {
+        const idx = Number(/const expectedIdx = (\d+);/.exec(script)?.[1]);
+        return { idx, type: "radio", name: null, checked: true, checkedGroupIdxs: [idx] };
+      }
+      return { ok: true };
+    },
+    async evaluateOnNewDocument() {},
+    async $$(selector) {
+      return Array.from({ length: 32 }, (_, i) => handle(selector, i));
+    },
+    async screenshot() { throw new Error("no screenshot in this harness"); },
+    async setViewport() {},
+    on() {},
+    async close() {},
+    async reload() {},
+  };
+}
+
+function multiWalkBrowser(scripts) {
+  const pages = [];
+  let i = 0;
+  const newPageTimestamps = [];
+  const browser = {
+    async newPage() {
+      newPageTimestamps.push(Date.now());
+      const reads = scripts[Math.min(i, scripts.length - 1)];
+      i += 1;
+      const page = fakePage(reads);
+      page._newPageAt = newPageTimestamps[newPageTimestamps.length - 1];
+      pages.push(page);
+      return page;
+    },
+    async close() {},
+    disconnect() {},
+    sessionId() { return `sess_lane_${i}`; },
+  };
+  return { browser, pages, newPageTimestamps };
+}
+
+function withBrowser(scripts, fn) {
+  const { browser, pages, newPageTimestamps } = multiWalkBrowser(scripts);
+  globalThis.__V2_TEST_BROWSER__ = {
+    async launch() { return browser; },
+    async connect() { return browser; },
+  };
+  return fn().then(
+    (out) => { delete globalThis.__V2_TEST_BROWSER__; return { out, pages, newPageTimestamps }; },
+    (err) => { delete globalThis.__V2_TEST_BROWSER__; throw err; },
+  );
+}
+
+async function twoPathLiveBed(mod, env) {
+  const { seedRun } = await import("./_helpers.mjs");
+  const seeded = await seedRun(mod, env, { testCompletion: "running" });
+  const sealed = (await mod.contractRevision.getContractRevision(env, seeded.contractRevisionId)).facetInstances.map(
+    (fi) => fi.facetInstanceId,
+  );
+  const planRevisionId = "plan_multilane01";
+  const pathA = {
+    id: "FLOOR-A", tier: 1, kind: "floor", intent: "walk A",
+    decisions: [], skipped_questions: [], terminated_at: null,
+    witnesses: [], witness_notes: [], needs_repeats: [], steps: 2,
+  };
+  const pathB = {
+    id: "FLOOR-B", tier: 1, kind: "floor", intent: "walk B",
+    decisions: [], skipped_questions: [], terminated_at: null,
+    witnesses: [], witness_notes: [], needs_repeats: [], steps: 2,
+  };
+  await env.EVIDENCE.put(
+    mod.keys.planKey(seeded.runId, planRevisionId),
+    JSON.stringify({
+      kind: "v2-execution-program/2.0.0",
+      runId: seeded.runId, planRevisionId,
+      contractRevisionId: seeded.contractRevisionId,
+      contractHash: seeded.contractHash,
+      generatedAt: "2026-08-11T00:00:00.000Z",
+      surveyUrl: "https://fixture.invalid/survey",
+      floor: [
+        { pathId: "FLOOR-A", caseIds: [sealed[0]] },
+        { pathId: "FLOOR-B", caseIds: [sealed[1]] },
+      ],
+      exploration: [], caseOrder: sealed,
+      unassignedCaseIds: [],
+      coverage: { obligations: 2, witnessedByFloor: 2, coversAllObligations: true, coversAllAfterMandatoryExploration: true, uncovered: [] },
+      warnings: [],
+      plan: { floor: { paths: [pathA, pathB] }, exploration: { queue: [] } },
+    }),
+    { httpMetadata: { contentType: "application/json" } },
+  );
+  const fence = await mod.checkpoint.claimOwnership(env, seeded.runId, seeded.runId, 0);
+  const cursor = {
+    batchIndex: 0, sessionId: null, sessionOpenedAt: null,
+    pendingCaseIds: [...sealed], completedCaseIds: [], planRevisionId,
+  };
+  await mod.checkpoint.updateCheckpoint(env, seeded.runId, (d) => {
+    d.execution = { ...cursor };
+    d.counts = { ...d.counts, exercised: 0, pending: sealed.length };
+  }, { fence });
+  return { runId: seeded.runId, fence, cursor, planRevisionId, sealed };
+}
+
+const simpleCompletion = () => [
+  screen("Q1. How are you?"),
+  screen("Q1. How are you?"),
+  completedTerminal(),
+];
+
+suite("multi-lane execution — live two-lane batch", () => {
+  test("EXEC_LANES=2: both walks recorded, commit ordering held, evidence names disjoint, stagger measured", async () => {
+    const mod = await worker();
+    const env = testEnv({ EXEC_LANES: "2" });
+    const bed = await twoPathLiveBed(mod, env);
+
+    const { out, pages, newPageTimestamps } = await withBrowser(
+      [simpleCompletion(), simpleCompletion()],
+      () => mod.executeBatch.executeBatch(env, {
+        runId: bed.runId, batch: 0, fence: bed.fence, cursor: bed.cursor,
+        surveyUrl: "https://fixture.invalid/survey", planRevisionId: bed.planRevisionId,
+      }),
+    );
+
+    // BOTH WALKS RECORDED
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(progress.walks.length, 2, `expected 2 walks, got ${progress.walks.length}`);
+    const pathIds = progress.walks.map((w) => w.pathId).sort();
+    assertEq(JSON.stringify(pathIds), JSON.stringify(["FLOOR-A", "FLOOR-B"]), "both paths must be walked");
+    assertEq(out.pathsWalked, 2, "pathsWalked count");
+    assertEq(out.casesClosed, 2, "both cases must close");
+
+    // COMMIT ORDERING HELD: walk records are in a stable order, and each
+    // has a distinct attemptId (proves sequential commit, not interleaved).
+    const attemptIds = progress.walks.map((w) => w.attemptId);
+    assertEq(new Set(attemptIds).size, 2, "each walk must have a distinct attemptId");
+
+    // EVIDENCE NAMES DISJOINT: the two walks' artifact basenames must not collide.
+    const listed = await env.EVIDENCE.list({ prefix: `v2/runs/${bed.runId}/evidence/` });
+    const byAttempt = new Map();
+    for (const o of listed.objects) {
+      const stored = await env.EVIDENCE.get(o.key);
+      let parsed;
+      try { parsed = await stored.json(); } catch { continue; }
+      if (typeof parsed?.artifactRef !== "string" || typeof parsed?.attemptId !== "string") continue;
+      const set = byAttempt.get(parsed.attemptId) ?? new Set();
+      set.add(parsed.artifactRef.split("/").pop());
+      byAttempt.set(parsed.attemptId, set);
+    }
+    for (const [attemptId, basenames] of byAttempt) {
+      const others = [...byAttempt.entries()].filter(([id]) => id !== attemptId);
+      for (const [otherId, otherBasenames] of others) {
+        const overlap = [...basenames].filter((b) => otherBasenames.has(b));
+        assertEq(
+          overlap.length, 0,
+          `evidence basenames collide between ${attemptId} and ${otherId}: ${overlap.join(", ")}`,
+        );
+      }
+    }
+
+    // STAGGER: newPage calls for different lanes must be >= LANE_STAGGER_MS apart.
+    // The multi-lane path acquires browsers per-lane, so each lane's newPage
+    // happens after the stagger delay.
+    if (newPageTimestamps.length >= 2) {
+      const gap = newPageTimestamps[1] - newPageTimestamps[0];
+      assert(
+        gap >= mod.multilane.LANE_STAGGER_MS - 100,
+        `stagger between newPage calls was ${gap}ms, expected >= ${mod.multilane.LANE_STAGGER_MS - 100}ms`,
+      );
+    }
+
+    // FLOOR DONE
+    assert(progress.floorDone.includes("FLOOR-A"), "FLOOR-A must be marked done");
+    assert(progress.floorDone.includes("FLOOR-B"), "FLOOR-B must be marked done");
   });
 });

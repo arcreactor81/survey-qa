@@ -2,7 +2,8 @@
  * EVIDENCE THAT THE MULTI-LANE EXECUTION GUARDS CAN FAIL.
  *
  * Each mutant re-opens one property — the lane cap, the stagger constant, the
- * flag-off default — and the named test must go red for it.
+ * flag-off default, wiring-level commit serialization, leftover accounting —
+ * and the named test must go red for it.
  *
  *   node tools/mutate-multilane.mjs
  */
@@ -10,6 +11,7 @@
 import { runMutantSuite } from "./mutate-runner.mjs";
 
 const ML = "src/workflow/stages/multilane.ts";
+const EB = "src/workflow/stages/execute-batch.ts";
 
 await runMutantSuite({
   title: "Multi-lane execution — can the guards fail?",
@@ -77,6 +79,59 @@ await runMutantSuite({
       replace: "export const LANE_STAGGER_MS = 200;",
       kills: [
         "LANE_STAGGER_MS is at least 1500",
+      ],
+    },
+    // ==================== WIRING MUTANTS ====================
+    {
+      name: "lane-count check inverted (multi-lane runs when EXEC_LANES=1)",
+      breaks:
+        "flag-off isolation. The multi-lane import must sit behind the lane " +
+        "count check so EXEC_LANES=1 runs cannot be affected by a multi-lane " +
+        "bug. Inverting the check activates multi-lane on single-lane config, " +
+        "which attempts to acquire per-lane browsers instead of a shared session",
+      file: EB,
+      find: "  if (requestedLanes > 1 && !hasSeedWork) {",
+      replace: "  if (requestedLanes <= 1 && !hasSeedWork) {",
+      kills: [
+        "flag-off proof: EXEC_LANES=1 executeBatch takes the sequential path, not the multi-lane path",
+      ],
+    },
+    {
+      name: "commit loop dropped (no walk records saved after wave)",
+      breaks:
+        "the sequential commit property. Without the commit loop, wave results " +
+        "are discarded and no walkRecord is pushed to progress, so the two-lane " +
+        "batch test sees zero walks",
+      file: EB,
+      find: "      // SEQUENTIAL COMMIT — each lane's result is applied one at a time so\n      // no two checkpoint writes interleave. This reproduces the exact\n      // ordering of the sequential path: walkRecord push, saveProgress,\n      // updateCheckpoint, cursor sync.\n      for (const result of results) {",
+      replace: "      // SEQUENTIAL COMMIT — each lane's result is applied one at a time so\n      // no two checkpoint writes interleave. This reproduces the exact\n      // ordering of the sequential path: walkRecord push, saveProgress,\n      // updateCheckpoint, cursor sync.\n      for (const result of []) {",
+      kills: [
+        "EXEC_LANES=2: both walks recorded, commit ordering held, evidence names disjoint, stagger measured",
+      ],
+    },
+    {
+      name: "stagger removed from runLaneWave (all lanes launch simultaneously)",
+      breaks:
+        "the browser launch stagger. Without the stagger, all lanes launch at " +
+        "the same millisecond, which violates the 1-browser-per-second rate limit",
+      file: ML,
+      find: "    if (i < items.length - 1) {\n      await new Promise((r) => setTimeout(r, LANE_STAGGER_MS));\n    }",
+      replace: "    // stagger removed",
+      kills: [
+        "EXEC_LANES=2: both walks recorded, commit ordering held, evidence names disjoint, stagger measured",
+      ],
+    },
+    {
+      name: "leftover accounting dropped (remaining work silently lost)",
+      breaks:
+        "the leftover handback. Without computing remaining work after the " +
+        "multi-lane loop, the function returns done=true even when work items " +
+        "were skipped, and the run never revisits them",
+      file: EB,
+      find: "  // No shared session to retire — each lane retired its own browser.\n  // Clear cursor session for the next batch.\n  await updateCheckpoint(",
+      replace: "  // No shared session to retire — each lane retired its own browser.\n  // Clear cursor session for the next batch.\n  return { done: true, stopReason: null, pathsWalked: 0, casesClosed: 0, steps: 0 };\n  await updateCheckpoint(",
+      kills: [
+        "EXEC_LANES=2: both walks recorded, commit ordering held, evidence names disjoint, stagger measured",
       ],
     },
   ],
