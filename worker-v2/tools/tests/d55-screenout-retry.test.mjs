@@ -900,3 +900,60 @@ suite("D55 — re-attempt artifact names are disjoint from attempt 0's", () => {
     );
   });
 });
+
+/* ============================================================ 8. the pivot re-tries the FAILING screen
+ *
+ * MEASURED ON RUN v2r_01m0787n7t1c220esa0r8pbf6s (v47): the trunk walk crossed seven
+ * screeners on steered defaults and screened out at screen ~12 on an unlabelled later
+ * screener — and its pivots, varying EVERY navigator default, changed the steered answer
+ * at screener #1 too, disqualified on screen 1, and never reached the screen they existed
+ * to re-try. The pivot now replays proven variant-0 answers below the failing step
+ * (walkOnce passes variantFromStep = the screened-out attempt's final answered step).
+ */
+
+/** Screen 2 of the two-screen bed: an unbound radio the navigator answers by default. */
+const roleScreen = () =>
+  screen("R1. Which of these best describes your role?", {
+    optionGroups: [
+      {
+        name: "R1",
+        kind: "radio",
+        options: [option(10, "Role A"), option(11, "Role B")],
+      },
+    ],
+  });
+
+const twoScreenScreenout = () => [s4Screen(), s4Screen(), roleScreen(), roleScreen(), roleScreen(), screenedOutTerminal(), screenedOutTerminal()];
+const twoScreenCompletion = () => [s4Screen(), s4Screen(), roleScreen(), roleScreen(), roleScreen(), completedTerminal(), completedTerminal()];
+
+suite("D55 — the pivot varies the failing screen and replays the survived ones verbatim", () => {
+  test("a screen-out at screen 2 pivots screen 2's answer while screen 1's proven answer replays unchanged", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const bed = await liveBed(mod, env);
+
+    const { pages } = await withBrowser([twoScreenScreenout(), twoScreenCompletion()], () => runBatch(mod, env, bed));
+
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(progress.walks.length, 2, "the screened-out attempt AND its pivot");
+    assertEq(progress.walks[1].pivot?.ordinal, 1);
+    assertEq(progress.walks[1].ending?.kind, "completed");
+
+    // Screen 1 (the number question the first walk SURVIVED): the pivot must replay the
+    // proven variant-0 midpoint, not the variant-1 quantile. Pre-fix this typed "8".
+    assertEq(pages[0].typed[0].text, "16", "attempt 0 types the midpoint");
+    assertEq(
+      pages[1].typed[0].text,
+      "16",
+      "the pivot must REPLAY the survived screen's answer — a varied early answer is how pivots died at screener #1 on the live run",
+    );
+
+    // Screen 2 (where the screen-out happened): the variant must apply — a different option.
+    const roleClicks = (p) => p.clicks.filter((c) => c.index === 10 || c.index === 11).map((c) => c.index);
+    assert(roleClicks(pages[0]).includes(10), `attempt 0 picks option 1, got ${JSON.stringify(roleClicks(pages[0]))}`);
+    assert(
+      roleClicks(pages[1]).includes(11),
+      `the pivot must vary THE FAILING screen's answer to option 2, got ${JSON.stringify(roleClicks(pages[1]))}`,
+    );
+  });
+});

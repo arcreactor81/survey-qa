@@ -147,6 +147,16 @@ export interface WalkOptions {
   /** Bound on EVERY page call before it rejects as hung (default PAGE_CALL_TIMEOUT_MS). */
   pageCallTimeoutMs?: number;
   /**
+   * FROM WHICH STEP the retry variant applies (default 0 — every step, today's behaviour).
+   * The 2026-08-17 v47 run measured the defect this closes: a walk screened out at screen
+   * ~12 on an unlabelled later screener, and its pivots — varying EVERY navigator default —
+   * changed the steered answer at screener #1 too, disqualified on screen 1, and never
+   * reached the screen they existed to re-try. A pivot now replays the proven answers
+   * verbatim (variant 0) below this step and varies only from here on: the screens the
+   * first walk survived are evidence, not degrees of freedom.
+   */
+  variantFromStep?: number;
+  /**
    * BOUNDED SCREEN-OUT RETRY: which deterministic filler variant this walk uses. 0 (or
    * absent) is today's defaults, byte-for-byte; `execute-batch.ts` sets the durable pivot
    * ordinal (1..2) when re-walking a path that screened out on navigator-default answers.
@@ -4200,8 +4210,12 @@ export async function walkPath(
   const pathHints = survivalHintsOf(path);
   // BOUNDED SCREEN-OUT RETRY: the walk-level filler variant, applied to EVERY
   // navigator-default choice on this walk (the main pass and the recovery pass alike) so
-  // one attempt is one coherent variant. See WalkOptions.variant for the contract.
+  // one attempt is one coherent variant. See WalkOptions.variant for the contract, and
+  // WalkOptions.variantFromStep for WHERE it starts applying: steps below that index
+  // replay the proven variant-0 answers so a pivot re-tries the failing screen, not the
+  // screens the first walk already survived.
   const fillerVariant = opts.variant ?? 0;
+  const variantFromStep = Math.max(0, opts.variantFromStep ?? 0);
   let bindingRefusalCount = 0;
   // WHAT THE READER COULD NOT DO, LIFTED TO THE WALK. A limitation named on screen 7 and
   // buried in screen 7's payload is a limitation nobody reads. Summed as well as listed,
@@ -4395,8 +4409,9 @@ export async function walkPath(
     if (matched) remaining.splice(matched.index, 1);
     bindingRefusalCount += binding.refusals.length;
 
+    const stepVariant = stepIndex >= variantFromStep ? fillerVariant : 0;
     const { actions, notOffered, unfillable } = await timed(
-      () => applyDecision(page, before, decision, pathHints, fillerVariant),
+      () => applyDecision(page, before, decision, pathHints, stepVariant),
       (ms) => (phaseActMs += ms),
     );
     for (const u of unfillable) unfillableControls.push({ ...u, stepIndex });
@@ -4739,7 +4754,7 @@ export async function walkPath(
           avoid_labels: survivalAvoidLabels(decision, pathHints, after ?? before),
         } as PlannedDecision,
         pathHints,
-        fillerVariant,
+        stepVariant,
       );
       const recoveryReadFailures: ScreenCaptureFailure[] = [];
       let recoveryBaseline: RenderedScreen | null = null;

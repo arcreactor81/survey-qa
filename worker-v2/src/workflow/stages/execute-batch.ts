@@ -1004,6 +1004,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         walkAttemptId = attemptId,
         walkCap = cap,
         walkVariant = 0,
+        walkVariantFromStep = 0,
       ): Promise<PathObservation> => {
         const page = (await withTimeout(handle.browser.newPage(), 30_000, "newPage")) as PageLike;
         try {
@@ -1022,6 +1023,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
               applyHistoryShim: shim,
               advanceTimeoutMs,
               variant: walkVariant,
+              variantFromStep: walkVariantFromStep,
             },
             walkCap,
           );
@@ -1320,11 +1322,17 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
           `${args.batch}:${item.path.id}:pivot${ordinal}`,
         );
 
+        // THE PIVOT RE-TRIES THE FAILING SCREEN, NOT THE WHOLE WALK. The screened-out
+        // attempt's final step is the terminal screen; the step before it holds the answers
+        // whose advance landed there. Steps below that replay the proven variant-0 answers
+        // verbatim — the v47 run measured pivots that varied EVERY default disqualifying
+        // themselves at screener #1 and never reaching the screen they existed to re-try.
+        const pivotFromStep = Math.max(0, obs.steps.length - 2);
         let retryHung = false;
         let retryPerCaseTimedOut = false;
         try {
           obs = await withTimeout(
-            walkOnce(progress.shimRequired && allowShim, retryAttemptId, retryCap, ordinal),
+            walkOnce(progress.shimRequired && allowShim, retryAttemptId, retryCap, ordinal, pivotFromStep),
             perCaseTimeoutMs,
             `walk ${item.path.id} pivot ${ordinal}`,
           );

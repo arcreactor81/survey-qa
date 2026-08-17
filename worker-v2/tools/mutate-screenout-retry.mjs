@@ -21,6 +21,7 @@ import { runMutantSuite } from "./mutate-runner.mjs";
 
 const EB = "src/workflow/stages/execute-batch.ts";
 const CAP = "src/browser/capture.ts";
+const DR = "src/browser/driver.ts";
 
 await runMutantSuite({
   title: "Bounded screen-out retry — can the D55 guards fail?",
@@ -131,6 +132,27 @@ await runMutantSuite({
       find: "  const walkBudgetMs = Math.max(perCaseTimeoutMs - graceMs, Math.floor(perCaseTimeoutMs / 2));",
       replace: "  const walkBudgetMs = perCaseTimeoutMs - graceMs;",
       kills: ["a pathological grace can never zero the walk's own time"],
+    },
+    {
+      name: "the pivot varies every screen again (the v47 pivot-suicide reopened, driver half)",
+      breaks:
+        "pivot reach. On the live run the trunk walk crossed seven screeners on steered " +
+        "defaults and screened out at screen ~12; pivots that vary EVERY default change the " +
+        "screener-#1 answer too, disqualify on screen 1, and never reach the failing screen",
+      file: DR,
+      find: "    const stepVariant = stepIndex >= variantFromStep ? fillerVariant : 0;",
+      replace: "    const stepVariant = fillerVariant;",
+      kills: ["a screen-out at screen 2 pivots screen 2's answer while screen 1's proven answer replays unchanged"],
+    },
+    {
+      name: "the pivot stops anchoring to the failing step (batch half)",
+      breaks:
+        "the same defect one layer up: walkPath can honour variantFromStep perfectly and " +
+        "the pivot never sends it — variantFromStep 0 varies from screen 1 exactly as before",
+      file: EB,
+      find: "        const pivotFromStep = Math.max(0, obs.steps.length - 2);",
+      replace: "        const pivotFromStep = 0;",
+      kills: ["a screen-out at screen 2 pivots screen 2's answer while screen 1's proven answer replays unchanged"],
     },
     {
       name: "a plain re-attempt loses its naming ordinal (the v41 EVIDENCE_NAME_COLLISION reopened)",
