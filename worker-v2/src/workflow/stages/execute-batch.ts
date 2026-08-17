@@ -1327,7 +1327,13 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         // whose advance landed there. Steps below that replay the proven variant-0 answers
         // verbatim — the v47 run measured pivots that varied EVERY default disqualifying
         // themselves at screener #1 and never reaching the screen they existed to re-try.
-        const pivotFromStep = Math.max(0, obs.steps.length - 2);
+        // INDEX, NOT COUNT: recovery half-steps (48.5) inflate steps.length past the last
+        // real step index — the v60 pivot anchored at count-2 = 54 with last index 53 and
+        // varied NOTHING, replaying the fatal answer verbatim. The last step's own index,
+        // floored (a half-step terminal belongs to its parent screen), minus one, is the
+        // screen whose answers led into the terminal.
+        const lastStepIndex = Math.floor(Number(obs.steps[obs.steps.length - 1]?.stepIndex ?? 0));
+        const pivotFromStep = Math.max(0, lastStepIndex - 1);
         let retryHung = false;
         let retryPerCaseTimedOut = false;
         try {
