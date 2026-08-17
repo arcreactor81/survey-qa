@@ -1277,6 +1277,14 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       // Closure is a UNION across attempts: each attempt closes cases through the same
       // `assessExercised` gate as any walk, and the cursor filter above each closure list
       // is what stops a pivot from re-closing what attempt 0 already closed.
+      //
+      // IDENTICAL-ACTIONS STOP: a pivot that reproduces its parent's action sequence
+      // byte-for-byte proves the filler-variant lever has nothing left to vary on this
+      // path — the v62 run spent four 14-minute pivots replaying a plan-pinned
+      // "None of the above" click verbatim, because exact plan labels are outside the
+      // variant's reach. One reproduction is the proof; further pivots are refused and
+      // the stop is named in the activity beat.
+      let pivotParentActions = walkActionsJson(obs);
       while (
         !item.seedAlternative &&
         screenoutRetryEligible({
@@ -1428,6 +1436,20 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         steps += obs.steps.length;
 
         if (retryHung) break;
+
+        const pivotActions = walkActionsJson(obs);
+        if (pivotActions === pivotParentActions) {
+          await beat(
+            env,
+            args.runId,
+            `batch ${args.batch}: ${item.path.id} pivot ${ordinal} reproduced the prior attempt's actions exactly — ` +
+              `the varied-filler lever cannot change this route (its fatal answers are plan-pinned); ` +
+              `stopping retries, document authority needed`,
+            `${args.batch}:${item.path.id}:pivot-identical`,
+          );
+          break;
+        }
+        pivotParentActions = pivotActions;
       }
 
       if (sessionWedged) break; // this browser is dead; the next batch starts a fresh one
@@ -1767,6 +1789,25 @@ const NOT_ASSESSED: ExercisedAssessment = {
   constrainingDecisions: 0,
   matchedConstraining: 0,
 };
+
+/**
+ * The action sequence a walk actually performed, as comparable JSON — what was clicked,
+ * typed and set, per step, in order, with success flags. Timing, captures and screen
+ * payloads are deliberately excluded: two walks that ACTED identically fingerprint
+ * identically even when the site rendered marginally differently around them. Exported
+ * for the identical-actions pivot stop's tests.
+ */
+export function walkActionsJson(obs: PathObservation): string {
+  return JSON.stringify(
+    obs.steps.map((s) => [
+      s.stepIndex,
+      (s.actions ?? []).map((a) => {
+        const row = a as { kind?: unknown; targetIdx?: unknown; value?: unknown; ok?: unknown };
+        return [row.kind ?? null, row.targetIdx ?? null, row.value ?? null, row.ok !== false];
+      }),
+    ]),
+  );
+}
 
 /**
  * THE WALK, REDUCED TO A LEDGER ROW. Exported so the carry above can be tested directly:

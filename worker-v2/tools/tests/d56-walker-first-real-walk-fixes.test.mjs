@@ -16,7 +16,7 @@
  * Evidence these can fail: each test is written to FAIL on the pre-fix behaviour.
  */
 
-import { assert, assertEq, suite, test, loadWorker } from "../testkit.mjs";
+import { assert, assertEq, assertThrows, suite, test, loadWorker } from "../testkit.mjs";
 import { testEnv } from "./_helpers.mjs";
 
 // ------------------------------------------------------------------ helpers
@@ -1185,6 +1185,183 @@ suite("amendment 4: a validation rejection overrides the already-answered skip o
       nonEmpty[0],
       "QA-PROBE",
       `the first pass must fill over the '-' placeholder before any validation speaks, typed: ${JSON.stringify(values)}`,
+    );
+  });
+});
+
+suite("amendment 5: recovery half-steps are valid persisted step ordinals", () => {
+  // Measured live (run v2r_01m08ce0s86w97rvvcn08h0n59): every deep walk's observation came
+  // back "artifact-corrupt" from the activity projection and visual-work ingestion — five
+  // 53-screen walks unreadable at exactly the screens that blocked. The cause was not the
+  // artifacts: the driver records the recovery it runs after a blocked step as
+  // `stepIndex + 0.5` BY DESIGN, and the strict validators demanded integers, so every legal
+  // recovery walk was declared corrupt on sight. The boundary must accept the writer's real
+  // domain — whole or half ordinals — while 2.25, NaN and negatives still fail.
+  const blockedRecoveryWalk = async () => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const mk = (validation, fieldValue = "-") => ({
+      at: "2026-08-17T18:00:00.000Z",
+      url: "https://fixture.invalid/survey",
+      title: "S70",
+      questionText: "S70. Years at organization?",
+      grid: null,
+      collectedErrors: [],
+      readerLimitations: [],
+      controls: [
+        {
+          idx: 0,
+          tag: "input",
+          type: "text",
+          name: "S70_1",
+          id: null,
+          code: null,
+          label: "Years at organization",
+          text: "",
+          checked: null,
+          value: fieldValue,
+          valueIsUserSupplied: true,
+          disabled: false,
+          required: true,
+          visible: true,
+          operable: true,
+          actuatedVia: "self",
+          placeholder: null,
+          maxlength: null,
+          min: null,
+          max: null,
+          step: null,
+          pattern: null,
+          readOnly: false,
+        },
+      ],
+      optionGroups: [],
+      buttons: [{ idx: 1, label: "Next", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+      validationMessages: validation,
+      progress: { present: false, value: null },
+      counts: { controls: 1, optionGroups: 0, options: 0, textInputs: 1, valueInputs: 1, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:s70",
+    });
+    const V = ["Please enter a number."];
+    const reads = [mk([]), mk([]), mk(V, "QA-PROBE"), mk(V, "QA-PROBE"), mk(V, "QA-PROBE"), mk(V, "QA-PROBE")];
+    let last = reads[0];
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        if (typeof script === "string" && script.includes("screenSignature")) {
+          if (reads.length > 0) last = reads.shift();
+          return last;
+        }
+        const src = String(script);
+        if (src.includes("el.value")) return { ok: true, reason: null, got: "" };
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return Array.from({ length: 4 }, () => ({
+          async click() {},
+          async type() {},
+          async focus() {},
+        }));
+      },
+      async screenshot() {
+        return new TextEncoder().encode("PNG-D56");
+      },
+      async setViewport() {},
+      on() {},
+      async close() {},
+      async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56ordnl", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey",
+        runId,
+        planRevisionId: "plan_d56ordnl1",
+        attemptId: "att_d56ordnl001",
+        tier: 1,
+        maxSteps: 1,
+        deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 },
+        applyHistoryShim: false,
+        advanceTimeoutMs: 400,
+      },
+      { env, runId, attemptId: "att_d56ordnl001", pathId: "path_d56ordnl", witnesses: [] },
+    );
+    return { mod, obs };
+  };
+  const bytes = (value) => new TextEncoder().encode(JSON.stringify(value));
+
+  test("a real blocked-then-recovered walk validates as a strict PathObservation", async () => {
+    const { mod, obs } = await blockedRecoveryWalk();
+    const fractional = obs.steps.filter((s) => !Number.isInteger(s.stepIndex)).map((s) => s.stepIndex);
+    // The guard that this fixture still exercises the class: no half-step, no test.
+    assert(
+      fractional.length >= 1,
+      `the blocked walk must record a recovery interleave at k + 0.5; steps: ${JSON.stringify(obs.steps.map((s) => s.stepIndex))}`,
+    );
+    assert(
+      fractional.every((n) => Number.isSafeInteger(n * 2)),
+      `recovery ordinals must stay on the half-step grid, got: ${JSON.stringify(fractional)}`,
+    );
+    // The kill-shot for the live defect: before the stepOrdinal fix this exact call threw
+    // "must be an integer…" and five 53-screen walks' evidence was unreadable.
+    mod.visualWork.validatePathObservationBytes(bytes(obs));
+  });
+
+  test("the relaxed boundary still rejects off-grid, negative and non-numeric ordinals", async () => {
+    const { mod, obs } = await blockedRecoveryWalk();
+    const offGrid = structuredClone(obs);
+    offGrid.steps[offGrid.steps.length - 1].stepIndex = 2.25;
+    await assertThrows(
+      () => mod.visualWork.validatePathObservationBytes(bytes(offGrid)),
+      "stepIndex",
+      "a quarter-step is not in the writer's domain and must still read as corrupt",
+    );
+    const negative = structuredClone(obs);
+    negative.steps[negative.steps.length - 1].stepIndex = -0.5;
+    await assertThrows(
+      () => mod.visualWork.validatePathObservationBytes(bytes(negative)),
+      "stepIndex",
+      "a negative ordinal must still read as corrupt",
+    );
+    const notANumber = structuredClone(obs);
+    notANumber.steps[notANumber.steps.length - 1].stepIndex = "0.5";
+    await assertThrows(
+      () => mod.visualWork.validatePathObservationBytes(bytes(notANumber)),
+      "stepIndex",
+      "a stringly ordinal must still read as corrupt",
+    );
+  });
+
+  test("half-step reader limitations and unfillable-control rows survive the boundary too", async () => {
+    const { mod, obs } = await blockedRecoveryWalk();
+    const widened = structuredClone(obs);
+    widened.readerLimitations = [
+      { stepIndex: 0.5, kind: "d56-fixture-limitation", detail: "recorded during a recovery interleave", count: 1 },
+    ];
+    widened.readerLimitationCount = 1;
+    widened.unfillableControls = [
+      {
+        idx: 0,
+        type: "text",
+        label: "Years at organization",
+        required: true,
+        reason: "value-rejected",
+        detail: "d56 fixture row bound to the recovery interleave",
+        stepIndex: 0.5,
+      },
+    ];
+    widened.unfillableControlCount = 1;
+    mod.visualWork.validatePathObservationBytes(bytes(widened));
+    const offGrid = structuredClone(widened);
+    offGrid.readerLimitations[0].stepIndex = 0.25;
+    await assertThrows(
+      () => mod.visualWork.validatePathObservationBytes(bytes(offGrid)),
+      "stepIndex",
+      "an off-grid limitation ordinal must still read as corrupt",
     );
   });
 });

@@ -150,7 +150,7 @@ await runMutantSuite({
         "the same defect one layer up: walkPath can honour variantFromStep perfectly and " +
         "the pivot never sends it — variantFromStep 0 varies from screen 1 exactly as before",
       file: EB,
-      find: "        const pivotFromStep = Math.max(0, obs.steps.length - 2);",
+      find: "        const pivotFromStep = Math.max(0, lastStepIndex - 1);",
       replace: "        const pivotFromStep = 0;",
       kills: ["a screen-out at screen 2 pivots screen 2's answer while screen 1's proven answer replays unchanged"],
     },
@@ -165,6 +165,41 @@ await runMutantSuite({
       find: "        ...(priorAttemptsOfPath > 0 ? { attemptOrdinal: priorAttemptsOfPath } : {}),",
       replace: "        // (attemptOrdinal threading dropped by mutant)",
       kills: ["a SECOND walk of a path carries retry-1- on every observation basename; attempt 0 refs stay bare"],
+    },
+    {
+      name: "the identical-actions stop is disabled (the v62 four-replay burn reopened)",
+      breaks:
+        "spend on proven-futile pivots. When the fatal answer is plan-pinned by exact label, " +
+        "the varied-filler lever cannot change the walk — run v2r_01m08ce0s86w97rvvcn08h0n59 " +
+        "spent four 14-minute pivots replaying the identical 'None of the above' click. With " +
+        "the stop disabled the chain runs to the cap on every plan-bound death",
+      file: EB,
+      find: "        const pivotActions = walkActionsJson(obs);\n        if (pivotActions === pivotParentActions) {",
+      replace: "        const pivotActions = walkActionsJson(obs);\n        if (false && pivotActions === pivotParentActions) {",
+      kills: ["a pivot that reproduces its parent's actions verbatim ends the retries — plan-pinned deaths are not re-bought"],
+    },
+    {
+      name: "the identical-actions stop fires on EVERY pivot",
+      breaks:
+        "the retry feature itself. A stop that ignores its comparison ends every chain after " +
+        "one pivot, so a differing variant that would have cleared the screener on pivot 2 is " +
+        "never bought — the reach feature quietly becomes a single-retry feature",
+      file: EB,
+      find: "        const pivotActions = walkActionsJson(obs);\n        if (pivotActions === pivotParentActions) {",
+      replace: "        const pivotActions = walkActionsJson(obs);\n        if (true || pivotActions === pivotParentActions) {",
+      kills: ["a pivot that ACTS differently keeps the retry chain alive to the cap"],
+    },
+    {
+      name: "the action fingerprint goes value-blind",
+      breaks:
+        "the stop's discrimination. Two pivots typing DIFFERENT values fingerprint " +
+        "identically, so a genuinely varying chain is stopped as if it were replaying — " +
+        "the same premature end as the fires-on-every-pivot mutant, reached through the " +
+        "fingerprint instead of the comparison",
+      file: EB,
+      find: "        return [row.kind ?? null, row.targetIdx ?? null, row.value ?? null, row.ok !== false];",
+      replace: "        return [row.kind ?? null, row.targetIdx ?? null, null, row.ok !== false];",
+      kills: ["walkActionsJson: identical actions fingerprint identically; timing and screens are excluded; any acted difference splits"],
     },
     // NOT A MUTANT, STATED: the walkOnce CALL SITE (deadline: walkDeadlineFor(...)) is
     // pinned by a d56 test that reads execute-batch.ts from DISK — this harness rewrites

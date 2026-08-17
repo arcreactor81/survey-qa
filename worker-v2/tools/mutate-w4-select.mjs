@@ -98,6 +98,48 @@ await runMutantSuite({
       kills: ["persisted successful select receipts require exact action/readback/owning-inventory agreement"],
     },
     {
+      name: "step-ordinal boundary reverts to integers and recovery walks read as corrupt",
+      breaks:
+        "the live v62 defect returns: every blocked-then-recovered walk's observation carries a k+0.5 step and the ingestion boundary declares the whole artifact corrupt, blinding verification at exactly the screens that blocked",
+      file: VW,
+      find: `    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > max ||
+    !Number.isSafeInteger(value * 2)
+  ) {
+    invalid(path, \`must be a whole or half step ordinal from 0 through \${max}\`);`,
+      replace: `    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > max ||
+    !Number.isSafeInteger(value)
+  ) {
+    invalid(path, \`must be a whole or half step ordinal from 0 through \${max}\`);`,
+      kills: ["a real blocked-then-recovered walk validates as a strict PathObservation"],
+    },
+    {
+      name: "step-ordinal boundary stops rejecting off-grid ordinals",
+      breaks:
+        "2.25, NaN-adjacent and finer-grained ordinals sail through the strict boundary, so a corrupted or hand-edited artifact reads as a legal walk",
+      file: VW,
+      find: `    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > max ||
+    !Number.isSafeInteger(value * 2)
+  ) {
+    invalid(path, \`must be a whole or half step ordinal from 0 through \${max}\`);`,
+      replace: `    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > max ||
+    false
+  ) {
+    invalid(path, \`must be a whole or half step ordinal from 0 through \${max}\`);`,
+      kills: ["the relaxed boundary still rejects off-grid, negative and non-numeric ordinals"],
+    },
+    {
       name: "route verifier accepts a successful select with no readback receipt",
       breaks:
         "route verification treats an attempted select as performed even though no exact post-action state was observed",

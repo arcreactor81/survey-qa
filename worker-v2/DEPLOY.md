@@ -181,6 +181,7 @@ $MutationHarnesses = @(
   "mutate-report-case-identity.mjs",
   "mutate-report-defects.mjs",
   "mutate-report-fanout.mjs",
+  "mutate-route-labels.mjs",
   "mutate-screenout-retry.mjs",
   "mutate-source-block-output-privacy.mjs",
   "mutate-source-roles.mjs",

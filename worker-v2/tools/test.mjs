@@ -538,6 +538,11 @@ const FILES = [
   // When EXEC_LANES=1 (default), behavior is byte-identical to today's sequential path.
   // Evidence these can fail: tools/mutate-multilane.mjs.
   "./tests/multilane.test.mjs",
+  // Per-answer routing rules with verbatim labels, anchor-artifact cleaning, and the full
+  // path from route_answers through sealedRouteDestinations to stampSurvivalHints. The
+  // anchor cleaner strips rendering-artifact markers with a named, counted transformation.
+  // Evidence they can fail: tools/mutate-route-labels.mjs.
+  "./tests/route-label-extraction.test.mjs",
 ];
 
 export async function runVerification({

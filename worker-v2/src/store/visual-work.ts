@@ -785,7 +785,7 @@ function validateEpochRow(value: unknown, index: number): VisualWorkEpochRow {
   const walkArtifact = validateBinding(root.walkArtifact, `${path}.walkArtifact`, `EV-${pathId}-observation`);
   const epochOrdinal = nonnegativeInteger(root.epochOrdinal, `${path}.epochOrdinal`, MAX_EPOCHS);
   const epochId = nonempty(root.epochId, `${path}.epochId`, 500);
-  const stepIndex = nonnegativeInteger(root.stepIndex, `${path}.stepIndex`, 1_000_000);
+  const stepIndex = stepOrdinal(root.stepIndex, `${path}.stepIndex`, 1_000_000);
   const slot = nonempty(root.slot, `${path}.slot`, 200);
   const scope = validateScope(root.scope, `${path}.scope`);
   const startedAt = timestamp(root.startedAt, `${path}.startedAt`);
@@ -1168,7 +1168,7 @@ function parseCaptureEpoch(value: unknown, path: string): { epoch: ScreenCapture
   const allowedKeys = isV1_1 ? [...EPOCH_V1_1_KEYS] : [...EPOCH_V1_KEYS];
   const root = object(value, path, allowedKeys);
   const epochId = nonempty(root.epochId, `${path}.epochId`, 500);
-  const stepIndex = nonnegativeInteger(root.stepIndex, `${path}.stepIndex`, 1_000_000);
+  const stepIndex = stepOrdinal(root.stepIndex, `${path}.stepIndex`, 1_000_000);
   const slot = nonempty(root.slot, `${path}.slot`, 200);
   const scope = validateScope(root.scope, `${path}.scope`);
   const startedAt = timestamp(root.startedAt, `${path}.startedAt`);
@@ -1361,7 +1361,7 @@ function validateStepsEnvelope(value: unknown, path: string): void {
     ]) {
       if (!hasOwn(step, required)) invalid(stepPath, `missing required step field ${required}`);
     }
-    nonnegativeInteger(step.stepIndex, `${stepPath}.stepIndex`, 1_000_000);
+    stepOrdinal(step.stepIndex, `${stepPath}.stepIndex`, 1_000_000);
     nullableString(step.decisionQuestion, `${stepPath}.decisionQuestion`, 1_000);
     oneOf(step.decisionSource, ["plan", "navigator-default", "probe", "recovery"] as const, `${stepPath}.decisionSource`);
     if (hasOwn(step, "bindingVia")) nullableString(step.bindingVia, `${stepPath}.bindingVia`, MAX_TEXT);
@@ -1407,7 +1407,7 @@ function validateOptionalPathFields(root: Record<string, unknown>): void {
     arrayValue(root.readerLimitations, "$artifact.readerLimitations", MAX_FAILURES).forEach((value, index) => {
       const path = `$artifact.readerLimitations[${index}]`;
       const row = object(value, path, ["stepIndex", "kind", "detail", "count"]);
-      nonnegativeInteger(row.stepIndex, `${path}.stepIndex`, 1_000_000);
+      stepOrdinal(row.stepIndex, `${path}.stepIndex`, 1_000_000);
       nonempty(row.kind, `${path}.kind`, 500);
       nonempty(row.detail, `${path}.detail`, MAX_TEXT);
       positiveInteger(row.count, `${path}.count`, 1_000_000);
@@ -1437,7 +1437,7 @@ function validateOptionalPathFields(root: Record<string, unknown>): void {
         `${path}.reason`,
       );
       nonempty(row.detail, `${path}.detail`, MAX_TEXT);
-      nonnegativeInteger(row.stepIndex, `${path}.stepIndex`, 1_000_000);
+      stepOrdinal(row.stepIndex, `${path}.stepIndex`, 1_000_000);
     });
   }
 }
@@ -1616,7 +1616,7 @@ function validateFailure(
   const detail = nonempty(root.detail, `${path}.detail`, MAX_TEXT);
   const count = positiveInteger(root.count, `${path}.count`, 1_000_000);
   const at = timestamp(root.at, `${path}.at`);
-  const stepIndex = nonnegativeInteger(root.stepIndex, `${path}.stepIndex`, 1_000_000);
+  const stepIndex = stepOrdinal(root.stepIndex, `${path}.stepIndex`, 1_000_000);
   const slot = nonempty(root.slot, `${path}.slot`, 200);
   if (expectedStepIndex !== undefined && expectedStepIndex !== stepIndex) {
     invalid(`${path}.stepIndex`, "does not bind its capture epoch");
@@ -2075,6 +2075,25 @@ function nonnegativeInteger(value: unknown, path: string, max: number): number {
     invalid(path, `must be an integer from 0 through ${max}`);
   }
   return value as number;
+}
+
+/**
+ * Step ordinals are whole steps (k) or the walker's recovery interleave (k + 0.5): the driver
+ * records the recovery it runs after a blocked step as `stepIndex + 0.5` by design, so a strict
+ * boundary demanding integers here rejects every legal recovery walk as corrupt. Accept exactly
+ * the writer's domain — halves and nothing finer; 2.25, NaN, and negatives still fail.
+ */
+function stepOrdinal(value: unknown, path: string, max: number): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > max ||
+    !Number.isSafeInteger(value * 2)
+  ) {
+    invalid(path, `must be a whole or half step ordinal from 0 through ${max}`);
+  }
+  return value;
 }
 
 function positiveInteger(value: unknown, path: string, max: number): number {
