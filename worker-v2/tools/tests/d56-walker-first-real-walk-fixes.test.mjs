@@ -1041,3 +1041,122 @@ suite("amendment 3b: leftover cases get the honest run-end label", () => {
     );
   });
 });
+
+suite("amendment 4: a validation rejection overrides the already-answered skip on recovery", () => {
+  // Measured live (run v2r_01m07j4mrttnmzg7j917mjpb0v, screen 48 "Years at organization"):
+  // the page pre-fills "-" and the reader's valueIsUserSupplied believes it, so the value
+  // loop skips the field as answered while the site's validation says "Please enter a
+  // number." forever. When the advance fails AND validation messages are present, the
+  // recovery pass must re-derive values — the site itself has testified the field holds
+  // no answer.
+  test("a pre-filled placeholder that validation rejects gets re-typed by the recovery pass", async () => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const mk = (validation) => ({
+      url: "https://fixture.invalid/survey",
+      title: "S70",
+      questionText: "S70. Years at organization?",
+      grid: null,
+      collectedErrors: [],
+      readerLimitations: [],
+      controls: [
+        {
+          idx: 0,
+          tag: "input",
+          type: "text",
+          name: "S70_1",
+          id: null,
+          code: null,
+          label: "Years at organization",
+          text: "",
+          checked: null,
+          value: "-",
+          valueIsUserSupplied: true,
+          disabled: false,
+          required: true,
+          visible: true,
+          operable: true,
+          actuatedVia: "self",
+          placeholder: null,
+          maxlength: null,
+          min: null,
+          max: null,
+          step: null,
+          pattern: null,
+          readOnly: false,
+        },
+      ],
+      optionGroups: [],
+      buttons: [{ idx: 1, label: "Next", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+      validationMessages: validation,
+      progress: { present: false, value: null },
+      counts: { controls: 1, optionGroups: 0, options: 0, textInputs: 1, valueInputs: 1, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:s70",
+    });
+    const reads = [mk([]), mk([]), mk(["Please enter a number."]), mk(["Please enter a number."]), mk(["Please enter a number."]), mk(["Please enter a number."])];
+    let last = reads[0];
+    const typed = [];
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        if (typeof script === "string" && script.includes("screenSignature")) {
+          if (reads.length > 0) last = reads.shift();
+          return last;
+        }
+        const src = String(script);
+        if (src.includes("el.value")) {
+          const start = src.indexOf('el.value = "');
+          const end = start >= 0 ? src.indexOf('";', start) : -1;
+          const value = start >= 0 && end > start ? src.slice(start + 'el.value = "'.length, end) : "";
+          typed.push(value);
+          return { ok: true, reason: null, got: value };
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return Array.from({ length: 4 }, (_, i) => ({
+          async click() {},
+          async type(t) {
+            typed.push(t);
+          },
+          async focus() {},
+        }));
+      },
+      async screenshot() {
+        return new TextEncoder().encode("PNG-D56");
+      },
+      async setViewport() {},
+      on() {},
+      async close() {},
+      async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56reval", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey",
+        runId,
+        planRevisionId: "plan_d56reval1",
+        attemptId: "att_d56reval001",
+        tier: 1,
+        maxSteps: 1,
+        deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 },
+        applyHistoryShim: false,
+        advanceTimeoutMs: 400,
+      },
+      { env, runId, attemptId: "att_d56reval001", pathId: "path_d56reval", witnesses: [] },
+    );
+    const recoveryFills = (obs.steps[0]?.recovery?.actions ?? [])
+      .concat(obs.steps[0]?.actions ?? [])
+      .filter((a) => (a.kind === "type-text" || a.kind === "set-value") && a.targetIdx === 0 && a.ok);
+    assert(
+      recoveryFills.length >= 1 || typed.length >= 1,
+      `the validation-rejected placeholder must be re-typed on recovery; actions: ${JSON.stringify(
+        (obs.steps[0]?.recovery?.actions ?? []).map((a) => a.kind),
+      )} step actions: ${JSON.stringify((obs.steps[0]?.actions ?? []).map((a) => a.kind))}`,
+    );
+  });
+});

@@ -2935,6 +2935,16 @@ async function applyDecision(
   pathHints: readonly SurvivalHint[] = [],
   /** BOUNDED SCREEN-OUT RETRY filler variant (WalkOptions.variant). 0 = today's defaults. */
   variant = 0,
+  /**
+   * RECOVERY AFTER A VALIDATION REJECTION: bypass the already-answered skip in the value
+   * loop. The site's own validation message is ground truth that whatever the fields hold
+   * is NOT an answer — measured live 2026-08-17 (S70 "Years at organization"): the page
+   * pre-fills "-", the reader's valueIsUserSupplied believes it, the value loop skips the
+   * field as answered, and validation says "Please enter a number." forever. Re-typing a
+   * value the walker itself already derived is idempotent, so the bypass is safe for the
+   * fields this walk actually filled.
+   */
+  revalidateValues = false,
 ): Promise<{ actions: PerformedAction[]; notOffered: string[]; unfillable: UnfillableControl[] }> {
   const actions: PerformedAction[] = [];
   const notOffered: string[] = [];
@@ -3620,7 +3630,7 @@ async function applyDecision(
     // skip off `value.length > 0` would skip every slider on every survey for ever and record
     // the screen as answered. `valueIsUserSupplied` is the reader's answer to exactly that;
     // where it is absent (an older reader) the old test is the honest fallback.
-    const alreadyAnswered = c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0);
+    const alreadyAnswered = revalidateValues ? false : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));
     if (alreadyAnswered) continue;
 
     const planned = decision?.text_entry?.value;
@@ -4830,6 +4840,10 @@ export async function walkPath(
         } as PlannedDecision,
         pathHints,
         stepVariant,
+        // The advance failed AND the site printed validation messages: whatever the value
+        // fields hold is not an answer, so the recovery's value loop must re-derive rather
+        // than trust the already-answered skip. See applyDecision.revalidateValues.
+        ((after ?? before)?.validationMessages ?? []).length > 0,
       );
       const recoveryReadFailures: ScreenCaptureFailure[] = [];
       let recoveryBaseline: RenderedScreen | null = null;

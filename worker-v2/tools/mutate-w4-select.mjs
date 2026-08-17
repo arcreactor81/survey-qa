@@ -199,6 +199,18 @@ await runMutantSuite({
       kills: ["ANY hung page call — screenshot, not a read — still returns a walk, via the page-call bound"],
     },
     {
+      name: "a validation rejection stops overriding the already-answered skip (the S70 stall reinstated)",
+      breaks:
+        "recovery after a site validation rejection. A page-pre-filled placeholder ('-') " +
+        "that valueIsUserSupplied believes leaves the value loop skipping the field forever " +
+        "while validation says 'Please enter a number.' — the walk blocks at that screen " +
+        "with 48 screens behind it, as measured live",
+      file: DR,
+      find: "    const alreadyAnswered = revalidateValues ? false : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));",
+      replace: "    const alreadyAnswered = c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0);",
+      kills: ["a pre-filled placeholder that validation rejects gets re-typed by the recovery pass"],
+    },
+    {
       name: "the fragmented exclusion shortcut stops firing (the live S50 shape dies again)",
       breaks:
         "reach on the shape the live screener actually renders: EIGHT one-checkbox company " +
