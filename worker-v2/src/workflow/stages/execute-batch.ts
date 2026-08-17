@@ -1231,23 +1231,20 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
   const hasSeedWork = work.some((item) => item.seedAlternative !== null);
   if (requestedLanes > 1 && !hasSeedWork) {
     const multilane = await import("./multilane");
-    const lanes = multilane.effectiveLaneCount(env);
-    if (lanes > 1) {
-      return await executeMultiLaneBatch(env, args, program, progress, work, {
-        batchDeadline,
-        batchMaxMs,
-        maxAttempts,
-        maxSteps,
-        advanceTimeoutMs,
-        allowShim,
-        acquireTimeoutMs,
-        perCaseTimeoutMs,
-        maxExploration,
-        requiredProbeStop,
-        lanes,
-        multilane,
-      });
-    }
+    return await executeMultiLaneBatch(env, args, program, progress, work, {
+      batchDeadline,
+      batchMaxMs,
+      maxAttempts,
+      maxSteps,
+      advanceTimeoutMs,
+      allowShim,
+      acquireTimeoutMs,
+      perCaseTimeoutMs,
+      maxExploration,
+      requiredProbeStop,
+      lanes: multilane.effectiveLaneCount(env),
+      multilane,
+    });
   }
 
   let handle: SessionHandle;
