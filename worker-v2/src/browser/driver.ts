@@ -3248,7 +3248,24 @@ async function applyDecision(
         prefer.length > 0
           ? g.options.find((o) => answerable(o) && !flagged(o) && prefer.some((p) => labelMatches(o.label, p)))
           : undefined;
-      const preferred = preferredByDoc ?? (avoid.length > 0 ? g.options.find((o) => answerable(o) && !flagged(o)) : first);
+      // EXCLUSION-SCREENER DEFAULT (assumption stated, CLAUDE.md discipline). A multi-select
+      // whose options are affiliations/conditions with an exclusive "None of the above" row
+      // is a universal screener shape: every listed option disqualifies and the none-option
+      // is the only survivable invented answer. Three live pivots on the 2026-08-17 run drew
+      // company options at such a screen and all screened out while "None of the above"
+      // (sealed as row 99) sat unpicked. When the navigator must INVENT a multi-select
+      // answer and no documented prefer-label matched, it now prefers a none-style option.
+      // The match is a linguistic convention (a small English lexicon) — stated here, used
+      // ONLY to re-order which invented filler is clicked (input, never evidence), skipped
+      // whenever a documented hint or avoid flag speaks, and inert on single-select groups.
+      const noneStyle = (label: string): boolean =>
+        /\bnone of the above\b|\bnone of these\b|^\s*none\b|\bnot applicable\b|\bn\/a\b/i.test(label);
+      const exclusionNone =
+        !preferredByDoc && g.kind === "checkbox"
+          ? g.options.find((o) => answerable(o) && !flagged(o) && noneStyle(o.label))
+          : undefined;
+      const preferred =
+        preferredByDoc ?? exclusionNone ?? (avoid.length > 0 ? g.options.find((o) => answerable(o) && !flagged(o)) : first);
       const chosen = preferred ?? first;
       // The labels actually steered around, in DOM order — named in the detail so a reader
       // can see WHY this filler is not position-1. Empty when the pick equals position-1.
@@ -3275,6 +3292,9 @@ async function applyDecision(
             ? `navigator-default:documented-continue-option(${JSON.stringify(chosen.label)}${
                 avoided.length > 0 ? `; avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}` : ""
               }) (` + choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`
+            : exclusionNone && chosen === exclusionNone
+              ? `navigator-default:exclusive-none-option(${JSON.stringify(chosen.label)}) (` +
+                choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`
             : avoided.length > 0
               ? `navigator-default:first-non-flagged-option(avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}) (` +
                 choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`

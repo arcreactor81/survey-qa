@@ -160,7 +160,10 @@ function fakePage(reads) {
       // exact W4 receipt contract, as the repaired D32/D55 fixtures do.
       if (script.includes("W4_NATIVE_CHOICE_SCOPED_READBACK")) {
         const idx = Number(/const expectedIdx = (\d+);/.exec(script)?.[1]);
-        return { idx, type: "radio", name: null, checked: true, checkedGroupIdxs: [idx] };
+        // Echo the clicked option's REAL group kind: a checkbox group's readback must say
+        // checkbox or the production type check correctly refuses the receipt.
+        const owner = (last?.optionGroups ?? []).find((grp) => (grp.options ?? []).some((o) => o.idx === idx));
+        return { idx, type: owner?.kind === "checkbox" ? "checkbox" : "radio", name: null, checked: true, checkedGroupIdxs: [idx] };
       }
       return { ok: true };
     },
@@ -431,6 +434,69 @@ suite("D54 — a documented CONTINUE answer outranks first-non-flagged, and neve
     const clicks = optionClicks(obs);
     assertEq(clicks[0].targetIdx, 0);
     assert(clicks[0].detail.startsWith("navigator-default:first-option ("), clicks[0].detail);
+  });
+});
+
+/* ============================================================ 2c. the exclusion-screener none-default */
+
+/** The measured 2026-08-17 shape: a select-all-that-apply of disqualifying affiliations. */
+const exclusionScreen = (extraOpts = {}) =>
+  screen("S50. Do you or anyone in your household work for any of the following?", {
+    optionGroups: [
+      {
+        name: "S50",
+        kind: "checkbox",
+        options: [
+          option(0, "An advertising agency or media company"),
+          option(1, "A pharmaceutical company"),
+          option(2, "None of the above", extraOpts),
+        ],
+      },
+    ],
+  });
+
+suite("D54 — an invented multi-select answer prefers the exclusive none-option", () => {
+  test("THE MEASURED SHAPE: an unbound exclusion screener answers None of the above, named as such", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, advancing(exclusionScreen()), { decisions: [] });
+    const clicks = optionClicks(obs);
+    assertEq(clicks.length, 1, JSON.stringify(obs.steps[0]?.actions));
+    assertEq(clicks[0].targetLabel, "None of the above", `three live pivots died drawing company options: ${clicks[0].targetLabel}`);
+    assert(clicks[0].detail.startsWith('navigator-default:exclusive-none-option("None of the above")'), clicks[0].detail);
+    assert(obs.navigatorDefaultAnswerCount >= 1, "still an invented, counted answer");
+  });
+
+  test("INERT ON SINGLE-SELECT: a radio group with a none-style option keeps position 1", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const s = exclusionScreen();
+    s.optionGroups[0].kind = "radio";
+    const { obs } = await walk(mod, env, advancing(s), { decisions: [] });
+    const clicks = optionClicks(obs);
+    assertEq(clicks[0].targetIdx, 0, "single-select defaults are untouched by the exclusion heuristic");
+  });
+
+  test("A DOCUMENTED HINT OUTRANKS THE HEURISTIC: prefer_labels beats none-of-the-above", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, advancing(exclusionScreen()), {
+      decisions: [],
+      survival_hints: [{ question: "S50", avoid_labels: [], prefer_labels: ["A pharmaceutical company"] }],
+    });
+    const clicks = optionClicks(obs);
+    assertEq(clicks[0].targetLabel, "A pharmaceutical company", clicks[0].detail);
+  });
+
+  test("AN AVOID FLAG ON THE NONE-OPTION IS HONOURED: the heuristic never overrules a documented screen-out", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, advancing(exclusionScreen()), {
+      decisions: [],
+      survival_hints: [{ question: "S50", avoid_labels: ["None of the above"] }],
+    });
+    const clicks = optionClicks(obs);
+    assert(clicks[0].targetLabel !== "None of the above", `a flagged none-option was clicked: ${clicks[0].detail}`);
   });
 });
 

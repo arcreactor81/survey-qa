@@ -199,6 +199,18 @@ await runMutantSuite({
       kills: ["ANY hung page call — screenshot, not a read — still returns a walk, via the page-call bound"],
     },
     {
+      name: "the exclusion-screener none-default stops firing (three live pivots' deaths reinstated)",
+      breaks:
+        "reach on the universal exclusion-screener shape. A select-all-that-apply of " +
+        "disqualifying affiliations offers exactly one survivable invented answer — the " +
+        "exclusive none-option; without the preference the default draws company options " +
+        "and screens out, as all three pivots did live on 2026-08-17",
+      file: DR,
+      find: "        !preferredByDoc && g.kind === \"checkbox\"",
+      replace: "        false",
+      kills: ["THE MEASURED SHAPE: an unbound exclusion screener answers None of the above, named as such"],
+    },
+    {
       name: "the post-advance epoch dedup stops happening (a third of every step's capture cost returns)",
       breaks:
         "the pace fix. The post-advance epoch duplicates the next step's before-epoch — the " +
