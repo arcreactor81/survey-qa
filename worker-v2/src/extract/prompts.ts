@@ -36,7 +36,10 @@ import { CONSTRUCT_CLASSES } from "./types";
 // 1.10.0 adds an explicit imperative scope constraint: scope must be "survey" or
 // "section:<name>"; question-level rules belong to pass B; any other scope value invalidates
 // the item. The 4.5 A/B's one failure was question:* scope leaking into pass A output.
-export const PROMPT_VERSION_A = "v2-extract-pass-a/1.10.0";
+// 1.11.0 adds routing table decomposition instructions: multi-row per-answer routing tables
+// must be decomposed into individual route_answers entries with verbatim label text. The
+// prompt now explicitly instructs against flattening routing tables into single statements.
+export const PROMPT_VERSION_A = "v2-extract-pass-a/1.11.0";
 // v2-extract-pass-b/1.2.0 — This constant is also the version gate
 // on every persisted pass-B artifact (chunks, sweeps, the whole-pass payload), so it covers
 // what pass B COMPUTES from a parse, not just the words it sends: 1.2.0 restricts the
@@ -47,7 +50,10 @@ export const PROMPT_VERSION_A = "v2-extract-pass-a/1.10.0";
 // routing/termination authority while withholding them from respondent option labels.
 // 1.5.0 moves chunks, context and ledger sweeps to the same lossless source-block JSONL seam;
 // no model-visible newline marker can differ from the exact source string the ledger checks.
-export const PROMPT_VERSION_B = "v2-extract-pass-b/1.6.0";
+// 1.7.0 adds routing table decomposition instructions: per-answer routing rules must carry
+// verbatim option labels, one route_answers entry per table row. Unresolvable label matches
+// surface as ambiguities rather than being guessed or dropped.
+export const PROMPT_VERSION_B = "v2-extract-pass-b/1.7.0";
 
 const SHARED_GROUND_RULES = `BINDING GROUND RULE
 The questionnaire document is the SOLE source of truth. You have never seen the implemented
@@ -156,6 +162,15 @@ DO NOT emit an item that only restates the content of one question (its wording,
 list, its own skip). That is the other pass's job and duplicating it wastes the diff.
 If a global rule has explicit exceptions, the exceptions belong in "exceptions", not in a
 separate item.
+
+ROUTING TABLES AND PER-ANSWER RULES
+When the document contains a routing summary table that maps answer options to destinations
+across multiple questions (e.g., a table listing which answers terminate, skip to another
+question, or continue), do NOT flatten it into a single global statement. Each row is a
+per-question, per-answer rule. Record the table's EXISTENCE as a cross-reference, and note
+which questions it covers, so the block-by-block pass can decompose each row into typed
+route_answers with verbatim labels. If the table carries survey-scoped rules (e.g., "all
+'None of the above' answers terminate"), those ARE global rules and belong here.
 
 CLOSED CONSTRUCT VOCABULARY
 The "construct" field must be exactly one of these values — no others are valid:
@@ -344,6 +359,26 @@ Then produce THREE things, all mandatory:
      "max_selections" — a positive integer, or null when not stated.
    No other keys. Never invent values: a field the document does not state stays null or [].
    Leave "expansion" null when the document enumerates nothing. NEVER invent codes.
+
+   ROUTING TABLE DECOMPOSITION (critical for per-answer steering)
+   When the document contains a routing table — rows mapping answer options to destinations
+   (question ids, TERMINATE, SKIP TO, GO TO, CONTINUE, etc.) — you MUST decompose it into
+   one "route_answers" entry per row:
+     - "label": the answer option's VERBATIM text as it appears in the document. Copy it
+       character-for-character. Do not paraphrase, shorten, or normalize.
+     - "code": the numeric or alphanumeric code, if the document states one alongside the
+       label. null when not stated.
+     - "destination": the target question id, "TERMINATE", or other routing destination as
+       the document states it.
+   Multi-row tables MUST produce multiple entries. Never collapse several rows into one
+   paragraph or one statement. Never drop rows. A routing table with 5 rows produces 5
+   entries in "route_answers".
+   When a routing row names only a code with no label (e.g., "code 3 -> TERMINATE"), put
+   the code in "code" and leave "label" null. Do not invent a label.
+   When a routing row's text cannot be matched to any option the question defines, record
+   that row in "ambiguities" as a genuine ambiguity rather than guessing the match. The
+   route_answers entry STILL gets the verbatim text as "label" — the ambiguity documents
+   the uncertainty, it does not delete the row.
 
 2. "block_dispositions" — EXACTLY ONE ENTRY FOR EVERY BLOCK ID IN YOUR CHUNK, including the
    ones you extracted nothing from. This is what makes an omission visible.
