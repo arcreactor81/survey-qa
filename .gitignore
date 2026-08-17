@@ -192,3 +192,6 @@ targets/
 
 # Ephemeral local session handoff; retained on disk but never published.
 /docs/HANDOFF-12AUG-SESSION.md
+
+# Agent worktrees (throwaway build isolation)
+/.worktrees/

@@ -1148,7 +1148,7 @@ function parseReaderLimitations(value: unknown, path: string): ParsedReaderLimit
   return array(value, path, MAX_ARRAY_ITEMS).map((entry, index) => {
     const itemPath = `${path}[${index}]`;
     const root = closedObject(entry, itemPath, ["stepIndex", "kind", "detail", "count"], ["stepIndex", "kind", "detail", "count"]);
-    integer(root.stepIndex, `${itemPath}.stepIndex`);
+    stepOrdinal(root.stepIndex, `${itemPath}.stepIndex`);
     const kind = nonempty(root.kind, `${itemPath}.kind`, 500);
     nonempty(root.detail, `${itemPath}.detail`, MAX_TEXT);
     return { kind, count: integer(root.count, `${itemPath}.count`) };
@@ -1225,6 +1225,18 @@ function nullableString(value: unknown, path: string, max: number): string | nul
 function integer(value: unknown, path: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) invalid(path, "must be a non-negative safe integer");
   return value as number;
+}
+
+/**
+ * Step ordinals are whole steps (k) or the walker's recovery interleave (k + 0.5): the driver
+ * records the recovery it runs after a blocked step as `stepIndex + 0.5` by design. Accept
+ * exactly the writer's domain — halves and nothing finer.
+ */
+function stepOrdinal(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || !Number.isSafeInteger(value * 2)) {
+    invalid(path, "must be a non-negative whole or half step ordinal");
+  }
+  return value;
 }
 
 function finiteNonnegative(value: unknown, path: string): number {

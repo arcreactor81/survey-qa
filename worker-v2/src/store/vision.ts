@@ -1050,7 +1050,7 @@ function normalizeCapture(value: unknown, path: string): VisualCaptureIdentity {
     runId: boundedString(root.runId, `${path}.runId`, 200),
     attemptId: boundedString(root.attemptId, `${path}.attemptId`, 200),
     pathId: boundedString(root.pathId, `${path}.pathId`, 200),
-    stepIndex: nonnegativeInteger(root.stepIndex, `${path}.stepIndex`, 1_000_000),
+    stepIndex: stepOrdinal(root.stepIndex, `${path}.stepIndex`, 1_000_000),
     slot: boundedString(root.slot, `${path}.slot`, 100),
     epochId: boundedString(root.epochId, `${path}.epochId`, 200),
     scope,
@@ -1583,7 +1583,7 @@ function normalizeMembershipFact(
     screenshotSha256: hash(sourceObject.screenshotSha256, `${path}.source.screenshotSha256`),
     pairedEvidenceSha256: hash(sourceObject.pairedEvidenceSha256, `${path}.source.pairedEvidenceSha256`),
     epochId: boundedString(sourceObject.epochId, `${path}.source.epochId`, 200),
-    stepIndex: nonnegativeInteger(sourceObject.stepIndex, `${path}.source.stepIndex`, 1_000_000),
+    stepIndex: stepOrdinal(sourceObject.stepIndex, `${path}.source.stepIndex`, 1_000_000),
     slot: boundedString(sourceObject.slot, `${path}.source.slot`, 100),
     observationCacheKey: nullableCacheKey(sourceObject.observationCacheKey, OBSERVATION_CACHE_KEY, `${path}.source.observationCacheKey`),
     screen,
@@ -2371,6 +2371,24 @@ function positiveInteger(value: unknown, path: string, max: number): number {
 function nonnegativeInteger(value: unknown, path: string, max: number): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > max) {
     invalid(path, `must be an integer in [0, ${max}]`);
+  }
+  return value;
+}
+
+/**
+ * Step ordinals are whole steps (k) or the walker's recovery interleave (k + 0.5): the driver
+ * records the recovery it runs after a blocked step as `stepIndex + 0.5` by design. Accept
+ * exactly the writer's domain — halves and nothing finer.
+ */
+function stepOrdinal(value: unknown, path: string, max: number): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > max ||
+    !Number.isSafeInteger(value * 2)
+  ) {
+    invalid(path, `must be a whole or half step ordinal in [0, ${max}]`);
   }
   return value;
 }

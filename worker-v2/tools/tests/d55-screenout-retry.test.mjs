@@ -957,3 +957,92 @@ suite("D55 — the pivot varies the failing screen and replays the survived ones
     );
   });
 });
+
+/* ============================================================ 7. THE IDENTICAL-ACTIONS STOP */
+
+suite("D55 — a pivot that reproduces its parent's actions ends the retries", () => {
+  // Measured live (run v2r_01m08ce0s86w97rvvcn08h0n59): the plan pinned "None of the
+  // above" at the fatal screen by exact label, so all four pivots replayed the identical
+  // click and died identically — four 14-minute walks buying zero new information. The
+  // varied-filler lever only moves navigator defaults; an exact plan label is outside its
+  // reach. One byte-for-byte reproduction is the proof that further pivots cannot differ.
+  test("a pivot that reproduces its parent's actions verbatim ends the retries — plan-pinned deaths are not re-bought", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const bed = await liveBed(mod, env, {
+      decisions: [
+        { question: "R1", question_wording: "Which of these best describes your role?", select: ["Role A"] },
+      ],
+    });
+
+    // Three identical scripts on offer; the stop must leave the third UNUSED.
+    const { pages } = await withBrowser(
+      [twoScreenScreenout(), twoScreenScreenout(), twoScreenScreenout()],
+      () => runBatch(mod, env, bed),
+    );
+
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(
+      progress.walks.length,
+      2,
+      `one attempt + one reproducing pivot must END the chain below the cap, got ${progress.walks.length} walks`,
+    );
+    assertEq(pages.length, 2, "the third script must never be walked — the stop preempts the pivot cap");
+    assertEq(progress.screenoutPivots?.["FLOOR-01"], 1, "exactly one pivot was bought");
+
+    // Both walks clicked the SAME plan-pinned option — the invariance the stop detected.
+    const roleClicks = (p) => p.clicks.filter((c) => c.index === 10 || c.index === 11).map((c) => c.index);
+    assertEq(JSON.stringify(roleClicks(pages[0])), JSON.stringify(roleClicks(pages[1])));
+    assertEq(
+      mod.executeBatch.walkActionsJson !== undefined,
+      true,
+      "the fingerprint is exported for direct pinning",
+    );
+  });
+
+  test("a pivot that ACTS differently keeps the retry chain alive to the cap", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const bed = await liveBed(mod, env);
+
+    // No plan pin: attempt 0 defaults Role A; pivot 1 varies to Role B (different actions,
+    // chain continues); pivot 2 clamps to Role B again and lands on a completion.
+    const { pages } = await withBrowser(
+      [twoScreenScreenout(), twoScreenScreenout(), twoScreenCompletion()],
+      () => runBatch(mod, env, bed),
+    );
+
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(
+      progress.walks.length,
+      3,
+      `a DIFFERING pivot must not be stopped — expected attempt + 2 pivots, got ${progress.walks.length}`,
+    );
+    assertEq(pages.length, 3, "all three scripts walked");
+    assertEq(progress.walks[2].ending?.kind, "completed", "the second pivot reached the completion");
+  });
+
+  test("walkActionsJson: identical actions fingerprint identically; timing and screens are excluded; any acted difference splits", async () => {
+    const mod = await worker();
+    const steps = (value, ok = true) => [
+      {
+        stepIndex: 0,
+        actions: [{ kind: "type-text", targetIdx: 3, value, ok }],
+      },
+      { stepIndex: 1.5, actions: [] },
+    ];
+    const base = { steps: steps("16") };
+    const sameActionsOtherNoise = {
+      steps: steps("16").map((s) => ({ ...s, wallMs: 9999, screenBefore: { questionText: "different render" } })),
+    };
+    assertEq(mod.executeBatch.walkActionsJson(base), mod.executeBatch.walkActionsJson(sameActionsOtherNoise));
+    assert(
+      mod.executeBatch.walkActionsJson(base) !== mod.executeBatch.walkActionsJson({ steps: steps("8") }),
+      "a different typed value must split the fingerprint",
+    );
+    assert(
+      mod.executeBatch.walkActionsJson(base) !== mod.executeBatch.walkActionsJson({ steps: steps("16", false) }),
+      "a failed action must split the fingerprint from a successful one",
+    );
+  });
+});
