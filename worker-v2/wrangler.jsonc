@@ -188,7 +188,7 @@
     // walking. Set it to 0 to run the contractual floor and nothing else.
     "EXEC_MAX_EXPLORATION": "24",
     "EXEC_MAX_STEPS_PER_PATH": "80", // a survey that never terminates must not hang a batch
-    "EXEC_ADVANCE_TIMEOUT_MS": "3500", // how long a screen may take to change after Next
+    "EXEC_ADVANCE_TIMEOUT_MS": "12000", // how long a screen may take to change after Next
     "EXEC_ACQUIRE_TIMEOUT_MS": "45000", // a reconnect to a wedged session never returns
     "EXEC_WALK_TIMEOUT_MS": "1800000", // one walk, bounded; a hang is a named outcome
     // PER-CASE TIME BUDGET (owner directive, 17-Aug: a walk that is PROGRESSING must not be
