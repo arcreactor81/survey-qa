@@ -163,5 +163,17 @@ await runMutantSuite({
       replace: "    shimmed: opts.applyHistoryShim,",
       kills: ["a walk that runs out of survey carries a typed ending with its evidence"],
     },
+    {
+      name: "the dead-forward-control screen-out arm is removed (termination pages read as stalls again)",
+      breaks:
+        "ending honesty on the measured live shape: the test-mode termination page prints " +
+        "'unable to accept ... Terminated at S80' AND renders a >> the walk pressed twelve " +
+        "times without the screen changing — 'still offering a way on' is false in " +
+        "behaviour, and calling it a stall buries a real screen-out",
+      file: DR,
+      find: "  if (advance && screenout && ctx.outcome === \"blocked\") {",
+      replace: "  if (false) {",
+      kills: ["screen-out wording + a rendered advance the walk MEASURED inert (outcome blocked) => screened-out"],
+    },
   ],
 });

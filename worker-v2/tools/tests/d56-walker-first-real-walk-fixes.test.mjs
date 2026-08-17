@@ -1052,7 +1052,7 @@ suite("amendment 4: a validation rejection overrides the already-answered skip o
   test("a pre-filled placeholder that validation rejects gets re-typed by the recovery pass", async () => {
     const { mod } = await loadWorker();
     const env = testEnv();
-    const mk = (validation) => ({
+    const mk = (validation, fieldValue = "-") => ({
       url: "https://fixture.invalid/survey",
       title: "S70",
       questionText: "S70. Years at organization?",
@@ -1070,7 +1070,7 @@ suite("amendment 4: a validation rejection overrides the already-answered skip o
           label: "Years at organization",
           text: "",
           checked: null,
-          value: "-",
+          value: fieldValue,
           valueIsUserSupplied: true,
           disabled: false,
           required: true,
@@ -1093,7 +1093,11 @@ suite("amendment 4: a validation rejection overrides the already-answered skip o
       counts: { controls: 1, optionGroups: 0, options: 0, textInputs: 1, valueInputs: 1, optionsNotOperable: 0, readerLimitations: 0 },
       screenSignature: "sig:s70",
     });
-    const reads = [mk([]), mk([]), mk(["Please enter a number."]), mk(["Please enter a number."]), mk(["Please enter a number."]), mk(["Please enter a number."])];
+    // The field RETAINS what the walker typed: after the first fill the re-reads show the
+    // probe text as a user-supplied value, so only the validation bypass (never the
+    // placeholder rule) can make the recovery re-derive.
+    const V = ["Please enter a number."];
+    const reads = [mk([]), mk([]), mk(V, "QA-PROBE"), mk(V, "QA-PROBE"), mk(V, "QA-PROBE"), mk(V, "QA-PROBE")];
     let last = reads[0];
     const typed = [];
     const page = {
@@ -1162,9 +1166,20 @@ suite("amendment 4: a validation rejection overrides the already-answered skip o
       values.some((v) => /^\d+$/.test(String(v ?? ""))),
       `the recovery must derive a NUMBER for a number-demanding validation, typed: ${JSON.stringify(values)}`,
     );
+    // The first pass may type the probe (no validation has spoken yet); the walk must
+    // CONVERGE on a number once it has — the last non-empty value typed is numeric.
+    const nonEmpty = values.filter((v) => String(v ?? "").length > 0);
     assert(
-      !values.includes("QA-PROBE"),
-      `the text probe cannot answer a number-demanding field, typed: ${JSON.stringify(values)}`,
+      /^\d+$/.test(String(nonEmpty[nonEmpty.length - 1] ?? "")),
+      `the walk must converge on a numeric answer after validation speaks, typed: ${JSON.stringify(values)}`,
+    );
+    // AND the FIRST pass must have treated the placeholder as unanswered: on S80 the live
+    // site terminated OUTRIGHT with no validation round, so a walk that only fills on
+    // recovery never fills there at all. The first fill precedes any validation feedback.
+    assertEq(
+      nonEmpty[0],
+      "QA-PROBE",
+      `the first pass must fill over the '-' placeholder before any validation speaks, typed: ${JSON.stringify(values)}`,
     );
   });
 });

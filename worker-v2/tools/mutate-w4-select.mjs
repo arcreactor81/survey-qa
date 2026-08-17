@@ -206,8 +206,20 @@ await runMutantSuite({
         "while validation says 'Please enter a number.' — the walk blocks at that screen " +
         "with 48 screens behind it, as measured live",
       file: DR,
-      find: "      revalidateValidation.length > 0 ? false : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));",
-      replace: "      c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0);",
+      find: "      revalidateValidation.length > 0 || placeholderValue",
+      replace: "      placeholderValue",
+      kills: ["a pre-filled placeholder that validation rejects gets re-typed by the recovery pass"],
+    },
+    {
+      name: "a placeholder value counts as an answer again (the S80 outright-termination reinstated)",
+      breaks:
+        "first-pass value filling. The live survey pre-fills '-' via its own script, " +
+        "valueIsUserSupplied believes it, and on S80 the site TERMINATED outright on the " +
+        "unanswered field — no validation round, so the recovery bypass never fires; only " +
+        "the first-pass placeholder rule can reach it",
+      file: DR,
+      find: "    const placeholderValue = typeof c.value === \"string\" && c.value.length > 0 && /^[\\s\\-–—.·*_/\\\\]+$/.test(c.value);",
+      replace: "    const placeholderValue = false;",
       kills: ["a pre-filled placeholder that validation rejects gets re-typed by the recovery pass"],
     },
     {

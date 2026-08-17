@@ -763,3 +763,36 @@ suite("D42 — a per-case timeout is a named outcome that never kills the batch"
     assert(src.includes('"per-case-timeout"'), "per-case-timeout must be a recognized outcome");
   });
 });
+
+suite("D42 — a termination page wearing a dead forward control is a screen-out, not a stall", () => {
+  // Measured live (run v2r_01m07qpwcjamfpcs89frs3syjs, screen 15): the test-mode
+  // termination page prints "unable to accept ... Terminated at S80" AND renders a ">>"
+  // the walker clicked twelve times without the screen ever changing.
+  test("screen-out wording + a rendered advance the walk MEASURED inert (outcome blocked) => screened-out", async () => {
+    const mod = await worker();
+    const final = screen("", {
+      visibleText:
+        "For testing only:\nThank you for your willingness to participate. Due to the specific guidelines, we have been given for this study, we are unable to accept your offer to participate in our research.\n\nSurvey status: Terminated at S80",
+      buttons: [
+        { idx: 15, label: "<<", role: "back", roleVia: "text", disabled: false, visible: true },
+        { idx: 16, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true },
+      ],
+    });
+    const e = mod.driver.classifyEnding(final, { outcome: "blocked", unboundDecisions: 0 });
+    assertEq(e.kind, "screened-out", JSON.stringify(e.evidence));
+    assert(
+      e.evidence.some((line) => /measured it inert|MEASURED it inert/i.test(line)),
+      `the inert-control measurement must be the named evidence: ${JSON.stringify(e.evidence)}`,
+    );
+  });
+
+  test("the SAME page with a WORKING advance (outcome completed) stays stalled — behaviour, not wording, decides", async () => {
+    const mod = await worker();
+    const final = screen("", {
+      visibleText: "we are unable to accept your offer to participate in our research.",
+      buttons: [{ idx: 16, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true }],
+    });
+    const e = mod.driver.classifyEnding(final, { outcome: "completed", unboundDecisions: 0 });
+    assertEq(e.kind, "stalled", JSON.stringify(e.evidence));
+  });
+});

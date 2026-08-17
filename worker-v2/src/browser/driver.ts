@@ -3632,8 +3632,19 @@ async function applyDecision(
     // skip off `value.length > 0` would skip every slider on every survey for ever and record
     // the screen as answered. `valueIsUserSupplied` is the reader's answer to exactly that;
     // where it is absent (an older reader) the old test is the honest fallback.
+    // A PLACEHOLDER IS NOT AN ANSWER (assumption stated). The live survey pre-fills "-"
+    // into numeric text fields via its own script, which makes the reader's
+    // valueIsUserSupplied heuristic (value differs from the markup default) believe a user
+    // typed it. On S70 that skip left the field for validation to reject; on S80 the site
+    // TERMINATED the respondent outright on the unanswered field — no validation round, so
+    // the recovery bypass never fires. A current value consisting only of punctuation and
+    // whitespace is treated as unanswered on the FIRST pass: no real answer is a lone
+    // dash, and the worst case is re-typing over a site-provided placeholder.
+    const placeholderValue = typeof c.value === "string" && c.value.length > 0 && /^[\s\-–—.·*_/\\]+$/.test(c.value);
     const alreadyAnswered =
-      revalidateValidation.length > 0 ? false : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));
+      revalidateValidation.length > 0 || placeholderValue
+        ? false
+        : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));
     if (alreadyAnswered) continue;
 
     const planned = decision?.text_entry?.value;
@@ -4085,6 +4096,22 @@ export function classifyEnding(
     final.progress.max > 0 &&
     final.progress.now >= final.progress.max;
 
+  // ---- 0. a termination page wearing a dead forward control ----
+  // Measured live (run v2r_01m07qpwcjamfpcs89frs3syjs, screen 15): the test-mode
+  // termination page prints "unable to accept ... Terminated at S80" AND renders a ">>"
+  // the walker clicked twelve times without the screen ever changing. "Still offering a
+  // way on" is a claim about BEHAVIOUR, not markup: an advance control this walk measured
+  // inert (outcome "blocked") does not contradict the page's own termination wording.
+  if (advance && screenout && ctx.outcome === "blocked") {
+    return {
+      kind: "screened-out",
+      evidence: [
+        `the final screen says: ${JSON.stringify(screenout)}`,
+        `a forward control is rendered but this walk MEASURED it inert: outcome "blocked" — the screen never changed after pressing it`,
+        ...provenance,
+      ],
+    };
+  }
   // ---- 1. the survey was still offering a way on ----
   if (advance) {
     return {
