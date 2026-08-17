@@ -533,6 +533,7 @@ export type BlockedReason =
 /** Which post-click observation proved that the survey moved. Answer state is excluded. */
 export type AdvanceSignal =
   | "screen-signature-changed"
+  | "question-identity-changed"
   | "url-changed"
   | "history-length-changed"
   | "progress-value-increased";

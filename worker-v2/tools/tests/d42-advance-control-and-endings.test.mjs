@@ -796,3 +796,43 @@ suite("D42 — a termination page wearing a dead forward control is a screen-out
     assertEq(e.kind, "stalled", JSON.stringify(e.evidence));
   });
 });
+
+suite("D42 — consecutive same-shaped questions are distinguishable advances", () => {
+  // Measured across five runs on 2026-08-17: S70 "Years at organization" -> S80 "Years at
+  // title" produce BYTE-IDENTICAL screenSignatures (one text input each, identical
+  // chrome), the form POST changes neither URL nor history, and every successful advance
+  // between them was declared "did not advance".
+  const yearsScreen = (name, label) =>
+    screen("", {
+      signature: "sig:same-shape",
+      controls: [
+        { idx: 13, tag: "input", type: "text", name, id: null, code: null, label, text: "", checked: null, value: "", valueIsUserSupplied: false, disabled: false, required: false, visible: true, operable: true, placeholder: null, maxlength: null, readOnly: false },
+      ],
+      buttons: [{ idx: 16, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true }],
+    });
+
+  test("THE MEASURED SHAPE: identical signatures, different input name+label => question-identity-changed fires", async () => {
+    const mod = await worker();
+    const s70 = yearsScreen("S70_1", "Years at organization");
+    const s80 = yearsScreen("S80_1", "Years at title or similar role");
+    const signals = mod.driver.advanceSignals(s70, s80);
+    assert(!signals.includes("screen-signature-changed"), "the fixture must reproduce the identical-signature shape");
+    assert(
+      signals.includes("question-identity-changed"),
+      `the advance between same-shaped questions must be detectable: ${JSON.stringify(signals)}`,
+    );
+  });
+
+  test("A VALIDATION RE-RENDER OF THE SAME SCREEN IS NOT AN ADVANCE: same name+label => no identity signal", async () => {
+    const mod = await worker();
+    const before = yearsScreen("S70_1", "Years at organization");
+    const after = yearsScreen("S70_1", "Years at organization");
+    after.validationMessages = ["Please enter a number."];
+    after.controls[0].value = "1"; // answering must not fake an advance either
+    const signals = mod.driver.advanceSignals(before, after);
+    assert(
+      !signals.includes("question-identity-changed"),
+      `a same-question re-render must not read as an advance: ${JSON.stringify(signals)}`,
+    );
+  });
+});

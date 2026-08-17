@@ -3793,9 +3793,25 @@ function nextButton(screen: RenderedScreen): { idx: number; label: string; via: 
  * deliberately absent: an answer can change state without navigation. Progress is accepted
  * only when its numeric value increases.
  */
+/**
+ * WHO the screen is asking about, independent of shape. Two CONSECUTIVE questions of the
+ * same widget shape (the live S70 "Years at organization" -> S80 "Years at title": one
+ * text input each, identical chrome) produce BYTE-IDENTICAL 4886-char screenSignatures,
+ * the form POST changes neither URL nor history, and every advance between them was
+ * declared "did not advance" — measured across five runs on 2026-08-17. Control NAMES and
+ * LABELS distinguish them; control VALUES and checked states are deliberately excluded so
+ * answering (or a validation re-render of the same screen) can never fake an advance.
+ */
+const questionIdentityOf = (s: RenderedScreen): string =>
+  JSON.stringify([
+    s.questionText ?? "",
+    s.controls.filter((c) => c.name || c.label).map((c) => [c.name ?? "", String(c.label ?? "").slice(0, 80)]),
+  ]);
+
 export function advanceSignals(before: RenderedScreen, after: RenderedScreen): AdvanceSignal[] {
   const out: AdvanceSignal[] = [];
   if (after.screenSignature !== before.screenSignature) out.push("screen-signature-changed");
+  if (questionIdentityOf(after) !== questionIdentityOf(before)) out.push("question-identity-changed");
   if (after.url !== before.url) out.push("url-changed");
   if (
     before.historyLength !== null && before.historyLength !== undefined &&

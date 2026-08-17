@@ -211,6 +211,17 @@ await runMutantSuite({
       kills: ["a pre-filled placeholder that validation rejects gets re-typed by the recovery pass"],
     },
     {
+      name: "the question-identity advance signal is removed (same-shaped advances invisible again)",
+      breaks:
+        "advance detection between consecutive same-shaped questions. S70 -> S80 produce " +
+        "byte-identical signatures, the POST changes neither URL nor history, and five runs " +
+        "declared every successful advance between them 'did not advance'",
+      file: DR,
+      find: "  if (questionIdentityOf(after) !== questionIdentityOf(before)) out.push(\"question-identity-changed\");",
+      replace: "  // (question-identity signal dropped by mutant)",
+      kills: ["THE MEASURED SHAPE: identical signatures, different input name+label => question-identity-changed fires"],
+    },
+    {
       name: "the typed-value commit is dropped (the server posts the stale value again)",
       breaks:
         "value delivery. The submit click is programmatic and never blurs the input; " +
