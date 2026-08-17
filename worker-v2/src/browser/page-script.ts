@@ -1354,3 +1354,29 @@ export const clearValueScript = (idx: number): string => `
   return { ok: true };
 })()
 `;
+
+/**
+ * COMMIT A KEYBOARD-TYPED VALUE. Measured live 2026-08-17 (S70 "Years at organization",
+ * run v2r_01m07wm76x9f9jw6atww36rfmb): the walker typed "1" via keyboard, the field held
+ * "1" on re-read — and the server posted the STALE value and re-rendered "Please enter a
+ * number.". The submit click is dispatched programmatically, so the input never blurs, the
+ * `change` event never fires, and a site that syncs its posted field on `change` (this one
+ * does) never sees the typed value. A local reproduction that dispatched input+change+blur
+ * before submitting was ACCEPTED by the same server on the same field. Dispatching these
+ * after typing is idempotent where the events already fired.
+ */
+export const commitValueScript = (idx: number): string => `
+(() => { /* W4_COMMIT_TYPED_VALUE */
+  const SEL = ${JSON.stringify(CONTROL_SELECTOR)};
+  const el = document.querySelectorAll(SEL)[${idx}];
+  if (!el) return { ok: false, reason: 'no-control-at-index' };
+  try {
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    if (typeof el.blur === 'function') el.blur();
+  } catch (err) {
+    return { ok: false, reason: String(err).slice(0, 120) };
+  }
+  return { ok: true, reason: null };
+})()
+`;

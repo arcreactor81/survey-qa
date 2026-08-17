@@ -51,6 +51,7 @@ import {
   LABEL_SELECTOR,
   READ_SCREEN,
   clearValueScript,
+  commitValueScript,
   fillRefusalFor,
   isTextEntry,
   isValueEntry,
@@ -1698,6 +1699,10 @@ async function typeIdx(
     if (!h) return { ok: false, detail: "no-control-at-index" };
     await h.click();
     await h.type(value, { delay: 8 });
+    // COMMIT before reading back: the submit click is programmatic and never blurs the
+    // input, so without an explicit change/blur a site that syncs its posted field on
+    // `change` posts the STALE value (measured live at S70 — see commitValueScript).
+    await page.evaluate(commitValueScript(idx));
     const got = await readValueAt(page, idx);
     // Only the UNAMBIGUOUS discard is reported: we asked for something and the control kept
     // nothing. A control that trimmed, truncated or reformatted the value still took it, and

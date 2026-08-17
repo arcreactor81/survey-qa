@@ -1100,6 +1100,7 @@ suite("amendment 4: a validation rejection overrides the already-answered skip o
     const reads = [mk([]), mk([]), mk(V, "QA-PROBE"), mk(V, "QA-PROBE"), mk(V, "QA-PROBE"), mk(V, "QA-PROBE")];
     let last = reads[0];
     const typed = [];
+    const commits = [];
     const page = {
       async goto() {},
       async evaluate(script) {
@@ -1108,6 +1109,7 @@ suite("amendment 4: a validation rejection overrides the already-answered skip o
           return last;
         }
         const src = String(script);
+        if (src.includes("W4_COMMIT_TYPED_VALUE")) commits.push(1);
         if (src.includes("el.value")) {
           const start = src.indexOf('el.value = "');
           const end = start >= 0 ? src.indexOf('";', start) : -1;
@@ -1173,6 +1175,9 @@ suite("amendment 4: a validation rejection overrides the already-answered skip o
       /^\d+$/.test(String(nonEmpty[nonEmpty.length - 1] ?? "")),
       `the walk must converge on a numeric answer after validation speaks, typed: ${JSON.stringify(values)}`,
     );
+    // Every keyboard-typed value must be COMMITTED (input+change+blur dispatched): the
+    // live server posted the STALE value when the events never fired (S70, v56 run).
+    assert(commits.length >= 1, "typeIdx must dispatch the change-event commit after typing");
     // AND the FIRST pass must have treated the placeholder as unanswered: on S80 the live
     // site terminated OUTRIGHT with no validation round, so a walk that only fills on
     // recovery never fills there at all. The first fill precedes any validation feedback.

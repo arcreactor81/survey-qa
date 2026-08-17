@@ -211,6 +211,18 @@ await runMutantSuite({
       kills: ["a pre-filled placeholder that validation rejects gets re-typed by the recovery pass"],
     },
     {
+      name: "the typed-value commit is dropped (the server posts the stale value again)",
+      breaks:
+        "value delivery. The submit click is programmatic and never blurs the input; " +
+        "without the explicit input+change+blur dispatch a site that syncs its posted " +
+        "field on `change` posts the STALE value — measured live at S70: the field held " +
+        "'1' on re-read and the server still said 'Please enter a number.'",
+      file: DR,
+      find: "    await page.evaluate(commitValueScript(idx));",
+      replace: "    // (commit dispatch dropped by mutant)",
+      kills: ["a pre-filled placeholder that validation rejects gets re-typed by the recovery pass"],
+    },
+    {
       name: "a placeholder value counts as an answer again (the S80 outright-termination reinstated)",
       breaks:
         "first-pass value filling. The live survey pre-fills '-' via its own script, " +
