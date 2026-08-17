@@ -3,7 +3,8 @@
  * lane in its own browser session.
  *
  * FLAG-GATED, DEFAULT OFF. When `EXEC_LANES` is "1" or absent, the existing
- * sequential `executeBatch` path runs unchanged. Multi-lane activates at "2"+.
+ * sequential `executeBatch` path runs unchanged — this module is not even
+ * imported (review fix D). Multi-lane activates at "2"+.
  *
  * CLOUDFLARE BROWSER RENDERING LIMITS (verified against their docs):
  *   - max 120 concurrent browsers per account
@@ -17,21 +18,40 @@
  * checkpoint reservation), the work is excluded from parallel waves and walked
  * sequentially. If the assumption fails on an unseen survey, the walks produce
  * independent observations and the existing exercised gate catches the gap.
+ *
+ * WHAT STAYS SEQUENTIAL (wiring contract):
+ *   - Seed alternatives: checkpoint reservation protocol requires sequential
+ *     exclusive access.
+ *   - Screen-out pivots: pivots for a lane's screened-out walk run AFTER the
+ *     wave settles, in the existing sequential pivot loop, with the
+ *     identical-actions stop intact.
+ *   - Per-attempt commits: walkRecord push, saveProgress, updateCheckpoint,
+ *     cursor sync are applied to each lane's result ONE AT A TIME after the
+ *     wave, so no two checkpoint writes interleave.
+ *
+ * USAGE STORE SAFETY (review fix A): `pushUsage` calls `updateCheckpoint`
+ * which uses CAS (compare-and-swap with etag/onlyIf). Under concurrent
+ * writers, CAS retries on contention, but `pushUsage` wraps the whole call
+ * in try/catch and logs failures — so a concurrent lane's usage push can be
+ * SILENTLY LOST if the checkpoint changes between read and write and the
+ * retry budget exhausts. Browser usage is declared best-effort in usage.ts
+ * line 89 ("Browser telemetry remains best-effort"), BUT losing browser
+ * session counts understates `toolCalls.used`, which is a cap counter.
+ * Therefore: usage pushes are collected from lanes and applied in the
+ * sequential post-wave commit step, one checkpoint write per wave.
  */
 
 import type { Env } from "../../types/env";
 import { num } from "../../types/env";
 import { mintAttemptId } from "../../ids";
 import { type Fence } from "../../store/checkpoint";
-import { browserUsage, pushUsage } from "../../store/usage";
-import type { ExecutionCursor } from "../../types/contracts";
+import { browserUsage } from "../../store/usage";
+import type { BrowserSessionUsageEvent } from "../../types/contracts";
 import {
   retireSession,
   type SessionHandle,
 } from "../browser-session";
 import {
-  type BatchArgs,
-  type BatchOutcome,
   type WorkItem,
   type ExecProgress,
   walkDeadlineFor,
@@ -78,16 +98,26 @@ export interface LaneResult {
   attemptId: string;
   browserHung: boolean;
   perCaseTimedOut: boolean;
-  /** Whether the lane's browser session should be considered wedged. */
   sessionWedged: boolean;
-  /** Error detail if the lane's browser acquisition failed. */
   acquisitionError: string | null;
+  /**
+   * Browser usage events collected during this lane's walk. Applied in the
+   * sequential post-wave commit step, never from inside the concurrent lane
+   * (review fix A: pushUsage uses CAS checkpoint writes, which under
+   * concurrent writers can lose events silently).
+   */
+  usageEvents: BrowserSessionUsageEvent[];
 }
 
 /**
  * Walk one lane: acquire a browser, walk the path, retire the browser.
  * Every browser session is retired in a finally block so a lane crash never
  * leaks a session.
+ *
+ * Review fix C: `batchMaxMs` is threaded from the caller's resolved value
+ * instead of re-reading env with a potentially different fallback. The
+ * sequential path resolves `num(env.EXEC_BATCH_MAX_MS, 120_000)` once at
+ * batch start; this function receives that resolved value.
  */
 export async function walkLane(
   env: Env,
@@ -99,6 +129,7 @@ export async function walkLane(
     fence: Fence;
     item: WorkItem;
     batchDeadline: number;
+    batchMaxMs: number;
     perCaseTimeoutMs: number;
     maxSteps: number;
     advanceTimeoutMs: number;
@@ -107,10 +138,14 @@ export async function walkLane(
     acquireTimeoutMs: number;
     priorAttempts: number;
     program: ExecutionProgram;
+    attemptId: string;
+    variant?: number;
+    variantFromStep?: number;
   },
 ): Promise<LaneResult> {
-  const attemptId = mintAttemptId();
+  const attemptId = args.attemptId;
   let handle: SessionHandle | null = null;
+  const usageEvents: BrowserSessionUsageEvent[] = [];
 
   const makeErrorObs = (reason: string, detail: string): PathObservation => ({
     kind: "v2-path-observation/1.0.0",
@@ -135,9 +170,8 @@ export async function walkLane(
   });
 
   try {
-    // Each lane acquires its own fresh browser — no session reuse across lanes.
     handle = await acquireWithRetry(env, { ...emptyCursor(), sessionId: null, sessionOpenedAt: null }, args.acquireTimeoutMs);
-    await pushUsage(env, args.runId, args.fence, [browserUsage()]);
+    usageEvents.push(browserUsage());
 
     const cap: CaptureContext = {
       env,
@@ -167,14 +201,14 @@ export async function walkLane(
             deadline: walkDeadlineFor(
               args.batchDeadline,
               Date.now(),
-              num(env.EXEC_BATCH_MAX_MS, 120_000),
+              args.batchMaxMs,
               args.perCaseTimeoutMs,
             ),
             viewport: { width: 1280, height: 900 },
             applyHistoryShim: args.shimRequired && args.allowShim,
             advanceTimeoutMs: args.advanceTimeoutMs,
-            variant: 0,
-            variantFromStep: 0,
+            variant: args.variant ?? 0,
+            variantFromStep: args.variantFromStep ?? 0,
           },
           cap,
         ),
@@ -198,7 +232,6 @@ export async function walkLane(
       }
     }
 
-    // Handle load-crash shim retry within the lane
     if (obs.outcome === "load-crash" && args.allowShim && !obs.shimmed) {
       const shimPage = (await withTimeout(handle.browser.newPage(), 30_000, "newPage")) as PageLike;
       try {
@@ -215,14 +248,14 @@ export async function walkLane(
             deadline: walkDeadlineFor(
               args.batchDeadline,
               Date.now(),
-              num(env.EXEC_BATCH_MAX_MS, 120_000),
+              args.batchMaxMs,
               args.perCaseTimeoutMs,
             ),
             viewport: { width: 1280, height: 900 },
             applyHistoryShim: true,
             advanceTimeoutMs: args.advanceTimeoutMs,
-            variant: 0,
-            variantFromStep: 0,
+            variant: args.variant ?? 0,
+            variantFromStep: args.variantFromStep ?? 0,
           },
           cap,
         );
@@ -243,9 +276,9 @@ export async function walkLane(
       perCaseTimedOut,
       sessionWedged: browserHung,
       acquisitionError: null,
+      usageEvents,
     };
   } catch (err) {
-    // Lane-level catch: browser acquisition failure or unexpected error.
     const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     return {
       item: args.item,
@@ -255,9 +288,9 @@ export async function walkLane(
       perCaseTimedOut: false,
       sessionWedged: false,
       acquisitionError: detail,
+      usageEvents,
     };
   } finally {
-    // EVERY LANE RETIRES ITS OWN BROWSER SESSION.
     if (handle) {
       try {
         await withTimeout(retireSession(handle), 20_000, "lane session close");
@@ -270,23 +303,27 @@ export async function walkLane(
   }
 }
 
-// emptyCursor imported from execute-batch
-
 /**
  * Run one wave of lanes concurrently with staggered launches.
  * Returns the results in lane order.
+ *
+ * Review fix B: each lane's attemptId is pre-minted BEFORE launch, so the
+ * Promise.allSettled fallback uses a real id, never "unknown".
  */
 export async function runLaneWave(
   env: Env,
   items: WorkItem[],
-  laneArgs: Omit<Parameters<typeof walkLane>[1], "item" | "priorAttempts"> & {
+  laneArgs: Omit<Parameters<typeof walkLane>[1], "item" | "priorAttempts" | "attemptId"> & {
     progress: ExecProgress;
   },
 ): Promise<LaneResult[]> {
   const lanePromises: Promise<LaneResult>[] = [];
+  const preMintedIds: string[] = [];
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i]!;
+    const attemptId = mintAttemptId();
+    preMintedIds.push(attemptId);
     const priorAttempts = laneArgs.progress.walks.filter(
       (w) => w.pathId === item.path.id,
     ).length;
@@ -296,10 +333,10 @@ export async function runLaneWave(
         ...laneArgs,
         item,
         priorAttempts,
+        attemptId,
       }),
     );
 
-    // Stagger the NEXT lane launch (not after the last one).
     if (i < items.length - 1) {
       await new Promise((r) => setTimeout(r, LANE_STAGGER_MS));
     }
@@ -308,7 +345,6 @@ export async function runLaneWave(
   const settled = await Promise.allSettled(lanePromises);
   return settled.map((result, index) => {
     if (result.status === "fulfilled") return result.value;
-    // This should not happen since walkLane catches internally, but defend.
     const detail = result.reason instanceof Error
       ? result.reason.message
       : String(result.reason);
@@ -319,7 +355,7 @@ export async function runLaneWave(
         runId: laneArgs.runId,
         pathId: items[index]!.path.id,
         tier: items[index]!.tier,
-        attemptId: "unknown",
+        attemptId: preMintedIds[index]!,
         planRevisionId: laneArgs.planRevisionId,
         surveyUrl: laneArgs.surveyUrl,
         startedAt: new Date().toISOString(),
@@ -335,11 +371,12 @@ export async function runLaneWave(
         evidenceIds: [],
         viewport: { width: 1280, height: 900 },
       } as PathObservation,
-      attemptId: "unknown",
+      attemptId: preMintedIds[index]!,
       browserHung: false,
       perCaseTimedOut: false,
       sessionWedged: false,
       acquisitionError: detail,
+      usageEvents: [],
     };
   });
 }
