@@ -534,6 +534,11 @@ const FILES = [
   // replicate the captured shapes generically, and the isPlatformNavigationWidget and
   // detectOptionLinkedSpecifyInputs tests cover both the positive and negative directions.
   "./tests/d56-walker-first-real-walk-fixes.test.mjs",
+  // Per-answer routing rules with verbatim labels, anchor-artifact cleaning, and the full
+  // path from route_answers through sealedRouteDestinations to stampSurvivalHints. The
+  // anchor cleaner strips rendering-artifact markers with a named, counted transformation.
+  // Evidence they can fail: tools/mutate-route-labels.mjs.
+  "./tests/route-label-extraction.test.mjs",
 ];
 
 export async function runVerification({
