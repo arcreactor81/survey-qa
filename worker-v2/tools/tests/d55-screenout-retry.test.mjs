@@ -833,3 +833,70 @@ suite("D55 — BLOCKER 4, the attempt budget: EXEC_BATCH_MAX_ATTEMPTS caps pivot
     assertEq(progress.walks[1].ending?.kind, "completed");
   });
 });
+
+/* ============================================================ 7. re-attempt artifact identity
+ *
+ * THE v41 EVIDENCE_NAME_COLLISION CLASS (run v2r_01m067zf40z4788yb60c380vgp): a plain
+ * re-walk of a path — after a per-case timeout, not a pivot — wrote its screenshots and
+ * observation under the SAME basenames as attempt 0, the judge's signed manifest keys by
+ * basename, 482 names went ambiguous and the run minted NO judgement. The capture layer
+ * already made pivot names disjoint via attemptOrdinal; this pins that the BASE capture
+ * context now counts prior walk rows, so every re-attempt is disjoint by construction.
+ */
+
+suite("D55 — re-attempt artifact names are disjoint from attempt 0's", () => {
+  test("a SECOND walk of a path carries retry-1- on every observation basename; attempt 0 refs stay bare", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const bed = await liveBed(mod, env);
+
+    // The durable ledger already holds a prior attempt of this path — the timeout shape:
+    // no evidence, no floorDone, path still owed a walk.
+    const progress0 = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    progress0.walks.push({
+      exercised: false,
+      plannedDecisions: 0,
+      matchedDecisions: 0,
+      constrainingDecisions: 0,
+      matchedConstraining: 0,
+      screensAdvanced: 0,
+      blockedSteps: 0,
+      pathId: "FLOOR-01",
+      tier: 1,
+      attemptId: "att_priorattempt1",
+      outcome: "per-case-timeout",
+      outcomeDetail: "walk exceeded its per-case budget",
+      steps: 0,
+      wallMs: 0,
+      shimmed: false,
+      loadCrash: false,
+      evidenceCount: 0,
+      caseIds: [],
+      at: "2026-08-17T00:00:00.000Z",
+    });
+    await mod.executeBatch.saveProgress(env, progress0);
+
+    await withBrowser([completionScript()], () => runBatch(mod, env, bed));
+
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(progress.walks.length, 2, "the re-attempt must have walked");
+
+    const listed = await env.EVIDENCE.list({ prefix: `v2/runs/${bed.runId}/evidence/` });
+    let observed = 0;
+    let prefixed = 0;
+    for (const o of listed.objects) {
+      const stored = await env.EVIDENCE.get(o.key);
+      const body = await stored.json();
+      const ref = String(body.artifactRef ?? "");
+      if (!ref.startsWith("observations/")) continue;
+      observed += 1;
+      if (ref.includes("retry-1-")) prefixed += 1;
+    }
+    assert(observed > 0, "the re-attempt must have catalogued observation artifacts");
+    assertEq(
+      prefixed,
+      observed,
+      `every re-attempt basename must carry the attempt-disjoint prefix (${prefixed}/${observed} did) — bare refs collide with attempt 0 in the judge's signed manifest`,
+    );
+  });
+});

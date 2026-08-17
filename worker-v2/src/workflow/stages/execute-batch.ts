@@ -977,11 +977,20 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       );
       await beat(env, args.runId, `batch ${args.batch}: walking ${item.path.id}`, `${args.batch}:${item.path.id}`);
 
+      // WHICH ATTEMPT OF THIS PATH THIS IS, counted from the durable walk rows. The judge's
+      // signed manifest keys artifacts by BASENAME, and a re-walk of the same path under the
+      // same refs raises MANIFEST_DUPLICATE_ARTIFACT and mints NO judgement (run
+      // v2r_01m067zf40z4788yb60c380vgp: 482 ambiguous names from timeout re-attempts). The
+      // first attempt stays ordinal 0 — refs byte-identical to every single-attempt run —
+      // and each re-attempt is disjoint by construction. Pivot retries below count rows the
+      // same way, so their names can never collide with a re-attempt's either.
+      const priorAttemptsOfPath = progress.walks.filter((w) => w.pathId === item.path.id).length;
       const cap: CaptureContext = {
         env,
         runId: args.runId,
         attemptId,
         pathId: item.path.id,
+        ...(priorAttemptsOfPath > 0 ? { attemptOrdinal: priorAttemptsOfPath } : {}),
         witnesses: Array.isArray(item.path.witnesses) ? (item.path.witnesses as string[]) : [],
       };
 
@@ -1297,8 +1306,13 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         };
         // A FRESH attemptId, never the shim retry's reuse: walk-artifact-index and
         // project-observations disambiguate multiple walks of one path by attemptId.
+        // The NAMING ordinal counts durable walk rows (the shared per-path sequence with
+        // plain re-attempts — see priorAttemptsOfPath), while `ordinal` above stays the
+        // pivot's behavioural variant. For the common single-attempt-then-pivot case the
+        // row count IS the pivot ordinal, so those refs are byte-identical to before.
         const retryAttemptId = mintAttemptId();
-        const retryCap: CaptureContext = { ...cap, attemptId: retryAttemptId, attemptOrdinal: ordinal };
+        const retryNamingOrdinal = progress.walks.filter((w) => w.pathId === item.path.id).length;
+        const retryCap: CaptureContext = { ...cap, attemptId: retryAttemptId, attemptOrdinal: retryNamingOrdinal };
         await beat(
           env,
           args.runId,

@@ -132,6 +132,18 @@ await runMutantSuite({
       replace: "  const walkBudgetMs = perCaseTimeoutMs - graceMs;",
       kills: ["a pathological grace can never zero the walk's own time"],
     },
+    {
+      name: "a plain re-attempt loses its naming ordinal (the v41 EVIDENCE_NAME_COLLISION reopened)",
+      breaks:
+        "artifact identity under re-walks. The judge's signed manifest keys by basename; a " +
+        "re-attempt writing attempt 0's names raises MANIFEST_DUPLICATE_ARTIFACT and the run " +
+        "mints NO judgement — run v2r_01m067zf40z4788yb60c380vgp lost its certification to " +
+        "482 such names",
+      file: EB,
+      find: "        ...(priorAttemptsOfPath > 0 ? { attemptOrdinal: priorAttemptsOfPath } : {}),",
+      replace: "        // (attemptOrdinal threading dropped by mutant)",
+      kills: ["a SECOND walk of a path carries retry-1- on every observation basename; attempt 0 refs stay bare"],
+    },
     // NOT A MUTANT, STATED: the walkOnce CALL SITE (deadline: walkDeadlineFor(...)) is
     // pinned by a d56 test that reads execute-batch.ts from DISK — this harness rewrites
     // sources in esbuild's load step, in memory, so no mutant here can make that test fail.
