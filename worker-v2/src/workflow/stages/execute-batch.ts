@@ -743,7 +743,7 @@ export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise
  *   - a reconnect to a wedged session never returns at all, so it is raced against a
  *     timeout and the fallback is a FRESH browser rather than the same wedged one.
  */
-async function acquireWithRetry(env: Env, cursor: ExecutionCursor | null, timeoutMs: number): Promise<SessionHandle> {
+export async function acquireWithRetry(env: Env, cursor: ExecutionCursor | null, timeoutMs: number): Promise<SessionHandle> {
   try {
     return await withTimeout(acquireSession(env, cursor), timeoutMs, "session acquire");
   } catch (err) {
@@ -757,7 +757,7 @@ async function acquireWithRetry(env: Env, cursor: ExecutionCursor | null, timeou
   }
 }
 
-const emptyCursor = (): ExecutionCursor => ({
+export const emptyCursor = (): ExecutionCursor => ({
   batchIndex: 0,
   sessionId: null,
   sessionOpenedAt: null,
@@ -766,7 +766,7 @@ const emptyCursor = (): ExecutionCursor => ({
   planRevisionId: null,
 });
 
-interface WorkItem {
+export interface WorkItem {
   path: PlannedPath;
   tier: 1 | 2;
   assignment: PathAssignment | null;
