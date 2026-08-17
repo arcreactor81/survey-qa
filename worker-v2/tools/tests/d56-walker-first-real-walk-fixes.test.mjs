@@ -1021,3 +1021,23 @@ suite("amendment 3: structural terminal page", () => {
     );
   });
 });
+
+suite("amendment 3b: leftover cases get the honest run-end label", () => {
+  // The 2026-08-17 drive runs ended with ZERO plannable work and wore
+  // "batch-budget-exhausted" — a label that says "more batches would have helped" about a
+  // run where they could not have. The close step must consult WHY the loop ended: executor
+  // done => no-executable-work; batches exhausted => batch-budget-exhausted. Pinned at
+  // source level (the close step runs only inside a live Workflow engine).
+  test("phase-executing-close distinguishes executor-done from batches-exhausted", async () => {
+    const { readFileSync } = await import("fs");
+    const src = readFileSync("src/workflow/run-workflow.ts", "utf8");
+    assert(
+      src.includes('const leftoverReason = executorSaidDone ? "no-executable-work" : "batch-budget-exhausted";'),
+      "the leftover>0 ending must pick its label from executorSaidDone",
+    );
+    assert(
+      /if \(outcome\.done\) \{\s*\n\s*executorSaidDone = true;/.test(src),
+      "the batch loop must record that the executor said done",
+    );
+  });
+});

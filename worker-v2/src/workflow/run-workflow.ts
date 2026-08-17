@@ -1838,6 +1838,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
 
       const maxBatches = num(this.env.EXEC_MAX_BATCHES, 200);
       let stopReason: string | null = null;
+      // Whether the batch loop ended because the EXECUTOR said done (true) or because the
+      // loop ran out of batches (false) — the two leftover>0 endings mean different things
+      // and must not share a label. See phase-executing-close.
+      let executorSaidDone = false;
 
       // RESUME AT THE DURABLE CURSOR, not at zero. Restarting the loop index would replay
       // batches whose observations are already committed and re-drive the browser for them.
@@ -1912,7 +1916,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           stopReason = outcome.stopReason;
           break;
         }
-        if (outcome.done) break;
+        if (outcome.done) {
+          executorSaidDone = true;
+          break;
+        }
       }
 
       await step.do("phase-executing-close", async () => {
@@ -1932,11 +1939,17 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               d.completion.test = stopCompletion(stopReason);
               d.completion.reasonCode = stopReason;
             } else if (leftover > 0) {
+              // TWO DIFFERENT ENDINGS, TWO NAMES (the 2026-08-17 drive runs wore the wrong
+              // one): the executor finishing with cases still pending means those cases
+              // have NO executable work — the shortfall is in the plan or the stimulus,
+              // and more batches would not have helped. Only a loop that genuinely ran out
+              // of batches may say "batch-budget-exhausted".
+              const leftoverReason = executorSaidDone ? "no-executable-work" : "batch-budget-exhausted";
               d.counts["not-reached"] += d.counts.pending;
               d.counts.pending = 0;
-              setPhase(d, "executing", "stopped", "batch-budget-exhausted");
+              setPhase(d, "executing", "stopped", leftoverReason);
               d.completion.test = "partial-blocked";
-              d.completion.reasonCode = "batch-budget-exhausted";
+              d.completion.reasonCode = leftoverReason;
             } else {
               setPhase(d, "executing", "complete");
             }
