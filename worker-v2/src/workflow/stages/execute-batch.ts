@@ -743,7 +743,7 @@ export function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise
  *   - a reconnect to a wedged session never returns at all, so it is raced against a
  *     timeout and the fallback is a FRESH browser rather than the same wedged one.
  */
-async function acquireWithRetry(env: Env, cursor: ExecutionCursor | null, timeoutMs: number): Promise<SessionHandle> {
+export async function acquireWithRetry(env: Env, cursor: ExecutionCursor | null, timeoutMs: number): Promise<SessionHandle> {
   try {
     return await withTimeout(acquireSession(env, cursor), timeoutMs, "session acquire");
   } catch (err) {
@@ -757,7 +757,7 @@ async function acquireWithRetry(env: Env, cursor: ExecutionCursor | null, timeou
   }
 }
 
-const emptyCursor = (): ExecutionCursor => ({
+export const emptyCursor = (): ExecutionCursor => ({
   batchIndex: 0,
   sessionId: null,
   sessionOpenedAt: null,
@@ -766,7 +766,7 @@ const emptyCursor = (): ExecutionCursor => ({
   planRevisionId: null,
 });
 
-interface WorkItem {
+export interface WorkItem {
   path: PlannedPath;
   tier: 1 | 2;
   assignment: PathAssignment | null;
@@ -831,6 +831,348 @@ export function selectWork(program: ExecutionProgram, progress: ExecProgress, ma
 }
 
 /**
+ * MULTI-LANE BATCH — walks independent items in parallel waves, commits
+ * results one at a time. Called only when effectiveLaneCount > 1 and no
+ * seed work is in the queue. Screen-out pivots run AFTER each wave in the
+ * existing sequential pivot loop with the identical-actions stop intact.
+ */
+async function executeMultiLaneBatch(
+  env: Env,
+  args: BatchArgs,
+  program: ExecutionProgram,
+  progress: ExecProgress,
+  work: WorkItem[],
+  opts: {
+    batchDeadline: number;
+    batchMaxMs: number;
+    maxAttempts: number;
+    maxSteps: number;
+    advanceTimeoutMs: number;
+    allowShim: boolean;
+    acquireTimeoutMs: number;
+    perCaseTimeoutMs: number;
+    maxExploration: number;
+    requiredProbeStop: string | null;
+    lanes: number;
+    multilane: typeof import("./multilane");
+  },
+): Promise<BatchOutcome> {
+  const {
+    batchDeadline, batchMaxMs, maxAttempts, maxSteps, advanceTimeoutMs,
+    allowShim, acquireTimeoutMs, perCaseTimeoutMs, maxExploration,
+    requiredProbeStop, lanes, multilane,
+  } = opts;
+  const minBatchResidualMs = perCaseTimeoutMs;
+  const seededCaseIds = new Set((program.seedPlan?.alternatives ?? []).map((row) => row.caseId));
+
+  let pathsWalked = 0;
+  let casesClosed = 0;
+  let steps = 0;
+  let stopReason: string | null = null;
+
+  console.log(
+    `v2 exec batch ${args.batch}: multi-lane enabled, ${lanes} concurrent lanes`,
+  );
+
+  try {
+    let workIndex = 0;
+    while (workIndex < work.length) {
+      if (pathsWalked >= maxAttempts || Date.now() >= batchDeadline) break;
+
+      const remainingBudgetMs = batchDeadline - Date.now();
+      if (remainingBudgetMs < minBatchResidualMs) {
+        console.log(
+          `v2 exec batch ${args.batch}: only ${remainingBudgetMs}ms remains, ` +
+            `below the ${minBatchResidualMs}ms minimum residual — ending wave`,
+        );
+        break;
+      }
+
+      const waveSize = Math.min(
+        lanes,
+        work.length - workIndex,
+        maxAttempts - pathsWalked,
+      );
+      const waveItems = work.slice(workIndex, workIndex + waveSize);
+      workIndex += waveSize;
+
+      await beat(
+        env,
+        args.runId,
+        `batch ${args.batch}: walking ${waveItems.length} lanes ` +
+          `[${waveItems.map((item) => item.path.id).join(", ")}]`,
+        `${args.batch}:wave:${workIndex}`,
+      );
+
+      const results = await multilane.runLaneWave(env, waveItems, {
+        runId: args.runId,
+        batch: args.batch,
+        planRevisionId: args.planRevisionId,
+        surveyUrl: args.surveyUrl,
+        fence: args.fence,
+        batchDeadline,
+        batchMaxMs,
+        perCaseTimeoutMs,
+        maxSteps,
+        advanceTimeoutMs,
+        shimRequired: progress.shimRequired,
+        allowShim,
+        acquireTimeoutMs,
+        program,
+        progress,
+      });
+
+      // SEQUENTIAL COMMIT — each lane's result is applied one at a time so
+      // no two checkpoint writes interleave. This reproduces the exact
+      // ordering of the sequential path: walkRecord push, saveProgress,
+      // updateCheckpoint, cursor sync.
+      for (const result of results) {
+        const obs = result.obs;
+        const item = result.item;
+
+        // Usage events collected during the lane (review fix A: pushed here,
+        // not from inside the concurrent lane).
+        if (result.usageEvents.length > 0) {
+          await pushUsage(env, args.runId, args.fence, result.usageEvents);
+        }
+
+        // Shim detection — same as sequential path
+        if (obs.outcome === "load-crash" && !obs.shimmed) {
+          progress.shimRequired = true;
+          progress.shimEvidence = obs.evidenceIds[0] ?? null;
+        }
+
+        const audit = assessExercised(obs, item.path.decisions as PlannedDecision[] | undefined);
+        const standardClosed =
+          item.assignment && audit.exercised
+            ? item.assignment.caseIds.filter(
+                (id) => !seededCaseIds.has(id) && !args.cursor.completedCaseIds.includes(id),
+              )
+            : [];
+        const walkedOk = obs.outcome !== "error";
+
+        progress.hungPaths = progress.hungPaths ?? [];
+        const alreadyHung = progress.hungPaths.includes(item.path.id);
+        if (result.browserHung && !alreadyHung) {
+          progress.hungPaths.push(item.path.id);
+        }
+        const retryable = result.browserHung && !alreadyHung;
+
+        if (!retryable) {
+          if (item.tier === 1 && !progress.floorDone.includes(item.path.id)) {
+            progress.floorDone.push(item.path.id);
+          } else if (item.tier !== 1 && !progress.explorationDone.includes(item.path.id)) {
+            progress.explorationDone.push(item.path.id);
+          }
+        }
+        progress.walks.push(walkRecord(obs, standardClosed, audit));
+        progress.totalSteps += obs.steps.length;
+        progress.totalEvidence += obs.evidenceIds.length;
+        await saveProgress(env, progress);
+
+        let closed: string[] = [];
+        let committed = false;
+        await updateCheckpoint(
+          env,
+          args.runId,
+          (d) => {
+            const c = d.execution;
+            if (!c) return false;
+            closed = standardClosed.filter((id) => c.pendingCaseIds.includes(id));
+            const next: ExecutionCursor = {
+              ...c,
+              batchIndex: args.batch + 1,
+              pendingCaseIds: c.pendingCaseIds.filter((id) => !closed.includes(id)),
+              completedCaseIds: [...c.completedCaseIds, ...closed],
+              sessionId: null,
+              sessionOpenedAt: null,
+            };
+            d.execution = next;
+            d.counts.pending = Math.max(0, d.counts.pending - closed.length);
+            d.counts.exercised += closed.length;
+            d.attempts.started += 1;
+            if (walkedOk) d.attempts.completed += 1;
+            d.currentAttempt = null;
+            committed = true;
+            return true;
+          },
+          { progressed: true, fence: args.fence },
+        );
+
+        if (committed) {
+          args.cursor.completedCaseIds = [...args.cursor.completedCaseIds, ...closed];
+          args.cursor.pendingCaseIds = args.cursor.pendingCaseIds.filter((id) => !closed.includes(id));
+        }
+        pathsWalked += 1;
+        casesClosed += closed.length;
+        steps += obs.steps.length;
+      }
+
+      // PIVOTS — run sequentially after the wave, with the identical-actions
+      // stop intact. Each lane's result is considered for pivot eligibility.
+      for (const result of results) {
+        const item = result.item;
+        let obs = result.obs;
+        let pivotParentActions = walkActionsJson(obs);
+        while (
+          screenoutRetryEligible({
+            obs,
+            path: item.path,
+            pivots: progress.screenoutPivots,
+            pathsWalked,
+            maxAttempts,
+            now: Date.now(),
+            batchDeadline,
+          })
+        ) {
+          const ordinal = (progress.screenoutPivots?.[item.path.id] ?? 0) + 1;
+          progress.screenoutPivots = { ...(progress.screenoutPivots ?? {}), [item.path.id]: ordinal };
+          await saveProgress(env, progress);
+
+          const pivot = {
+            retryOf: obs.attemptId,
+            ordinal,
+            reason:
+              `attempt ${obs.attemptId} ended screened-out with ` +
+              `${obs.navigatorDefaultAnswerCount ?? 0} navigator-default answer(s) — ` +
+              `re-walking with deterministic filler variant ${ordinal}`,
+          };
+          const lastStepIndex = Math.floor(Number(obs.steps[obs.steps.length - 1]?.stepIndex ?? 0));
+          const pivotFromStep = Math.max(0, lastStepIndex - 1);
+
+          await beat(
+            env,
+            args.runId,
+            `batch ${args.batch}: ${item.path.id} screened out on invented answers — re-walking with varied fillers (pivot ${ordinal})`,
+            `${args.batch}:${item.path.id}:pivot${ordinal}`,
+          );
+
+          const pivotResults = await multilane.runLaneWave(env, [item], {
+            runId: args.runId,
+            batch: args.batch,
+            planRevisionId: args.planRevisionId,
+            surveyUrl: args.surveyUrl,
+            fence: args.fence,
+            batchDeadline,
+            batchMaxMs,
+            perCaseTimeoutMs,
+            maxSteps,
+            advanceTimeoutMs,
+            shimRequired: progress.shimRequired,
+            allowShim,
+            acquireTimeoutMs,
+            program,
+            progress,
+            variant: ordinal,
+            variantFromStep: pivotFromStep,
+          });
+          const pivotResult = pivotResults[0]!;
+          obs = pivotResult.obs;
+
+          if (pivotResult.usageEvents.length > 0) {
+            await pushUsage(env, args.runId, args.fence, pivotResult.usageEvents);
+          }
+
+          const retryAudit = assessExercised(obs, item.path.decisions as PlannedDecision[] | undefined);
+          const retryClosed =
+            item.assignment && retryAudit.exercised
+              ? item.assignment.caseIds.filter(
+                  (id) => !seededCaseIds.has(id) && !args.cursor.completedCaseIds.includes(id),
+                )
+              : [];
+          const retryWalkedOk = obs.outcome !== "error";
+
+          progress.walks.push(walkRecord(obs, retryClosed, retryAudit, pivot));
+          progress.totalSteps += obs.steps.length;
+          progress.totalEvidence += obs.evidenceIds.length;
+          if (pivotResult.browserHung) {
+            progress.hungPaths = progress.hungPaths ?? [];
+            if (!progress.hungPaths.includes(item.path.id)) progress.hungPaths.push(item.path.id);
+          }
+          await saveProgress(env, progress);
+
+          await updateCheckpoint(
+            env,
+            args.runId,
+            (d) => {
+              const c = d.execution;
+              if (!c) return false;
+              const next: ExecutionCursor = {
+                ...c,
+                batchIndex: args.batch + 1,
+                pendingCaseIds: c.pendingCaseIds.filter((id) => !retryClosed.includes(id)),
+                completedCaseIds: [...c.completedCaseIds, ...retryClosed],
+                sessionId: null,
+                sessionOpenedAt: null,
+              };
+              d.execution = next;
+              d.counts.pending = Math.max(0, d.counts.pending - retryClosed.length);
+              d.counts.exercised += retryClosed.length;
+              d.attempts.started += 1;
+              if (retryWalkedOk) d.attempts.completed += 1;
+              d.currentAttempt = null;
+              return true;
+            },
+            { progressed: true, fence: args.fence },
+          );
+          args.cursor.completedCaseIds = [...args.cursor.completedCaseIds, ...retryClosed];
+          args.cursor.pendingCaseIds = args.cursor.pendingCaseIds.filter((id) => !retryClosed.includes(id));
+
+          pathsWalked += 1;
+          casesClosed += retryClosed.length;
+          steps += obs.steps.length;
+
+          if (pivotResult.browserHung) break;
+
+          const pivotActions = walkActionsJson(obs);
+          if (pivotActions === pivotParentActions) {
+            await beat(
+              env,
+              args.runId,
+              `batch ${args.batch}: ${item.path.id} pivot ${ordinal} reproduced the prior attempt's actions exactly — ` +
+                `the varied-filler lever cannot change this route (its fatal answers are plan-pinned); ` +
+                `stopping retries, document authority needed`,
+              `${args.batch}:${item.path.id}:pivot-identical`,
+            );
+            break;
+          }
+          pivotParentActions = pivotActions;
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`v2 exec batch ${args.batch}: executor error`, err);
+    stopReason = EXEC_STOP_EXECUTOR_ERROR;
+  }
+
+  // No shared session to retire — each lane retired its own browser.
+  // Clear cursor session for the next batch.
+  await updateCheckpoint(
+    env,
+    args.runId,
+    (d) => {
+      if (!d.execution) return false;
+      d.execution = { ...d.execution, sessionId: null, sessionOpenedAt: null };
+      return true;
+    },
+    { fence: args.fence },
+  );
+
+  const remaining = selectWork(program, progress, maxExploration).length;
+  if (stopReason === null && remaining === 0 && requiredProbeStop !== null) {
+    stopReason = requiredProbeStop;
+  }
+  const done = remaining === 0 || stopReason !== null;
+  stopReason = resolveStopReason({
+    done,
+    pendingCases: args.cursor.pendingCaseIds.length,
+    stopReason,
+    walks: progress.walks,
+  });
+  return { done, stopReason, pathsWalked, casesClosed, steps };
+}
+
+/**
  * Run one batch. Reconnect → walk up to N paths inside a wall-clock budget → disconnect
  * (NOT close). Every path commits its own checkpoint before the next one starts.
  */
@@ -877,6 +1219,33 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
     num((env as unknown as { EXEC_PER_CASE_TIMEOUT_MS?: string }).EXEC_PER_CASE_TIMEOUT_MS, 45_000),
     walkTimeoutMs,
   );
+
+  // MULTI-LANE BRANCH — the import sits BEHIND the lane-count check (review
+  // fix D), so EXEC_LANES=1 runs never load multilane.ts and cannot be
+  // affected by a bug in it. Seed alternatives stay sequential because
+  // their checkpoint reservation protocol requires exclusive access. Pivots
+  // run after the wave, in the existing sequential pivot loop, with the
+  // identical-actions stop intact.
+  const batchMaxMs = num(env.EXEC_BATCH_MAX_MS, 120_000);
+  const requestedLanes = num((env as unknown as { EXEC_LANES?: string }).EXEC_LANES, 1);
+  const hasSeedWork = work.some((item) => item.seedAlternative !== null);
+  if (requestedLanes > 1 && !hasSeedWork) {
+    const multilane = await import("./multilane");
+    return await executeMultiLaneBatch(env, args, program, progress, work, {
+      batchDeadline,
+      batchMaxMs,
+      maxAttempts,
+      maxSteps,
+      advanceTimeoutMs,
+      allowShim,
+      acquireTimeoutMs,
+      perCaseTimeoutMs,
+      maxExploration,
+      requiredProbeStop,
+      lanes: multilane.effectiveLaneCount(env),
+      multilane,
+    });
+  }
 
   let handle: SessionHandle;
   try {

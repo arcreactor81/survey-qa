@@ -191,6 +191,7 @@ $MutationHarnesses = @(
   "mutate-verifier.mjs",
   "mutate-verifier-destination.mjs",
   "mutate-verifier-identity.mjs",
+  "mutate-multilane.mjs",
   "mutate-w4-select.mjs",
   "mutate-w5-seeded-traversal.mjs"
 )
