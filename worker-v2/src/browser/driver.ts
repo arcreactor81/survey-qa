@@ -3660,7 +3660,10 @@ async function applyDecision(
       revalidateValidation.length > 0 && revalidateValidation.some((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m));
     const derived =
       numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== "number"
-        ? { value: "1", how: `the site's validation demands a number (${JSON.stringify(revalidateValidation.find((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m)))})`, via: "type" as const }
+        ? // via SET, not keyboard: the recovery runs on a field a mask may already have
+          // wedged, and the set path (value + input/change events) is the one the live
+          // server verifiably accepted on this exact shape.
+          { value: "1", how: `the site's validation demands a number (${JSON.stringify(revalidateValidation.find((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m)))})`, via: "set" as const }
         : navigatorValueFor(c, variant);
     if (planned === undefined && !derived) {
       // NO RULE IS NOT "NOTHING TO ANSWER". The type is one the reader classes as fillable and
@@ -3682,7 +3685,20 @@ async function applyDecision(
     // value, never the mechanism. Typing a documented date into a date input would be discarded
     // exactly as the harness's own filler was.
     const via = derived ? derived.via : isTextEntry(c.type) ? "type" : "set";
-    const r = via === "set" ? await setIdx(page, c.idx, value) : await typeIdx(page, c.idx, value);
+    let r = via === "set" ? await setIdx(page, c.idx, value) : await typeIdx(page, c.idx, value);
+    let fillDetail = r.detail;
+    // THE CONTROL TRANSFORMED WHAT WAS TYPED: the live S70 input mask reverts non-matching
+    // keyboard input (typed "QA-PROBE", read back "-"), and once wedged the server rejected
+    // even later valid keystrokes — while the SET path (value + input/change events) was
+    // ACCEPTED by the same live field. When the keyboard readback disagrees with what was
+    // typed, retry ONCE via set; both attempts are recorded in the receipt.
+    if (via !== "set" && r.ok && r.got !== undefined && r.got !== value) {
+      const setRetry = await setIdx(page, c.idx, value);
+      fillDetail =
+        `keyboard-type read back ${JSON.stringify(r.got)} for ${JSON.stringify(value)} — the control transformed it; ` +
+        `retried via set-value (${setRetry.detail})`;
+      r = setRetry;
+    }
     actions.push({
       kind: via === "set" ? "set-value" : "type-text",
       targetIdx: c.idx,
@@ -3693,7 +3709,7 @@ async function applyDecision(
       // WHOSE VALUE THIS WAS, AND HOW IT WAS DERIVED. A planned answer and a filler the harness
       // invented to get past a screen are different evidence, and a `blocked` that follows one
       // of them means something very different from a `blocked` that follows the other.
-      detail: planned === undefined ? `navigator-default:${derived!.how} (${r.detail})` : r.detail,
+      detail: planned === undefined ? `navigator-default:${derived!.how} (${fillDetail})` : fillDetail,
     });
     // THE CONTROL'S OWN VERDICT ON THE VALUE. Sanitised away, or refused outright, is a fact
     // about this walk that has to travel — otherwise the next thing that happens is a `blocked`
