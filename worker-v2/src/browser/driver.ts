@@ -184,6 +184,13 @@ const norm = (s: string): string =>
 
 const PROBE_TEXT = "QA-PROBE";
 
+/**
+ * The none-style option lexicon shared by the exclusion-screener defaults (the in-group
+ * heuristic and the fragmented-groups shortcut). A linguistic convention, stated: it only
+ * re-orders which INVENTED filler is clicked — input, never evidence.
+ */
+const NONE_STYLE_OPTION = /\bnone of the above\b|\bnone of these\b|^\s*none\b|\bnot applicable\b|\bn\/a\b/i;
+
 /** Label match: exact first, then containment either way. Never fuzzy scoring. */
 function labelMatches(optionLabel: string, wanted: string): boolean {
   const a = norm(optionLabel);
@@ -3194,6 +3201,56 @@ async function applyDecision(
   // ---- default: nothing requested matched, so answer enough to advance ----
   const answeredSomething = actions.some((a) => a.ok && a.kind !== "type-text");
   if (!answeredSomething && !screen.grid && !hasRequestedNativeSelectMatch) {
+    // FRAGMENTED EXCLUSION SCREENER (assumption stated; measured live 2026-08-17). The S50
+    // affiliation screen renders as EIGHT one-checkbox groups — one per disqualifying
+    // company — plus the exclusive "None of the above" as its OWN radio group. A per-group
+    // default walks the groups in order, clicks the first company checkbox and stops; the
+    // none-option two groups down is never considered, and the walk screens out. When a
+    // screen carries two or more checkbox groups and an unflagged none-style option exists
+    // ANYWHERE on it (whatever its own group's kind), the invented answer is that option
+    // alone, with every other group left deliberately blank — ticking any company alongside
+    // it would contradict the exclusive answer. Skipped whenever a documented prefer-label
+    // matches any option on the screen, on retry variants (a pivot exists to try a
+    // DIFFERENT answer), and on screens with fewer than two checkbox groups (the in-group
+    // heuristic below covers the single-group shape).
+    const screenOptionRows = screen.optionGroups.flatMap((g) => g.options.map((o) => ({ group: g, option: o })));
+    const checkboxGroupCount = screen.optionGroups.filter((g) => g.kind === "checkbox").length;
+    const notFlagged = (o: { label: string }): boolean => !avoid.some((a) => labelMatches(o.label, a));
+    // A documented prefer-label anywhere on the screen outranks everything — including on
+    // fragmented screens where the per-group loop would answer an EARLIER group and stop
+    // before ever reaching the preferred option's group.
+    const preferAcrossScreen =
+      checkboxGroupCount >= 2 && prefer.length > 0
+        ? screenOptionRows.find(
+            ({ option: o }) => answerable(o) && notFlagged(o) && prefer.some((p) => labelMatches(o.label, p)),
+          )
+        : undefined;
+    const noneAcrossScreen =
+      !preferAcrossScreen && variant === 0 && checkboxGroupCount >= 2
+        ? screenOptionRows.find(({ option: o }) => answerable(o) && notFlagged(o) && NONE_STYLE_OPTION.test(o.label))
+        : undefined;
+    const screenLevelPick = preferAcrossScreen ?? noneAcrossScreen;
+    if (screenLevelPick) {
+      const target = screenLevelPick.option;
+      const r = await clickIdx(page, target.idx, target);
+      const choiceReadback = r.ok ? await readChoiceAt(page, target.idx) : null;
+      const label = preferAcrossScreen
+        ? `documented-continue-option(${JSON.stringify(target.label)}; fragmented-groups)`
+        : `exclusive-none-option(${JSON.stringify(target.label)}; fragmented-groups)`;
+      actions.push({
+        kind: "click-option",
+        targetIdx: target.idx,
+        targetLabel: target.label,
+        targetCode: target.code,
+        value: null,
+        ok: r.ok && exactChoiceReadback(target.idx, screenLevelPick.group.kind, choiceReadback, screenLevelPick.group),
+        detail:
+          `navigator-default:${label} (` +
+          choiceReceiptDetail(r.detail, target.idx, screenLevelPick.group.kind, choiceReadback, screenLevelPick.group) +
+          `)`,
+        choiceReadback,
+      });
+    } else
     for (const g of screen.optionGroups) {
       if (g.options.some((o) => o.checked)) continue;
       // `answerable`, NOT `visible` — see the comment on answerable(). This is the line that
@@ -3258,11 +3315,9 @@ async function applyDecision(
       // The match is a linguistic convention (a small English lexicon) — stated here, used
       // ONLY to re-order which invented filler is clicked (input, never evidence), skipped
       // whenever a documented hint or avoid flag speaks, and inert on single-select groups.
-      const noneStyle = (label: string): boolean =>
-        /\bnone of the above\b|\bnone of these\b|^\s*none\b|\bnot applicable\b|\bn\/a\b/i.test(label);
       const exclusionNone =
         !preferredByDoc && g.kind === "checkbox"
-          ? g.options.find((o) => answerable(o) && !flagged(o) && noneStyle(o.label))
+          ? g.options.find((o) => answerable(o) && !flagged(o) && NONE_STYLE_OPTION.test(o.label))
           : undefined;
       const preferred =
         preferredByDoc ?? exclusionNone ?? (avoid.length > 0 ? g.options.find((o) => answerable(o) && !flagged(o)) : first);

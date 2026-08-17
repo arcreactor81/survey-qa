@@ -500,6 +500,64 @@ suite("D54 — an invented multi-select answer prefers the exclusive none-option
   });
 });
 
+/* ============================================================ 2d. the FRAGMENTED exclusion screener */
+
+/**
+ * The live S50 shape (v52 observation): each disqualifying company is its OWN one-checkbox
+ * group, and the exclusive none-option is its OWN radio group. A per-group default clicks
+ * the first company checkbox and stops — the none-option is never considered.
+ */
+const fragmentedExclusionScreen = () =>
+  screen("S50. Do you or anyone in your household work for any of the following?", {
+    optionGroups: [
+      { name: "S50_1", kind: "checkbox", options: [option(0, "A healthcare consulting firm")] },
+      { name: "S50_2", kind: "checkbox", options: [option(1, "An advertising agency or media company")] },
+      { name: "S50_3", kind: "checkbox", options: [option(2, "A pharmaceutical company")] },
+      { name: "S50_99", kind: "radio", options: [option(3, "None of the above")] },
+    ],
+  });
+
+suite("D54 — the fragmented exclusion screener answers the none-option alone", () => {
+  test("THE LIVE SHAPE: one-checkbox company groups + a none radio group => only None is clicked", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, advancing(fragmentedExclusionScreen()), { decisions: [] });
+    const clicks = optionClicks(obs);
+    assertEq(clicks.length, 1, `exactly one option click, got ${JSON.stringify((obs.steps[0]?.actions ?? []).map((a) => a.targetLabel))}`);
+    assertEq(clicks[0].targetLabel, "None of the above", clicks[0].detail);
+    assert(clicks[0].detail.includes("exclusive-none-option"), clicks[0].detail);
+    assert(clicks[0].detail.includes("fragmented-groups"), clicks[0].detail);
+  });
+
+  test("A DOCUMENTED PREFER-LABEL ON THE SCREEN DISABLES THE SHORTCUT", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, advancing(fragmentedExclusionScreen()), {
+      decisions: [],
+      survival_hints: [{ question: "S50", avoid_labels: [], prefer_labels: ["A pharmaceutical company"] }],
+    });
+    const clicks = optionClicks(obs);
+    assert(
+      clicks.some((c) => c.targetLabel === "A pharmaceutical company"),
+      `the documented prefer must win over the heuristic: ${JSON.stringify(clicks.map((c) => c.targetLabel))}`,
+    );
+  });
+
+  test("AN AVOID FLAG ON THE NONE-OPTION DISABLES THE SHORTCUT", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const { obs } = await walk(mod, env, advancing(fragmentedExclusionScreen()), {
+      decisions: [],
+      survival_hints: [{ question: "S50", avoid_labels: ["None of the above"] }],
+    });
+    const clicks = optionClicks(obs);
+    assert(
+      !clicks.some((c) => c.targetLabel === "None of the above"),
+      `a flagged none-option must not be clicked: ${JSON.stringify(clicks.map((c) => c.targetLabel))}`,
+    );
+  });
+});
+
 /* ============================================================ 3. the ONLY consumer is the option default */
 
 suite("D54 — survival hints have exactly one consumer: grid and value fillers ignore them", () => {

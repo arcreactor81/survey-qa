@@ -199,6 +199,18 @@ await runMutantSuite({
       kills: ["ANY hung page call — screenshot, not a read — still returns a walk, via the page-call bound"],
     },
     {
+      name: "the fragmented exclusion shortcut stops firing (the live S50 shape dies again)",
+      breaks:
+        "reach on the shape the live screener actually renders: EIGHT one-checkbox company " +
+        "groups plus the none-option as its own radio group. A per-group default clicks the " +
+        "first company checkbox and stops; only the screen-level pre-pass can reach the " +
+        "exclusive answer",
+      file: DR,
+      find: "      !preferAcrossScreen && variant === 0 && checkboxGroupCount >= 2",
+      replace: "      false",
+      kills: ["THE LIVE SHAPE: one-checkbox company groups + a none radio group => only None is clicked"],
+    },
+    {
       name: "the exclusion-screener none-default stops firing (three live pivots' deaths reinstated)",
       breaks:
         "reach on the universal exclusion-screener shape. A select-all-that-apply of " +
