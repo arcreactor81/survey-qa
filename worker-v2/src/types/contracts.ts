@@ -48,10 +48,29 @@ export interface Phase {
   observedAt: string | null;
   /** Machine-readable cause for `skipped` / `stopped`. null otherwise. */
   reasonCode: string | null;
+  /**
+   * ADDITIVE (Direction 2 upgrade). When the phase transitioned to `active`.
+   * null while pending or for checkpoints written before this field existed.
+   * Optional because older checkpoints do not carry it.
+   */
+  startedAt?: string | null;
+  /**
+   * ADDITIVE (Direction 2 upgrade). When the phase left `active` (complete/stopped/skipped).
+   * null while pending or active, or for checkpoints written before this field existed.
+   * Optional because older checkpoints do not carry it.
+   */
+  endedAt?: string | null;
 }
 
 export const initialPhases = (): Phase[] =>
-  PHASE_NAMES.map((name) => ({ name, state: "pending" as PhaseState, observedAt: null, reasonCode: null }));
+  PHASE_NAMES.map((name) => ({
+    name,
+    state: "pending" as PhaseState,
+    observedAt: null,
+    reasonCode: null,
+    startedAt: null,
+    endedAt: null,
+  }));
 
 // ---------------------------------------------------------------------------
 // Completion — the second axis (ui-report-redesign §2.3, §7.3)
