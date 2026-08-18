@@ -154,6 +154,8 @@ export async function pushModelUsageStrict(
     if (usageSource !== undefined && !REPLAY_SOURCES.has(usageSource)) {
       invalid(`modelEvents[${index}].usageSource`, "unknown model-call usage source");
     }
+    // The membership check above is the proof; TypeScript cannot see through Set.has.
+    const boundedUsageSource = usageSource as ModelCallUsageEvent["usageSource"];
     const originalCostUsd = event.originalCostUsd === undefined
       ? undefined
       : nonnegativeFinite(event.originalCostUsd, `modelEvents[${index}].originalCostUsd`);
@@ -171,7 +173,7 @@ export async function pushModelUsageStrict(
       outputTokens: nonnegativeSafeInteger(event.outputTokens, `modelEvents[${index}].outputTokens`),
       costUsd: nonnegativeFinite(event.costUsd, `modelEvents[${index}].costUsd`),
       at,
-      ...(usageSource === undefined ? {} : { usageSource }),
+      ...(boundedUsageSource === undefined ? {} : { usageSource: boundedUsageSource }),
       ...(originalCostUsd === undefined ? {} : { originalCostUsd }),
     };
   });
