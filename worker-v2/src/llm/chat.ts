@@ -210,6 +210,8 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
   let unverifiedReportedModel: string | null = null;
   let attemptsMade = 0;
   let lastTruncatedAtOutputCeiling = false;
+  /** True when every failed attempt was a definitive pre-generation refusal (401/402/403). */
+  let allFailuresRejectedBeforeGeneration = true;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     attemptsMade = attempt;
@@ -262,7 +264,24 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         // non-JSON response separately.
       }
       if (!res.ok) {
-        accountUsage(data?.usage);
+        // DEFINITIVE NON-BILLING STATUSES: 401 (unauthorized), 402 (insufficient balance),
+        // 403 (forbidden). The provider rejected the request BEFORE any generation occurred.
+        // No tokens were consumed, no billing happened. Booking conservative ceiling here
+        // would create phantom dollars for a call the provider provably never started.
+        //
+        // Everything ambiguous — timeouts, 5xx, aborted streams — KEEPS the conservative
+        // ceiling because a timed-out generation may still bill server-side.
+        // Refusal-with-status is evidence of non-billing; silence is not.
+        if (isDefinitiveNonBillingStatus(res.status)) {
+          // Book zero tokens: the provider rejected before generation
+          if (!usageAccounted) {
+            usageAccounted = true;
+            // inputTokens += 0; outputTokens += 0; — deliberately no-op
+          }
+        } else {
+          accountUsage(data?.usage);
+          allFailuresRejectedBeforeGeneration = false;
+        }
         lastDetail = `HTTP ${res.status}: ${rawBody.slice(0, 300)}`;
         lastHttpStatus = res.status;
         lastFailureKind = failureKindForHttpStatus(res.status);
@@ -283,6 +302,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastFailureCause = "provider-content";
         lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
+        allFailuresRejectedBeforeGeneration = false;
         if (attempt === maxAttempts) break;
         continue;
       }
@@ -378,10 +398,24 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
       lastFailureCause = isLocalDeadlineExpiry(err, attemptSignal) ? "local-deadline" : "network";
       if (lastFailureCause === "local-deadline") sawLocalDeadline = true;
       if (lastFailureCause !== "local-deadline") allFailuresWereLocalDeadlines = false;
+      allFailuresRejectedBeforeGeneration = false;
       lastHttpStatus = null;
       if (attempt === maxAttempts) break;
     }
   }
+
+  // Determine the usage source for the error receipt.
+  // rejected-before-generation: every attempt was refused with a definitive non-billing
+  // HTTP status (401/402/403). The provider never started generation and provably billed
+  // nothing. Tokens and cost are 0.
+  const errorUsageSource: CallUsage["usageSource"] =
+    allFailuresRejectedBeforeGeneration && inputTokens === 0 && outputTokens === 0
+      ? "rejected-before-generation"
+      : usedUnboundModelRateCeiling
+        ? "unverified-model-rate-ceiling"
+        : usedConservativeCeiling
+          ? "conservative-ceiling"
+          : "provider-reported";
 
   throw new ModelCallError(`${spec.provider}/${spec.model} ${opts.role} failed: ${lastDetail}`, {
     callId: opts.callId,
@@ -396,15 +430,16 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
     costUsd: costOf(spec, inputTokens, outputTokens, usedUnboundModelRateCeiling),
     latencyMs: 0,
     attempts: attemptsMade,
-    usageSource: usedUnboundModelRateCeiling
-      ? "unverified-model-rate-ceiling"
-      : usedConservativeCeiling
-        ? "conservative-ceiling"
-        : "provider-reported",
+    usageSource: errorUsageSource,
+    ...(errorUsageSource === "rejected-before-generation" && lastHttpStatus !== null
+      ? { rejectedHttpStatus: lastHttpStatus }
+      : {}),
     detail: (
-      usedConservativeCeiling
-        ? `usage conservatively ceilinged because at least one attempt returned no valid token receipt; ${lastDetail}`
-        : lastDetail
+      errorUsageSource === "rejected-before-generation"
+        ? `rejected before generation (HTTP ${lastHttpStatus}); no tokens consumed, no billing; ${lastDetail}`
+        : usedConservativeCeiling
+          ? `usage conservatively ceilinged because at least one attempt returned no valid token receipt; ${lastDetail}`
+          : lastDetail
     ).slice(0, 400),
   }, lastFailureKind, lastHttpStatus,
   allFailuresWereLocalDeadlines
@@ -423,6 +458,17 @@ function failureKindForHttpStatus(status: number): ModelFailureKind {
   if (status === 402) return "insufficient-balance";
   if (status === 400 || status === 404 || status === 409 || status === 422) return "invalid-request";
   return "nonretryable-http";
+}
+
+/**
+ * HTTP statuses where the provider definitively rejected the request BEFORE any generation.
+ * No tokens were consumed, no billing occurred. This is evidence of non-billing.
+ *
+ * Timeouts (408), 5xx, and rate-limits (429) are NOT included: a timed-out or server-errored
+ * generation may still have billed server-side. Silence is not evidence of non-billing.
+ */
+export function isDefinitiveNonBillingStatus(status: number): boolean {
+  return status === 401 || status === 402 || status === 403;
 }
 
 /** A timer being expired is insufficient: the caught rejection must be that timer's reason. */
