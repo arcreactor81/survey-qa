@@ -553,6 +553,12 @@ const FILES = [
   // provenance-marked usage. Identity-miss tests prove each field in the digest is load-bearing.
   // Evidence they can fail: the mutation anchors in unit-reuse.ts and pass-b.ts.
   "./tests/unit-reuse.test.mjs",
+  // CROSS-RUN PASS-A SYNTHESIS ADOPTION — the multi-window fixture that proves the
+  // synthesis unit-reuse path is correct and justifies PASS_A_SYNTHESIS_ADOPTION_ENABLED.
+  // (a) identity-hit adoption, (b) identity-miss on different window candidates,
+  // (c) revalidation refusal fallback, (d) failed synthesis never indexed.
+  // Evidence they can fail: tools/mutate-unit-reuse.mjs (synthesis mutants).
+  "./tests/synthesis-adoption.test.mjs",
 ];
 
 export async function runVerification({
