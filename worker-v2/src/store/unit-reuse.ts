@@ -230,9 +230,9 @@ export async function lookupReusableUnit(
   ) {
     console.log(
       `unit-reuse: identity field mismatch for ${identity.unitKind} ` +
-        `(digest collision or index corruption)`, // mutation-anchor: unit-reuse-identity-mismatch-refused
+        `(digest collision or index corruption)`,
     );
-    return null;
+    return null; // mutation-anchor: unit-reuse-identity-mismatch-refused
   }
 
   // The model output must be a non-null non-array object for the decoder to run on.

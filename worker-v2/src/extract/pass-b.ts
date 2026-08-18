@@ -1193,7 +1193,7 @@ export async function runPassB(
 
       // Store in the cross-run unit index so the next run can adopt instead of re-buying.
       // This is best-effort: a store failure does not affect this run's correctness.
-      const admitted = chunkWireChecks.get(chunk.n);
+      const admitted = chunkWireChecks.get(chunk.n); // mutation-anchor: unit-reuse-store-guard
       if (admitted?.ok) {
         const okUsage = purchasedUsages.find((u) => u.status === "ok");
         if (okUsage) {
