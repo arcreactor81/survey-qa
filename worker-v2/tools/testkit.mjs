@@ -242,6 +242,7 @@ export async function loadWorker() {
       // that could change what a re-extraction produces has to be in it — and a test reaching it
       // only through the workflow could not tell "the key is complete" from "the lookup missed".
       `export * as contractReuse from ${p("src/store/contract-reuse.ts")};`,
+      `export * as unitReuse from ${p("src/store/unit-reuse.ts")};`,
       `export * as humanContract from ${p("src/contract/human-authored.ts")};`,
       `export * as structure from ${p("src/structure/index.ts")};`,
       `export * as visionReconcile from ${p("src/vision/reconcile.ts")};`,

@@ -193,12 +193,13 @@ $MutationHarnesses = @(
   "mutate-verifier-identity.mjs",
   "mutate-multilane.mjs",
   "mutate-w4-select.mjs",
-  "mutate-w5-seeded-traversal.mjs"
+  "mutate-w5-seeded-traversal.mjs",
+  "mutate-unit-reuse.mjs"
 )
 $MutationLibraries = @(
   "mutate-runner.mjs"
 )
-if ($MutationHarnesses.Count -ne 43 -or $MutationLibraries.Count -ne 1) {
+if ($MutationHarnesses.Count -ne 44 -or $MutationLibraries.Count -ne 1) {
   throw "Mutation manifest cardinality changed"
 }
 $MutationDeclared = @($MutationHarnesses + $MutationLibraries)
