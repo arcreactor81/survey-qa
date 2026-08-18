@@ -124,6 +124,12 @@ import { coerceRequirement, coerceAmbiguities, coerceUnverifiable } from "./coer
 import { k } from "../keys";
 import { canonicalJson, sha256Hex } from "../store/hash";
 import {
+  lookupReusableUnit,
+  storeCompletedUnit,
+  type UnitIdentityFields,
+  type StoredReusableUnit,
+} from "../store/unit-reuse";
+import {
   publicExtractionFailureDetail,
   sourceContextForUnit,
   type DocumentReadingUnitStartObserver,
@@ -1689,6 +1695,141 @@ export async function runPassA(
 
     const priorAttempts = existing && existing.kind === "failed" ? existing.attempts : 0;
 
+    // -------------------------------------------------------------------
+    // CROSS-RUN UNIT REUSE (windows). Same pattern as pass-B chunks.
+    //
+    // A window still needing purchase is checked against the content-addressed
+    // cross-run unit index. On a hit the stored model output is re-validated
+    // through the SAME decoder the live path uses (strictPrimaryOutput +
+    // inspectPrimaryWindowGrounding), a per-run artifact is written, and
+    // results are accumulated. The window is then treated as done WITHOUT
+    // consuming an issue budget slot — it made no provider call.
+    //
+    // Only attempted when existing is null (no per-run artifact to reclaim)
+    // and no wire failure blocks this window. A retriable-failed existing
+    // window already has a different request hash (echoed error), so its
+    // identity would miss anyway. // mutation-anchor: unit-reuse-window-adoption
+    // -------------------------------------------------------------------
+    if (
+      existing === null &&
+      pendingPrimaryWireFailure === null &&
+      primaryWireChecks[i]?.ok
+    ) {
+      try {
+        const adoptPlan = primaryPlanFor(w, n, label);
+        if (adoptPlan.ok) {
+          const grokBody = chatRequestBodyText(grokRequestShape(env), adoptPlan.optionsForCall);
+          const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), adoptPlan.optionsForCall);
+          const windowRequestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
+          const windowIdentity: UnitIdentityFields = {
+            unitKind: "pass-a-window",
+            requestHash: windowRequestHash,
+            decoderIdentity: windowPolicyIdentity(env),
+            providerPlanIdentity: providerRouteIdentity,
+            promptVersion: PROMPT_VERSION_A, // mutation-anchor: unit-reuse-window-promptVersion
+            parserVersion,
+          };
+          const stored = await lookupReusableUnit(env, windowIdentity);
+          if (stored !== null) {
+            let decoded;
+            try {
+              const strict = strictPrimaryOutput(stored.modelOutput, origin); // mutation-anchor: unit-reuse-window-revalidation
+              decoded = inspectPrimaryWindowGrounding({
+                kind: "ok",
+                ...strict,
+                primaryGroundingLimitations: [],
+                usages: [],
+                routeReceipt: { selected: "grok-4.5", trigger: null },
+              }, w, origin).unit;
+            } catch (err) {
+              console.log(
+                `unit-reuse: adopted window payload revalidation failed for ${origin}: ` +
+                  `${err instanceof Error ? err.message : String(err)}`,
+              );
+              decoded = null;
+            }
+            if (decoded !== null) {
+              // Build synthetic receipt matching the window artifact format.
+              const syntheticReceipt: CallUsage = {
+                eventId: `core-model-call/pass-a/${runId}/${origin}/issue-1/receipt-1`,
+                callId: `call_a_${n}`,
+                role: `extract-pass-a${label ? `-w${n}` : ""}`,
+                provider: stored.originalUsage.provider,
+                model: stored.originalUsage.model,
+                status: "ok",
+                inputTokens: stored.originalUsage.inputTokens,
+                outputTokens: stored.originalUsage.outputTokens,
+                costUsd: stored.originalUsage.costUsd,
+                latencyMs: stored.originalUsage.latencyMs,
+                attempts: 1,
+                usageSource: stored.originalUsage.usageSource as CallUsage["usageSource"],
+              };
+              const adoptedRouteReceipt: PassARouteReceipt = { selected: "grok-4.5", trigger: null };
+              const adoptedArtifact = JSON.stringify(
+                {
+                  windowId: origin,
+                  windowNumber: n,
+                  blockIds,
+                  parserVersion,
+                  promptVersion: PROMPT_VERSION_A,
+                  providerRouteIdentity,
+                  windowPolicyIdentity: windowPolicyIdentity(env),
+                  attempts: 1,
+                  modelOutput: stored.modelOutput,
+                  ...decoded,
+                  usages: [syntheticReceipt],
+                  routeReceipt: adoptedRouteReceipt,
+                  reusedFromRunId: stored.sourceRunId,
+                },
+                null,
+                2,
+              );
+              try {
+                const retainedAdoption = await persistPrimaryWindowArtifact(
+                  env, runId, n, w, parserVersion, origin,
+                  predecessorAuthority, adoptedArtifact,
+                  (artifact) => artifact.kind === "ok",
+                );
+                if (retainedAdoption?.kind === "ok") {
+                  Object.assign(decoded, retainedAdoption);
+                }
+                // Accumulate results. Zero-cost accounting — adopted, not purchased.
+                const replayedUsage = replayUsage(syntheticReceipt, `reused: adopted window from prior run ${stored.sourceRunId}`);
+                calls.push(replayedUsage);
+                accountingCalls.push({ ...syntheticReceipt, usageSource: "reused-prior-artifact" as const });
+                landed += 1;
+                routeReceipts.push(adoptedRouteReceipt);
+                absorb(decoded);
+                if (onProgress) {
+                  try {
+                    await onProgress(
+                      `pass A ${origin}: ADOPTED from prior run ${stored.sourceRunId} (saved $${syntheticReceipt.costUsd.toFixed(4)})`,
+                    );
+                  } catch { /* observability only */ }
+                }
+                continue;
+              } catch (persistErr) {
+                if (persistErr instanceof PassAPrimaryPersistenceError) {
+                  console.log(
+                    `unit-reuse: adopted window persistence failed for ${origin}: ` +
+                      `${persistErr.message}`,
+                  );
+                  // Fall through to normal purchase path.
+                } else {
+                  throw persistErr;
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.log(
+          `unit-reuse: cross-run window adoption failed for ${origin}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     // A later canonical window already failed the all-window wire preflight. Reclaiming
     // durable earlier work is safe, but buying any missing/retryable earlier unit is not.
     if (pendingPrimaryWireFailure !== null) {
@@ -2101,6 +2242,48 @@ export async function runPassA(
       landed += 1;
       routeReceipts.push(routeReceipt);
       absorb(landedWindow);
+
+      // Store window in the cross-run unit index so the next run can adopt (best-effort).
+      // Only store when the window used the Grok primary route (no fallback trigger).
+      if (routeReceipt.trigger === null && rawModelOutput !== null) { // mutation-anchor: unit-reuse-window-store-guard
+        try {
+          const grokBody = chatRequestBodyText(grokRequestShape(env), optionsForCall);
+          const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall);
+          const windowRequestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
+          const okUsage = purchasedUsages.find((u) => u.status === "ok");
+          if (okUsage) {
+            await storeCompletedUnit(
+              env,
+              {
+                unitKind: "pass-a-window",
+                requestHash: windowRequestHash,
+                decoderIdentity: windowPolicyIdentity(env),
+                providerPlanIdentity: providerRouteIdentity,
+                promptVersion: PROMPT_VERSION_A,
+                parserVersion,
+              },
+              rawModelOutput,
+              {
+                inputTokens: okUsage.inputTokens,
+                outputTokens: okUsage.outputTokens,
+                costUsd: okUsage.costUsd,
+                latencyMs: okUsage.latencyMs,
+                model: okUsage.model,
+                provider: okUsage.provider,
+                usageSource: okUsage.usageSource ?? "provider-reported",
+                attempts: okUsage.attempts,
+              },
+              runId,
+            ); // mutation-anchor: unit-reuse-window-store-on-success
+          }
+        } catch (err) {
+          console.log(
+            `unit-reuse: window store failed for ${origin}: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
       // Progress is best-effort observability. Once the model answer and receipt are
       // durably persisted, a heartbeat error cannot relabel that purchase as failed.
       if (onProgress) {
@@ -4614,6 +4797,115 @@ export async function runPassASynthesis(
     });
   }
 
+  // -------------------------------------------------------------------
+  // CROSS-RUN UNIT REUSE (synthesis). Same pattern as windows/chunks.
+  //
+  // CAREFUL: synthesis identity must include the synthesis INPUT hash
+  // (which derives from all window outputs) — two runs whose windows
+  // produced different candidates must MISS. The requestHash already
+  // includes the input JSON through the preflighted request bodies.
+  //
+  // Only attempted when existing is null (no per-run synthesis artifact).
+  // If the synthesis was already attempted in this run, its per-run
+  // artifact exists and the normal retry/exhaustion logic handles it.
+  // -------------------------------------------------------------------
+  if (existing === null && context.wireFailureDetail === null) {
+    try {
+      const synthesisIdentity: UnitIdentityFields = {
+        unitKind: "pass-a-synthesis",
+        requestHash: context.requestHash, // mutation-anchor: unit-reuse-synthesis-inputHash
+        decoderIdentity: context.policyIdentity,
+        providerPlanIdentity: passAPrimaryRouteIdentity(env),
+        promptVersion: PROMPT_VERSION_A,
+        parserVersion: context.parserVersion,
+      };
+      const stored = await lookupReusableUnit(env, synthesisIdentity);
+      if (stored !== null) {
+        let additions: PassASynthesisAdditions | null = null;
+        try {
+          additions = validatePassASynthesisOutput(
+            stored.modelOutput, context,
+          ); // mutation-anchor: unit-reuse-synthesis-revalidation
+        } catch (err) {
+          console.log(
+            `unit-reuse: adopted synthesis payload revalidation failed: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        if (additions !== null) {
+          const syntheticReceipt: CallUsage = {
+            eventId: `core-model-call/pass-a/${runId}/A-synthesis/issue-1/receipt-1`,
+            callId: "call_a_synthesis",
+            role: "extract-pass-a-synthesis",
+            provider: stored.originalUsage.provider,
+            model: stored.originalUsage.model,
+            status: "ok",
+            inputTokens: stored.originalUsage.inputTokens,
+            outputTokens: stored.originalUsage.outputTokens,
+            costUsd: stored.originalUsage.costUsd,
+            latencyMs: stored.originalUsage.latencyMs,
+            attempts: 1,
+            usageSource: stored.originalUsage.usageSource as CallUsage["usageSource"],
+          };
+          const adoptedRouteReceipt: PassARouteReceipt = { selected: "grok-4.5", trigger: null };
+          const adoptedBody: Record<string, unknown> = {
+            ...synthesisArtifactEnvelope(env, context),
+            status: "ok",
+            attempts: 1,
+            usages: [syntheticReceipt],
+            routeReceipt: adoptedRouteReceipt,
+            modelOutput: stored.modelOutput,
+            reusedFromRunId: stored.sourceRunId,
+          };
+          try {
+            const retainedAdoption = await writePassASynthesis(
+              env,
+              runId,
+              context,
+              null,
+              adoptedBody,
+              (artifact) => artifact.kind === "ok",
+            );
+            // Whether or not writePassASynthesis returned a retained artifact,
+            // the attempt to write succeeded (no throw).
+            const limitation = synthesisLimitation(coverage, additions);
+            const replayedUsage = replayUsage(
+              syntheticReceipt,
+              `reused: adopted synthesis from prior run ${stored.sourceRunId}`,
+            );
+            if (retainedAdoption?.kind === "ok") {
+              additions = retainedAdoption.additions;
+            }
+            return synthesisOutcome("ok", {
+              issued: 0,
+              attempts: 1,
+              inputHash: context.inputHash,
+              coverage,
+              additions,
+              calls: [replayedUsage],
+              issuedCalls: [],
+              accountingCalls: [{ ...syntheticReceipt, usageSource: "reused-prior-artifact" as const }],
+              routeReceipt: adoptedRouteReceipt,
+              fallbackTrigger: null,
+              limitation,
+            });
+          } catch (persistErr) {
+            console.log(
+              `unit-reuse: adopted synthesis persistence failed: ` +
+                `${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+            );
+            // Fall through to normal purchase path.
+          }
+        }
+      }
+    } catch (err) {
+      console.log(
+        `unit-reuse: cross-run synthesis adoption failed: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   const predecessorAuthority = existing?.kind === "failed"
     ? synthesisStorageAuthorityOf(existing)
     : null;
@@ -4851,6 +5143,45 @@ async function purchasePassASynthesis(
       additions = retainedSuccess.additions;
       routeReceipt = retainedSuccess.routeReceipt;
     }
+
+    // Store synthesis in the cross-run unit index (best-effort).
+    // Only store when synthesis used the Grok primary route (no fallback trigger).
+    if (routeReceipt.trigger === null && rawModelOutput !== null) { // mutation-anchor: unit-reuse-synthesis-store-guard
+      try {
+        const okUsage = purchasedUsages.find((u) => u.status === "ok");
+        if (okUsage) {
+          await storeCompletedUnit(
+            env,
+            {
+              unitKind: "pass-a-synthesis",
+              requestHash: context.requestHash,
+              decoderIdentity: context.policyIdentity,
+              providerPlanIdentity: passAPrimaryRouteIdentity(env),
+              promptVersion: PROMPT_VERSION_A,
+              parserVersion: context.parserVersion,
+            },
+            rawModelOutput,
+            {
+              inputTokens: okUsage.inputTokens,
+              outputTokens: okUsage.outputTokens,
+              costUsd: okUsage.costUsd,
+              latencyMs: okUsage.latencyMs,
+              model: okUsage.model,
+              provider: okUsage.provider,
+              usageSource: okUsage.usageSource ?? "provider-reported",
+              attempts: okUsage.attempts,
+            },
+            runId,
+          ); // mutation-anchor: unit-reuse-synthesis-store-on-success
+        }
+      } catch (err) {
+        console.log(
+          `unit-reuse: synthesis store failed: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     const limitation = synthesisLimitation(context.coverage, additions);
     // Progress is observability, not extraction authority. A heartbeat failure after the
     // success artifact lands must never overwrite it as failed and authorize a repurchase.

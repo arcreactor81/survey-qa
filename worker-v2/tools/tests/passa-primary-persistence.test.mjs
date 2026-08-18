@@ -317,8 +317,11 @@ function stubFallbackRoute() {
 }
 
 async function onlyArtifact(bucket) {
-  assertEq(bucket._store.size, 1, "the fixture has exactly one durable artifact");
-  const key = [...bucket._store.keys()][0];
+  // Filter out cross-run index entries (v2/extract-units/) — they are an optimization
+  // layer above the per-run artifact this helper inspects.
+  const runKeys = [...bucket._store.keys()].filter((k) => !k.startsWith("v2/extract-units/"));
+  assertEq(runKeys.length, 1, "the fixture has exactly one durable per-run artifact");
+  const key = runKeys[0];
   return bucket.get(key).then((object) => object.json());
 }
 
@@ -352,7 +355,7 @@ test("a before-commit write failure retries only immutable artifact bytes, never
     assertEq(first.failedUnits.length, 0, "storage retry is not a semantic failed unit");
     assertEq(first.calls[0].status, "ok", "the valid paid receipt stays ok");
     assertEq(provider.calls(), 1, "the valid model answer was bought once");
-    assertEq(storage.attempts(), 2, "only the exact success artifact write is retried in-process");
+    assertEq(storage.attempts(), 3, "exact success artifact write retried in-process, plus cross-run index store");
     const stored = await onlyArtifact(storage.base);
     assertEq(stored.kind, "ok", "the retried bytes retain success authority");
     assertEq(stored.status, undefined, "no semantic failed-artifact discriminator was minted");
@@ -386,7 +389,7 @@ test("an after-commit transport failure is recovered only from the strict succes
     assertEq(first.failedUnits.length, 0, "transport failure is not reported as bad model output");
     assertEq(first.requirements.length, 1, "strictly reread typed authority is absorbed");
     assertEq(first.calls[0].status, "ok", "the paid receipt is never relabeled parse-failed");
-    assertEq(storage.attempts(), 1, "recovery does not overwrite the committed object");
+    assertEq(storage.attempts(), 2, "recovery does not overwrite committed object; cross-run index stored");
 
     const stored = await onlyArtifact(storage.base);
     assertEq(stored.kind, "ok", "the retained artifact is the current success shape");
