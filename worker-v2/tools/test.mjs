@@ -553,6 +553,11 @@ const FILES = [
   // provenance-marked usage. Identity-miss tests prove each field in the digest is load-bearing.
   // Evidence they can fail: the mutation anchors in unit-reuse.ts and pass-b.ts.
   "./tests/unit-reuse.test.mjs",
+  // COMPLETION LABELS — step-timeout classification, failure-report-with-disagreement, and
+  // dev-drive targeting. Each relabeled path is tested from a fixture checkpoint to the
+  // expected label. Evidence they can fail: mutation anchors in classifyFailure, failure.ts
+  // usageDisagreement path, and dev-drive targetQuestionId validation.
+  "./tests/completion-labels.test.mjs",
 ];
 
 export async function runVerification({

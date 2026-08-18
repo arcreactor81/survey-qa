@@ -257,6 +257,8 @@ export async function loadWorker() {
       `export * as env from ${p("src/types/env.ts")};`,
       // The dev-extract route handler — tested by the passOnly:B guard suite.
       `export * as devExtractRoute from ${p("src/workflow/stages/dev-extract.ts")};`,
+      `export * as devDrive from ${p("src/workflow/stages/dev-drive.ts")};`,
+      `export * as failureReport from ${p("src/report/failure.ts")};`,
       `export * as multilane from ${p("src/workflow/stages/multilane.ts")};`,
     ].join("\n"),
     "utf8",
