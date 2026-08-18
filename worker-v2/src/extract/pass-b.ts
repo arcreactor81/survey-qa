@@ -94,6 +94,22 @@ export { decodePassBOutput, PASS_B_DECODER_VERSION, PassBOutputInvalid, salvageP
 
 export const PASS_B_VERSION = PROMPT_VERSION_B;
 
+/** Tag a usage row as a replay: zero cost for this run, original cost preserved. */
+function replayUsage(usage: CallUsage, detail: string): CallUsage {
+  return {
+    ...usage,
+    costUsd: 0,
+    usageSource: "reused-prior-artifact",
+    originalCostUsd: usage.costUsd,
+    detail,
+  };
+}
+
+/** Tag usages in accountingCalls so chargeUsage knows they are replays. */
+function replayAccountingUsages(usages: CallUsage[]): CallUsage[] {
+  return usages.map((u) => ({ ...u, usageSource: "reused-prior-artifact" as const }));
+}
+
 /**
  * When the fraction of terminally-failed chunks exceeds this threshold the pass
  * stops issuing new chunks and seals with PASS_B_FAILURE_RATE_EXCEEDED.
@@ -774,9 +790,9 @@ export async function runPassB(
     }
 
     if (existing.kind === "failed") {
-      accountingCalls.push(...existing.usages);
+      accountingCalls.push(...replayAccountingUsages(existing.usages));
       for (const usage of existing.usages) {
-        calls.push({ ...usage, detail: "reused: prior failed chunk purchase", costUsd: 0 });
+        calls.push(replayUsage(usage, "reused: prior failed chunk purchase"));
       }
       // A FAILED CHUNK IS RE-ISSUED A BOUNDED NUMBER OF TIMES, ACROSS THE WHOLE RUN — the
       // artifact carries the count, so waves and recovery instances share one budget rather
@@ -800,18 +816,14 @@ export async function runPassB(
     }
 
     landed += 1;
-    accountingCalls.push(...existing.usages);
+    accountingCalls.push(...replayAccountingUsages(existing.usages));
     requirements.push(...existing.obligations);
     dispositions.push(...existing.dispositions);
     constructs.push(...existing.constructs);
     ambiguities.push(...existing.ambiguities);
     unverifiable.push(...existing.unverifiable);
     for (const usage of existing.usages) {
-      calls.push({
-        ...usage,
-        detail: "reused: this chunk was already persisted by an earlier attempt",
-        costUsd: 0,
-      });
+      calls.push(replayUsage(usage, "reused: this chunk was already persisted by an earlier attempt"));
     }
     for (const id of blockIds) {
       if (!existing.dispositions.some((d) => d.blockId === id)) {
@@ -1419,18 +1431,18 @@ export async function runPassB(
       // every step retry re-bought all three sweep calls at full price.
       const existing = existingSweeps.get(i) ?? null;
       if (existing && existing.kind === "ok") {
-        accountingCalls.push(...existing.usages);
+        accountingCalls.push(...replayAccountingUsages(existing.usages));
         for (const usage of existing.usages) {
-          calls.push({ ...usage, detail: "reused: this sweep call was already persisted", costUsd: 0 });
+          calls.push(replayUsage(usage, "reused: this sweep call was already persisted"));
         }
         absorb(existing.obligations, existing.dispositions, existing.ambiguities, existing.unverifiable);
         await reportProgress(onProgress, `pass B ${sweepId}: reused a previously persisted sweep call`);
         continue;
       }
       if (existing && existing.kind === "failed") {
-        accountingCalls.push(...existing.usages);
+        accountingCalls.push(...replayAccountingUsages(existing.usages));
         for (const usage of existing.usages) {
-          calls.push({ ...usage, detail: "reused: prior failed sweep purchase", costUsd: 0 });
+          calls.push(replayUsage(usage, "reused: prior failed sweep purchase"));
         }
       }
       if (existing && existing.kind === "failed" &&
@@ -1760,7 +1772,7 @@ export async function reconstructPassBCompletedAuthority(
       const detail = `${chunk.id} is missing or belongs to a stale cache partition`;
       return invalid(detail, { unit: chunk.id, blockIds: chunk.blocks.map((block) => block.blockId), detail });
     }
-    accountingCalls.push(...unit.usages);
+    accountingCalls.push(...replayAccountingUsages(unit.usages));
     chunksLanded += 1;
     if (unit.kind === "failed") {
       // Terminal-failed chunks are accepted as part of a completed pass. Their blocks are
@@ -1811,7 +1823,7 @@ export async function reconstructPassBCompletedAuthority(
       const detail = `${sweepId} is missing or belongs to a stale cache partition`;
       return invalid(detail, { unit: sweepId, blockIds: sourceBlocks.map((block) => block.blockId), detail });
     }
-    accountingCalls.push(...unit.usages);
+    accountingCalls.push(...replayAccountingUsages(unit.usages));
     sweepsLanded += 1;
     if (unit.kind === "failed") {
       return invalid(
