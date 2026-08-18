@@ -323,7 +323,15 @@ const EXTRACT_POLICY = { retries: { limit: 2, delay: "15 seconds", backoff: "lin
 // equal — and the engine killed every batch mid-walk before anything committed (run
 // v2r_01m05bh8scxkebmqd7h9wmmf5z: sessions churning, walks recording zero screens). The
 // d56 config-arithmetic test pins step-timeout >= EXEC_BATCH_MAX_MS + 120s slack.
-const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "67 minutes" } as const;
+//
+// AND THE SLACK MUST BE REAL, NOT MINIMAL. At "67 minutes" the margin over the 65-minute
+// walk axe was 120 s — and a deep walk's wrap-up (final-slot epoch capture, evidence
+// uploads, session retirement) can exceed that. The step then dies at its own timeout,
+// which Cloudflare reports as the OPAQUE "WorkflowInternalError: Attempt failed due to
+// internal workflows error" — five runs (v53, v56, v61, v62 v2r_01m08ce0…, v63
+// v2r_01m08r1r…) were mis-read as platform failures before the instance trace showed the
+// failing attempts ending at exactly ~67:01. Fifteen minutes of wrap-up margin instead.
+const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "80 minutes" } as const;
 /**
  * THE JUDGING STAGES. `delay` is 30 seconds and NOT 5 for a reason that is not politeness.
  *
