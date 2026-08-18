@@ -1630,6 +1630,117 @@ export async function runPassB(
         await reportProgress(onProgress, `pass B ${sweepId}: reused a previously persisted sweep call`);
         continue;
       }
+
+      // -------------------------------------------------------------------
+      // CROSS-RUN UNIT REUSE (sweeps). Same pattern as chunks (phase 1.5).
+      //
+      // A sweep still needing purchase is checked against the content-addressed
+      // cross-run unit index. On a hit the stored model output is re-validated
+      // through the SAME decoder the live path uses, a per-run artifact is
+      // written, and results are accumulated. The sweep is then treated as done
+      // WITHOUT consuming a sweep-call budget slot — it made no provider call.
+      // -------------------------------------------------------------------
+      if (
+        (existing === null || (existing?.kind === "failed" && !existing.terminal && existing.attempts < maxIssues)) &&
+        plan.wireCheck.ok && plan.requestHash !== undefined &&
+        retainedSweepTerminal === null && pendingSweepWireFailure === null
+      ) {
+        try {
+          const sweepIdentity: UnitIdentityFields = {
+            unitKind: "pass-b-sweep",
+            requestHash: plan.requestHash,
+            decoderIdentity: PASS_B_DECODER_VERSION,
+            providerPlanIdentity,
+            promptVersion: PROMPT_VERSION_B,
+            parserVersion,
+          };
+          const stored = await lookupReusableUnit(env, sweepIdentity);
+          if (stored !== null) {
+            let decoded;
+            try {
+              decoded = decodePassBOutput(stored.modelOutput, sweepId, slice, sweepEvidenceBlocks); // mutation-anchor: unit-reuse-sweep-revalidation
+            } catch (err) {
+              console.log(
+                `unit-reuse: adopted sweep payload revalidation failed for ${sweepId}: ` +
+                  `${err instanceof Error ? err.message : String(err)}`,
+              );
+              decoded = null;
+            }
+            if (decoded !== null) {
+              // Build synthetic receipt mirroring the chunk adoption pattern.
+              const syntheticReceipt: CallUsage = {
+                eventId: `core-model-call/pass-b/${runId}/${sweepId}/issue-1/receipt-1`,
+                callId: `call_b_sweep_${i + 1}`,
+                role: `extract-pass-b-${sweepId}`,
+                provider: stored.originalUsage.provider,
+                model: stored.originalUsage.model,
+                status: "ok",
+                inputTokens: stored.originalUsage.inputTokens,
+                outputTokens: stored.originalUsage.outputTokens,
+                costUsd: stored.originalUsage.costUsd,
+                latencyMs: stored.originalUsage.latencyMs,
+                attempts: 1,
+                usageSource: stored.originalUsage.usageSource as CallUsage["usageSource"],
+              };
+              const adoptedBody = JSON.stringify(
+                {
+                  sweepId,
+                  blockIds: [...allowed],
+                  evidenceBlockIds: sweepEvidenceBlocks.map((block) => block.blockId),
+                  parserVersion,
+                  promptVersion: PROMPT_VERSION_B,
+                  providerPlanIdentity,
+                  decoderIdentity: PASS_B_DECODER_VERSION,
+                  status: "ok",
+                  attempts: 1,
+                  usages: [syntheticReceipt],
+                  modelOutput: stored.modelOutput,
+                  obligations: decoded.obligations,
+                  dispositions: decoded.dispositions,
+                  constructs: decoded.constructs,
+                  ambiguities: decoded.ambiguities,
+                  unverifiable: decoded.unverifiable,
+                  reusedFromRunId: stored.sourceRunId,
+                },
+                null,
+                2,
+              );
+              const predecessor = sweepPredecessors.get(i) ?? null;
+              const persistence = await persistPassBPaidUnitArtifact(
+                env,
+                sweepId,
+                {
+                  canonicalKey: sweepKey(runId, i),
+                  historyKey: (digest) => sweepHistoryKey(runId, i, digest),
+                  conflictKey: (digest) => sweepCasConflictKey(runId, i, digest),
+                },
+                predecessor,
+                adoptedBody,
+              );
+              if (persistence.ok) {
+                // Accumulate results. Zero-cost accounting — adopted, not purchased.
+                const replayedUsage = replayUsage(syntheticReceipt, `reused: adopted sweep from prior run ${stored.sourceRunId}`);
+                calls.push(replayedUsage);
+                accountingCalls.push({ ...syntheticReceipt, usageSource: "reused-prior-artifact" as const });
+                absorb(decoded.obligations, decoded.dispositions, decoded.ambiguities, decoded.unverifiable);
+                // An adopted sweep must NOT consume a sweep-call budget slot. // mutation-anchor: unit-reuse-sweep-no-budget-slot
+                await reportProgress(
+                  onProgress,
+                  `pass B ${sweepId}: ADOPTED from prior run ${stored.sourceRunId} (saved $${syntheticReceipt.costUsd.toFixed(4)})`,
+                );
+                continue;
+              }
+              // Persistence conflict — fall through to normal purchase path.
+            }
+          }
+        } catch (err) {
+          console.log(
+            `unit-reuse: cross-run sweep adoption failed for ${sweepId}: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
       if (existing && existing.kind === "failed") {
         accountingCalls.push(...replayAccountingUsages(existing.usages));
         for (const usage of existing.usages) {
