@@ -127,5 +127,34 @@ await runMutantSuite({
       replace: "",
       kills: [IDENTITY],
     },
+
+    // -----------------------------------------------------------------------
+    // COST BOOKING MUTANTS — evidence the cost-booking fix can fail
+    // -----------------------------------------------------------------------
+
+    {
+      name: "zero-booking applied to timeouts too (widens non-billing to all errors)",
+      breaks: "a timeout still books the conservative ceiling",
+      file: "src/llm/chat.ts",
+      find: "  return status === 401 || status === 402 || status === 403;",
+      replace: "  return status === 401 || status === 402 || status === 403 || status === 408 || status >= 500;",
+      kills: ["HTTP 503 still books the conservative ceiling (negative control, server error)"],
+    },
+    {
+      name: "replay provenance dropped (usageSource marker removed from replay events)",
+      breaks: "a replayed usage event carries usageSource marker",
+      file: "src/store/usage.ts",
+      find: '      ...(usageSource === undefined ? {} : { usageSource }),',
+      replace: '      // MUTANT: usageSource stripped from events',
+      kills: ["replayed usage event has usageSource 'reused-prior-artifact', costUsd 0, originalCostUsd preserved"],
+    },
+    {
+      name: "replay booked at current rates again (replay validation removed)",
+      breaks: "budget gate correctly ignores replay costs",
+      file: "src/store/usage.ts",
+      find: '    if (usageSource === "reused-prior-artifact" && event.costUsd !== 0) {',
+      replace: '    if (false) {',
+      kills: ["replay event with non-zero costUsd is rejected"],
+    },
   ],
 });

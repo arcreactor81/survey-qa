@@ -6001,7 +6001,7 @@ function isCallUsage(value: unknown): value is CallUsage {
     finiteNonNegative(row.costUsd) && finiteNonNegative(row.latencyMs) &&
     Number.isSafeInteger(row.attempts) && (row.attempts ?? 0) >= 1 &&
     (row.usageSource === "provider-reported" || row.usageSource === "conservative-ceiling" ||
-      row.usageSource === "unverified-model-rate-ceiling")
+      row.usageSource === "unverified-model-rate-ceiling" || row.usageSource === "rejected-before-generation")
   );
 }
 

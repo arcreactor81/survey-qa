@@ -543,6 +543,11 @@ const FILES = [
   // anchor cleaner strips rendering-artifact markers with a named, counted transformation.
   // Evidence they can fail: tools/mutate-route-labels.mjs.
   "./tests/route-label-extraction.test.mjs",
+  // COST BOOKING — replayed units book zero with provenance, rejected-before-generation
+  // books zero, timeouts keep the conservative ceiling. The measured defect: a fully-cached
+  // run re-booked persisted artifacts and tripped the extraction budget gate over money
+  // nobody spent. Evidence they can fail: tools/mutate-grok-cost-policy.mjs (cost-booking mutants).
+  "./tests/cost-booking.test.mjs",
 ];
 
 export async function runVerification({

@@ -2347,7 +2347,8 @@ function isCallUsage(value: unknown): value is CallUsage {
     (
       row.usageSource === "provider-reported" ||
       row.usageSource === "conservative-ceiling" ||
-      row.usageSource === "unverified-model-rate-ceiling"
+      row.usageSource === "unverified-model-rate-ceiling" ||
+      row.usageSource === "rejected-before-generation"
     )
   );
 }
