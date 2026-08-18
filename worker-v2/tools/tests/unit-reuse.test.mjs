@@ -650,3 +650,381 @@ suite("CROSS-RUN UNIT REUSE — pass-B end-to-end adoption", () => {
     }
   });
 });
+
+// =========================================================================
+// PASS-B SWEEP ADOPTION
+// =========================================================================
+
+/**
+ * Fake provider for sweep testing. For chunk calls, deliberately leaves the
+ * last block uncited (normative but not in any obligation), so the sweep has
+ * unaccounted blocks to cover.
+ */
+function fakeDeepseekFetchForSweep() {
+  let callCount = 0;
+  return {
+    count: () => callCount,
+    fn: async (url, opts) => {
+      callCount += 1;
+      const body = JSON.parse(opts.body);
+      const user = body.messages?.find((m) => m.role === "user")?.content ?? "";
+      const jsonlStart = user.indexOf("===== YOUR SOURCE BLOCKS JSONL");
+      const jsonlEnd = user.indexOf("===== END YOUR SOURCE BLOCKS JSONL");
+      const sweepStart = user.indexOf("===== UNACCOUNTED SOURCE BLOCKS JSONL");
+      const sweepEnd = user.indexOf("===== END UNACCOUNTED SOURCE BLOCKS JSONL");
+      let sourceRows = [];
+      if (jsonlStart >= 0 && jsonlEnd > jsonlStart) {
+        const section = user.slice(user.indexOf("\n", jsonlStart) + 1, jsonlEnd).trim();
+        sourceRows = section.split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
+      } else if (sweepStart >= 0 && sweepEnd > sweepStart) {
+        const section = user.slice(user.indexOf("\n", sweepStart) + 1, sweepEnd).trim();
+        sourceRows = section.split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
+      }
+      const blockIds = sourceRows.map((r) => String(r.block_id));
+      if (blockIds.length === 0) blockIds.push("b0001");
+      const textOf = (id) => {
+        const row = sourceRows.find((r) => String(r.block_id) === id);
+        return row ? String(row.text) : `text for ${id}`;
+      };
+      const unitMatch = user.match(/Your chunk id for this call is: (\S+)/);
+      const sweepMatch = user.match(/Your sweep id for this call is: (\S+)/);
+      const unitName = unitMatch ? unitMatch[1] : sweepMatch ? sweepMatch[1] : "C01-b0001";
+      const isSweep = sweepMatch !== null;
+
+      // For chunk calls: cite only the first block, leave others as normative-but-unaccounted.
+      const citedIds = isSweep ? blockIds : blockIds.slice(0, 1);
+      const output = {
+        chunk_id: unitName,
+        obligations: citedIds.map((id, i) => ({
+          id: `${unitName}-R${i + 1}`,
+          construct: "question",
+          scope: `question:${id}`,
+          quantifier: "every",
+          selector: id,
+          exceptions: [],
+          statement: `block ${id} must be asked and answered`,
+          doc_quote: textOf(id),
+          block_ids: [id],
+          evidence_quotes: [{ block_id: id, quote: textOf(id) }],
+          browser_observable: "full",
+          confidence: 0.9,
+          expansion: null,
+        })),
+        block_dispositions: blockIds.map((id) => ({
+          block_id: id,
+          disposition: "normative",
+          reason: "states something an implementation must do",
+        })),
+        construct_checklist: CONSTRUCTS.map((c) => ({
+          construct: c,
+          present: c === "question",
+          block_ids: c === "question" ? citedIds : [],
+        })),
+        ambiguities: [],
+        unverifiable_from_browser: [],
+      };
+      return new Response(
+        JSON.stringify({
+          id: "test-completion",
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1000),
+          model: body.model ?? "deepseek-v4-pro",
+          choices: [{
+            index: 0,
+            message: { role: "assistant", content: JSON.stringify(output) },
+            finish_reason: "stop",
+          }],
+          usage: { prompt_tokens: 500, completion_tokens: 200, total_tokens: 700 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  };
+}
+
+function sweepEnv(evidence) {
+  return {
+    ...baseEnv(evidence),
+    EXTRACT_CHUNK_CHARS: "10000",
+    EXTRACT_CHUNK_MAX_BLOCKS: "10",
+    EXTRACT_SWEEP_MAX_CALLS: "3",
+    EXTRACT_SWEEP_BLOCKS_PER_CALL: "40",
+  };
+}
+
+suite("CROSS-RUN UNIT REUSE — pass-B sweep adoption", () => {
+  test("sweep bought in run 1 is adopted in run 2 with zero-cost provenance", async () => {
+    const { passB } = (await mod());
+    const doc = docFor(2);
+    const evidence = memoryR2();
+    const sweep1 = fakeDeepseekFetchForSweep();
+    const origFetch = globalThis.fetch;
+
+    try {
+      globalThis.fetch = sweep1.fn;
+      const env1 = sweepEnv(evidence);
+      const result1 = await passB.runPassB(env1, "run-1", doc, "test.docx");
+      assertEq(result1.slice.done, true, "run 1 must complete");
+      const sweepKeys = [...evidence._store.keys()].filter((k) => k.startsWith("v2/extract-units/"));
+      assert(sweepKeys.length > 0, "cross-run index must have entries");
+
+      const env2 = sweepEnv(evidence);
+      const sweep2 = fakeDeepseekFetchForSweep();
+      globalThis.fetch = sweep2.fn;
+      const result2 = await passB.runPassB(env2, "run-2", doc, "test.docx");
+      assertEq(result2.slice.done, true, "run 2 must complete");
+      assertEq(sweep2.count(), 0, "run 2 must not make any provider calls (all adopted)");
+      const run2Cost = result2.calls.reduce((sum, c) => sum + c.costUsd, 0);
+      assertEq(run2Cost, 0, "run 2 cost must be zero (adopted)");
+      assertEq(result2.slice.sweepCallsIssued, 0, "adopted sweeps must not consume budget slots"); // mutation-anchor: unit-reuse-sweep-budget-test
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test("sweep revalidation refusal falls back to live purchase", async () => {
+    const { passB } = (await mod());
+    const doc = docFor(2);
+    const evidence = memoryR2();
+    const sweep1 = fakeDeepseekFetchForSweep();
+    const origFetch = globalThis.fetch;
+
+    try {
+      globalThis.fetch = sweep1.fn;
+      const env1 = sweepEnv(evidence);
+      await passB.runPassB(env1, "run-1", doc, "test.docx");
+
+      // Corrupt ONLY sweep entries in cross-run index (leave chunk entries intact)
+      for (const key of [...evidence._store.keys()].filter((k) => k.startsWith("v2/extract-units/"))) {
+        const obj = await evidence.get(key);
+        const entry = JSON.parse(await obj.text());
+        if (entry.identity.unitKind === "pass-b-sweep") {
+          entry.modelOutput = { deliberately: "corrupt" };
+          await evidence.delete(key);
+          await evidence.put(key, JSON.stringify(entry), { httpMetadata: { contentType: "application/json" } });
+        }
+      }
+      // Delete ONLY sweep per-run artifacts (keep chunk artifacts so they can be reclaimed)
+      for (const key of [...evidence._store.keys()].filter((k) =>
+        k.startsWith("v2/runs/run-1/") && k.includes("/sweep"),
+      )) {
+        await evidence.delete(key);
+      }
+
+      const env2 = sweepEnv(evidence);
+      const sweep2 = fakeDeepseekFetchForSweep();
+      globalThis.fetch = sweep2.fn;
+      const result2 = await passB.runPassB(env2, "run-2", doc, "test.docx");
+      assert(sweep2.count() > 0, "corrupt sweep adoption must fall back to live purchase");
+      assertEq(result2.slice.done, true, "run 2 must still complete");
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});
+
+// =========================================================================
+// PASS-A WINDOW ADOPTION
+// =========================================================================
+
+function fakeGrokFetch() {
+  let callCount = 0;
+  return {
+    count: () => callCount,
+    fn: async (url, opts) => {
+      callCount += 1;
+      const body = JSON.parse(opts.body);
+      const user = body.messages?.find((m) => m.role === "user")?.content ?? "";
+      // Pass A uses "===== SOURCE BLOCKS JSONL" (not "YOUR SOURCE BLOCKS JSONL")
+      const jsonlStart = user.indexOf("===== SOURCE BLOCKS JSONL");
+      const jsonlEnd = user.indexOf("===== END SOURCE BLOCKS JSONL");
+      let sourceRows = [];
+      if (jsonlStart >= 0 && jsonlEnd > jsonlStart) {
+        const section = user.slice(user.indexOf("\n", jsonlStart) + 1, jsonlEnd).trim();
+        sourceRows = section.split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
+      }
+      const blockIds = sourceRows.map((r) => String(r.block_id));
+      if (blockIds.length === 0) blockIds.push("b0001");
+      const textOf = (id) => {
+        const row = sourceRows.find((r) => String(r.block_id) === id);
+        return row ? String(row.text) : `text for ${id}`;
+      };
+      const output = {
+        global_rules: blockIds.map((id, i) => ({
+          id: `rule-${i + 1}`,
+          construct: "question",
+          scope: "survey",
+          quantifier: "every",
+          selector: id,
+          exceptions: [],
+          statement: `All respondents must answer ${id}`,
+          doc_quote: textOf(id),
+          block_ids: [id],
+          evidence_quotes: [{ block_id: id, quote: textOf(id) }],
+          browser_observable: "full",
+          confidence: 0.9,
+        })),
+        cross_references: [],
+        ambiguities: [],
+        unverifiable_from_browser: [],
+      };
+      return new Response(
+        JSON.stringify({
+          id: "test-completion",
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1000),
+          model: body.model ?? "grok-4.5",
+          choices: [{
+            index: 0,
+            message: { role: "assistant", content: JSON.stringify(output) },
+            finish_reason: "stop",
+          }],
+          usage: { prompt_tokens: 500, completion_tokens: 200, total_tokens: 700 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  };
+}
+
+function passAEnv(evidence) {
+  return {
+    EVIDENCE: evidence,
+    ALLOW_DIRECT_LLM_BASE_URL: "true",
+    EXTRACT_PASS_A_WINDOW_CHARS: "200",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "1",
+    EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "2",
+    EXTRACT_MAX_ATTEMPTS: "1",
+    EXTRACT_MAX_OUTPUT_TOKENS: "32000",
+    EXTRACT_MODEL_INPUT_MAX_BYTES: "400000",
+    EXTRACT_PASS_A_WAVE_BUDGET_MS: "600000",
+    LLM_TIMEOUT_MS: "300000",
+    XAI_API_KEY: "test-xai-key",
+    DEEPSEEK_API_KEY: "test-deepseek-key",
+    GROK_MODEL: "grok-4.5",
+    GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
+    GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
+    GROK_CONTEXT_WINDOW_TOKENS: "500000",
+    GROK_INPUT_USD_PER_MTOK: "2",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
+    GROK_OUTPUT_USD_PER_MTOK: "6",
+    GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
+    GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
+    GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
+    GROK_MAX_INPUT_USD_PER_MTOK: "4",
+    GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
+    DEEPSEEK_FALLBACK_MODEL: "deepseek-v4-flash",
+    DEEPSEEK_FALLBACK_REASONING_EFFORT: "medium",
+    DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK: "1.0",
+    DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK: "4.0",
+    DEEPSEEK_FALLBACK_MAX_ATTEMPTS: "1",
+  };
+}
+
+suite("CROSS-RUN UNIT REUSE — pass-A window adoption", () => {
+  test("window bought in run 1 is adopted in run 2 with zero-cost provenance", async () => {
+    const { passA } = (await mod());
+    const doc = docFor(1);
+    const evidence = memoryR2();
+    const grok1 = fakeGrokFetch();
+    const origFetch = globalThis.fetch;
+
+    try {
+      globalThis.fetch = grok1.fn;
+      const env1 = passAEnv(evidence);
+      const result1 = await passA.runPassA(env1, "run-1", doc, "test.docx");
+      assertEq(result1.slice.done, true, "run 1 must complete");
+      assert(result1.requirements.length > 0, "run 1 must produce requirements");
+
+      const indexKeys = [...evidence._store.keys()].filter((k) => k.startsWith("v2/extract-units/"));
+      let hasWindowUnit = false;
+      for (const key of indexKeys) {
+        const obj = await evidence.get(key);
+        const entry = JSON.parse(await obj.text());
+        if (entry.identity.unitKind === "pass-a-window") hasWindowUnit = true;
+      }
+      assert(hasWindowUnit, "cross-run index must have a pass-a-window entry");
+
+      const env2 = passAEnv(evidence);
+      const grok2 = fakeGrokFetch();
+      globalThis.fetch = grok2.fn;
+      const result2 = await passA.runPassA(env2, "run-2", doc, "test.docx");
+      assertEq(result2.slice.done, true, "run 2 must complete");
+      assertEq(grok2.count(), 0, "run 2 must not make any provider calls (adopted)");
+      const run2Cost = result2.calls.reduce((sum, c) => sum + c.costUsd, 0);
+      assertEq(run2Cost, 0, "run 2 cost must be zero (adopted)");
+      for (const call of result2.calls) {
+        assertEq(call.usageSource, "reused-prior-artifact", "adopted usage must be marked reused");
+      }
+      assertEq(result2.requirements.length, result1.requirements.length, "same number of requirements");
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test("window revalidation refusal falls back to live purchase", async () => {
+    const { passA } = (await mod());
+    const doc = docFor(1);
+    const evidence = memoryR2();
+    const grok1 = fakeGrokFetch();
+    const origFetch = globalThis.fetch;
+
+    try {
+      globalThis.fetch = grok1.fn;
+      const env1 = passAEnv(evidence);
+      await passA.runPassA(env1, "run-1", doc, "test.docx");
+
+      for (const key of [...evidence._store.keys()].filter((k) => k.startsWith("v2/extract-units/"))) {
+        const obj = await evidence.get(key);
+        const entry = JSON.parse(await obj.text());
+        if (entry.identity.unitKind === "pass-a-window") {
+          entry.modelOutput = { deliberately: "corrupt" };
+          await evidence.delete(key);
+          await evidence.put(key, JSON.stringify(entry), { httpMetadata: { contentType: "application/json" } });
+        }
+      }
+      for (const key of [...evidence._store.keys()].filter((k) => k.startsWith("v2/runs/run-1/"))) {
+        await evidence.delete(key);
+      }
+
+      const env2 = passAEnv(evidence);
+      const grok2 = fakeGrokFetch();
+      globalThis.fetch = grok2.fn;
+      const result2 = await passA.runPassA(env2, "run-2", doc, "test.docx");
+      assert(grok2.count() > 0, "corrupt window adoption must fall back to live purchase");
+      assertEq(result2.slice.done, true, "run 2 must still complete");
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  test("failed windows never enter the cross-run index", async () => {
+    const { passA } = (await mod());
+    const evidence = memoryR2();
+    const origFetch = globalThis.fetch;
+
+    try {
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({ error: "server error" }), { status: 500 });
+
+      const doc = docFor(1);
+      const env1 = { ...passAEnv(evidence), EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "1" };
+      try {
+        await passA.runPassA(env1, "run-1", doc, "test.docx");
+      } catch { /* Expected */ }
+
+      for (const key of [...evidence._store.keys()].filter((k) => k.startsWith("v2/extract-units/"))) {
+        const obj = await evidence.get(key);
+        const entry = JSON.parse(await obj.text());
+        assert(entry.identity.unitKind !== "pass-a-window", "failed windows must not be stored");
+      }
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+});

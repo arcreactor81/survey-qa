@@ -14,6 +14,7 @@ import { runMutantSuite } from "./mutate-runner.mjs";
 
 const UNIT_REUSE = "src/store/unit-reuse.ts";
 const PASS_B = "src/extract/pass-b.ts";
+const PASS_A = "src/extract/pass-a.ts";
 
 await runMutantSuite({
   title: "cross-run extraction unit reuse",
@@ -94,6 +95,33 @@ await runMutantSuite({
     find: '      const admitted = chunkWireChecks.get(chunk.n); // mutation-anchor: unit-reuse-store-guard',
     replace: '      const admitted = null; // mutation-anchor: unit-reuse-store-guard',
     kills: ["chunk bought in run 1 is adopted in run 2 with zero-cost provenance"],
+  },
+  // --- sweep adoption consumes budget slot ---
+  {
+    name: "adopted sweep increments sweepCallsIssued (consumes budget slot)",
+    breaks: "an adopted sweep would consume a sweep-call budget slot, reducing capacity for real purchases",
+    file: PASS_B,
+    find: '                // An adopted sweep must NOT consume a sweep-call budget slot. // mutation-anchor: unit-reuse-sweep-no-budget-slot',
+    replace: '                sweepCallsIssued += 1; // mutation-anchor: unit-reuse-sweep-no-budget-slot',
+    kills: ["sweep bought in run 1 is adopted in run 2 with zero-cost provenance"],
+  },
+  // --- window identity missing promptVersion ---
+  {
+    name: "window adoption identity omits promptVersion",
+    breaks: "a prompt change would adopt a window extracted under a stale prompt",
+    file: PASS_A,
+    find: '            promptVersion: PROMPT_VERSION_A, // mutation-anchor: unit-reuse-window-promptVersion',
+    replace: '            promptVersion: "fixed-prompt", // mutation-anchor: unit-reuse-window-promptVersion',
+    kills: ["window bought in run 1 is adopted in run 2 with zero-cost provenance"],
+  },
+  // --- window revalidation skipped ---
+  {
+    name: "adopted window payload revalidation skipped",
+    breaks: "a stored model output that fails the current strict decoder would be adopted silently",
+    file: PASS_A,
+    find: '              const strict = strictPrimaryOutput(stored.modelOutput, origin); // mutation-anchor: unit-reuse-window-revalidation',
+    replace: '              const strict = { globalRules: [], crossRefs: [], ambiguities: [], unverifiable: [] }; // mutation-anchor: unit-reuse-window-revalidation',
+    kills: ["window bought in run 1 is adopted in run 2 with zero-cost provenance"],
   },
 ],
 });
