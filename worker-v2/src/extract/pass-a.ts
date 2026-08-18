@@ -127,7 +127,6 @@ import {
   lookupReusableUnit,
   storeCompletedUnit,
   type UnitIdentityFields,
-  type StoredReusableUnit,
 } from "../store/unit-reuse";
 import {
   publicExtractionFailureDetail,
@@ -4809,7 +4808,14 @@ export async function runPassASynthesis(
   // If the synthesis was already attempted in this run, its per-run
   // artifact exists and the normal retry/exhaustion logic handles it.
   // -------------------------------------------------------------------
-  if (existing === null && context.wireFailureDetail === null) {
+  // DISABLED PENDING ITS FIXTURE. Adoption here has no end-to-end test (it
+  // needs a multi-window document fixture) and its identity-miss property is
+  // unproven — and a wrongly-adopted synthesis silently poisons the sealed
+  // contract, the ground truth for everything downstream, to save one ~$0.12
+  // call. The store-on-success path below stays live so the index accrues;
+  // flip this only together with the multi-window adoption test.
+  const PASS_A_SYNTHESIS_ADOPTION_ENABLED = false;
+  if (PASS_A_SYNTHESIS_ADOPTION_ENABLED && existing === null && context.wireFailureDetail === null) {
     try {
       const synthesisIdentity: UnitIdentityFields = {
         unitKind: "pass-a-synthesis",

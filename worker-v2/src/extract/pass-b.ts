@@ -88,7 +88,6 @@ import {
   lookupReusableUnit,
   storeCompletedUnit,
   type UnitIdentityFields,
-  type StoredReusableUnit,
 } from "../store/unit-reuse";
 import {
   publicExtractionFailureDetail,
