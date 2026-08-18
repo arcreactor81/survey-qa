@@ -187,7 +187,7 @@
     // The t1-easy plan queues 76 entries (~13 screens each); 24 is a few minutes of
     // walking. Set it to 0 to run the contractual floor and nothing else.
     "EXEC_MAX_EXPLORATION": "24",
-    "EXEC_MAX_STEPS_PER_PATH": "80", // a survey that never terminates must not hang a batch
+    "EXEC_MAX_STEPS_PER_PATH": "120", // a survey that never terminates must not hang a batch; 120 clears the measured ~85-100-screen full traversal (59-screen screener + ~15 body questions at the measured 2-3 screens/question)
     "EXEC_ADVANCE_TIMEOUT_MS": "12000", // how long a screen may take to change after Next
     "EXEC_ACQUIRE_TIMEOUT_MS": "45000", // a reconnect to a wedged session never returns
     "EXEC_WALK_TIMEOUT_MS": "1800000", // one walk, bounded; a hang is a named outcome
@@ -307,14 +307,14 @@
     "DEEPSEEK_REASONING_EFFORT": "medium",
     // Official api.deepseek.com rates checked 13 Aug 2026. Primary and fallback
     // keep separate rates because the ledger records each actual model purchase.
-    "DEEPSEEK_INPUT_USD_PER_MTOK": "0.14",
-    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.28",
+    "DEEPSEEK_INPUT_USD_PER_MTOK": "0.44",
+    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "1.32",
     "DEEPSEEK_FALLBACK_MODE": "on-error",
     "DEEPSEEK_FALLBACK_MODEL": "deepseek-v4-pro",
     "DEEPSEEK_FALLBACK_REASONING_EFFORT": "medium",
     "DEEPSEEK_FALLBACK_MAX_ATTEMPTS": "1",
-    "DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK": "0.435",
-    "DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK": "0.87",
+    "DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK": "1.32",
+    "DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK": "3.96",
 
     // ---- extraction shape (a document that needs smaller chunks must not need code) ----
     // MEASURED, not guessed. A 45-block chunk of the t1 questionnaire cost 150 s and 13.6 k

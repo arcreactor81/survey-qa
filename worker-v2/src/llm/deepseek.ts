@@ -25,10 +25,19 @@ export const DEFAULT_DEEPSEEK_PRIMARY_MODEL = "deepseek-v4-flash";
 export const DEFAULT_DEEPSEEK_FALLBACK_MODEL = "deepseek-v4-pro";
 export const DEEPSEEK_EXTRACTION_ROUTE_VERSION = "deepseek-extraction-route/1.0.0";
 
-/** Official api.deepseek.com rates checked 2026-08-13, USD per million tokens. */
+/**
+ * Official api.deepseek.com rates re-checked 2026-08-18, USD per million tokens.
+ *
+ * DeepSeek moved to PEAK/OFF-PEAK dynamic pricing on 2026-08-16 (peak = 2x off-peak,
+ * automatic by clock; peak windows 01:00-04:00 and 06:00-10:00 UTC). A single constant
+ * cannot track a time-varying price, so these are the PEAK rates — the conservative
+ * ceiling. The cost ledger may therefore OVERSTATE an off-peak call by up to 2x; it can
+ * never understate one. If DeepSeek changes the windows or the multiple, re-check the
+ * pricing page before trusting any budget arithmetic derived from these numbers.
+ */
 export const DEEPSEEK_OFFICIAL_RATES = {
-  "deepseek-v4-flash": { inputUsdPerMTok: 0.14, outputUsdPerMTok: 0.28 },
-  "deepseek-v4-pro": { inputUsdPerMTok: 0.435, outputUsdPerMTok: 0.87 },
+  "deepseek-v4-flash": { inputUsdPerMTok: 0.44, outputUsdPerMTok: 1.32 },
+  "deepseek-v4-pro": { inputUsdPerMTok: 1.32, outputUsdPerMTok: 3.96 },
 } as const;
 
 export interface DeepseekModelLeg {

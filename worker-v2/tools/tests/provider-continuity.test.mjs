@@ -223,8 +223,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
       assertEq(result.issuedCalls[1].status, "ok");
       assertEq(result.issuedCalls[1].model, "deepseek-v4-pro");
       assertEq(result.issuedCalls[1].callId, "call_b_fixture:fallback");
-      approx(result.issuedCalls[0].costUsd, 0.00028, "Flash official-rate cost");
-      approx(result.issuedCalls[1].costUsd, 0.00174, "Pro official-rate cost");
+      approx(result.issuedCalls[0].costUsd, 0.0011, "Flash official-rate cost");
+      approx(result.issuedCalls[1].costUsd, 0.0066, "Pro official-rate cost");
       assert(result.issuedCalls.every((row) => row.provider === "deepseek"),
         "Flash+Pro must not be projected as two independent providers");
     } finally {
@@ -251,9 +251,9 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
   test("a response must attest the exact requested model under the stored plan", async () => {
     const m = await mod();
     const flashOnlySpec = await m.deepseek.deepseekSpec(env({ DEEPSEEK_FALLBACK_MODE: "disabled" }));
-    assertEq(flashOnlySpec.unboundModelRateCeiling.inputUsdPerMTok, 0.435,
+    assertEq(flashOnlySpec.unboundModelRateCeiling.inputUsdPerMTok, 1.32,
       "unbound identity uses the maximum checked DeepSeek input rate even with fallback disabled");
-    assertEq(flashOnlySpec.unboundModelRateCeiling.outputUsdPerMTok, 0.87,
+    assertEq(flashOnlySpec.unboundModelRateCeiling.outputUsdPerMTok, 3.96,
       "unbound identity uses the maximum checked DeepSeek output rate even with fallback disabled");
     for (const [label, primaryReportedModel] of [
       ["different", "deepseek-v4-pro"],
@@ -275,8 +275,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
         assertEq(result.issuedCalls[0].outputTokens, 1000);
         approx(
           result.issuedCalls[0].costUsd,
-          (result.issuedCalls[0].inputTokens / 1e6) * 0.435 +
-            (result.issuedCalls[0].outputTokens / 1e6) * 0.87,
+          (result.issuedCalls[0].inputTokens / 1e6) * 1.32 +
+            (result.issuedCalls[0].outputTokens / 1e6) * 3.96,
           "unverified model purchase uses the maximum checked/configured DeepSeek rates",
         );
         assert(result.issuedCalls[0].detail.includes("response model identity mismatch"));
@@ -500,7 +500,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
     try {
       await assertThrows(
         () => m.deepseek.deepseekJsonWithContinuity(
-          env({ DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK: "0.435" }),
+          env({ DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK: "1.32" }),
           opts(),
         ),
         "must be configured together",
@@ -887,11 +887,11 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
 
     const exactReleasePolicy = [
       ["DEEPSEEK_MODEL", "deepseek-v4-flash"],
-      ["DEEPSEEK_INPUT_USD_PER_MTOK", "0.14"],
-      ["DEEPSEEK_OUTPUT_USD_PER_MTOK", "0.28"],
+      ["DEEPSEEK_INPUT_USD_PER_MTOK", "0.44"],
+      ["DEEPSEEK_OUTPUT_USD_PER_MTOK", "1.32"],
       ["DEEPSEEK_FALLBACK_MODEL", "deepseek-v4-pro"],
-      ["DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK", "0.435"],
-      ["DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK", "0.87"],
+      ["DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK", "1.32"],
+      ["DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK", "3.96"],
       ["CAP_STANDARD_MAX_USD", "5"],
     ];
     const requireExactReleasePolicy = (source) => {
@@ -952,7 +952,7 @@ suite("PROVIDER ACTIVATION - Grok 4.5 + Pro, Flash only behind a retained trigge
       assertEq(passA.routeReceipts[0].selected, "grok-4.5");
       assertEq(passB.model, m.deepseek.deepseekPassBIdentity(value));
       approx(passA.issuedCalls[0].costUsd, 0.00064, "Grok conservative max-tier cost receipt");
-      approx(passB.issuedCalls[0].costUsd, 0.0001218, "exact Pro receipt");
+      approx(passB.issuedCalls[0].costUsd, 0.0004224, "exact Pro receipt");
     } finally {
       stub.restore();
     }

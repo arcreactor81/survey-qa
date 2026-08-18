@@ -43,8 +43,8 @@ await runMutantSuite({
       name: "Pro output billed at Flash rate",
       breaks: "the fallback cost ledger under-reports the actual model purchase",
       file: CLIENT,
-      find: '"deepseek-v4-pro": { inputUsdPerMTok: 0.435, outputUsdPerMTok: 0.87 },',
-      replace: '"deepseek-v4-pro": { inputUsdPerMTok: 0.435, outputUsdPerMTok: 0.28 },',
+      find: '"deepseek-v4-pro": { inputUsdPerMTok: 1.32, outputUsdPerMTok: 3.96 },',
+      replace: '"deepseek-v4-pro": { inputUsdPerMTok: 1.32, outputUsdPerMTok: 1.32 },',
       kills: [RECEIPTS],
     },
     {
