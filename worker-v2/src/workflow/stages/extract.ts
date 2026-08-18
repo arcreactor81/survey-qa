@@ -256,15 +256,31 @@ async function chargeUsage(env: Env, runId: string, calls: CallUsage[], fence: F
     env,
     runId,
     fence,
-    calls.map((c) => modelUsage(c.model, c.inputTokens, c.outputTokens, c.costUsd, c.eventId)),
+    calls.map((c) => {
+      const isReplay = c.usageSource === "reused-prior-artifact";
+      return modelUsage(
+        c.model,
+        c.inputTokens,
+        c.outputTokens,
+        // Replay events book zero against this run's budget. The original cost lives in
+        // originalCostUsd so the information is never deleted.
+        isReplay ? 0 : c.costUsd,
+        c.eventId,
+        isReplay ? "reused-prior-artifact" : undefined,
+        isReplay ? c.costUsd : undefined,
+      );
+    }),
   );
   // RECORD each provider's spend into the cumulative cross-run ledger. This is
   // AFTER the per-run settlement above, using the SAME USD figure the run ledger
   // records. A ledger write failure becomes a named, counted limitation — loud,
   // never silent, never fatal to the run.
+  // Replay events are NOT recorded to the cross-run ledger — they were recorded
+  // by the run that originally bought them.
   const KNOWN: Set<string> = new Set(["grok", "deepseek", "gemini"]);
   for (const c of calls) {
     if (!KNOWN.has(c.provider)) continue;
+    if (c.usageSource === "reused-prior-artifact") continue;
     const result = await recordProviderSpend(env.EVIDENCE, {
       provider: c.provider as ProviderName,
       costUsd: c.costUsd,
