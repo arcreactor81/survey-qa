@@ -140,6 +140,25 @@ export const PASS_A_VERSION = PROMPT_VERSION_A;
 export const GROK_FALLBACK_TRIGGER_VERSION = "grok-flash-fallback-trigger/1.0.0";
 export const PASS_A_SYNTHESIS_VERSION = "v2-extract-pass-a-synthesis/1.1.0";
 
+/**
+ * Tag a usage row as a replay: zero cost for this run, original cost preserved in provenance.
+ * A replay is VISIBLE as a replay (fail-loudly rule) — never a silently-zero row.
+ */
+function replayUsage(usage: CallUsage, detail: string): CallUsage {
+  return {
+    ...usage,
+    costUsd: 0,
+    usageSource: "reused-prior-artifact",
+    originalCostUsd: usage.costUsd,
+    detail,
+  };
+}
+
+/** Tag usages in accountingCalls so chargeUsage knows they are replays, not new spend. */
+function replayAccountingUsages(usages: CallUsage[]): CallUsage[] {
+  return usages.map((u) => ({ ...u, usageSource: "reused-prior-artifact" as const }));
+}
+
 export type PassAProviderIndependence =
   | "independent"
   | "reduced-same-provider-fallback";
@@ -1150,10 +1169,9 @@ async function readSubWindowsWithSplit(
       result.unverifiable.push(...existing.unverifiable);
       result.primaryGroundingLimitations.push(...existing.primaryGroundingLimitations);
       result.routeReceipts.push(existing.routeReceipt);
-      result.accountingCalls.push(...existing.usages);
-      // Reclaimed at zero cost
+      result.accountingCalls.push(...replayAccountingUsages(existing.usages));
       for (const usage of existing.usages) {
-        result.usages.push({ ...usage, detail: "reused: persisted sub-window", costUsd: 0 });
+        result.usages.push(replayUsage(usage, "reused: persisted sub-window"));
       }
       if (onProgress) {
         try { await onProgress(`pass A ${subOrigin}: reused persisted sub-window`); } catch { /* observability */ }
@@ -1170,9 +1188,9 @@ async function readSubWindowsWithSplit(
       if (existing.splitExhaustion) {
         result.splitExhaustionRefusals.push(existing.splitExhaustion);
       }
-      result.accountingCalls.push(...existing.usages);
+      result.accountingCalls.push(...replayAccountingUsages(existing.usages));
       for (const usage of existing.usages) {
-        result.usages.push({ ...usage, detail: "reused: persisted failed sub-window", costUsd: 0 });
+        result.usages.push(replayUsage(usage, "reused: persisted failed sub-window"));
       }
       continue;
     }
@@ -1542,9 +1560,9 @@ export async function runPassA(
         2,
       );
       if (existing?.kind === "failed") {
-        accountingCalls.push(...existing.usages);
+        accountingCalls.push(...replayAccountingUsages(existing.usages));
         for (const usage of existing.usages) {
-          calls.push({ ...usage, detail: "reused: prior failed pass-A purchase", costUsd: 0 });
+          calls.push(replayUsage(usage, "reused: prior failed pass-A purchase"));
         }
         if (existing.fallbackTrigger !== null) fallbackTriggers.push(existing.fallbackTrigger);
         await persistImmutableExtractionArtifact(
@@ -1574,9 +1592,9 @@ export async function runPassA(
     }
 
     if (existing?.kind === "invalid") {
-      accountingCalls.push(...existing.usages);
+      accountingCalls.push(...replayAccountingUsages(existing.usages));
       for (const usage of existing.usages) {
-        calls.push({ ...usage, detail: "reused: invalid retained pass-A window artifact", costUsd: 0 });
+        calls.push(replayUsage(usage, "reused: invalid retained pass-A window artifact"));
       }
       landed += 1;
       terminalFailure = true;
@@ -1587,13 +1605,9 @@ export async function runPassA(
 
     if (existing && existing.kind === "ok") {
       landed += 1;
-      accountingCalls.push(...existing.usages);
+      accountingCalls.push(...replayAccountingUsages(existing.usages));
       for (const usage of existing.usages) {
-        calls.push({
-          ...usage,
-          detail: "reused: this window was already persisted by an earlier attempt",
-          costUsd: 0,
-        });
+        calls.push(replayUsage(usage, "reused: this window was already persisted by an earlier attempt"));
       }
       routeReceipts.push(existing.routeReceipt);
       if (existing.routeReceipt.trigger !== null) {
@@ -1620,9 +1634,9 @@ export async function runPassA(
 
     const priorUsages = existing && existing.kind === "failed" ? existing.usages : [];
     if (existing && existing.kind === "failed") {
-      accountingCalls.push(...existing.usages);
+      accountingCalls.push(...replayAccountingUsages(existing.usages));
       for (const usage of existing.usages) {
-        calls.push({ ...usage, detail: "reused: prior failed pass-A purchase", costUsd: 0 });
+        calls.push(replayUsage(usage, "reused: prior failed pass-A purchase"));
       }
       if (existing.fallbackTrigger !== null) {
         fallbackTriggers.push(existing.fallbackTrigger);
@@ -4523,7 +4537,7 @@ export async function runPassASynthesis(
   const maxIssues = context.maxIssues;
   const existing = await readPassASynthesis(env, runId, context);
   const reusedCalls = (usages: CallUsage[], detail: string): CallUsage[] =>
-    usages.map((usage) => ({ ...usage, costUsd: 0, detail }));
+    usages.map((usage) => replayUsage(usage, detail));
 
   if (existing?.kind === "ok") {
     const limitation = synthesisLimitation(coverage, existing.additions);
@@ -4535,7 +4549,7 @@ export async function runPassASynthesis(
         coverage,
         additions: existing.additions,
         calls: reusedCalls(existing.usages, "reused: cross-window synthesis artifact"),
-        accountingCalls: existing.usages,
+        accountingCalls: replayAccountingUsages(existing.usages),
         routeReceipt: existing.routeReceipt,
         fallbackTrigger: existing.routeReceipt.trigger,
         limitation,
@@ -4549,7 +4563,7 @@ export async function runPassASynthesis(
       inputHash: context.inputHash,
       coverage,
       calls: reusedCalls(existing.usages, 'reused: invalid retained cross-window synthesis artifact'),
-      accountingCalls: existing.usages,
+      accountingCalls: replayAccountingUsages(existing.usages),
       failedUnit: { unit: 'A-synthesis-artifact', blockIds: context.sourceBlockIds, detail: existing.detail },
     });
   }
@@ -4560,7 +4574,7 @@ export async function runPassASynthesis(
       inputHash: context.inputHash,
       coverage,
       calls: reusedCalls(existing.usages, "reused: terminal cross-window synthesis failure"),
-      accountingCalls: existing.usages,
+      accountingCalls: replayAccountingUsages(existing.usages),
       fallbackTrigger: existing.fallbackTrigger,
       failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail: existing.detail },
       ...(existing.wireCeiling
@@ -4593,7 +4607,7 @@ export async function runPassASynthesis(
       inputHash: context.inputHash,
       coverage,
       calls: existing ? reusedCalls(existing.usages, "reused: terminal synthesis oversize") : [],
-      accountingCalls: existing?.usages ?? [],
+      accountingCalls: existing ? replayAccountingUsages(existing.usages) : [],
       fallbackTrigger: existing?.fallbackTrigger ?? null,
       failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail },
       terminalReasonCode: sizeReasonCode,
@@ -4612,7 +4626,7 @@ export async function runPassASynthesis(
       inputHash: context.inputHash,
       coverage,
       calls: reusedCalls(existing.usages, "reused: synthesis storage authority refusal"),
-      accountingCalls: existing.usages,
+      accountingCalls: replayAccountingUsages(existing.usages),
       fallbackTrigger: existing.fallbackTrigger,
       failedUnit: { unit: "A-synthesis-artifact", blockIds: context.sourceBlockIds, detail },
     });
@@ -4627,7 +4641,7 @@ export async function runPassASynthesis(
       inputHash: context.inputHash,
       coverage,
       calls: reusedCalls(existing.usages, "reused: terminal cross-window synthesis failure"),
-      accountingCalls: existing.usages,
+      accountingCalls: replayAccountingUsages(existing.usages),
       fallbackTrigger: existing.fallbackTrigger,
       failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail: existing.detail },
     });
@@ -4638,7 +4652,7 @@ export async function runPassASynthesis(
       inputHash: context.inputHash,
       coverage,
       calls: existing ? reusedCalls(existing.usages, "reused: prior cross-window synthesis failure") : [],
-      accountingCalls: existing?.usages ?? [],
+      accountingCalls: existing ? replayAccountingUsages(existing.usages) : [],
       fallbackTrigger: existing?.fallbackTrigger ?? null,
     });
   }
@@ -5847,7 +5861,7 @@ export async function reconstructPassACompletedAuthority(
       const detail = `${origin} is missing or belongs to a stale partition policy`;
       return invalid(detail, { unit: origin, blockIds, detail });
     }
-    accountingCalls.push(...unit.usages);
+    accountingCalls.push(...replayAccountingUsages(unit.usages));
     if (unit.kind === "invalid") {
       windowsLanded = index + 1;
       return invalid(unit.detail, { unit: origin, blockIds, detail: unit.detail });
@@ -5893,7 +5907,7 @@ export async function reconstructPassACompletedAuthority(
       const detail = "cross-window synthesis artifact is missing";
       return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
     }
-    accountingCalls.push(...synthesis.usages);
+    accountingCalls.push(...replayAccountingUsages(synthesis.usages));
     synthesisAttempts = synthesis.attempts;
     if (synthesis.kind === "invalid") {
       return invalid(synthesis.detail, { unit: "A-synthesis", blockIds: [], detail: synthesis.detail });
@@ -5987,7 +6001,7 @@ function isCallUsage(value: unknown): value is CallUsage {
     finiteNonNegative(row.costUsd) && finiteNonNegative(row.latencyMs) &&
     Number.isSafeInteger(row.attempts) && (row.attempts ?? 0) >= 1 &&
     (row.usageSource === "provider-reported" || row.usageSource === "conservative-ceiling" ||
-      row.usageSource === "unverified-model-rate-ceiling")
+      row.usageSource === "unverified-model-rate-ceiling" || row.usageSource === "rejected-before-generation")
   );
 }
 

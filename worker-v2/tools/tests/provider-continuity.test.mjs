@@ -312,6 +312,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
 
   test("auth, balance and invalid-request failures never buy a doomed Pro call", async () => {
     const m = await mod();
+    // Definitive non-billing statuses (401/402/403) book zero; others keep the ceiling.
+    const NON_BILLING = new Set([401, 402, 403]);
     for (const [status, kind] of [
       [400, "invalid-request"],
       [401, "authentication"],
@@ -335,10 +337,22 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
         assertEq(error.fallbackAttempted, false, `HTTP ${status} must not buy Pro`);
         assertEq(error.issuedCalls.length, 1, `HTTP ${status} keeps only the actual Flash receipt`);
         assertEq(error.issuedCalls[0].attempts, 1, `HTTP ${status} stops primary retries immediately`);
-        assertEq(error.issuedCalls[0].usageSource, "conservative-ceiling");
-        assert(error.issuedCalls[0].inputTokens > 0, "unknown input is charged at the request-byte ceiling");
-        assertEq(error.issuedCalls[0].outputTokens, 1000, "unknown output is charged at max_tokens");
-        assert(error.issuedCalls[0].costUsd > 0, "missing provider usage is never serialized as free spend");
+        if (NON_BILLING.has(status)) {
+          // Definitive pre-generation refusal: zero tokens, zero cost, named source
+          assertEq(error.issuedCalls[0].usageSource, "rejected-before-generation",
+            `HTTP ${status} must be rejected-before-generation`);
+          assertEq(error.issuedCalls[0].inputTokens, 0, `HTTP ${status} books zero input tokens`);
+          assertEq(error.issuedCalls[0].outputTokens, 0, `HTTP ${status} books zero output tokens`);
+          assertEq(error.issuedCalls[0].costUsd, 0, `HTTP ${status} books zero cost`);
+        } else {
+          // Ambiguous status: conservative ceiling still applies
+          assertEq(error.issuedCalls[0].usageSource, "conservative-ceiling",
+            `HTTP ${status} must use conservative ceiling`);
+          assert(error.issuedCalls[0].inputTokens > 0,
+            `HTTP ${status} unknown input is charged at the request-byte ceiling`);
+          assert(error.issuedCalls[0].costUsd > 0,
+            `HTTP ${status} missing provider usage is never serialized as free spend`);
+        }
         assertEq(stub.requests.length, 1, `HTTP ${status} made exactly one provider request`);
       } finally {
         stub.restore();

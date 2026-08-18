@@ -236,9 +236,34 @@ export interface CallUsage {
   costUsd: number;
   latencyMs: number;
   attempts: number;
-  /** Provider receipt, or a conservative token ceiling when no receipt was available. */
-  usageSource?: "provider-reported" | "conservative-ceiling" | "unverified-model-rate-ceiling";
+  /**
+   * Provider receipt, a conservative token ceiling when no receipt was available,
+   * or a provenance marker for replayed/rejected events.
+   *
+   * - `provider-reported`: token counts came from the provider's response.
+   * - `conservative-ceiling`: no valid receipt; tokens estimated at the request/output ceiling.
+   * - `unverified-model-rate-ceiling`: response model identity mismatch; rates ceilinged.
+   * - `reused-prior-artifact`: this unit was reclaimed from a persisted artifact; costUsd is 0
+   *   for THIS run and originalCostUsd carries the cost the original purchase paid.
+   * - `rejected-before-generation`: the provider returned a definitive non-billing HTTP status
+   *   (401/402/403) before any generation occurred; costUsd is provably 0.
+   */
+  usageSource?:
+    | "provider-reported"
+    | "conservative-ceiling"
+    | "unverified-model-rate-ceiling"
+    | "reused-prior-artifact"
+    | "rejected-before-generation";
   detail?: string;
+  /**
+   * For `reused-prior-artifact` events: the cost the original purchase paid. The report can
+   * show what money was once spent without re-counting it against this run's budget.
+   */
+  originalCostUsd?: number;
+  /**
+   * For `rejected-before-generation` events: the HTTP status that proves no billing occurred.
+   */
+  rejectedHttpStatus?: number;
 }
 
 export interface PassResult {

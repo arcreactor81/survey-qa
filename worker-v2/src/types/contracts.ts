@@ -250,6 +250,18 @@ export interface ModelCallUsageEvent {
   outputTokens: number;
   costUsd: number;
   at: string;
+  /**
+   * ADDITIVE (cost-booking fix). Provenance marker distinguishing live spend from replayed
+   * or rejected-before-generation events. Absent on events written before this field existed;
+   * those are implicitly live spend.
+   */
+  usageSource?: "reused-prior-artifact" | "rejected-before-generation";
+  /**
+   * ADDITIVE (cost-booking fix). For `reused-prior-artifact` events: the cost the original
+   * purchase paid. Moves the information out of this run's spend column into provenance
+   * without deleting it. Absent on non-replay events and on events written before this field.
+   */
+  originalCostUsd?: number;
 }
 
 /** Legacy/best-effort browser usage. */
