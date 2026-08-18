@@ -548,6 +548,11 @@ const FILES = [
   // run re-booked persisted artifacts and tripped the extraction budget gate over money
   // nobody spent. Evidence they can fail: tools/mutate-grok-cost-policy.mjs (cost-booking mutants).
   "./tests/cost-booking.test.mjs",
+  // CROSS-RUN EXTRACTION UNIT REUSE — content-addressed reuse of completed extraction units
+  // across runs. An adopted unit is indistinguishable from a fresh one except for its zero-cost
+  // provenance-marked usage. Identity-miss tests prove each field in the digest is load-bearing.
+  // Evidence they can fail: the mutation anchors in unit-reuse.ts and pass-b.ts.
+  "./tests/unit-reuse.test.mjs",
 ];
 
 export async function runVerification({

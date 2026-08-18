@@ -85,6 +85,12 @@ import {
 } from "./pass-b-decode";
 import { k } from "../keys";
 import {
+  lookupReusableUnit,
+  storeCompletedUnit,
+  type UnitIdentityFields,
+  type StoredReusableUnit,
+} from "../store/unit-reuse";
+import {
   publicExtractionFailureDetail,
   sourceContextForUnit,
   type DocumentReadingUnitStartObserver,
@@ -837,6 +843,159 @@ export async function runPassB(
   }
 
   // -------------------------------------------------------------------------
+  // PHASE 1.5 — CROSS-RUN UNIT REUSE (chunks).
+  //
+  // For each chunk still needing purchase, check the content-addressed cross-run unit
+  // index. A hit means another run already bought this exact extraction with the
+  // IDENTICAL identity and it decoded successfully. Adopt it: re-validate the model
+  // output through the SAME decoder the live path uses, write a per-run artifact, and
+  // accumulate results. The chunk is then removed from the purchase queue.
+  //
+  // A miss, a validation refusal, or any index error falls through to a live purchase
+  // with a console line naming why. Reuse is an optimization; correctness never depends
+  // on it.
+  // -------------------------------------------------------------------------
+  {
+    const adoptable = [...todo];
+    todo.length = 0;
+    for (const chunk of adoptable) {
+      const wireCheck = chunkWireChecks.get(chunk.n);
+      if (!wireCheck?.ok) {
+        todo.push(chunk);
+        continue;
+      }
+      // A chunk with a prior failure detail has an echoed validator error in its request,
+      // so its requestHash differs from any stored first-attempt unit. That is correct:
+      // the retry may produce a different (corrected) output.
+      if (priorFailureDetailByChunk.has(chunk.n)) {
+        todo.push(chunk);
+        continue;
+      }
+      const identityFields: UnitIdentityFields = {
+        unitKind: "pass-b-chunk",
+        requestHash: wireCheck.requestHash,
+        decoderIdentity: PASS_B_DECODER_VERSION,
+        providerPlanIdentity,
+        promptVersion: PROMPT_VERSION_B,
+        parserVersion,
+      };
+      try {
+        const stored = await lookupReusableUnit(env, identityFields);
+        if (stored === null) {
+          todo.push(chunk);
+          continue;
+        }
+        // Re-validate the stored model output through the SAME decoder the live path uses.
+        // An adopted unit that fails today's decoder is refused and bought fresh.
+        const blockIds = chunk.blocks.map((b) => b.blockId);
+        const includesContext = !blockIds.some((id) => contextIds.has(id)) && contextBlocks.length > 0;
+        const evidenceBlocks = evidenceBlocksFor(chunk.blocks, includesContext);
+        let decoded;
+        try {
+          decoded = decodePassBOutput(stored.modelOutput, chunk.id, chunk.blocks, evidenceBlocks); // mutation-anchor: unit-reuse-revalidation
+        } catch (err) {
+          console.log(
+            `unit-reuse: adopted payload revalidation failed for ${chunk.id}: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+          todo.push(chunk);
+          continue;
+        }
+        // Build a synthetic receipt for the per-run artifact. The receipt uses THIS run's
+        // identifiers so the strict per-run reader validates it, and the ORIGINAL cost so the
+        // artifact records what the model actually charged. The zero-cost accounting happens
+        // at the accumulator level (calls, accountingCalls), not at the artifact level.
+        const unitId = chunk.id;
+        const syntheticReceipt: CallUsage = {
+          eventId: `core-model-call/pass-b/${runId}/${unitId}/issue-1/receipt-1`,
+          callId: `call_b_${chunk.n}`,
+          role: `extract-pass-b-${unitId}`,
+          provider: stored.originalUsage.provider,
+          model: stored.originalUsage.model,
+          status: "ok",
+          inputTokens: stored.originalUsage.inputTokens,
+          outputTokens: stored.originalUsage.outputTokens,
+          costUsd: stored.originalUsage.costUsd,
+          latencyMs: stored.originalUsage.latencyMs,
+          attempts: 1,
+          usageSource: stored.originalUsage.usageSource as CallUsage["usageSource"],
+        };
+        const adoptedBody = JSON.stringify(
+          {
+            chunkId: unitId,
+            blockIds,
+            evidenceBlockIds: evidenceBlocks.map((block) => block.blockId),
+            parserVersion,
+            promptVersion: PROMPT_VERSION_B,
+            providerPlanIdentity,
+            decoderIdentity: PASS_B_DECODER_VERSION,
+            status: "ok",
+            attempts: 1,
+            usages: [syntheticReceipt],
+            modelOutput: stored.modelOutput,
+            obligations: decoded.obligations,
+            dispositions: decoded.dispositions,
+            constructs: decoded.constructs,
+            ambiguities: decoded.ambiguities,
+            unverifiable: decoded.unverifiable,
+            reusedFromRunId: stored.sourceRunId,
+          },
+          null,
+          2,
+        );
+        // Write to per-run storage so reconstruction and future waves find it.
+        const predecessor = priorAuthorityByChunk.get(chunk.n) ?? null;
+        const persistence = await persistPassBPaidUnitArtifact(
+          env,
+          unitId,
+          {
+            canonicalKey: chunkKey(runId, chunk.n),
+            historyKey: (digest) => chunkHistoryKey(runId, chunk.n, digest),
+            conflictKey: (digest) => chunkCasConflictKey(runId, chunk.n, digest),
+          },
+          predecessor,
+          adoptedBody,
+        );
+        if (!persistence.ok) {
+          // Another writer won the canonical key. That writer's artifact is authority;
+          // Phase 1 of the next wave will reclaim it.
+          todo.push(chunk);
+          continue;
+        }
+        // Accumulate results. The usage events book costUsd 0 with "reused-prior-artifact".
+        const replayedUsage = replayUsage(syntheticReceipt, `reused: adopted from prior run ${stored.sourceRunId}`);
+        calls.push(replayedUsage);
+        accountingCalls.push({ ...syntheticReceipt, usageSource: "reused-prior-artifact" as const });
+        requirements.push(...decoded.obligations);
+        dispositions.push(...decoded.dispositions);
+        constructs.push(...decoded.constructs);
+        ambiguities.push(...decoded.ambiguities);
+        unverifiable.push(...decoded.unverifiable);
+        for (const id of blockIds) {
+          if (!decoded.dispositions.some((d) => d.blockId === id)) {
+            dispositions.push({
+              blockId: id,
+              disposition: "unresolved",
+              reason: `chunk ${unitId} adopted from prior run returned no disposition for this block`,
+            });
+          }
+        }
+        landed += 1;
+        await reportProgress(
+          onProgress,
+          `pass B ${unitId}: ADOPTED from prior run ${stored.sourceRunId} (saved $${syntheticReceipt.costUsd.toFixed(4)})`,
+        );
+      } catch (err) {
+        console.log(
+          `unit-reuse: cross-run adoption failed for ${chunk.id}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+        todo.push(chunk);
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // PHASE 2 — ISSUE, under bounded concurrency AND the slice deadline.
   //
   // Chunks are independent — each one is told exactly which blocks it owns — so running them
@@ -1031,6 +1190,38 @@ export async function runPassB(
         `pass B ${chunk.id}: ${decoded.obligations.length} obligations, ` +
           `${decoded.dispositions.length}/${blockIds.length} blocks dispositioned`,
       );
+
+      // Store in the cross-run unit index so the next run can adopt instead of re-buying.
+      // This is best-effort: a store failure does not affect this run's correctness.
+      const admitted = chunkWireChecks.get(chunk.n);
+      if (admitted?.ok) {
+        const okUsage = purchasedUsages.find((u) => u.status === "ok");
+        if (okUsage) {
+          await storeCompletedUnit(
+            env,
+            {
+              unitKind: "pass-b-chunk",
+              requestHash: admitted.requestHash,
+              decoderIdentity: PASS_B_DECODER_VERSION,
+              providerPlanIdentity,
+              promptVersion: PROMPT_VERSION_B,
+              parserVersion,
+            },
+            value,
+            {
+              inputTokens: okUsage.inputTokens,
+              outputTokens: okUsage.outputTokens,
+              costUsd: okUsage.costUsd,
+              latencyMs: okUsage.latencyMs,
+              model: okUsage.model,
+              provider: okUsage.provider,
+              usageSource: okUsage.usageSource ?? "provider-reported",
+              attempts: okUsage.attempts,
+            },
+            runId,
+          ); // mutation-anchor: unit-reuse-store-on-success
+        }
+      }
     } catch (err) {
       // Exact Pro bytes were preflighted before the fan-out existed. Credential lookup is
       // deliberately inside the provider client after that proof; missing configuration is
@@ -1579,6 +1770,36 @@ export async function runPassB(
           `pass B ${sweepId}: accounted for ${decoded.dispositions.length}/${allowed.size} ` +
             `previously unaccounted blocks (+${decoded.obligations.length} obligations)`,
         );
+
+        // Store sweep in the cross-run unit index (best-effort).
+        if (plan.requestHash !== undefined) {
+          const okUsage = purchasedUsages.find((u) => u.status === "ok");
+          if (okUsage) {
+            await storeCompletedUnit(
+              env,
+              {
+                unitKind: "pass-b-sweep",
+                requestHash: plan.requestHash,
+                decoderIdentity: PASS_B_DECODER_VERSION,
+                providerPlanIdentity,
+                promptVersion: PROMPT_VERSION_B,
+                parserVersion,
+              },
+              value,
+              {
+                inputTokens: okUsage.inputTokens,
+                outputTokens: okUsage.outputTokens,
+                costUsd: okUsage.costUsd,
+                latencyMs: okUsage.latencyMs,
+                model: okUsage.model,
+                provider: okUsage.provider,
+                usageSource: okUsage.usageSource ?? "provider-reported",
+                attempts: okUsage.attempts,
+              },
+              runId,
+            );
+          }
+        }
       } catch (err) {
         if (err instanceof MissingCredential) throw err;
         if (!(err instanceof PassBOutputInvalid) && !(err instanceof ModelCallError)) throw err;
