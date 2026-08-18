@@ -512,7 +512,6 @@ suite("terminal extraction failure report — durable evidence, zero guessed QA 
   for (const [label, evidenceState, reasonCode] of [
     ["malformed retained artifact", "malformed", "failure-report-extraction-evidence-invalid"],
     ["paid usage with no retained artifact", "missing", "failure-report-extraction-evidence-missing"],
-    ["artifact receipt not present in the charged ledger", "mismatch", "failure-report-extraction-usage-disagreement"],
   ]) {
     test(`NEGATIVE: ${label} fails honestly and publishes no pointer`, async () => {
       const mod = await worker();
@@ -534,6 +533,41 @@ suite("terminal extraction failure report — durable evidence, zero guessed QA 
       assertEq(operational.final, false);
     });
   }
+
+  // RECEIPT DISAGREEMENT IS NOW A NAMED LIMITATION, NOT A REFUSAL.
+  //
+  // Run v2r_01m0933y… reached this point with mismatched receipts and the old code
+  // refused to generate ANY report. Silence is worse than a report that honestly names
+  // the disagreement. The report now publishes with a named `extraction-usage-disagreement`
+  // limitation; the reader sees what happened instead of a 404.
+  test("POSITIVE: artifact receipt disagreement publishes a report with a named limitation", async () => {
+    const mod = await worker();
+    const fixture = await refusalFixture(mod, "mismatch");
+    const finalization = await finalize(mod, fixture);
+    assertEq(finalization.completion.test, "failed");
+    assertEq(finalization.completion.report, "complete", "a disagreement must still publish a report");
+    assert(finalization.reportAvailable, "reportAvailable must be true when the disagreement is a limitation");
+    const checkpoint = (await mod.checkpoint.loadCheckpoint(fixture.env, fixture.runId)).checkpoint;
+    assertEq(checkpoint.completion.report, "complete");
+    assertEq(checkpoint.reportAvailable, true);
+    const pointer = await mod.publish.readReportPointer(fixture.env, fixture.runId);
+    assert(pointer, "a report pointer must exist");
+    const dataResponse = await mod.apiReport.getReportData(
+      new Request("https://fixture.invalid/report-data"), fixture.env, fixture.runId,
+    );
+    assertEq(dataResponse.status, 200, "the report data endpoint must serve the report");
+    const data = await dataResponse.json();
+    const disagreement = data.limitations.find((l) => l.code === "extraction-usage-disagreement");
+    assert(disagreement, "the report must carry a named extraction-usage-disagreement limitation");
+    assert(
+      disagreement.detail.includes("paid receipt(s) missing from artifacts"),
+      `the limitation detail must name the mismatch direction, got: ${disagreement.detail}`,
+    );
+    assert(
+      data.extractionEvidence.receiptBinding.startsWith("disagreement:"),
+      `receiptBinding must say disagreement, got: ${data.extractionEvidence.receiptBinding}`,
+    );
+  });
 
   test("NEGATIVE: report-failed with no pointer never returns raw checkpoint error prose", async () => {
     const mod = await worker();

@@ -444,20 +444,34 @@ export async function buildAndStoreTerminalFailureReport(env: Env, runId: string
   const paidIds = new Set(usage.modelEvents.map((event) => event.eventId!));
   const missingReceipts = [...paidIds].filter((id) => !inventory.usageEventIds.has(id));
   const unchargedReceipts = [...inventory.usageEventIds].filter((id) => !paidIds.has(id));
-  if (inventory.uninspected === 0 && (missingReceipts.length > 0 || unchargedReceipts.length > 0)) {
-    return operationalFailure(
-      "failure-report-extraction-usage-disagreement",
-      `retained extraction receipts disagree with checkpoint usage: ${missingReceipts.length} paid receipt(s) missing from artifacts, ` +
-        `${unchargedReceipts.length} artifact receipt(s) absent from the usage ledger`,
-    );
-  }
+  // DISAGREEMENT IS A NAMED LIMITATION, NOT A REFUSAL.
+  //
+  // Run v2r_01m0933y… (402 failed units) reached this point with mismatched receipts and the
+  // old code refused to generate ANY report — the reader got 404, which is silence, and
+  // silence is the thing this repo forbids. A failed run with no report is strictly worse
+  // than a failed run with a report that honestly names the disagreement. The receipts stay
+  // auditable in the report data; the limitation is counted and named.
+  const usageDisagreement =
+    inventory.uninspected === 0 && (missingReceipts.length > 0 || unchargedReceipts.length > 0)
+      ? {
+          code: "extraction-usage-disagreement" as const,
+          count: missingReceipts.length + unchargedReceipts.length,
+          detail:
+            `retained extraction receipts disagree with checkpoint usage: ` +
+            `${missingReceipts.length} paid receipt(s) missing from artifacts, ` +
+            `${unchargedReceipts.length} artifact receipt(s) absent from the usage ledger. ` +
+            `The report is published with this named disagreement; neither total is silently dropped.`,
+        }
+      : null;
 
   const reasonCode = loaded.checkpoint.completion.reasonCode!;
   const detail = publicExtractionFailureDetail(reasonCode);
   const surveyOrigin = new URL(envelope.input.surveyUrl).origin;
   const receiptBinding = inventory.uninspected > 0
     ? `partial: ${inventory.uninspected} retained artifact(s) were not content-inspected, so full receipt equality is unknown`
-    : `complete: ${paidIds.size} checkpoint paid receipt(s) equal ${inventory.usageEventIds.size} extraction receipt(s)`;
+    : usageDisagreement
+      ? `disagreement: ${paidIds.size} checkpoint paid receipt(s) vs ${inventory.usageEventIds.size} extraction receipt(s) — ${missingReceipts.length} missing from artifacts, ${unchargedReceipts.length} absent from ledger`
+      : `complete: ${paidIds.size} checkpoint paid receipt(s) equal ${inventory.usageEventIds.size} extraction receipt(s)`;
   const resolvedDocumentReading = await resolveDocumentReading(env, runId, loaded.checkpoint);
   const affectedWireBlockCount =
     resolvedDocumentReading.progress?.lastDurableUnit?.sourceContext?.blockCount ??
@@ -496,6 +510,7 @@ export async function buildAndStoreTerminalFailureReport(env: Env, runId: string
             "The entire refused document-reading unit remains counted. No source was truncated, " +
             "no QA or coverage credit was awarded, and this refusal issued no new credential lookup or provider request.",
         }] : []),
+    ...(usageDisagreement ? [usageDisagreement] : []),
   ];
   const view: Record<string, unknown> = {
     schemaVersion: TERMINAL_FAILURE_REPORT_SCHEMA,
