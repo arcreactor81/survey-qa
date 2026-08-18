@@ -600,9 +600,9 @@ suite("Construct prompt constraint", () => {
     );
   });
 
-  test("prompt version bumped to 1.11.0", async () => {
+  test("prompt version bumped to 1.12.0", async () => {
     const mod = await worker();
-    assertEq(mod.prompts.PROMPT_VERSION_A, "v2-extract-pass-a/1.11.0");
+    assertEq(mod.prompts.PROMPT_VERSION_A, "v2-extract-pass-a/1.12.0");
   });
 
   test("negative: construct 'ordering' is not in the allowed list", async () => {

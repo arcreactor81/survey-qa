@@ -521,8 +521,8 @@ suite("anchor cleaner on route labels: cleaning feeds correct steering", () => {
  * ================================================================ */
 
 suite("prompt versions reflect routing table decomposition", () => {
-  test("pass A prompt version is 1.11.0", () => {
-    assertEq(PROMPT_VERSION_A, "v2-extract-pass-a/1.11.0");
+  test("pass A prompt version is 1.12.0", () => {
+    assertEq(PROMPT_VERSION_A, "v2-extract-pass-a/1.12.0");
   });
 
   test("pass B prompt version is 1.7.0", () => {

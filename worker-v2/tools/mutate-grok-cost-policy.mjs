@@ -144,7 +144,7 @@ await runMutantSuite({
       name: "replay provenance dropped (usageSource marker removed from replay events)",
       breaks: "a replayed usage event carries usageSource marker",
       file: "src/store/usage.ts",
-      find: '      ...(usageSource === undefined ? {} : { usageSource }),',
+      find: '      ...(boundedUsageSource === undefined ? {} : { usageSource: boundedUsageSource }),',
       replace: '      // MUTANT: usageSource stripped from events',
       kills: ["replayed usage event has usageSource 'reused-prior-artifact', costUsd 0, originalCostUsd preserved"],
     },

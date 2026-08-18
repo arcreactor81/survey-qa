@@ -39,7 +39,12 @@ import { CONSTRUCT_CLASSES } from "./types";
 // 1.11.0 adds routing table decomposition instructions: multi-row per-answer routing tables
 // must be decomposed into individual route_answers entries with verbatim label text. The
 // prompt now explicitly instructs against flattening routing tables into single statements.
-export const PROMPT_VERSION_A = "v2-extract-pass-a/1.11.0";
+// 1.12.0 pins the synthesis evidence contract: evidence_quotes IS the cited set, and a
+// cross-reference resolution carries exactly two quotes (source + resolved target). Run
+// v2r_01m0a5mtezsggnp4gjncm6h0y9 failed synthesis twice because the model attached extra
+// corroborating quotes to a resolution — the validator rightly rejects them, but the prompt
+// never said so.
+export const PROMPT_VERSION_A = "v2-extract-pass-a/1.12.0";
 // v2-extract-pass-b/1.2.0 — This constant is also the version gate
 // on every persisted pass-B artifact (chunks, sweeps, the whole-pass payload), so it covers
 // what pass B COMPUTES from a parse, not just the words it sends: 1.2.0 restricts the
@@ -266,6 +271,13 @@ non-empty exact quote for EVERY cited block. Each quote must
 be copied character-for-character from that block's source text. For a global rule, doc_quote
 must equal one of those exact evidence quotes. Runtime rejects the row if any id is absent,
 any quote is inexact, or all ids belong to one window.
+
+evidence_quotes is EXACTLY the cited set — never a corroboration list. A cross-reference
+resolution carries EXACTLY TWO evidence_quotes rows: one for the reference's source block and
+one for resolved_to_block. Do not add supporting quotes from other blocks, however relevant;
+a third quote invalidates the entire row and discards the resolution. For every other row
+kind, every evidence_quotes block_id must appear in block_ids and vice versa — quotes for
+uncited blocks are rejected, not ignored.
 
 The "construct" field must be exactly one of: ${CONSTRUCT_CLASSES.join(", ")}. No other value is valid.
 

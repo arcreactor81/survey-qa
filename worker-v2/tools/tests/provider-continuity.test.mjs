@@ -350,6 +350,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
             `HTTP ${status} must use conservative ceiling`);
           assert(error.issuedCalls[0].inputTokens > 0,
             `HTTP ${status} unknown input is charged at the request-byte ceiling`);
+          assertEq(error.issuedCalls[0].outputTokens, 1000,
+            `HTTP ${status} unknown output is charged at max_tokens`);
           assert(error.issuedCalls[0].costUsd > 0,
             `HTTP ${status} missing provider usage is never serialized as free spend`);
         }
