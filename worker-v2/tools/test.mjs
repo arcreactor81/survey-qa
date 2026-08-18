@@ -559,6 +559,11 @@ const FILES = [
   // (c) revalidation refusal fallback, (d) failed synthesis never indexed.
   // Evidence they can fail: tools/mutate-unit-reuse.mjs (synthesis mutants).
   "./tests/synthesis-adoption.test.mjs",
+  // COMPLETION LABELS — step-timeout classification, failure-report-with-disagreement, and
+  // dev-drive targeting. Each relabeled path is tested from a fixture checkpoint to the
+  // expected label. Evidence they can fail: mutation anchors in classifyFailure, failure.ts
+  // usageDisagreement path, and dev-drive targetQuestionId validation.
+  "./tests/completion-labels.test.mjs",
 ];
 
 export async function runVerification({

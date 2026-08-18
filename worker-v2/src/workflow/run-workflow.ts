@@ -487,6 +487,19 @@ const PLANNING_REFUSAL_PHRASES = [
 const SUBREQUEST_LIMIT_EXCEEDED = "subrequest-limit-exceeded";
 
 /**
+ * THE PLATFORM KILLED THE STEP, NOT THE RUN'S OWN LOGIC.
+ *
+ * Five real runs (v53, v56, v61, v62 v2r_01m08ce0…, v63 v2r_01m08r1r…) ended with
+ * Cloudflare's opaque "WorkflowInternalError: Attempt failed due to internal workflows
+ * error", which the old code classified as `workflow-error`. A reader could not tell "the
+ * platform killed us mid-walk because the step exceeded its timeout" from "we chose to
+ * stop" or "there is a bug in the system". The cause is recognisable from its own sentence,
+ * and its meaning is distinct: the fix is a longer step timeout or less work per step, not
+ * a bug fix in the application logic.
+ */
+const STEP_TIMEOUT = "step-timeout";
+
+/**
  * The two sentences the platform actually produces for the ceiling. Same discipline as
  * `PLANNING_REFUSAL_PHRASES`: LITERAL, short, and a recogniser for text we have seen rather
  * than a taxonomy of text we imagine. Matched case-insensitively because these arrive from
@@ -502,6 +515,19 @@ const SUBREQUEST_LIMIT_EXCEEDED = "subrequest-limit-exceeded";
 const SUBREQUEST_LIMIT_PHRASES = [
   "too many api requests by single worker invocation",
   "too many subrequests",
+] as const;
+
+/**
+ * The sentence Cloudflare's Workflow engine produces when a step exceeds its configured
+ * timeout. Matched case-insensitively for the same reason as `SUBREQUEST_LIMIT_PHRASES`:
+ * the words come from the runtime, not from this codebase.
+ *
+ *   "Attempt failed due to internal workflows error"  — seen on every real step-timeout
+ *                                                        death; the engine wraps it in a
+ *                                                        `WorkflowInternalError` name.
+ */
+const STEP_TIMEOUT_PHRASES = [
+  "attempt failed due to internal workflows error",
 ] as const;
 
 /**
@@ -534,6 +560,7 @@ export function classifyFailure(err: unknown): string | null {
   if (PLANNING_REFUSAL_PHRASES.some((phrase) => message.includes(phrase))) return PLANNING_REFUSED;
   const lowered = message.toLowerCase();
   if (SUBREQUEST_LIMIT_PHRASES.some((phrase) => lowered.includes(phrase))) return SUBREQUEST_LIMIT_EXCEEDED;
+  if (STEP_TIMEOUT_PHRASES.some((phrase) => lowered.includes(phrase))) return STEP_TIMEOUT;
   return null;
 }
 
