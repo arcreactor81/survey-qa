@@ -209,7 +209,7 @@
     // ---- run caps (proposal §5; each keeps its own name and denominator) ----
     // Owner-authorized production ceiling for this live iteration. Keep this in the
     // reviewed config; an unrecorded CLI --var override is not release evidence.
-    "CAP_STANDARD_MAX_USD": "5",
+    "CAP_STANDARD_MAX_USD": "15",
     "CAP_STANDARD_MIN_USD": "5",
     "CAP_DEEP_MAX_USD": "75",
     "CAP_VERIFICATION_RESERVE_FRACTION": "0.15",

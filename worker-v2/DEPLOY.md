@@ -1049,7 +1049,7 @@ setEq((c.workflows||[]).map(w=>[w.name,w.binding,w.class_name].join("|")),[
 setEq((c.secrets_store_secrets||[]).map(s=>s.binding),[
  "ANTHROPIC_API_KEY","DEEPSEEK_API_KEY","GEMINI_API_KEY","MISTRAL_API_KEY","XAI_API_KEY"],"wrong secret bindings");
 const v=c.vars||{}; eq(v.V2_PREFIX,"v2/","wrong prefix");
-eq(v.CAP_STANDARD_MAX_USD,"5","source cap not $5");
+eq(v.CAP_STANDARD_MAX_USD,"15","source cap not $15");
 eq(v.CAP_WALL_CLOCK_MS,"14400000","wall cap not 4h"); eq(v.VISUAL_SHADOW_ENABLED,"false","visual enabled");
 if(Object.hasOwn(v,"DEV_SEED")) fail("DEV_SEED present");
 eq(v.GROK_MODEL,"grok-4.5","wrong normal Pass-A model");

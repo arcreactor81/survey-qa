@@ -892,7 +892,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
       ["DEEPSEEK_FALLBACK_MODEL", "deepseek-v4-pro"],
       ["DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK", "1.32"],
       ["DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK", "3.96"],
-      ["CAP_STANDARD_MAX_USD", "5"],
+      ["CAP_STANDARD_MAX_USD", "15"],
     ];
     const requireExactReleasePolicy = (source) => {
       for (const [key, expected] of exactReleasePolicy) {
@@ -903,7 +903,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
     requireExactReleasePolicy(config);
 
     const hostile = config.replace(
-      '"CAP_STANDARD_MAX_USD": "5"',
+      '"CAP_STANDARD_MAX_USD": "15"',
       '"CAP_STANDARD_MAX_USD": "30"',
     );
     let refusal = "";
