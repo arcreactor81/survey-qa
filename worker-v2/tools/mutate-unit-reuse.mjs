@@ -123,5 +123,41 @@ await runMutantSuite({
     replace: '              const strict = { globalRules: [], crossRefs: [], ambiguities: [], unverifiable: [] }; // mutation-anchor: unit-reuse-window-revalidation',
     kills: ["window bought in run 1 is adopted in run 2 with zero-cost provenance"],
   },
+  // --- synthesis identity requestHash fixed to a constant (lookup side) ---
+  {
+    name: "synthesis adoption lookup uses fixed requestHash",
+    breaks: "lookup identity ignores the synthesis input hash, so same-doc adoption misses",
+    file: PASS_A,
+    find: '        requestHash: context.requestHash, // mutation-anchor: unit-reuse-synthesis-inputHash',
+    replace: '        requestHash: "fixed-input-hash", // mutation-anchor: unit-reuse-synthesis-inputHash',
+    kills: ["synthesis bought in run 1 is adopted in run 2 with zero-cost provenance and reusedFromRunId"],
+  },
+  // --- synthesis identity requestHash fixed to a constant (store side) ---
+  {
+    name: "synthesis store uses fixed requestHash",
+    breaks: "different documents store under the same identity, so a later run with different input adopts the wrong synthesis",
+    file: PASS_A,
+    find: '              requestHash: context.requestHash, // mutation-anchor: unit-reuse-synthesis-store-requestHash',
+    replace: '              requestHash: "fixed-input-hash", // mutation-anchor: unit-reuse-synthesis-store-requestHash',
+    kills: ["synthesis bought in run 1 is adopted in run 2 with zero-cost provenance and reusedFromRunId"],
+  },
+  // --- synthesis revalidation skipped ---
+  {
+    name: "adopted synthesis payload revalidation skipped",
+    breaks: "a stored model output that fails the current decoder would be adopted silently",
+    file: PASS_A,
+    find: '          additions = validatePassASynthesisOutput(\n            stored.modelOutput, context,\n          ); // mutation-anchor: unit-reuse-synthesis-revalidation',
+    replace: '          additions = { globalRules: [], crossRefs: [], ambiguities: [], unverifiable: [], droppedReResolutions: [] } as PassASynthesisAdditions; // mutation-anchor: unit-reuse-synthesis-revalidation',
+    kills: ["synthesis bought in run 1 is adopted in run 2 with zero-cost provenance and reusedFromRunId"],
+  },
+  // --- synthesis store-on-success guard made unconditionally false ---
+  {
+    name: "synthesis storeCompletedUnit guard made unconditionally false",
+    breaks: "no synthesis is stored in the cross-run index, so the next run cannot adopt",
+    file: PASS_A,
+    find: '    if (routeReceipt.trigger === null && rawModelOutput !== null) { // mutation-anchor: unit-reuse-synthesis-store-guard',
+    replace: '    if (false) { // mutation-anchor: unit-reuse-synthesis-store-guard',
+    kills: ["synthesis bought in run 1 is adopted in run 2 with zero-cost provenance and reusedFromRunId"],
+  },
 ],
 });

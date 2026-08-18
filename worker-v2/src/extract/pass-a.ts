@@ -4808,13 +4808,13 @@ export async function runPassASynthesis(
   // If the synthesis was already attempted in this run, its per-run
   // artifact exists and the normal retry/exhaustion logic handles it.
   // -------------------------------------------------------------------
-  // DISABLED PENDING ITS FIXTURE. Adoption here has no end-to-end test (it
-  // needs a multi-window document fixture) and its identity-miss property is
-  // unproven — and a wrongly-adopted synthesis silently poisons the sealed
-  // contract, the ground truth for everything downstream, to save one ~$0.12
-  // call. The store-on-success path below stays live so the index accrues;
-  // flip this only together with the multi-window adoption test.
-  const PASS_A_SYNTHESIS_ADOPTION_ENABLED = false;
+  // ENABLED — end-to-end proof lives in synthesis-adoption.test.mjs:
+  // identity-hit adoption, identity-miss on different window candidates,
+  // revalidation refusal fallback, and failed-synthesis exclusion from the
+  // index. Mutation evidence in tools/mutate-unit-reuse.mjs (synthesis
+  // mutants). The store-on-success path below accrues the index entries that
+  // this adoption path consumes.
+  const PASS_A_SYNTHESIS_ADOPTION_ENABLED = true;
   if (PASS_A_SYNTHESIS_ADOPTION_ENABLED && existing === null && context.wireFailureDetail === null) {
     try {
       const synthesisIdentity: UnitIdentityFields = {
@@ -5160,7 +5160,7 @@ async function purchasePassASynthesis(
             env,
             {
               unitKind: "pass-a-synthesis",
-              requestHash: context.requestHash,
+              requestHash: context.requestHash, // mutation-anchor: unit-reuse-synthesis-store-requestHash
               decoderIdentity: context.policyIdentity,
               providerPlanIdentity: passAPrimaryRouteIdentity(env),
               promptVersion: PROMPT_VERSION_A,
