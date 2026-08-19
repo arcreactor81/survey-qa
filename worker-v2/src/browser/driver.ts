@@ -3615,6 +3615,20 @@ async function applyDecision(
   const valueControls = screen.controls.filter(
     (c) => c.visible && !c.disabled && !c.readOnly && (isValueEntry(c.type) || fillRefusalFor(c.type) !== null),
   );
+  // ALLOCATION-AWARE NUMERIC RECOVERY. When validation demands numbers and MULTIPLE text
+  // cells share the screen, all-ones cannot satisfy a sum constraint: the live B10
+  // percentage-allocation grid (run v2r_01m0ceth…, 2026-08-19) rejected three "1"s
+  // forever because its cells must total 100. One hundred in the first cell and zero in
+  // the rest is valid arithmetic for any sum-to-100 allocation and stays a legal number
+  // everywhere else; a single lone cell keeps the least-committed "1".
+  const screenNumericDemanded =
+    revalidateValidation.length > 0 && revalidateValidation.some((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m));
+  const numericRecoveryTargets = screenNumericDemanded
+    ? valueControls.filter(
+        (c) => isTextEntry(c.type) && String(c.type).toLowerCase() !== "number" && fillRefusalFor(c.type) === null,
+      ).length
+    : 0;
+  let numericRecoveryOrdinal = 0;
   for (const c of valueControls) {
     // Already claimed by the constant-sum pass above — answered as a group, or named
     // unfillable as a group. Either way this loop has nothing to add.
@@ -3696,14 +3710,25 @@ async function applyDecision(
     // The validation message steers the recovery derivation: "Please enter a number." on a
     // text-typed input means the probe text can never land. A small positive integer is the
     // least-committed number for a field whose bounds the markup does not declare.
-    const numericDemanded =
-      revalidateValidation.length > 0 && revalidateValidation.some((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m));
+    const numericDemanded = screenNumericDemanded;
     const derived =
       numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== "number"
         ? // via SET, not keyboard: the recovery runs on a field a mask may already have
           // wedged, and the set path (value + input/change events) is the one the live
           // server verifiably accepted on this exact shape.
-          { value: "1", how: `the site's validation demands a number (${JSON.stringify(revalidateValidation.find((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m)))})`, via: "set" as const }
+          (() => {
+            const allocationValue =
+              numericRecoveryTargets > 1 ? (numericRecoveryOrdinal++ === 0 ? "100" : "0") : "1";
+            const allocationNote =
+              numericRecoveryTargets > 1
+                ? `; ${numericRecoveryTargets} numeric cells share this screen — allocation split (100 first, 0 rest) so a sum constraint can hold`
+                : "";
+            return {
+              value: allocationValue,
+              how: `the site's validation demands a number (${JSON.stringify(revalidateValidation.find((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m)))})${allocationNote}`,
+              via: "set" as const,
+            };
+          })()
         : navigatorValueFor(c, variant);
     if (planned === undefined && !derived) {
       // NO RULE IS NOT "NOTHING TO ANSWER". The type is one the reader classes as fillable and

@@ -1421,3 +1421,88 @@ suite("amendment 6: a set value must SURVIVE the mask, not merely pass the synch
     assert(r.detail.includes("keeps discarding"), r.detail);
   });
 });
+
+suite("amendment 7: multi-cell numeric recovery splits an allocation, not all-ones", () => {
+  // Measured live (run v2r_01m0ceth…, B10 percentage-allocation grid, 19 Aug): three
+  // numeric cells rejected three "1"s forever — the grid demands the cells total 100.
+  // With multiple numeric-demanding cells on one screen the recovery now sets 100 in the
+  // first and 0 in the rest; a lone cell keeps the least-committed "1".
+  const allocWalk = async (cellCount) => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const controls = Array.from({ length: cellCount }, (_, i) => ({
+      idx: i,
+      tag: "input", type: "text", name: `B10_${i + 1}`, id: null, code: null,
+      label: "%", text: "", checked: null, value: "", valueIsUserSupplied: false,
+      disabled: false, required: true, visible: true, operable: true,
+      actuatedVia: "self", placeholder: null, maxlength: null, min: null, max: null,
+      step: null, pattern: null, readOnly: false,
+    }));
+    const mk = (validation) => ({
+      at: "2026-08-19T12:00:00.000Z",
+      url: "https://fixture.invalid/survey",
+      title: "B10",
+      questionText: "B10. What proportion of each?",
+      grid: null, collectedErrors: [], readerLimitations: [],
+      controls,
+      optionGroups: [],
+      buttons: [{ idx: 90, label: ">>", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+      validationMessages: validation,
+      progress: { present: false, value: null },
+      counts: { controls: controls.length, optionGroups: 0, options: 0, textInputs: controls.length, valueInputs: controls.length, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:b10",
+    });
+    const V = ["Please enter a number."];
+    const reads = [mk([]), mk([]), mk(V), mk(V), mk(V), mk(V)];
+    let last = reads[0];
+    const sets = [];
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) { if (reads.length > 0) last = reads.shift(); return last; }
+        if (src.includes("W4_READ_VALUE")) return { got: sets.length > 0 ? sets[sets.length - 1] : "" };
+        const start = src.indexOf('el.value = "');
+        if (start >= 0 && src.includes("change")) {
+          const end = src.indexOf('";', start);
+          const v = end > start ? src.slice(start + 'el.value = "'.length, end) : "";
+          sets.push(v);
+          return { ok: true, reason: null, got: v };
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() { return Array.from({ length: 95 }, () => ({ async click() {}, async type() {}, async focus() {} })); },
+      async screenshot() { return new TextEncoder().encode("PNG-D56"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56alloc", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey", runId, planRevisionId: "plan_d56alloc1",
+        attemptId: "att_d56alloc001", tier: 1, maxSteps: 1, deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 }, applyHistoryShim: false, advanceTimeoutMs: 400,
+      },
+      { env, runId, attemptId: "att_d56alloc001", pathId: "path_d56alloc", witnesses: [] },
+    );
+    const recoverySets = obs.steps
+      .filter((s) => s.decisionSource === "recovery")
+      .flatMap((s) => (s.actions ?? []).filter((a) => a.kind === "set-value" && a.ok))
+      .map((a) => a.value);
+    return recoverySets;
+  };
+
+  test("THE MEASURED SHAPE: three numeric cells recover as 100/0/0, never 1/1/1", async () => {
+    const values = await allocWalk(3);
+    assertEq(JSON.stringify(values), JSON.stringify(["100", "0", "0"]),
+      `three cells must split an allocation, got ${JSON.stringify(values)}`);
+  });
+
+  test("a lone numeric cell keeps the least-committed 1", async () => {
+    const values = await allocWalk(1);
+    assertEq(JSON.stringify(values), JSON.stringify(["1"]),
+      `a single cell has no sum constraint to satisfy, got ${JSON.stringify(values)}`);
+  });
+});

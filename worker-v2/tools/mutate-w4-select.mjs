@@ -374,5 +374,16 @@ await runMutantSuite({
       replace: "      const again = (null) as unknown as",
       kills: ["THE MEASURED SHAPE: the mask reverts once, the re-set sticks, and the receipt names the revert"],
     },
+    {
+      name: "the allocation split collapses back to all-ones",
+      breaks:
+        "the B10 class: a percentage-allocation grid whose cells must total 100 rejects " +
+        "three '1's forever, and the walk stalls one screen into the survey body while " +
+        "each individual cell claims a valid numeric answer",
+      file: DR,
+      find: '              numericRecoveryTargets > 1 ? (numericRecoveryOrdinal++ === 0 ? "100" : "0") : "1";',
+      replace: '              "1";',
+      kills: ["THE MEASURED SHAPE: three numeric cells recover as 100/0/0, never 1/1/1"],
+    },
   ],
 });
