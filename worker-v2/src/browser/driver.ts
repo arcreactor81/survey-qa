@@ -3154,9 +3154,94 @@ async function applyDecision(
   if (screen.grid && screen.grid.rows.length > 0) {
     const m = /grid:answer-every-row with "(.+?)"/.exec(strategy);
     const wantColumn = m ? m[1] : (wanted[0] ?? null);
-    for (const row of screen.grid.rows) {
+    const gridRows = screen.grid.rows;
+    type GridRowState = (typeof gridRows)[number];
+    /**
+     * WHAT THE FIRST-PASS RULE WOULD ANSWER EACH ROW WITH — the documented column when the row
+     * offers it, else the row's first cell. Computed for the WHOLE GRID before any cell is
+     * clicked, because the distinct-column re-pick below is a cross-row decision and cannot be
+     * taken one row at a time. Answering row by row with no sibling awareness is exactly the
+     * shape that put both rows of a best/worst pair on column 1.
+     */
+    const firstPass = gridRows.map((row) => {
       const wantedCell = wantColumn ? row.cells.find((c) => c.column && labelMatches(c.column, wantColumn)) : null;
-      const cell = wantedCell ?? row.cells[0];
+      return {
+        row,
+        wantedCell: wantedCell ?? null,
+        /** Position in this row's OWN cells; -1 when the row offers none. */
+        at: wantedCell ? row.cells.indexOf(wantedCell) : row.cells.length > 0 ? 0 : -1,
+      };
+    });
+    const placed = firstPass.filter((p) => p.at >= 0);
+    /**
+     * A column's identity for "two rows took the same one": the label when the reader captured
+     * one, the position otherwise. Position is meaningful because `CLASSIFY_TABLE_GRID_SRC`
+     * certifies a grid ONLY when it is built from distinct native radio row groups in one table,
+     * so cell k is the same column in every row; a grid whose columns are unlabelled already
+     * travels as a named reader limitation.
+     */
+    const columnKey = (row: GridRowState, at: number): string => row.cells[at]?.column ?? `#${at}`;
+    /**
+     * DISTINCT-COLUMN RE-PICK — VALIDATION-DRIVEN RECOVERY ONLY.
+     *
+     * A cross-row constraint is invisible in the DOM. Some grids forbid two rows taking the SAME
+     * column — a "best" row and a "worst" row that may not name the same item is the common
+     * shape — and nothing on the page declares it. The first-pass rule above answers every row
+     * with the same column DELIBERATELY and must keep doing so: the wide rating grids this walk
+     * has already passed are legal that way, and changing the first pass would put a conquered
+     * shape back at risk for a constraint most grids do not have.
+     *
+     * ASSUMPTION, STATED: when the site rejects a submit and two or more rows of a CHOICE grid
+     * sit on one column, the repeat is a CANDIDATE cause, worth one different experiment. The
+     * trigger is the OBSERVABLE PAIR — validation standing, rows sharing a column — and never
+     * the validation's words. "Best"/"worst" is one questionnaire's vocabulary, not a class, and
+     * matching on it would hard-anchor the walker on the instrument in front of it. When the
+     * repeat was not the cause, the answers are merely different rather than wrong, and the
+     * round's receipts still carry the site's own message for the next diagnosis.
+     *
+     * DETECTED OVER THE COLUMNS THIS PASS WOULD LAND ON, not over the bits the page currently
+     * holds. In the measured shape those are the same thing (a rejected full-page-POST re-renders
+     * with the rejected radios still checked), but reading only the checked bits would miss a
+     * site that clears its grid on rejection — and, the reason it decides the design, a later
+     * recovery round re-derives its picks from the same plan and would collapse an earlier
+     * round's distinct answers back onto one column.
+     *
+     * DEGRADES, NEVER GUESSES: distinctness is achievable only when the grid offers at least one
+     * column per answerable row. With fewer columns than rows the assignment spreads as far as
+     * the grid allows and EVERY receipt names the shortfall.
+     */
+    const choiceGrid =
+      placed.length > 1 &&
+      placed.every((p) =>
+        p.row.cells.every((c) => {
+          const t = actuation(c.idx)?.type;
+          return t === "radio" || t === "checkbox";
+        }),
+      );
+    const firstPassKeys = placed.map((p) => columnKey(p.row, p.at));
+    const keyCount = new Map<string, number>();
+    for (const key of firstPassKeys) keyCount.set(key, (keyCount.get(key) ?? 0) + 1);
+    /** Rows sitting on a column some OTHER row also took. Zero, or two or more. */
+    const sharedRowCount = firstPassKeys.filter((key) => (keyCount.get(key) ?? 0) > 1).length;
+    const distinctRepick = revalidateValidation.length > 0 && choiceGrid && sharedRowCount > 1;
+    const widestRow = Math.max(...gridRows.map((row) => row.cells.length));
+    const distinctAchievable = widestRow >= placed.length;
+    /**
+     * Row k takes column `base + k`, cycled over its own cells, with `base` the column the first
+     * answerable row already wanted — so the plan's documented column survives on the row that
+     * asked for it wherever the arithmetic allows. Deterministic, and IDEMPOTENT: a later round
+     * recomputes the same base from the same plan and re-lands the same assignment rather than
+     * oscillating between two of them.
+     */
+    const base = placed[0]?.at ?? 0;
+    const assignment = placed.map((p, ordinal) => ({
+      row: p.row,
+      wantedCell: p.wantedCell,
+      firstPassAt: p.at,
+      at: distinctRepick ? (base + ordinal) % p.row.cells.length : p.at,
+    }));
+    for (const { row, wantedCell, firstPassAt, at } of assignment) {
+      const cell = row.cells[at];
       if (!cell) continue;
       // The allocation pass already answered this row's input — a click on a filled number
       // cell is not an answer and must not be recorded as one. Same shape as the option-group
@@ -3174,12 +3259,21 @@ async function applyDecision(
           : r.ok;
       // THE FALLBACK IS NAMED. Taking cells[0] because no column matched is a DIFFERENT act
       // from answering the documented column, and it used to be recorded identically — which
-      // is how a shifted column parse produced wrong answers that read like right ones.
+      // is how a shifted column parse produced wrong answers that read like right ones. A
+      // distinct-column re-pick is a THIRD act, and it carries its own reason: a reader must be
+      // able to tell an invented spread from a documented answer without re-deriving either.
       const how =
-        wantColumn && !wantedCell
-          ? `grid:no-column-matched "${wantColumn}" — fell back to the row's first cell` +
-            (row.cells.some((c) => c.column === null) ? " (this grid's columns are unlabelled — see readerLimitations)" : "")
-          : null;
+        distinctRepick
+          ? `grid:distinct-column-repick: validation standing and ${sharedRowCount} rows share a column — ` +
+            `re-picked row ${JSON.stringify(row.label)} to column ${JSON.stringify(cell.column ?? `#${at + 1}`)} for distinctness` +
+            (wantedCell && at !== firstPassAt ? ` (this displaces the documented column ${JSON.stringify(wantColumn)})` : "") +
+            (distinctAchievable
+              ? ""
+              : ` (LIMITATION: this grid offers ${widestRow} columns for ${placed.length} answerable rows, so the rows cannot all differ — they are spread as far as the grid allows and some still repeat)`)
+          : wantColumn && !wantedCell
+            ? `grid:no-column-matched "${wantColumn}" — fell back to the row's first cell` +
+              (row.cells.some((c) => c.column === null) ? " (this grid's columns are unlabelled — see readerLimitations)" : "")
+            : null;
       actions.push({
         kind: "select-grid-cell",
         targetIdx: cell.idx,

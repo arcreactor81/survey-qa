@@ -504,5 +504,73 @@ await runMutantSuite({
       replace: "            if (setFillsSeen && !flippedToKeyboard) { fillVia = \"set\"; flippedToKeyboard = true; }",
       kills: ["THE MEASURED SHAPE: set-value recovery blocked, keyboard flip advances the walk"],
     },
+    {
+      name: "a rejected choice grid re-picks the same column for every row, forever",
+      breaks:
+        "the forward-scan §3.3 class on twelve upcoming screens: a best/worst grid that " +
+        "forbids naming one column twice rejects the first pass, and a recovery with no " +
+        "cross-row awareness re-enters the identical same-column answer every round",
+      file: DR,
+      find: "    const distinctRepick = revalidateValidation.length > 0 && choiceGrid && sharedRowCount > 1;",
+      replace: "    const distinctRepick = false;",
+      kills: [
+        "THE MEASURED SHAPE: a rejected 2x3 best/worst grid re-picks distinct columns and advances",
+        "fewer columns than rows: the spread is the best available and every receipt names the shortfall",
+      ],
+    },
+    {
+      name: "the distinct-column re-pick escapes into the FIRST pass",
+      breaks:
+        "the conquered wide grids: a 20-row and a 3x5 rating grid answer every row with one " +
+        "column LEGALLY, and spreading them before any site has objected changes answers on " +
+        "screens that were already passing",
+      file: DR,
+      find: "    const distinctRepick = revalidateValidation.length > 0 && choiceGrid && sharedRowCount > 1;",
+      replace: "    const distinctRepick = choiceGrid && sharedRowCount > 1;",
+      kills: ["counterproof: a legal same-column grid with no validation standing is never re-picked"],
+    },
+    {
+      name: "the re-pick assigns every row the same column anyway",
+      breaks:
+        "the whole point of the re-pick: an assignment that does not advance the column per " +
+        "row re-enters the rejected answer under a new name, and the wall never falls",
+      file: DR,
+      find: "      at: distinctRepick ? (base + ordinal) % p.row.cells.length : p.at,",
+      replace: "      at: distinctRepick ? base % p.row.cells.length : p.at,",
+      kills: ["THE MEASURED SHAPE: a rejected 2x3 best/worst grid re-picks distinct columns and advances"],
+    },
+    {
+      name: "a grid too narrow to make its rows distinct claims it managed anyway",
+      breaks:
+        "an unachievable distinctness reported as achieved: three rows over two columns " +
+        "cannot all differ, and a receipt that omits the shortfall presents a repeat as a " +
+        "deliberate distinct answer",
+      file: DR,
+      find: "    const distinctAchievable = widestRow >= placed.length;",
+      replace: "    const distinctAchievable = true;",
+      kills: ["fewer columns than rows: the spread is the best available and every receipt names the shortfall"],
+    },
+    {
+      name: "the re-pick spreads value cells as if they were choices",
+      breaks:
+        "the allocation shape amendment 7 owns: a grid of value cells has no one-column-per-row " +
+        "semantics, so spreading it moves answers off the planned column chasing a constraint " +
+        "that cannot exist there",
+      file: DR,
+      find: "    const choiceGrid =",
+      replace: "    const choiceGrid = true; const choiceGridUnused =",
+      kills: ["counterproof: a NON-choice grid is never distinct-column re-picked, validation or not"],
+    },
+    {
+      name: "a distinct-column re-pick happens silently, with no reason on its receipt",
+      breaks:
+        "an invented spread that reads exactly like a documented answer: the rows move and " +
+        "nothing in the record says a validation drove it, which is the disguise the named " +
+        "column fallback already exists to prevent",
+      file: DR,
+      find: "        distinctRepick",
+      replace: "        false",
+      kills: ["THE MEASURED SHAPE: a rejected 2x3 best/worst grid re-picks distinct columns and advances"],
+    },
   ],
 });
