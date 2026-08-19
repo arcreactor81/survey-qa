@@ -385,5 +385,27 @@ await runMutantSuite({
       replace: '              "1";',
       kills: ["THE MEASURED SHAPE: three numeric cells recover as 100/0/0, never 1/1/1"],
     },
+    {
+      name: "the keyboard-flip round is dropped",
+      breaks:
+        "the second B10 lesson: a widget whose submitted state listens only to real key " +
+        "events keeps every set value in el.value, validation never clears, and the walk " +
+        "stalls one recovery short of the mechanism that would have worked",
+      file: DR,
+      find: "      if (flipEligible) {",
+      replace: "      if (false) {",
+      kills: ["THE MEASURED SHAPE: set-value recovery blocked, keyboard flip advances the walk"],
+    },
+    {
+      name: "the flip round re-uses set instead of flipping the mechanism",
+      breaks:
+        "the point of the flip: a second recovery that repeats the same set-value fills " +
+        "tests nothing the first round did not, so the keyboard-only widget still never " +
+        "sees an answer",
+      file: DR,
+      find: '          "type",',
+      replace: '          "set",',
+      kills: ["THE MEASURED SHAPE: set-value recovery blocked, keyboard flip advances the walk"],
+    },
   ],
 });

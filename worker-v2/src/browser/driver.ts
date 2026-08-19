@@ -2992,6 +2992,18 @@ async function applyDecision(
    * (a linguistic convention, stated; the message is quoted in the receipt).
    */
   revalidateValidation: readonly string[] = [],
+  /**
+   * WHICH MECHANISM A NUMERIC RECOVERY USES TO FILL A TEXT INPUT. "set" is the S70 lesson:
+   * a wedged input mask reverts keystrokes while value+events was accepted by the live
+   * server. "type" is the B10 lesson — the exact opposite wiring: a scripted allocation
+   * grid kept every set value in el.value (so readback verified "ok" four times) while the
+   * state it actually submits listens only to real key events, and the site's own total
+   * stayed 0 (run v2r_01m0cp6grt3sbyscj6d6vk89qb, screen 68). Neither mechanism is right
+   * for every widget, so the walk FLIPS this on a second recovery round instead of
+   * assuming; both attempts travel in the receipts. The fill-level type->set retry below
+   * still covers the reverse direction when typing is transformed.
+   */
+  numericFillVia: "set" | "type" = "set",
 ): Promise<{ actions: PerformedAction[]; notOffered: string[]; unfillable: UnfillableControl[] }> {
   const actions: PerformedAction[] = [];
   const notOffered: string[] = [];
@@ -3726,7 +3738,7 @@ async function applyDecision(
             return {
               value: allocationValue,
               how: `the site's validation demands a number (${JSON.stringify(revalidateValidation.find((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m)))})${allocationNote}`,
-              via: "set" as const,
+              via: numericFillVia,
             };
           })()
         : navigatorValueFor(c, variant);
@@ -5082,8 +5094,107 @@ export async function walkPath(
         const receipt = [...recovery.actions].reverse().find((action) => action.kind === "click-next");
         if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${recoveryMovement.join("+")}`;
       }
+      // MECHANISM FLIP — the second and last recovery round, folded into the SAME +0.5 step
+      // (persisted step ordinals live on a half-step grid; a third fractional slot would be
+      // off-grid). The first recovery filled numeric text inputs via SET (the S70 lesson).
+      // If the site's validation is STILL standing after fills that all read back "ok", the
+      // one remaining hypothesis this walk can test is that the widget's submitted state
+      // listens only to real key events (the B10 allocation grid: el.value held every set
+      // value while the site's total stayed 0). One more round, same values, keyboard
+      // mechanism. Assumption stated: the flip cannot know which wiring a scripted widget
+      // has — it only refuses to give up while a mechanism the fill level cannot reach on
+      // its own remains untried. Both rounds travel in this one step's receipts.
+      const flipBase = recovered ?? recoveryBaseline;
+      const flipValidation = flipBase?.validationMessages ?? [];
+      const flipEligible =
+        recoveryClicked &&
+        recoveryMovement.length === 0 &&
+        flipBase !== null &&
+        flipValidation.length > 0 &&
+        recovery.actions.some((a) => a.kind === "set-value" && a.ok);
+      const flipReadFailures: ScreenCaptureFailure[] = [];
+      let flipRecovered: RenderedScreen | null = null;
+      let flipCapture: Awaited<ReturnType<typeof captureScreenEpoch>> | null = null;
+      let flipMovement: string[] = [];
+      if (flipEligible) {
+        const flip = await applyDecision(
+          page,
+          flipBase!,
+          {
+            question: decision?.question ?? "",
+            select: decision?.select ?? [],
+            source: "recovery",
+            avoid_labels: survivalAvoidLabels(decision, pathHints, flipBase!),
+          } as PlannedDecision,
+          pathHints,
+          stepVariant,
+          flipValidation,
+          "type",
+        );
+        recovery.actions.push(...flip.actions);
+        recovery.notOffered.push(...flip.notOffered);
+        recovery.unfillable.push(...flip.unfillable);
+        let flipBaseline: RenderedScreen | null = null;
+        try {
+          flipBaseline = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `keyboard-flip baseline read on step ${stepIndex}`);
+        } catch (err) {
+          flipReadFailures.push(recordCaptureFailure(
+            captureFailureRow(
+              "screen-read-failed",
+              `screen JSON read failed after keyboard-flip answers on step ${stepIndex}: ${errorText(err)}`,
+              stepIndex,
+              "recovery-after-action",
+            ),
+          ));
+        }
+        const flipNavigation = flipBaseline ? resolveAdvanceControl(flipBaseline) : { kind: "none" as const, candidates: [] };
+        let flipClicked = false;
+        if (flipNavigation.kind === "unique") {
+          const again = await clickIdx(page, flipNavigation.control.idx);
+          flipClicked = again.ok;
+          recovery.actions.push({
+            kind: "click-next",
+            targetIdx: flipNavigation.control.idx,
+            targetLabel: flipNavigation.control.label,
+            targetCode: null,
+            value: null,
+            ok: again.ok,
+            detail: `recovery-after-block keyboard-flip (${again.detail}) via ${flipNavigation.control.via}`,
+          });
+        }
+        if (flipClicked) await sleep(600);
+        try {
+          flipRecovered = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `keyboard-flip read on step ${stepIndex}`);
+        } catch (err) {
+          flipReadFailures.push(recordCaptureFailure(
+            captureFailureRow(
+              "screen-read-failed",
+              `screen JSON read failed after keyboard-flip on step ${stepIndex}: ${errorText(err)}`,
+              stepIndex,
+              "recovery",
+            ),
+          ));
+          flipRecovered = null;
+        }
+        flipCapture = flipRecovered
+          ? recordEpoch(
+              await captureScreenEpoch(page, cap, flipRecovered, "recovery", stepIndex, opts.viewport),
+            )
+          : null;
+        flipMovement =
+          flipClicked && flipBaseline && flipRecovered ? advanceSignals(flipBaseline, flipRecovered) : [];
+        if (flipMovement.length > 0) {
+          const receipt = [...recovery.actions].reverse().find((action) => action.kind === "click-next");
+          if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${flipMovement.join("+")}`;
+        }
+      }
+      const recoveryAdvanced = recoveryMovement.length > 0 || flipMovement.length > 0;
       const recoveryBeforeCapture = afterCapture ?? afterActionCapture ?? beforeCapture;
-      const recoveryCaptures = [recoveryBeforeCapture, ...(recoveredCapture ? [recoveredCapture] : [])];
+      const recoveryCaptures = [
+        recoveryBeforeCapture,
+        ...(recoveredCapture ? [recoveredCapture] : []),
+        ...(flipCapture ? [flipCapture] : []),
+      ];
       steps.push({
         stepIndex: stepIndex + 0.5,
         decisionQuestion: decision ? String(decision.question ?? "") : null,
@@ -5093,21 +5204,26 @@ export async function walkPath(
         requested: { select: decision?.select ?? [], textEntry: null, action: "recover-after-block" },
         screenBefore: after ?? before,
         screenAfterAction: recoveryBaseline,
-        screenAfterAdvance: recovered,
+        screenAfterAdvance: flipRecovered ?? recovered,
         actions: recovery.actions,
         requestedButNotOffered: recovery.notOffered,
         unfillableControls: recovery.unfillable,
-        advanced: recoveryMovement.length > 0,
-        blocked: recoveryClicked && recoveryMovement.length === 0,
+        advanced: recoveryAdvanced,
+        blocked: recoveryClicked && !recoveryAdvanced,
         blockedReason:
           recoveryAmbiguity
             ? NAVIGATION_FORWARD_AMBIGUOUS
-            : recoveryClicked && recoveryMovement.length === 0
-              ? whyBlocked(recoveryBaseline, recoveryBaseline, recovered)
+            : recoveryClicked && !recoveryAdvanced
+              ? whyBlocked(recoveryBaseline, recoveryBaseline, flipRecovered ?? recovered)
             : null,
         pageErrors: pageErrors.slice(errAt),
         consoleErrors: [],
-        evidence: stepEvidence(null, recoveredEv, recoveryCaptures, recoveryReadFailures),
+        evidence: stepEvidence(
+          null,
+          flipCapture?.screenJson.evidenceId ?? recoveredEv,
+          recoveryCaptures,
+          [...recoveryReadFailures, ...flipReadFailures],
+        ),
         wallMs: 0,
       });
       for (const u of recovery.unfillable) unfillableControls.push({ ...u, stepIndex: stepIndex + 0.5 });
@@ -5116,7 +5232,7 @@ export async function walkPath(
         outcomeDetail = recoveryAmbiguity;
         break;
       }
-      if (!recoveryClicked || recoveryMovement.length === 0) {
+      if (!recoveryClicked || !recoveryAdvanced) {
         outcome = wasProbe ? "blocked-after-probe" : "blocked";
         // SAME RULE AS ABOVE, and it matters more here: "the survey did not advance even after a
         // valid answer" is a claim that the answer WAS valid. If the walker left a control on
@@ -5125,6 +5241,7 @@ export async function walkPath(
         const unfilledHere = [...unfillable, ...recovery.unfillable];
         outcomeDetail =
           `the survey did not advance from screen ${stepIndex} even after a valid answer` +
+          (flipEligible ? ` (a second recovery re-entered the numeric values by keyboard and the screen still did not advance)` : "") +
           (unfilledHere.length > 0
             ? ` — THOUGH THE WALKER LEFT ${unfilledHere.length} CONTROL(S) ON IT UNANSWERED, so "a valid answer" ` +
               `overstates what was submitted: ${nameUnfilled(unfilledHere)}`

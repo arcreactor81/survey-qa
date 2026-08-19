@@ -1506,3 +1506,161 @@ suite("amendment 7: multi-cell numeric recovery splits an allocation, not all-on
       `a single cell has no sum constraint to satisfy, got ${JSON.stringify(values)}`);
   });
 });
+
+suite("amendment 8: a blocked set-value recovery gets one keyboard-flip round", () => {
+  // Measured live (run v2r_01m0cp6grt3sbyscj6d6vk89qb, B10 allocation grid, screen 68,
+  // 19 Aug): four set-value fills read back "ok" while the site's own TOTAL stayed 0 —
+  // the widget's submitted state listens only to real key events. The S70 lesson (set is
+  // the mechanism a wedged mask accepts) is the exact opposite wiring. Neither is right
+  // everywhere, so when a set-based numeric recovery leaves validation standing the walk
+  // now runs ONE more round with the same values through the keyboard, and both rounds
+  // travel in the receipts.
+  const isDigits = (s) => typeof s === "string" && s.length > 0 && [...s].every((ch) => ch >= "0" && ch <= "9");
+
+  const keyboardOnlyGridWalk = async ({ keyboardRegisters }) => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const cellCount = 3;
+    const NEXT_IDX = 90;
+    const controls = Array.from({ length: cellCount }, (_, i) => ({
+      idx: i,
+      tag: "input", type: "text", name: `B10_${i + 1}`, id: null, code: null,
+      label: "%", text: "", checked: null, value: "", valueIsUserSupplied: false,
+      disabled: false, required: true, visible: true, operable: true,
+      actuatedVia: "self", placeholder: null, maxlength: null, min: null, max: null,
+      step: null, pattern: null, readOnly: false,
+    }));
+    const V = ["Please enter a number.", "Please ensure the sum of your answers equals 100."];
+    const mkGrid = (validation) => ({
+      at: "2026-08-19T12:00:00.000Z",
+      url: "https://fixture.invalid/survey",
+      title: "B10",
+      questionText: "B10. What proportion of each?",
+      grid: null, collectedErrors: [], readerLimitations: [],
+      controls,
+      optionGroups: [],
+      buttons: [{ idx: NEXT_IDX, label: ">>", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+      validationMessages: validation,
+      progress: { present: false, value: null },
+      counts: { controls: controls.length, optionGroups: 0, options: 0, textInputs: controls.length, valueInputs: controls.length, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:kbgrid",
+    });
+    const doneScreen = {
+      at: "2026-08-19T12:00:01.000Z",
+      url: "https://fixture.invalid/survey/next-section",
+      title: "C10",
+      questionText: "C10. The next section.",
+      grid: null, collectedErrors: [], readerLimitations: [],
+      controls: [],
+      optionGroups: [],
+      buttons: [],
+      validationMessages: [],
+      progress: { present: false, value: null },
+      counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:kbdone",
+    };
+
+    // THE WIDGET'S SUBMITTED STATE: only keyboard keystrokes land here, and only when the
+    // fixture is told keyboard registers at all. Non-numeric keystrokes are transformed to
+    // "-" the way the live mask did. set-value writes are remembered separately and NEVER
+    // register — that is the measured B10 wiring this fixture pins.
+    const typed = {};
+    const sets = [];
+    let validationShown = false;
+    let done = false;
+    const acceptedCount = () => Object.values(typed).filter((v) => isDigits(v)).length;
+    const idxFromSrc = (src) => {
+      const at = src.indexOf(")[");
+      if (at < 0) return null;
+      const end = src.indexOf("]", at + 2);
+      const n = Number(src.slice(at + 2, end));
+      return Number.isInteger(n) ? n : null;
+    };
+    const mkHandle = (idx) => ({
+      async click() {
+        if (idx === NEXT_IDX) {
+          if (acceptedCount() >= cellCount) done = true;
+          else validationShown = true;
+        }
+      },
+      async type(v) {
+        if (keyboardRegisters) typed[idx] = isDigits(v) ? v : "-";
+        else typed[idx] = "-";
+      },
+      async focus() {},
+    });
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) return done ? doneScreen : mkGrid(validationShown ? V : []);
+        if (src.includes("W4_READ_VALUE")) return { got: sets.length > 0 ? sets[sets.length - 1] : "" };
+        // The set sniffer runs BEFORE the plain readback sniffer: setValueScript both
+        // assigns el.value and reads it back, and only the assignment identifies it.
+        const start = src.indexOf('el.value = "');
+        if (start >= 0 && src.includes("change")) {
+          const end = src.indexOf('";', start);
+          const v = end > start ? src.slice(start + 'el.value = "'.length, end) : "";
+          if (v.length > 0) sets.push(v);
+          return { ok: true, reason: null, got: v };
+        }
+        if (src.includes("'value' in e")) {
+          const idx = idxFromSrc(src);
+          return idx !== null && typed[idx] !== undefined ? typed[idx] : "";
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() { return Array.from({ length: 95 }, (_, i) => mkHandle(i)); },
+      async screenshot() { return new TextEncoder().encode("PNG-D56"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56kbflip", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey", runId, planRevisionId: "plan_d56kbflip1",
+        attemptId: "att_d56kbflip01", tier: 1, maxSteps: 2, deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 }, applyHistoryShim: false, advanceTimeoutMs: 400,
+      },
+      { env, runId, attemptId: "att_d56kbflip01", pathId: "path_d56kbflip", witnesses: [] },
+    );
+    return { obs, sets, typed };
+  };
+
+  test("THE MEASURED SHAPE: set-value recovery blocked, keyboard flip advances the walk", async () => {
+    const { obs, sets } = await keyboardOnlyGridWalk({ keyboardRegisters: true });
+    assert(sets.length >= 3, `the first recovery must have tried set-value fills, saw ${sets.length}`);
+    const recoverySteps = obs.steps.filter((s) => s.decisionSource === "recovery");
+    assertEq(recoverySteps.length, 1, "both rounds fold into the ONE half-step the persisted grid allows");
+    const rec = recoverySteps[0];
+    assert(Number.isSafeInteger(rec.stepIndex * 2), `recovery ordinal must stay on the half-step grid, got ${rec.stepIndex}`);
+    const setActions = (rec.actions ?? []).filter((a) => a.kind === "set-value" && a.ok).map((a) => a.value);
+    assertEq(JSON.stringify(setActions), JSON.stringify(["100", "0", "0"]),
+      `round one is the set-value allocation, got ${JSON.stringify(setActions)}`);
+    const typedActions = (rec.actions ?? []).filter((a) => a.kind === "type-text" && a.ok).map((a) => a.value);
+    assertEq(JSON.stringify(typedActions), JSON.stringify(["100", "0", "0"]),
+      `round two re-enters the same allocation by keyboard, got ${JSON.stringify(typedActions)}`);
+    const flipClick = (rec.actions ?? []).filter((a) => a.kind === "click-next").pop();
+    assert(String(flipClick?.detail ?? "").includes("keyboard-flip"), "the second click-next names the flip round");
+    assertEq(rec.advanced, true, "the keyboard flip must be the round that advances");
+    assert(obs.outcome !== "blocked", `the walk must continue past the grid, outcome was ${JSON.stringify(obs.outcome)}`);
+  });
+
+  test("counterproof: when keyboard does not register either, the walk blocks and says the flip was tried", async () => {
+    const { obs } = await keyboardOnlyGridWalk({ keyboardRegisters: false });
+    assertEq(obs.outcome, "blocked");
+    assert(
+      String(obs.outcomeDetail).includes("a second recovery re-entered the numeric values by keyboard"),
+      `the receipt must say the flip ran: ${String(obs.outcomeDetail).slice(0, 200)}`,
+    );
+    const rec = obs.steps.find((s) => s.decisionSource === "recovery");
+    assert(rec, "the merged recovery step is still recorded");
+    assertEq(rec.blocked, true);
+    assert((rec.actions ?? []).some((a) => a.kind === "type-text"), "the failed flip round's receipts still travel");
+    for (const s of obs.steps) {
+      assert(Number.isSafeInteger(s.stepIndex * 2), `every persisted ordinal stays on the half-step grid, got ${s.stepIndex}`);
+    }
+  });
+});
