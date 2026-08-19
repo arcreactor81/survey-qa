@@ -69,6 +69,27 @@ const MUTANTS = [
       "const entries = (Array.isArray(block.entries) ? block.entries : []).filter((e) => Number(e?.count ?? 0) > 0);",
     kills: ["a named shortfall is shown — and the one at ZERO survives, because that is the point"],
   },
+  {
+    name: "THE MEASURED DEFECT: the page reads a stop-reason shape v2 does not write",
+    breaks:
+      "every v2 attempt counts as \"other\", so the page prints \"Recorded attempt stop reasons: " +
+      "other ×N\" over a run whose walks each stated plainly how they stopped — including the " +
+      "`no-advance-control` that a real completion lands on",
+    file: VIEW,
+    find: '    const r = a?.stop?.reason ?? a?.stopReason ?? "other";',
+    replace: '    const r = a?.stop?.reason ?? "other";',
+    kills: ["A V2 ATTEMPT'S STOP REASON IS NAMED, not counted as `other`"],
+  },
+  {
+    name: "INVERTED: an attempt that stated no reason is given one anyway",
+    breaks:
+      "the fix is a second READ, not a default. Inventing a stop reason for a row that carries " +
+      "neither shape is the same confident-wrong-answer defect pointed the other way",
+    file: VIEW,
+    find: '    const r = a?.stop?.reason ?? a?.stopReason ?? "other";',
+    replace: '    const r = a?.stop?.reason ?? a?.stopReason ?? "no-advance-control";',
+    kills: ["THE COUNTERWEIGHT: a stop reason the record does NOT state is still `other`"],
+  },
 ];
 
 await runMutantSuite({

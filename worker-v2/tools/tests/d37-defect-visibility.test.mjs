@@ -338,3 +338,55 @@ suite("D37 — what the plan could not do is surfaced, and its absence is not si
     );
   });
 });
+
+// ===========================================================================
+// The same disease one field over (completion-path audit G3): the page printed the walker's
+// account of how every walk stopped as the word "other", because it read a shape v2 does not
+// write. A run whose deep walk reached the completion page would have published "Recorded
+// attempt stop reasons: other ×N" — the closest thing the record has to a completion signal,
+// rendered as the absence of one.
+// ===========================================================================
+suite("D37 — the page reads the stop reason the record actually writes", () => {
+  const withStops = (record) => {
+    record.attempts = [
+      { ...record.attempts[0], attemptId: "att_done01", stopReason: "no-advance-control" },
+      { ...record.attempts[0], attemptId: "att_done02", stopReason: "no-advance-control" },
+      { ...record.attempts[0], attemptId: "att_capped1", stopReason: "step-cap" },
+    ];
+  };
+
+  test("A V2 ATTEMPT'S STOP REASON IS NAMED, not counted as `other`", async () => {
+    const { data } = await publishWith(withStops);
+    const sentence = data.completion.testing.stoppingReason;
+    assert(
+      /no-advance-control ×2/.test(sentence),
+      `the walker's own stop reason must reach the page: ${sentence}`,
+    );
+    assert(/step-cap ×1/.test(sentence), sentence);
+    assert(!/other/.test(sentence), `a reason the record states plainly was filed as "other": ${sentence}`);
+  });
+
+  test("THE COUNTERWEIGHT: a stop reason the record does NOT state is still `other`", async () => {
+    // The fix is a second READ, never a default. An attempt row carrying neither shape has not
+    // told us how it stopped, and inventing a reason for it would be the opposite defect.
+    const { data } = await publishWith((record) => {
+      record.attempts = [{ ...record.attempts[0], attemptId: "att_silent1", stopReason: null }];
+    });
+    assert(
+      /other ×1/.test(data.completion.testing.stoppingReason),
+      `an attempt that stated no reason must stay unnamed: ${data.completion.testing.stoppingReason}`,
+    );
+  });
+
+  test("...and the v1 NESTED shape still wins where a record carries it", async () => {
+    // A legacy record is not re-read into the new shape; both are read, and the older one is
+    // consulted first so nothing that renders today renders differently tomorrow.
+    const { data } = await publishWith((record) => {
+      record.attempts = [{ ...record.attempts[0], attemptId: "att_legacy1", stop: { reason: "budget-limit" } }];
+    });
+    assert(
+      /budget|limit/i.test(data.completion.testing.stoppingReason),
+      `the legacy nested reason stopped being read: ${data.completion.testing.stoppingReason}`,
+    );
+  });
+});
