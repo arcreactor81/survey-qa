@@ -178,6 +178,7 @@ $MutationHarnesses = @(
   "mutate-projection-carry.mjs",
   "mutate-provider-activation.mjs",
   "mutate-provider-continuity.mjs",
+  "mutate-reading-base.mjs",
   "mutate-report-case-identity.mjs",
   "mutate-report-defects.mjs",
   "mutate-report-fanout.mjs",

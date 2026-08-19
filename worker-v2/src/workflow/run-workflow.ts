@@ -161,6 +161,7 @@ import {
   publicExtractionFailureDetail,
   projectDocumentReadingProgress,
   readingAtUnitStart,
+  preserveDurableReadingBase,
   readingFromPrimary,
   readingFromSecondary,
   stopDocumentReading,
@@ -1221,14 +1222,17 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               this.env,
               runId,
               (d) => {
-                d.documentReading = withCheckpointUsage(readingFromPrimary(outcome.slice, {
-                  state: stopped ? "stopped" : "reading",
-                  failedUnit: outcome.failedUnit ?? null,
-                  sourceContext: outcome.failedUnitSourceContext ?? null,
-                  reasonCode:
-                    outcome.terminal && outcome.result.state === "not-evaluated" ? outcome.result.reason : null,
-                  updatedAt: d.observedAt,
-                }), d.usage);
+                d.documentReading = withCheckpointUsage(preserveDurableReadingBase(
+                  d.documentReading,
+                  readingFromPrimary(outcome.slice, {
+                    state: stopped ? "stopped" : "reading",
+                    failedUnit: outcome.failedUnit ?? null,
+                    sourceContext: outcome.failedUnitSourceContext ?? null,
+                    reasonCode:
+                      outcome.terminal && outcome.result.state === "not-evaluated" ? outcome.result.reason : null,
+                    updatedAt: d.observedAt,
+                  }),
+                ), d.usage);
               },
               { progressed: true, fence },
             );
@@ -1394,16 +1398,19 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 if (!primary) {
                   throw new Error("DOCUMENT_READING_PROGRESS_BASE_MISSING: Pass B has no durable Pass-A progress");
                 }
-                d.documentReading = withCheckpointUsage(readingFromSecondary(primary, outcome.slice, {
-                  state: stopped ? "stopped" : outcome.slice.done ? "complete" : "reading",
-                  failedUnit: outcome.failedUnit ?? null,
-                  sourceContext: outcome.failedUnitSourceContext ?? null,
-                  reasonCode:
-                    outcome.slice.terminalFailure && outcome.result.state === "not-evaluated"
-                      ? outcome.result.reason
-                      : null,
-                  updatedAt: d.observedAt,
-                }), d.usage);
+                d.documentReading = withCheckpointUsage(preserveDurableReadingBase(
+                  d.documentReading,
+                  readingFromSecondary(primary, outcome.slice, {
+                    state: stopped ? "stopped" : outcome.slice.done ? "complete" : "reading",
+                    failedUnit: outcome.failedUnit ?? null,
+                    sourceContext: outcome.failedUnitSourceContext ?? null,
+                    reasonCode:
+                      outcome.slice.terminalFailure && outcome.result.state === "not-evaluated"
+                        ? outcome.result.reason
+                        : null,
+                    updatedAt: d.observedAt,
+                  }),
+                ), d.usage);
               },
               { progressed: true, fence },
             );

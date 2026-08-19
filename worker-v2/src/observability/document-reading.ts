@@ -706,6 +706,45 @@ export function readingFromSecondary(
   };
 }
 
+/**
+ * WITHIN A RUN, A DURABLE DENOMINATOR NEVER BECOMES UNKNOWN AGAIN.
+ *
+ * A wave that re-enters after its pass already finished (a Workflow step retry, or a
+ * later wave finding the completed payload) reads nothing and honestly reports zero
+ * slice facts — "this wave bought nothing". Recording those zero facts verbatim ERASED
+ * the durable base the earlier attempt had committed, and the next unit-start event —
+ * which carries `primary: null` precisely because the base is supposed to be durable —
+ * failed the whole run with DOCUMENT_READING_PRIMARY_BASE_MISSING (run
+ * v2r_01m0ckxqb93tk5k364g85n1je5, step extract-pass-b-wave-0). The reducer's loud throw
+ * is correct; the regression it caught is what this guard forbids. A record that LOSES
+ * a channel's durable total keeps the prior record's counters and takes from the new
+ * one only what it actually learned: its failure, its non-partition limitations, and
+ * its commit time. A record that never had a base to lose passes through untouched.
+ */
+export function preserveDurableReadingBase(
+  existing: unknown,
+  next: DocumentReadingProgress,
+): DocumentReadingProgress {
+  const prior = projectDocumentReadingProgress(existing);
+  if (!prior) return next;
+  const primaryLost = next.primary.total === null && prior.primary.total !== null;
+  const secondaryLost = next.secondary !== null && next.secondary.total === null &&
+    prior.secondary !== null && prior.secondary.total !== null;
+  if (!primaryLost && !secondaryLost) return next;
+  return {
+    ...prior,
+    failure: next.failure ?? prior.failure,
+    limitations: [
+      ...prior.limitations,
+      ...next.limitations.filter((entry) =>
+        entry.code !== "document-reading-partition-unavailable" &&
+        entry.code !== "secondary-reading-partition-unavailable" &&
+        !prior.limitations.some((kept) => kept.code === entry.code)),
+    ],
+    updatedAt: next.updatedAt,
+  };
+}
+
 export function readingAtUnitStart(
   existing: unknown,
   event: DocumentReadingUnitStart,

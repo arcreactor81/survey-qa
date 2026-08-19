@@ -712,3 +712,133 @@ suite("durable questionnaire-reading visibility", () => {
     assert(html.includes("<strong>11</strong> were unread/not covered"));
   });
 });
+
+suite("a durable reading denominator never becomes unknown again", () => {
+  const AT2 = "2026-08-19T09:04:38.059Z";
+
+  function completedPassABase(mod) {
+    return mod.documentReading.readingFromPrimary({
+      done: true,
+      windowsTotal: 11,
+      windowsLanded: 11,
+      windowsRemaining: 0,
+      terminalFailure: false,
+      synthesisState: "ok",
+    }, { state: "reading", updatedAt: AT });
+  }
+
+  function zeroFactResumeRecord(mod, options = {}) {
+    // The exact record a settled resume wave produces: stagePassASlice found the
+    // completed payload, reported zero slice facts, and readingFromPrimary lost the base.
+    return mod.documentReading.readingFromPrimary({
+      done: true,
+      windowsTotal: 0,
+      windowsLanded: 0,
+      windowsRemaining: 0,
+      terminalFailure: false,
+      deadlineHit: false,
+    }, { state: "reading", updatedAt: AT2, ...options });
+  }
+
+  function passBFirstChunkStart() {
+    return {
+      stage: "secondary-chunks",
+      unit: { kind: "chunk", name: "C01-block-1", ordinal: 1, total: 7, sourceContext: null },
+      primary: null,
+      secondary: { total: 7, landed: 0, remaining: 7, sweepRemaining: null },
+    };
+  }
+
+  test("the v78 outage replayed: a resumed zero-fact wave record keeps the completed base", async () => {
+    const mod = await worker();
+    const base = completedPassABase(mod);
+    const guarded = mod.documentReading.preserveDurableReadingBase(base, zeroFactResumeRecord(mod));
+    assertEq(guarded.primary.total, 11, "the durable denominator must survive the resumed wave");
+    assertEq(guarded.primary.landed, 11);
+    assertEq(guarded.primary.remaining, 0);
+    assertEq(guarded.updatedAt, AT2, "the resumed wave still moves the commit time");
+    assert(
+      !guarded.limitations.some((row) => row.code === "document-reading-partition-unavailable"),
+      "a preserved base is not a missing partition",
+    );
+    const next = mod.documentReading.readingAtUnitStart(guarded, passBFirstChunkStart(), usage(), AT2);
+    assertEq(next.primary.total, 11, "pass B carries the primary base forward");
+    assertEq(next.secondary.total, 7);
+  });
+
+  test("counterproof: without the guard the same record still fails the run loudly", async () => {
+    const mod = await worker();
+    const wiped = zeroFactResumeRecord(mod);
+    // assertThrows is async — an un-awaited call here passes whatever happens, which is
+    // exactly what the reducer-throw mutant in tools/mutate-reading-base.mjs caught.
+    await assertThrows(
+      () => mod.documentReading.readingAtUnitStart(wiped, passBFirstChunkStart(), usage(), AT2),
+      "DOCUMENT_READING_PRIMARY_BASE_MISSING",
+    );
+  });
+
+  test("fresh knowledge passes through untouched; a first record honestly stays unavailable", async () => {
+    const mod = await worker();
+    const fresh = mod.documentReading.readingFromPrimary({
+      done: false,
+      windowsTotal: 11,
+      windowsLanded: 5,
+      windowsRemaining: 6,
+      terminalFailure: false,
+      synthesisState: "waiting-for-windows",
+    }, { state: "reading", updatedAt: AT2 });
+    const guarded = mod.documentReading.preserveDurableReadingBase(completedPassABase(mod), fresh);
+    assertEq(guarded.primary.landed, 5, "a genuine new record is not frozen by the guard");
+    const first = mod.documentReading.preserveDurableReadingBase(undefined, zeroFactResumeRecord(mod));
+    assertEq(first.primary.total, null, "no prior base means there is nothing to preserve");
+    assert(first.limitations.some((row) => row.code === "document-reading-partition-unavailable"));
+  });
+
+  test("a stopped resumed wave keeps the base and still delivers its failure", async () => {
+    const mod = await worker();
+    const guarded = mod.documentReading.preserveDurableReadingBase(
+      completedPassABase(mod),
+      zeroFactResumeRecord(mod, {
+        state: "stopped",
+        failedUnit: { unit: "A", detail: "provider independence collapsed" },
+        reasonCode: "REDUCED_PROVIDER_INDEPENDENCE",
+      }),
+    );
+    assertEq(guarded.primary.total, 11);
+    assertEq(guarded.failure.reasonCode, "REDUCED_PROVIDER_INDEPENDENCE");
+  });
+
+  test("the secondary chunk denominator is preserved the same way", async () => {
+    const mod = await worker();
+    const primary = completedPassABase(mod);
+    const withChunks = mod.documentReading.readingFromSecondary(primary, {
+      done: false, chunksTotal: 7, chunksLanded: 4, chunksIssued: 4,
+      chunksRemaining: 3, sweepCallsIssued: 0, sweepRemaining: 3,
+      terminalFailure: false, deadlineHit: false,
+    }, { state: "reading", updatedAt: AT });
+    const zeroFactPassB = mod.documentReading.readingFromSecondary(primary, {
+      done: true, chunksTotal: 0, chunksLanded: 0, chunksIssued: 0,
+      chunksRemaining: 0, sweepCallsIssued: 0, sweepRemaining: 0,
+      terminalFailure: false, deadlineHit: false,
+    }, { state: "reading", updatedAt: AT2 });
+    const guarded = mod.documentReading.preserveDurableReadingBase(withChunks, zeroFactPassB);
+    assertEq(guarded.secondary.total, 7, "the chunk denominator must survive a resumed pass-B wave");
+    assertEq(guarded.secondary.landed, 4);
+    assertEq(guarded.primary.total, 11);
+  });
+
+  test("both wave recorders are wired through the guard, not straight to the checkpoint", async () => {
+    // The guard only protects runs if the recorder steps actually call it. This source
+    // pin fails if either site goes back to writing the fresh record verbatim.
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(new URL("../../src/workflow/run-workflow.ts", import.meta.url), "utf8");
+    const wrapped = /preserveDurableReadingBase\(\s*d\.documentReading,\s*readingFrom(Primary|Secondary)\(/g;
+    const sites = [...source.matchAll(wrapped)].map((m) => m[1]);
+    assert(sites.includes("Primary"), "the pass-A wave recorder must route through the guard");
+    assert(sites.includes("Secondary"), "the pass-B wave recorder must route through the guard");
+    const unwrapped =
+      /withCheckpointUsage\(readingFrom(Primary|Secondary)\([^)]*outcome\.slice/g;
+    assertEq([...source.matchAll(unwrapped)].length, 0,
+      "no wave recorder may write a fresh reading record without the guard");
+  });
+});
