@@ -27,9 +27,11 @@
  * ============================== WHAT IS PINNED HERE ==============================
  *
  *   1. THE SCORE. 89/99 on the frozen corpus (87 before this work: fixture 08 NBSP +1,
- *      fixture 11 dropdown +2), and 31/31 on `corpus-v2-extra` — the fixtures the frozen
+ *      fixture 11 dropdown +2), and 38/38 on `corpus-v2-extra` — the fixtures the frozen
  *      corpus does not exercise at all. The score stays structural: unsupported semantic
  *      table-header relationships are surfaced as limitations, never rewarded as guesses.
+ *      (This line read "31/31" until the corpus-v2-extra fixtures grew past it; the assertion
+ *      below has always been the authority, and the prose had quietly stopped matching it.)
  *   2. THE SEAL, above.
  *   3. ONE NAMED TEST PER FIX, so `tools/mutate-docx-blocks.mjs` has something specific to
  *      point its `kills` at. "The score moved" is not proof that a particular guard works.
@@ -39,17 +41,31 @@
  *      corpus's extracted text must be byte-identical to the pre-change parser except on the
  *      named documents these fixes are about. W6 later adds three deliberate auxiliary-part
  *      discoveries; those are listed with their exact coverage receipts below.
+ *   5. THE PRECONDITION OF ITEM 1. The 20 documents are committed; the 99 probes are NOT — they
+ *      are git-ignored, so the commonest environment in this repo, a fresh worktree, has the
+ *      corpus and none of the instrument. The harness used to score that as `0/99`: an empty
+ *      denominator wearing the costume of a measurement, and the score gate then blamed the
+ *      CORPUS for it. Absence is now a named refusal naming the environment and the remedy, and
+ *      the last suite in this file builds every provisioning state on disk to prove the refusal
+ *      fires — and, just as important, that it does NOT fire when the inputs are there.
  *
  * The parser module comes from the suite's own esbuild bundle of `src/**`, not from
  * `test-suite/docx-robustness/build-v2/`, so this gate cannot score a stale artifact and a
  * mutant applied by `testkit.mjs#mutantPlugin` really does reach the code under test.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as esbuild from "esbuild";
-import { assert, assertEq, loadWorker, suite, test, REPO_ROOT } from "../testkit.mjs";
-import { SUITES, scoreSuite } from "../../../test-suite/docx-robustness/run-harness-v2.mjs";
+import { assert, assertEq, assertThrows, loadWorker, suite, test, REPO_ROOT } from "../testkit.mjs";
+import {
+  SUITES,
+  scoreSuite,
+  probeInputReport,
+  probeSupplyTarget,
+  CorpusInputsMissingError,
+} from "../../../test-suite/docx-robustness/run-harness-v2.mjs";
 
 const CORPUS = join(REPO_ROOT, "test-suite", "docx-robustness", "corpus");
 const EXTRA = join(REPO_ROOT, "test-suite", "docx-robustness", "corpus-v2-extra");
@@ -259,9 +275,14 @@ const KNOWN_POLICY_FAILING = [
 ];
 
 suite("DOCX READER — the hostile corpus is a permanent gate", () => {
+  // PROVISIONING IS A PRECONDITION, NOT A RESULT. The 99 probes are git-ignored while the 20
+  // documents are committed, so an unprovisioned worktree used to reach the line below with
+  // total 0 and fail as "the corpus must still carry 99 probes" — an accusation against the
+  // corpus for something only this machine is missing. `scoreSuite` now refuses by name first,
+  // so the message names the environment and says what to supply. A properly provisioned run
+  // is unaffected: it still scores exactly 89/99 with the same ten failures.
   test("the frozen 20-file corpus scores 89/99 and the FAILING SET is exactly the known ten", async () => {
     const run = scoreSuite(await parser(), SUITES.find((s) => s.id === "corpus"), { write: false });
-    assert(run !== null, "the frozen corpus directory is missing");
     assertEq(run.score.total, 99, "the corpus must still carry 99 probes");
     assertEq(run.score.passed, 89, `score moved: ${run.score.failing.concat(run.score.policyFailing).join(" | ")}`);
     // Set equality, not a count: one failure swapping for another must be visible.
@@ -279,16 +300,21 @@ suite("DOCX READER — the hostile corpus is a permanent gate", () => {
 
   test("the fixtures the frozen corpus lacks — gridSpan header, gridBefore, ruby, dropdown values, declared header row — score 38/38", async () => {
     const run = scoreSuite(await parser(), SUITES.find((s) => s.id === "corpus-v2-extra"), { write: false });
-    assert(run !== null, "corpus-v2-extra is missing");
     assertEq(run.score.total, 38, "corpus-v2-extra must still carry 38 probes");
     assertEq(run.score.passed, 38, `failing: ${run.score.failing.join(" | ")}`);
   });
 
+  // DELIBERATELY `probes: "unscored"`, AND THE REASON IS COVERAGE HONESTY. This test asserts a
+  // property of the DOCUMENTS — all of which are committed — and never reads a probe. Making it
+  // demand the git-ignored probes would paint it red on an unprovisioned machine for something
+  // it does not measure, which is the mirror image of the bug above: a false alarm rather than a
+  // false number. `"unscored"` returns `score: null`, so this test cannot accidentally read a
+  // zero as a measurement either.
   test("EVERY document in both corpora parses or refuses LOUDLY — never empty and quiet", async () => {
     const { parseDocxBlocks } = await parser();
     let refusals = 0;
     for (const s of SUITES) {
-      const run = scoreSuite(await parser(), s, { write: false });
+      const run = scoreSuite(await parser(), s, { write: false, probes: "unscored" });
       for (const r of run.results) {
         if (r.error !== null) {
           refusals += 1;
@@ -607,7 +633,9 @@ suite("DOCX READER — the counterweights", () => {
     // work (test-suite/docx-robustness/out-v2-prechange/). A merged-cell rewrite that also
     // moved an unrelated document would pass every test above and be invisible.
     const { parseDocxBlocks, annotate } = await parser();
-    const run = scoreSuite(await parser(), SUITES.find((s) => s.id === "corpus"), { write: false });
+    // `probes: "unscored"` — this test compares extracted TEXT against the pre-change captures
+    // and enumerates documents; it never reads a probe. See the note on the parse/refuse test.
+    const run = scoreSuite(await parser(), SUITES.find((s) => s.id === "corpus"), { write: false, probes: "unscored" });
     const changed = [];
     const auxiliaryReceipts = {};
     const expectedAuxiliaryReceipts = {
@@ -666,5 +694,192 @@ suite("DOCX READER — the counterweights", () => {
       JSON.stringify(expectedAuxiliaryReceipts),
       "auxiliary-part discovery changed without its exact named coverage receipts",
     );
+  });
+});
+
+/**
+ * ================= THE GATE'S OWN PROVISIONING GUARD — THE NEGATIVE PROOF =================
+ *
+ * The corpus gate above is only a gate where the corpus can actually be scored. The 20 documents
+ * are COMMITTED; the 99 probes are GIT-IGNORED. So the single most likely environment in this
+ * repo — a fresh worktree — has a corpus directory full of documents and no probes at all, and
+ * the harness used to answer that with `passed: 0, total: 0`: an empty denominator dressed as a
+ * measurement, which is the exact failure mode CLAUDE.md's "beware the check that cannot fail"
+ * rule exists to stop.
+ *
+ * These tests build each provisioning state on disk and prove the refusal fires by NAME. Every
+ * one of them runs identically whether or not THIS machine has the real probes, because the
+ * fixtures are temporary directories the test creates itself — a guard that can only be tested
+ * on a broken machine is a guard nobody tests.
+ *
+ * The last three are the counterweights, and they carry the weight: a refusal that fires
+ * unconditionally would pass every test above while making the corpus permanently unscorable.
+ */
+const TEMP_SUITE_DEFAULTS = {
+  probeGlob: "_probes-*.json",
+  gitIgnoredProbes: true,
+  regenerateWith: "node test-suite/docx-robustness/gen/gen-docxlib.mjs",
+};
+
+const DOC = "08-unicode-punctuation.docx";
+const NAMED = "probe corpus inputs absent — this environment cannot score the corpus";
+// A known-TRUE and a known-FALSE probe over the SAME impossible string — `absent` must hold and
+// `present` must not, whatever the parser emits. Quoting real document text here would have been
+// the obvious choice and is the wrong one twice over: it couples a test about the SCORER to the
+// parser's output, so any unrelated docx-blocks mutant drags these tests red as collateral, and
+// it invites an invisible-codepoint literal (the corpus's U+00A0 phrase is the nearest one) into
+// an assertion no reviewer can read.
+const IMPOSSIBLE = "ZZ-NOT-IN-ANY-DOCUMENT-QQ";
+const PASSING_PROBE = { kind: "absent", text: IMPOSSIBLE, why: "known-true: in no document", severity: "high" };
+const FAILING_PROBE = { kind: "present", text: IMPOSSIBLE, why: "known-false: in no document", severity: "high" };
+const probeManifest = (probes) => JSON.stringify([{ file: DOC, hazard: "temp", probes }]);
+
+/**
+ * A throwaway corpus. Documents are copied from the committed frozen corpus — they are in git,
+ * so this works on any checkout — while probes are written here, so each provisioning state is
+ * BUILT exactly rather than simulated.
+ */
+async function withTempCorpus({ documents = [], probeFiles = {}, declared }, fn) {
+  const dir = mkdtempSync(join(tmpdir(), "docx-corpus-gate-"));
+  try {
+    for (const doc of documents) copyFileSync(join(CORPUS, doc), join(dir, doc));
+    for (const [name, body] of Object.entries(probeFiles)) writeFileSync(join(dir, name), body, "utf8");
+    await fn({ ...TEMP_SUITE_DEFAULTS, id: "temp-corpus", dir, out: join(dir, "_out"), probeFiles: declared });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+suite("DOCX READER — an unprovisioned environment is REFUSED, never scored as zero", () => {
+  test("an EMPTY corpus directory is refused by name instead of scoring 0/0", async () => {
+    const p = await parser();
+    await withTempCorpus({ declared: ["_probes-docxlib.json", "_probes-raw.json"] }, async (s) => {
+      const err = await assertThrows(
+        () => scoreSuite(p, s, { write: false }),
+        NAMED,
+        "an empty corpus directory did not produce the named refusal",
+      );
+      assert(err instanceof CorpusInputsMissingError, `wrong error type: ${err.name}`);
+      assert(err.message.includes("does not exist") || err.message.includes("contains no .docx"),
+        `the refusal does not say the documents are absent: ${err.message}`);
+      assert(err.message.includes("REFUSING to report a score over an absent denominator"),
+        "the refusal does not state that it declined to report a number");
+    });
+  });
+
+  test("THE FRESH-WORKTREE SHAPE — documents present, probes absent — names the missing inputs and the git-ignore cause", async () => {
+    const p = await parser();
+    await withTempCorpus({ documents: [DOC], declared: ["_probes-docxlib.json", "_probes-raw.json"] }, async (s) => {
+      const err = await assertThrows(() => scoreSuite(p, s, { write: false }), NAMED, "the real defect shape was not refused");
+      // It must name BOTH inputs, or an operator fixes half the problem and hits it again.
+      assert(err.message.includes("_probes-docxlib.json"), `first missing input unnamed: ${err.message}`);
+      assert(err.message.includes("_probes-raw.json"), `second missing input unnamed: ${err.message}`);
+      // And it must blame the ENVIRONMENT, not the corpus. This is the whole point of the fix.
+      assert(err.message.includes("GIT-IGNORED"), "the refusal does not explain why this machine lacks them");
+      assert(err.message.includes("NOT a corpus regression"), "the refusal still lets the corpus take the blame");
+      assert(err.message.includes(TEMP_SUITE_DEFAULTS.regenerateWith), "the refusal does not say how to regenerate them");
+      // The document set is intact here, so it must NOT be reported as missing.
+      assert(!err.message.includes("contains no .docx"), `documents were present but reported absent: ${err.message}`);
+    });
+  });
+
+  test("PARTIAL provisioning is refused rather than scored over a silently shrunken denominator", async () => {
+    const p = await parser();
+    await withTempCorpus({
+      documents: [DOC],
+      probeFiles: { "_probes-docxlib.json": probeManifest([PASSING_PROBE, FAILING_PROBE]) },
+      declared: ["_probes-docxlib.json", "_probes-raw.json"],
+    }, async (s) => {
+      // The old `existsSync` filter would have scored these 2 probes and called it a corpus run.
+      const report = probeInputReport(s);
+      assertEq(report.probeCount, 2, "fixture drift: the partial input should hold exactly 2 probes");
+      assertEq(report.missing.length, 1, "fixture drift: exactly one declared input should be missing");
+      const err = await assertThrows(() => scoreSuite(p, s, { write: false }), NAMED, "a half-provisioned corpus was scored");
+      assert(err.message.includes("_probes-raw.json"), `the absent half was not named: ${err.message}`);
+    });
+  });
+
+  test("a probe input that declares ZERO probes is refused; a present file is not the same as a present denominator", async () => {
+    const p = await parser();
+    await withTempCorpus({
+      documents: [DOC],
+      probeFiles: { "_probes-docxlib.json": probeManifest([]), "_probes-raw.json": "[]" },
+      declared: ["_probes-docxlib.json", "_probes-raw.json"],
+    }, async (s) => {
+      const err = await assertThrows(() => scoreSuite(p, s, { write: false }), NAMED, "an empty probe set was scored as a result");
+      assert(err.message.includes("declaring zero probes"), `the empty denominator was not named: ${err.message}`);
+    });
+  });
+
+  test("an UNREADABLE probe input is refused by name, never quietly skipped", async () => {
+    const p = await parser();
+    await withTempCorpus({
+      documents: [DOC],
+      probeFiles: { "_probes-docxlib.json": "{ this is not json", "_probes-raw.json": probeManifest([PASSING_PROBE]) },
+      declared: ["_probes-docxlib.json", "_probes-raw.json"],
+    }, async (s) => {
+      const err = await assertThrows(() => scoreSuite(p, s, { write: false }), NAMED, "a corrupt probe input was skipped");
+      assert(err.message.includes("unreadable probe input"), `corruption was not named: ${err.message}`);
+      assert(err.message.includes("_probes-docxlib.json"), "the corrupt file was not identified");
+    });
+  });
+
+  // ------------------------------------------------------------------ THE COUNTERWEIGHTS
+
+  test("A REFUSAL THAT ALWAYS REFUSES IS NOT A GUARD: a provisioned corpus scores, and the score discriminates", async () => {
+    const p = await parser();
+    await withTempCorpus({
+      documents: [DOC],
+      probeFiles: { "_probes-docxlib.json": probeManifest([PASSING_PROBE, FAILING_PROBE]) },
+      declared: ["_probes-docxlib.json"],
+    }, async (s) => {
+      const run = scoreSuite(p, s, { write: false });
+      assertEq(run.score.total, 2, "a fully provisioned suite did not score its declared probes");
+      // 1 of 2, not 2 of 2 and not 0 of 2 — the scorer still tells true from false.
+      assertEq(run.score.passed, 1, "the scorer stopped discriminating between a true and a false probe");
+      assertEq(run.score.failing.length, 1, "the failing probe was not reported by identity");
+      assert(run.score.failing[0].includes(IMPOSSIBLE), "the wrong probe was reported failing");
+      // The document really was parsed — a 1-of-2 over an unparsed file would be a different bug.
+      assert(run.results[0].blocks > 0, "the counterweight scored without the document being read");
+    });
+  });
+
+  test("NOT SCORED IS NULL, NEVER ZERO: an unscored run returns parse results and no score at all", async () => {
+    const p = await parser();
+    await withTempCorpus({ documents: [DOC], declared: ["_probes-docxlib.json", "_probes-raw.json"] }, async (s) => {
+      // Probes absent — but this caller never asked for a score, so it must NOT be refused.
+      const run = scoreSuite(p, s, { write: false, probes: "unscored" });
+      assertEq(run.score, null, "an unscored run produced a score object a caller could misread as a measurement");
+      assertEq(run.results.length, 1, "the unscored run lost the parse results it exists to provide");
+      assertEq(run.results[0].file, DOC);
+      assert(run.results[0].blocks > 0, "the document was not actually parsed");
+    });
+  });
+
+  test("even an unscored run refuses an empty document set — the other empty denominator", async () => {
+    const p = await parser();
+    await withTempCorpus({ declared: ["_probes-docxlib.json"] }, async (s) => {
+      await assertThrows(
+        () => scoreSuite(p, s, { write: false, probes: "unscored" }),
+        NAMED,
+        "a corpus with no documents was walked as though it had been checked",
+      );
+    });
+  });
+
+  test("the refusal points at the REAL frozen-corpus path, and every declared suite can produce one", async () => {
+    // Pinned from the suite declaration, so it holds on a provisioned machine too — the exact
+    // string an operator is told to supply, matching .gitignore's own pattern.
+    assertEq(
+      probeSupplyTarget(SUITES.find((s) => s.id === "corpus")),
+      "test-suite/docx-robustness/corpus/_probes-*.json",
+      "the refusal would send an operator to the wrong path",
+    );
+    for (const s of SUITES) {
+      assert(Array.isArray(s.probeFiles) && s.probeFiles.length > 0, `${s.id}: declares no probe inputs`);
+      assert(typeof s.probeGlob === "string" && s.probeGlob.length > 0, `${s.id}: no probeGlob for the diagnostic`);
+      assert(typeof s.gitIgnoredProbes === "boolean", `${s.id}: does not state whether its probes are git-ignored`);
+      assert(typeof s.regenerateWith === "string" && s.regenerateWith.length > 0, `${s.id}: no regeneration command`);
+    }
   });
 });

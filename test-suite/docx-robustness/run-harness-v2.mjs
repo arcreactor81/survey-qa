@@ -43,11 +43,15 @@
  */
 
 import { readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildParser } from "./build-v2.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(ROOT, "..", "..");
+
+/** Repo-relative, forward-slashed — so a diagnostic reads the same on Windows and Linux. */
+const relOf = (p) => relative(REPO_ROOT, p).split("\\").join("/");
 
 /**
  * The corpora. `corpus` is the FROZEN 20-file / 99-probe instrument behind every comparative
@@ -62,12 +66,23 @@ export const SUITES = [
     dir: join(ROOT, "corpus"),
     out: join(ROOT, "out-v2"),
     probeFiles: ["_probes-docxlib.json", "_probes-raw.json"],
+    // STATED ASSUMPTION: these two inputs are GIT-IGNORED (.gitignore:
+    // /test-suite/docx-robustness/corpus/_probes-*.json), so a fresh clone or worktree HAS the
+    // 20 documents but NOT the 99 probes. `probeGlob` is what a diagnostic tells the operator
+    // to supply; it is declared per suite rather than inferred, because the two corpora do not
+    // share a naming convention and guessing one is how a message starts lying.
+    probeGlob: "_probes-*.json",
+    gitIgnoredProbes: true,
+    regenerateWith: "node test-suite/docx-robustness/gen/gen-docxlib.mjs && node test-suite/docx-robustness/gen/gen-raw-ooxml.mjs",
   },
   {
     id: "corpus-v2-extra",
     dir: join(ROOT, "corpus-v2-extra"),
     out: join(ROOT, "out-v2-extra"),
     probeFiles: ["_probes.json"],
+    probeGlob: "_probes.json",
+    gitIgnoredProbes: false,
+    regenerateWith: "node test-suite/docx-robustness/gen-v2-extra.mjs",
   },
 ];
 
@@ -114,18 +129,148 @@ export function evaluate(p, text) {
 }
 
 /**
+ * ===================== THE UNPROVISIONED ENVIRONMENT IS A NAMED REFUSAL =====================
+ *
+ * The frozen corpus ships as 20 COMMITTED documents plus 99 GIT-IGNORED probes. That split is
+ * the whole hazard: a fresh clone or worktree has the directory, has every .docx, and has no
+ * probes at all. The old code filtered the probe files through `existsSync` and scored whatever
+ * survived, so that environment produced `passed: 0, total: 0` — an empty denominator wearing
+ * the costume of a measurement. Downstream that reached the gate as "expected 99, got 0", which
+ * accuses the CORPUS of losing its probes when the truth is that this MACHINE never had them.
+ * A wrong diagnosis sends the next person hunting a regression that does not exist.
+ *
+ * So absence is now refused by name, and the refusal distinguishes the three states that an
+ * empty denominator conflates: NOT PROVISIONED (no inputs here), NOT SCORED (a caller that
+ * deliberately wants parse results only, which gets `score: null`, never a zero), and SCORED
+ * (a real number over a real denominator).
+ *
+ * PARTIAL provisioning is refused too, and that is not pedantry: with one of the two probe
+ * files present the old filter scored a SHRUNKEN denominator silently — a 45/45 that looks
+ * perfect and measures half the instrument.
+ */
+export class CorpusInputsMissingError extends Error {
+  constructor(message, detail) {
+    super(message);
+    this.name = "CorpusInputsMissingError";
+    Object.assign(this, detail);
+  }
+}
+
+/**
+ * Inspect provisioning WITHOUT judging it. Separated from the throw so tests can assert the
+ * facts, and so a diagnostic can report every missing input at once rather than one per run.
+ */
+export function probeInputReport(suite) {
+  const dirPresent = existsSync(suite.dir);
+  const documents = dirPresent
+    ? readdirSync(suite.dir).filter((f) => /\.(docx|doc)$/i.test(f)).sort()
+    : [];
+  const declared = suite.probeFiles ?? [];
+  const present = declared.filter((f) => existsSync(join(suite.dir, f)));
+  const missing = declared.filter((f) => !existsSync(join(suite.dir, f)));
+
+  let probeCount = 0;
+  const empty = [];
+  const malformed = [];
+  for (const f of present) {
+    let entries;
+    try {
+      entries = JSON.parse(readFileSync(join(suite.dir, f), "utf8"));
+    } catch (err) {
+      malformed.push(`${f}: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    if (!Array.isArray(entries)) {
+      malformed.push(`${f}: top level is ${entries === null ? "null" : typeof entries}, expected an array`);
+      continue;
+    }
+    const n = entries.reduce((sum, e) => sum + (Array.isArray(e?.probes) ? e.probes.length : 0), 0);
+    if (n === 0) empty.push(f);
+    probeCount += n;
+  }
+
+  return { suiteId: suite.id, dir: suite.dir, dirPresent, documents, declared, present, missing, empty, malformed, probeCount };
+}
+
+/**
+ * The exact repo-relative thing an operator must supply, derived from the suite declaration and
+ * NOT from the filesystem — so a test can pin the operator-facing string in any environment,
+ * provisioned or not. A diagnostic whose wording is only checkable on a broken machine is a
+ * diagnostic nobody checks.
+ */
+export const probeSupplyTarget = (suite) => `${relOf(suite.dir)}/${suite.probeGlob ?? "_probes*.json"}`;
+
+/**
+ * The loud, named failure. Throws `CorpusInputsMissingError` when this environment cannot honestly
+ * score the suite; returns the report when it can.
+ */
+export function requireProbeInputs(suite) {
+  const r = probeInputReport(suite);
+  const relDir = relOf(suite.dir);
+
+  const faults = [];
+  if (!r.dirPresent) faults.push(`the corpus directory ${relDir}/ does not exist`);
+  else if (r.documents.length === 0) faults.push(`${relDir}/ contains no .docx/.doc documents`);
+  if (r.missing.length > 0) faults.push(`missing probe input(s): ${r.missing.map((f) => `${relDir}/${f}`).join(", ")}`);
+  if (r.malformed.length > 0) faults.push(`unreadable probe input(s): ${r.malformed.join("; ")}`);
+  if (r.empty.length > 0) faults.push(`probe input(s) declaring zero probes: ${r.empty.map((f) => `${relDir}/${f}`).join(", ")}`);
+  if (faults.length === 0 && r.probeCount === 0) faults.push(`the probe inputs parsed to zero probes in total`);
+
+  if (faults.length === 0) return r;
+
+  // SIX LINES IS THE BUDGET, AND IT IS NOT A STYLE CHOICE: the suite runner prints only the
+  // first six lines of a failure's stack (tools/test.mjs). A diagnostic whose cause and remedy
+  // sit on line eight is a diagnostic the reader never sees, so what is wrong, why this machine
+  // lacks it, and how to fix it all go above that fold — the verbose state dump goes last.
+  const cause = suite.gitIgnoredProbes
+    ? `these inputs are GIT-IGNORED, so a fresh clone or worktree never has them — an environment gap, NOT a corpus regression`
+    : `these inputs are tracked, so an absence here means they were deleted or the checkout is damaged`;
+  const fix = suite.gitIgnoredProbes
+    ? `copy them from a provisioned checkout, or regenerate: ${suite.regenerateWith}`
+    : `restore them from git, or regenerate: ${suite.regenerateWith}`;
+
+  throw new CorpusInputsMissingError(
+    `probe corpus inputs absent — this environment cannot score the corpus; ` +
+      `supply ${probeSupplyTarget(suite)}\n` +
+      `  WRONG: ${faults.join("; ")}\n` +
+      `  CAUSE: ${cause}\n` +
+      `  FIX:   ${fix}\n` +
+      `  STATE: suite=${r.suiteId}; dir=${relDir}/ ` +
+      `(${r.dirPresent ? `present, ${r.documents.length} document(s)` : "ABSENT"}); ` +
+      `declared=${r.declared.length > 0 ? r.declared.join(",") : "(none)"}; ` +
+      `found=${r.present.length > 0 ? r.present.join(",") : "(none)"}; probes readable here=${r.probeCount}\n` +
+      `  REFUSING to report a score over an absent denominator.`,
+    r,
+  );
+}
+
+/**
  * Score one corpus with a GIVEN parser module. The parser is a parameter and not an import so
  * that the suite gate scores the same freshly-bundled `src/**` the rest of the suite runs,
  * and never a build artifact left on disk by an earlier session.
  *
  * `write: false` keeps it side-effect free, which is what the suite uses.
+ *
+ * `probes: "required"` (the DEFAULT, and it is a default on purpose — a guard you must remember
+ * to switch on is a guard that gets forgotten) refuses an unprovisioned environment by name.
+ * `probes: "unscored"` is for the callers that want the PARSE results and never look at a score;
+ * they get `score: null`, because the one thing an unscored run must never be mistaken for is a
+ * run that scored zero. Documents are required in BOTH modes: scoring the parser over an empty
+ * document set is the same empty denominator wearing a different hat.
  */
-export function scoreSuite({ parseDocxBlocks, annotate }, suite, { write = true } = {}) {
-  if (!existsSync(suite.dir)) return null;
+export function scoreSuite({ parseDocxBlocks, annotate }, suite, { write = true, probes: probeMode = "required" } = {}) {
+  if (probeMode !== "required" && probeMode !== "unscored") {
+    throw new TypeError(`scoreSuite: probes must be "required" or "unscored", got ${JSON.stringify(probeMode)}`);
+  }
 
-  const probes = suite.probeFiles
-    .filter((f) => existsSync(join(suite.dir, f)))
-    .flatMap((f) => JSON.parse(readFileSync(join(suite.dir, f), "utf8")));
+  if (!existsSync(suite.dir) || readdirSync(suite.dir).filter((f) => /\.(docx|doc)$/i.test(f)).length === 0) {
+    // Reuse the one diagnostic: it already reports the directory and document state by name.
+    requireProbeInputs(suite);
+  }
+
+  const probes = probeMode === "required"
+    ? (requireProbeInputs(suite), suite.probeFiles.flatMap((f) => JSON.parse(readFileSync(join(suite.dir, f), "utf8"))))
+    : [];
   const byFile = new Map(probes.map((p) => [p.file, p]));
   const files = readdirSync(suite.dir).filter((f) => /\.(docx|doc)$/i.test(f)).sort();
 
@@ -173,7 +318,11 @@ export function scoreSuite({ parseDocxBlocks, annotate }, suite, { write = true 
     });
   }
 
-  const score = { suite: suite.id, passed, total, failing: failing.sort(), policyFailing: policyFailing.sort() };
+  // NOT SCORED is null, never zero. A caller that asks for parse results only must not be able
+  // to read `score.passed === 0` and believe it measured something.
+  const score = probeMode === "unscored"
+    ? null
+    : { suite: suite.id, passed, total, failing: failing.sort(), policyFailing: policyFailing.sort() };
 
   if (write) {
     mkdirSync(suite.out, { recursive: true });
@@ -197,10 +346,18 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const parser = await buildParser();
   const pad = (s, n) => String(s).padEnd(n);
 
+  // A suite this environment cannot score is REPORTED AND COUNTED, never "skipped" — and the
+  // process exits non-zero, so no caller can read an unprovisioned run as a clean one.
+  let unscorable = 0;
+
   for (const suite of SUITES) {
-    const run = scoreSuite(parser, suite);
-    if (run === null) {
-      console.log(`(${suite.id}: no such directory — skipped)\n`);
+    let run;
+    try {
+      run = scoreSuite(parser, suite);
+    } catch (err) {
+      if (!(err instanceof CorpusInputsMissingError)) throw err;
+      unscorable += 1;
+      console.error(`=== ${suite.id} — CANNOT BE SCORED IN THIS ENVIRONMENT ===\n${err.message}\n`);
       continue;
     }
     const { score, results } = run;
@@ -227,5 +384,13 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       }
       console.log("");
     }
+  }
+
+  if (unscorable > 0) {
+    console.error(
+      `${unscorable} of ${SUITES.length} suite(s) could not be scored here. ` +
+        `That is a missing measurement, not a passing one.`,
+    );
+    process.exitCode = 1;
   }
 }
