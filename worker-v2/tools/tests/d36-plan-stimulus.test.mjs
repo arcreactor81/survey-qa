@@ -758,6 +758,73 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
     assertEq(fd?.kind, "terminate", "a bound terminal under a skip-rule requirement must still avoid");
   });
 
+  test("THE MEASURED ORPHANED TABLE: a section-scoped route row joins its question through the sealed option facts", async () => {
+    // Run v2r_01m0cy89mz80nf4g3z32j7f8sx: the S10 routing table's requirement was scoped
+    // `section:S10. Which of the following…`, so every typed route row carried
+    // targetQuestionId null and was dropped here — the walker then picked among documented
+    // terminations by lottery. The option-set facets DO bind their question; an answer
+    // label asserted by exactly one question's option table names its owner.
+    const mod = await worker();
+    const rev = routeRevision();
+    rev.facetInstances.push(
+      {
+        facetInstanceId: "fi_optset_s10",
+        requirementLineageId: "REQ-X",
+        targetQuestionId: "S10",
+        case: {
+          kind: "option-set",
+          optionSet: { exhaustive: true, asserted: [{ code: "23", label: "Finance Manager" }, { code: "24", label: "Procurement Director" }] },
+        },
+      },
+      {
+        facetInstanceId: "fi_route_orphaned",
+        requirementLineageId: "REQ-C", // section-scoped obligation: facet says skip-rule
+        targetQuestionId: null,
+        case: {
+          kind: "route",
+          routeAnswer: { code: "23", label: "Finance Manager" },
+          expectedDestination: { questionId: null, screen: null, terminal: "screenout" },
+        },
+      },
+    );
+    const routes = mod.plan.sealedRouteDestinations(rev);
+    const fm = routes.find((r) => r.label === "Finance Manager");
+    assertEq(fm?.question, "S10", "the sealed option facts name the owning question");
+    assertEq(fm?.kind, "terminate", "and the row's own bound terminal still types it");
+  });
+
+  test("counterproof: a label two questions both assert is REFUSED an owner, never guessed", async () => {
+    const mod = await worker();
+    const rev = routeRevision();
+    rev.facetInstances.push(
+      {
+        facetInstanceId: "fi_optset_a",
+        requirementLineageId: "REQ-X",
+        targetQuestionId: "S10",
+        case: { kind: "option-set", optionSet: { exhaustive: true, asserted: [{ code: "1", label: "Yes" }] } },
+      },
+      {
+        facetInstanceId: "fi_optset_b",
+        requirementLineageId: "REQ-X",
+        targetQuestionId: "D20",
+        case: { kind: "option-set", optionSet: { exhaustive: true, asserted: [{ code: "1", label: "Yes" }] } },
+      },
+      {
+        facetInstanceId: "fi_route_ambiguous",
+        requirementLineageId: "REQ-T",
+        targetQuestionId: null,
+        case: {
+          kind: "route",
+          routeAnswer: { code: "1", label: "Yes" },
+          expectedDestination: { questionId: null, screen: null, terminal: "screenout" },
+        },
+      },
+    );
+    const routes = mod.plan.sealedRouteDestinations(rev);
+    assertEq(routes.some((r) => r.label === "Yes"), false,
+      "an ambiguous owner must refuse to steer rather than gamble on a question");
+  });
+
   test("THE MEASURED STARVATION: empty model + sealed routes still stamps avoid AND prefer", async () => {
     const mod = await worker();
     const p = survivalPath({

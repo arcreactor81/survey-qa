@@ -1517,7 +1517,7 @@ suite("amendment 8: a blocked set-value recovery gets one keyboard-flip round", 
   // travel in the receipts.
   const isDigits = (s) => typeof s === "string" && s.length > 0 && [...s].every((ch) => ch >= "0" && ch <= "9");
 
-  const keyboardOnlyGridWalk = async ({ keyboardRegisters }) => {
+  const keyboardOnlyGridWalk = async ({ keyboardRegisters, lateNumericMessage = false }) => {
     const { mod } = await loadWorker();
     const env = testEnv();
     const cellCount = 3;
@@ -1531,6 +1531,9 @@ suite("amendment 8: a blocked set-value recovery gets one keyboard-flip round", 
       step: null, pattern: null, readOnly: false,
     }));
     const V = ["Please enter a number.", "Please ensure the sum of your answers equals 100."];
+    // The measured B10 staging: the FIRST rejection says only "Please provide an answer.";
+    // the numeric-sum demand appears only after values were submitted and rejected.
+    const V_GENERIC = ["Please provide an answer."];
     const mkGrid = (validation) => ({
       at: "2026-08-19T12:00:00.000Z",
       url: "https://fixture.invalid/survey",
@@ -1566,7 +1569,7 @@ suite("amendment 8: a blocked set-value recovery gets one keyboard-flip round", 
     // register — that is the measured B10 wiring this fixture pins.
     const typed = {};
     const sets = [];
-    let validationShown = false;
+    let nextClicks = 0;
     let done = false;
     const acceptedCount = () => Object.values(typed).filter((v) => isDigits(v)).length;
     const idxFromSrc = (src) => {
@@ -1580,7 +1583,7 @@ suite("amendment 8: a blocked set-value recovery gets one keyboard-flip round", 
       async click() {
         if (idx === NEXT_IDX) {
           if (acceptedCount() >= cellCount) done = true;
-          else validationShown = true;
+          else nextClicks += 1;
         }
       },
       async type(v) {
@@ -1593,7 +1596,11 @@ suite("amendment 8: a blocked set-value recovery gets one keyboard-flip round", 
       async goto() {},
       async evaluate(script) {
         const src = String(script);
-        if (src.includes("screenSignature")) return done ? doneScreen : mkGrid(validationShown ? V : []);
+        if (src.includes("screenSignature")) {
+          if (done) return doneScreen;
+          const validation = nextClicks === 0 ? [] : lateNumericMessage && nextClicks === 1 ? V_GENERIC : V;
+          return mkGrid(validation);
+        }
         if (src.includes("W4_READ_VALUE")) return { got: sets.length > 0 ? sets[sets.length - 1] : "" };
         // The set sniffer runs BEFORE the plain readback sniffer: setValueScript both
         // assigns el.value and reads it back, and only the assignment identifies it.
@@ -1646,6 +1653,27 @@ suite("amendment 8: a blocked set-value recovery gets one keyboard-flip round", 
     assert(String(flipClick?.detail ?? "").includes("keyboard-flip"), "the second click-next names the flip round");
     assertEq(rec.advanced, true, "the keyboard flip must be the round that advances");
     assert(obs.outcome !== "blocked", `the walk must continue past the grid, outcome was ${JSON.stringify(obs.outcome)}`);
+  });
+
+  test("THE MEASURED v80 SHAPE: the numeric demand appears only in the SECOND validation, and the rounds still get through", async () => {
+    // Run v2r_01m0cy89mz80nf4g3z32j7f8sx: first rejection said only "Please provide an
+    // answer.", so a single recovery round derived probe text, submitted it, and never read
+    // the numeric-sum message that came back. The bounded rounds re-derive from the newest
+    // validation: probe round, then the set allocation, then the keyboard flip.
+    const { obs } = await keyboardOnlyGridWalk({ keyboardRegisters: true, lateNumericMessage: true });
+    const rec = obs.steps.find((s) => s.decisionSource === "recovery");
+    assert(rec, "a recovery step must be recorded");
+    const setValues = (rec.actions ?? []).filter((a) => a.kind === "set-value" && a.ok).map((a) => a.value);
+    assertEq(JSON.stringify(setValues), JSON.stringify(["100", "0", "0"]),
+      `the numeric demand round must derive the allocation once the site says numbers, got ${JSON.stringify(setValues)}`);
+    const typedNumeric = (rec.actions ?? []).filter((a) => a.kind === "type-text" && a.ok && a.value !== "QA-PROBE").map((a) => a.value);
+    assertEq(JSON.stringify(typedNumeric), JSON.stringify(["100", "0", "0"]),
+      `the final round re-enters the allocation by keyboard, got ${JSON.stringify(typedNumeric)}`);
+    const clicks = (rec.actions ?? []).filter((a) => a.kind === "click-next");
+    assertEq(clicks.length, 3, "three rounds each submitted once");
+    assert(String(clicks[2].detail).includes("keyboard-flip"), "the last round names the mechanism flip");
+    assertEq(rec.advanced, true, "the walk gets through the staged-validation grid");
+    assert(obs.outcome !== "blocked", `outcome was ${JSON.stringify(obs.outcome)}`);
   });
 
   test("counterproof: when keyboard does not register either, the walk blocks and says the flip was tried", async () => {

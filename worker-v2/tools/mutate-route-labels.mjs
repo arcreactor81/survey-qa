@@ -103,6 +103,28 @@ await runMutantSuite({
       kills: ["typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped"],
     },
     {
+      name: "the option-fact join is dropped (section-scoped routing tables lose their owner)",
+      breaks:
+        "the run v2r_01m0cy89mz80nf4g3z32j7f8sx class: a routing table scoped to a SECTION " +
+        "carries no targetQuestionId, so every typed route row is dropped and the walker " +
+        "picks among documented terminations by lottery",
+      file: PLAN,
+      find: "      if (owners && owners.size === 1) question = [...owners][0]!;",
+      replace: "      if (false) question = [...owners!][0]!;",
+      kills: ["THE MEASURED ORPHANED TABLE: a section-scoped route row joins its question through the sealed option facts"],
+    },
+    {
+      name: "an ambiguous label owner is guessed instead of refused",
+      breaks:
+        "the refusal arm of the join: a label two questions both assert would be stamped " +
+        "onto whichever owner iteration order happens to yield, steering answers on the " +
+        "wrong question",
+      file: PLAN,
+      find: "      if (owners && owners.size === 1) question = [...owners][0]!;",
+      replace: "      if (owners && owners.size >= 1) question = [...owners][0]!;",
+      kills: ["counterproof: a label two questions both assert is REFUSED an owner, never guessed"],
+    },
+    {
       name: "pass B prompt version is not bumped (stale artifacts reused)",
       breaks:
         "the version gate. A pass-B artifact persisted under the old version would be " +

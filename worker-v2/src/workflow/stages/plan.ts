@@ -751,11 +751,37 @@ export function sealedRouteDestinations(revision: {
 }): SealedRouteDestination[] {
   const facetByLineage = new Map<string, string>();
   for (const r of revision.requirements) facetByLineage.set(r.requirementLineageId, r.facet);
+  // LABEL -> OWNING QUESTION, joined from the SEALED OPTION FACTS. A routing table's
+  // requirement is often scoped to a SECTION, not `question:X`, so its route rows carry
+  // no `targetQuestionId` — measured live 19 Aug 2026 (run v2r_01m0cy89mz80nf4g3z32j7f8sx):
+  // every typed S10 route ("Finance Manager → screenout" et al.) was dropped here and the
+  // walker picked among documented terminations by lottery. The option-set facets DO bind
+  // their question, and a route answer label that appears in exactly ONE question's
+  // asserted option table names its owner without any naming convention. An ambiguous
+  // label (asserted by several questions) is REFUSED, never guessed.
+  const labelOwners = new Map<string, Set<string>>();
+  for (const fi of revision.facetInstances) {
+    if (fi.case?.kind !== "option-set") continue;
+    const optionSet = (fi.case as { optionSet?: { asserted?: Array<{ label?: string | null }> } | null }).optionSet;
+    const owner = nonEmpty(fi.targetQuestionId);
+    if (!owner || !optionSet?.asserted) continue;
+    for (const o of optionSet.asserted) {
+      const label = nonEmpty(o?.label ?? null);
+      if (!label) continue;
+      const owners = labelOwners.get(label) ?? new Set<string>();
+      owners.add(owner);
+      labelOwners.set(label, owners);
+    }
+  }
   const out: SealedRouteDestination[] = [];
   for (const fi of revision.facetInstances) {
     if (fi.case?.kind !== "route") continue;
-    const question = nonEmpty(fi.targetQuestionId);
     const label = nonEmpty(fi.case.routeAnswer?.label ?? null);
+    let question = nonEmpty(fi.targetQuestionId);
+    if (!question && label) {
+      const owners = labelOwners.get(label);
+      if (owners && owners.size === 1) question = [...owners][0]!;
+    }
     if (!question || !label) continue;
     // THE ROW'S OWN BOUND DESTINATION OUTRANKS THE REQUIREMENT'S FACET. One obligation
     // carries a whole routing table, so its single facet stamps every row — the live S10

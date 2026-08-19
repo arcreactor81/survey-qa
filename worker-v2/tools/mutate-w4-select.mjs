@@ -386,14 +386,25 @@ await runMutantSuite({
       kills: ["THE MEASURED SHAPE: three numeric cells recover as 100/0/0, never 1/1/1"],
     },
     {
+      name: "recovery rounds stop re-deriving from the newest validation",
+      breaks:
+        "the run v2r_01m0cy89mz80nf4g3z32j7f8sx class: the numeric-sum demand appears only " +
+        "in the SECOND validation, and a recovery that never re-reads it submits probe text " +
+        "once and gives up on a screen three rounds would have passed",
+      file: DR,
+      find: "          const changed = validationKey !== priorValidationKey;",
+      replace: "          const changed = false;",
+      kills: ["THE MEASURED v80 SHAPE: the numeric demand appears only in the SECOND validation, and the rounds still get through"],
+    },
+    {
       name: "the keyboard-flip round is dropped",
       breaks:
         "the second B10 lesson: a widget whose submitted state listens only to real key " +
         "events keeps every set value in el.value, validation never clears, and the walk " +
         "stalls one recovery short of the mechanism that would have worked",
       file: DR,
-      find: "      if (flipEligible) {",
-      replace: "      if (false) {",
+      find: "            if (setFillsSeen && !flippedToKeyboard) { fillVia = \"type\"; flippedToKeyboard = true; }",
+      replace: "            if (false) { fillVia = \"type\"; flippedToKeyboard = true; }",
       kills: ["THE MEASURED SHAPE: set-value recovery blocked, keyboard flip advances the walk"],
     },
     {
@@ -403,8 +414,8 @@ await runMutantSuite({
         "tests nothing the first round did not, so the keyboard-only widget still never " +
         "sees an answer",
       file: DR,
-      find: '          "type",',
-      replace: '          "set",',
+      find: "            if (setFillsSeen && !flippedToKeyboard) { fillVia = \"type\"; flippedToKeyboard = true; }",
+      replace: "            if (setFillsSeen && !flippedToKeyboard) { fillVia = \"set\"; flippedToKeyboard = true; }",
       kills: ["THE MEASURED SHAPE: set-value recovery blocked, keyboard flip advances the walk"],
     },
   ],
