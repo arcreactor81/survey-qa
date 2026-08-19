@@ -793,6 +793,56 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
     assertEq(fm?.kind, "terminate", "and the row's own bound terminal still types it");
   });
 
+  test("THE SECOND ORPHANING: a section title leading with a KNOWN question id owns its rows", async () => {
+    // Run v2r_01m0d1qf7baq2g9evn8mkje28n: the option-set chunk asserting S10's rows 10-13
+    // was itself section-scoped, so the label join had nothing to join through and
+    // "Finance Director → screenout" still walked. The section-title convention is
+    // accepted only when the leading token names a question some BOUND instance targets.
+    const mod = await worker();
+    const rev = routeRevision();
+    rev.requirements.push({ requirementLineageId: "REQ-SECT", facet: "terminate", scope: "section:S10. Which of the following best describes your current role?" });
+    rev.facetInstances.push({
+      facetInstanceId: "fi_route_section_scoped",
+      requirementLineageId: "REQ-SECT",
+      targetQuestionId: null,
+      case: {
+        kind: "route",
+        routeAnswer: { code: "24", label: "Procurement Director" },
+        expectedDestination: { questionId: null, screen: null, terminal: "screenout" },
+      },
+    });
+    const routes = mod.plan.sealedRouteDestinations(rev);
+    const pd = routes.find((r) => r.label === "Procurement Director");
+    assertEq(pd?.question, "S10", "the section title's leading id, validated against bound instances, owns the row");
+    assertEq(pd?.kind, "terminate");
+  });
+
+  test("counterproof: a section token NO bound instance targets is refused, and prose titles never match", async () => {
+    const mod = await worker();
+    const rev = routeRevision();
+    rev.requirements.push(
+      { requirementLineageId: "REQ-GHOST", facet: "terminate", scope: "section:Z99. A table of a question nobody bound" },
+      { requirementLineageId: "REQ-PROSE", facet: "terminate", scope: "section:Overview of the vaccination program" },
+    );
+    rev.facetInstances.push(
+      {
+        facetInstanceId: "fi_route_ghost",
+        requirementLineageId: "REQ-GHOST",
+        targetQuestionId: null,
+        case: { kind: "route", routeAnswer: { code: "1", label: "Ghost Row" }, expectedDestination: { questionId: null, screen: null, terminal: "screenout" } },
+      },
+      {
+        facetInstanceId: "fi_route_prose",
+        requirementLineageId: "REQ-PROSE",
+        targetQuestionId: null,
+        case: { kind: "route", routeAnswer: { code: "2", label: "Prose Row" }, expectedDestination: { questionId: null, screen: null, terminal: "screenout" } },
+      },
+    );
+    const routes = mod.plan.sealedRouteDestinations(rev);
+    assertEq(routes.some((r) => r.label === "Ghost Row" || r.label === "Prose Row"), false,
+      "an unvalidated section token must never mint an owner");
+  });
+
   test("counterproof: a label two questions both assert is REFUSED an owner, never guessed", async () => {
     const mod = await worker();
     const rev = routeRevision();

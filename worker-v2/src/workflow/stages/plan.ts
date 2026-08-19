@@ -773,6 +773,35 @@ export function sealedRouteDestinations(revision: {
       labelOwners.set(label, owners);
     }
   }
+  // SECOND JOIN, stated assumption. The option-fact join above has the same hole one level
+  // up: the option-set chunk asserting a table's later rows can ITSELF be section-scoped
+  // (measured live, run v2r_01m0d1qf7baq2g9evn8mkje28n: rows 10-13 of S10's table —
+  // "Finance Manager", "Finance Director" et al. — were asserted by a section-scoped chunk,
+  // so those four routes still had no owner and first-option walked into "Finance
+  // Director → screenout"). Questionnaires commonly lead a section title with the question
+  // id ("S10. Which of the following…"); that is a CONVENTION, so it is accepted only when
+  // the leading token both matches the question-id shape AND names a question some BOUND
+  // facet instance already targets — the sealed world validates the token, never the
+  // corpus. No match: the row stays unowned and unstamped, a named shortfall rather than
+  // a guess.
+  const boundQuestions = new Set<string>();
+  for (const fi of revision.facetInstances) {
+    const q = nonEmpty(fi.targetQuestionId);
+    if (q) boundQuestions.add(q);
+  }
+  const scopeByLineage = new Map<string, string>();
+  for (const r of revision.requirements) {
+    if (typeof (r as { scope?: unknown }).scope === "string") {
+      scopeByLineage.set(r.requirementLineageId, (r as { scope?: string }).scope!);
+    }
+  }
+  const sectionScopeOwner = (lineageId: string): string | null => {
+    const scope = scopeByLineage.get(lineageId);
+    if (!scope || !scope.startsWith("section:")) return null;
+    const m = /^section:\s*([A-Za-z]{1,4}\d{1,4}[a-z]?)\b/.exec(scope);
+    const token = m?.[1] ?? null;
+    return token && boundQuestions.has(token) ? token : null;
+  };
   const out: SealedRouteDestination[] = [];
   for (const fi of revision.facetInstances) {
     if (fi.case?.kind !== "route") continue;
@@ -782,6 +811,7 @@ export function sealedRouteDestinations(revision: {
       const owners = labelOwners.get(label);
       if (owners && owners.size === 1) question = [...owners][0]!;
     }
+    if (!question) question = sectionScopeOwner(fi.requirementLineageId);
     if (!question || !label) continue;
     // THE ROW'S OWN BOUND DESTINATION OUTRANKS THE REQUIREMENT'S FACET. One obligation
     // carries a whole routing table, so its single facet stamps every row — the live S10

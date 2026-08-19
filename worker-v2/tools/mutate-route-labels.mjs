@@ -125,6 +125,27 @@ await runMutantSuite({
       kills: ["counterproof: a label two questions both assert is REFUSED an owner, never guessed"],
     },
     {
+      name: "the section-title join is dropped (later table chunks lose their owner again)",
+      breaks:
+        "the run v2r_01m0d1qf7baq2g9evn8mkje28n class: an option-set chunk that is itself " +
+        "section-scoped leaves its rows without a label join, and only the section title's " +
+        "validated leading id can own them",
+      file: PLAN,
+      find: "    if (!question) question = sectionScopeOwner(fi.requirementLineageId);",
+      replace: "    if (false) question = sectionScopeOwner(fi.requirementLineageId);",
+      kills: ["THE SECOND ORPHANING: a section title leading with a KNOWN question id owns its rows"],
+    },
+    {
+      name: "the section token skips its bound-instance validation",
+      breaks:
+        "the guard that keeps the convention honest: any section title starting with an " +
+        "id-shaped token would mint an owner, including questions nothing ever bound",
+      file: PLAN,
+      find: "    return token && boundQuestions.has(token) ? token : null;",
+      replace: "    return token ? token : null;",
+      kills: ["counterproof: a section token NO bound instance targets is refused, and prose titles never match"],
+    },
+    {
       name: "pass B prompt version is not bumped (stale artifacts reused)",
       breaks:
         "the version gate. A pass-B artifact persisted under the old version would be " +
