@@ -912,6 +912,16 @@ suite("D42 — hidden platform plumbing does not disqualify a text-only screen",
   const hiddenPlumbing = () => [
     { idx: 0, tag: "input", type: "hidden", name: "__state", id: null, code: null, label: "", text: "", checked: null, value: "abc", valueIsUserSupplied: false, disabled: false, required: false, visible: false, operable: false, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
     { idx: 1, tag: "input", type: "hidden", name: "__seqno", id: null, code: null, label: "", text: "", checked: null, value: "41", valueIsUserSupplied: false, disabled: false, required: false, visible: false, operable: false, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
+    // The three that SURVIVE a visible/hidden filter on the live doorstep (run
+    // v2r_01m0ccpe…): the test-mode jump-menu select and the __bck/__fwd buttons.
+    // Navigation, not answers — the gate must see zero interactive controls here.
+    { idx: 13, tag: "select", type: "select", name: "", id: null, code: null, label: "function jumpLink(ob", text: "", checked: null, value: null, valueIsUserSupplied: false, disabled: false, required: false, visible: true, operable: true, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false, options: [
+      { order: 0, code: "S10", label: "S10", selected: false, disabled: false },
+      { order: 1, code: "S20", label: "S20", selected: false, disabled: false },
+      { order: 2, code: "A10", label: "A10", selected: false, disabled: false },
+    ] },
+    { idx: 14, tag: "input", type: "button", name: "__bck", id: null, code: null, label: "", text: "", checked: null, value: null, valueIsUserSupplied: false, disabled: false, required: false, visible: true, operable: true, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
+    { idx: 15, tag: "input", type: "submit", name: "__fwd", id: null, code: null, label: "", text: "", checked: null, value: null, valueIsUserSupplied: false, disabled: false, required: false, visible: true, operable: true, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
   ];
   const plumbedInfo = (visibleText) =>
     screen("", {

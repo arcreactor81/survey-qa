@@ -3865,12 +3865,21 @@ export function advanceSignals(before: RenderedScreen, after: RenderedScreen): A
   // INTERACTIVE means answerable. The same live interstitials carry 17 HIDDEN platform
   // controls (__state, __seqno, __version — form plumbing, visible:false), measured
   // 2026-08-19 on run v2r_01m0ca98… where a controls.length===0 gate never opened and
-  // the walk stalled at the doorstep a second time. Hidden plumbing cannot be answered,
-  // so it cannot disqualify a screen from being text-only. Stated limitation: a
+  // the walk stalled at the doorstep a second time. And the three controls that survive
+  // a visible/hidden filter — the test-mode jump-menu select, __bck and __fwd
+  // button/submit inputs (run v2r_01m0ccpe…, same day) — are NAVIGATION, not answers.
+  // Hidden plumbing, navigation buttons and platform jump widgets cannot be answered,
+  // so none of them can disqualify a screen from being text-only. Stated limitation: a
   // self-updating control-less screen (a ticking counter) would also register; that
   // failure mode is visible in evidence as an advance whose screens share their prose.
+  const NAVIGATION_CONTROL_TYPES = new Set(["hidden", "button", "submit", "reset", "image"]);
   const interactiveControls = (s: RenderedScreen): number =>
-    s.controls.filter((c) => c.visible !== false && c.type !== "hidden").length;
+    s.controls.filter(
+      (c) =>
+        c.visible !== false &&
+        !NAVIGATION_CONTROL_TYPES.has(String(c.type ?? "")) &&
+        !isPlatformNavigationWidget(c, s),
+    ).length;
   if (
     interactiveControls(before) === 0 &&
     interactiveControls(after) === 0 &&
