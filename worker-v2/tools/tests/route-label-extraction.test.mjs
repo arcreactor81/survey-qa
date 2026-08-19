@@ -21,6 +21,7 @@ const { sealedRouteDestinations, stampSurvivalHints, survivalAvoidIndex } = mod.
 const { coerceRequirement } = mod.coerce;
 const { cleanRenderingArtifacts, RENDERING_ARTIFACT_VOCAB_VERSION } = mod.anchorCleaner;
 const { PROMPT_VERSION_A, PROMPT_VERSION_B, SYSTEM_A, SYSTEM_B } = mod.prompts;
+const expander = mod.expand;
 
 /* ================================================================
  * 1. ANCHOR CLEANER — unit tests
@@ -562,5 +563,26 @@ suite("prompt versions reflect routing table decomposition", () => {
       SYSTEM_B.includes('"ambiguities" as a genuine ambiguity rather than guessing'),
       "SYSTEM_B instructs ambiguity recording for unresolvable labels",
     );
+  });
+});
+
+suite("bindDestination: the TERMINATE keyword family binds through its wrapping", () => {
+  // Measured 19 Aug 2026 (contract cr_fe65a470…, run v2r_01m0cjew…): the live routing
+  // table's "[TERMINATE IMMEDIATELY]" bound to NOTHING, every such route landed
+  // ROUTE_DESTINATION_NOT_BOUND, and the planner preferred a documented termination.
+  // Brackets and adverbs are wrapping; the keyword decides.
+  test("bracketed and adorned terminate phrases bind as the screenout terminal", () => {
+    const vocab = new Map();
+    for (const phrase of ["[TERMINATE IMMEDIATELY]", "Terminate", "TERMINATE SURVEY", "disqualify", "Not eligible — end"]) {
+      const b = expander.bindDestination(phrase, vocab);
+      assertEq(b.destination?.terminal, "screenout", `${phrase} must read as a terminal`);
+    }
+  });
+
+  test("a relative continue still refuses to bind — order-guessing stays forbidden", () => {
+    const vocab = new Map();
+    const b = expander.bindDestination("[CONTINUE]", vocab);
+    assertEq(b.destination, null, "continue names no target and must stay unbound");
+    assert(String(b.expectationGap?.code ?? "").includes("NOT_BOUND"), "the refusal stays named");
   });
 });

@@ -757,9 +757,21 @@ export function sealedRouteDestinations(revision: {
     const question = nonEmpty(fi.targetQuestionId);
     const label = nonEmpty(fi.case.routeAnswer?.label ?? null);
     if (!question || !label) continue;
-    const facet = facetByLineage.get(fi.requirementLineageId);
-    if (facet === "terminate") out.push({ question, label, kind: "terminate" });
-    else if (facet === "skip-rule") out.push({ question, label, kind: "continue" });
+    // THE ROW'S OWN BOUND DESTINATION OUTRANKS THE REQUIREMENT'S FACET. One obligation
+    // carries a whole routing table, so its single facet stamps every row — the live S10
+    // table's "[TERMINATE IMMEDIATELY]" rows inherited "skip-rule" from their obligation
+    // and became PREFER labels, steering run v2r_01m0cjew… into a documented termination
+    // (19 Aug 2026). A terminal binding is a terminate; a bound question id is a continue;
+    // an UNBOUND row must never steer positively — "the binder could not read it" is not
+    // "the document says go here". The facet arm survives only for terminates, where the
+    // worst case of over-avoiding is a filler picked elsewhere.
+    const dest = (fi.case as { expectedDestination?: { questionId?: string | null; terminal?: string | null } | null })
+      .expectedDestination;
+    if (dest?.terminal) out.push({ question, label, kind: "terminate" });
+    else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, kind: "continue" });
+    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {
+      out.push({ question, label, kind: "terminate" });
+    }
   }
   return out;
 }

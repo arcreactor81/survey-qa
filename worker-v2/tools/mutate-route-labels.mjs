@@ -18,31 +18,40 @@ await runMutantSuite({
   filter: "route-label",
   mutants: [
     {
-      name: "sealedRouteDestinations stops reading terminate facets",
+      name: "sealedRouteDestinations stops reading bound terminals",
       breaks:
-        "the typed route source's terminate channel. A terminate facet instance with a " +
-        "verbatim label would no longer become an avoid_labels entry, so the walker would " +
-        "click documented screen-out answers",
+        "the destination-first terminate channel: a route whose OWN binding says terminal " +
+        "would no longer become an avoid_labels entry, so the walker would click documented " +
+        "screen-out answers whenever the requirement facet happens not to say terminate",
       file: PLAN,
-      find: '    if (facet === "terminate") out.push({ question, label, kind: "terminate" });',
-      replace: '    if (false && facet === "terminate") out.push({ question, label, kind: "terminate" });',
-      kills: [
-        "extracts terminate destinations with verbatim labels",
-        "terminate routes become avoid entries",
-      ],
+      find: '    if (dest?.terminal) out.push({ question, label, kind: "terminate" });',
+      replace: '    if (false) out.push({ question, label, kind: "terminate" });',
+      kills: ["a route with its OWN bound terminal is a terminate whatever its requirement facet says"],
     },
     {
-      name: "sealedRouteDestinations stops reading skip-rule facets",
+      name: "sealedRouteDestinations stops reading bound continue destinations",
       breaks:
-        "the typed route source's continue channel. A skip-rule facet instance with a " +
-        "verbatim label would no longer become a prefer_labels entry, so the walker would " +
-        "get no positive steering",
+        "the typed route source's continue channel. A route bound to a named question would " +
+        "no longer become a prefer_labels entry, so the walker would get no positive steering",
       file: PLAN,
-      find: '    else if (facet === "skip-rule") out.push({ question, label, kind: "continue" });',
-      replace: '    else if (false && facet === "skip-rule") out.push({ question, label, kind: "continue" });',
+      find: '    else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, kind: "continue" });',
+      replace: '    else if (false) out.push({ question, label, kind: "continue" });',
       kills: [
         "extracts continue destinations with verbatim labels",
         "continue routes become prefer entries",
+      ],
+    },
+    {
+      name: "the facet-terminate fallback is dropped (label-only terminates stop avoiding)",
+      breaks:
+        "the conservative arm for terminate facets whose rows carry no binding — the old " +
+        "contract shape. Their labels stop joining avoid_labels and the walker clicks them",
+      file: PLAN,
+      find: '    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {',
+      replace: '    else if (false) {',
+      kills: [
+        "extracts terminate destinations with verbatim labels",
+        "terminate routes become avoid entries",
       ],
     },
     {
@@ -71,6 +80,27 @@ await runMutantSuite({
         "strips a single [ANCHOR BELOW] marker and counts it",
         "strips multiple rendering artifacts and counts each",
       ],
+    },
+    {
+      name: "the TERMINATE keyword family is forgotten again (bracketed terminates go unbound)",
+      breaks:
+        "the v2r_01m0cjew… class at its root: '[TERMINATE IMMEDIATELY]' reads as no terminal " +
+        "state, every such route lands ROUTE_DESTINATION_NOT_BOUND, and the planner is one " +
+        "typing slip away from preferring documented terminations",
+      file: "src/extract/expand.ts",
+      find: '  if (/terminat|disqualif|not\\s+eligible|unable\\s+to\\s+accept/i.test(dest)) return "screenout";',
+      replace: "  // (terminate family dropped by mutant)",
+      kills: ["bracketed and adorned terminate phrases bind as the screenout terminal"],
+    },
+    {
+      name: "unbound routes steer positively again (unparsed reads as documented continue)",
+      breaks:
+        "the honesty rule that walked run v2r_01m0cjew… into a documented termination: a row " +
+        "whose destination the binder could not read must never become a prefer label",
+      file: PLAN,
+      find: '    else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, kind: "continue" });',
+      replace: '    else if (true) out.push({ question, label, kind: "continue" });',
+      kills: ["typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped"],
     },
     {
       name: "pass B prompt version is not bumped (stale artifacts reused)",

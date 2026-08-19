@@ -674,7 +674,22 @@ const routeRevision = (over = {}) => ({
       facetInstanceId: "fi_cont",
       requirementLineageId: "REQ-C",
       targetQuestionId: "S10",
-      case: { kind: "route", routeAnswer: { code: "19", label: "Director of Population Health" } },
+      // A continue now requires the row's OWN bound destination: the live S10 table's
+      // unbound "[TERMINATE IMMEDIATELY]" rows inherited skip-rule from their shared
+      // obligation and were PREFERRED into a documented termination (run v2r_01m0cjew…).
+      case: {
+        kind: "route",
+        routeAnswer: { code: "19", label: "Director of Population Health" },
+        expectedDestination: { questionId: "S20", screen: null, terminal: null },
+      },
+    },
+    // An UNBOUND row under a skip-rule requirement must never steer positively — this is
+    // the exact shape that walked into the terminate.
+    {
+      facetInstanceId: "fi_unbound_skiprule",
+      requirementLineageId: "REQ-C",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "21", label: "Pharmacist" } },
     },
     // A route under any OTHER facet states a destination this pass must not guess about.
     {
@@ -713,6 +728,9 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
   test("typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped", async () => {
     const mod = await worker();
     const routes = mod.plan.sealedRouteDestinations(routeRevision());
+    // A bound question id types a continue; a facet terminate still types a terminate;
+    // an UNBOUND row under a skip-rule requirement (fi_unbound_skiprule) yields NOTHING —
+    // "the binder could not read it" is not "the document says go here".
     assertEq(
       JSON.stringify(routes),
       JSON.stringify([
@@ -720,6 +738,24 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
         { question: "S10", label: "Director of Population Health", kind: "continue" },
       ]),
     );
+  });
+
+  test("a route with its OWN bound terminal is a terminate whatever its requirement facet says", async () => {
+    const mod = await worker();
+    const rev = routeRevision();
+    rev.facetInstances.push({
+      facetInstanceId: "fi_term_by_dest",
+      requirementLineageId: "REQ-C", // skip-rule facet — the destination must outrank it
+      targetQuestionId: "S10",
+      case: {
+        kind: "route",
+        routeAnswer: { code: "22", label: "Finance Director" },
+        expectedDestination: { questionId: null, screen: null, terminal: "screenout" },
+      },
+    });
+    const routes = mod.plan.sealedRouteDestinations(rev);
+    const fd = routes.find((r) => r.label === "Finance Director");
+    assertEq(fd?.kind, "terminate", "a bound terminal under a skip-rule requirement must still avoid");
   });
 
   test("THE MEASURED STARVATION: empty model + sealed routes still stamps avoid AND prefer", async () => {
