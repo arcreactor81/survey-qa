@@ -146,6 +146,22 @@ export interface WalkOptions {
   advanceTimeoutMs: number;
   /** Bound on ONE screen read before it is recorded as hung (default READ_SCREEN_TIMEOUT_MS). */
   readTimeoutMs?: number;
+  /**
+   * Ceiling on waiting for a WITHHELD forward control to open — a forced-exposure / minimum-dwell
+   * gate (see `awaitForwardRelease`). A SAFETY BOUND, never a duration estimate: the wait ends the
+   * moment the control opens. Default `FORWARD_RELEASE_MAX_WAIT_MS`; operators raise it with
+   * `EXEC_FORWARD_RELEASE_MAX_WAIT_MS` for an instrument whose gates are longer than the default.
+   */
+  forwardReleaseMaxWaitMs?: number;
+  /**
+   * Poll interval and terminal-screen patience for the same wait. INJECTABLE FOR THE SAME REASON
+   * `readTimeoutMs` is: a fixture must be able to exercise the real decision procedure in
+   * milliseconds instead of sleeping real seconds inside every mutant run. Production passes
+   * nothing and gets the defaults, which are asserted by their own test so a mutant that weakens
+   * production timing still dies.
+   */
+  forwardReleasePollMs?: number;
+  forwardReleaseTerminalMaxWaitMs?: number;
   /** Bound on EVERY page call before it rejects as hung (default PAGE_CALL_TIMEOUT_MS). */
   pageCallTimeoutMs?: number;
   /**
@@ -3955,6 +3971,13 @@ async function applyAcrossQuestionRoots(
  * now says so in the record, because a press chosen by elimination and a press chosen by
  * identity are different acts and were previously indistinguishable afterwards.
  */
+/**
+ * Direction-only glyphs that NAME a back control. Hoisted so the withheld-forward reader
+ * below applies exactly the same direction convention the resolver does — two readers
+ * disagreeing about what "<<" means would be a defect that only showed up on live pages.
+ */
+const symbolicBack = (label: string): boolean => /^(?:<+|‹|«|←|⬅|◀|⏪)$/u.test(label.trim());
+
 export type AdvanceControlResolution =
   | { kind: "none"; candidates: [] }
   | { kind: "unique"; control: { idx: number; label: string; via: string }; candidates: Array<{ idx: number; label: string; via: string }> }
@@ -3974,7 +3997,6 @@ export function resolveAdvanceControl(screen: RenderedScreen): AdvanceControlRes
   // Defense in depth for artifacts read before the page classifier learned direction-only
   // glyphs: `<<`/left-arrow is Back evidence, never an unknown button eligible to become the
   // sole-forward candidate. This is a generic direction convention, not a platform selector.
-  const symbolicBack = (label: string): boolean => /^(?:<+|‹|«|←|⬅|◀|⏪)$/u.test(label.trim());
   const only = cands.filter((b) => b.role !== "back" && !symbolicBack(b.label)).map((b) => ({
     idx: b.idx,
     label: b.label,
@@ -3995,6 +4017,157 @@ export function resolveAdvanceControl(screen: RenderedScreen): AdvanceControlRes
 function nextButton(screen: RenderedScreen): { idx: number; label: string; via: string } | null {
   const resolution = resolveAdvanceControl(screen);
   return resolution.kind === "unique" ? resolution.control : null;
+}
+
+/**
+ * A FORWARD CONTROL THE PAGE IS HOLDING BACK IS NOT A FORWARD CONTROL THE PAGE LACKS.
+ *
+ * MEASURED LIVE 19 Aug 2026 (run `v2r_01m0dj2vcznwcw8krwxhyw5qan`, screen 42, question C20):
+ * the page rendered its `>>` control with `visible: false` and printed "You will be allowed to
+ * proceed in 15 seconds" — a forced-exposure gate, the standard way a conjoint or ad-test screen
+ * makes a respondent look at the stimulus before answering. `resolveAdvanceControl` only ever
+ * considers controls operable AT THE INSTANT OF THE READ, so the walk concluded "no control
+ * advances this screen", ended, and reported an ending on a screen that would have opened by
+ * itself a few seconds later, with 79% of the survey unreached.
+ *
+ * THE ASSUMPTION, STATED: a control that is PRESENT in the page but not operable, and that would
+ * be a forward candidate if it were operable, is evidence that this screen HAS a way on and is
+ * withholding it. That is a fact about the DOM, not about a platform and not about a language —
+ * nothing here reads the countdown's words, which would only work on an English page.
+ *
+ * WHAT IT DOES NOT ASSUME: that the control will ever open, and — the point the owner made
+ * binding on 19 Aug 2026 — HOW LONG it takes. THIS survey's gate is 15 seconds; that number
+ * appears NOWHERE in this code. The mechanism polls until the page opens the control or a ceiling
+ * elapses, so a survey with a 5-second gate costs 5 seconds, a survey with a 45-second gate costs
+ * 45, and a survey with no gate at all costs nothing. The ceiling is a safety bound, not a
+ * duration estimate, and an operator can raise it (`EXEC_FORWARD_RELEASE_MAX_WAIT_MS`) without a
+ * code change.
+ *
+ * NOTHING HERE READS THE COUNTDOWN'S WORDS. Not on the way in (the trigger is the DOM state of
+ * the control) and not on the way out (release is proved by the control becoming resolvable).
+ * A gate whose page is written in German, or which prints no countdown at all, behaves the same.
+ *
+ * WHEN THE CEILING WINS the walk ends exactly where it ended before — but with the withheld
+ * control NAMED in the outcome and counted as a reader limitation, so a gate that never opens can
+ * never be read as a thank-you page that simply had nothing left to press.
+ */
+/** How often to look again. A gate that opens is noticed within one interval of opening. */
+export const FORWARD_RELEASE_POLL_MS = 3_000;
+/**
+ * The DEFAULT ceiling, deliberately generous: it exists to stop an infinite wait, not to predict
+ * any survey's dwell. Override per deployment with `EXEC_FORWARD_RELEASE_MAX_WAIT_MS`.
+ */
+export const FORWARD_RELEASE_MAX_WAIT_MS = 90_000;
+/**
+ * THE SHORT PATIENCE FOR A SCREEN THAT LOOKS LIKE AN ENDING, and the discrimination is stated
+ * because it is a real trade: a screen with NOTHING LEFT TO ANSWER is what every completed walk
+ * ends on, and a thank-you page that ships a hidden Next in its platform template would otherwise
+ * cost the full ceiling on every walk of every run.
+ *
+ * SO: no answerable controls => this short cap, UNLESS the page's own prose keeps changing between
+ * polls. A ticking countdown rewrites its text (MEASURED: "…in 15 seconds" -> "…in 10 seconds"
+ * while the screen SIGNATURE stayed byte-identical, run v2r_01m0dj2vcznwcw8krwxhyw5qan step 42),
+ * and that change is proof the page is still working, which restores the full ceiling. A static
+ * page has nothing to wait for.
+ *
+ * STATED LIMITATION: a control-free screen that gates its Next on a SILENT timer — no visible
+ * countdown, no other changing text — gets only the short cap, and if its gate is longer than
+ * that the walk ends with the withheld control named. That is a named limitation, not a wrong
+ * answer, and it is the price of not delaying every real completion page.
+ */
+export const FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS = 9_000;
+export const FORWARD_CONTROL_WITHHELD = "forward-control-withheld";
+
+export type WithheldForwardControl = { idx: number; label: string; why: string };
+
+export type ForwardReleaseWait = {
+  /** The forward-eligible controls this screen had, and could not be pressed. */
+  withheld: WithheldForwardControl[];
+  waitedMs: number;
+  polls: number;
+  /** The bound this wait was actually held to, after the terminal-looking discrimination. */
+  ceilingMs: number;
+  /** True only when a re-read actually produced a resolvable advance control. */
+  released: boolean;
+  /** The freshest screen this wait read, or null when it never re-read one. */
+  screen: RenderedScreen | null;
+};
+
+/** The screen's own prose — what a page rewrites while it is counting down. */
+const screenProse = (s: RenderedScreen): string =>
+  `${s.questionText ?? ""}\n${s.instructionText ?? ""}\n${s.visibleText ?? ""}`;
+
+export function withheldForwardControls(screen: RenderedScreen): WithheldForwardControl[] {
+  return screen.buttons
+    .filter((b) => !b.visible || b.disabled)
+    .filter((b) => b.role === "next" || (b.role !== "back" && !symbolicBack(b.label)))
+    .map((b) => ({
+      idx: b.idx,
+      label: b.label,
+      why: !b.visible && b.disabled ? "present but hidden and disabled" : !b.visible ? "present but hidden" : "present but disabled",
+    }));
+}
+
+/**
+ * Wait, boundedly, for a withheld forward control to open. Returns without waiting at all when
+ * the screen has no withheld forward control — a screen that genuinely has no way on must still
+ * cost nothing, because that is what the last screen of every completed walk looks like.
+ */
+export async function awaitForwardRelease(
+  page: PageLike,
+  screen: RenderedScreen,
+  opts: {
+    readTimeoutMs?: number;
+    deadline: number;
+    forwardReleaseMaxWaitMs?: number;
+    forwardReleasePollMs?: number;
+    forwardReleaseTerminalMaxWaitMs?: number;
+  },
+  what: string,
+): Promise<ForwardReleaseWait> {
+  const withheld = withheldForwardControls(screen);
+  const out: ForwardReleaseWait = { withheld, waitedMs: 0, polls: 0, ceilingMs: 0, released: false, screen: null };
+  if (withheld.length === 0) return out;
+  const configured = Math.max(0, Math.floor(opts.forwardReleaseMaxWaitMs ?? FORWARD_RELEASE_MAX_WAIT_MS));
+  const pollMs = Math.max(1, Math.floor(opts.forwardReleasePollMs ?? FORWARD_RELEASE_POLL_MS));
+  const terminalCap = Math.max(0, Math.floor(opts.forwardReleaseTerminalMaxWaitMs ?? FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS));
+  // See FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS: nothing left to answer means this looks
+  // like an ending, and an ending must not cost the full ceiling on every walk.
+  let ceiling = answerableControls(screen).length === 0 ? Math.min(configured, terminalCap) : configured;
+  let prose = screenProse(screen);
+  const started = Date.now();
+  while (
+    Date.now() - started + pollMs <= ceiling &&
+    Date.now() + pollMs < opts.deadline
+  ) {
+    await sleep(pollMs);
+    out.polls += 1;
+    out.waitedMs = Date.now() - started;
+    let fresh: RenderedScreen | null = null;
+    try {
+      fresh = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `forward-release poll on ${what}`);
+    } catch {
+      // A read we could not make is not a release we can prove. Stop and report the wait.
+      break;
+    }
+    out.screen = fresh;
+    if (resolveAdvanceControl(fresh).kind !== "none") {
+      out.released = true;
+      out.ceilingMs = ceiling;
+      return out;
+    }
+    // Nothing left to wait FOR: the screen no longer holds a forward control back, so further
+    // polling would just be latency on a genuine dead end.
+    if (withheldForwardControls(fresh).length === 0) break;
+    // PROOF OF LIFE. A page rewriting its own prose between polls is a page still working, so a
+    // screen that looked terminal earns back the full ceiling. Never shortens a ceiling.
+    const freshProse = screenProse(fresh);
+    if (freshProse !== prose) ceiling = configured;
+    prose = freshProse;
+  }
+  out.waitedMs = Date.now() - started;
+  out.ceilingMs = ceiling;
+  return out;
 }
 
 /**
@@ -4336,6 +4509,20 @@ export function isPlatformNavigationWidget(
  * instruments, the completion page reports `progress.now: null`. A conjunction requiring 100%
  * would have classified every real completion as unknown.
  */
+/**
+ * CONTROLS A RESPONDENT COULD STILL ANSWER on this screen — the one definition, shared by the
+ * ending classifier and by the forward-release wait, so "this screen looks like an ending" means
+ * the same thing in both. Platform navigation widgets (a question-jump menu) are excluded: they
+ * are a way to move, never a question to answer.
+ */
+export function answerableControls(screen: RenderedScreen): RenderedScreen["controls"] {
+  return screen.controls.filter(
+    (c) => !c.disabled && !c.readOnly && (c.operable ?? c.visible) &&
+      (isValueEntry(c.type) || c.type === "radio" || c.type === "checkbox" || c.type === "select") &&
+      !isPlatformNavigationWidget(c, screen),
+  );
+}
+
 export function classifyEnding(
   final: RenderedScreen | null,
   ctx: {
@@ -4362,11 +4549,7 @@ export function classifyEnding(
   }
 
   const advance = nextButton(final);
-  const answerable = final.controls.filter(
-    (c) => !c.disabled && !c.readOnly && (c.operable ?? c.visible) &&
-      (isValueEntry(c.type) || c.type === "radio" || c.type === "checkbox" || c.type === "select") &&
-      !isPlatformNavigationWidget(c, final),
-  );
+  const answerable = answerableControls(final);
   /**
    * THE PROVENANCE LINE THAT TRAVELS WITH EVERY ENDING. Not decoration: the fix that widened
    * the walker's input types also made it likelier to reach a terminal page, and the value it
@@ -4502,12 +4685,28 @@ export function classifyEnding(
   }
 
   // ---- 4. an ending this reader cannot name ----
+  //
+  // A WITHHELD WAY FORWARD IS REPORTED HERE AS EVIDENCE, NOT PROMOTED TO A KIND. A hidden or
+  // disabled Next on the final screen is a strong hint the walk stopped BEFORE the ending rather
+  // than at it — but a real thank-you page whose wording this reader does not know can carry a
+  // hidden Next from the same platform template, and turning that into `stalled` would be a
+  // POSITIVE WRONG CLAIM about a survey that actually completed. `unclassified` plus the named
+  // control is the honest shape: the fact is visible, and nothing is asserted from it.
+  const withheldForward = withheldForwardControls(final);
   return {
     kind: "unclassified",
     evidence: [
       `no enabled control advances the final screen, and nothing on it says which kind of ending this is: no ` +
         `screen-out wording, no completion wording, and ${final.progress.present ? "a progress indicator this reader could not read a value from" : "no progress indicator"}`,
       `${answerable.length} answerable control(s) remain on it`,
+      ...(withheldForward.length > 0
+        ? [
+            `${withheldForward.length} forward control(s) are PRESENT on this screen and out of reach (` +
+              withheldForward.map((w) => `#${w.idx} ${JSON.stringify(w.label)} ${w.why}`).join("; ") +
+              `) — a screen still holding a way forward may be one this walk stopped before rather than at, so this ` +
+              `ending is unnamed and NOT a completion`,
+          ]
+        : []),
       `outcome "${ctx.outcome}"`,
       ...provenance,
     ],
@@ -4905,7 +5104,33 @@ export async function walkPath(
       }
     }
 
-    const navigation = resolveAdvanceControl(afterAction ?? before);
+    let navigation = resolveAdvanceControl(afterAction ?? before);
+    // A SCREEN THAT IS HOLDING ITS WAY FORWARD BACK IS NOT A SCREEN WITHOUT ONE. See
+    // `awaitForwardRelease`: a forced-exposure gate hides Next for a few seconds, and reading the
+    // screen once at that instant reported the end of the survey on screen 42 of 200-odd. Only
+    // run on a screen this step actually re-read — waiting on the PRE-ACTION read would be
+    // deciding from a screen the walk has since changed.
+    let forwardRelease: ForwardReleaseWait | null = null;
+    if (navigation.kind === "none" && afterAction) {
+      forwardRelease = await timed(
+        () => awaitForwardRelease(page, afterAction!, opts, `step ${stepIndex}`),
+        (ms) => (phaseAdvanceMs += ms),
+      );
+      if (forwardRelease.screen) {
+        afterAction = forwardRelease.screen;
+        navigation = resolveAdvanceControl(afterAction);
+      }
+      if (forwardRelease.withheld.length > 0 && !forwardRelease.released) {
+        recordReaderLimitation(
+          FORWARD_CONTROL_WITHHELD,
+          `screen ${stepIndex} kept ${forwardRelease.withheld.length} forward control(s) out of reach for the whole ` +
+            `${forwardRelease.waitedMs}ms this walk waited across ${forwardRelease.polls} re-read(s) ` +
+            `(ceiling ${forwardRelease.ceilingMs}ms): ` +
+            forwardRelease.withheld.map((w) => `#${w.idx} ${JSON.stringify(w.label)} ${w.why}`).join("; "),
+          forwardRelease.withheld.length,
+        );
+      }
+    }
     const nb = navigation.kind === "unique" ? navigation.control : null;
     const afterActionCapture = afterAction
       ? recordEpoch(
@@ -5003,6 +5228,14 @@ export async function walkPath(
       // here, where an `outcome`-reading consumer cannot miss it.
       outcomeDetail =
         `screen ${stepIndex} offered no enabled control that advances the survey` +
+        // A WITHHELD WAY ON IS THE OPPOSITE OF AN ENDING, so it is said first and said loudly:
+        // the sentence above is word-for-word what a thank-you page produces.
+        (forwardRelease && forwardRelease.withheld.length > 0
+          ? ` — BUT ${forwardRelease.withheld.length} FORWARD CONTROL(S) ARE PRESENT ON IT AND OUT OF REACH (` +
+            forwardRelease.withheld.map((w) => `#${w.idx} ${JSON.stringify(w.label)} ${w.why}`).join("; ") +
+            `), STILL out of reach after ${forwardRelease.waitedMs}ms of waiting across ${forwardRelease.polls} ` +
+            `re-read(s), so this is a screen the survey did not open, not the end of the survey`
+          : "") +
         (unfillable.length > 0
           ? ` — AND THE WALKER LEFT ${unfillable.length} CONTROL(S) ON IT UNANSWERED, so this is not necessarily the ` +
             `end of the survey: ${nameUnfilled(unfillable)}`
@@ -5023,7 +5256,16 @@ export async function walkPath(
       // named itself and a press chosen by elimination are different evidence — the second is
       // how a reader that could not classify a single SurveyJS button still advanced screen 1
       // and looked healthy doing it.
-      detail: `${clickRes.detail} via ${nb.via}`,
+      // AND WHETHER THIS WALK HAD TO WAIT FOR THE CONTROL TO OPEN. A press on a control the page
+      // withheld is a different act from a press on one it offered, and a run that silently waited
+      // 15 seconds per screen should say so in its own receipts.
+      detail:
+        `${clickRes.detail} via ${nb.via}` +
+        (forwardRelease && forwardRelease.released
+          ? `; the page WITHHELD this control (${forwardRelease.withheld.map((w) => `#${w.idx} ${w.why}`).join("; ")}) ` +
+            `and forward control enabled after ~${Math.round(forwardRelease.waitedMs / 1000)}s of polling ` +
+            `(${forwardRelease.waitedMs}ms, ${forwardRelease.polls} re-read(s), ceiling ${forwardRelease.ceilingMs}ms)`
+          : ""),
     });
 
     // Did the survey move? The baseline is AFTER answers were applied, so answer-only state
@@ -5270,7 +5512,28 @@ export async function walkPath(
             ),
           ));
         }
-        const recoveryNavigation = recoveryBaseline ? resolveAdvanceControl(recoveryBaseline) : { kind: "none" as const, candidates: [] };
+        let recoveryNavigation: AdvanceControlResolution = recoveryBaseline
+          ? resolveAdvanceControl(recoveryBaseline)
+          : { kind: "none" as const, candidates: [] };
+        // The same gate can re-arm after a rejected submit: the platform re-renders the screen and
+        // starts its forced-exposure timer again. Without this, a recovery round would read "no way
+        // on" and end the walk as blocked on a screen that was about to open.
+        if (recoveryNavigation.kind === "none" && recoveryBaseline) {
+          const held = await awaitForwardRelease(page, recoveryBaseline, opts, `step ${stepIndex} recovery round ${round}`);
+          if (held.screen) {
+            recoveryBaseline = held.screen;
+            recoveryNavigation = resolveAdvanceControl(recoveryBaseline);
+          }
+          if (held.withheld.length > 0 && !held.released) {
+            recordReaderLimitation(
+              FORWARD_CONTROL_WITHHELD,
+              `screen ${stepIndex} recovery round ${round} kept ${held.withheld.length} forward control(s) out of reach for ` +
+                `the whole ${held.waitedMs}ms this walk waited across ${held.polls} re-read(s): ` +
+                held.withheld.map((w) => `#${w.idx} ${JSON.stringify(w.label)} ${w.why}`).join("; "),
+              held.withheld.length,
+            );
+          }
+        }
         if (recoveryNavigation.kind === "ambiguous") {
           recoveryAmbiguity = `screen ${stepIndex} exposes ${recoveryNavigation.candidates.length} usable forward candidates after recovery answers`;
           break;

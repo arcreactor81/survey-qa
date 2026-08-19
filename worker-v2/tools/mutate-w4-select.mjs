@@ -504,5 +504,136 @@ await runMutantSuite({
       replace: "            if (setFillsSeen && !flippedToKeyboard) { fillVia = \"set\"; flippedToKeyboard = true; }",
       kills: ["THE MEASURED SHAPE: set-value recovery blocked, keyboard flip advances the walk"],
     },
+    {
+      name: "the walk never waits for a withheld forward control",
+      breaks:
+        "the C20 lesson: a minimum-dwell gate hides Next for a few seconds, the walk reads " +
+        "the screen once at that instant, calls it the end of the survey and stops with " +
+        "four fifths of the instrument unreached",
+      file: DR,
+      find: `    if (navigation.kind === "none" && afterAction) {`,
+      replace: `    if (false && navigation.kind === "none" && afterAction) {`,
+      kills: ["THE WALK ITSELF waits out the gate, presses the control that opened, and puts the measured wait in the receipt"],
+    },
+    {
+      name: "the measured wait vanishes from the press receipt",
+      breaks:
+        "a run that silently paused on every gated screen looks identical to one that never " +
+        "met a gate, and the dwell the site enforces stops being measurable evidence",
+      file: DR,
+      find: `        (forwardRelease && forwardRelease.released`,
+      replace: `        (false && forwardRelease && forwardRelease.released`,
+      kills: ["THE WALK ITSELF waits out the gate, presses the control that opened, and puts the measured wait in the receipt"],
+    },
+    {
+      name: "a gate that never opens is reported as a plain dead end",
+      breaks:
+        "'screen N offered no enabled control that advances the survey' is word-for-word what " +
+        "a thank-you page produces, so a gate that never opened would be read as a completion",
+      file: DR,
+      find: `    if (navigation.kind === "none" && afterAction) {`,
+      replace: `    if (navigation.kind === "none" && !afterAction) {`,
+      kills: ["THE WALK ITSELF ends honestly when the gate never opens, naming the control it could not press"],
+    },
+    {
+      name: "a back control counts as a withheld way forward",
+      breaks:
+        "every screen that renders a hidden or disabled Back button would be treated as gated, " +
+        "so real endings pay the ceiling and the signal stops meaning anything",
+      file: DR,
+      find: `    .filter((b) => b.role === "next" || (b.role !== "back" && !symbolicBack(b.label)))`,
+      replace: `    .filter((b) => true)`,
+      kills: ["a BACK control is never mistaken for a withheld way forward"],
+    },
+    {
+      name: "a screen with nothing withheld is waited on anyway",
+      breaks:
+        "the last screen of every completed walk has no forward control at all; making it pay " +
+        "a polling wait adds latency to every run and re-reads a page that has finished",
+      file: DR,
+      find: `  if (withheld.length === 0) return out;`,
+      replace: `  if (false) return out;`,
+      kills: ["counterproof: a screen with NO forward control at all never waits and never re-reads"],
+    },
+    {
+      name: "release is declared without a resolvable forward control",
+      breaks:
+        "the wait would claim the gate opened whenever it managed one re-read, so a screen that " +
+        "never opened would be pressed blindly and its ending mis-stated",
+      file: DR,
+      find: `    if (resolveAdvanceControl(fresh).kind !== "none") {`,
+      replace: `    if (true) {`,
+      kills: ["a gate that never opens stops at the ceiling and reports the wait it actually spent"],
+    },
+    {
+      name: "a terminal-looking screen gets the full ceiling",
+      breaks:
+        "a real completion page carrying a hidden Next in its platform template would delay " +
+        "every walk of every run by the whole ceiling before the run could finish",
+      file: DR,
+      find: `  let ceiling = answerableControls(screen).length === 0 ? Math.min(configured, terminalCap) : configured;`,
+      replace: `  let ceiling = configured;`,
+      kills: ["a screen that LOOKS TERMINAL and says nothing new stops at the short cap, not the configured ceiling"],
+    },
+    {
+      name: "a page visibly still counting down never earns its patience back",
+      breaks:
+        "a stimulus screen with nothing to answer and a real dwell gate would be abandoned at " +
+        "the short cap even while its own countdown was still ticking on screen",
+      file: DR,
+      find: `    if (freshProse !== prose) ceiling = configured;`,
+      replace: `    if (false) ceiling = configured;`,
+      kills: ["counterproof: a terminal-looking screen whose own prose keeps changing earns the full ceiling back"],
+    },
+    {
+      name: "the ending drops the withheld control from its evidence",
+      breaks:
+        "an unnamed ending on a screen that was still holding a way forward would read as a " +
+        "screen the survey simply finished on, with nothing in the record to say otherwise",
+      file: DR,
+      find: `  const withheldForward = withheldForwardControls(final);`,
+      replace: `  const withheldForward = [];`,
+      kills: ["the ending classifier reports a withheld way forward as evidence, and still refuses to name the ending"],
+    },
+    {
+      name: "production polls at fixture speed",
+      breaks:
+        "the deployed walk would hammer the live site every 20ms instead of every 3s, which is "
+        + "the fixture's injected interval leaking into production behaviour",
+      file: DR,
+      find: `export const FORWARD_RELEASE_POLL_MS = 3_000;`,
+      replace: `export const FORWARD_RELEASE_POLL_MS = 20;`,
+      kills: ["PRODUCTION TIMING DEFAULTS are pinned — fixtures inject milliseconds, the deployed walk must not"],
+    },
+    {
+      name: "the production ceiling shrinks to fixture scale",
+      breaks:
+        "every real minimum-dwell gate would outlast the ceiling and every gated screen would end "
+        + "the walk, which is precisely the defect this mechanism exists to close",
+      file: DR,
+      find: `export const FORWARD_RELEASE_MAX_WAIT_MS = 90_000;`,
+      replace: `export const FORWARD_RELEASE_MAX_WAIT_MS = 300;`,
+      kills: ["PRODUCTION TIMING DEFAULTS are pinned — fixtures inject milliseconds, the deployed walk must not"],
+    },
+    {
+      name: "the terminal-looking cap stops being a cap",
+      breaks:
+        "raising the short patience to the full ceiling makes every completion and screen-out page "
+        + "pay the whole wait on every walk of every run",
+      file: DR,
+      find: `export const FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS = 9_000;`,
+      replace: `export const FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS = 90_000;`,
+      kills: ["PRODUCTION TIMING DEFAULTS are pinned — fixtures inject milliseconds, the deployed walk must not"],
+    },
+    {
+      name: "the injected poll interval becomes the default",
+      breaks:
+        "an injection point that defaults to the fixture value ships the fixture's timing: a "
+        + "deployment passing no options would poll the live site at test speed",
+      file: DR,
+      find: `  const pollMs = Math.max(1, Math.floor(opts.forwardReleasePollMs ?? FORWARD_RELEASE_POLL_MS));`,
+      replace: `  const pollMs = Math.max(1, Math.floor(opts.forwardReleasePollMs ?? 20));`,
+      kills: ["a walk given no timing options at all falls back to the production defaults"],
+    },
   ],
 });

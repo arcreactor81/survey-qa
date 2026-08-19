@@ -2177,3 +2177,358 @@ suite("amendment 12: multi-question screens traverse per root instead of ending 
       "acting without ownership scoping would be a guess — the refusal stands");
   });
 });
+
+suite("amendment 13: a forward control the page withholds is waited for, boundedly", () => {
+  // Measured live 19 Aug 2026 (run v2r_01m0dj2vcznwcw8krwxhyw5qan, screen 42, question C20):
+  // the page rendered its ">>" with visible:false behind a minimum-dwell gate and the walk
+  // read "no control advances this screen" and ENDED, 79% of the survey unreached. The fix
+  // waits for the control to open. NO DURATION IS ENCODED: these fixtures release after a
+  // different number of polls each, and the same code handles all of them.
+  const NEXT_IDX = 7;
+
+  const mkCtrl = (idx, type, name, label) => ({
+    idx, tag: "input", type, name, id: null, code: null, label, text: "",
+    checked: false, value: "", valueIsUserSupplied: false, disabled: false, required: false,
+    visible: true, operable: true, actuatedVia: "self", labelIndex: null, placeholder: null,
+    maxlength: null, min: null, max: null, step: null, pattern: null, readOnly: false,
+  });
+
+  // A screen carrying a BACK control that is usable and a FORWARD control the page is holding
+  // back — the exact live shape. `prose` is what a countdown rewrites while it ticks.
+  const gatedScreen = ({ answerable = true, forwardVisible = false, prose = "you may proceed shortly" } = {}) => ({
+    at: "2026-08-19T12:00:00.000Z",
+    url: "https://fixture.invalid/gated",
+    title: "C20-like",
+    questionText: "",
+    instructionText: prose,
+    visibleText: prose,
+    grid: null,
+    collectedErrors: [],
+    readerLimitations: [],
+    controls: answerable
+      ? [mkCtrl(0, "radio", "best", "Profile Variation 1"), mkCtrl(1, "radio", "worst", "Profile Variation 1")]
+      : [],
+    optionGroups: answerable
+      ? [
+          { name: "best", kind: "radio", options: [{ order: 0, idx: 0, code: "1", label: "Profile Variation 1", checked: false, disabled: false, visible: true, operable: true, actuatedVia: "self", labelIndex: null }] },
+          { name: "worst", kind: "radio", options: [{ order: 0, idx: 1, code: "1", label: "Profile Variation 1", checked: false, disabled: false, visible: true, operable: true, actuatedVia: "self", labelIndex: null }] },
+        ]
+      : [],
+    questionRoots: [],
+    buttons: [
+      { idx: 6, label: "<<", labelSource: "code", role: "back", roleVia: "code:<<", disabled: false, visible: true },
+      { idx: NEXT_IDX, label: ">>", labelSource: "code", role: "other", roleVia: null, disabled: false, visible: forwardVisible },
+    ],
+    validationMessages: [],
+    progress: { present: false, kind: null, now: null, max: null, text: null },
+    counts: {
+      controls: answerable ? 2 : 0, optionGroups: answerable ? 2 : 0, options: answerable ? 2 : 0,
+      textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0,
+    },
+    screenSignature: "sig:gated",
+  });
+
+  // A page whose reads are counted, so "never waited" is provable rather than asserted.
+  const pollingPage = (screensInOrder) => {
+    const state = { reads: 0 };
+    return {
+      state,
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) {
+          const i = Math.min(state.reads, screensInOrder.length - 1);
+          state.reads += 1;
+          return screensInOrder[i];
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() { return []; },
+      async screenshot() { return new TextEncoder().encode("PNG-A13"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+  };
+
+  const repeat = (screen, n) => Array.from({ length: n }, () => screen);
+
+  // ---- the wiring: the WALK itself must wait, advance, and say what it waited for ----
+  const gatedWalk = async ({ opensAfterReads = 3, ceilingMs = 300 } = {}) => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const checked = new Set();
+    let reads = 0;
+    let done = false;
+    const live = () => {
+      const s = gatedScreen({ forwardVisible: opensAfterReads >= 0 && reads >= opensAfterReads });
+      s.controls = s.controls.map((c) => ({ ...c, checked: checked.has(c.idx) }));
+      return s;
+    };
+    const doneScreen = {
+      ...gatedScreen(),
+      url: "https://fixture.invalid/gated/after",
+      controls: [], optionGroups: [], questionRoots: [], buttons: [],
+      counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:after-gated",
+    };
+    const idxFromSrc = (src) => {
+      const at = src.indexOf(")[");
+      if (at < 0) return null;
+      const end = src.indexOf("]", at + 2);
+      const n = Number(src.slice(at + 2, end));
+      return Number.isInteger(n) ? n : null;
+    };
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) {
+          if (done) return doneScreen;
+          const s = live();
+          reads += 1;
+          return s;
+        }
+        if (src.includes("checkedGroupIdxs")) {
+          const idx = idxFromSrc(src);
+          return {
+            idx, type: "radio", name: idx === 0 ? "best" : "worst", formOwner: 0,
+            unnamedControlIdx: null, checked: idx !== null && checked.has(idx),
+            checkedGroupIdxs: idx !== null && checked.has(idx) ? [idx] : [],
+          };
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return Array.from({ length: 12 }, (_, idx) => ({
+          async click() {
+            if (idx === NEXT_IDX) { done = true; return; }
+            if (idx <= 1) checked.add(idx);
+          },
+          async type() {}, async focus() {},
+        }));
+      },
+      async screenshot() { return new TextEncoder().encode("PNG-A13W"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_a13", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/gated", runId, planRevisionId: "plan_a13gate01",
+        attemptId: "att_a13gate0001", tier: 1, maxSteps: 2, deadline: Date.now() + 120_000,
+        viewport: { width: 1280, height: 900 }, applyHistoryShim: false, advanceTimeoutMs: 400,
+        forwardReleaseMaxWaitMs: ceilingMs, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60,
+      },
+      { env, runId, attemptId: "att_a13gate0001", pathId: "path_a13", witnesses: [] },
+    );
+    return { obs };
+  };
+
+  test("THE WALK ITSELF waits out the gate, presses the control that opened, and puts the measured wait in the receipt", async () => {
+    const { obs } = await gatedWalk({ opensAfterReads: 3 });
+    const step0 = obs.steps[0];
+    assertEq(step0.advanced, true,
+      `the walk must get past a screen whose only fault was a gate, outcome was ${JSON.stringify(obs.outcome)}`);
+    const press = (step0.actions ?? []).find((a) => a.kind === "click-next");
+    assert(press && String(press.detail).includes("forward control enabled after"),
+      `the press receipt must carry the MEASURED wait, got ${JSON.stringify(press?.detail)}`);
+    assert(String(press.detail).includes("WITHHELD"),
+      "and it must say the page was withholding the control, not offering it");
+  });
+
+  test("THE WALK ITSELF ends honestly when the gate never opens, naming the control it could not press", async () => {
+    const { obs } = await gatedWalk({ opensAfterReads: -1, ceilingMs: 70 });
+    assertEq(obs.outcome, "no-advance-control", "a gate that never opens is still an honest dead stop");
+    assert(String(obs.outcomeDetail).includes("OUT OF REACH"),
+      `the outcome must not read like a thank-you page, got ${JSON.stringify(obs.outcomeDetail)}`);
+    assert((obs.readerLimitations ?? []).some((l) => l.kind === "forward-control-withheld"),
+      `the withheld control must be a counted limitation, got ${JSON.stringify(obs.readerLimitations)}`);
+  });
+
+
+  test("THE MEASURED SHAPE: a hidden forward control that opens mid-poll releases the wait, and the wait is measured", async () => {
+    const { mod } = await loadWorker();
+    // Held for two polls, open on the third — a number this code never knew in advance.
+    const page = pollingPage([
+      ...repeat(gatedScreen({ prose: "proceed in 9" }), 1),
+      ...repeat(gatedScreen({ prose: "proceed in 6" }), 1),
+      gatedScreen({ forwardVisible: true, prose: "proceed now" }),
+    ]);
+    const held = await mod.driver.awaitForwardRelease(
+      page,
+      gatedScreen({ prose: "proceed in 12" }),
+      { deadline: Date.now() + 120_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 300 },
+      "fixture",
+    );
+    assertEq(held.released, true, "the control opened, so the wait must report a release");
+    assertEq(held.polls, 3, `release must be noticed on the poll that sees it, got ${held.polls}`);
+    assert(held.waitedMs >= 40, `the measured wait is evidence and must be real, got ${held.waitedMs}ms`);
+    assert(held.screen !== null && held.screen.buttons.some((b) => b.idx === NEXT_IDX && b.visible),
+      "the released screen must be handed back so the walk presses the control that actually opened");
+    assertEq(held.withheld.length, 1, "exactly one forward control was being withheld");
+    assertEq(held.withheld[0].why, "present but hidden", "the live shape is hidden, not disabled");
+  });
+
+  test("a DISABLED forward control is withheld too, not just a hidden one", async () => {
+    const { mod } = await loadWorker();
+    const screen = gatedScreen({ forwardVisible: true });
+    screen.buttons[1].disabled = true;
+    const held = mod.driver.withheldForwardControls(screen);
+    assertEq(held.length, 1, "a present-but-disabled forward control is withheld");
+    assertEq(held[0].why, "present but disabled", "and it is named for what it is");
+  });
+
+  test("a BACK control is never mistaken for a withheld way forward", async () => {
+    const { mod } = await loadWorker();
+    const screen = gatedScreen();
+    // Both buttons hidden: only the forward-eligible one may count.
+    screen.buttons[0].visible = false;
+    const held = mod.driver.withheldForwardControls(screen);
+    assertEq(held.length, 1, `only the forward candidate counts, got ${JSON.stringify(held)}`);
+    assertEq(held[0].idx, NEXT_IDX, "and it is the forward one");
+  });
+
+  test("counterproof: a screen with NO forward control at all never waits and never re-reads", async () => {
+    const { mod } = await loadWorker();
+    const bare = gatedScreen();
+    bare.buttons = [];
+    const page = pollingPage([bare]);
+    const held = await mod.driver.awaitForwardRelease(
+      page,
+      bare,
+      { deadline: Date.now() + 120_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 300 },
+      "fixture",
+    );
+    assertEq(held.polls, 0, "nothing was being withheld, so there was nothing to wait for");
+    assertEq(held.waitedMs, 0, "a real ending must cost no time at all");
+    assertEq(page.state.reads, 0, "and it must not re-read the page even once");
+  });
+
+  test("a gate that never opens stops at the ceiling and reports the wait it actually spent", async () => {
+    const { mod } = await loadWorker();
+    const page = pollingPage(repeat(gatedScreen({ prose: "still waiting" }), 40));
+    const t0 = Date.now();
+    const held = await mod.driver.awaitForwardRelease(
+      page,
+      gatedScreen({ prose: "still waiting" }),
+      { deadline: Date.now() + 600_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 70 },
+      "fixture",
+    );
+    const elapsed = Date.now() - t0;
+    assertEq(held.released, false, "the control never opened, and the wait must not pretend it did");
+    assert(held.polls >= 1 && held.polls <= 3, `the ceiling bounds the polling, got ${held.polls}`);
+    assert(elapsed < 5_000, `patience must never become an unbounded wait, took ${elapsed}ms`);
+    assertEq(held.ceilingMs, 70, "the ceiling actually applied travels in the receipt");
+  });
+
+  test("a screen that LOOKS TERMINAL and says nothing new stops at the short cap, not the configured ceiling", async () => {
+    const { mod } = await loadWorker();
+    // No answerable controls + unchanging prose = what a real thank-you page looks like. A
+    // completion page must not cost the full ceiling on every walk of every run.
+    const terminal = gatedScreen({ answerable: false, prose: "Thank you for taking part." });
+    const page = pollingPage(repeat(terminal, 40));
+    const held = await mod.driver.awaitForwardRelease(
+      page,
+      terminal,
+      { deadline: Date.now() + 600_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 300 },
+      "fixture",
+    );
+    assertEq(held.released, false, "nothing opened");
+    assertEq(held.ceilingMs, 60, `the terminal-looking cap must apply, got ${held.ceilingMs}`);
+    assert(held.waitedMs < 200, `a completion page must not pay the full ceiling, waited ${held.waitedMs}ms`);
+  });
+
+  test("counterproof: a terminal-looking screen whose own prose keeps changing earns the full ceiling back", async () => {
+    const { mod } = await loadWorker();
+    // Same shape, except the page is visibly still working — a countdown rewriting itself. That
+    // is proof of life, and it must buy the patience the short cap would have denied.
+    const ticking = (n) => gatedScreen({ answerable: false, prose: `proceed in ${n} seconds` });
+    const page = pollingPage([
+      ticking(9), ticking(6), ticking(3),
+      gatedScreen({ answerable: false, forwardVisible: true, prose: "proceed now" }),
+    ]);
+    const held = await mod.driver.awaitForwardRelease(
+      page,
+      ticking(12),
+      { deadline: Date.now() + 600_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 300 },
+      "fixture",
+    );
+    assertEq(held.released, true, "a page that kept working long enough to open must be waited for");
+    assertEq(held.polls, 4, `the wait must run past the short cap, got ${held.polls} polls`);
+    assert(held.waitedMs > 60, `the short cap must have been lifted, waited only ${held.waitedMs}ms`);
+  });
+
+  test("PRODUCTION TIMING DEFAULTS are pinned — fixtures inject milliseconds, the deployed walk must not", async () => {
+    const { mod } = await loadWorker();
+    // The tests above run the real decision procedure in milliseconds so a mutant run costs
+    // milliseconds too. That speed is only honest if the values production actually uses are
+    // pinned somewhere a weakening mutant cannot slip past — this is that place.
+    assertEq(mod.driver.FORWARD_RELEASE_POLL_MS, 3_000,
+      "production polls every 3s; a fixture-speed interval must never reach the deployed walk");
+    assertEq(mod.driver.FORWARD_RELEASE_MAX_WAIT_MS, 90_000,
+      "the production ceiling is a generous safety bound, not a dwell estimate");
+    assertEq(mod.driver.FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS, 9_000,
+      "the terminal-looking patience must stay long enough to clear a short gate");
+    assert(mod.driver.FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS < mod.driver.FORWARD_RELEASE_MAX_WAIT_MS,
+      "the terminal cap is only meaningful while it is shorter than the full ceiling");
+    assert(mod.driver.FORWARD_RELEASE_POLL_MS < mod.driver.FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS,
+      "a poll interval at or above the short cap would make terminal-looking patience a single glance");
+  });
+
+  test("a walk given no timing options at all falls back to the production defaults", async () => {
+    const { mod } = await loadWorker();
+    // The injection points must DEFAULT, not require. A deployment that passes nothing gets the
+    // real timings; this is what stops the fixture speed from being the shipped behaviour.
+    const t0 = Date.now();
+    const bare = gatedScreen();
+    bare.buttons = [];
+    await mod.driver.awaitForwardRelease(bare && bare, bare, { deadline: Date.now() + 50 }, "fixture");
+    assert(Date.now() - t0 < 1_000, "a screen with nothing withheld must return immediately even with real defaults");
+    const held = await mod.driver.awaitForwardRelease(
+      { async evaluate() { throw new Error("must not be read"); } },
+      gatedScreen(),
+      // Deadline inside one production poll interval: the loop must decline to start rather than
+      // overrun it, which only works if the REAL 3s interval is what it fell back to.
+      { deadline: Date.now() + 500 },
+      "fixture",
+    );
+    assertEq(held.polls, 0, "with the production interval and a 500ms deadline, no poll may start");
+    assertEq(held.ceilingMs, mod.driver.FORWARD_RELEASE_MAX_WAIT_MS,
+      "and the ceiling it fell back to must be the production default");
+  });
+
+  test("the ceiling is a CONFIGURED bound, never this survey's dwell baked into the code", async () => {
+    const { mod } = await loadWorker();
+    const { readFileSync } = await import("fs");
+    assert(mod.driver.FORWARD_RELEASE_MAX_WAIT_MS >= 60_000,
+      `the default ceiling is a safety bound and must be generous, got ${mod.driver.FORWARD_RELEASE_MAX_WAIT_MS}`);
+    const batch = readFileSync("src/workflow/stages/execute-batch.ts", "utf8");
+    assert(batch.includes("EXEC_FORWARD_RELEASE_MAX_WAIT_MS"),
+      "the ceiling must be raisable per deployment without a code change");
+    assert(batch.includes("forwardReleaseMaxWaitMs:"),
+      "and it must actually reach the walk, not merely be read from the environment");
+  });
+
+  test("the ending classifier reports a withheld way forward as evidence, and still refuses to name the ending", async () => {
+    const { mod } = await loadWorker();
+    // The LIVE shape: answerable controls still on the screen, so the structural screen-out arm
+    // stays inert and the ending genuinely has nothing to name it.
+    const ending = mod.driver.classifyEnding(gatedScreen({ prose: "" }), {
+      outcome: "no-advance-control", unboundDecisions: 0,
+    });
+    assertEq(ending.kind, "unclassified",
+      "a hidden Next on an unrecognised terminal page must not become a positive 'stalled' claim");
+    assert(ending.evidence.some((e) => e.includes("out of reach")),
+      `the withheld control must still be reported, got ${JSON.stringify(ending.evidence)}`);
+  });
+
+  test("counterproof: a completion page keeps its completed ending even carrying a hidden forward control", async () => {
+    const { mod } = await loadWorker();
+    const done = gatedScreen({ answerable: false, prose: "Thank you for completing this survey." });
+    const ending = mod.driver.classifyEnding(done, { outcome: "no-advance-control", unboundDecisions: 0 });
+    assertEq(ending.kind, "completed",
+      "completion wording outranks the withheld-control evidence — a real completion must still read as one");
+  });
+});

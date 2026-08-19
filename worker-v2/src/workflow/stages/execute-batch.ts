@@ -47,7 +47,7 @@ import {
   type ExecutionProgram,
   type PathAssignment,
 } from "./plan";
-import { walkPath, type PageLike } from "../../browser/driver";
+import { walkPath, FORWARD_RELEASE_MAX_WAIT_MS, type PageLike } from "../../browser/driver";
 import type { CaptureContext } from "../../browser/capture";
 import type { PathObservation, StepObservation, WalkEnding } from "../../browser/types";
 import type { PlannedPath, PlannedDecision } from "./planner/plan-core.js";
@@ -1391,6 +1391,13 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
               viewport: { width: 1280, height: 900 },
               applyHistoryShim: shim,
               advanceTimeoutMs,
+              // A minimum-dwell gate's length is a property of the INSTRUMENT, never of this code:
+              // the wait ends when the control opens, and this is only the bound that stops it
+              // becoming an infinite wait. Raise it for an instrument with longer gates.
+              forwardReleaseMaxWaitMs: num(
+                (env as unknown as { EXEC_FORWARD_RELEASE_MAX_WAIT_MS?: string }).EXEC_FORWARD_RELEASE_MAX_WAIT_MS,
+                FORWARD_RELEASE_MAX_WAIT_MS,
+              ),
               variant: walkVariant,
               variantFromStep: walkVariantFromStep,
             },
