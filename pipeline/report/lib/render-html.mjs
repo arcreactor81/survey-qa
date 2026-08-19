@@ -498,6 +498,10 @@ function renderScope(view) {
           <li><span class="lbl">Testing completeness</span><span class="val">${esc(c.testing.headline)}</span></li>
         </ul>
         <p><strong>Stopping reason:</strong> ${esc(c.testing.stoppingReason)}</p>
+        <!-- WHERE THE ATTEMPTS ENDED. Printed beside the stopping reason because it is the
+             line that disambiguates it: "nothing left to press" is what a finished survey and
+             a walk that never got in both record, and only the ending tells them apart. -->
+        <p><strong>Where the attempts ended:</strong> ${esc(c.testing.endings.headline)}</p>
         <p>${esc(String(c.testing.exercised))} of ${esc(String(c.testing.total))} document requirements were exercised at least once. Exercised is not passed.</p>
         ${
           c.oracle.present

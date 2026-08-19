@@ -627,6 +627,13 @@ export function renderSummaryView(view, summary) {
   </p>
   ${s.shapeNote ? `<p class="shape-note">${esc(s.shapeNote)}</p>` : ""}
   ${
+    /* HOW FAR THE RUN GOT THROUGH THE SURVEY. In the hero, not behind a disclosure: every
+       other number a reader meets here counts requirements, and none of them answers "did
+       anyone ever reach the last page". Absent when the record has no attempts at all —
+       silence about nothing, never silence about something. */
+    s.endingsNote ? `<p class="shape-note shape-note--endings">${esc(s.endingsNote)}</p>` : ""
+  }
+  ${
     /* NEVER SILENTLY SHORTER THAN THE RECORD. If the run derived more failing
        requirements than this page has cards for, the difference is stated here rather
        than left for a reader to find by comparing two totals in the audit trail. */

@@ -35,7 +35,7 @@
 
 import { assert, assertEq, suite, test } from "../testkit.mjs";
 import { testEnv, worker, seedRun } from "./_helpers.mjs";
-import { extractView } from "../../../pipeline/report/jargon-scan.mjs";
+import { extractView, scanText } from "../../../pipeline/report/jargon-scan.mjs";
 
 /** Rebuild a seeded run's report after editing its record, and read back what was published. */
 async function publishWith(edit, { plan } = {}) {
@@ -376,6 +376,132 @@ suite("D37 — the page reads the stop reason the record actually writes", () =>
       /other ×1/.test(data.completion.testing.stoppingReason),
       `an attempt that stated no reason must stay unnamed: ${data.completion.testing.stoppingReason}`,
     );
+  });
+
+  test("WHERE THE ATTEMPTS ENDED IS ON THE PAGE, in the summary a reader meets first", async () => {
+    // The record has carried `attempts[].ending` since the completion-path work, and no
+    // renderer read it — "this walk reached the completion page" was sayable from the signed
+    // document and unsaid on the page. `stopReason` cannot stand in for it: the same
+    // `no-advance-control` is what a finished survey AND a walk that never got in both record.
+    const { data, summary } = await publishWith((record) => {
+      record.attempts = [
+        { ...record.attempts[0], attemptId: "att_end01", stopReason: "no-advance-control", ending: { kind: "completed", evidence: ["the final screen says: \"Thank you for completing the survey.\""] } },
+        { ...record.attempts[0], attemptId: "att_end02", stopReason: "no-advance-control", ending: { kind: "screened-out", evidence: ["the final screen says: \"you do not qualify\""] } },
+        { ...record.attempts[0], attemptId: "att_end03", stopReason: "step-cap", ending: { kind: "stalled", evidence: ["still offered an enabled control"] } },
+      ];
+    });
+
+    const e = data.completion.testing.endings;
+    assertEq(e.counts.completed, 1, JSON.stringify(e));
+    assertEq(e.counts["screened-out"], 1, JSON.stringify(e));
+    assertEq(e.counts.stalled, 1, JSON.stringify(e));
+    assertEq(e.unstated, 0, "every attempt in this fixture states its ending");
+    assertEq(e.reachedAnEnd, true);
+
+    // AND IT IS RENDERED, not merely computed. A view model nobody prints is the same silence
+    // with more fields in it.
+    const text = visible(summary);
+    assert(
+      /reached the survey's own final page/.test(text),
+      `the completion is not stated in the summary: ${text.slice(0, 900)}`,
+    );
+    assert(
+      /screened out/.test(text) && /the survey working/.test(text),
+      `a screen-out must read as the deliberate termination it is: ${text.slice(0, 900)}`,
+    );
+    // ...in the customer's vocabulary. This sentence is new copy in the view a reader meets
+    // first, so it is held to the same gate as every other sentence there.
+    assertEq(
+      scanText(text).length,
+      0,
+      `banned jargon reached the summary: ${JSON.stringify(scanText(text).map((h) => h.term))}`,
+    );
+  });
+
+  test("A SCREEN-OUT-ONLY RUN SAYS SO PLAINLY — no attempt reached the end, and that is not hidden", async () => {
+    const { data, summary } = await publishWith((record) => {
+      record.attempts = [
+        { ...record.attempts[0], attemptId: "att_so01", ending: { kind: "screened-out", evidence: ["you do not qualify"] } },
+        { ...record.attempts[0], attemptId: "att_so02", ending: { kind: "screened-out", evidence: ["you do not qualify"] } },
+      ];
+    });
+    assertEq(data.completion.testing.endings.reachedAnEnd, false);
+    const text = visible(summary);
+    assert(
+      /None of those reached the survey's own final page/.test(text),
+      `a run that never reached the end must say so: ${text.slice(0, 900)}`,
+    );
+    // AND THE SCREEN-OUTS ARE NAMED, WITH THE GLOSS. A count of screen-outs printed bare reads
+    // as a count of failures; being turned away by a screener is the survey doing its job, and
+    // this project has already published one accusation against a customer's survey for
+    // exactly that misreading.
+    assert(/2 were screened out/.test(text), `the screen-outs were not named: ${text.slice(0, 900)}`);
+    assert(
+      /deliberately ended those attempts early, which is the survey working/.test(text),
+      `a screen-out was printed without saying it is the survey working: ${text.slice(0, 900)}`,
+    );
+  });
+
+  test("THE AUDIT TRAIL CARRIES IT TOO, beside the stopping reason it disambiguates", async () => {
+    // Two surfaces, on purpose: the summary states it in the customer's words and the auditor
+    // surface states it beside `stopReason`, which is the value it disambiguates —
+    // `no-advance-control` is what a finished survey AND a walk that never got in both record.
+    const { html } = await publishWith((record) => {
+      record.attempts = [
+        { ...record.attempts[0], attemptId: "att_aud01", ending: { kind: "completed", evidence: ["done"] } },
+      ];
+    });
+    const audit = visible(extractView(html, "audit") ?? "");
+    assert(/Where the attempts ended:/.test(audit), `the auditor surface dropped the ending line: ${audit.slice(0, 600)}`);
+    assert(/reached the end of the survey/.test(audit), audit.slice(0, 600));
+  });
+
+  test("ABSENT RENDERS AS ABSENT: a record predating the field is never read as a completion", async () => {
+    // The honest fallback. These rows are the shape every run before the ending field wrote,
+    // and the only correct sentence about them is that we cannot say — inferring `completed`
+    // from a `no-advance-control` stop reason is exactly the ambiguity the field exists to end.
+    const { data, summary } = await publishWith((record) => {
+      record.attempts = record.attempts.map((a, i) => {
+        const row = { ...a, attemptId: `att_old0${i}`, stopReason: "no-advance-control" };
+        delete row.ending;
+        return row;
+      });
+    });
+
+    const e = data.completion.testing.endings;
+    assertEq(e.stated, 0, JSON.stringify(e));
+    assertEq(e.counts.completed, 0, "an absent ending must never be counted as a completion");
+    assertEq(e.reachedAnEnd, false);
+    const text = visible(summary);
+    assert(
+      /cannot say how far/.test(text),
+      `an unrecorded ending must be stated as unknown, not omitted: ${text.slice(0, 900)}`,
+    );
+    assert(!/reached the survey's own final page/.test(text), `a completion was inferred from nothing: ${text}`);
+  });
+
+  test("A PARTIAL LEDGER IS NEVER SILENTLY SHORTER: rows without an ending are counted out loud", async () => {
+    const { data, summary } = await publishWith((record) => {
+      const withEnding = { ...record.attempts[0], attemptId: "att_mix01", ending: { kind: "completed", evidence: ["done"] } };
+      const without = { ...record.attempts[0], attemptId: "att_mix02" };
+      delete without.ending;
+      record.attempts = [withEnding, without];
+    });
+    assertEq(data.completion.testing.endings.unstated, 1, JSON.stringify(data.completion.testing.endings));
+    assert(
+      /1 recorded no ending at all/.test(visible(summary)),
+      `the row that said nothing was dropped from the sentence: ${visible(summary).slice(0, 900)}`,
+    );
+  });
+
+  test("AN ENDING KIND THIS READER DOES NOT KNOW IS COUNTED BY NAME, not dropped", async () => {
+    const { data } = await publishWith((record) => {
+      record.attempts = [{ ...record.attempts[0], attemptId: "att_new01", ending: { kind: "redirected-away", evidence: [] } }];
+    });
+    const e = data.completion.testing.endings;
+    assertEq(JSON.stringify(e.unrecognised), JSON.stringify([{ kind: "redirected-away", count: 1 }]));
+    assertEq(e.counts.completed, 0, "an unknown kind must not be folded into a known one");
+    assert(/does not recognise/.test(e.headline), e.headline);
   });
 
   test("...and the v1 NESTED shape still wins where a record carries it", async () => {

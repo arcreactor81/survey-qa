@@ -491,6 +491,67 @@ export function buildReportView({ record, scorecard = null, attestation, options
   }
   const limitStops = [...stopReasons.keys()].filter((r) => r === "budget-limit" || r === "time-limit");
 
+  /* ---------------- how far each attempt actually got ---------------- */
+  // WHERE THE ATTEMPTS ENDED, as the walker typed it from the final screen it was looking at
+  // (`AttemptRecordV2.ending`). This is the one fact a test run exists to establish and the
+  // page had no way to state: `stopReason` says the loop ran out of screens to press, which is
+  // ALSO what a walk that never got into the survey records. Only the ending separates them.
+  //
+  // NOTHING HERE INFERS. An attempt row that carries no ending is counted as `unstated` and
+  // said out loud; it is never read as a completion, and `unclassified` — the walker's own
+  // "the last page did not say which kind of ending this was" — is never folded into one
+  // either. A kind this reader does not know is counted BY NAME rather than dropped, because a
+  // silently shorter list is the failure this whole field exists to end.
+  /** "a, b and c" — a computed sentence still has to read as a sentence. */
+  const joinList = (parts) => {
+    const list = parts.filter(Boolean);
+    if (list.length <= 1) return list[0] ?? "";
+    return `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+  };
+
+  const ENDING_KINDS = ["completed", "screened-out", "stalled", "unclassified"];
+  const endingCounts = Object.fromEntries(ENDING_KINDS.map((k) => [k, 0]));
+  const unrecognisedEndings = new Map();
+  let endingsUnstated = 0;
+  for (const a of attempts) {
+    const kind = a?.ending && typeof a.ending === "object" ? a.ending.kind : null;
+    if (typeof kind !== "string" || kind.length === 0) endingsUnstated += 1;
+    else if (ENDING_KINDS.includes(kind)) endingCounts[kind] += 1;
+    else unrecognisedEndings.set(kind, (unrecognisedEndings.get(kind) ?? 0) + 1);
+  }
+  const unrecognised = [...unrecognisedEndings.entries()].map(([kind, count]) => ({ kind, count }));
+  const endingsStated = ENDING_KINDS.reduce((n, k) => n + endingCounts[k], 0) + unrecognised.reduce((n, u) => n + u.count, 0);
+
+  const ENDING_PHRASE = {
+    completed: (n) => `${n} reached the end of the survey`,
+    "screened-out": (n) => `${n} ${n === 1 ? "was" : "were"} screened out by the survey itself`,
+    stalled: (n) => `${n} stopped before reaching any ending`,
+    unclassified: (n) => `${n} ended on a page that did not say which kind of ending it was`,
+  };
+  const endingParts = ENDING_KINDS.filter((k) => endingCounts[k] > 0).map((k) => ENDING_PHRASE[k](endingCounts[k]));
+  for (const u of unrecognised) endingParts.push(`${u.count} recorded an ending this report does not recognise ("${u.kind}")`);
+  if (endingsUnstated > 0) {
+    endingParts.push(
+      `${endingsUnstated} recorded no ending at all, so this report cannot say where ${endingsUnstated === 1 ? "it" : "they"} stopped`,
+    );
+  }
+  const endingsHeadline =
+    attempts.length === 0
+      ? "No attempts are recorded in this run, so there is nothing to say about where they ended."
+      : endingsStated === 0
+        ? `None of the ${attempts.length} recorded attempt${attempts.length === 1 ? "" : "s"} states where it ended. This report does not guess.`
+        : `Of ${attempts.length} recorded attempt${attempts.length === 1 ? "" : "s"}: ${joinList(endingParts)}.`;
+
+  const endings = {
+    stated: endingsStated,
+    unstated: endingsUnstated,
+    attempts: attempts.length,
+    counts: endingCounts,
+    unrecognised,
+    reachedAnEnd: endingCounts.completed > 0,
+    headline: endingsHeadline,
+  };
+
   const reportComplete = total > 0 && missingResults.length === 0 && orphanResults.length === 0;
   const nonTerminal = total - exercised - coverageCounts["proven-unreachable"];
 
@@ -898,6 +959,7 @@ export function buildReportView({ record, scorecard = null, attestation, options
         state: testingState,
         headline: TESTING_SENTENCE[testingState],
         stoppingReason,
+        endings,
         stopSummary,
         exercised,
         total,

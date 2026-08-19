@@ -491,6 +491,50 @@ export function buildDecisionSummary(view) {
     ? "After recording the launch failure, the remaining checks continued in the controlled test environment. Rerun the complete test after fixing the blocker."
     : null;
 
+  /* ---- how far the run actually got through the survey ----
+   *
+   * THE FACT A TEST RUN EXISTS TO ESTABLISH, and the page could not state it. Every other
+   * number here counts REQUIREMENTS; this one counts times we took the survey and says where
+   * each one stopped. A reader could previously see "227 requirements, 2 tried" and still not
+   * learn whether anyone ever reached the last page.
+   *
+   * IT REPORTS, IT DOES NOT INFER. The counts come from `completion.testing.endings`, which
+   * counts an attempt that recorded no ending as `unstated` rather than reading it as anything;
+   * this sentence says that number out loud for the same reason. A run whose attempts all
+   * predate the ending field says so plainly instead of going quiet.
+   */
+  const endings = view.completion?.testing?.endings ?? null;
+  let endingsNote = null;
+  if (endings && endings.attempts > 0) {
+    const took = `We took this survey ${endings.attempts === 1 ? "once" : `${endings.attempts} times`}.`;
+    if (endings.stated === 0) {
+      endingsNote = `${took} This report cannot say how far ${endings.attempts === 1 ? "it" : "any of them"} got: the run did not record where ${endings.attempts === 1 ? "it" : "they"} ended.`;
+    } else {
+      const reached = endings.counts.completed;
+      const lead =
+        reached > 0
+          ? `${took} ${reached === endings.attempts ? (endings.attempts === 1 ? "It" : "Every one") : `${reached} of ${endings.attempts}`} reached the survey's own final page.`
+          : `${took} None of ${endings.attempts === 1 ? "them" : "those"} reached the survey's own final page.`;
+      const screenedOut = endings.counts["screened-out"];
+      const rest = [];
+      if (screenedOut > 0) rest.push(`${screenedOut} ${screenedOut === 1 ? "was" : "were"} screened out`);
+      if (endings.counts.stalled > 0) rest.push(`${endings.counts.stalled} stopped before reaching any ending`);
+      if (endings.counts.unclassified > 0) {
+        rest.push(`${endings.counts.unclassified} ended on a page that did not say which kind of ending it was`);
+      }
+      for (const u of endings.unrecognised ?? []) rest.push(`${u.count} recorded an ending this report does not recognise`);
+      if (endings.unstated > 0) rest.push(`${endings.unstated} recorded no ending at all`);
+      // THE SCREEN-OUT GLOSS IS ITS OWN SENTENCE, not a clause inside the list. Being turned
+      // away by a screener is the survey doing its job, and a reader who meets that number
+      // without being told so reads a working screener as a count of failures.
+      const screenOutGloss =
+        screenedOut > 0
+          ? ` Being screened out means the survey deliberately ended ${screenedOut === 1 ? "that attempt" : "those attempts"} early, which is the survey working.`
+          : "";
+      endingsNote = rest.length ? `${lead} Of the rest, ${joinList(rest)}.${screenOutGloss}` : lead;
+    }
+  }
+
   /* ---- what was checked and what remains unresolved (GPT's pushback) ----
    * Same six buckets, same derivation, spelled out rather than summed into two
    * opaque totals. `settled` here is the SAME number the evidence sentence
@@ -595,6 +639,7 @@ export function buildDecisionSummary(view) {
     accountingSentence,
     notPassed,
     shapeNote,
+    endingsNote,
     evidenceLine,
     coverageLine,
     // Trust-independent. Present on every run, whether or not a column is current.
