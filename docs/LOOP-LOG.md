@@ -226,6 +226,32 @@ rule exists to stop. The fix is to make absent probe inputs a loud failure rathe
 score. Deferred deliberately: it is test-suite tooling, not the worker, and it does not belong in a
 deploy train carrying three merged branches. It should be the next non-urgent piece of work.
 
+### Bounce-backs from the merged-tree campaigns (20 Aug)
+
+The builders' new mutants arrived unscored by agreement, so the merged-tree runs are their first
+real scoring. `mutate-report-defects` came back **11/13**. Neither failure is in the walker, and
+both belong to the report train that is actively rewriting the same file
+(`pipeline/report/lib/view-model.mjs`):
+
+1. **NO-RUN — "an ending kind this reader does not know is folded into `completed`".** Not anchor
+   drift: the anchor is present. The mutant is MALFORMED. It rewrites
+   `else if (ENDING_KINDS.includes(kind)) …` into `else …`, but the following line is also an
+   `else`, so the mutated source is `else` after `else` — a syntax error. The build fails, no tests
+   run, and the harness correctly refuses to score it. Fix: replace both lines together.
+2. **SURVIVED — "rows without an ending are dropped from the sentence instead of counted".** This
+   is the real one. The guard is
+   "A PARTIAL LEDGER IS NEVER SILENTLY SHORTER: rows without an ending are counted out loud", and
+   it does not pin what the mutant breaks: its `endings.unstated` assertion reads a count computed
+   UPSTREAM of the sentence, so it passes with the sentence suppressed. A guard against silent
+   shortening that survives the sentence being silenced is the exact anti-pattern CLAUDE.md names.
+
+### Named debt for the walker backlog (NOT this train)
+
+B4 quotes the site's refusal by parsing the `"; validation said: "` marker out of `outcomeDetail`.
+Reading a string a human wrote for humans is not a contract. The durable fix is a TYPED field on
+the walk record, written by `driver.ts` where the validation messages are already in hand, with the
+prose sentence derived from it rather than parsed back out of it.
+
 ### Integration queue (after this deploy lands)
 
 `report-path-fixes` @ `51672ea`, 4 commits on `ae7a370`. Protocol: rebase-merge into
