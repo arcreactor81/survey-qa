@@ -2699,6 +2699,282 @@ function exactLatticeRepair(
   return "solved";
 }
 
+// ---------------------------------------------------------------------------
+// DISPLAYED PER-ROW CEILINGS ON AN ALLOCATION — read off the screen, never remembered
+// ---------------------------------------------------------------------------
+
+/**
+ * A per-row upper bound THE SCREEN ITSELF SHOWS beside an allocation cell.
+ *
+ * THE CLASS (docs/FORWARD-SCAN.md §3.4): a sum-to-100 allocation whose rows carry a
+ * carried-forward cap — "this row may not exceed what you gave it earlier" — with the
+ * prior value piped onto the same screen as a read-only column. The validation-driven
+ * numeric recovery puts the whole 100 in the FIRST cell (amendment 7's measured shape);
+ * where that row's displayed cap is below 100 the site rejects the split for ever and the
+ * walk stalls on a screen whose own answer was visible the whole time.
+ *
+ * WHAT IS AND IS NOT CONSULTED — the boundary, stated where it is enforced:
+ *   - ONLY what this screen displays: a read-only cell whose whole content is a number,
+ *     sitting in the same row as an allocation input, or a limit the site's own validation
+ *     states in words.
+ *   - NEVER cross-screen memory of an earlier answer, never a question id, never a column
+ *     name. The walker does not know that a column headed "Current scenario" pipes an
+ *     earlier question, and it must never need to.
+ *   - A bound that is not displayed is NOT INVENTED. No witness means no ceiling, and the
+ *     split degrades to the existing 100-first behaviour with a receipt naming why.
+ */
+export interface DisplayedRowCeiling {
+  /** The allocation input this bound applies to. */
+  idx: number;
+  /** The largest value the screen says this row may take. */
+  ceiling: number;
+  /** How the screen said so, quoted for the receipt. */
+  via: string;
+}
+
+/**
+ * A cell whose ENTIRE content is a number — a bare "40", "40%", " 40 " — and nothing else.
+ *
+ * The strictness is the whole point. A row head reading "PCV15" and a column called
+ * "Product 3" both contain digits and neither is a bound; a piped prior-answer cell
+ * contains the number and only the number. Requiring the whole content keeps the detector
+ * from inventing a ceiling out of a product name, which is the one failure this class
+ * cannot afford: a wrong cap silently reshapes an answer instead of failing loudly.
+ */
+const BARE_NUMBER_CELL_RE = /^\s*(\d+(?:\.\d+)?)\s*%?\s*$/;
+
+/**
+ * A limit the site states IN WORDS in its own validation message.
+ *
+ * ASSUMPTION STATED (CLAUDE.md north star): English limit phrasing. A site that rejects in
+ * another language, or with a bare "invalid entry", states no bound this pattern can read,
+ * and the detector then reports none rather than guessing — the read-only-cell signal above
+ * carries no language assumption at all and still applies. This signal is ORDERING INPUT
+ * ONLY: it may re-order where the allocation's mass is placed, and it is never recorded as
+ * evidence about the survey (the same boundary survival hints are held to).
+ */
+const STATED_LIMIT_RE =
+  /(?:less\s+than\s+or\s+equal\s+to|no\s+more\s+than|not\s+more\s+than|not\s+greater\s+than|cannot\s+exceed|must\s+not\s+exceed|at\s+most|maximum(?:\s+of)?|max(?:\s+of)?|up\s+to|<=|≤)\s*(\d+(?:\.\d+)?)/gi;
+
+/** Case- and space-insensitive comparison key for a row label. */
+const rowKey = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
+
+/**
+ * The per-row ceilings this screen DISPLAYS for the given allocation inputs.
+ *
+ * Three independent structural signals, each stating its own association assumption. A
+ * target with no witness simply does not appear in the result — absence here means "this
+ * screen displayed no bound for that row", never "that row is unbounded in fact".
+ *
+ *   (a) GRID ROW CO-MEMBERSHIP — the table's own row groups them, not us. A read-only (or
+ *       disabled) cell holding a bare number, in the same `grid.rows[]` entry as exactly one
+ *       allocation input, is that row's displayed cap. This is the strongest signal
+ *       available because the association is the document's markup rather than a heuristic,
+ *       and it carries no language or platform assumption.
+ *   (b) DOM ADJACENCY — for an allocation not marked up as a table. A read-only cell holding
+ *       a bare number within 2 control indices of an allocation input, and nearer to that
+ *       input than to any other, reads as the same row. ASSUMPTION STATED: reading order
+ *       tracks visual rows. This is the same adjacency the option-linked-specify detector
+ *       already relies on, and it is used only when (a) found nothing for that input.
+ *   (c) THE SITE'S OWN WORDS — a validation segment that names exactly one row and states
+ *       exactly one limit. Verbatim only: the segment must contain the row's label and a
+ *       limit phrase, and a segment naming two rows or two numbers is ambiguous and refused.
+ *
+ * Where a row shows SEVERAL read-only numbers the smallest is taken, because satisfying the
+ * smallest satisfies whichever of them is the real cap — conservative in the safe direction,
+ * and the count travels in `via` so the receipt does not overclaim which column was read.
+ */
+export function displayedRowCeilings(
+  screen: RenderedScreen,
+  targetIdxs: number[],
+  validationMessages: readonly string[],
+): DisplayedRowCeiling[] {
+  if (targetIdxs.length < 2) return [];
+  const targets = new Set(targetIdxs);
+  const byIdx = new Map(screen.controls.map((c) => [c.idx, c]));
+  const found = new Map<number, DisplayedRowCeiling>();
+
+  // A read-only/disabled control whose whole displayed value is a number. `readOnly` and
+  // `disabled` are exactly the two states that say "shown, not answerable" — which is what
+  // a piped carry-forward column is.
+  const bareNumberAt = (idx: number): number | null => {
+    const c = byIdx.get(idx);
+    if (!c || targets.has(idx)) return null;
+    if (!(c.readOnly || c.disabled)) return null;
+    const m = BARE_NUMBER_CELL_RE.exec(String(c.value ?? ""));
+    return m ? Number(m[1]) : null;
+  };
+
+  // ---- (a) the table's own row ----
+  const rowLabelFor = new Map<number, string>();
+  // Inputs the TABLE has already spoken for. Whatever it said — a bound, or a refusal on an
+  // ambiguous row — adjacency does not get to second-guess it: the markup's own grouping
+  // outranks a guess from reading order, and overriding a refusal would reinstate exactly the
+  // ambiguity the refusal exists to report.
+  const insideGrid = new Set<number>();
+  for (const row of screen.grid?.rows ?? []) {
+    const idxs = row.cells.map((cell) => cell.idx);
+    const rowTargets = idxs.filter((i) => targets.has(i));
+    for (const i of rowTargets) insideGrid.add(i);
+    // TWO allocation inputs in one row and the association is genuinely ambiguous: which of
+    // them does the read-only number cap? Refused rather than guessed.
+    if (rowTargets.length !== 1) continue;
+    const target = rowTargets[0]!;
+    if (row.label) rowLabelFor.set(target, row.label);
+    const numbers = idxs.map(bareNumberAt).filter((n): n is number => n !== null);
+    if (numbers.length === 0) continue;
+    const ceiling = Math.min(...numbers);
+    found.set(target, {
+      idx: target,
+      ceiling,
+      via:
+        `a read-only cell showing ${tidy(ceiling)} in this input's own grid row` +
+        (numbers.length > 1 ? ` (the smallest of ${numbers.length} read-only numbers in that row)` : "") +
+        (row.label ? ` (row "${row.label}")` : ""),
+    });
+  }
+
+  // ---- (b) DOM adjacency, only where the grid said nothing ----
+  for (const target of targetIdxs) {
+    if (found.has(target) || insideGrid.has(target)) continue;
+    let best: { idx: number; n: number } | null = null;
+    for (let d = 1; d <= 2; d++) {
+      for (const cand of [target - d, target + d]) {
+        const n = bareNumberAt(cand);
+        if (n === null) continue;
+        // NEARER TO ANOTHER ALLOCATION INPUT than to this one: it is that row's cell, not
+        // this one's. Ties go to no one — an equidistant witness names no row.
+        const nearest = targetIdxs.reduce(
+          (a, t) => (Math.abs(cand - t) < Math.abs(cand - a) ? t : a),
+          targetIdxs[0]!,
+        );
+        if (nearest !== target) continue;
+        if (targetIdxs.some((t) => t !== target && Math.abs(cand - t) === Math.abs(cand - target))) continue;
+        if (best === null) best = { idx: cand, n };
+        else if (n < best.n) best = { idx: cand, n };
+      }
+      if (best) break;
+    }
+    if (best) {
+      found.set(target, {
+        idx: target,
+        ceiling: best.n,
+        via: `a read-only cell showing ${tidy(best.n)} adjacent to this input (control #${best.idx})`,
+      });
+    }
+  }
+
+  // ---- (c) the site's own words ----
+  //
+  // ORDERING INPUT, NEVER EVIDENCE. A segment must name exactly one of these rows and state
+  // exactly one limit; anything else is ambiguous and is refused rather than apportioned.
+  const labelled = targetIdxs
+    .map((idx) => ({ idx, label: rowLabelFor.get(idx) ?? byIdx.get(idx)?.label ?? "" }))
+    // A one- or two-character row label ("%", "X") matches almost any sentence and would
+    // bind a limit to the wrong row; too short to identify a row is too short to use.
+    .filter((r) => rowKey(r.label).length >= 3);
+  for (const message of validationMessages) {
+    for (const segment of String(message).split(/(?<=[.!?])\s+|[;\n]/)) {
+      const limits = [...segment.matchAll(STATED_LIMIT_RE)];
+      if (limits.length !== 1) continue;
+      const named = labelled.filter((r) => rowKey(segment).includes(rowKey(r.label)));
+      if (named.length !== 1) continue;
+      const target = named[0]!;
+      const ceiling = Number(limits[0]![1]);
+      if (!Number.isFinite(ceiling)) continue;
+      const existing = found.get(target.idx);
+      // The site's stated limit is authoritative over an inferred adjacency when it is
+      // TIGHTER; where both are shown, the tighter one is the one that must hold.
+      if (existing && existing.ceiling <= ceiling) continue;
+      found.set(target.idx, {
+        idx: target.idx,
+        ceiling,
+        via: `the site's own validation stating a limit of ${tidy(ceiling)} for row "${target.label}"`,
+      });
+    }
+  }
+
+  return targetIdxs.map((i) => found.get(i)).filter((c): c is DisplayedRowCeiling => c !== undefined);
+}
+
+/**
+ * WHERE THE MASS GOES — the ceiling-aware allocation split.
+ *
+ * `how` is `null` when the screen displayed NO usable bound: the caller then keeps the
+ * existing 100-first receipt byte for byte, so a screen with nothing to be ceiling-aware
+ * about behaves exactly as it did before this existed.
+ *
+ *   - SOME ROW SHOWS NO CEILING: the whole total goes on the FIRST such row in DOM order
+ *     and every other row takes 0. Zero satisfies every displayed cap at once, so this
+ *     lands one write that no stated bound can reject.
+ *   - EVERY ROW SHOWS A CEILING: fill largest-ceiling-first, ties by DOM order, each row
+ *     taking as much as its own displayed cap allows until the total is placed. Deterministic
+ *     and, when the caps admit any solution at all, it finds one.
+ *   - THE CAPS CANNOT REACH THE TOTAL: no split satisfies them, so rather than write a
+ *     knowingly-rejected answer the split DEGRADES to the existing 100-first behaviour and
+ *     says so — the arithmetic travels in the receipt for the run to report.
+ */
+export function ceilingAwareAllocationSplit(
+  targetIdxs: number[],
+  total: number,
+  ceilings: DisplayedRowCeiling[],
+): { values: Map<number, string>; how: string | null } {
+  const EPS = 1e-9;
+  const firstTakesAll = (): Map<number, string> =>
+    new Map(targetIdxs.map((idx, i) => [idx, i === 0 ? tidy(total) : "0"]));
+
+  const usable = ceilings.filter((c) => Number.isFinite(c.ceiling) && c.ceiling >= 0 && targetIdxs.includes(c.idx));
+  if (usable.length === 0) return { values: firstTakesAll(), how: null };
+
+  const cap = new Map(usable.map((c) => [c.idx, c]));
+  const shown = usable.map((c) => `#${c.idx} <= ${tidy(c.ceiling)} (${c.via})`).join("; ");
+  const free = targetIdxs.filter((idx) => !cap.has(idx));
+
+  if (free.length > 0) {
+    const winner = free[0]!;
+    return {
+      values: new Map(targetIdxs.map((idx) => [idx, idx === winner ? tidy(total) : "0"])),
+      how:
+        `${tidy(total)} placed on cell #${winner}, the first cell this screen shows no ceiling for, ` +
+        `and 0 in every other cell, so each displayed per-row ceiling holds — displayed bounds: ${shown}`,
+    };
+  }
+
+  // Every row is capped. Largest cap first: the greedy that succeeds whenever the caps admit
+  // any assignment, because taking the most from the roomiest row can never strand a total
+  // that a different order could have reached.
+  const order = [...targetIdxs].sort(
+    (a, b) => (cap.get(b)!.ceiling - cap.get(a)!.ceiling) || (a - b),
+  );
+  const values = new Map<number, string>(targetIdxs.map((idx) => [idx, "0"]));
+  let left = total;
+  for (const idx of order) {
+    if (left <= EPS) break;
+    // Whole units only: this recovery writes into text cells whose granularity nothing on
+    // the screen declares, and a fractional share is a value the site never asked for.
+    const take = Math.min(left, Math.floor(cap.get(idx)!.ceiling));
+    if (take <= EPS) continue;
+    values.set(idx, tidy(take));
+    left -= take;
+  }
+  if (left > EPS) {
+    return {
+      values: firstTakesAll(),
+      how:
+        `every cell on this screen shows a ceiling and together they allow at most ` +
+        `${tidy(total - left)}, below the ${tidy(total)} this allocation must reach — no split satisfies ` +
+        `the displayed bounds, so the existing first-cell split stands and the shortfall is reported ` +
+        `rather than papered over — displayed bounds: ${shown}`,
+    };
+  }
+  return {
+    values,
+    how:
+      `${tidy(total)} distributed largest-ceiling-first because every cell on this screen shows a ` +
+      `ceiling — displayed bounds: ${shown}`,
+  };
+}
+
 /**
  * PLANNER-DRIVEN SURVIVAL HINTS — the additive stimulus channel that keeps the option
  * DEFAULT from volunteering a documented screen-out answer.
@@ -3812,12 +4088,29 @@ async function applyDecision(
   // everywhere else; a single lone cell keeps the least-committed "1".
   const screenNumericDemanded =
     revalidateValidation.length > 0 && revalidateValidation.some((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m));
-  const numericRecoveryTargets = screenNumericDemanded
-    ? valueControls.filter(
-        (c) => isTextEntry(c.type) && String(c.type).toLowerCase() !== "number" && fillRefusalFor(c.type) === null &&
-          !SPECIFY_STYLE_LABEL.test(c.label ?? ""),
-      ).length
-    : 0;
+  const numericRecoveryIdxs = screenNumericDemanded
+    ? valueControls
+        .filter(
+          (c) => isTextEntry(c.type) && String(c.type).toLowerCase() !== "number" && fillRefusalFor(c.type) === null &&
+            !SPECIFY_STYLE_LABEL.test(c.label ?? ""),
+        )
+        .map((c) => c.idx)
+    : [];
+  const numericRecoveryTargets = numericRecoveryIdxs.length;
+  // CEILING-AWARE PLACEMENT (docs/FORWARD-SCAN.md §3.4). Where the screen DISPLAYS a per-row
+  // cap beside these cells — a piped read-only column, or a limit the validation states in
+  // words — the whole 100 must not land on a row whose shown cap is smaller. The bounds come
+  // off THIS screen only; when it shows none, `how` is null and the split below is the
+  // pre-existing first-cell behaviour, unchanged.
+  const ALLOCATION_RECOVERY_TOTAL = 100;
+  const ceilingPlan =
+    numericRecoveryTargets > 1
+      ? ceilingAwareAllocationSplit(
+          numericRecoveryIdxs,
+          ALLOCATION_RECOVERY_TOTAL,
+          displayedRowCeilings(screen, numericRecoveryIdxs, revalidateValidation),
+        )
+      : { values: new Map<number, string>(), how: null };
   let numericRecoveryOrdinal = 0;
   for (const c of valueControls) {
     // Already claimed by the constant-sum pass above — answered as a group, or named
@@ -3917,11 +4210,22 @@ async function applyDecision(
           // wedged, and the set path (value + input/change events) is the one the live
           // server verifiably accepted on this exact shape.
           (() => {
+            // WITH a displayed ceiling the share is bound to the CELL (a cap belongs to a
+            // row, never to a position); with none, the ordinal walk below is kept exactly
+            // as it was so a screen showing no bounds behaves byte for byte as before.
             const allocationValue =
-              numericRecoveryTargets > 1 ? (numericRecoveryOrdinal++ === 0 ? "100" : "0") : "1";
+              numericRecoveryTargets > 1
+                ? ceilingPlan.how !== null
+                  ? ceilingPlan.values.get(c.idx) ?? "0"
+                  : numericRecoveryOrdinal++ === 0
+                  ? "100"
+                  : "0"
+                : "1";
             const allocationNote =
               numericRecoveryTargets > 1
-                ? `; ${numericRecoveryTargets} numeric cells share this screen — allocation split (100 first, 0 rest) so a sum constraint can hold`
+                ? ceilingPlan.how !== null
+                  ? `; ${numericRecoveryTargets} numeric cells share this screen — allocation split under the ceilings this screen displays: ${ceilingPlan.how}`
+                  : `; ${numericRecoveryTargets} numeric cells share this screen — allocation split (100 first, 0 rest) so a sum constraint can hold`
                 : "";
             return {
               value: allocationValue,

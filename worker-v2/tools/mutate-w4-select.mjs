@@ -703,5 +703,139 @@ await runMutantSuite({
       replace: "        false",
       kills: ["THE MEASURED SHAPE: a rejected 2x3 best/worst grid re-picks distinct columns and advances"],
     },
+
+    // ---- ALLOCATION UNDER A CARRY-FORWARD CEILING (docs/FORWARD-SCAN.md §3.4) ----
+    // A sum-to-100 grid whose rows DISPLAY a per-row cap piped from an earlier answer. The
+    // split must read the cap off the row it is filling and place the mass where every
+    // displayed bound holds — and must stay inert where no bound is displayed.
+    {
+      name: "the allocation split stops reading the ceilings its screen displays",
+      breaks:
+        "the whole class: the recovery goes back to putting the entire 100 in the FIRST " +
+        "cell, and on any grid whose first row displays a cap below 100 the site rejects " +
+        "that split for ever — a screen whose own answer was visible the whole time",
+      file: DR,
+      find: "          displayedRowCeilings(screen, numericRecoveryIdxs, revalidateValidation),",
+      replace: "          [],",
+      kills: [
+        "THE CLASS: a grid row showing a ceiling of 40 takes 0 and the uncapped row takes the 100",
+        "the receipt names the split AND the displayed bound that constrained it",
+        "the ceiling fix and the specify clear compose: mass on the uncapped % row, specify emptied",
+      ],
+    },
+    {
+      name: "the mass goes to the DOM-first cell even when that cell displays a ceiling",
+      breaks:
+        "the placement rule: preferring a row with NO displayed cap is the one move that " +
+        "satisfies every stated bound at once, and taking position over the bound puts 100 " +
+        "back on the capped row",
+      file: DR,
+      find: "    const winner = free[0]!;",
+      replace: "    const winner = targetIdxs[0]!;",
+      kills: [
+        "THE CLASS: a grid row showing a ceiling of 40 takes 0 and the uncapped row takes the 100",
+        "the mass goes to the FIRST cell with no displayed ceiling",
+      ],
+    },
+    {
+      name: "an EDITABLE cell counts as a displayed bound",
+      breaks:
+        "what makes something a bound rather than an answer: a cap is shown and cannot be " +
+        "changed. Reading one off another allocation cell invents a constraint the screen " +
+        "never stated and reshapes the split around it",
+      file: DR,
+      find: "    if (!(c.readOnly || c.disabled)) return null;",
+      replace: "    if (false) return null;",
+      kills: ["an EDITABLE numeric neighbour is never read as a ceiling"],
+    },
+    {
+      name: "the bare-number strictness is dropped (a product name becomes a cap)",
+      breaks:
+        "the precision the class depends on: 'PCV15' and 'Product 3' contain digits and " +
+        "neither is a bound. A cap read out of a product name is a wrong answer that reads " +
+        "like a right one, which is the one failure mode this detector cannot afford",
+      file: DR,
+      find: "const BARE_NUMBER_CELL_RE = /^\\s*(\\d+(?:\\.\\d+)?)\\s*%?\\s*$/;",
+      replace: "const BARE_NUMBER_CELL_RE = /(\\d+(?:\\.\\d+)?)/;",
+      kills: ["a row head that merely CONTAINS digits is not a ceiling"],
+    },
+    {
+      name: "the all-capped distribution stops honouring each cell's own cap",
+      breaks:
+        "the only reason the all-capped branch is safe: every share must fit inside the cap " +
+        "its own row displays. Taking the whole remainder puts a knowingly-rejected value " +
+        "into the roomiest cell and calls it a split",
+      file: DR,
+      find: "    const take = Math.min(left, Math.floor(cap.get(idx)!.ceiling));",
+      replace: "    const take = left;",
+      kills: [
+        "every cell capped: largest-ceiling-first, and the total is still reached",
+        "a capped cell never receives more than its displayed ceiling",
+      ],
+    },
+    {
+      name: "the largest-ceiling-first order collapses to DOM order",
+      breaks:
+        "the greedy that makes the all-capped branch complete: filling the roomiest row " +
+        "first cannot strand a total a different order would have reached, and DOM order can",
+      file: DR,
+      find: "    (a, b) => (cap.get(b)!.ceiling - cap.get(a)!.ceiling) || (a - b),",
+      replace: "    (a, b) => a - b,",
+      kills: ["every cell capped: largest-ceiling-first, and the total is still reached"],
+    },
+    {
+      name: "the infeasible-ceilings degrade is dropped (a knowingly-short sum is written)",
+      breaks:
+        "fail loudly, never silently short: when the displayed caps cannot reach the total " +
+        "there is no valid split, and writing the shortfall as though it were one hides the " +
+        "arithmetic the run is supposed to report",
+      file: DR,
+      find: "  if (left > EPS) {",
+      replace: "  if (false) {",
+      kills: ["no split can satisfy the caps: DEGRADE to the pre-fix split with the arithmetic named"],
+    },
+    {
+      name: "a validation naming SEVERAL rows binds its limit to the first of them",
+      breaks:
+        "the verbatim rule on the site's own words: a segment naming two rows does not say " +
+        "which the limit belongs to, and apportioning it to whichever came first is invention " +
+        "dressed as evidence",
+      file: DR,
+      find: "      if (named.length !== 1) continue;",
+      replace: "      if (named.length < 1) continue;",
+      kills: ["a validation naming TWO rows is ambiguous and states no bound"],
+    },
+    {
+      name: "a grid row holding two allocation inputs binds the cap to the first",
+      breaks:
+        "the table's own ambiguity: with two inputs in one row nothing says which the " +
+        "read-only number caps, and guessing produces a wrong cap on a real row",
+      file: DR,
+      find: "    if (rowTargets.length !== 1) continue;",
+      replace: "    if (rowTargets.length < 1) continue;",
+      kills: ["a grid row holding TWO allocation inputs is ambiguous and states no bound"],
+    },
+    {
+      name: "DOM adjacency overrides the table's own refusal",
+      breaks:
+        "the precedence between the two signals: where a table exists its grouping is the " +
+        "authority, and letting reading order re-answer a row the markup called ambiguous " +
+        "reinstates exactly the ambiguity the refusal exists to report",
+      file: DR,
+      find: "    if (found.has(target) || insideGrid.has(target)) continue;",
+      replace: "    if (found.has(target)) continue;",
+      kills: ["a grid row holding TWO allocation inputs is ambiguous and states no bound"],
+    },
+    {
+      name: "an equidistant read-only number is claimed by a row anyway",
+      breaks:
+        "the adjacency rule's own limit: a number sitting exactly between two allocation " +
+        "inputs names neither, and handing it to one of them caps a row the screen never " +
+        "capped",
+      file: DR,
+      find: "        if (targetIdxs.some((t) => t !== target && Math.abs(cand - t) === Math.abs(cand - target))) continue;",
+      replace: "        if (false) continue;",
+      kills: ["an equidistant read-only number names no row and is refused"],
+    },
   ],
 });
