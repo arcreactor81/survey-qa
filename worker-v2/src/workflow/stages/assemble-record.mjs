@@ -526,7 +526,15 @@ function loadFailureEvidence(evidence, walk) {
 // reason claims are not.
 // ---------------------------------------------------------------------------
 
-export const ATTEMPT_PROJECTION_ID = "v2-attempt-projection/1.0.0";
+/**
+ * 1.1.0 — the projection now CARRIES the walk's typed ending and judges `ok` from it. Bumped
+ * rather than left at 1.0.0 because `derivedBy` is how a reader of a signed record knows which
+ * projection produced a row, and `ok` changed MEANING here: 1.0.0 rows read it as
+ * `outcome === "completed"`, 1.1.0 rows read it as "this walk reached an ending". Two records
+ * disagreeing about the same walk under one version id is the drift this field exists to
+ * prevent. (Precedent: `BLOCKER_PROJECTION_ID` is at 1.1.0 for the same reason.)
+ */
+export const ATTEMPT_PROJECTION_ID = "v2-attempt-projection/1.1.0";
 
 /**
  * `attempts: []` WAS THE SAME DEFECT AS `claims: []`, ONE FIELD OVER — and it was
@@ -578,16 +586,52 @@ export function deriveAttempts({ walks, evidence }) {
       targetCaseIds: arr(w?.caseIds),
       startedAt: startOfWalk(endedAt, w?.wallMs),
       endedAt,
-      // `ok` IS THE LEDGER'S OWN WORDS, NOT AN OPINION: the driver wrote `outcome` and
-      // `loadCrash`, and a walk that crashed on load is not ok however it finished.
-      ok: w?.outcome === "completed" && w?.loadCrash !== true,
+      // `ok` IS THE LEDGER'S OWN WORDS, NOT AN OPINION: the driver wrote `outcome`, `ending`
+      // and `loadCrash`, and a walk that crashed on load is not ok however it finished.
+      ok: reachedAnEnding(w),
       stopReason: typeof w?.outcome === "string" ? w.outcome : null,
+      // CARRIED ONLY WHEN THE LEDGER HAS IT, and then byte-for-byte — the same conditional
+      // spread `walkRecord()` uses one hop upstream, for the same reason: `ending: w.ending`
+      // would put the KEY on every row with the value `undefined`, and a reader testing
+      // `"ending" in attempt` would read a row that predates the field as one that HAS an
+      // ending. There is no `??` here deliberately; a default is the whole defect.
+      ...(w && typeof w === "object" && w.ending !== undefined ? { ending: w.ending } : {}),
       evidenceIds: walkEvidenceIds(evidence, w),
       evidenceSharedWithSiblingWalks: (rowsPerKey.get(walkKey(w)) ?? 0) > 1,
       derivedBy: ATTEMPT_PROJECTION_ID,
     });
   }
   return attempts;
+}
+
+/**
+ * DID THIS WALK REACH AN ENDING? — and NOT `outcome === "completed"`, which is the step loop's
+ * own budget bookkeeping.
+ *
+ * THE DEFECT THIS CLOSES. `browser/types.ts` states it outright: `outcome`'s `"completed"`
+ * means "the step loop exited under budget", and A REAL THANK-YOU PAGE LANDS ON
+ * `"no-advance-control"`. So the old reading marked `ok: true` for walks that ran out of PLAN
+ * mid-survey and `ok: false` for the walk that ran out of SURVEY — inverted for precisely the
+ * case the deliverable is about. The comment above the old line ("the ledger's own words, not
+ * an opinion") was true and is why it survived: it faithfully copied a field whose name is a
+ * false friend, which is the same two-meanings-in-one-value defect that made `WalkEnding`
+ * necessary.
+ *
+ * THE TYPED ENDING WINS WHEN THE ROW HAS ONE, because that is the field built to answer this
+ * question from the final screen's own evidence. `stalled` and `unclassified` are NOT endings
+ * reached — `unclassified` especially: it is the walker's counted "I could not tell", and
+ * reading it as ok would rebuild the confident-wrong-answer defect one layer down.
+ *
+ * A ROW WITHOUT AN ENDING falls back to the two terminal outcomes. That is the honest older
+ * reading — it says "this walk ran out of survey" without claiming WHICH kind of ending it
+ * was — and it never invents an ending for a row that did not record one.
+ */
+function reachedAnEnding(w) {
+  if (w?.loadCrash === true) return false;
+  const kind = w?.ending && typeof w.ending === "object" ? w.ending.kind : null;
+  if (kind === "completed" || kind === "screened-out") return true;
+  if (kind === "stalled" || kind === "unclassified") return false;
+  return w?.outcome === "completed" || w?.outcome === "no-advance-control";
 }
 
 /**

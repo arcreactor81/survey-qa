@@ -543,6 +543,143 @@ test("END TO END THROUGH R2: the stored `observations.json` carries the ending",
 });
 
 // ===========================================================================
+// THE THIRD HOP, added by the completion-path audit (docs/COMPLETION-PATH-AUDIT.md G1/G2).
+//
+// The two hops above carry the ending as far as the record's OBSERVATION payloads. The record
+// also carries an ATTEMPT LEDGER — `record.attempts`, the rows the report renders "how many
+// walks ran and how did they go" from — and that projection dropped the ending entirely and
+// judged its `ok` flag off `outcome === "completed"`.
+//
+// `browser/types.ts` says what is wrong with that in its own words: `outcome: "completed"`
+// means "the step loop exited under budget", and A REAL THANK-YOU PAGE LANDS ON
+// `"no-advance-control"`. So the flag was INVERTED for the one case the deliverable is about:
+// the walk that ran out of SURVEY was recorded `ok: false`, and walks that ran out of PLAN
+// mid-survey were recorded `ok: true`.
+// ===========================================================================
+suite("D43 — ...and the record's ATTEMPT ledger carries it, and judges `ok` BY it", () => {});
+
+/** A ledger row as `walkRecord` writes it, with only the fields `deriveAttempts` reads. */
+const ledgerRow = (extra = {}) => ({
+  pathId: PATH_ID,
+  attemptId: ATTEMPT_ID,
+  outcome: "no-advance-control",
+  loadCrash: false,
+  caseIds: ["fi_out_q7"],
+  wallMs: 60000,
+  at: "2026-08-08T00:05:00.000Z",
+  ...extra,
+});
+
+const attemptFor = async (mod, row) => mod.assembleRecordProjection.deriveAttempts({ walks: [row], evidence: [] })[0];
+
+test("THE THIRD HOP: the attempt row carries the ending, evidence and all", async () => {
+  const mod = await worker();
+  const attempt = await attemptFor(mod, ledgerRow({ ending: ended("completed") }));
+
+  // The ambiguous value the ledger recorded, still there...
+  assertEq(attempt.stopReason, "no-advance-control");
+  // ...and, for the first time, the field in the SIGNED record that says which ending it was.
+  assertEq(attempt.ending.kind, "completed", JSON.stringify(attempt.ending));
+  assertEq(attempt.ending.evidence.length, 2, "an ending whose reasoning did not survive is one nobody can argue with");
+  assert(/classified completed/.test(attempt.ending.evidence[0]), JSON.stringify(attempt.ending.evidence));
+});
+
+test("THE INVERTED FLAG: the walk that finished the survey is `ok`, and `outcome` alone never decides it", async () => {
+  const mod = await worker();
+
+  // THE MEASURED SHAPE OF A REAL COMPLETION: the step loop did not "complete" — it ran out of
+  // survey, which the walker records as `no-advance-control` and types as `completed`. Under
+  // the old `ok: w.outcome === "completed"` this row was the one that read `ok: false`.
+  const finished = await attemptFor(mod, ledgerRow({ outcome: "no-advance-control", ending: ended("completed") }));
+  assertEq(finished.ok, true, `the walk that reached the thank-you page must be ok: ${JSON.stringify(finished)}`);
+
+  // ...and the exact inverse, which the old line called ok: the step loop exited under budget
+  // with the survey still going. That is a walk that ran out of PLAN, not out of survey.
+  const ranOutOfPlan = await attemptFor(mod, ledgerRow({ outcome: "completed", ending: ended("stalled") }));
+  assertEq(ranOutOfPlan.ok, false, `a walk that stopped mid-survey is not ok: ${JSON.stringify(ranOutOfPlan)}`);
+
+  // A screen-out is an ending REACHED. The survey answered us; we were turned away, not stopped.
+  const turnedAway = await attemptFor(mod, ledgerRow({ ending: ended("screened-out") }));
+  assertEq(turnedAway.ok, true);
+});
+
+test("`unclassified` IS NOT AN ENDING REACHED — the counted residual never becomes a success", async () => {
+  const mod = await worker();
+  const unnamed = await attemptFor(mod, ledgerRow({ ending: ended("unclassified") }));
+
+  // The collapse that would be invisible: a terminal page that said nothing about which kind of
+  // ending it was, recorded in the signed document as a walk that went fine. `unclassified` is
+  // the walker's "I could not tell", and reading it as ok republishes the guess it refused.
+  assertEq(unnamed.ok, false, JSON.stringify(unnamed));
+  assertEq(unnamed.ending.kind, "unclassified", "and it is still carried, so a reader can see WHY it is not ok");
+});
+
+test("A LOAD CRASH IS NOT OK however it finished — the older guarantee is not traded away", async () => {
+  const mod = await worker();
+  const crashed = await attemptFor(mod, ledgerRow({ loadCrash: true, ending: ended("completed") }));
+  assertEq(crashed.ok, false, "a walk whose page never loaded cannot have finished the survey");
+});
+
+test("ABSENCE IS PRESERVED AS ABSENCE at the third hop, and `ok` degrades to the honest older reading", async () => {
+  const mod = await worker();
+
+  const legacy = ledgerRow({ outcome: "no-advance-control" });
+  const attempt = await attemptFor(mod, legacy);
+  // Not `undefined`, not a default: `"ending" in attempt` must still separate "this walk said
+  // nothing about its ending" from "nobody looked".
+  assertEq("ending" in attempt, false, `the key was written anyway: ${JSON.stringify(attempt.ending)}`);
+  assertEq(JSON.parse(JSON.stringify(attempt)).ending, undefined);
+
+  // The fallback reads the two TERMINAL outcomes — it says "this walk ran out of survey"
+  // without claiming which kind of ending it was, and never invents one.
+  assertEq(attempt.ok, true, "a pre-ending row that ran out of survey is still ok");
+  assertEq((await attemptFor(mod, ledgerRow({ outcome: "completed" }))).ok, true);
+  for (const outcome of ["step-cap", "time-cap", "blocked", "load-crash", "per-case-timeout"]) {
+    assertEq((await attemptFor(mod, ledgerRow({ outcome }))).ok, false, outcome);
+  }
+});
+
+test("A DIFFERENT ENDING IS A DIFFERENT VALUE — all four states survive the third hop distinctly", async () => {
+  const mod = await worker();
+  const seen = [];
+  for (const kind of ["completed", "screened-out", "stalled", "unclassified"]) {
+    const attempt = await attemptFor(mod, ledgerRow({ ending: ended(kind) }));
+    seen.push([kind, attempt.ending.kind, attempt.ok]);
+  }
+  assertEq(
+    JSON.stringify(seen),
+    JSON.stringify([
+      ["completed", "completed", true],
+      ["screened-out", "screened-out", true],
+      ["stalled", "stalled", false],
+      ["unclassified", "unclassified", false],
+    ]),
+    "a carry that mapped, defaulted or collapsed any state would show up here as a repeat",
+  );
+});
+
+test("END TO END THROUGH R2: the signed record's attempt row carries the ending", async () => {
+  const mod = await worker();
+  const env = testEnv();
+  const { runId } = await seedExecutedRun(mod, env, { ending: ended("screened-out") });
+
+  const projected = await mod.projectObservations.projectObservations(env, runId);
+  assertEq(projected.state, "evaluated", JSON.stringify(projected));
+  const derived = await mod.deriveVerdicts.deriveItemResults(env, runId);
+  assertEq(derived.state, "evaluated", JSON.stringify(derived));
+  const assembled = await mod.assembleRecord.assembleRecord(env, runId, derived.value.itemResults);
+  assertEq(assembled.state, "evaluated", `${assembled.reason ?? ""} ${assembled.detail ?? ""}`);
+
+  // Read back out of storage, not off a return value — the signed document is the deliverable.
+  const record = await (await env.EVIDENCE.get(mod.keys.recordKey(runId))).json();
+  const row = record.attempts.find((a) => a.pathId === PATH_ID);
+  assert(row, `no attempt row for ${PATH_ID}: ${JSON.stringify(record.attempts)}`);
+  assertEq(row.ending.kind, "screened-out", JSON.stringify(row));
+  assertEq(row.ok, true, "reaching a screen-out page is reaching an ending");
+  assertEq(row.derivedBy, "v2-attempt-projection/1.1.0", "the projection version says which reading of `ok` produced it");
+});
+
+// ===========================================================================
 suite("D43 — the payload is READABLE, and still not EVIDENCE", () => {});
 
 test("A PAYLOAD WHOSE ENDING CONTRADICTS ITS ARTIFACT MOVES NO VERDICT", async () => {
