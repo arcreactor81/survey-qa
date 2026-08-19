@@ -139,6 +139,41 @@ export const sumCounts = (c: CoverageCounts): number =>
   COVERAGE_BUCKETS.reduce((n, b) => n + (c[b] ?? 0), 0);
 
 /**
+ * THE REASON CODES THAT ACCUSE THE SITE. An allowlist, and it is deliberately one entry long.
+ *
+ * `blocked` in a signed record means "the site stopped us here". Every other stop reason this
+ * system can write — `coverage-shortfall-unexercised`, `plan-missing`, `executor-error`,
+ * `browser-unavailable`, `required-probe-capability-unsupported`, every `extraction-*` code,
+ * `workflow-error` — names something that went wrong on OUR side, and none of them is a fact
+ * about the customer's survey.
+ *
+ * A DENYLIST WOULD BE THE WRONG SHAPE. It was one: "any reason that is not a `-cap`" meant a
+ * new reason code, invented anywhere in this system for any purpose, silently defaulted to
+ * accusing the customer. An allowlist defaults the other way, so an unrecognised code degrades
+ * to "we never reached these cases" — which is always true when cases are still pending, and
+ * is the direction CLAUDE.md requires when the alternative is an unfounded accusation.
+ */
+export const SITE_REFUSAL_REASON_CODES = ["walks-blocked-by-site"] as const;
+
+/**
+ * WHICH UNSETTLED BUCKET A STOPPED RUN'S PENDING CASES BELONG IN.
+ *
+ * ONE FUNCTION, TWO READERS. The checkpoint's coverage counts (`run-workflow.ts#stopBucket`)
+ * and the signed record's per-case statuses (`derive-verdicts.ts#unreachedFromCursor`) used to
+ * carry the same mapping written out twice; when they disagree the run's own blocker sentence
+ * contradicts its own record. `not-reached` is the fallback because a case with no verdict was,
+ * at minimum, never settled — a claim that holds whatever stopped the run.
+ */
+export function unsettledBucketFor(
+  reason: string | null | undefined,
+): "blocked" | "budget-exhausted" | "time-exhausted" | "not-reached" {
+  if (typeof reason !== "string" || reason.length === 0) return "not-reached";
+  if (reason === "wall-clock-cap") return "time-exhausted";
+  if (reason.endsWith("-cap")) return "budget-exhausted";
+  return (SITE_REFUSAL_REASON_CODES as readonly string[]).includes(reason) ? "blocked" : "not-reached";
+}
+
+/**
  * §7.4: "After sealing, counts sum to contract.total."
  *
  * This is enforced at the WRITE boundary, not the read boundary — a checkpoint whose

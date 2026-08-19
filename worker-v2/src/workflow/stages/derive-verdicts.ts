@@ -23,6 +23,7 @@
  */
 
 import type { Env } from "../../types/env";
+import { unsettledBucketFor } from "../../types/contracts";
 import { judgementKey, recordKey } from "../../keys";
 import { getContractRevision } from "../../store/contract-revision";
 import { ArtifactNameCollision, loadRunInputs, loadArtifactBytes, signingKeys, type RunInputs } from "./run-inputs";
@@ -99,14 +100,13 @@ function unreachedFromCursor(inputs: RunInputs): Record<string, string> {
   const cursor = inputs.checkpoint?.execution ?? null;
   const reason = inputs.checkpoint?.completion.reasonCode ?? null;
   if (!cursor || cursor.pendingCaseIds.length === 0) return {};
-  const status =
-    reason === "wall-clock-cap"
-      ? "time-exhausted"
-      : reason && reason.endsWith("-cap")
-        ? "budget-exhausted"
-        : reason
-          ? "blocked"
-          : "not-reached";
+  // OUR SHORTFALL IS NOT THEIR REFUSAL. This read "any reason code that is not a `-cap`" as
+  // `blocked`, which in a signed record means "the site stopped us here" — so a run that
+  // stopped on `coverage-shortfall-unexercised` wrote hundreds of cases we NEVER DROVE into
+  // the record as refusals by the customer's survey. `unsettledBucketFor` (types/contracts.ts)
+  // holds the mapping once, shared with the checkpoint's own `stopBucket`, so the record and
+  // the run's blocker sentence cannot say different things about the same cases.
+  const status = unsettledBucketFor(reason);
   return Object.fromEntries(cursor.pendingCaseIds.map((id) => [id, status]));
 }
 

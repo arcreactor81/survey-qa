@@ -271,7 +271,7 @@ const CRASHED_WALK = walk({
 
 const SHIMMED_RETRY = walk({ shimmed: true });
 
-async function seedD33(mod, env, { observationOpts = {}, walks, crashEvidence = true } = {}) {
+async function seedD33(mod, env, { observationOpts = {}, walks, crashEvidence = true, reasonCode = "walks-blocked-by-site" } = {}) {
   const runId = mod.ids.mintRunId();
   const { contractRevisionId, contractHash } = await mod.contractRevision.sealContract(env, contractBodyD33());
 
@@ -384,9 +384,14 @@ async function seedD33(mod, env, { observationOpts = {}, walks, crashEvidence = 
     // Four cases observed, one the executor never settled — the ledger must reconcile to the
     // sealed total of 5 or `updateCheckpoint` refuses the write.
     d.counts = { ...d.counts, exercised: 4, blocked: 1, pending: 0 };
-    // The cursor that makes `fi_route_blocked` blocked rather than observed.
+    // The cursor that makes `fi_route_blocked` blocked rather than observed. THE REASON CODE
+    // IS LOAD-BEARING: `blocked` means "the site stopped us here", and since the completion-path
+    // audit only a reason that NAMES a site refusal produces it (`unsettledBucketFor`,
+    // types/contracts.ts). This fixture is about a case the SITE blocked, so it carries the
+    // accusation-grade code; it previously said `coverage-shortfall-unexercised`, which is our
+    // own shortfall and now correctly yields `not-reached` instead.
     d.execution = { ...d.execution, pendingCaseIds: ["fi_route_blocked"], planRevisionId: "plan_d33" };
-    d.completion = { test: "partial-blocked", report: "not-started", reasonCode: "coverage-shortfall-unexercised" };
+    d.completion = { test: "partial-blocked", report: "not-started", reasonCode };
   });
 
   return { runId, contractRevisionId, contractHash };
@@ -399,6 +404,7 @@ async function assembleD33(env, opts = {}) {
     observationOpts: { allPass: opts.allPass === true },
     walks: opts.walks === undefined ? [CRASHED_WALK, SHIMMED_RETRY] : opts.walks,
     crashEvidence: opts.crashEvidence,
+    reasonCode: opts.reasonCode,
   });
   const derived = await mod.deriveVerdicts.deriveItemResults(env, seeded.runId);
   assertEq(derived.state, "evaluated", `the aggregator must run: ${derived.reason ?? ""} ${derived.detail ?? ""}`);
@@ -484,6 +490,19 @@ suite("D33 — the record carries the defects the run found", () => {
       `a claims pipeline that manufactures a claim from a passing run is worse than the empty array it replaces: ${JSON.stringify(record.claims)}`,
     );
     assertEq(record.blockers.length, 0, `a healthy ledger blocks nothing: ${JSON.stringify(record.blockers)}`);
+  });
+
+  test("A CASE WE NEVER DROVE IS `not-reached`, NOT `blocked` — the record does not accuse the site of our shortfall", async () => {
+    // Completion-path audit G5. The first-completion run shape is one deep walk, a few
+    // screened-out probes and ~400 cases nobody ever attempted. Every one of those 400 was
+    // written into the SIGNED RECORD as `blocked` — "the site stopped us here" — because the
+    // status mapping read every non-`-cap` reason that way. The identical fixture, one reason
+    // code apart, is the whole proof: the same never-driven case is `blocked` under a site
+    // refusal and `not-reached` under our own coverage shortfall.
+    const { derived } = await assembleD33(testEnv(), { reasonCode: "coverage-shortfall-unexercised" });
+    const routeItem = derived.value.itemResults.find((r) => r.requirementLineageId === "req_ty94r6fg57gn");
+    const never = routeItem.facetResults.find((f) => f.facetInstanceId === "fi_route_blocked");
+    assertEq(never.status, "not-reached", `our own shortfall must not be filed as the site's refusal: ${JSON.stringify(never)}`);
   });
 
   test("a contradicted observation on a case the CURSOR blocked yields no claim — the aggregator decides, not the projection", async () => {
