@@ -902,3 +902,55 @@ suite("D42 — consecutive text-only screens are distinguishable advances", () =
     );
   });
 });
+
+suite("D42 — hidden platform plumbing does not disqualify a text-only screen", () => {
+  // Measured 2026-08-19, run v2r_01m0ca98…: the same qualification interstitials carry
+  // 17 HIDDEN Confirmit form controls (__state, __seqno, __version, visible:false). A
+  // controls.length===0 gate never opened and the walk stalled at the doorstep a second
+  // time. Interactive means answerable: hidden plumbing cannot be answered, so it cannot
+  // make a screen "answerable".
+  const hiddenPlumbing = () => [
+    { idx: 0, tag: "input", type: "hidden", name: "__state", id: null, code: null, label: "", text: "", checked: null, value: "abc", valueIsUserSupplied: false, disabled: false, required: false, visible: false, operable: false, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
+    { idx: 1, tag: "input", type: "hidden", name: "__seqno", id: null, code: null, label: "", text: "", checked: null, value: "41", valueIsUserSupplied: false, disabled: false, required: false, visible: false, operable: false, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
+  ];
+  const plumbedInfo = (visibleText) =>
+    screen("", {
+      signature: "sig:info-shape",
+      controls: hiddenPlumbing(),
+      buttons: [{ idx: 3, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true }],
+    });
+
+  test("THE MEASURED SHAPE: hidden __state/__seqno controls, different prose => the text signal still fires", async () => {
+    const mod = await worker();
+    const congrats = plumbedInfo();
+    congrats.visibleText = "Survey progress: 2% iCongo Congratulations, you have qualified";
+    const intro = plumbedInfo();
+    intro.visibleText = "Survey progress: 3% iSecA Throughout this survey, we will focus on pediatric patients";
+    const signals = mod.driver.advanceSignals(congrats, intro);
+    assert(
+      signals.includes("info-screen-text-changed"),
+      `hidden plumbing must not blind the text signal: ${JSON.stringify(signals)}`,
+    );
+  });
+
+  test("one VISIBLE interactive control still gates the text signal off", async () => {
+    const mod = await worker();
+    const withInput = (visibleText) => {
+      const s = plumbedInfo();
+      s.controls = [
+        ...hiddenPlumbing(),
+        { idx: 5, tag: "input", type: "text", name: "Q1_1", id: null, code: null, label: "Amount", text: "", checked: null, value: "", valueIsUserSupplied: false, disabled: false, required: true, visible: true, operable: true, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
+      ];
+      s.visibleText = visibleText;
+      return s;
+    };
+    const before = withInput("Q1. How many?");
+    const after = withInput("Please review your responses. Q1. How many?");
+    after.validationMessages = ["Please review your responses."];
+    const signals = mod.driver.advanceSignals(before, after);
+    assert(
+      !signals.includes("info-screen-text-changed"),
+      `an answerable screen must never fire the text signal: ${JSON.stringify(signals)}`,
+    );
+  });
+});

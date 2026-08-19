@@ -195,9 +195,12 @@ await runMutantSuite({
         "an advance, resurrecting the exact failure class the identity signal was built " +
         "to prevent",
       file: DR,
-      find: "    before.controls.length === 0 &&\n    after.controls.length === 0 &&",
+      find: "    interactiveControls(before) === 0 &&\n    interactiveControls(after) === 0 &&",
       replace: "    true &&\n    true &&",
-      kills: ["THE GATE: a screen WITH controls whose prose changes (validation re-render) never fires the text signal"],
+      kills: [
+        "THE GATE: a screen WITH controls whose prose changes (validation re-render) never fires the text signal",
+        "one VISIBLE interactive control still gates the text signal off",
+      ],
     },
   ],
 });
