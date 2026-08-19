@@ -817,6 +817,21 @@ export interface AttemptRecordV2 {
    * completion, and `unclassified` is not one either — it is the walker's counted residual.
    */
   ending?: WalkEnding;
+  /**
+   * HOW FAR THIS WALK GOT, counted by the walker as screens it actually advanced past.
+   *
+   * Optional and never defaulted: absent means the ledger row predates the carry, and `0` is a
+   * real measurement that must stay distinguishable from it. "How far did we get?" is the first
+   * question anyone asks of a test run, and until this was carried the number existed in
+   * `progress.json` and in no signed document (docs/REPORT-PRESENTATION-REVIEW.md B4).
+   */
+  screensAdvanced?: number;
+  /**
+   * THE WALKER'S OWN SENTENCE ABOUT WHY IT STOPPED, including — when the survey refused an
+   * answer — the survey's own validation wording. Carried verbatim; readers translate, and
+   * nothing here re-derives it.
+   */
+  outcomeDetail?: string | null;
   /** Catalogue entries stamped with this walk's route AND attempt. */
   evidenceIds: string[];
   /**

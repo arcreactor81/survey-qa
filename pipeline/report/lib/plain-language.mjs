@@ -32,12 +32,16 @@ import { COVERAGE_ORDER, COVERAGE_LABEL } from "./view-model.mjs";
  */
 const COVERAGE_PLAIN = {
   exercised: "were tried on the live survey",
-  "not-reached": "were never reached",
+  // POLISH-2: "were never reached" and "were never started" sat side by side in one sentence
+  // ("416 were never reached and 36 were never started") and a reader had no way to tell them
+  // apart — both just mean "not done". They are different facts and now they say which:
+  // not-reached is the run stopping before it arrived, pending is work never queued at all.
+  "not-reached": "were never reached before the run stopped",
   "proven-unreachable": "were shown to be impossible to reach",
   blocked: "were stopped before we could check them",
   "budget-exhausted": "were still waiting when the run hit its spending limit",
   "time-exhausted": "were still waiting when the run ran out of time",
-  pending: "were never started",
+  pending: "were never queued up to try",
 };
 
 /* ------------------------------------------------------------------ *
@@ -531,7 +535,31 @@ export function buildDecisionSummary(view) {
         screenedOut > 0
           ? ` Being screened out means the survey deliberately ended ${screenedOut === 1 ? "that attempt" : "those attempts"} early, which is the survey working.`
           : "";
-      endingsNote = rest.length ? `${lead} Of the rest, ${joinList(rest)}.${screenOutGloss}` : lead;
+      // POLISH-1: "Of the rest" presumes something came before it. When NONE reached the end
+      // there is no rest — the sentence is about all of them — so it says "Instead".
+      const restLead = reached > 0 ? "Of the rest," : "Instead,";
+      endingsNote = rest.length ? `${lead} ${restLead} ${joinList(rest)}.${screenOutGloss}` : lead;
+    }
+
+    // HOW FAR THE FURTHEST ONE GOT (review B4) — appended to EITHER branch, because depth and
+    // ending are separate facts: a run can record how far it drove without recording where it
+    // stopped, and that combination is exactly the one a reader most needs.
+    //
+    // SAID ONLY WHEN THE RECORD STATES IT. Rows predating the carry produce no sentence rather
+    // than a confident zero, and when only some rows carry a depth the sentence says so instead
+    // of implying the deepest one is the deepest of all.
+    const deepest = endings.deepest;
+    if (deepest && deepest.screens > 0) {
+      const partial =
+        endings.depthUnstated > 0
+          ? ` (${endings.depthUnstated} of the ${endings.attempts} did not record how far ${endings.depthUnstated === 1 ? "it" : "they"} got, so this may not be the deepest)`
+          : "";
+      endingsNote += ` Our deepest attempt got ${deepest.screens} screen${deepest.screens === 1 ? "" : "s"} into the survey before it stopped${partial}.`;
+      // The survey's own wording, quoted when the record carries it — a reader can act on "it
+      // would not accept this answer" and can do nothing with "the walk stopped".
+      if (deepest.siteMessage) {
+        endingsNote += ` The survey would not accept an answer we gave, saying: “${deepest.siteMessage}”`;
+      }
     }
   }
 
@@ -659,7 +687,11 @@ export function buildDecisionSummary(view) {
     decisionLaneLede,
     surveyReady,
     reportReady,
-    readinessLine: `${reportReady ? "Report ready" : "Report incomplete"} · ${surveyReady ? "Survey ready" : "Survey not ready"}`,
+    // POLISH-4: "Report ready · Survey not ready" put two different meanings of "ready" in one
+    // line — the report being finished, and the survey being fit to field — so the eyebrow read
+    // as a contradiction. The report says whether it is COMPLETE; the survey says whether it has
+    // been CHECKED, which is the honest claim when nothing settled.
+    readinessLine: `${reportReady ? "Report complete" : "Report incomplete"} · ${surveyReady ? "Survey ready" : "Survey not yet checked"}`,
     launchBlockers: withConfirmation(launchBlockers),
     problems: withConfirmation(problems),
     cannotTest: withConfirmation(cannotTest),

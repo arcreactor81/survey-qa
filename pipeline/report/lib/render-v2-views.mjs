@@ -40,8 +40,11 @@ export function renderV2KpiStrip(view) {
     checksValue = String(done);
     checksSub = `of ${ec.total} mandatory checks`;
   } else {
-    checksValue = "—";
-    checksSub = "No column may report completion";
+    // POLISH-6: an em dash is not a number, and "No column may report completion" describes
+    // the pipeline's internal state rather than the reader's. The KPI now answers the question
+    // it is asked — have the mandatory checks completed? — with a plain "Not yet".
+    checksValue = "Not yet";
+    checksSub = "No results have cleared our evidence check";
     checksMod = " v2-kpi--neutral";
   }
 
