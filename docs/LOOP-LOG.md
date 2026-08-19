@@ -144,6 +144,31 @@ minutes to 16 in 10.
    to read the first rejection before building anything, because whether the site enforces the
    ceiling at all is unknown from the document. Not built.
 
+### Shipped — v86
+
+- Commit `9995cb6` on `agent/v2-reading-visibility`, pushed to origin.
+- Gates on the MAIN tree: `tsc --noEmit` exit 0; full suite **1534/1534, 0 failed**; w4 mutation
+  **56/56 killed**.
+- The 56th needs its own sentence, because it is the trap this repo has paid for before. The full
+  campaign came back 55/56 with one **NO-RUN**, not a survivor: making the patience timings
+  injectable had rewritten the very line one of my own mutants anchored on, so its find-string no
+  longer matched and the mutant silently never ran. Retargeted the anchor to the new line and
+  re-scored it alone — killed by its named test. The other 55 verdicts stand because only the
+  mutant file changed; `driver.ts` was byte-identical between the two runs. A NO-RUN is not a
+  pass, and a campaign that reports 55/56 while one guard was never tested is the same class of
+  defect as a test that cannot fail.
+- Deployed version `07356ef7-a0a9-4455-9751-d2d7aa9a7053` at 100%, SUCCESS line confirmed.
+  `EXEC_MAX_STEPS_PER_PATH: "120"` verified present in the uploaded config before deploying.
+- Canary launched: run **`v2r_01m0dvfmm162z50msh7pj9b96a`**, output in
+  `.local-private/v86-canary-out/`. The previous walled run was terminated over two hours earlier,
+  so the browser session had long drained.
+
+**Useful datum for the integration phase:** the full suite on MAIN is 1534/1534 green, including
+the corpus tests that both builder branches report failing in their worktrees ("frozen 20-file
+corpus scores 89/99" / "corpus must carry 99 probes, got 0"). That failure is therefore
+environmental to worktrees — an untracked corpus fixture they lack. If it appears on the merged
+MAIN tree it is real, and the merge stops until it is understood.
+
 ### Integration queue (after this deploy lands)
 
 `report-path-fixes` @ `51672ea`, 4 commits on `ae7a370`. Protocol: rebase-merge into
