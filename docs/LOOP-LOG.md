@@ -226,6 +226,34 @@ rule exists to stop. The fix is to make absent probe inputs a loud failure rathe
 score. Deferred deliberately: it is test-suite tooling, not the worker, and it does not belong in a
 deploy train carrying three merged branches. It should be the next non-urgent piece of work.
 
+### Shipped — v87, the four-branch train
+
+Deployed version `a023ab22-66be-433e-8746-f8e85912b673` at 100%, SUCCESS confirmed,
+`EXEC_MAX_STEPS_PER_PATH: "120"` verified present first. Canary launched:
+**`v2r_01m0e6axg4phhm8wzeh3a3fxw5`**.
+
+Merged gates on the final tree (patience + report-path @ `ef4a65c` + bw-grid + ceiling):
+
+| Gate | Result |
+|---|---|
+| `npx tsc --noEmit` | exit 0 |
+| full suite | **1589/1589**, 0 failed |
+| `mutate-w4-select` | **73/73 killed**, denominator 61, both self-checks passed |
+| `mutate-report-defects` | 11/13 — two bounce-backs, below |
+
+The 73/73 is the first real scoring of bw-grid's 6 and ceiling's 11 mutants, which arrived
+unscored by agreement.
+
+**A gate that reddened for the wrong reason, and what it cost.** The first merged w4 baseline came
+back 60/61 with one of my own patience tests already red — on a tree whose full suite had been
+1583/1583 twenty minutes earlier. The cause was mine: that fixture injected a 300 ms ceiling for
+four 20 ms polls, under 4x headroom, and another builder's load on the machine erased it by
+stretching a single sleep. Injected ceilings are now 5 s, so the POLL COUNT decides the outcome
+rather than the wall clock (~60x headroom). The guards did not get weaker: each mutant is still
+killed by an exact timing-independent assertion — removing the terminal cap changes `ceilingMs`
+from 60 to 5000, removing the proof-of-life extension leaves `released` false. "It passed when the
+machine was quiet" is not a result.
+
 ### Bounce-backs from the merged-tree campaigns (20 Aug)
 
 The builders' new mutants arrived unscored by agreement, so the merged-tree runs are their first
