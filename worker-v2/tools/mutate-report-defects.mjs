@@ -26,6 +26,7 @@ import { runMutantSuite } from "./mutate-runner.mjs";
 const SUMMARY = "../pipeline/report/lib/render-summary.mjs";
 const PLAIN = "../pipeline/report/lib/plain-language.mjs";
 const VIEW = "../pipeline/report/lib/view-model.mjs";
+const HTML = "../pipeline/report/lib/render-html.mjs";
 
 const MUTANTS = [
   {
@@ -89,6 +90,69 @@ const MUTANTS = [
     find: '    const r = a?.stop?.reason ?? a?.stopReason ?? "other";',
     replace: '    const r = a?.stop?.reason ?? a?.stopReason ?? "no-advance-control";',
     kills: ["THE COUNTERWEIGHT: a stop reason the record does NOT state is still `other`"],
+  },
+
+  // ---- where the attempts ended, on the page (the fact a test run exists to establish) ----
+  {
+    name: "THE RENDERER DROPS THE ENDING: the summary stops saying where the attempts got to",
+    breaks:
+      "the deployed state: `attempts[].ending` sat in the signed record and no report surface " +
+      "read it, so \"this attempt reached the completion page\" was sayable from the document " +
+      "and unsaid on the page. A view model nobody prints is the same silence with more fields",
+    file: SUMMARY,
+    find: '    s.endingsNote ? `<p class="shape-note shape-note--endings">${esc(s.endingsNote)}</p>` : ""',
+    replace: '    ""',
+    kills: ["WHERE THE ATTEMPTS ENDED IS ON THE PAGE, in the summary a reader meets first"],
+  },
+  {
+    name: "the audit trail drops it too, so no surface carries the ending",
+    breaks:
+      "the auditor's copy of the same fact, printed beside the stopping reason precisely because " +
+      "it is the line that disambiguates it",
+    file: HTML,
+    find: "        <p><strong>Where the attempts ended:</strong> ${esc(c.testing.endings.headline)}</p>",
+    replace: "",
+    kills: ["THE AUDIT TRAIL CARRIES IT TOO, beside the stopping reason it disambiguates"],
+  },
+  {
+    name: "INVERTED: an attempt that recorded no ending is counted as a completion",
+    breaks:
+      "the honest fallback, and the exact ambiguity the ending field exists to end — every run " +
+      "predating the field would report its walks as having finished the survey",
+    file: VIEW,
+    find: "    if (typeof kind !== \"string\" || kind.length === 0) endingsUnstated += 1;",
+    replace: '    if (typeof kind !== "string" || kind.length === 0) endingCounts.completed += 1;',
+    kills: ["ABSENT RENDERS AS ABSENT: a record predating the field is never read as a completion"],
+  },
+  {
+    name: "rows without an ending are dropped from the sentence instead of counted",
+    breaks:
+      "\"never silently shorter\": a ledger half-full of rows that said nothing reads as a ledger " +
+      "where every attempt was accounted for",
+    file: VIEW,
+    find: "  if (endingsUnstated > 0) {\n    endingParts.push(",
+    replace: "  if (false) {\n    endingParts.push(",
+    kills: ["A PARTIAL LEDGER IS NEVER SILENTLY SHORTER: rows without an ending are counted out loud"],
+  },
+  {
+    name: "an ending kind this reader does not know is folded into `completed`",
+    breaks:
+      "a future ending kind silently promoted to the one answer that matters most — the same " +
+      "collapse `unclassified` exists to prevent, one kind over",
+    file: VIEW,
+    find: "    else if (ENDING_KINDS.includes(kind)) endingCounts[kind] += 1;",
+    replace: "    else endingCounts.completed += 1;",
+    kills: ["AN ENDING KIND THIS READER DOES NOT KNOW IS COUNTED BY NAME, not dropped"],
+  },
+  {
+    name: "a screen-out stops being named as the survey working",
+    breaks:
+      "a reader meeting a count of screen-outs with no gloss reads a screener doing its job as a " +
+      "count of failures — the accusation this project keeps having to unlearn, in copy this time",
+    file: PLAIN,
+    find: "      if (screenedOut > 0) rest.push(`${screenedOut} ${screenedOut === 1 ? \"was\" : \"were\"} screened out`);",
+    replace: "      if (false) rest.push(``);",
+    kills: ["A SCREEN-OUT-ONLY RUN SAYS SO PLAINLY — no attempt reached the end, and that is not hidden"],
   },
 ];
 
