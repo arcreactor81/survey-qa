@@ -123,7 +123,8 @@ const baseScreen = (overrides = {}) => ({
   ...overrides,
 });
 
-// ====================================================================// AMENDMENT 1: OPTION-LINKED SPECIFY FILL
+// ===========================================================================
+// AMENDMENT 1: OPTION-LINKED SPECIFY FILL
 // ===========================================================================
 
 suite("amendment 1: option-linked specify fill", () => {
@@ -2529,7 +2530,9 @@ suite("amendment 13: a forward control the page withholds is waited for, bounded
     const ending = mod.driver.classifyEnding(done, { outcome: "no-advance-control", unboundDecisions: 0 });
     assertEq(ending.kind, "completed",
       "completion wording outranks the withheld-control evidence — a real completion must still read as one");
-=======
+  });
+});
+
 // ===========================================================================
 // amendment 14: the deep walk's own step budget, when the environment loses it
 //
