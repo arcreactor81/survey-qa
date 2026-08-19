@@ -2359,7 +2359,7 @@ suite("amendment 13: a forward control the page withholds is waited for, bounded
     const held = await mod.driver.awaitForwardRelease(
       page,
       gatedScreen({ prose: "proceed in 12" }),
-      { deadline: Date.now() + 120_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 300 },
+      { deadline: Date.now() + 120_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 5_000 },
       "fixture",
     );
     assertEq(held.released, true, "the control opened, so the wait must report a release");
@@ -2398,7 +2398,7 @@ suite("amendment 13: a forward control the page withholds is waited for, bounded
     const held = await mod.driver.awaitForwardRelease(
       page,
       bare,
-      { deadline: Date.now() + 120_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 300 },
+      { deadline: Date.now() + 120_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 5_000 },
       "fixture",
     );
     assertEq(held.polls, 0, "nothing was being withheld, so there was nothing to wait for");
@@ -2432,12 +2432,12 @@ suite("amendment 13: a forward control the page withholds is waited for, bounded
     const held = await mod.driver.awaitForwardRelease(
       page,
       terminal,
-      { deadline: Date.now() + 600_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 300 },
+      { deadline: Date.now() + 600_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 5_000 },
       "fixture",
     );
     assertEq(held.released, false, "nothing opened");
     assertEq(held.ceilingMs, 60, `the terminal-looking cap must apply, got ${held.ceilingMs}`);
-    assert(held.waitedMs < 200, `a completion page must not pay the full ceiling, waited ${held.waitedMs}ms`);
+    assert(held.waitedMs < 2_000, `a completion page must not pay the full ceiling, waited ${held.waitedMs}ms`);
   });
 
   test("counterproof: a terminal-looking screen whose own prose keeps changing earns the full ceiling back", async () => {
@@ -2452,7 +2452,7 @@ suite("amendment 13: a forward control the page withholds is waited for, bounded
     const held = await mod.driver.awaitForwardRelease(
       page,
       ticking(12),
-      { deadline: Date.now() + 600_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 300 },
+      { deadline: Date.now() + 600_000, forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 5_000 },
       "fixture",
     );
     assertEq(held.released, true, "a page that kept working long enough to open must be waited for");

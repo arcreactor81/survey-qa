@@ -381,8 +381,19 @@ await runMutantSuite({
         "three '1's forever, and the walk stalls one screen into the survey body while " +
         "each individual cell claims a valid numeric answer",
       file: DR,
-      find: '              numericRecoveryTargets > 1 ? (numericRecoveryOrdinal++ === 0 ? "100" : "0") : "1";',
-      replace: '              "1";',
+      // RETARGETED 20 Aug 2026: ceiling-allocation-fixes reshaped this expression across
+      // several lines (and renamed numericRecoveryTargets -> numericRecoveryIdxs for the
+      // index list), so the old single-line anchor stopped matching and the mutant scored
+      // NO-RUN — never actually tested. Same defect reintroduced, against the new shape.
+      find: `            const allocationValue =
+              numericRecoveryTargets > 1
+                ? ceilingPlan.how !== null
+                  ? ceilingPlan.values.get(c.idx) ?? "0"
+                  : numericRecoveryOrdinal++ === 0
+                  ? "100"
+                  : "0"
+                : "1";`,
+      replace: `            const allocationValue = "1";`,
       kills: ["THE MEASURED SHAPE: three numeric cells recover as 100/0/0, never 1/1/1"],
     },
     {
