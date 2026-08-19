@@ -3889,6 +3889,60 @@ async function applyDecision(
 }
 
 /**
+ * MULTI-QUESTION SCREENS: fill each visible question root as its OWN sub-screen.
+ *
+ * Measured live 19 Aug 2026 (run v2r_01m0dcadeay20nhmh5wap22dag, screen 75): the conjoint
+ * block renders four distinct questions (hAttC20x1..x4) on one page, and the walk stopped
+ * at the one-question refusal with 80% of the survey unreached. The reader already scopes
+ * each root's control indexes, so each root can take the same per-type navigator defaults
+ * a single-question screen gets — SCOPED, so screen-level heuristics (the fragmented
+ * exclusion pre-pass, allocation counting) can never leak across questions. Control idx
+ * values are page-global, so clicks land on the right elements unchanged.
+ *
+ * WHAT THIS DOES NOT CHANGE: planned decisions still never bind on a multi-root screen —
+ * filling here is TRAVERSAL, not witnessing, and no case coverage can be earned from it.
+ * The walk records the standing limitation either way. Grids inside roots are not
+ * re-scoped (assumption stated: a root-level allocation grid keeps whole-screen handling);
+ * a roots list without control indexes still refuses, exactly as before.
+ */
+async function applyAcrossQuestionRoots(
+  page: PageLike,
+  screen: RenderedScreen,
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+  variant: number,
+  revalidateValidation: readonly string[] = [],
+  numericFillVia: "set" | "type" = "set",
+): Promise<{ actions: PerformedAction[]; notOffered: string[]; unfillable: UnfillableControl[] }> {
+  const roots = (Array.isArray(screen.questionRoots) ? screen.questionRoots : [])
+    .filter((r) => Array.isArray(r?.controlIdxs) && r.controlIdxs.length > 0);
+  if (roots.length < 2) {
+    return await applyDecision(page, screen, decision, pathHints, variant, revalidateValidation, numericFillVia);
+  }
+  const out = {
+    actions: [] as PerformedAction[],
+    notOffered: [] as string[],
+    unfillable: [] as UnfillableControl[],
+  };
+  for (const root of roots) {
+    const owned = new Set<number>(root.controlIdxs as number[]);
+    const sub: RenderedScreen = {
+      ...screen,
+      grid: null,
+      controls: screen.controls.filter((c) => owned.has(c.idx)),
+      optionGroups: screen.optionGroups
+        .map((g) => ({ ...g, options: g.options.filter((o) => owned.has(o.idx)) }))
+        .filter((g) => g.options.length > 0),
+    };
+    const filled = await applyDecision(page, sub, decision, pathHints, variant, revalidateValidation, numericFillVia);
+    out.actions.push(...filled.actions);
+    out.notOffered.push(...filled.notOffered);
+    out.unfillable.push(...filled.unfillable);
+  }
+  return out;
+}
+
+/**
  * THE CONTROL THAT ADVANCES THE SURVEY — and WHICH RULE FOUND IT.
  *
  * The second rule is a FALLBACK, and until it was named it was also a disguise. On the live
@@ -3964,6 +4018,33 @@ const questionIdentityOf = (s: RenderedScreen): string =>
   ]);
 
 export function advanceSignals(before: RenderedScreen, after: RenderedScreen): AdvanceSignal[] {
+  const NAVIGATION_CONTROL_TYPES = new Set(["hidden", "button", "submit", "reset", "image"]);
+  const interactiveOf = (s: RenderedScreen) =>
+    s.controls.filter(
+      (c) =>
+        c.visible !== false &&
+        !NAVIGATION_CONTROL_TYPES.has(String(c.type ?? "")) &&
+        !isPlatformNavigationWidget(c, s),
+    );
+  // THE SITE'S OWN REJECTION OUTRANKS EVERY STRUCTURAL MOVEMENT SIGNAL. A failed submit on
+  // a full-page-POST platform re-renders the SAME question with a validation banner, and
+  // the banner mutates everything the structural signals watch: it adds/removes elements
+  // (screen-signature and question-identity change) and the POST itself grows
+  // history.length — measured live 19 Aug 2026 (local jump harness, B10): six consecutive
+  // rejected submits each read as an advance, so the recovery that would have answered the
+  // validation never ran. A re-render keeps the ANSWERABLE control skeleton (names and
+  // labels of non-hidden, non-navigation controls); a genuine advance to a new question
+  // changes it. So: validation visible AND the same answerable skeleton => not an advance,
+  // whatever else moved. Stated limitation: a next question that renders with a validation
+  // banner already up AND an identical answerable skeleton would be misread as a re-render;
+  // the walk then re-answers it and the bounded recovery rounds carry it forward, visibly.
+  if (
+    (after.validationMessages ?? []).length > 0 &&
+    JSON.stringify(interactiveOf(after).map((c) => [c.name ?? "", String(c.label ?? "").slice(0, 80)])) ===
+      JSON.stringify(interactiveOf(before).map((c) => [c.name ?? "", String(c.label ?? "").slice(0, 80)]))
+  ) {
+    return [];
+  }
   const out: AdvanceSignal[] = [];
   if (after.screenSignature !== before.screenSignature) out.push("screen-signature-changed");
   if (questionIdentityOf(after) !== questionIdentityOf(before)) out.push("question-identity-changed");
@@ -3987,14 +4068,7 @@ export function advanceSignals(before: RenderedScreen, after: RenderedScreen): A
   // so none of them can disqualify a screen from being text-only. Stated limitation: a
   // self-updating control-less screen (a ticking counter) would also register; that
   // failure mode is visible in evidence as an advance whose screens share their prose.
-  const NAVIGATION_CONTROL_TYPES = new Set(["hidden", "button", "submit", "reset", "image"]);
-  const interactiveControls = (s: RenderedScreen): number =>
-    s.controls.filter(
-      (c) =>
-        c.visible !== false &&
-        !NAVIGATION_CONTROL_TYPES.has(String(c.type ?? "")) &&
-        !isPlatformNavigationWidget(c, s),
-    ).length;
+  const interactiveControls = (s: RenderedScreen): number => interactiveOf(s).length;
   if (
     interactiveControls(before) === 0 &&
     interactiveControls(after) === 0 &&
@@ -4703,8 +4777,17 @@ export async function walkPath(
     // or clicking; the pending decision stays pending and the walk cannot earn coverage.
     const rootCount = multiQuestionRootCount(before);
     const initialNavigation = resolveAdvanceControl(before);
+    // PER-ROOT TRAVERSAL: a multi-root screen whose reader scoped each root's controls is
+    // filled root-by-root with navigator defaults (see applyAcrossQuestionRoots) instead of
+    // ending the walk — the conjoint block at screen 75 stopped the deep walk with 80% of
+    // the survey unreached. Decisions still never bind here, coverage is never earned here,
+    // and the standing limitation is still recorded. A multi-root screen WITHOUT scoped
+    // control indexes keeps the hard refusal: acting on it would be guessing ownership.
+    const scopedRoots = (Array.isArray(before.questionRoots) ? before.questionRoots : [])
+      .filter((r) => Array.isArray(r?.controlIdxs) && r.controlIdxs.length > 0);
+    const multiRootTraversal = rootCount >= 2 && scopedRoots.length >= 2;
     const initialStop =
-      rootCount >= 2
+      rootCount >= 2 && !multiRootTraversal
         ? {
             kind: MULTI_QUESTION_ACTUATION_UNSUPPORTED,
             count: rootCount,
@@ -4748,11 +4831,25 @@ export async function walkPath(
       break;
     }
 
+    if (multiRootTraversal) {
+      recordReaderLimitation(
+        MULTI_QUESTION_ACTUATION_UNSUPPORTED,
+        `screen ${stepIndex} exposes ${rootCount} distinct visible question roots; filled per-root with ` +
+          `navigator defaults to traverse — planned decisions do not bind here and earn no coverage`,
+        rootCount,
+      );
+    }
+
     // A REFUSED DECISION IS NOT CONSUMED. `splice` runs only on an actual binding, so a
     // decision this screen could not be identified as stays pending and is offered to every
     // later screen — which is the whole repair: the Q7 decision that used to be eaten by an
     // earlier screen's similar option label now survives to reach the real Q7.
-    const binding = bindDecision(before, remaining, walkQuestionIds);
+    // On a multi-root traversal screen NOTHING binds: a one-question binder choosing an
+    // owner among several questions would be a guess, and a guess that consumed a sealed
+    // decision would starve the real question downstream.
+    const binding = multiRootTraversal
+      ? { match: null, refusals: [] as ReturnType<typeof bindDecision>["refusals"] }
+      : bindDecision(before, remaining, walkQuestionIds);
     const matched = binding.match;
     const decision = matched?.decision ?? null;
     if (matched) remaining.splice(matched.index, 1);
@@ -4760,7 +4857,7 @@ export async function walkPath(
 
     const stepVariant = stepIndex >= variantFromStep ? fillerVariant : 0;
     const { actions, notOffered, unfillable } = await timed(
-      () => applyDecision(page, before, decision, pathHints, stepVariant),
+      () => applyAcrossQuestionRoots(page, before, decision, pathHints, stepVariant),
       (ms) => (phaseActMs += ms),
     );
     for (const u of unfillable) unfillableControls.push({ ...u, stepIndex });
@@ -5136,7 +5233,7 @@ export async function walkPath(
         }
         priorValidationKey = validationKey;
         roundsRun = round;
-        const filled = await applyDecision(
+        const filled = await applyAcrossQuestionRoots(
           page,
           roundScreen ?? before,
           {

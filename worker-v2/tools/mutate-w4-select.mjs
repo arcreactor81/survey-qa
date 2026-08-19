@@ -386,6 +386,49 @@ await runMutantSuite({
       kills: ["THE MEASURED SHAPE: three numeric cells recover as 100/0/0, never 1/1/1"],
     },
     {
+      name: "multi-question screens collapse back to whole-screen filling",
+      breaks:
+        "the run v2r_01m0dcadeay20nhmh5wap22dag class one level in: without per-root " +
+        "scoping, screen-level heuristics leak across questions — the fragmented-exclusion " +
+        "pre-pass answers ONE none-option for the whole page and the second question stays " +
+        "unanswered forever",
+      file: DR,
+      find: "  if (roots.length < 2) {",
+      replace: "  if (true) {",
+      kills: ["THE MEASURED SHAPE: both roots take their own none-option and the walk continues"],
+    },
+    {
+      name: "the multi-question walk-ending refusal returns",
+      breaks:
+        "the headline class: the conjoint block at screen 75 ends the walk again with 80% " +
+        "of the survey unreached, even though every root's controls are scoped and fillable",
+      file: DR,
+      find: "    const multiRootTraversal = rootCount >= 2 && scopedRoots.length >= 2;",
+      replace: "    const multiRootTraversal = false;",
+      kills: ["THE MEASURED SHAPE: both roots take their own none-option and the walk continues"],
+    },
+    {
+      name: "a rejected submit reads as an advance again (the validation veto is dropped)",
+      breaks:
+        "the 19 Aug jump-probe class: a failed submit re-renders the same question with a " +
+        "banner that mutates signature, identity and history length; without the veto every " +
+        "rejection reads as movement and the recovery that answers validation never runs",
+      file: DR,
+      find: "    (after.validationMessages ?? []).length > 0 &&",
+      replace: "    false &&",
+      kills: ["THE MEASURED SHAPE: banner mutates signature+identity+history, and it is still not an advance"],
+    },
+    {
+      name: "the veto stops comparing the answerable skeleton (every banner blocks everything)",
+      breaks:
+        "the counterproof side: with the skeleton comparison gone, a REAL advance onto a " +
+        "new question that happens to show a banner would be silently erased as a re-render",
+      file: DR,
+      find: "    JSON.stringify(interactiveOf(after).map((c) => [c.name ?? \"\", String(c.label ?? \"\").slice(0, 80)])) ===",
+      replace: "    true ||",
+      kills: ["counterproof: a NEW question showing validation still advances when its skeleton differs"],
+    },
+    {
       name: "the specify cell rejoins the numeric allocation targets",
       breaks:
         "the run v2r_01m0d5x1h5z8xjxw6tdvnee771 class: a number lands in the grid's " +

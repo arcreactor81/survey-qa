@@ -1960,3 +1960,220 @@ suite("amendment 10: a specify-style text cell is cleared, never allocated", () 
     assert(obs.outcome !== "blocked", `outcome was ${JSON.stringify(obs.outcome)}`);
   });
 });
+
+suite("amendment 11: a rejected submit never reads as an advance", () => {
+  // Measured live 19 Aug (jump probe at B10): a failed submit on a full-page-POST platform
+  // re-renders the SAME question with a validation banner, and the banner mutates every
+  // structural signal — signature, question identity, history length. Six rejected submits
+  // each read as an advance, so the recovery that answers validation never ran. The site's
+  // own rejection outranks structural movement: validation visible + the same answerable
+  // control skeleton => no advance.
+  const ctrl = (idx, name, label, extra = {}) => ({
+    idx, tag: "input", type: "text", name, id: null, code: null, label, text: "",
+    checked: null, value: "", valueIsUserSupplied: false, disabled: false, required: true,
+    visible: true, operable: true, actuatedVia: "self", placeholder: null, maxlength: null,
+    min: null, max: null, step: null, pattern: null, readOnly: false, ...extra,
+  });
+  const screenOf = ({ controls, validation = [], signature, history, url }) => ({
+    at: "2026-08-19T12:00:00.000Z",
+    url: url ?? "https://fixture.invalid/survey",
+    title: "B10", questionText: "", grid: null, collectedErrors: [], readerLimitations: [],
+    controls, optionGroups: [],
+    buttons: [{ idx: 90, label: ">>", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+    validationMessages: validation,
+    progress: { present: false, value: null },
+    counts: { controls: controls.length, optionGroups: 0, options: 0, textInputs: controls.length, valueInputs: controls.length, optionsNotOperable: 0, readerLimitations: 0 },
+    screenSignature: signature,
+    historyLength: history,
+  });
+
+  test("THE MEASURED SHAPE: banner mutates signature+identity+history, and it is still not an advance", async () => {
+    const { mod } = await loadWorker();
+    const before = screenOf({
+      controls: [ctrl(0, "B10_1", "%"), ctrl(1, "B10_2", "%")],
+      signature: "sig:one", history: 5,
+    });
+    const after = screenOf({
+      controls: [
+        ctrl(0, "B10_1", "%"), ctrl(1, "B10_2", "%"),
+        // The banner's own additions: hidden plumbing and an unnamed anchor-ish control.
+        ctrl(2, "__seqno", "", { type: "hidden", visible: false }),
+      ],
+      validation: ["Please review your responses on this page.", "Please enter numeric answers."],
+      signature: "sig:two", history: 6,
+    });
+    const signals = mod.driver.advanceSignals(before, after);
+    assertEq(JSON.stringify(signals), JSON.stringify([]),
+      `a validation re-render with the same answerable skeleton is not movement, got ${JSON.stringify(signals)}`);
+  });
+
+  test("counterproof: a NEW question showing validation still advances when its skeleton differs", async () => {
+    const { mod } = await loadWorker();
+    const before = screenOf({ controls: [ctrl(0, "B10_1", "%")], signature: "sig:one", history: 5 });
+    const after = screenOf({
+      controls: [ctrl(0, "B20_1", "How many?")],
+      validation: ["Please enter a number."],
+      signature: "sig:two", history: 6,
+    });
+    const signals = mod.driver.advanceSignals(before, after);
+    assert(signals.length > 0, "a different answerable skeleton is a real advance even with a banner up");
+  });
+
+  test("counterproof: without validation, the structural signals still work exactly as before", async () => {
+    const { mod } = await loadWorker();
+    const before = screenOf({ controls: [ctrl(0, "B10_1", "%")], signature: "sig:one", history: 5 });
+    const after = screenOf({ controls: [ctrl(0, "B10_1", "%")], signature: "sig:two", history: 6 });
+    const signals = mod.driver.advanceSignals(before, after);
+    assert(signals.includes("screen-signature-changed") && signals.includes("history-length-changed"),
+      `no validation means no veto, got ${JSON.stringify(signals)}`);
+  });
+});
+
+suite("amendment 12: multi-question screens traverse per root instead of ending the walk", () => {
+  // Measured live 19 Aug (run v2r_01m0dcadeay20nhmh5wap22dag, screen 75): the conjoint
+  // block renders four questions on one page and the deep walk ENDED at the one-question
+  // refusal with 80% of the survey unreached. The reader scopes each root's controls, so
+  // each root now takes the same navigator defaults a single-question screen gets —
+  // scoped per root, so screen-level heuristics cannot leak across questions. The fixture
+  // is the leak-proof shape: TWO fragmented exclusion screeners share the page, and only
+  // per-root filling answers BOTH none-options (whole-screen filling picks one and stops).
+  const NEXT_IDX = 90;
+  const mkCtrl = (idx, type, name, label) => ({
+    idx, tag: "input", type, name, id: null, code: null, label, text: "",
+    checked: false, value: "", valueIsUserSupplied: false, disabled: false, required: false,
+    visible: true, operable: true, actuatedVia: "self", labelIndex: null, placeholder: null,
+    maxlength: null, min: null, max: null, step: null, pattern: null, readOnly: false,
+  });
+  const mkOpt = (idx, label) => ({
+    order: 0, idx, code: String(idx), label, checked: false, disabled: false,
+    visible: true, operable: true, actuatedVia: "self", labelIndex: null,
+  });
+
+  const twinScreenerWalk = async ({ scopedRoots = true } = {}) => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const checked = new Set();
+    let nextClicks = 0;
+    let done = false;
+    const rootA = [0, 1, 2];
+    const rootB = [3, 4, 5];
+    const answered = (root) => root.some((i) => checked.has(i));
+    const mkScreen = () => ({
+      at: "2026-08-19T12:00:00.000Z",
+      url: "https://fixture.invalid/survey",
+      title: "Q1Q2",
+      questionText: "",
+      grid: null, collectedErrors: [], readerLimitations: [],
+      controls: [
+        mkCtrl(0, "checkbox", "q1_a", "Company Alpha"),
+        mkCtrl(1, "checkbox", "q1_b", "Company Beta"),
+        mkCtrl(2, "radio", "q1none", "None of the above"),
+        mkCtrl(3, "checkbox", "q2_a", "Condition Gamma"),
+        mkCtrl(4, "checkbox", "q2_b", "Condition Delta"),
+        mkCtrl(5, "radio", "q2none", "None of the above"),
+      ].map((c) => ({ ...c, checked: checked.has(c.idx) })),
+      optionGroups: [
+        { name: "q1_a", kind: "checkbox", options: [{ ...mkOpt(0, "Company Alpha"), checked: checked.has(0) }] },
+        { name: "q1_b", kind: "checkbox", options: [{ ...mkOpt(1, "Company Beta"), checked: checked.has(1) }] },
+        { name: "q1none", kind: "radio", options: [{ ...mkOpt(2, "None of the above"), checked: checked.has(2) }] },
+        { name: "q2_a", kind: "checkbox", options: [{ ...mkOpt(3, "Condition Gamma"), checked: checked.has(3) }] },
+        { name: "q2_b", kind: "checkbox", options: [{ ...mkOpt(4, "Condition Delta"), checked: checked.has(4) }] },
+        { name: "q2none", kind: "radio", options: [{ ...mkOpt(5, "None of the above"), checked: checked.has(5) }] },
+      ],
+      questionRoots: scopedRoots
+        ? [
+            { via: "question-container+fieldset", label: "Q1", controlIdxs: rootA },
+            { via: "question-container+fieldset", label: "Q2", controlIdxs: rootB },
+          ]
+        : [
+            { via: "question-container+fieldset", label: "Q1" },
+            { via: "question-container+fieldset", label: "Q2" },
+          ],
+      buttons: [{ idx: NEXT_IDX, label: ">>", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+      validationMessages: nextClicks > 0 && !done ? ["Please select an answer."] : [],
+      progress: { present: false, value: null },
+      counts: { controls: 6, optionGroups: 6, options: 6, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:twin",
+    });
+    const doneScreen = {
+      ...mkScreen(),
+      url: "https://fixture.invalid/survey/after-twin",
+      controls: [], optionGroups: [], questionRoots: [], buttons: [],
+      validationMessages: [],
+      counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:after-twin",
+    };
+    const idxFromSrc = (src) => {
+      const at = src.indexOf(")[");
+      if (at < 0) return null;
+      const end = src.indexOf("]", at + 2);
+      const n = Number(src.slice(at + 2, end));
+      return Number.isInteger(n) ? n : null;
+    };
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) return done ? doneScreen : mkScreen();
+        if (src.includes("checkedGroupIdxs")) {
+          const idx = idxFromSrc(src);
+          const kind = idx === 2 || idx === 5 ? "radio" : "checkbox";
+          const names = ["q1_a", "q1_b", "q1none", "q2_a", "q2_b", "q2none"];
+          return {
+            idx, type: kind, name: idx !== null ? names[idx] ?? null : null, formOwner: 0,
+            unnamedControlIdx: null, checked: idx !== null && checked.has(idx),
+            checkedGroupIdxs: idx !== null && checked.has(idx) ? [idx] : [],
+          };
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return Array.from({ length: 95 }, (_, idx) => ({
+          async click() {
+            if (idx === NEXT_IDX) {
+              if (answered(rootA) && answered(rootB)) done = true;
+              else nextClicks += 1;
+              return;
+            }
+            if (idx <= 5) checked.add(idx);
+          },
+          async type() {}, async focus() {},
+        }));
+      },
+      async screenshot() { return new TextEncoder().encode("PNG-D56"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56twin", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey", runId, planRevisionId: "plan_d56twin1",
+        attemptId: "att_d56twin001", tier: 1, maxSteps: 2, deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 }, applyHistoryShim: false, advanceTimeoutMs: 400,
+      },
+      { env, runId, attemptId: "att_d56twin001", pathId: "path_d56twin", witnesses: [] },
+    );
+    return { obs, checked };
+  };
+
+  test("THE MEASURED SHAPE: both roots take their own none-option and the walk continues", async () => {
+    const { obs, checked } = await twinScreenerWalk();
+    assert(checked.has(2) && checked.has(5),
+      `each root's own exclusive none must be picked, got ${JSON.stringify([...checked])}`);
+    assert(obs.outcome !== "multi-question-screen-actuation-unsupported",
+      `the walk must not end at the refusal, outcome was ${JSON.stringify(obs.outcome)}`);
+    const step0 = obs.steps[0];
+    assertEq(step0.advanced, true, "the twin-screener page advances once both roots are answered");
+    assert((obs.readerLimitations ?? []).some((l) => l.kind === "multi-question-screen-actuation-unsupported"),
+      "the standing limitation still travels — traversal is not witnessing");
+    assertEq(step0.decisionQuestion, null, "no planned decision binds on a multi-root screen");
+  });
+
+  test("counterproof: roots without scoped control indexes keep the hard refusal", async () => {
+    const { obs } = await twinScreenerWalk({ scopedRoots: false });
+    assertEq(obs.outcome, "multi-question-screen-actuation-unsupported",
+      "acting without ownership scoping would be a guess — the refusal stands");
+  });
+});

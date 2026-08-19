@@ -91,7 +91,7 @@ async function walk(mod, reads, decisions = [], advanceTimeoutMs = 40) {
 }
 
 suite("P0 honesty blockers - disjoint question ownership", () => {
-  test("two visible question roots stop before binding, defaults, forward click, or coverage", async () => {
+  test("two scoped question roots traverse by default and still bind nothing and earn nothing", async () => {
     const mod = await worker();
     const roots = [
       { via: "fieldset", label: "Q1?", controlIdxs: [0, 1] },
@@ -110,18 +110,66 @@ suite("P0 honesty blockers - disjoint question ownership", () => {
         { idx: 2, tag: "input", type: "radio", name: "q2", id: null, code: "a", label: "A", text: "", checked: false, value: "a", disabled: false, required: false, visible: true, operable: true, placeholder: null, maxlength: null, readOnly: false },
         { idx: 3, tag: "input", type: "radio", name: "q2", id: null, code: "b", label: "B", text: "", checked: false, value: "b", disabled: false, required: false, visible: true, operable: true, placeholder: null, maxlength: null, readOnly: false },
       ],
+      optionGroups: [
+        { name: "q1", kind: "radio", options: [
+          { order: 0, idx: 0, code: "y", label: "Yes", checked: false, disabled: false, visible: true, operable: true },
+          { order: 1, idx: 1, code: "n", label: "No", checked: false, disabled: false, visible: true, operable: true },
+        ] },
+        { name: "q2", kind: "radio", options: [
+          { order: 0, idx: 2, code: "a", label: "A", checked: false, disabled: false, visible: true, operable: true },
+          { order: 1, idx: 3, code: "b", label: "B", checked: false, disabled: false, visible: true, operable: true },
+        ] },
+      ],
+    });
+    const decision = { question: "Q1", question_text: "Q1?", select: ["Yes"] };
+    const { obs } = await walk(mod, [s], [decision]);
+    // THE CONTRACT SINCE 19 AUG (run v2r_01m0dcadeay20nhmh5wap22dag, screen 75): scoped
+    // roots TRAVERSE with per-root navigator defaults instead of ending the walk — but the
+    // honesty core is unchanged and pinned here: no planned decision binds, the sealed
+    // decision is not consumed, no coverage is earned, and the limitation still travels.
+    assert(obs.outcome !== "multi-question-screen-actuation-unsupported",
+      "scoped roots no longer end the walk");
+    assertEq(obs.steps[0].decisionQuestion, null, "no planned decision binds on a multi-root screen");
+    assertEq(obs.unboundDecisions.length, 1, "the sealed decision is NOT consumed by the traversal");
+    const rootAActed = obs.steps[0].actions.some((a) => a.kind === "click-option" && (a.targetIdx === 0 || a.targetIdx === 1));
+    const rootBActed = obs.steps[0].actions.some((a) => a.kind === "click-option" && (a.targetIdx === 2 || a.targetIdx === 3));
+    assert(rootAActed && rootBActed, `both roots take a default: ${JSON.stringify(obs.steps[0].actions.map((a) => a.targetIdx))}`);
+    assert(
+      obs.steps[0].actions.some((a) => a.kind === "click-option" && String(a.detail ?? "").startsWith("navigator-default")),
+      "traversal fillers carry the invented-answer label",
+    );
+    assertEq(mod.executeBatch.assessExercised(obs, [decision]).exercised, false, "traversal earns no coverage");
+    assert(
+      (obs.readerLimitations ?? []).some((l) => l.kind === "multi-question-screen-actuation-unsupported"),
+      "the standing limitation still travels",
+    );
+  });
+
+  test("roots WITHOUT scoped control indexes still stop before binding, defaults, or coverage", async () => {
+    const mod = await worker();
+    const s = screen({
+      questionRoots: [
+        { via: "fieldset", label: "Q1?" },
+        { via: "fieldset", label: "Q2?" },
+      ],
+      readerLimitations: [{
+        kind: "multi-question-screen-actuation-unsupported",
+        detail: "two disjoint roots",
+        count: 2,
+      }],
+      controls: [
+        { idx: 0, tag: "input", type: "radio", name: "q1", id: null, code: "y", label: "Yes", text: "", checked: false, value: "y", disabled: false, required: false, visible: true, operable: true, placeholder: null, maxlength: null, readOnly: false },
+        { idx: 1, tag: "input", type: "radio", name: "q2", id: null, code: "a", label: "A", text: "", checked: false, value: "a", disabled: false, required: false, visible: true, operable: true, placeholder: null, maxlength: null, readOnly: false },
+      ],
     });
     const decision = { question: "Q1", question_text: "Q1?", select: ["Yes"] };
     const { obs, page } = await walk(mod, [s], [decision]);
     assertEq(obs.outcome, "multi-question-screen-actuation-unsupported");
-    assertEq(obs.steps.length, 1);
     assertEq(obs.steps[0].actions.length, 0, JSON.stringify(obs.steps[0].actions));
     assertEq(page.clicks.length, 0, JSON.stringify(page.clicks));
-    assertEq(obs.steps[0].decisionQuestion, null);
     assertEq(obs.unboundDecisions.length, 1);
     assertEq(obs.navigatorDefaultAnswerCount, 0);
     assertEq(mod.executeBatch.assessExercised(obs, [decision]).exercised, false);
-    assertEq(obs.readerLimitationCount, 2);
   });
 
   test("duplicate/nested labels over one owner collapse, while two ARIA groups remain two", async () => {
