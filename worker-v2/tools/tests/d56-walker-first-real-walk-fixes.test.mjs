@@ -123,8 +123,7 @@ const baseScreen = (overrides = {}) => ({
   ...overrides,
 });
 
-// ===========================================================================
-// AMENDMENT 1: OPTION-LINKED SPECIFY FILL
+// ====================================================================// AMENDMENT 1: OPTION-LINKED SPECIFY FILL
 // ===========================================================================
 
 suite("amendment 1: option-linked specify fill", () => {
@@ -2530,5 +2529,74 @@ suite("amendment 13: a forward control the page withholds is waited for, bounded
     const ending = mod.driver.classifyEnding(done, { outcome: "no-advance-control", unboundDecisions: 0 });
     assertEq(ending.kind, "completed",
       "completion wording outranks the withheld-control evidence — a real completion must still read as one");
+=======
+// ===========================================================================
+// amendment 14: the deep walk's own step budget, when the environment loses it
+//
+// Completion-path audit §5.4. Every shipped environment declares
+// EXEC_MAX_STEPS_PER_PATH = 120, sized in wrangler.jsonc's own comment against the measured
+// ~85-100-screen full traversal. The CODE fallback was 40. Forty does not clear this survey,
+// and the failure is silent in exactly the way CLAUDE.md forbids: an over-cap walk is converted
+// to `outcome: "step-cap"` and therefore `ending: stalled` (driver.ts), so a deploy that lost
+// the variable would report walks that gave up instead of the walk that finished.
+// ===========================================================================
+suite("amendment 14: a lost env var must not silently cap the deep walk", () => {
+  test("the code fallback clears every shipped config's declared step cap", async () => {
+    const { mod } = await loadWorker();
+    const { readFileSync, readdirSync } = await import("fs");
+    const fallback = mod.executeBatch.DEFAULT_MAX_STEPS_PER_PATH;
+
+    const configs = ["wrangler.jsonc", ...readdirSync(".").filter((f) => f.startsWith("wrangler.arm-") && f.endsWith(".jsonc"))];
+    assert(configs.length >= 2, `expected the deployed config and the arm configs, got ${JSON.stringify(configs)}`);
+    for (const f of configs) {
+      const declared = Number(readFileSync(f, "utf8").match(/"EXEC_MAX_STEPS_PER_PATH"\s*:\s*"(\d+)"/)?.[1]);
+      // A config that stopped declaring it would make the comparison vacuous, so the absence is
+      // itself a failure rather than a quietly skipped row.
+      assert(Number.isFinite(declared), `${f} declares no EXEC_MAX_STEPS_PER_PATH to compare against`);
+      assert(
+        fallback >= declared,
+        `${f} sizes walks at ${declared} screens and the code default is ${fallback}: an environment that lost the ` +
+          `variable would cap every deep walk below what this config was sized for, and report it as a stall`,
+      );
+    }
+  });
+
+  test("...and it clears the measured traversal itself, not merely whatever the configs say", async () => {
+    const { mod } = await loadWorker();
+    // The independent half. If someone lowered every config to 40, the comparison above would
+    // pass while nothing could reach a completion page. The number this is pinned against is
+    // wrangler.jsonc's own stated sizing argument: a ~85-100-screen full traversal.
+    assert(
+      mod.executeBatch.DEFAULT_MAX_STEPS_PER_PATH >= 100,
+      `the fallback (${mod.executeBatch.DEFAULT_MAX_STEPS_PER_PATH}) does not clear the measured ~85-100-screen traversal`,
+    );
+  });
+
+  test("THE RESOLVER, NOT A LINE OF SOURCE: an environment with no step cap resolves to the fallback", async () => {
+    const { mod } = await loadWorker();
+    const { resolveMaxStepsPerPath, DEFAULT_MAX_STEPS_PER_PATH } = mod.executeBatch;
+
+    // The property stated as behaviour, so a mutation can kill it. An assertion that only greps
+    // the source cannot: the mutant harness rewrites the module inside esbuild's load step and
+    // never touches the file on disk.
+    assertEq(resolveMaxStepsPerPath(undefined), DEFAULT_MAX_STEPS_PER_PATH, "a missing variable takes the fallback");
+    assertEq(resolveMaxStepsPerPath("55"), 55, "and a declared value still wins — this is a fallback, not a policy");
+    assertEq(resolveMaxStepsPerPath("not a number"), DEFAULT_MAX_STEPS_PER_PATH, "an unreadable value is not a cap of NaN");
+  });
+
+  test("the call site resolves through it, and a missing variable is named rather than silently defaulted", async () => {
+    const { readFileSync } = await import("fs");
+    const source = readFileSync("src/workflow/stages/execute-batch.ts", "utf8");
+    // A SOURCE-LEVEL DRIFT GUARD, and honestly labelled as one: this pair is not killable by the
+    // mutation campaign (the rewrite is in-memory), so it is a review aid in the same spirit as
+    // amendment 3b above — the behavioural half of this property is the test before it.
+    assert(
+      /const maxSteps = resolveMaxStepsPerPath\(declaredMaxSteps\);/.test(source),
+      "the step-cap read no longer resolves through resolveMaxStepsPerPath",
+    );
+    assert(
+      /EXEC_MAX_STEPS_PER_PATH is not set in this environment/.test(source),
+      "an environment missing the variable must be named in the log, not silently defaulted",
+    );
   });
 });

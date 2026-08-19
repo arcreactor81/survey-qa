@@ -99,6 +99,7 @@ import {
   type RunFailure,
   type TestCompletion,
   unavailableContract,
+  unsettledBucketFor,
   zeroCounts,
 } from "../types/contracts";
 import { mintPlanRevisionId, recoveryInstanceId } from "../ids";
@@ -3424,8 +3425,18 @@ export function capExceeded(usage: {
   return null;
 }
 
-const stopBucket = (reason: string): "budget-exhausted" | "time-exhausted" | "blocked" =>
-  reason === "wall-clock-cap" ? "time-exhausted" : reason.endsWith("-cap") ? "budget-exhausted" : "blocked";
+/**
+ * WHICH BUCKET THE PENDING CASES MOVE INTO when a stop reason ends the execution phase.
+ *
+ * Delegated to `unsettledBucketFor` (types/contracts.ts) so this and the signed record's own
+ * per-case statuses (`derive-verdicts.ts#unreachedFromCursor`) read one mapping instead of two
+ * copies of it. It used to say "any non-`-cap` reason is `blocked`", which put every case a
+ * `coverage-shortfall-unexercised` run never drove into `counts.blocked` — and `counts.blocked`
+ * is what `testAxisBlockers` prints, so the run's own blocker sentence accused the customer's
+ * survey of stopping walks that were never attempted.
+ */
+const stopBucket = (reason: string): "budget-exhausted" | "time-exhausted" | "blocked" | "not-reached" =>
+  unsettledBucketFor(reason);
 
 const stopCompletion = (reason: string): TestCompletion =>
   reason === "wall-clock-cap" ? "partial-time" : reason.endsWith("-cap") ? "partial-budget" : "partial-blocked";

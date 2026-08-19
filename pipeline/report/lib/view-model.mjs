@@ -480,7 +480,13 @@ export function buildReportView({ record, scorecard = null, attestation, options
   /* ---------------- completion: two independent outcomes ---------------- */
   const stopReasons = new Map();
   for (const a of attempts) {
-    const r = a?.stop?.reason ?? "other";
+    // v1 nested this as `stop.reason`; v2's `AttemptRecordV2` writes a FLAT `stopReason`
+    // (worker-v2/src/types/record.ts, written by `deriveAttempts`). Reading only the nested
+    // shape counted EVERY v2 attempt as "other", so the page said "Recorded attempt stop
+    // reasons: other ×N" and the walker's own account of how each walk stopped — including
+    // the `no-advance-control` that a real completion lands on — was invisible to a reader.
+    // Both shapes are read; neither is defaulted into the other.
+    const r = a?.stop?.reason ?? a?.stopReason ?? "other";
     stopReasons.set(r, (stopReasons.get(r) || 0) + 1);
   }
   const limitStops = [...stopReasons.keys()].filter((r) => r === "budget-limit" || r === "time-limit");

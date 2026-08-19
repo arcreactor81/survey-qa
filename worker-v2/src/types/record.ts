@@ -16,6 +16,7 @@
  * the opposite. Three false passes came from one unchecked prose step.
  */
 
+import type { WalkEnding } from "../browser/types";
 import type { GateOutcome } from "../workflow/gates";
 import type { DocumentCoverage } from "../extract/types";
 import type { DocumentSemanticsProfile } from "../extract/document-semantics";
@@ -799,8 +800,23 @@ export interface AttemptRecordV2 {
    */
   startedAt: string | null;
   endedAt: string | null;
+  /**
+   * DID THIS WALK REACH AN ENDING? Judged from `ending` when the ledger row carries one, and
+   * NOT from `stopReason` — `outcome: "completed"` is the step loop's own budget bookkeeping,
+   * and `browser/types.ts` states that a real thank-you page lands on `"no-advance-control"`.
+   * Reading the outcome alone marked the one walk that finished the survey `ok: false`.
+   */
   ok: boolean;
   stopReason: string | null;
+  /**
+   * HOW THE WALK ENDED, as the walker typed it from its own final screen (`WalkEnding`).
+   *
+   * OPTIONAL AND NEVER DEFAULTED. Ledger rows written before endings were typed do not carry
+   * one, so the key is absent on those rows and `"ending" in attempt` still separates "this
+   * walk said nothing about its ending" from "nobody looked". An absent ending is NOT a
+   * completion, and `unclassified` is not one either — it is the walker's counted residual.
+   */
+  ending?: WalkEnding;
   /** Catalogue entries stamped with this walk's route AND attempt. */
   evidenceIds: string[];
   /**

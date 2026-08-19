@@ -200,7 +200,7 @@ $MutationHarnesses = @(
 $MutationLibraries = @(
   "mutate-runner.mjs"
 )
-if ($MutationHarnesses.Count -ne 44 -or $MutationLibraries.Count -ne 1) {
+if ($MutationHarnesses.Count -ne 46 -or $MutationLibraries.Count -ne 1) {
   throw "Mutation manifest cardinality changed"
 }
 $MutationDeclared = @($MutationHarnesses + $MutationLibraries)

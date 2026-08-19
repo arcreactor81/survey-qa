@@ -127,6 +127,35 @@ export const EXEC_STOP_COVERAGE_SHORTFALL = "coverage-shortfall-unexercised";
 /** Required planned work uses an action vocabulary this executor cannot perform or prove. */
 export const EXEC_STOP_REQUIRED_PROBE_UNSUPPORTED = "required-probe-capability-unsupported";
 
+/**
+ * HOW MANY SCREENS ONE WALK MAY VISIT, when the environment does not say.
+ *
+ * THE DEFECT THIS CLOSES. The code default was 40 while every deployed environment declares
+ * 120 (`wrangler.jsonc` and the four arm configs, plus both canary config tools). 40 does NOT
+ * clear this instrument — the measured full traversal is ~85-100 screens — so a deploy that
+ * lost the variable would silently cap every deep walk, convert it to `outcome: "step-cap"`
+ * and therefore `ending: stalled` (driver.ts), and the run would report walks that gave up
+ * instead of walks that finished. A default that cannot do the job it is the default for is a
+ * silent short, which CLAUDE.md forbids.
+ *
+ * THE VALUE IS THE DEPLOYED ONE, and `d56-walker-first-real-walk-fixes.test.mjs` asserts that
+ * against the config files themselves, so the two cannot drift apart again unnoticed. It is a
+ * fallback, not a policy: the environment still overrides it, and a missing var is logged.
+ */
+export const DEFAULT_MAX_STEPS_PER_PATH = 120;
+
+/**
+ * THE STEP CAP THIS ENVIRONMENT GIVES ONE WALK.
+ *
+ * Exported and pure so the fallback is testable AS BEHAVIOUR. A guard that can only read the
+ * source file is a guard a mutation cannot kill — the mutant harness rewrites the module inside
+ * esbuild's load step and never touches the disk — and a budget nothing can falsify is exactly
+ * how a 40 that could not finish this survey survived beside a config that says 120.
+ */
+export function resolveMaxStepsPerPath(declared: string | undefined): number {
+  return num(declared, DEFAULT_MAX_STEPS_PER_PATH);
+}
+
 /** The complete set. A code not in here is a bug, not a new feature. */
 export const EXEC_STOP_REASONS = [
   EXEC_STOP_PLAN_MISSING,
@@ -1204,7 +1233,17 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
 
   const batchDeadline = Date.now() + num(env.EXEC_BATCH_MAX_MS, 120_000);
   const maxAttempts = num(env.EXEC_BATCH_MAX_ATTEMPTS, 4);
-  const maxSteps = num((env as unknown as { EXEC_MAX_STEPS_PER_PATH?: string }).EXEC_MAX_STEPS_PER_PATH, 40);
+  const declaredMaxSteps = (env as unknown as { EXEC_MAX_STEPS_PER_PATH?: string }).EXEC_MAX_STEPS_PER_PATH;
+  if (declaredMaxSteps === undefined) {
+    // NAMED, NOT SILENT (CLAUDE.md: detect when an assumption does not hold and report it).
+    // The fallback below is only ever reached in an environment that lost the var, and the
+    // consequence — every deep walk capped and typed `stalled` — is invisible in the output.
+    console.log(
+      `v2 exec batch ${args.batch}: EXEC_MAX_STEPS_PER_PATH is not set in this environment; ` +
+        `falling back to the code default ${DEFAULT_MAX_STEPS_PER_PATH}`,
+    );
+  }
+  const maxSteps = resolveMaxStepsPerPath(declaredMaxSteps);
   const advanceTimeoutMs = num((env as unknown as { EXEC_ADVANCE_TIMEOUT_MS?: string }).EXEC_ADVANCE_TIMEOUT_MS, 3500);
   const allowShim = (env as unknown as { BROWSER_COMPAT_SHIMS?: string }).BROWSER_COMPAT_SHIMS !== "off";
 
@@ -2129,9 +2168,35 @@ export function blockedStepCount(obs: PathObservation): number {
   }).length;
 }
 
+/**
+ * A WALK THAT REACHED A TERMINAL PAGE WAS NOT REFUSED — whatever its `outcome` says.
+ *
+ * `classifyEnding` arm 0 (`browser/driver.ts`) REQUIRES `outcome: "blocked"` to recognise the
+ * measured test-mode termination page: the survey printing "we are unable to accept your offer
+ * to participate ... Terminated at S80" beside a ">>" the walker pressed twelve times without
+ * the screen changing (run v2r_01m07qpwcjamfpcs89frs3syjs, screen 15). So on this platform a
+ * CORRECTLY CLASSIFIED screen-out necessarily carries the outcome that `BLOCKING_OUTCOMES`
+ * reads as proof the site refused us. Left alone, a screener behaving exactly as documented
+ * manufactures the `walks-blocked-by-site` accusation that `resolveStopReason` below exists to
+ * require evidence for — the gate intact, its input poisoned.
+ *
+ * ONLY THE OUTCOME ARM IS EXEMPTED, deliberately. `blockedSteps` counts steps where the walker
+ * MEASURED the survey saying no to a non-probe answer (`blockedStepCount`, above) — that is
+ * positive evidence of a refusal that happened, and it stays evidence even if the walk later
+ * ran on to a terminal page. The termination page itself cannot forge one: its ">>" is present,
+ * so `whyBlocked` types those steps `advance-timeout`, which `blockedStepCount` excludes.
+ *
+ * ABSENT IS NOT EXEMPT: a row with no `ending` (one written before endings were typed) keeps
+ * counting exactly as before, and `stalled` / `unclassified` endings are not terminal.
+ */
+const reachedTerminalPage = (w: WalkRecord): boolean =>
+  w.ending?.kind === "completed" || w.ending?.kind === "screened-out";
+
 /** Did anything in this run actually get refused? Absent evidence is NOT evidence. */
 export function hasBlockingEvidence(walks: readonly WalkRecord[]): boolean {
-  return walks.some((w) => BLOCKING_OUTCOMES.has(w.outcome) || (w.blockedSteps ?? 0) > 0);
+  return walks.some(
+    (w) => (BLOCKING_OUTCOMES.has(w.outcome) && !reachedTerminalPage(w)) || (w.blockedSteps ?? 0) > 0,
+  );
 }
 
 /**

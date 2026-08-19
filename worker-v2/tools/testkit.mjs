@@ -217,6 +217,13 @@ export async function loadWorker() {
       // D25 needs the REAL assemble+capture stages, so the v2 evidence the judge reads is
       // written by the code that writes it in production rather than by a fixture.
       `export * as assembleRecord from ${p("src/workflow/stages/assemble-record.ts")};`,
+      // ...AND THE PROJECTIONS THEMSELVES. `assemble-record.ts` imports six names from the
+      // `.mjs` and re-exports two, so the derivations the record is BUILT from — `deriveAttempts`
+      // above all — were reachable only by driving a whole run. That is enough to prove the
+      // chain works and not enough to pin a projection's behaviour case by case: the attempt
+      // row's `ok` flag was inverted for two years' worth of runs underneath a green end-to-end
+      // test, because every fixture that reached it happened to agree with the wrong reading.
+      `export * as assembleRecordProjection from ${p("src/workflow/stages/assemble-record.mjs")};`,
       `export * as capture from ${p("src/browser/capture.ts")};`,
       // D29 needs the REAL walker. `walkPath` decides what "blocked" means for every downstream
       // stage, and until D29 nothing executed a line of it — its `PageLike` is a structural
