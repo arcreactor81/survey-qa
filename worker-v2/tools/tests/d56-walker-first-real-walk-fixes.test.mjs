@@ -2600,3 +2600,242 @@ suite("amendment 14: a lost env var must not silently cap the deep walk", () => 
     );
   });
 });
+
+suite("amendment 15: a rejected choice grid re-picks DISTINCT columns instead of the same one twice", () => {
+  // The shape forward-scan §3.3 names on twelve upcoming screens (C20 ×4, D40 ×8): a 2-row
+  // (Best, Worst) × 3-column (Profile Variation 1/2/3) radio grid on which naming the SAME
+  // column twice is invalid. The grid pass answers each row with its first cell and has no
+  // sibling awareness, so both rows land on column 1, the site rejects, and the recovery
+  // re-derives the identical answer for every round it is given.
+  //
+  // THE FIXTURE'S REJECTION MESSAGE IS DELIBERATELY GENERIC — "Please review your responses on
+  // this page." It contains no "best", no "worst", no "same", no "different". A fix that passes
+  // this suite therefore CANNOT be reading the validation's words for the constraint's
+  // semantics; the only thing left to read is the observable pair the class is defined on —
+  // validation standing, and two or more rows sitting on one column. That is what keeps this a
+  // class fix rather than a transcription of one questionnaire's wording.
+  const NEXT_IDX = 90;
+  const GENERIC_VALIDATION = "Please review your responses on this page.";
+
+  /**
+   * One walk over one grid page. `accepts(picks, submitOrdinal)` is THE SITE'S rule and nothing
+   * else — the walker is never told what it is, only shown the generic rejection when it is
+   * unmet. `picks[r]` is the column index row r currently holds, which is what the fixture
+   * asserts on afterwards.
+   */
+  const gridWalk = async ({ rowLabels, columns, cellType = "radio", accepts }) => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const width = columns.length;
+    const cellCount = rowLabels.length * width;
+    const picks = rowLabels.map(() => null);
+    const idxOf = (r, c) => r * width + c;
+    let submits = 0;
+    let rejected = false;
+    let done = false;
+    const mkControl = (r, c) => ({
+      idx: idxOf(r, c), tag: "input", type: cellType, name: `row_${r}`, id: null, code: null,
+      label: `${rowLabels[r]} / ${columns[c]}`, text: "",
+      checked: cellType === "radio" ? picks[r] === c : false,
+      value: "", valueIsUserSupplied: false, disabled: false, required: false,
+      visible: true, operable: true, actuatedVia: "self", labelIndex: null,
+      placeholder: null, maxlength: null, min: null, max: null, step: null, pattern: null,
+      readOnly: false,
+    });
+    const mkScreen = () => ({
+      at: "2026-08-19T12:00:00.000Z",
+      url: "https://fixture.invalid/survey",
+      title: "BW",
+      questionText: "Please indicate the best and the worst of the profiles you reviewed.",
+      instructionText: null, visibleText: "", visibleTextTruncated: false,
+      bracketedInstructionsVisible: [], collectedErrors: [], readerLimitations: [],
+      controls: rowLabels.flatMap((_, r) => columns.map((__, c) => mkControl(r, c))),
+      optionGroups: cellType === "radio"
+        ? rowLabels.map((label, r) => ({
+            name: `row_${r}`,
+            kind: "radio",
+            options: columns.map((col, c) => ({
+              order: c, idx: idxOf(r, c), code: `${r + 1}-${c + 1}`, label: `${label} / ${col}`,
+              checked: picks[r] === c, disabled: false, visible: true, operable: true,
+              actuatedVia: "self", labelIndex: null,
+            })),
+          }))
+        : [],
+      grid: {
+        columns: [...columns],
+        rows: rowLabels.map((label, r) => ({
+          label,
+          name: `row_${r}`,
+          cells: columns.map((col, c) => ({
+            column: col, code: `${r + 1}-${c + 1}`, checked: picks[r] === c, idx: idxOf(r, c),
+          })),
+        })),
+      },
+      buttons: [{ idx: NEXT_IDX, label: ">>", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+      validationMessages: rejected && !done ? [GENERIC_VALIDATION] : [],
+      progress: { present: false, kind: null, now: null, max: null, text: null },
+      counts: {
+        controls: cellCount,
+        optionGroups: cellType === "radio" ? rowLabels.length : 0,
+        options: cellType === "radio" ? cellCount : 0,
+        textInputs: cellType === "radio" ? 0 : cellCount,
+        valueInputs: cellType === "radio" ? 0 : cellCount,
+        optionsNotOperable: 0, readerLimitations: 0,
+      },
+      screenSignature: "sig:bw",
+    });
+    const doneScreen = {
+      ...mkScreen(),
+      url: "https://fixture.invalid/survey/after-bw",
+      controls: [], optionGroups: [], grid: null, buttons: [], validationMessages: [],
+      counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:after-bw",
+    };
+    const idxFromSrc = (src) => {
+      const at = src.indexOf(")[");
+      if (at < 0) return null;
+      const end = src.indexOf("]", at + 2);
+      const n = Number(src.slice(at + 2, end));
+      return Number.isInteger(n) ? n : null;
+    };
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) return done ? doneScreen : mkScreen();
+        if (src.includes("checkedGroupIdxs")) {
+          const idx = idxFromSrc(src);
+          if (cellType !== "radio" || idx === null || idx < 0 || idx >= cellCount) return null;
+          const r = Math.floor(idx / width);
+          // A row is one native radio group: picking a cell unchecks that row's other cells.
+          return {
+            idx, type: "radio", name: `row_${r}`, formOwner: 0, unnamedControlIdx: null,
+            checked: picks[r] === idx % width,
+            checkedGroupIdxs: picks[r] === null ? [] : [idxOf(r, picks[r])],
+          };
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return Array.from({ length: 95 }, (_, idx) => ({
+          async click() {
+            if (idx === NEXT_IDX) {
+              submits += 1;
+              if (accepts(picks.slice(), submits)) { done = true; rejected = false; }
+              else rejected = true;
+              return;
+            }
+            if (idx >= 0 && idx < cellCount) picks[Math.floor(idx / width)] = idx % width;
+          },
+          async type() {}, async focus() {},
+        }));
+      },
+      async screenshot() { return new TextEncoder().encode("PNG-D56"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56bw", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey", runId, planRevisionId: "plan_d56bw1",
+        attemptId: "att_d56bw001", tier: 1, maxSteps: 2, deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 }, applyHistoryShim: false, advanceTimeoutMs: 400,
+      },
+      { env, runId, attemptId: "att_d56bw001", pathId: "path_d56bw", witnesses: [] },
+    );
+    const cellsOf = (steps) =>
+      steps.flatMap((s) => (s.actions ?? []).filter((a) => a.kind === "select-grid-cell"));
+    return {
+      obs,
+      picks,
+      submits,
+      firstPassCells: cellsOf(obs.steps.filter((s) => s.decisionSource !== "recovery")),
+      recoveryCells: cellsOf(obs.steps.filter((s) => s.decisionSource === "recovery")),
+      allCells: cellsOf(obs.steps),
+    };
+  };
+
+  test("THE MEASURED SHAPE: a rejected 2x3 best/worst grid re-picks distinct columns and advances", async () => {
+    const { obs, picks, firstPassCells, recoveryCells } = await gridWalk({
+      rowLabels: ["Best", "Worst"],
+      columns: ["Profile Variation 1", "Profile Variation 2", "Profile Variation 3"],
+      // The site's rule, never shown to the walker: both rows answered, on different columns.
+      accepts: (p) => p[0] !== null && p[1] !== null && p[0] !== p[1],
+    });
+    assertEq(JSON.stringify(picks), JSON.stringify([0, 1]),
+      `Best and Worst must end on DIFFERENT columns, deterministically row k -> column k, got ${JSON.stringify(picks)}`);
+    assertEq(firstPassCells.length, 2,
+      `the first pass still answers every row, got ${firstPassCells.length}`);
+    assert(firstPassCells.every((a) => !String(a.detail).includes("distinct-column-repick")),
+      `the FIRST pass must be untouched — the conquered wide grids answer every row with one column legally, got ${JSON.stringify(firstPassCells.map((a) => a.detail))}`);
+    assertEq(recoveryCells.length, 2,
+      `the recovery round re-answers both rows, got ${recoveryCells.length}`);
+    assert(recoveryCells.every((a) =>
+      String(a.detail).includes("grid:distinct-column-repick") &&
+      String(a.detail).includes("validation standing and 2 rows share a column") &&
+      String(a.detail).includes("for distinctness")),
+      `every re-pick receipt must say WHY it moved, got ${JSON.stringify(recoveryCells.map((a) => a.detail))}`);
+    assert(recoveryCells.some((a) =>
+      String(a.detail).includes('re-picked row "Worst" to column "Profile Variation 2"')),
+      `the receipt must name the row it moved and the column it moved to, got ${JSON.stringify(recoveryCells.map((a) => a.detail))}`);
+    assert(obs.steps.some((s) => s.decisionSource === "recovery" && s.advanced === true),
+      `the recovery must clear the wall the first pass hit, steps were ${JSON.stringify(obs.steps.map((s) => [s.stepIndex, s.decisionSource, s.advanced]))}`);
+  });
+
+  test("counterproof: a legal same-column grid with no validation standing is never re-picked", async () => {
+    // The conquered shape this fix must not disturb: a 3-row x 5-point rating grid (D20/D30)
+    // where answering every row with the same column is perfectly legal. Nothing rejects it, so
+    // no validation ever stands, so the distinct-column re-pick must never run.
+    const { obs, picks, allCells } = await gridWalk({
+      rowLabels: ["Product X", "Product Y", "Product Z"],
+      columns: ["Very unlikely", "Unlikely", "Neither", "Likely", "Very likely"],
+      accepts: () => true,
+    });
+    assertEq(JSON.stringify(picks), JSON.stringify([0, 0, 0]),
+      `a legal same-column answer must be left exactly as the first pass made it, got ${JSON.stringify(picks)}`);
+    assert(allCells.every((a) => !String(a.detail).includes("distinct-column-repick")),
+      `no validation stood, so nothing may be re-picked, got ${JSON.stringify(allCells.map((a) => a.detail))}`);
+    assert(!obs.steps.some((s) => s.decisionSource === "recovery"),
+      "the page took the answer, so no recovery round should exist at all");
+  });
+
+  test("fewer columns than rows: the spread is the best available and every receipt names the shortfall", async () => {
+    // Distinctness is not always reachable. Three rows over two columns CANNOT all differ, and
+    // the honest behaviour is to spread as far as the grid allows and say so on the record —
+    // never to claim a distinctness the grid cannot provide.
+    const { picks, recoveryCells } = await gridWalk({
+      rowLabels: ["Row A", "Row B", "Row C"],
+      columns: ["Yes", "No"],
+      accepts: (_p, submitOrdinal) => submitOrdinal > 1,
+    });
+    assertEq(JSON.stringify(picks), JSON.stringify([0, 1, 0]),
+      `three rows over two columns cycle as far as the grid allows, got ${JSON.stringify(picks)}`);
+    assertEq(recoveryCells.length, 3, `all three rows are re-answered, got ${recoveryCells.length}`);
+    assert(recoveryCells.every((a) =>
+      String(a.detail).includes("LIMITATION: this grid offers 2 columns for 3 answerable rows") &&
+      String(a.detail).includes("some still repeat")),
+      `a grid that cannot make its rows distinct must NAME that on every receipt, got ${JSON.stringify(recoveryCells.map((a) => a.detail))}`);
+  });
+
+  test("counterproof: a NON-choice grid is never distinct-column re-picked, validation or not", async () => {
+    // The trigger is scoped to CHOICE grids on purpose. A grid of value cells — the allocation
+    // shape amendment 7 owns — has no "one column per row" semantics to satisfy, and spreading
+    // its cells would move answers off the column the plan asked for to chase a constraint that
+    // cannot exist there. Validation stands here and the re-pick must still not fire.
+    // Asserted on the GRID PASS'S OWN targets, not on what the page ends up holding: the value
+    // loop fills text cells afterwards and moves the page's state for reasons of its own, which
+    // is exactly the noise a claim about the grid pass must not be read out of.
+    const { recoveryCells, allCells } = await gridWalk({
+      rowLabels: ["Row A", "Row B"],
+      columns: ["Col 1", "Col 2", "Col 3"],
+      cellType: "text",
+      accepts: (_p, submitOrdinal) => submitOrdinal > 1,
+    });
+    assertEq(JSON.stringify(recoveryCells.map((a) => a.targetIdx)), JSON.stringify([0, 3]),
+      `a value grid keeps each row's FIRST cell even under standing validation (a spread would target [0,4]), got ${JSON.stringify(recoveryCells.map((a) => a.targetIdx))}`);
+    assert(allCells.every((a) => !String(a.detail).includes("distinct-column-repick")),
+      `the re-pick is for choice grids only, got ${JSON.stringify(allCells.map((a) => a.detail))}`);
+  });
+});
