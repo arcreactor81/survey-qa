@@ -484,6 +484,87 @@ suite("D42 — a survey that ended and a survey we never got into are no longer 
     assert(e.evidence.some((x) => /7 planned decision/.test(x)), JSON.stringify(e.evidence));
   });
 
+  test("THE SYNONYM GAP: the six completion wordings this reader could not read", async () => {
+    const mod = await worker();
+    // Completion-path audit §1.3 C3. The completion lexicon had five entries against the
+    // screen-out lexicon's ten, and the asymmetry was not just in size: an unmatched SCREEN-OUT
+    // page still falls to the structural arm and gets typed, while an unmatched COMPLETION page
+    // is `unclassified` — the one ending the deliverable is about, lost to a synonym. Each line
+    // below is a wording the audit checked against the deployed lexicon and found unreadable.
+    const wordings = [
+      "Thank you for your participation.",
+      "You have successfully completed the survey.",
+      "Your answers have been saved.",
+      "This is the end of the survey.",
+      "Thank you for your feedback.",
+      "Survey status: Complete",
+    ];
+    for (const text of wordings) {
+      const e = endingOf(mod, screen("Final screen", { visibleText: text }));
+      assertEq(e.kind, "completed", `${JSON.stringify(text)} -> ${JSON.stringify(e)}`);
+      // The matched wording is QUOTED, so a reader can see which phrase decided it and disagree.
+      assert(
+        e.evidence.some((x) => /the final screen says/.test(x)),
+        `the deciding wording was not quoted for ${JSON.stringify(text)}: ${JSON.stringify(e.evidence)}`,
+      );
+    }
+  });
+
+  test("THE COUNTERWEIGHT: the widened lexicon did not swallow the screen-out it sits behind", async () => {
+    const mod = await worker();
+    // The whole reason the screen-out lexicon is consulted FIRST. A widened completion lexicon
+    // is only safe while that ordering holds — a disqualification page thanks you too, and the
+    // measured termination page on the live instrument thanks you AND stamps its own status.
+    const measured = screen("For testing only:", {
+      visibleText:
+        "For testing only:\nThank you for your willingness to participate. Due to the specific guidelines " +
+        "we have been given for this study, we are unable to accept your offer to participate in our " +
+        "research.\n\nSurvey status: Terminated at S80",
+    });
+    assertEq(endingOf(mod, measured).kind, "screened-out", JSON.stringify(endingOf(mod, measured)));
+
+    // ...and the direct collision: a page carrying BOTH a new completion wording and a
+    // screen-out wording is a screen-out, with the completion wording named as overruled.
+    const both = screen("Final screen", {
+      visibleText: "Thank you for your participation. Unfortunately you do not qualify for this study.",
+    });
+    const e = endingOf(mod, both);
+    assertEq(e.kind, "screened-out", JSON.stringify(e));
+    assert(e.evidence.some((x) => /also carries completion wording/.test(x)), JSON.stringify(e.evidence));
+  });
+
+  test("A TERMINAL PAGE OUTSIDE BOTH LEXICONS IS STILL `unclassified` — widening added wordings, not a default", async () => {
+    const mod = await worker();
+    // The property the widening must not buy its recall with. A page whose wording neither
+    // lexicon knows — another language, a bare "Session closed", an image — is a COUNTED
+    // residual, and any regex loose enough to swallow it would make every unknown ending a
+    // completion.
+    for (const text of ["Sitzung beendet.", "Session closed.", "Ihre Antworten wurden gespeichert.", ""]) {
+      const e = endingOf(mod, screen("Final screen", { visibleText: text }));
+      assertEq(e.kind, "unclassified", `${JSON.stringify(text)} -> ${JSON.stringify(e)}`);
+    }
+    // And the near-misses: prose that mentions a survey ending without being a page saying it
+    // has ended. "the end" alone is ordinary text; the article and the noun are required.
+    for (const text of ["Please answer every question before the end.", "We will complete the analysis next week."]) {
+      assertEq(endingOf(mod, screen("Final screen", { visibleText: text })).kind, "unclassified", text);
+    }
+  });
+
+  test("A COMPLETION PAGE SHAPED LIKE A REJECTION SAYS SO IN ITS OWN EVIDENCE", async () => {
+    const mod = await worker();
+    // The contradiction the ordering resolves silently: the structural arm reads "the only way
+    // off this page is backwards" as a rejection shape, and defers to completion wording when
+    // both are present. That deference is a judgement call on conflicting evidence, and a reader
+    // can only disagree with it if the losing evidence is on the record next to the winning one.
+    const final = screen("Final screen", { visibleText: "Thank you for your participation.", buttons: [backBtn(8)] });
+    const e = endingOf(mod, final);
+    assertEq(e.kind, "completed", JSON.stringify(e));
+    assert(
+      e.evidence.some((x) => /only visible button\(s\) on this page are back controls/.test(x)),
+      `the losing evidence was swallowed: ${JSON.stringify(e.evidence)}`,
+    );
+  });
+
   test("A WALK THAT HIT A CAP REACHED NO ENDING, whatever its last screen happens to say", async () => {
     const mod = await worker();
     // The trap: the walk ran out of BUDGET on a screen that reads like a thank-you page. It did
@@ -900,6 +981,20 @@ suite("D42 — consecutive text-only screens are distinguishable advances", () =
       !signals.includes("info-screen-text-changed"),
       `a validation re-render of an answerable screen must never fire the text signal: ${JSON.stringify(signals)}`,
     );
+
+    // AND THE SAME SCREEN PAIR WITHOUT THE BANNER, which is the half that reaches THIS gate.
+    // The assertion above is satisfied before the gate is ever consulted: amendment 11's
+    // rejected-submit arm returns [] for any pair with a validation message and an unchanged
+    // answerable skeleton, so with the control-less gate deleted entirely the assertion still
+    // held — the guard named in `mutate-endings.mjs` was shadowed by a later arm and had been
+    // passing for the wrong reason. Answerable controls, prose changed, no banner: the ONLY
+    // thing that can withhold the signal here is the gate itself.
+    const quietAfter = mkAnswerable();
+    quietAfter.visibleText = "Please review your responses. Q1. How many?";
+    assert(
+      !mod.driver.advanceSignals(before, quietAfter).includes("info-screen-text-changed"),
+      `an answerable screen whose prose changed must not fire the text signal: ${JSON.stringify(mod.driver.advanceSignals(before, quietAfter))}`,
+    );
   });
 });
 
@@ -961,6 +1056,16 @@ suite("D42 — hidden platform plumbing does not disqualify a text-only screen",
     assert(
       !signals.includes("info-screen-text-changed"),
       `an answerable screen must never fire the text signal: ${JSON.stringify(signals)}`,
+    );
+
+    // The same shadowing as the sibling test above: with a validation banner and an unchanged
+    // skeleton, amendment 11's arm returns [] before this gate is consulted. The pair below
+    // carries no banner, so the one visible interactive control among the hidden plumbing is
+    // the only reason the signal must stay off — which is the property this test is named for.
+    const quiet = withInput("Please review your responses. Q1. How many?");
+    assert(
+      !mod.driver.advanceSignals(before, quiet).includes("info-screen-text-changed"),
+      `one visible interactive control must gate the signal off: ${JSON.stringify(mod.driver.advanceSignals(before, quiet))}`,
     );
   });
 });

@@ -202,5 +202,67 @@ await runMutantSuite({
         "one VISIBLE interactive control still gates the text signal off",
       ],
     },
+
+    // ---- the completion lexicon (completion-path audit §1.3 C3) ----
+    // A recall fix is the easiest kind of change to fake: widen a regex until everything
+    // matches and every terminal page becomes a completion. So each mutant below is paired —
+    // two narrow the lexicon back to the deployed five and must break RECALL, one loosens it
+    // past what the evidence supports and must break the RESIDUAL.
+    {
+      name: "the thank-you entry goes back to the deployed four verb forms",
+      breaks:
+        "the measured synonym gap: 'Thank you for your participation.' and 'Thank you for your " +
+        "feedback.' — ordinary completion-page wording — fall outside every marker again, and a " +
+        "finished survey is typed `unclassified` (or, once a hidden submit button is on the page, `stalled`)",
+      file: DR,
+      find: "  /\\bthank\\s+you\\s+for\\s+(completing|taking\\s+part|participating|participation|your\\s+participation|your\\s+time|your\\s+feedback|your\\s+input|your\\s+responses?|your\\s+answers?)\\b/i,",
+      replace: "  /\\bthank\\s+you\\s+for\\s+(completing|taking\\s+part|participating|your\\s+time)\\b/i,",
+      kills: ["THE SYNONYM GAP: the six completion wordings this reader could not read"],
+    },
+    {
+      name: "the vendor status stamp is dropped from the completion lexicon",
+      breaks:
+        "'Survey status: Complete' — the one line this platform is KNOWN to print on its END " +
+        "pages, and the exact mirror of the `status[:\\s]+terminated` entry the screen-out lexicon " +
+        "already carries — stops being readable, so the completion is lost to the page's own stamp",
+      file: DR,
+      find: "  /\\bstatus[:\\s]+complete(d)?\\b/i,\n",
+      replace: "",
+      kills: ["THE SYNONYM GAP: the six completion wordings this reader could not read"],
+    },
+    {
+      name: "'the end of the survey' is loosened to a bare 'the end'",
+      breaks:
+        "THE FAKE FIX, and the one a recall test cannot see: a lexicon widened past the evidence " +
+        "matches ordinary prose ('please answer every question before the end'), and every " +
+        "unrecognised terminal page becomes a confident completion — which is the defect typing " +
+        "the ending existed to remove",
+      file: DR,
+      find: "  /\\b(this\\s+is\\s+)?the\\s+end\\s+of\\s+(the|this)\\s+(survey|questionnaire|interview)\\b/i,",
+      replace: "  /\\bthe\\s+end\\b/i,",
+      kills: ["A TERMINAL PAGE OUTSIDE BOTH LEXICONS IS STILL `unclassified` — widening added wordings, not a default"],
+    },
+    {
+      name: "completion wording overrules the screen-out lexicon it sits behind",
+      breaks:
+        "the ordering the whole design rests on: a disqualification page thanks you too, so a " +
+        "widened completion lexicon is only safe while the screen-out one is consulted first. " +
+        "With this, 'thank you for your participation ... you do not qualify' is a COMPLETION",
+      file: DR,
+      find: "  if (screenout) {",
+      replace: "  if (screenout && !completion) {",
+      kills: ["THE COUNTERWEIGHT: the widened lexicon did not swallow the screen-out it sits behind"],
+    },
+    {
+      name: "the resolved contradiction goes back to being resolved silently",
+      breaks:
+        "a page whose only way off is BACKWARDS — the shape of a rejection — typed `completed` on " +
+        "its wording, with the structural evidence that argued the other way dropped from the " +
+        "record. A reader cannot disagree with a judgement call whose losing side was swallowed",
+      file: DR,
+      find: "        ...(onlyBackVisible\n          ? [",
+      replace: "        ...(false\n          ? [",
+      kills: ["A COMPLETION PAGE SHAPED LIKE A REJECTION SAYS SO IN ITS OWN EVIDENCE"],
+    },
   ],
 });

@@ -4220,11 +4220,44 @@ const SCREENOUT_MARKERS: readonly RegExp[] = [
   /\bstatus[:\s]+terminated\b/i,
 ];
 
+/**
+ * MEASURED GAP, CLOSED (completion-path audit, 19 Aug 2026 §1.3 C3). This lexicon had five
+ * entries against the screen-out lexicon's ten, and the gap was not symmetric in consequence:
+ * an unmatched screen-out page falls to the structural arm and is still typed, while an
+ * unmatched COMPLETION page is `unclassified` — the one ending the deliverable is about,
+ * lost to a synonym. The six wordings the audit checked and this lexicon missed:
+ *
+ *   "Thank you for your participation."             — `participating` was here, `participation` was not
+ *   "You have successfully completed the survey."   — no adverb slot between "have" and "completed"
+ *   "Your answers have been saved."                 — `response`/`responses` only, not `answers`
+ *   "This is the end of the survey."                — covered by nothing
+ *   "Thank you for your feedback."                  — covered by nothing
+ *   "Survey status: Complete"                       — `survey (is )?complete` needs adjacency; `status: ` intervenes
+ *
+ * The last one matters most: it is the platform's own status stamp, the mirror of the
+ * `status[:\s]+terminated` entry the screen-out lexicon already carries, and the one line the
+ * measured test-mode END pages are known to print.
+ *
+ * STILL AN ASSUMPTION ABOUT WORDS, AND STILL SECOND (CLAUDE.md, the north star). Every entry
+ * below is a phrase a page prints about ITS OWN COMPLETION, never one a rejection page prints
+ * on its way to turning someone away — and `SCREENOUT_MARKERS` is consulted first regardless,
+ * so a page carrying both wordings is still a screen-out. A terminal page that says none of
+ * this is `unclassified` and counted, exactly as before: widening the lexicon adds recognised
+ * wordings, and never a default.
+ */
 const COMPLETION_MARKERS: readonly RegExp[] = [
-  /\bthank\s+you\s+for\s+(completing|taking\s+part|participating|your\s+time)\b/i,
-  /\byour\s+responses?\s+(have|has)\s+been\s+(recorded|received|submitted|saved)\b/i,
+  /\bthank\s+you\s+for\s+(completing|taking\s+part|participating|participation|your\s+participation|your\s+time|your\s+feedback|your\s+input|your\s+responses?|your\s+answers?)\b/i,
+  /\byour\s+(responses?|answers?|submission|entry)\s+(have|has)\s+been\s+(recorded|received|submitted|saved|stored|captured)\b/i,
   /\b(survey|questionnaire|interview)\s+(is\s+)?complete(d)?\b/i,
-  /\byou\s+have\s+(now\s+)?completed\b/i,
+  // The vendor status stamp, mirroring `status[:\s]+terminated` in the screen-out lexicon.
+  // Generalizable for the same reason that one is: a terminal page whose status label reads
+  // "complete" is reporting a completion, whoever built the page.
+  /\bstatus[:\s]+complete(d)?\b/i,
+  /\byou\s+have\s+(now\s+)?(successfully\s+)?(completed|finished)\b/i,
+  /\b(you\s+have\s+)?reached\s+the\s+end\s+of\s+(the|this)\s+(survey|questionnaire|interview)\b/i,
+  // "This is the end of the survey." — REQUIRES the article, deliberately. A bare "the end"
+  // appears in ordinary prose; "the end of the survey" is a page describing its own finality.
+  /\b(this\s+is\s+)?the\s+end\s+of\s+(the|this)\s+(survey|questionnaire|interview)\b/i,
   /\bsubmission\s+(received|complete)\b/i,
 ];
 
@@ -4496,6 +4529,18 @@ export function classifyEnding(
         ...(completion ? [`the final screen says: "${completion}"`] : []),
         ...(progressFull ? [`the progress indicator reads ${final.progress.now}/${final.progress.max}`] : []),
         `${answerable.length} answerable control(s) remain on it`,
+        // THE CONTRADICTION THIS ARM RESOLVES, SAID OUT LOUD RATHER THAN SWALLOWED. Arm 2b
+        // reads "the only way off this page is backwards" as a rejection shape, and defers to
+        // completion wording when both are present (its own comment says so). That deference
+        // is a JUDGEMENT CALL on conflicting evidence, and a reader who disagrees can only
+        // disagree if the losing evidence is on the record beside the winning one.
+        ...(onlyBackVisible
+          ? [
+              `NOTE — the only visible button(s) on this page are back controls, which is the shape of a ` +
+                `rejection page; the completion wording above is what this reader weighed more heavily, and a ` +
+                `reader who disagrees should re-open the screen capture`,
+            ]
+          : []),
         ...provenance,
       ],
     };
