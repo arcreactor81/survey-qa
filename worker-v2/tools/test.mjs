@@ -534,6 +534,12 @@ const FILES = [
   // replicate the captured shapes generically, and the isPlatformNavigationWidget and
   // detectOptionLinkedSpecifyInputs tests cover both the positive and negative directions.
   "./tests/d56-walker-first-real-walk-fixes.test.mjs",
+  // ALLOCATION UNDER A CARRY-FORWARD CEILING — a sum-to-100 grid whose rows display a
+  // per-row cap piped from an earlier answer. The split reads the cap off the row it is
+  // filling (read-only cell, or the site's own words) and places the mass where every
+  // displayed bound holds; a screen showing no bound keeps amendment 7's split byte for
+  // byte. Evidence these can fail: tools/mutate-w4-select.mjs.
+  "./tests/d57-ceiling-allocation.test.mjs",
   // MULTI-LANE EXECUTION — flag-gated concurrent browser walks behind EXEC_LANES.
   // When EXEC_LANES=1 (default), behavior is byte-identical to today's sequential path.
   // Evidence these can fail: tools/mutate-multilane.mjs.
