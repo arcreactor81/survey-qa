@@ -1815,3 +1815,148 @@ suite("amendment 9: validation outranks the checked bit — held selections re-a
     assert(obs.outcome !== "blocked", `outcome was ${JSON.stringify(obs.outcome)}`);
   });
 });
+
+suite("amendment 10: a specify-style text cell is cleared, never allocated", () => {
+  // Measured live (run v2r_01m0d5x1h5z8xjxw6tdvnee771, B10, 19 Aug): the allocation split
+  // wrote "0" into the grid's "Others (Please Specify)" TEXT cell; the sum constraint was
+  // satisfied but the platform's pairing rule then demanded a real specify answer forever.
+  // The specify cell is not a numeric target: it is cleared so the allocation stands alone.
+  const isDigits = (s) => typeof s === "string" && s.length > 0 && [...s].every((ch) => ch >= "0" && ch <= "9");
+
+  const specifyGridWalk = async ({ pctIdxs = [0, 1, 3], labels = ["%", "%", "Others (Please Specify)", "%"] } = {}) => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const NEXT_IDX = 90;
+    const SPECIFY_IDX = labels.findIndex((l) => l !== "%");
+    const mk = (validation) => ({
+      at: "2026-08-19T12:00:00.000Z",
+      url: "https://fixture.invalid/survey",
+      title: "B10",
+      questionText: "B10. What proportion of each?",
+      grid: null, collectedErrors: [], readerLimitations: [],
+      controls: labels.map((label, i) => ({
+        idx: i, tag: "input", type: "text", name: `B10_${i + 1}`, id: null, code: null,
+        label, text: "", checked: null, value: "", valueIsUserSupplied: false,
+        disabled: false, required: label === "%", visible: true, operable: true,
+        actuatedVia: "self", placeholder: null, maxlength: null, min: null, max: null,
+        step: null, pattern: null, readOnly: false,
+      })),
+      optionGroups: [],
+      buttons: [{ idx: NEXT_IDX, label: ">>", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+      validationMessages: validation,
+      progress: { present: false, value: null },
+      counts: { controls: labels.length, optionGroups: 0, options: 0, textInputs: labels.length, valueInputs: labels.length, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:specgrid",
+    });
+    const doneScreen = { ...mk([]), url: "https://fixture.invalid/survey/next", questionText: "C10.", controls: [], buttons: [], counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 }, screenSignature: "sig:specdone" };
+    // Stored per cell: % cells DISCARD non-numeric values (mask), the specify cell keeps
+    // anything. The site: all three % cells numeric and sum 100 AND specify empty -> next
+    // advances; % cells incomplete -> numeric demand; specify non-empty -> pairing demand.
+    const stored = Object.fromEntries(labels.map((_, i) => [i, ""]));
+    let nextClicks = 0;
+    let done = false;
+    const V_NUMERIC = ["Please enter numeric answers in column % of PCVs stocked."];
+    const V_PAIRING = ["If you specify «Others (Please Specify)» then please enter answer for the «Others (Please Specify)» option."];
+    const currentValidation = () => {
+      if (nextClicks === 0) return [];
+      const pctOk = pctIdxs.every((i) => isDigits(stored[i]));
+      if (!pctOk) return V_NUMERIC;
+      if (stored[SPECIFY_IDX].length > 0) return V_PAIRING;
+      return [];
+    };
+    const put = (idx, v) => { stored[idx] = idx === SPECIFY_IDX ? v : (isDigits(v) || v === "" ? v : ""); };
+    const idxFromSrc = (src) => {
+      const at = src.indexOf(")[");
+      if (at < 0) return null;
+      const end = src.indexOf("]", at + 2);
+      const n = Number(src.slice(at + 2, end));
+      return Number.isInteger(n) ? n : null;
+    };
+    const lastTyped = {};
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) return done ? doneScreen : mk(currentValidation());
+        if (src.includes("W4_READ_VALUE")) {
+          const idx = idxFromSrc(src);
+          return { got: idx !== null ? stored[idx] ?? "" : "" };
+        }
+        if (src.includes("el.value = ''")) {
+          const idx = idxFromSrc(src);
+          if (idx !== null) { put(idx, ""); delete lastTyped[idx]; }
+          return { ok: true };
+        }
+        const start = src.indexOf('el.value = "');
+        if (start >= 0 && src.includes("change")) {
+          const end = src.indexOf('";', start);
+          const v = end > start ? src.slice(start + 'el.value = "'.length, end) : "";
+          const idx = idxFromSrc(src);
+          if (idx !== null) { put(idx, v); lastTyped[idx] = stored[idx]; }
+          return { ok: true, reason: null, got: idx !== null ? stored[idx] : v };
+        }
+        if (src.includes("'value' in e")) {
+          const idx = idxFromSrc(src);
+          return idx !== null ? (lastTyped[idx] ?? stored[idx] ?? "") : "";
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$(sel) {
+        const mkHandle = (idx) => ({
+          async click() {
+            if (idx === NEXT_IDX) {
+              const pctOk = pctIdxs.every((i) => isDigits(stored[i]));
+              if (pctOk && stored[SPECIFY_IDX].length === 0) done = true; else nextClicks += 1;
+            }
+          },
+          async type(v) { lastTyped[idx] = v; put(idx, v); },
+          async focus() {},
+        });
+        return Array.from({ length: 95 }, (_, i) => mkHandle(i));
+      },
+      async screenshot() { return new TextEncoder().encode("PNG-D56"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56spec", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey", runId, planRevisionId: "plan_d56spec1",
+        attemptId: "att_d56spec001", tier: 1, maxSteps: 2, deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 }, applyHistoryShim: false, advanceTimeoutMs: 400,
+      },
+      { env, runId, attemptId: "att_d56spec001", pathId: "path_d56spec", witnesses: [] },
+    );
+    return { obs, stored };
+  };
+
+  test("a lone % cell next to a specify box keeps the least-committed 1", async () => {
+    // The specify box must not inflate the target count: one real numeric cell means the
+    // least-committed "1", not an allocation share. Counting the specify box as a second
+    // target would put "100" into a field whose bounds nothing declared.
+    const { obs } = await specifyGridWalk({ pctIdxs: [0], labels: ["%", "Others (Please Specify)"] });
+    const rec = obs.steps.find((s) => s.decisionSource === "recovery");
+    assert(rec, "a recovery step must be recorded");
+    const pctFills = (rec.actions ?? []).filter((a) => a.kind === "set-value" && a.targetIdx === 0 && a.ok).map((a) => a.value);
+    assertEq(JSON.stringify(pctFills), JSON.stringify(["1"]),
+      `a lone numeric cell takes 1, got ${JSON.stringify(pctFills)}`);
+    assertEq(rec.advanced, true);
+  });
+
+  test("THE MEASURED SHAPE: the allocation lands on the % cells and the specify cell is cleared", async () => {
+    const { obs, stored } = await specifyGridWalk();
+    const rec = obs.steps.find((s) => s.decisionSource === "recovery");
+    assert(rec, "a recovery step must be recorded");
+    const numericIntoSpecify = (rec.actions ?? []).filter((a) =>
+      (a.kind === "set-value" || a.kind === "type-text") && a.targetIdx === 2 && isDigits(a.value));
+    assertEq(numericIntoSpecify.length, 0,
+      `the specify cell must never receive a number, got ${JSON.stringify(numericIntoSpecify.map((a) => a.value))}`);
+    const clear = (rec.actions ?? []).find((a) => a.targetIdx === 2 && String(a.detail ?? "").includes("not a numeric allocation target"));
+    assert(clear, "the specify cell is explicitly cleared with the reason in the receipt");
+    assertEq(stored[2], "", "and the page's specify state ends empty");
+    assertEq(rec.advanced, true, "the allocation alone satisfies the screen");
+    assert(obs.outcome !== "blocked", `outcome was ${JSON.stringify(obs.outcome)}`);
+  });
+});

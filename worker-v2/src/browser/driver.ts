@@ -192,6 +192,14 @@ const PROBE_TEXT = "QA-PROBE";
  * re-orders which INVENTED filler is clicked — input, never evidence.
  */
 const NONE_STYLE_OPTION = /\bnone of the above\b|\bnone of these\b|^\s*none\b|\bnot applicable\b|\bn\/a\b/i;
+// A text control whose label reads as a specify prompt ("Others (Please Specify)"). A
+// linguistic convention like NONE_STYLE_OPTION — stated, used only to steer the harness's
+// own fillers, never as evidence. Measured live (run v2r_01m0d5x1h5z8xjxw6tdvnee771,
+// B10): the allocation split wrote "0" into the grid's specify TEXT cell, and the site's
+// pairing rule then demanded a real specify answer forever — while the probe round proved
+// the distinction on the wire (the % cells transform non-numeric input, the specify cell
+// keeps it).
+const SPECIFY_STYLE_LABEL = /\bplease specify\b|\(specify\)|\bspecify\b/i;
 
 /** Label match: exact first, then containment either way. Never fuzzy scoring. */
 function labelMatches(optionLabel: string, wanted: string): boolean {
@@ -3696,7 +3704,8 @@ async function applyDecision(
     revalidateValidation.length > 0 && revalidateValidation.some((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m));
   const numericRecoveryTargets = screenNumericDemanded
     ? valueControls.filter(
-        (c) => isTextEntry(c.type) && String(c.type).toLowerCase() !== "number" && fillRefusalFor(c.type) === null,
+        (c) => isTextEntry(c.type) && String(c.type).toLowerCase() !== "number" && fillRefusalFor(c.type) === null &&
+          !SPECIFY_STYLE_LABEL.test(c.label ?? ""),
       ).length
     : 0;
   let numericRecoveryOrdinal = 0;
@@ -3783,7 +3792,17 @@ async function applyDecision(
     // least-committed number for a field whose bounds the markup does not declare.
     const numericDemanded = screenNumericDemanded;
     const derived =
-      numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== "number"
+      numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== "number" &&
+      SPECIFY_STYLE_LABEL.test(c.label ?? "")
+        ? // A SPECIFY-STYLE TEXT CELL IS NOT A NUMERIC ALLOCATION TARGET. It is CLEARED so
+          // the allocation stands alone: a number in the specify box trips the platform's
+          // specify-pairing rule, and the harness must undo the value it wrote itself.
+          {
+            value: "",
+            how: "a specify-style text cell is not a numeric allocation target — cleared so the allocation stands alone",
+            via: "type" as const,
+          }
+        : numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== "number"
         ? // via SET, not keyboard: the recovery runs on a field a mask may already have
           // wedged, and the set path (value + input/change events) is the one the live
           // server verifiably accepted on this exact shape.

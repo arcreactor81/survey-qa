@@ -294,8 +294,8 @@ await runMutantSuite({
         "for a semantically numeric text input, and 'Please enter a number.' rejects it " +
         "forever — measured on the v54 run's step 48.5",
       file: DR,
-      find: "      numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== \"number\"",
-      replace: "      false",
+      find: "        : numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== \"number\"",
+      replace: "        : false",
       kills: ["a pre-filled placeholder that validation rejects gets re-typed by the recovery pass"],
     },
     {
@@ -384,6 +384,27 @@ await runMutantSuite({
       find: '              numericRecoveryTargets > 1 ? (numericRecoveryOrdinal++ === 0 ? "100" : "0") : "1";',
       replace: '              "1";',
       kills: ["THE MEASURED SHAPE: three numeric cells recover as 100/0/0, never 1/1/1"],
+    },
+    {
+      name: "the specify cell rejoins the numeric allocation targets",
+      breaks:
+        "the run v2r_01m0d5x1h5z8xjxw6tdvnee771 class: a number lands in the grid's " +
+        "specify TEXT cell, the sum passes but the platform's specify-pairing rule blocks " +
+        "the screen forever",
+      file: DR,
+      find: "          !SPECIFY_STYLE_LABEL.test(c.label ?? \"\"),",
+      replace: "          true,",
+      kills: ["a lone % cell next to a specify box keeps the least-committed 1"],
+    },
+    {
+      name: "the specify clear arm is dropped (the cell falls back into the allocation)",
+      breaks:
+        "the other half of the same class: without the clear arm the specify cell takes " +
+        "an allocation share, and the harness never undoes the value it wrote itself",
+      file: DR,
+      find: "      SPECIFY_STYLE_LABEL.test(c.label ?? \"\")",
+      replace: "      false",
+      kills: ["THE MEASURED SHAPE: the allocation lands on the % cells and the specify cell is cleared"],
     },
     {
       name: "held selections stop re-actuating under a standing validation",
