@@ -254,6 +254,44 @@ killed by an exact timing-independent assertion — removing the terminal cap ch
 from 60 to 5000, removing the proof-of-life extension leaves `released` false. "It passed when the
 machine was quiet" is not a result.
 
+### v87 run: two more walls fell, and the next one is diagnosed
+
+Run `v2r_01m0e6axg4phhm8wzeh3a3fxw5`. Deep walk `FLOOR-01` reached **screen 54, 39% progress** —
+up from 43 on v86 and 42 on v85. The best/worst distinct-column wall fell (bw-grid, live-proven),
+as did the C20 dwell gate (patience, live-proven a second time).
+
+**The new wall — D10, and it is a NEW CLASS: the recovery ladder oscillates.**
+
+Screen 54 is `iSecDTPP`/D10, an allocation grid whose column "Future w/ Product X, Product Y and
+Product Z" needs five numeric cells summing to 100. The site's validation is explicit:
+
+> "Please enter numeric answers for «PCV20 (Prevnar 20) [Pfizer]», … in column Future w/ Product X,
+> Product Y and Product Z. Please ensure the sum of your answers equals 100…"
+
+The receipts show the ladder going back and forth rather than converging:
+
+| round | what it did |
+|---|---|
+| first attempt | typed `QA-PROBE` into all five `%` cells — the generic text default |
+| recovery 1 | **set 100 / 0 / 0 / 0 / 0** — correct, derived from the numeric demand |
+| recovery 2 | typed `QA-PROBE` into all five again — **threw the correct answer away** |
+| recovery 3 | set 100 / 0 / 0 / 0 / 0 again |
+
+Then the rounds ran out and the step ended `advance-timeout`. The field's own mask makes the cost
+visible: the receipt records keyboard-type reading back `"-"` for `"QA-PROBE"`, so the probe text
+cannot ever satisfy a numeric cell — it is discarded down to a single character.
+
+**The class:** *a demand the site has already made is not withdrawn by a later round that does not
+repeat it.* Each recovery round re-derives from the NEWEST validation only, so a round whose screen
+read carries no numeric sentence falls back to the generic text default and destroys an answer the
+previous round had already derived correctly. The fix is monotonic accumulation: once validation
+has demanded numeric answers for a set of cells, that demand holds for the remainder of the step,
+and no later round may re-derive those cells as free text. This is general — it is not about
+percentages, sums, or this instrument — and it should degrade the same way it does now (rounds run
+out, step ends named) when the accumulated demands still cannot be satisfied.
+
+Not built in this session: the walk record shows it clearly and it is the next class fix.
+
 ### Bounce-backs from the merged-tree campaigns (20 Aug)
 
 The builders' new mutants arrived unscored by agreement, so the merged-tree runs are their first
