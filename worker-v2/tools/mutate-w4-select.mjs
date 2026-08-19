@@ -353,5 +353,26 @@ await runMutantSuite({
         "ANY hung page call — screenshot, not a read — still returns a walk, via the page-call bound",
       ],
     },
+    {
+      name: "the delayed set verification stops looking (mask reverts become invisible again)",
+      breaks:
+        "the S150 class: a mask that re-initialises after the synchronous readback silently " +
+        "discards the value, the server sees nothing, and the walk stalls on validation that " +
+        "never clears — while the receipt says the set succeeded",
+      file: DR,
+      find: '      if (held === value) return { ok: true, detail: "set-value(+input,+change,+blur; verified after delay)", discarded: false, got: held };',
+      replace: '      if (true) return { ok: true, detail: "set-value(+input,+change,+blur; verified after delay)", discarded: false, got: held };',
+      kills: ["a mask that keeps discarding is a recorded refusal, never a success"],
+    },
+    {
+      name: "the one re-set after a revert is removed",
+      breaks:
+        "recovery from a late-attaching mask: the measured live shape reverts exactly once " +
+        "and accepts the second set — without the re-set, that screen is permanently unfillable",
+      file: DR,
+      find: "      const again = (await page.evaluate(setValueScript(idx, value))) as",
+      replace: "      const again = (null) as unknown as",
+      kills: ["THE MEASURED SHAPE: the mask reverts once, the re-set sticks, and the receipt names the revert"],
+    },
   ],
 });

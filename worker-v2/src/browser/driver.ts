@@ -56,6 +56,7 @@ import {
   isTextEntry,
   isValueEntry,
   selectOptionScript,
+  readValueScript,
   setValueScript,
 } from "./page-script";
 import type {
@@ -1818,10 +1819,17 @@ const choiceReceiptDetail = (
   `${detail}; ${exactChoiceReadback(idx, type, got, expected) ? "exact-choice-readback" : "choice-readback-unavailable-or-mismatched"}`;
 
 /**
+ * How long a mask gets to revert a set value before we call the set verified. Late mask
+ * re-initialisation was measured on the live S150 numeric grid; the beat must outlast a
+ * queued microtask/short timer without materially slowing walks (sets are rare).
+ */
+const SET_VERIFY_DELAY_MS = 250;
+
+/**
  * Set a value on a control that cannot be typed into — see `page-script.ts#setValueScript` for
  * why a slider and a date picker need this route and keystrokes will not do.
  */
-async function setIdx(
+export async function setIdx(
   page: PageLike,
   idx: number,
   value: string,
@@ -1831,7 +1839,39 @@ async function setIdx(
       | { ok?: boolean; reason?: string | null; got?: string | null }
       | null;
     if (!out || typeof out !== "object") return { ok: false, detail: "set-value returned nothing" };
-    if (out.ok === true) return { ok: true, detail: "set-value(+input,+change)", discarded: false, got: out.got ?? undefined };
+    if (out.ok === true) {
+      // A MASK CAN REVERT AFTER THE SYNCHRONOUS READBACK PASSES. The live S150 numeric
+      // grid cell held "1" at set time and "-" by the advance click (run v2r_01m0c4hv…,
+      // 2026-08-19) — the mask re-initialises on a later tick and the server received
+      // nothing. Verify after a beat; on revert, set ONCE more; a second revert is the
+      // control's final answer and is recorded as a refusal, never as success.
+      await new Promise((resolve) => setTimeout(resolve, SET_VERIFY_DELAY_MS));
+      const check = (await page.evaluate(readValueScript(idx))) as { got?: string | null } | null;
+      const held = check && typeof check === "object" ? String(check.got ?? "") : "";
+      if (held === value) return { ok: true, detail: "set-value(+input,+change,+blur; verified after delay)", discarded: false, got: held };
+      const again = (await page.evaluate(setValueScript(idx, value))) as
+        | { ok?: boolean; got?: string | null }
+        | null;
+      await new Promise((resolve) => setTimeout(resolve, SET_VERIFY_DELAY_MS));
+      const recheck = (await page.evaluate(readValueScript(idx))) as { got?: string | null } | null;
+      const heldNow = recheck && typeof recheck === "object" ? String(recheck.got ?? "") : "";
+      if (again?.ok === true && heldNow === value) {
+        return {
+          ok: true,
+          detail: `set-value survived after one re-set (the control reverted "${value}" to "${held}" once — a mask re-initialised over it)`,
+          discarded: false,
+          got: heldNow,
+        };
+      }
+      return {
+        ok: false,
+        detail:
+          `value reverted after set: the control accepted "${value}" then held "${held}", ` +
+          `and after one re-set holds "${heldNow}" — the mask keeps discarding it`,
+        discarded: true,
+        got: heldNow,
+      };
+    }
     return {
       ok: false,
       detail: `set-value rejected: ${out.reason ?? "unknown"} — the control holds "${out.got ?? ""}"`,

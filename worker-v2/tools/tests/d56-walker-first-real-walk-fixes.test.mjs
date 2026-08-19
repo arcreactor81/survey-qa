@@ -1365,3 +1365,59 @@ suite("amendment 5: recovery half-steps are valid persisted step ordinals", () =
     );
   });
 });
+
+suite("amendment 6: a set value must SURVIVE the mask, not merely pass the synchronous readback", () => {
+  // Measured live (run v2r_01m0c4hvsqcn2jgr740peefgmh, S150 numeric grid cell, 19 Aug):
+  // set-value read back "1" at set time, the input mask re-initialised on a later tick,
+  // and the advance click posted "-" — the walk stalled on validation that never cleared.
+  // setIdx now verifies after a delay, re-sets once on revert, and records a refusal when
+  // the mask discards the value twice.
+  const revertingPage = (behavior) => {
+    let sets = 0;
+    let reads = 0;
+    return {
+      sets: () => sets,
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("W4_READ_VALUE")) {
+          reads += 1;
+          if (behavior === "clean") return { got: "7" };
+          if (behavior === "revert-once") return { got: reads === 1 ? "-" : "7" };
+          return { got: "-" }; // always-reverts
+        }
+        if (src.includes("el.value = ")) {
+          sets += 1;
+          return { ok: true, reason: null, got: "7" };
+        }
+        return { ok: true };
+      },
+    };
+  };
+
+  test("a clean set verifies after the delay and reports it", async () => {
+    const mod = await loadWorker().then((w) => w.mod);
+    const page = revertingPage("clean");
+    const r = await mod.driver.setIdx(page, 3, "7");
+    assertEq(r.ok, true, r.detail);
+    assert(r.detail.includes("verified after delay"), r.detail);
+    assertEq(page.sets(), 1, "a clean set must not re-set");
+  });
+
+  test("THE MEASURED SHAPE: the mask reverts once, the re-set sticks, and the receipt names the revert", async () => {
+    const mod = await loadWorker().then((w) => w.mod);
+    const page = revertingPage("revert-once");
+    const r = await mod.driver.setIdx(page, 3, "7");
+    assertEq(r.ok, true, r.detail);
+    assert(r.detail.includes("survived after one re-set"), r.detail);
+    assertEq(page.sets(), 2, "the revert must buy exactly one re-set");
+  });
+
+  test("a mask that keeps discarding is a recorded refusal, never a success", async () => {
+    const mod = await loadWorker().then((w) => w.mod);
+    const page = revertingPage("always-reverts");
+    const r = await mod.driver.setIdx(page, 3, "7");
+    assertEq(r.ok, false, r.detail);
+    assertEq(r.discarded, true, "a twice-reverted value is the control refusing it");
+    assert(r.detail.includes("keeps discarding"), r.detail);
+  });
+});

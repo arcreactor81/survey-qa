@@ -1266,11 +1266,32 @@ export const setValueScript = (idx: number, value: string): string => `
   el.value = ${JSON.stringify(value)};
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
+  // BLUR IS PART OF A REAL ENTRY. Input masks commonly finalise (or revert) on focus
+  // loss; committing without blur leaves the mask's blur handler to fire later under the
+  // advance click, at which point the revert is invisible to the synchronous readback
+  // below. Parity with commitValueScript's typed path.
+  try { el.blur(); } catch (_) { /* blur is a courtesy, not the mechanism */ }
   const got = String(el.value == null ? '' : el.value);
   // THE PAGE'S ANSWER, NOT OURS. A value the control sanitised away comes back as \`ok: false\`
   // with what it actually holds, so "we set it" can never be recorded for a control that
   // refused the value.
   return { ok: got === ${JSON.stringify(value)}, reason: got === ${JSON.stringify(value)} ? null : 'value-rejected-by-control', got: got };
+})()
+`;
+
+/**
+ * Read ONE control's current value, nothing else — the delayed-verification probe for
+ * masked inputs: a mask that re-initialises after our
+ * set silently reverts the value AFTER the synchronous readback passed — the live S150
+ * numeric grid cell held "1" at set time and "-" by the advance click (measured
+ * 2026-08-19, run v2r_01m0c4hv…). Reading again after a beat is the only way to see it.
+ */
+export const readValueScript = (idx: number): string => `
+(() => { /* W4_READ_VALUE */
+  const SEL = ${JSON.stringify(CONTROL_SELECTOR)};
+  const el = document.querySelectorAll(SEL)[${idx}];
+  if (!el || !('value' in el)) return { got: null };
+  return { got: String(el.value == null ? '' : el.value) };
 })()
 `;
 

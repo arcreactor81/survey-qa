@@ -179,6 +179,11 @@ function fakePage(reads, { setRejects = false, selectReadback = "exact", choiceR
         if (queue.length > 0) last = queue.shift();
         return last;
       }
+      // The delayed-verification probe reads the value the mask let stand. This stub's
+      // controls have no mask: whatever the last set assigned is what the probe sees.
+      if (script.includes("W4_READ_VALUE")) {
+        return { got: setRejects ? "" : (set.length > 0 ? set[set.length - 1].value : "") };
+      }
       // The setValueScript body is recognisable by the events it dispatches; capture the value
       // it was built with so a test can assert WHAT was assigned, not merely that something was.
       const m = /el\.value = ("(?:[^"\\]|\\.)*");/.exec(script);
