@@ -1692,3 +1692,126 @@ suite("amendment 8: a blocked set-value recovery gets one keyboard-flip round", 
     }
   });
 });
+
+suite("amendment 9: validation outranks the checked bit — held selections re-actuate by label", () => {
+  // Measured live (run v2r_01m0d2sxehnjcyd18qttmvp7wh, screen 7 = S40 yes/no radio,
+  // 19 Aug): "Yes" was clicked and read back checked, yet the site's validation said
+  // "Please select an answer." — the platform registers a selection through its own
+  // handlers, and both recovery rounds SKIPPED the group as already answered and just
+  // re-clicked next. Under a standing validation the held option now re-actuates through
+  // its label, a different code path than the element click that just failed.
+  const labelOnlyRadioWalk = async ({ labelRegisters, preChecked = false, siteValidates = true }) => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const NEXT_IDX = 90;
+    let checked = preChecked;
+    let registered = preChecked && !siteValidates;
+    let nextClicks = 0;
+    let done = false;
+    let optionElementClicks = 0;
+    let labelClicks = 0;
+    const mkRadio = () => ({
+      at: "2026-08-19T12:00:00.000Z",
+      url: "https://fixture.invalid/survey",
+      title: "S40",
+      questionText: "S40. Committee service?",
+      grid: null, collectedErrors: [], readerLimitations: [],
+      controls: [{
+        idx: 0, tag: "input", type: "radio", name: "S40", id: null, code: "1",
+        label: "Yes", text: "", checked, value: "1", valueIsUserSupplied: false,
+        disabled: false, required: true, visible: true, operable: true,
+        actuatedVia: "self", labelIndex: 5, placeholder: null, maxlength: null,
+        min: null, max: null, step: null, pattern: null, readOnly: false,
+      }],
+      optionGroups: [{
+        name: "S40",
+        kind: "radio",
+        options: [
+          { order: 0, idx: 0, code: "1", label: "Yes", checked, disabled: false, visible: true, operable: true, actuatedVia: "self", labelIndex: 5 },
+          { order: 1, idx: 1, code: "2", label: "No", checked: false, disabled: false, visible: true, operable: true, actuatedVia: "self", labelIndex: 6 },
+        ],
+      }],
+      buttons: [{ idx: NEXT_IDX, label: ">>", role: "next", roleVia: "text:Next", disabled: false, visible: true }],
+      validationMessages: !done && nextClicks > 0 && !registered && siteValidates ? ["Please select an answer."] : [],
+      progress: { present: false, value: null },
+      counts: { controls: 1, optionGroups: 1, options: 2, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:s40",
+    });
+    const doneScreen = {
+      ...mkRadio(),
+      url: "https://fixture.invalid/survey/after-s40",
+      title: "S50",
+      questionText: "S50. The next question.",
+      controls: [], optionGroups: [], buttons: [],
+      validationMessages: [],
+      counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+      screenSignature: "sig:after-s40",
+    };
+    const mkControlHandle = (idx) => ({
+      async click() {
+        if (idx === NEXT_IDX) {
+          if (registered || !siteValidates) { if (checked) done = true; else nextClicks += 1; }
+          else nextClicks += 1;
+          return;
+        }
+        if (idx === 0) { checked = true; optionElementClicks += 1; }
+      },
+      async type() {}, async focus() {},
+    });
+    const mkLabelHandle = (labelIdx) => ({
+      async click() {
+        labelClicks += 1;
+        if (labelIdx === 5) { checked = true; if (labelRegisters) registered = true; }
+      },
+      async type() {}, async focus() {},
+    });
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) return done ? doneScreen : mkRadio();
+        if (src.includes("checkedGroupIdxs")) {
+          return { idx: 0, type: "radio", name: "S40", formOwner: 0, unnamedControlIdx: null, checked, checkedGroupIdxs: checked ? [0] : [] };
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$(sel) {
+        if (String(sel) === "label") return Array.from({ length: 10 }, (_, i) => mkLabelHandle(i));
+        return Array.from({ length: 95 }, (_, i) => mkControlHandle(i));
+      },
+      async screenshot() { return new TextEncoder().encode("PNG-D56"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_d56label", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey", runId, planRevisionId: "plan_d56label1",
+        attemptId: "att_d56label001", tier: 1, maxSteps: 2, deadline: Date.now() + 30_000,
+        viewport: { width: 1280, height: 900 }, applyHistoryShim: false, advanceTimeoutMs: 400,
+      },
+      { env, runId, attemptId: "att_d56label001", pathId: "path_d56label", witnesses: [] },
+    );
+    return { obs, optionElementClicks, labelClicks };
+  };
+
+  test("THE MEASURED SHAPE: a held selection the site rejects re-actuates by label and advances", async () => {
+    const { obs, labelClicks } = await labelOnlyRadioWalk({ labelRegisters: true });
+    const rec = obs.steps.find((s) => s.decisionSource === "recovery");
+    assert(rec, "a recovery step must be recorded");
+    const re = (rec.actions ?? []).find((a) => String(a.detail ?? "").startsWith("revalidate-reactuate(label-click)"));
+    assert(re, `the held option must re-actuate through its label; actions: ${JSON.stringify((rec.actions ?? []).map((a) => a.kind + ":" + String(a.detail).slice(0, 40)))}`);
+    assert(labelClicks > 0, "the label element itself was clicked");
+    assertEq(rec.advanced, true, "the re-actuated selection is what the site accepts");
+    assert(obs.outcome !== "blocked", `outcome was ${JSON.stringify(obs.outcome)}`);
+  });
+
+  test("counterproof: with no validation standing, held state is never re-dispatched", async () => {
+    const { obs, optionElementClicks, labelClicks } = await labelOnlyRadioWalk({ labelRegisters: true, preChecked: true, siteValidates: false });
+    assertEq(optionElementClicks, 0, "a pre-checked group with no validation gets no element click");
+    assertEq(labelClicks, 0, "and no label click either — re-dispatch would invent a change");
+    assert(obs.outcome !== "blocked", `outcome was ${JSON.stringify(obs.outcome)}`);
+  });
+});

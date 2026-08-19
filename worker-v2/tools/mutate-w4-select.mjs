@@ -386,6 +386,28 @@ await runMutantSuite({
       kills: ["THE MEASURED SHAPE: three numeric cells recover as 100/0/0, never 1/1/1"],
     },
     {
+      name: "held selections stop re-actuating under a standing validation",
+      breaks:
+        "the run v2r_01m0d2sxehnjcyd18qttmvp7wh class: a radio that reads checked while " +
+        "the site says 'Please select an answer' is skipped as already answered, every " +
+        "recovery round just re-clicks next, and the walk stalls seven screens in",
+      file: DR,
+      find: "        if (revalidateValidation.length === 0) continue;",
+      replace: "        continue;",
+      kills: ["THE MEASURED SHAPE: a held selection the site rejects re-actuates by label and advances"],
+    },
+    {
+      name: "the re-actuation loses its alternate mechanism (element click repeats)",
+      breaks:
+        "the point of the label path: repeating the exact element click that just failed " +
+        "to register tests nothing, and platforms that listen on label handlers never see " +
+        "the selection",
+      file: DR,
+      find: "        const viaLabel = typeof held.labelIndex === \"number\" && held.labelIndex >= 0;",
+      replace: "        const viaLabel = false;",
+      kills: ["THE MEASURED SHAPE: a held selection the site rejects re-actuates by label and advances"],
+    },
+    {
       name: "recovery rounds stop re-deriving from the newest validation",
       breaks:
         "the run v2r_01m0cy89mz80nf4g3z32j7f8sx class: the numeric-sum demand appears only " +

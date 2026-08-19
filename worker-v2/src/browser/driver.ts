@@ -3218,6 +3218,32 @@ async function applyDecision(
     if (matches.length === 0) continue;
     for (const { w, opt } of matches) {
       if (!opt) continue;
+      if (opt.checked && revalidateValidation.length > 0) {
+        // THE SITE'S VALIDATION OUTRANKS THE DOM'S CHECKED BIT — see the identical rule in
+        // the navigator-default loop below (the S40 shape). A held selection the site
+        // rejects is re-actuated through its label when one exists.
+        const viaLabel = typeof opt.labelIndex === "number" && opt.labelIndex >= 0;
+        const r = await clickIdx(
+          page,
+          opt.idx,
+          viaLabel ? { actuatedVia: "label", labelIndex: opt.labelIndex } : opt,
+        );
+        const choiceReadback = r.ok ? await readChoiceAt(page, opt.idx) : null;
+        actions.push({
+          kind: "click-option",
+          targetIdx: opt.idx,
+          targetLabel: opt.label,
+          targetCode: opt.code,
+          value: w,
+          ok: r.ok && exactChoiceReadback(opt.idx, g.kind, choiceReadback, g),
+          detail:
+            `revalidate-reactuate(${viaLabel ? "label-click" : "element-click"}): the site's validation ` +
+            `rejects the held selection (` +
+            choiceReceiptDetail(r.detail, opt.idx, g.kind, choiceReadback, g) + `)`,
+          choiceReadback,
+        });
+        continue;
+      }
       if (opt.checked) {
         const checkedGroupIdxs = g.options.filter((candidate) => candidate.checked).map((candidate) => candidate.idx);
         const choiceReadback: NonNullable<PerformedAction["choiceReadback"]> = {
@@ -3321,7 +3347,40 @@ async function applyDecision(
       });
     } else
     for (const g of screen.optionGroups) {
-      if (g.options.some((o) => o.checked)) continue;
+      const checkedHere = g.options.filter((o) => o.checked);
+      if (checkedHere.length > 0) {
+        // THE SITE'S VALIDATION OUTRANKS THE DOM'S CHECKED BIT (the S40 shape, run
+        // v2r_01m0d2sxehnjcyd18qttmvp7wh: "Yes" read back checked while the site said
+        // "Please select an answer" — a platform can register a selection through its own
+        // handlers, and a checked control the site rejects means those handlers never
+        // fired). Under a standing validation the held option is RE-ACTUATED, through its
+        // label when one exists — a different code path than the element click that just
+        // failed. With no validation the skip stands: re-dispatching events on held state
+        // would invent a change the page never made.
+        if (revalidateValidation.length === 0) continue;
+        const held = checkedHere[0]!;
+        const viaLabel = typeof held.labelIndex === "number" && held.labelIndex >= 0;
+        const r = await clickIdx(
+          page,
+          held.idx,
+          viaLabel ? { actuatedVia: "label", labelIndex: held.labelIndex } : held,
+        );
+        const choiceReadback = r.ok ? await readChoiceAt(page, held.idx) : null;
+        actions.push({
+          kind: "click-option",
+          targetIdx: held.idx,
+          targetLabel: held.label,
+          targetCode: held.code,
+          value: null,
+          ok: r.ok && exactChoiceReadback(held.idx, g.kind, choiceReadback, g),
+          detail:
+            `revalidate-reactuate(${viaLabel ? "label-click" : "element-click"}): the site's validation ` +
+            `rejects the held selection (` +
+            choiceReceiptDetail(r.detail, held.idx, g.kind, choiceReadback, g) + `)`,
+          choiceReadback,
+        });
+        continue;
+      }
       // `answerable`, NOT `visible` — see the comment on answerable(). This is the line that
       // made a 0-10 NPS score unreachable and answered "Don't know" instead.
       const first = g.options.find((o) => answerable(o));
