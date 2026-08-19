@@ -169,6 +169,63 @@ corpus scores 89/99" / "corpus must carry 99 probes, got 0"). That failure is th
 environmental to worktrees — an untracked corpus fixture they lack. If it appears on the merged
 MAIN tree it is real, and the merge stops until it is understood.
 
+## 2026-08-20 — the C20 wall fell live, and the three-branch integration
+
+### The wall fell (receipts)
+
+Run `v2r_01m0dvfmm162z50msh7pj9b96a` on v86. Deep walk `FLOOR-01` reached **screen 43** — past the
+C20 minimum-dwell gate that ended the previous walk at 42 — and stopped on a completely different,
+NAMED cause:
+
+> "Please make sure you choose different Profile Variation for both Best and Worst rows."
+
+That is exactly the constraint predicted from the previous run's receipts and deliberately NOT
+built blind. The patience mechanism is proven on the live site, not merely by gates.
+
+Two design decisions were confirmed by the same run:
+
+- The terminal-looking cap worked. The screened-out probe reports "STILL out of reach after
+  **6024ms** of waiting across 2 re-read(s)" — a completion-shaped page paid six seconds, not the
+  90-second ceiling.
+- The honest degradation worked. That probe's outcome now reads "a screen the survey did not open,
+  not the end of the survey" instead of the old sentence that was word-for-word what a thank-you
+  page produces.
+
+### Integration of all three branches
+
+Merged into `agent/v2-reading-visibility`: `report-path-fixes` @ `51672ea`, `bw-grid-fixes` @
+`c4c79f7`, `ceiling-allocation-fixes` @ `c984c1e`.
+
+- Suite titles renumbered so all coexist: 13 patience, 14 step-cap, 15 best/worst grid. Individual
+  TEST names untouched, because mutation campaigns match kills by test name. Zero duplicate test
+  names across all 1988, checked by script rather than by eye.
+- `DEPLOY.md`'s mutation census hardcoded `-ne 44` while the manifest and `tools/` now both hold
+  46. Counted both, fixed to 46; the release script would otherwise have failed closed.
+- The w4 campaign now carries 73 mutants — mine, bw-grid's 6 and ceiling's 11 — the builders'
+  arriving unscored by agreement, with the merged-tree run as the authoritative verdict.
+
+**A mistake I made and how it was caught.** The report-path resolution left a live conflict marker
+and I committed an unparseable test file. The cause: the cleanup replaced the substring
+`"=======\n"`, which also matches the TAIL of a long `// ====` banner comment line, so it clipped a
+banner and left the real separator in place — and my marker check grepped only for `<<<<<<<` and
+`>>>>>>>`, so a bare `=======` passed it. Caught by running the suite, which is the point of
+running it. Repaired by rebuilding the file from its three sources rather than patching: all three
+versions are verified pure appends onto `ae7a370`. The marker check is now line-anchored and covers
+all three markers.
+
+### The corpus test: mystery closed, hardening deferred
+
+Both builders saw "frozen 20-file corpus scores 89/99" fail in their worktrees. On the merged MAIN
+tree it **PASSES at its known 89/99 with the failing set exactly the known ten**. The cause is that
+its probe inputs (`test-suite/docx-robustness/corpus/_probes-*.json`) are git-ignored and absent
+from fresh worktrees.
+
+**Named, dated deferral (20 Aug 2026):** it fails there as a silent `0/99` — an empty denominator
+scoring as a number, which is precisely the defect CLAUDE.md's "beware the check that cannot fail"
+rule exists to stop. The fix is to make absent probe inputs a loud failure rather than a zero
+score. Deferred deliberately: it is test-suite tooling, not the worker, and it does not belong in a
+deploy train carrying three merged branches. It should be the next non-urgent piece of work.
+
 ### Integration queue (after this deploy lands)
 
 `report-path-fixes` @ `51672ea`, 4 commits on `ae7a370`. Protocol: rebase-merge into
