@@ -140,7 +140,16 @@ const MUTANTS = [
       "a future ending kind silently promoted to the one answer that matters most — the same " +
       "collapse `unclassified` exists to prevent, one kind over",
     file: VIEW,
-    find: "    else if (ENDING_KINDS.includes(kind)) endingCounts[kind] += 1;",
+    // REPAIRED (merged-run bounce-back, 20 Aug). This replaced the middle arm of an
+    // if / else-if / else chain with a bare `else`, leaving `else` followed by `else` — a
+    // syntax error, so the build failed, no test ran, and the harness correctly refused to
+    // score it. A mutant that cannot compile is not a weak guard, it is NO guard, and it
+    // reported as one for two commits.
+    //
+    // Now it replaces the LAST arm instead: the chain stays valid, and the mutation is exactly
+    // what this mutant's name claims — an unrecognised kind folded into `completed` — rather
+    // than also swallowing the known kinds on its way past.
+    find: "    else unrecognisedEndings.set(kind, (unrecognisedEndings.get(kind) ?? 0) + 1);",
     replace: "    else endingCounts.completed += 1;",
     kills: ["AN ENDING KIND THIS READER DOES NOT KNOW IS COUNTED BY NAME, not dropped"],
   },

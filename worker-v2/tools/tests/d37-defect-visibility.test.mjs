@@ -486,17 +486,33 @@ suite("D37 — the page reads the stop reason the record actually writes", () =>
   });
 
   test("A PARTIAL LEDGER IS NEVER SILENTLY SHORTER: rows without an ending are counted out loud", async () => {
-    const { data, summary } = await publishWith((record) => {
+    const { data, html, summary } = await publishWith((record) => {
       const withEnding = { ...record.attempts[0], attemptId: "att_mix01", ending: { kind: "completed", evidence: ["done"] } };
       const without = { ...record.attempts[0], attemptId: "att_mix02" };
       delete without.ending;
       record.attempts = [withEnding, without];
     });
-    assertEq(data.completion.testing.endings.unstated, 1, JSON.stringify(data.completion.testing.endings));
+
+    // THE SENTENCE FIRST, AND ON EVERY SURFACE THAT CARRIES IT (merged-run bounce-back,
+    // 20 Aug). This test used to lead with the `unstated` COUNT, which is computed upstream of
+    // both sentences — so suppressing the sentence entirely left the count at 1 and this guard
+    // green. A guard against silent shortening that survives the sentence being silenced is
+    // precisely the check-that-cannot-fail CLAUDE.md warns about, and it took a merged campaign
+    // to catch. Each surface is asserted against the module that writes it: the audit line
+    // comes from the view model's headline, the hero line from plain-language.
+    const audit = visible(extractView(html, "audit") ?? "");
+    assert(
+      /recorded no ending at all, so this report cannot say where it stopped/.test(audit),
+      `the auditor surface went silent about the row that said nothing: ${audit.slice(0, 900)}`,
+    );
     assert(
       /1 recorded no ending at all/.test(visible(summary)),
-      `the row that said nothing was dropped from the sentence: ${visible(summary).slice(0, 900)}`,
+      `the row that said nothing was dropped from the summary sentence: ${visible(summary).slice(0, 900)}`,
     );
+
+    // ...and the count agrees with the sentences. Second, deliberately: it is corroboration,
+    // not the property — it was passing throughout the whole time the sentence could vanish.
+    assertEq(data.completion.testing.endings.unstated, 1, JSON.stringify(data.completion.testing.endings));
   });
 
   test("AN ENDING KIND THIS READER DOES NOT KNOW IS COUNTED BY NAME, not dropped", async () => {
