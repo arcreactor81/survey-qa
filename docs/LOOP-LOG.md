@@ -292,6 +292,17 @@ out, step ends named) when the accumulated demands still cannot be satisfied.
 
 Not built in this session: the walk record shows it clearly and it is the next class fix.
 
+### Shipped — v89, the prose-progress signal
+
+Deployed `e83fa046-e2f0-43a9-b7ce-ecc74f7c763c` at 100%, SUCCESS confirmed, step cap verified.
+Old run terminated, ~2 min drain, canary launched: **`v2r_01m0enh6bjc1en2bgesvcnt5jc`**.
+
+| Gate | Result |
+|---|---|
+| `npx tsc --noEmit` | exit 0 |
+| full suite | **1619/1619**, 0 failed |
+| `mutate-w4-select` | **81/81 killed**, denominator 68, both self-checks passed |
+
 ### v88 run: the D10 fix worked, and uncovered something bigger
 
 Run `v2r_01m0eddha4xfq66xhynfmaq2cw`. The monotonic-demand fix did exactly what it was built to
