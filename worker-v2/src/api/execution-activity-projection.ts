@@ -791,6 +791,7 @@ async function readProgressStrict(env: Env, runId: string): Promise<ParsedProgre
     "shimRequired",
     "hungPaths",
     "screenoutPivots",
+    "bindingRetryPivots",
     "shimEvidence",
     "totalSteps",
     "totalEvidence",
@@ -823,6 +824,14 @@ async function readProgressStrict(env: Env, runId: string): Promise<ParsedProgre
     for (const [pathId, value] of Object.entries(pivots)) {
       if (pathId.length === 0 || pathId.length > 500) invalid("$progress.screenoutPivots", "path id is outside its bound");
       integer(value, `$progress.screenoutPivots.${pathId}`);
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(root, "bindingRetryPivots")) {
+    const pivots = object(root.bindingRetryPivots, "$progress.bindingRetryPivots");
+    if (Object.keys(pivots).length > MAX_WALKS) invalid("$progress.bindingRetryPivots", "too many path entries");
+    for (const [pathId, value] of Object.entries(pivots)) {
+      if (pathId.length === 0 || pathId.length > 500) invalid("$progress.bindingRetryPivots", "path id is outside its bound");
+      integer(value, `$progress.bindingRetryPivots.${pathId}`);
     }
   }
   const totalSteps = integer(root.totalSteps, "$progress.totalSteps");

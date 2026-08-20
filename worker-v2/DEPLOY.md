@@ -154,6 +154,7 @@ $MutationHarnesses = @(
   "mutate-api-authority.mjs",
   "mutate-axis-closure.mjs",
   "mutate-binding.mjs",
+  "mutate-binding-retry.mjs",
   "mutate-claims.mjs",
   "mutate-closure.mjs",
   "mutate-docx-blocks.mjs",
@@ -200,7 +201,7 @@ $MutationHarnesses = @(
 $MutationLibraries = @(
   "mutate-runner.mjs"
 )
-if ($MutationHarnesses.Count -ne 46 -or $MutationLibraries.Count -ne 1) {
+if ($MutationHarnesses.Count -ne 47 -or $MutationLibraries.Count -ne 1) {
   throw "Mutation manifest cardinality changed"
 }
 $MutationDeclared = @($MutationHarnesses + $MutationLibraries)

@@ -276,6 +276,15 @@ export interface ExecProgress {
    * before this field re-reads as zero pivots everywhere.
    */
   screenoutPivots?: Record<string, number>;
+  /**
+   * BOUNDED BINDING-FAILURE RETRY: pivots consumed per path id. Mirrors `screenoutPivots`
+   * in persistence discipline (durable-before-effect) and cap semantics
+   * (`BINDING_RETRY_CAP`). A walk that blocked with constraining decisions in the plan and
+   * zero matched means `bindDecision()` never identified any screen as the target of a
+   * planned decision — the walk defaulted everywhere and got stuck. A FULL re-walk (from
+   * step 0) in a fresh browser session gives binding another chance.
+   */
+  bindingRetryPivots?: Record<string, number>;
   shimEvidence: string | null;
   totalSteps: number;
   totalEvidence: number;
@@ -435,6 +444,7 @@ const emptyProgress = (runId: string, planRevisionId: string): ExecProgress => (
   shimEvidence: null,
   hungPaths: [],
   screenoutPivots: {},
+  bindingRetryPivots: {},
   totalSteps: 0,
   totalEvidence: 0,
 });
@@ -509,6 +519,13 @@ export function decodeProgress(value: unknown, runId: string, planRevisionId: st
     for (const [pathId, count] of Object.entries(pivots)) {
       if (pathId.length === 0) progressCorrupt("$.screenoutPivots has an empty path id");
       progressCount(count, `$.screenoutPivots[${JSON.stringify(pathId)}]`);
+    }
+  }
+  if (root.bindingRetryPivots !== undefined) {
+    const pivots = progressObject(root.bindingRetryPivots, "$.bindingRetryPivots");
+    for (const [pathId, count] of Object.entries(pivots)) {
+      if (pathId.length === 0) progressCorrupt("$.bindingRetryPivots has an empty path id");
+      progressCount(count, `$.bindingRetryPivots[${JSON.stringify(pathId)}]`);
     }
   }
   return root as unknown as ExecProgress;
@@ -1166,6 +1183,152 @@ async function executeMultiLaneBatch(
             break;
           }
           pivotParentActions = pivotActions;
+        }
+
+        // ==================== BOUNDED BINDING-FAILURE RETRY (multi-lane) ====================
+        //
+        // AFTER the screenout retry loop (those two retries are mutually exclusive in practice:
+        // a screened-out walk has ending kind "screened-out" and is not in BLOCKING_OUTCOMES;
+        // a blocked walk is in BLOCKING_OUTCOMES and is not screened-out). But a screenout retry
+        // that ends up blocked IS eligible here, so order matters: screenout first, then binding.
+        //
+        // THE KEY DIFFERENCE FROM SCREENOUT RETRY: this is a FULL re-walk from step 0, not a
+        // partial pivot from the failing screen. Binding is per-screen and depends on page render,
+        // so the entire walk must be re-driven. The variant changes filler answers, which routes
+        // through different screens and may expose the binding-eligible ones.
+        {
+          const bindAudit = assessExercised(obs, item.path.decisions as PlannedDecision[] | undefined);
+          let bindParentActions = walkActionsJson(obs);
+          while (
+            bindingRetryEligible({
+              obs,
+              audit: bindAudit,
+              path: item.path,
+              pivots: progress.bindingRetryPivots,
+              pathsWalked,
+              maxAttempts,
+              now: Date.now(),
+              batchDeadline,
+            })
+          ) {
+            const ordinal = (progress.bindingRetryPivots?.[item.path.id] ?? 0) + 1;
+            progress.bindingRetryPivots = { ...(progress.bindingRetryPivots ?? {}), [item.path.id]: ordinal };
+            await saveProgress(env, progress);
+
+            const pivot = {
+              retryOf: obs.attemptId,
+              ordinal,
+              reason:
+                `attempt ${obs.attemptId} blocked with ` +
+                `${bindAudit.constrainingDecisions} constraining decision(s), 0 matched — ` +
+                `bindDecision() never identified a screen; re-walking from step 0 (binding retry ${ordinal})`,
+            };
+
+            await beat(
+              env,
+              args.runId,
+              `batch ${args.batch}: ${item.path.id} blocked with 0/${bindAudit.constrainingDecisions} constraining matched — ` +
+                `full re-walk for binding retry ${ordinal}`,
+              `${args.batch}:${item.path.id}:binding-retry${ordinal}`,
+            );
+
+            // FULL re-walk from step 0 with varied filler. The fresh browser session from
+            // runLaneWave gives binding a new chance at the page render.
+            const pivotResults = await multilane.runLaneWave(env, [item], {
+              runId: args.runId,
+              batch: args.batch,
+              planRevisionId: args.planRevisionId,
+              surveyUrl: args.surveyUrl,
+              fence: args.fence,
+              batchDeadline,
+              batchMaxMs,
+              perCaseTimeoutMs,
+              maxSteps,
+              advanceTimeoutMs,
+              shimRequired: progress.shimRequired,
+              allowShim,
+              acquireTimeoutMs,
+              program,
+              progress,
+              variant: ordinal,
+              variantFromStep: 0, // FULL re-walk: vary from step 0
+            });
+            const pivotResult = pivotResults[0]!;
+            obs = pivotResult.obs;
+
+            if (pivotResult.usageEvents.length > 0) {
+              await pushUsage(env, args.runId, args.fence, pivotResult.usageEvents);
+            }
+
+            const retryAudit = assessExercised(obs, item.path.decisions as PlannedDecision[] | undefined);
+            const retryClosed =
+              item.assignment && retryAudit.exercised
+                ? item.assignment.caseIds.filter(
+                    (id) => !seededCaseIds.has(id) && !args.cursor.completedCaseIds.includes(id),
+                  )
+                : [];
+            const retryWalkedOk = obs.outcome !== "error";
+
+            progress.walks.push(walkRecord(obs, retryClosed, retryAudit, pivot));
+            progress.totalSteps += obs.steps.length;
+            progress.totalEvidence += obs.evidenceIds.length;
+            if (pivotResult.browserHung) {
+              progress.hungPaths = progress.hungPaths ?? [];
+              if (!progress.hungPaths.includes(item.path.id)) progress.hungPaths.push(item.path.id);
+            }
+            await saveProgress(env, progress);
+
+            await updateCheckpoint(
+              env,
+              args.runId,
+              (d) => {
+                const c = d.execution;
+                if (!c) return false;
+                const next: ExecutionCursor = {
+                  ...c,
+                  batchIndex: args.batch + 1,
+                  pendingCaseIds: c.pendingCaseIds.filter((id) => !retryClosed.includes(id)),
+                  completedCaseIds: [...c.completedCaseIds, ...retryClosed],
+                  sessionId: null,
+                  sessionOpenedAt: null,
+                };
+                d.execution = next;
+                d.counts.pending = Math.max(0, d.counts.pending - retryClosed.length);
+                d.counts.exercised += retryClosed.length;
+                d.attempts.started += 1;
+                if (retryWalkedOk) d.attempts.completed += 1;
+                d.currentAttempt = null;
+                return true;
+              },
+              { progressed: true, fence: args.fence },
+            );
+            args.cursor.completedCaseIds = [...args.cursor.completedCaseIds, ...retryClosed];
+            args.cursor.pendingCaseIds = args.cursor.pendingCaseIds.filter((id) => !retryClosed.includes(id));
+
+            pathsWalked += 1;
+            casesClosed += retryClosed.length;
+            steps += obs.steps.length;
+
+            if (pivotResult.browserHung) break;
+
+            const pivotActions = walkActionsJson(obs);
+            if (pivotActions === bindParentActions) {
+              await beat(
+                env,
+                args.runId,
+                `batch ${args.batch}: ${item.path.id} binding retry ${ordinal} reproduced the prior attempt's actions exactly — ` +
+                  `the page renders identically; binding cannot succeed this way; ` +
+                  `stopping retries, composite binding score needed`,
+                `${args.batch}:${item.path.id}:binding-retry-identical`,
+              );
+              break;
+            }
+            bindParentActions = pivotActions;
+
+            // Re-derive the audit for the next eligibility check — the while condition
+            // re-reads `obs` and needs the NEW audit to decide whether binding succeeded.
+            Object.assign(bindAudit, retryAudit);
+          }
         }
       }
     }
@@ -1867,6 +2030,162 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         pivotParentActions = pivotActions;
       }
 
+      // ==================== BOUNDED BINDING-FAILURE RETRY (single-lane) ====================
+      //
+      // Same logic as the multi-lane binding-failure retry above, adapted for the single-lane
+      // code path where `walkOnce` drives a new page on the existing browser session. A FULL
+      // re-walk from step 0 means the walker navigates fresh to the survey URL and re-attempts
+      // binding on every screen.
+      if (!sessionWedged) {
+        const bindAudit = assessExercised(obs, item.path.decisions as PlannedDecision[] | undefined);
+        let bindParentActions = walkActionsJson(obs);
+        while (
+          !item.seedAlternative &&
+          bindingRetryEligible({
+            obs,
+            audit: bindAudit,
+            path: item.path,
+            pivots: progress.bindingRetryPivots,
+            pathsWalked,
+            maxAttempts,
+            now: Date.now(),
+            batchDeadline,
+          })
+        ) {
+          const ordinal = (progress.bindingRetryPivots?.[item.path.id] ?? 0) + 1;
+          progress.bindingRetryPivots = { ...(progress.bindingRetryPivots ?? {}), [item.path.id]: ordinal };
+          await saveProgress(env, progress);
+
+          const pivot = {
+            retryOf: obs.attemptId,
+            ordinal,
+            reason:
+              `attempt ${obs.attemptId} blocked with ` +
+              `${bindAudit.constrainingDecisions} constraining decision(s), 0 matched — ` +
+              `bindDecision() never identified a screen; re-walking from step 0 (binding retry ${ordinal})`,
+          };
+          const retryAttemptId = mintAttemptId();
+          const retryNamingOrdinal = progress.walks.filter((w) => w.pathId === item.path.id).length;
+          const retryCap: CaptureContext = { ...cap, attemptId: retryAttemptId, attemptOrdinal: retryNamingOrdinal };
+          await beat(
+            env,
+            args.runId,
+            `batch ${args.batch}: ${item.path.id} blocked with 0/${bindAudit.constrainingDecisions} constraining matched — ` +
+              `full re-walk for binding retry ${ordinal}`,
+            `${args.batch}:${item.path.id}:binding-retry${ordinal}`,
+          );
+
+          // FULL re-walk from step 0: variant = ordinal (different fillers route through
+          // different screens), variantFromStep = 0 (vary from the first step).
+          let retryHung = false;
+          let retryPerCaseTimedOut = false;
+          try {
+            obs = await withTimeout(
+              walkOnce(progress.shimRequired && allowShim, retryAttemptId, retryCap, ordinal, 0),
+              perCaseTimeoutMs,
+              `walk ${item.path.id} binding retry ${ordinal}`,
+            );
+          } catch (err) {
+            retryPerCaseTimedOut = err instanceof BrowserTimeout;
+            retryHung = retryPerCaseTimedOut;
+            obs = {
+              kind: "v2-path-observation/1.0.0",
+              runId: args.runId,
+              pathId: item.path.id,
+              tier: item.tier,
+              attemptId: retryAttemptId,
+              planRevisionId: args.planRevisionId,
+              surveyUrl: program.surveyUrl || args.surveyUrl,
+              startedAt: new Date().toISOString(),
+              endedAt: new Date().toISOString(),
+              wallMs: 0,
+              plannedWitnesses: [],
+              steps: [],
+              outcome: retryPerCaseTimedOut ? "per-case-timeout" : "error",
+              outcomeDetail: retryPerCaseTimedOut ? `walk exceeded its per-case budget of ${perCaseTimeoutMs}ms` : String(err).slice(0, 500),
+              shimmed: false,
+              shimNote: null,
+              loadFailure: null,
+              evidenceIds: [],
+              viewport: { width: 1280, height: 900 },
+            };
+          }
+
+          // ---- the binding retry's own per-attempt commit: same discipline as the walk above ----
+          const retryAudit = assessExercised(obs, item.path.decisions as PlannedDecision[] | undefined);
+          const retryClosed =
+            item.assignment && retryAudit.exercised
+              ? item.assignment.caseIds.filter(
+                  (id) =>
+                    !(program.seedPlan?.alternatives ?? []).some((alternative) => alternative.caseId === id) &&
+                    !args.cursor.completedCaseIds.includes(id),
+                )
+              : [];
+          const retryWalkedOk = obs.outcome !== "error";
+
+          progress.walks.push(walkRecord(obs, retryClosed, retryAudit, pivot));
+          progress.totalSteps += obs.steps.length;
+          progress.totalEvidence += obs.evidenceIds.length;
+          if (retryHung) {
+            sessionWedged = true;
+            progress.hungPaths = progress.hungPaths ?? [];
+            if (!progress.hungPaths.includes(item.path.id)) progress.hungPaths.push(item.path.id);
+          }
+          await saveProgress(env, progress);
+
+          await updateCheckpoint(
+            env,
+            args.runId,
+            (d) => {
+              const c = d.execution;
+              if (!c) return false;
+              const next: ExecutionCursor = applySessionToCursor(
+                {
+                  ...c,
+                  batchIndex: args.batch + 1,
+                  pendingCaseIds: c.pendingCaseIds.filter((id) => !retryClosed.includes(id)),
+                  completedCaseIds: [...c.completedCaseIds, ...retryClosed],
+                },
+                handle,
+              );
+              d.execution = next;
+              d.counts.pending = Math.max(0, d.counts.pending - retryClosed.length);
+              d.counts.exercised += retryClosed.length;
+              d.attempts.started += 1;
+              if (retryWalkedOk) d.attempts.completed += 1;
+              d.currentAttempt = null;
+              return true;
+            },
+            { progressed: true, fence: args.fence },
+          );
+          args.cursor.completedCaseIds = [...args.cursor.completedCaseIds, ...retryClosed];
+          args.cursor.pendingCaseIds = args.cursor.pendingCaseIds.filter((id) => !retryClosed.includes(id));
+
+          pathsWalked += 1;
+          casesClosed += retryClosed.length;
+          steps += obs.steps.length;
+
+          if (retryHung) break;
+
+          const pivotActions = walkActionsJson(obs);
+          if (pivotActions === bindParentActions) {
+            await beat(
+              env,
+              args.runId,
+              `batch ${args.batch}: ${item.path.id} binding retry ${ordinal} reproduced the prior attempt's actions exactly — ` +
+                `the page renders identically; binding cannot succeed this way; ` +
+                `stopping retries, composite binding score needed`,
+              `${args.batch}:${item.path.id}:binding-retry-identical`,
+            );
+            break;
+          }
+          bindParentActions = pivotActions;
+
+          // Re-derive the audit for the next eligibility check
+          Object.assign(bindAudit, retryAudit);
+        }
+      }
+
       if (sessionWedged) break; // this browser is dead; the next batch starts a fresh one
     }
   } catch (err) {
@@ -2134,6 +2453,63 @@ export function screenoutRetryEligible(args: {
   if ((path as { adjacency?: { side?: string } }).adjacency?.side === "just-triggers") return false;
   if ((args.pivots?.[path.id] ?? 0) >= SCREENOUT_PIVOT_CAP) return false;
   if (args.pathsWalked >= args.maxAttempts) return false;
+  if (args.now >= args.batchDeadline) return false;
+  return true;
+}
+
+/**
+ * ==================== BOUNDED BINDING-FAILURE RETRY: THE ELIGIBILITY GATE ====================
+ *
+ * WHY A RETRY EXISTS AT ALL. `bindDecision()` evaluates four independent signals (wording
+ * similarity, control-name markup, question token in heading, option-label overlap) to
+ * identify which planned decision applies to the current screen. Each signal independently
+ * passes or fails. When NO signal crosses its threshold on ANY constraining decision, the
+ * walker defaults everywhere and blocks at a low screen count — not because the survey
+ * refused it, but because it never steered at all.
+ *
+ * The binding depends on the exact page render: HTML structure, heading text, element IDs.
+ * A fresh browser session, different page-load timing, or a different filler-variant route
+ * through early screens can produce a page where binding succeeds. The retry is a FULL
+ * re-walk from step 0 (not a partial pivot from the failing screen) because the binding is
+ * per-screen and every screen must be re-identified.
+ *
+ * EVERY CLAUSE IS A REFUSAL, mirroring `screenoutRetryEligible`:
+ *
+ *   - not a blocking outcome — the walk reached a terminal; binding isn't the issue;
+ *   - no constraining decisions in the plan — there is nothing to bind;
+ *   - at least one constraining decision matched — binding worked for something;
+ *   - an intended termination path — the plan expects this to end;
+ *   - a sealed case action or seed-certified walk — don't retry sealed work;
+ *   - a just-triggers probe — not a real walk;
+ *   - cap reached — bounded by BINDING_RETRY_CAP;
+ *   - attempt budget exhausted — the batch-level maxAttempts;
+ *   - batch deadline passed — no open-ended work.
+ *
+ * Pure and exported so every clause is directly testable without a browser; the executor
+ * consults it and nothing else does. Evidence it can fail: `tools/mutate-binding-retry.mjs`.
+ */
+export const BINDING_RETRY_CAP = 2;
+
+export function bindingRetryEligible(args: {
+  obs: Pick<PathObservation, "outcome" | "steps">;
+  audit: ExercisedAssessment;
+  path: PlannedPath;
+  pivots: Record<string, number> | undefined;
+  pathsWalked: number;
+  maxAttempts: number;
+  now: number;
+  batchDeadline: number;
+}): boolean {
+  const { obs, audit, path } = args;
+  if (!BLOCKING_OUTCOMES.has(obs.outcome)) return false;
+  if (audit.constrainingDecisions === 0) return false;
+  if (audit.matchedConstraining > 0) return false;
+  if (path.terminated_at != null) return false;
+  if (Array.isArray(path.decisions) && path.decisions.some((d) => d && d.case_action !== undefined)) return false; // binding-retry
+  if (Array.isArray(path.decisions) && path.decisions.some((d) => typeof d?.seed_certificate_hash === "string")) return false;
+  if ((path as { adjacency?: { side?: string } }).adjacency?.side === "just-triggers") return false;
+  if ((args.pivots?.[path.id] ?? 0) >= BINDING_RETRY_CAP) return false;
+  if (args.pathsWalked >= args.maxAttempts) return false; // binding-retry
   if (args.now >= args.batchDeadline) return false;
   return true;
 }
