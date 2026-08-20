@@ -292,6 +292,52 @@ out, step ends named) when the accumulated demands still cannot be satisfied.
 
 Not built in this session: the walk record shows it clearly and it is the next class fix.
 
+### v89 run: the dwell gate's SECOND shape
+
+Run `v2r_01m0enh6bjc1en2bgesvcnt5jc`. The prose-progress signal behaved correctly and caused no
+false advances — measured: it appeared alongside other evidence on 18 of 45 advanced steps and was
+the SOLE evidence **zero** times.
+
+The walk stopped at 26% on C20 "SCREEN 2 of 4", and the receipts are unambiguous. The walk answered
+the best/worst grid CORRECTLY — the distinct-column repick fired and the readbacks confirm two
+different columns checked. It pressed forward. Nothing happened: no movement, and no validation.
+The screen's own instruction text says why:
+
+- before the press: "You will be allowed to proceed in **4 seconds**"
+- after the press: "You will be allowed to proceed in **0 seconds**"
+
+The press landed inside the minimum-dwell gate and was swallowed, and the ladder then spent its
+rounds re-deriving an answer that was already right.
+
+**This is the gate's second shape.** On the first C20 screen the platform HID its forward control,
+which the patience fix waits out. Here it leaves the control VISIBLE and simply ignores the press,
+so nothing up to now noticed.
+
+**The class: silence is not rejection.** A press producing neither movement nor a new complaint is
+not evidence the answer was wrong. The walk now waits and presses again, bounded by press count,
+and hands over to the answer-recovery ladder the moment the site does complain. Nothing reads the
+countdown — the trigger is the absence of both movement and complaint, which is platform- and
+language-neutral. A merely slow site benefits identically, and each re-press re-checks for movement
+first so a late advance is never pressed through onto the next question.
+
+The cadence is the advance window itself rather than a new knob: waiting again before re-pressing
+is exactly "give this submit another advance window". That also keeps fixtures fast automatically
+instead of making every non-advancing fixture sleep real seconds — the lesson from the patience
+work, applied before it cost anything this time.
+
+**Four of my own mutants failed first**, and the reasons are worth keeping:
+
+- Two SURVIVED because the fixture's event landed BEFORE the guard it was meant to reach, so both
+  inner guards were never executed at all. The fixture now times events by reads-since-press so
+  they land inside the wait. A test that passes without executing the line it guards is not a test.
+- Two assertions counted re-presses across ALL steps and so caught a LATER step's perfectly
+  legitimate re-press. Scoped to the step under test.
+
+Two existing d38 pins were also updated deliberately: they fed one screen three times, so the walk
+never advances and now records its own limitation for the bounded re-press. Both were asserting
+TOTALS while being about the LIFTING of screen-raised limitations, so they now scope by kind —
+"listed with its step and counted" and "empty is a claim, not absence" both survive intact.
+
 ### Shipped — v89, the prose-progress signal
 
 Deployed `e83fa046-e2f0-43a9-b7ce-ecc74f7c763c` at 100%, SUCCESS confirmed, step cap verified.
