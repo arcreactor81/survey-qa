@@ -4717,6 +4717,48 @@ const normMsg = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim
  * banner, a toast and a live region that was there when the page loaded. A message that was
  * already on the screen before we touched it witnesses nothing about what we typed.
  */
+/**
+ * DEMANDS THE SITE HAS MADE DO NOT EXPIRE BECAUSE THE NEXT READ FORGOT THEM.
+ *
+ * MEASURED LIVE 20 Aug 2026 (run `v2r_01m0e6axg4phhm8wzeh3a3fxw5`, screen 54, question D10):
+ * an allocation grid demanded "Please enter numeric answers for … Please ensure the sum of your
+ * answers equals 100". Recovery round 1 derived that correctly and set 100/0/0/0/0. The page then
+ * re-rendered with an EMPTY validation list, so round 2 — which re-derived from the newest
+ * messages only — saw no demand at all, fell back to the generic text default, and typed
+ * "QA-PROBE" into the same five numeric cells, throwing away the answer round 1 had got right.
+ * Round 3 set the numbers again. The ladder oscillated instead of converging and the step ended
+ * `advance-timeout` with the survey still holding at 39%.
+ *
+ * THE RULE: a demand the site has made STANDS for the rest of this step. Rounds accumulate
+ * demands rather than replacing them, so a numeric demand and a later pairing demand are both
+ * satisfied, and no round may regress a cell the site already constrained back to probe text.
+ *
+ * WHY THIS ALSO FIXES THE LADDER'S OWN LOGIC, not just the fill: the round loop stops when the
+ * validation key stops CHANGING. A demand list that collapsed to empty and back looked like
+ * change on every round, so the ladder kept spending rounds re-deriving. Standing demands make
+ * the key stable, which is what lets the bounded keyboard-flip round (the B10 lesson) actually
+ * fire — round 2 now re-enters the SAME numeric values by real key events instead of inventing
+ * new text.
+ *
+ * WHAT IT DOES NOT DO: decide that a demand has been withdrawn. Nothing generic can read
+ * supersession out of prose, so this never drops a demand — it only ever adds. The honest cost is
+ * that a demand which genuinely stopped applying is still satisfied; satisfying a constraint the
+ * site no longer cares about is harmless, while dropping one it does care about is the defect
+ * above. Newest messages are ordered FIRST so any first-match derivation still follows the site's
+ * latest word.
+ */
+export function mergeStandingDemands(standing: readonly string[], latest: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of [...latest, ...standing]) {
+    const key = normMsg(m);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(m);
+  }
+  return out;
+}
+
 function newValidationMessages(before: RenderedScreen | null, after: RenderedScreen | null): string[] {
   const had = new Set((before?.validationMessages ?? []).map(normMsg).filter(Boolean));
   const seen = new Set<string>();
@@ -5931,7 +5973,9 @@ export async function walkPath(
           stepVariant,
           // The advance failed AND the site printed validation messages: whatever the value
           // fields hold is not an answer, so the round's value loop must re-derive rather
-          // than trust the already-answered skip — steered by the NEWEST messages.
+          // than trust the already-answered skip — steered by every demand the site has made
+          // in this step, newest first (see mergeStandingDemands). NOT by the latest read
+          // alone: a re-render that prints no messages is not the site withdrawing them.
           roundValidation,
           fillVia,
         );
@@ -6025,7 +6069,11 @@ export async function walkPath(
         }
         if (!recoveryClicked) break;
         roundScreen = recovered ?? roundScreen;
-        roundValidation = recovered?.validationMessages ?? [];
+        // STANDING DEMANDS, NOT THE LATEST READ. See mergeStandingDemands: the D10 grid answered
+        // a numeric demand correctly in round 1, the page re-rendered with an empty validation
+        // list, and the old assignment handed round 2 an empty demand set — which re-derived the
+        // numeric cells as free text and destroyed the right answer.
+        roundValidation = mergeStandingDemands(roundValidation, recovered?.validationMessages ?? []);
       }
       const recoveryAdvanced = recoveryMovement.length > 0;
       const lastRoundCapture = recoveryRoundCaptures.length > 0

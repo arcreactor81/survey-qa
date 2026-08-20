@@ -2842,3 +2842,146 @@ suite("amendment 15: a rejected choice grid re-picks DISTINCT columns instead of
       `the re-pick is for choice grids only, got ${JSON.stringify(allCells.map((a) => a.detail))}`);
   });
 });
+
+suite("amendment 16: a demand the site has made stands until the step ends", () => {
+  // Measured live 20 Aug 2026 (run v2r_01m0e6axg4phhm8wzeh3a3fxw5, screen 54, question D10):
+  // an allocation grid demanded numeric answers summing to 100. Recovery round 1 derived that
+  // and set 100/0/0. The page then re-rendered carrying NO validation messages, so round 2 —
+  // deriving from the newest read alone — saw no demand, fell back to the generic text default
+  // and typed probe text into the same numeric cells. Round 3 set numbers again. The ladder
+  // oscillated instead of converging and the walk stopped at 39% of the survey.
+  const NEXT_IDX = 30;
+  const CELL_IDXS = [0, 1, 2];
+  const NUMERIC_DEMAND =
+    "Please enter numeric answers for «A», «B» and «C» in column Future. " +
+    "Please ensure the sum of your answers equals 100 in column Future.";
+  const REVIEW = "Please review your responses on this page. One or more questions require further input.";
+
+  const numCell = (idx) => ({
+    idx, tag: "input", type: "text", name: `cell_${idx}`, id: null, code: null, label: "%", text: "",
+    checked: false, value: "", valueIsUserSupplied: false, disabled: false, required: false,
+    visible: true, operable: true, actuatedVia: "self", labelIndex: null, placeholder: null,
+    maxlength: null, min: null, max: null, step: null, pattern: null, readOnly: false,
+  });
+
+  // `validation` is what THIS read carries — the live defect is that it goes empty after the
+  // round that answered it, while the demand itself has not been withdrawn.
+  const gridScreen = (validation) => ({
+    at: "2026-08-20T12:00:00.000Z",
+    url: "https://fixture.invalid/alloc",
+    title: "D10-like",
+    questionText: "D10",
+    instructionText: "",
+    visibleText: "Future column",
+    grid: null,
+    collectedErrors: [],
+    readerLimitations: [],
+    controls: CELL_IDXS.map(numCell),
+    optionGroups: [],
+    questionRoots: [],
+    buttons: [{ idx: NEXT_IDX, label: ">>", labelSource: "code", role: "other", roleVia: null, disabled: false, visible: true }],
+    validationMessages: validation,
+    progress: { present: false, kind: null, now: null, max: null, text: null },
+    counts: { controls: 3, optionGroups: 0, options: 0, textInputs: 3, valueInputs: 3, optionsNotOperable: 0, readerLimitations: 0 },
+    screenSignature: "sig:alloc",
+  });
+
+  // THE MEASURED SEQUENCE. The site states the demand once, then stops repeating it while still
+  // refusing to advance — exactly what D10 did.
+  const allocWalk = async () => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const typed = new Map();
+    let submits = 0;
+    const readsAfterFirstSubmit = () => (submits === 0 ? [] : submits === 1 ? [REVIEW, NUMERIC_DEMAND] : []);
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) {
+          const s = gridScreen(readsAfterFirstSubmit());
+          s.controls = s.controls.map((c) => ({ ...c, value: typed.get(c.idx) ?? "" }));
+          return s;
+        }
+        if (src.includes("checkedGroupIdxs")) return { idx: null, type: null, name: null, formOwner: 0, unnamedControlIdx: null, checked: false, checkedGroupIdxs: [] };
+        // set-value / read-value helpers: record what the driver wrote.
+        const at = src.indexOf(")[");
+        if (at >= 0) {
+          const end = src.indexOf("]", at + 2);
+          const idx = Number(src.slice(at + 2, end));
+          const q = src.indexOf('"');
+          if (Number.isInteger(idx) && src.includes("value") && q >= 0) {
+            const q2 = src.indexOf('"', q + 1);
+            if (q2 > q) typed.set(idx, src.slice(q + 1, q2));
+          }
+          return { ok: true, value: typed.get(idx) ?? "" };
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return Array.from({ length: 40 }, (_, idx) => ({
+          async click() { if (idx === NEXT_IDX) submits += 1; },
+          async type(text) { typed.set(idx, String(text).replace(/[^0-9.\-]/g, "").slice(0, 12) || "-"); },
+          async focus() {},
+        }));
+      },
+      async screenshot() { return new TextEncoder().encode("PNG-A16"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_a16", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/alloc", runId, planRevisionId: "plan_a16alloc1",
+        attemptId: "att_a16alloc001", tier: 1, maxSteps: 2, deadline: Date.now() + 60_000,
+        viewport: { width: 1280, height: 900 }, applyHistoryShim: false, advanceTimeoutMs: 120,
+        forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 5_000,
+      },
+      { env, runId, attemptId: "att_a16alloc001", pathId: "path_a16", witnesses: [] },
+    );
+    return { obs };
+  };
+
+  test("THE MEASURED SHAPE: a numeric demand survives the re-render that stops repeating it", async () => {
+    const { obs } = await allocWalk();
+    const recovery = obs.steps.find((s) => s.decisionSource === "recovery");
+    assert(recovery, "the blocked screen must have run recovery rounds");
+    const valueWrites = (recovery.actions ?? []).filter((a) => a.kind === "set-value" || a.kind === "type-text");
+    assert(valueWrites.length > 0, "the recovery must have written values");
+    // THE REGRESSION THIS PINS: once the site has demanded numbers, no later round may put
+    // non-numeric probe text back into those cells.
+    const afterDemand = valueWrites.filter((a) => a.value !== null && a.value !== undefined);
+    const nonNumeric = afterDemand.filter((a) => !/^-?\d+(\.\d+)?$/.test(String(a.value)));
+    assertEq(nonNumeric.length, 0,
+      `a standing numeric demand was regressed to free text: ${JSON.stringify(nonNumeric.map((a) => [a.targetIdx, a.value]))}`);
+  });
+
+  test("mergeStandingDemands keeps an earlier demand when the newest read carries none", async () => {
+    const { mod } = await loadWorker();
+    const merged = mod.driver.mergeStandingDemands([NUMERIC_DEMAND], []);
+    assertEq(merged.length, 1, "an empty read is not the site withdrawing its demand");
+    assertEq(merged[0], NUMERIC_DEMAND, "and the demand it keeps is the one that was made");
+  });
+
+  test("BOTH demands are satisfied when the site adds a second one", async () => {
+    const { mod } = await loadWorker();
+    const pairing = "Please make sure you choose different Profile Variation for both Best and Worst rows.";
+    const merged = mod.driver.mergeStandingDemands([NUMERIC_DEMAND], [pairing]);
+    assertEq(merged.length, 2, `both demands must stand, got ${JSON.stringify(merged)}`);
+    assertEq(merged[0], pairing, "the site's newest word is ordered first so first-match derivation follows it");
+    assert(merged.includes(NUMERIC_DEMAND), "and the earlier demand is still there to be satisfied");
+  });
+
+  test("a repeated demand is not counted twice, however the site re-spaces it", async () => {
+    const { mod } = await loadWorker();
+    const merged = mod.driver.mergeStandingDemands([NUMERIC_DEMAND], [`  ${NUMERIC_DEMAND.toUpperCase()}  `]);
+    assertEq(merged.length, 1, `whitespace and case must not create a second demand: ${JSON.stringify(merged)}`);
+  });
+
+  test("counterproof: with no demand ever made, nothing is invented", async () => {
+    const { mod } = await loadWorker();
+    assertEq(mod.driver.mergeStandingDemands([], []).length, 0, "no demand means no demand");
+  });
+});

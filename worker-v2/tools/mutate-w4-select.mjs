@@ -848,5 +848,46 @@ await runMutantSuite({
       replace: "        if (false) continue;",
       kills: ["an equidistant read-only number names no row and is refused"],
     },
+    {
+      name: "the recovery ladder forgets a demand the site already made",
+      breaks:
+        "the D10 oscillation: round 1 answers the numeric demand correctly, the page re-renders "
+        + "carrying no messages, and round 2 re-derives the same cells as free text and destroys "
+        + "the right answer — the ladder alternates instead of converging and the walk stops",
+      file: DR,
+      find: `        roundValidation = mergeStandingDemands(roundValidation, recovered?.validationMessages ?? []);`,
+      replace: `        roundValidation = recovered?.validationMessages ?? [];`,
+      kills: ["THE MEASURED SHAPE: a numeric demand survives the re-render that stops repeating it"],
+    },
+    {
+      name: "standing demands are dropped for the latest read",
+      breaks:
+        "a re-render printing no messages would read as the site withdrawing every constraint it "
+        + "had stated, which is the defect one level down from the ladder",
+      file: DR,
+      find: `  for (const m of [...latest, ...standing]) {`,
+      replace: `  for (const m of [...latest]) {`,
+      kills: ["mergeStandingDemands keeps an earlier demand when the newest read carries none"],
+    },
+    {
+      name: "the site's newest word stops being ordered first",
+      breaks:
+        "a first-match derivation would follow a stale demand instead of the site's latest one "
+        + "whenever both stand",
+      file: DR,
+      find: `  for (const m of [...latest, ...standing]) {`,
+      replace: `  for (const m of [...standing, ...latest]) {`,
+      kills: ["BOTH demands are satisfied when the site adds a second one"],
+    },
+    {
+      name: "a re-stated demand accumulates as a second demand",
+      breaks:
+        "a site that repeats itself every round would grow the demand list without bound, and the "
+        + "round loop's change detection reads that growth as progress that is not happening",
+      file: DR,
+      find: `    if (!key || seen.has(key)) continue;`,
+      replace: `    if (!key) continue;`,
+      kills: ["a repeated demand is not counted twice, however the site re-spaces it"],
+    },
   ],
 });
