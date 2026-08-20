@@ -261,108 +261,6 @@ const WORDING_MARGIN_RATIO = 1.25;
 /** Below this, a "wording" is a programmer instruction ("ASK ALL.") and matches everything. */
 const MIN_WORDING_TOKENS = 4;
 
-// ---------------------------------------------------------------------------
-// COMPOSITE BINDING SCORE — thresholds and weights.
-//
-// When NO SINGLE signal crosses its threshold alone (wording < WORDING_BIND_MIN, no markup,
-// no question token in heading), the binder assembles a weighted composite from every weak
-// signal that IS present. A composite score above COMPOSITE_BIND_MIN binds the decision.
-//
-// WHY THESE NUMBERS: the composite is a fallback. Its threshold is deliberately HIGH so that
-// binding on weak signals alone requires MULTIPLE independent witnesses agreeing. A screen
-// that merely echoes a couple of option labels from a different question scores ~0.30 on
-// option overlap alone and does NOT reach 0.55. A screen with weak wording (~0.4) AND option
-// overlap (~0.3) AND matching response type (~0.10) reaches ~0.80 and DOES bind.
-//
-// ASSUMPTION STATED: the composite weights reflect the relative informativeness of each signal
-// for ANY survey. A site that uses a language the document does not (wording always 0) will
-// never bind by composite, and that is the correct outcome — composite is a repair for
-// PARTIAL wording match, not a replacement for it.
-// ---------------------------------------------------------------------------
-
-/** Below this composite score, no binding. Set above any single weak signal alone. */
-const COMPOSITE_BIND_MIN = 0.55;
-/** Two candidates must be separated by this ratio, or the composite refuses both. */
-const COMPOSITE_MARGIN_RATIO = 1.3;
-
-/** Weights for each signal in the composite. Sum to 1.0 for clarity; the threshold is scaled accordingly. */
-const COMPOSITE_WEIGHT_WORDING = 0.50;
-const COMPOSITE_WEIGHT_OPTIONS = 0.30;
-const COMPOSITE_WEIGHT_RESPONSE_TYPE = 0.20;
-
-/**
- * RESPONSE-TYPE MATCH: does the screen's structural shape corroborate a decision?
- *
- * A single-select question with 5 options matching a screen that has a radio group with ~5
- * options is weak evidence they are the same question. This signal is NEVER strong enough
- * alone; it only nudges a composite over the threshold when wording and option overlap already
- * provide partial evidence.
- *
- * ASSUMPTION STATED: a decision's `select` array length and the presence of `text_entry`
- * are structural hints about response type. This works for any survey platform, because
- * it reads the PLAN's view of what the document described, not any platform convention.
- */
-export function responseTypeScore(decision: PlannedDecision, screen: RenderedScreen): number {
-  const selectCount = Array.isArray(decision.select) ? decision.select.length : 0;
-  const hasTextEntry = !!decision.text_entry;
-  const screenOptions = screen.optionGroups.reduce((sum, g) => sum + g.options.length, 0);
-  const screenTextInputs = screen.counts?.textInputs ?? 0;
-  const screenHasGrid = !!screen.grid;
-
-  let score = 0;
-
-  // Text entry match: the decision expects text input and the screen has one
-  if (hasTextEntry && screenTextInputs > 0) score += 0.5;
-  // Text entry mismatch: the decision expects text but the screen has none (or vice versa)
-  if (hasTextEntry && screenTextInputs === 0) score -= 0.2;
-
-  // Option-group presence match
-  if (selectCount > 0 && screenOptions > 0) {
-    score += 0.3;
-    // Option count similarity: the closer the counts, the more corroborating
-    const countRatio = Math.min(selectCount, screenOptions) / Math.max(selectCount, screenOptions);
-    score += 0.2 * countRatio;
-  }
-
-  // Grid match: if the decision has no select and the screen is a grid, that's corroborating
-  // for decisions on grid questions (which typically have empty select and text_entry)
-  if (screenHasGrid && selectCount === 0 && !hasTextEntry) score += 0.3;
-
-  return Math.max(0, Math.min(1, score));
-}
-
-/**
- * COMPOSITE BINDING SCORE for a single decision against this screen.
- *
- * Combines three weak signals:
- *   - wording (below WORDING_BIND_MIN but nonzero)
- *   - option-label overlap (normalised to [0, 1])
- *   - response-type match
- *
- * Returns a value in [0, 1]. The caller must still check separation and conflict rules.
- */
-export function compositeScore(
-  wordingScore: number,
-  optionHitCount: number,
-  optionExpected: number,
-  responseType: number,
-): number {
-  // Normalise wording to [0, 1]: already in that range from questionWordingScore
-  const wordingNorm = Math.max(0, Math.min(1, wordingScore));
-
-  // Normalise option hits: fraction of expected labels that the screen offers
-  const optionNorm = optionExpected > 0 ? Math.min(1, optionHitCount / optionExpected) : 0;
-
-  // Response type already in [0, 1]
-  const responseNorm = Math.max(0, Math.min(1, responseType));
-
-  return (
-    COMPOSITE_WEIGHT_WORDING * wordingNorm +
-    COMPOSITE_WEIGHT_OPTIONS * optionNorm +
-    COMPOSITE_WEIGHT_RESPONSE_TYPE * responseNorm
-  );
-}
-
 /**
  * HOW WELL DOES THE DOCUMENT'S WORDING OF A QUESTION DESCRIBE THIS SCREEN?
  *
@@ -474,12 +372,9 @@ export interface BindingOutcome {
  *      contract never worded. And a screen whose markup names a question with NO pending
  *      decision refuses everything: that screen has said what it is, and it is not ours.
  *   4. THE QUESTION TOKEN IN THE HEADING binds only when exactly one decision claims it.
- *  4b. COMPOSITE BINDING — when no single signal is strong enough, a weighted composite of
- *      partial wording, option-label overlap and response-type match may bind. The composite
- *      REQUIRES wording > 0 (option overlap alone cannot reach the threshold by construction)
- *      and applies the same ambiguity guard: two candidates scoring close refuse both.
- *   5. OPTION-LABEL OVERLAP NEVER BINDS ON ITS OWN. When the composite also could not bind,
- *      option overlap is recorded as a refusal: `option-labels-only`.
+ *   5. OPTION-LABEL OVERLAP NEVER BINDS. It is recorded in `via` when something else bound,
+ *      and when it is the ONLY thing present the decision is REFUSED as `option-labels-only`.
+ *      That single rule is the defect: two questions may offer the same words.
  *
  * OPTION OVERLAP IS NEVER REQUIRED EITHER, and that direction matters just as much. A screen
  * whose wording identifies it MUST bind even when it offers none of the labels the decision
@@ -590,76 +485,6 @@ export function bindDecision(
       });
     }
     return { match: null, refusals };
-  }
-
-  // ---- 4b: COMPOSITE BINDING — no single signal is strong enough alone, but multiple weak
-  //          signals together may identify this screen. This is the FALLBACK that the FLOOR-01
-  //          walk needed: weak wording + option overlap + response-type match can cross the
-  //          threshold together, when none could alone.
-  //
-  //          THE SAME TWO GUARDS APPLY: conflicting signals refuse (already handled above
-  //          in paths 1-2), and ambiguity between two candidates refuses (checked here).
-  //
-  //          OPTION OVERLAP IS NEVER IDENTITY ON ITS OWN, even inside the composite: if
-  //          wording contributes zero, option overlap alone cannot reach COMPOSITE_BIND_MIN
-  //          because its maximum weight (0.30) + response-type's maximum (0.20) = 0.50 < 0.55.
-  //          That is BY CONSTRUCTION. ----
-  {
-    const compositeScored = scored.map((row) => {
-      const hits = optionHits(row.decision);
-      const expected = Array.isArray(row.decision.select) ? row.decision.select.length : 0;
-      const rt = responseTypeScore(row.decision, screen);
-      return {
-        ...row,
-        composite: compositeScore(row.wording, hits, expected, rt),
-        compositeDetail: {
-          wording: row.wording,
-          optionHits: hits,
-          optionExpected: expected,
-          responseType: rt,
-        },
-      };
-    });
-
-    const compositeRanked = [...compositeScored].sort((a, b) => b.composite - a.composite || a.index - b.index);
-    const cTop = compositeRanked[0];
-    const cRunnerUp = compositeRanked[1];
-
-    if (cTop && cTop.composite >= COMPOSITE_BIND_MIN) {
-      // Ambiguity guard: two candidates scoring close together refuse, same as wording path.
-      const cSeparated =
-        !cRunnerUp ||
-        cRunnerUp.composite <= 0 ||
-        cTop.composite >= cRunnerUp.composite * COMPOSITE_MARGIN_RATIO;
-
-      if (!cSeparated && cRunnerUp) {
-        for (const row of [cTop, cRunnerUp]) {
-          refusals.push({
-            question: row.question,
-            reason: "composite-ambiguous",
-            detail:
-              `composite signals for ${cTop.question} (${cTop.composite.toFixed(2)}) and ` +
-              `${cRunnerUp.question} (${cRunnerUp.composite.toFixed(2)}) are too close to distinguish; ` +
-              `wording: ${row.compositeDetail.wording.toFixed(2)}, options: ${row.compositeDetail.optionHits}/${row.compositeDetail.optionExpected}, ` +
-              `responseType: ${row.compositeDetail.responseType.toFixed(2)}`,
-          });
-        }
-        return { match: null, refusals };
-      }
-
-      // Wording must contribute SOMETHING — composite without any wording is option overlap
-      // in disguise, and option overlap alone is the production defect.
-      if (cTop.wording > 0) {
-        const cd = cTop.compositeDetail;
-        const parts = [
-          `composite:${cTop.composite.toFixed(2)}`,
-          `wording:${cd.wording.toFixed(2)}`,
-          ...(cd.optionHits > 0 ? [`options:${cd.optionHits}/${cd.optionExpected}`] : []),
-          ...(cd.responseType > 0 ? [`responseType:${cd.responseType.toFixed(2)}`] : []),
-        ];
-        return bind(cTop, parts.join("+"));
-      }
-    }
   }
 
   // ---- 5: option-label overlap is not identity ----

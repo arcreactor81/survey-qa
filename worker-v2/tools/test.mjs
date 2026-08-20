@@ -424,12 +424,6 @@ const FILES = [
   // MANIFEST_DUPLICATE_ARTIFACT. Closure is a union across attempts through the cursor's
   // existing dedupe. Evidence they can fail: `tools/mutate-screenout-retry.mjs`.
   "./tests/d55-screenout-retry.test.mjs",
-  // BOUNDED BINDING-FAILURE RETRY (D58): a walk that blocks because `bindDecision()` never
-  // identified any screen as the target of a planned decision gets up to two full re-walks.
-  // Eligibility is narrow (blocking outcome + constraining decisions + 0 matched + under cap),
-  // the retry is a FULL re-walk from step 0, and every attempt is first-class.
-  // Evidence they can fail: `tools/mutate-binding-retry.mjs`.
-  "./tests/d58-binding-retry.test.mjs",
   // AXIS CLOSURE — review-run-workflow.md finding 1. The contract-reuse adopted branch
   // skipped both `phase-extracting` arms (the only writers of `completion.test = "running"`)
   // and finalize's never-closed backstop tested `=== "running"` exactly — so a reuse-adopted
@@ -576,13 +570,6 @@ const FILES = [
   // expected label. Evidence they can fail: mutation anchors in classifyFailure, failure.ts
   // usageDisagreement path, and dev-drive targetQuestionId validation.
   "./tests/completion-labels.test.mjs",
-  // D65 — COMPOSITE BINDING SCORE: when no single signal is strong enough (wording below
-  // threshold, no markup, no question token in heading), a weighted composite of partial
-  // wording + option-label overlap + response-type match may bind. The composite requires
-  // wording > 0, applies the same ambiguity guard, and option overlap alone structurally
-  // cannot reach the threshold — so the D32 production defect stays fixed.
-  // Evidence they can fail: `tools/mutate-binding.mjs`.
-  "./tests/d65-composite-binding-score.test.mjs",
 ];
 
 export async function runVerification({

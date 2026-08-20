@@ -154,31 +154,6 @@ const MUTANTS = [
     replace: "    limitations: limitations.filter((l) => l.count > 0),\n    coverage: {",
     kills: ["EVERY named limitation is emitted, INCLUDING at zero — 'we looked' must differ from 'nobody looked'"],
   },
-  // ---- D65: COMPOSITE BINDING SCORE mutants ----
-  // NOTE: the composite's structural guarantee that option overlap alone cannot reach
-  // COMPOSITE_BIND_MIN (because 0.30 + 0.20 = 0.50 < 0.55) is tested directly in
-  // "zero wording + full options = at most options weight (0.30), below COMPOSITE_BIND_MIN".
-  // The wording guard `if (cTop.wording > 0)` is defense-in-depth, structurally redundant
-  // with the threshold, and therefore untestable as a single-point mutation. The structural
-  // property itself is tested; this comment replaces an unkillable mutant.
-  {
-    name: "the composite ambiguity margin is deleted (highest always wins)",
-    breaks: "two equally-described candidates must refuse, not race",
-    file: DRIVER,
-    find:
-      "        cTop.composite >= cRunnerUp.composite * COMPOSITE_MARGIN_RATIO;",
-    replace:
-      "        true; // MUTANT: no margin",
-    kills: ["two decisions with similar composite scores both refuse as composite-ambiguous"],
-  },
-  {
-    name: "the composite path is deleted entirely (path 4b skipped)",
-    breaks: "weak wording + option overlap no longer has a way to bind",
-    file: DRIVER,
-    find: "    if (cTop && cTop.composite >= COMPOSITE_BIND_MIN) {",
-    replace: "    if (false) {",
-    kills: ["THE MEASURED SHAPE: partial wording + option overlap binds when neither alone could"],
-  },
 ];
 
 await runMutantSuite({
