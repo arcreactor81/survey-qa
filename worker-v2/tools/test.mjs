@@ -576,6 +576,13 @@ const FILES = [
   // expected label. Evidence they can fail: mutation anchors in classifyFailure, failure.ts
   // usageDisagreement path, and dev-drive targetQuestionId validation.
   "./tests/completion-labels.test.mjs",
+  // D65 — COMPOSITE BINDING SCORE: when no single signal is strong enough (wording below
+  // threshold, no markup, no question token in heading), a weighted composite of partial
+  // wording + option-label overlap + response-type match may bind. The composite requires
+  // wording > 0, applies the same ambiguity guard, and option overlap alone structurally
+  // cannot reach the threshold — so the D32 production defect stays fixed.
+  // Evidence they can fail: `tools/mutate-binding.mjs`.
+  "./tests/d65-composite-binding-score.test.mjs",
 ];
 
 export async function runVerification({

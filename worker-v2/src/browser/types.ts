@@ -604,7 +604,7 @@ export interface WalkEnding {
 export interface BindingRefusal {
   /** The planned decision's question id. */
   question: string;
-  reason: "option-labels-only" | "identity-ambiguous" | "identity-conflict" | "screen-is-another-question";
+  reason: "option-labels-only" | "identity-ambiguous" | "identity-conflict" | "screen-is-another-question" | "composite-ambiguous";
   detail: string;
 }
 
