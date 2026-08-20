@@ -292,6 +292,41 @@ out, step ends named) when the accumulated demands still cannot be satisfied.
 
 Not built in this session: the walk record shows it clearly and it is the next class fix.
 
+### v88 run: the D10 fix worked, and uncovered something bigger
+
+Run `v2r_01m0eddha4xfq66xhynfmaq2cw`. The monotonic-demand fix did exactly what it was built to
+do — all three recovery rounds held `100/0/0/0/0`, round 3 flipped to keyboard entry as the ladder
+was always meant to, and probe text never reappeared. The oscillation is gone.
+
+The walk still recorded `advance-timeout` at screen 54, and the receipts say why: **the survey was
+advancing the whole time.** "Survey progress: 39%" became 43%, then 44%, across the three submits,
+with validation empty throughout.
+
+Nothing could see it. The D-section repeats one question shape, so the screen signature was
+byte-identical, the question identity unchanged, the URL unchanged and `historyLength` pinned at
+50. The existing numeric progress signal could not help either: this platform renders progress as
+a `div` whose `now`/`max` are null, so the respondent's position exists ONLY inside the sentence.
+
+**The class: a position indicator that is prose is still the site saying where the respondent is.**
+Take the first number on each side, require an INCREASE. Safe because the baseline is the
+POST-ACTION screen — a counter that moves when an answer is typed has already moved before the
+comparison, so what remains is navigation. Requiring an increase rather than any change stops a
+re-render that merely reworded itself from reading as movement, and the site's own rejection still
+outranks the signal. An indicator with no number yields nothing and the walk falls back to the
+structural signals: this adds evidence, never removes any.
+
+This matters beyond D10. Any instrument that asks the same question shape repeatedly — loops,
+scenario blocks, grids — was invisible to every movement signal the walker had.
+
+**Two of my own mutants failed before this shipped**, and both are the kind worth writing down:
+
+- One **NO-RUN** was the heredoc regex trap the runbook names: a backslash inside a JS string
+  literal collapses, so `/-?\d+/` became `/-?d+/` and the anchor silently never matched. A mutant
+  that cannot match is a guard that was never tested. Rewritten with `String.raw` and verified to
+  resolve to exactly one occurrence in the source.
+- One **SURVIVED** because no test exercised an ABSENT indicator against a present one — the
+  mutant made absence compare as zero, which is this repo's oldest failure mode. Added that test.
+
 ### Shipped — v88, the third train
 
 Deployed version `c8711704-ada9-4b3f-9817-f8af1efeaa64` at 100%, SUCCESS confirmed, step cap
