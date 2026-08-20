@@ -292,6 +292,42 @@ out, step ends named) when the accumulated demands still cannot be satisfied.
 
 Not built in this session: the walk record shows it clearly and it is the next class fix.
 
+### v90 run: shallow, and NOT a logic regression — page reads failed
+
+Deployed `dd0e4c97-daa0-453c-8fcf-394a1a0f021e` (silent-refusal re-press). Gates: tsc 0, suite
+**1625/1625**, `mutate-w4-select` **85/85** (83 in the full run plus the two wait-bound mutants
+re-scored with child headroom — see below). Run `v2r_01m0f04dpk7m3xxjz99rrhwrj2`.
+
+The deep walk stopped at **5%** on A20, far shallower than the 26–39% of the previous runs. It
+looked like a regression and is not one. The receipts on step 27:
+
+- `blockedReason: advance-timeout`, no validation on any read
+- **two `screen-read-failed` capture failures**, so `screenAfterAdvance` is absent
+- **zero** silent-refusal re-presses and **zero** withheld-control releases across the whole walk
+
+So neither new mechanism ran at all. The reason is that the advance-poll reads of that screen
+FAILED, leaving no post-press screen to reason about — and the re-press loop deliberately declines
+to act when it cannot read the page, because a failed read is not evidence that the site refused
+anything. That refusal to guess is the correct behaviour; the shallow depth is a page-read
+problem, not a walker-logic one.
+
+Next session should relaunch once and see whether the read failures reproduce. If they do, read
+reliability on heavy grid screens is the next class — and it is a different class from anything
+fixed so far.
+
+### A NO-RUN is not a pass, again
+
+The merged campaign came back 83/85 with two NO-RUNs, and both were mine. Neither was a weak
+guard: both mutants remove a WAIT bound (the forward-release early return, and the silent-refusal
+press bound), which makes the mutated tree genuinely slower, so the child was killed at the 120s
+default before it could produce a summary. Left alone, the campaign would have reported a number
+while two guards sat untested.
+
+Fixed by making the press-bound mutant cheap (6 presses, still breaking the bound of 3) so it
+fails fast, and by recording in the campaign header that this suite wants
+`MUTATION_CHILD_TIMEOUT_MS=600000`. Re-scored both under that headroom: 2/2 killed, so the verdict
+is **85/85**.
+
 ### v89 run: the dwell gate's SECOND shape
 
 Run `v2r_01m0enh6bjc1en2bgesvcnt5jc`. The prose-progress signal behaved correctly and caused no
