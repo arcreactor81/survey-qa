@@ -292,6 +292,22 @@ out, step ends named) when the accumulated demands still cannot be satisfied.
 
 Not built in this session: the walk record shows it clearly and it is the next class fix.
 
+### Shipped — v88, the third train
+
+Deployed version `c8711704-ada9-4b3f-9817-f8af1efeaa64` at 100%, SUCCESS confirmed, step cap
+verified present first. Old run terminated, ~2 min drain observed, canary launched:
+**`v2r_01m0eddha4xfq66xhynfmaq2cw`**.
+
+Contents: the D10 monotonic-demand fix, `report-blockers @ f58d399`, `corpus-gate-hardening @
+7d77185`.
+
+| Gate | Result |
+|---|---|
+| `npx tsc --noEmit` | exit 0 |
+| full suite | **1612/1612**, 0 failed |
+| `mutate-w4-select` | **77/77 killed**, denominator 65, both self-checks passed |
+| `mutate-report-defects` | 18/20 — two report-path guard gaps, bounced back, below |
+
 ### Third train: D10 fix built, and two more report bounce-backs
 
 Built the D10 monotonic-demand fix (`mergeStandingDemands`) — commit `9e0a3d5`, amendment 16, 5/5
