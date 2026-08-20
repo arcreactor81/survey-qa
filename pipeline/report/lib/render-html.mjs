@@ -722,9 +722,17 @@ function renderSummary(view) {
         })}
         ${tile({
           label: "Verdicts among exercised — AS RECORDED, historical",
-          value: `${cov.verdictAmongExercised.pass + cov.verdictAmongExercised.fail + cov.verdictAmongExercised.inconclusive} / ${cov.exercised}`,
+          // POLISH-3: on a run that settled nothing this printed a bare "0 / 0", which reads
+          // as a score of zero out of zero rather than as "there was nothing to score". The
+          // numbers are unchanged when there ARE any; the empty case says what it means.
+          value:
+            cov.exercised === 0
+              ? "Nothing to score yet"
+              : `${cov.verdictAmongExercised.pass + cov.verdictAmongExercised.fail + cov.verdictAmongExercised.inconclusive} / ${cov.exercised}`,
           denom:
-            "denominator is exercised obligations only. These are the verdicts the executing agent wrote about its own evidence; they are history, not the current result. The current result is at the top of this page.",
+            cov.exercised === 0
+              ? "No requirement was checked on this run, so there is nothing to score here yet."
+              : "denominator is exercised obligations only. These are the verdicts the executing agent wrote about its own evidence; they are history, not the current result. The current result is at the top of this page.",
           extra: `<ul>${verdictList}</ul>`,
           modifier: "tile--historical",
         })}
@@ -2266,35 +2274,77 @@ function renderAttempts(view) {
       ${emptyState("No attempts are recorded in this run.", "Nothing was executed against the target, so no obligation can carry a verdict.")}
     </section>`;
   }
+  // READS THE RECORD THE PIPELINE ACTUALLY WRITES (review B3). This read v1's nested shape —
+  // `timestamps`, `actions`, `stateFingerprints`, `stop.reason`, `targetItemIds` — and
+  // `projectV2ToLegacy` passes v2 attempts through untranslated, so every row of a real run
+  // rendered "not recorded → not recorded | 0 actions | 0 states" with an empty Stop column,
+  // for walks that had driven 43 screens. Both shapes are read; v1 first, so nothing that
+  // renders today renders differently tomorrow.
+  //
+  // AND ABSENT RENDERS AS ABSENT. A count printed for a list the record does not carry is a
+  // measurement the run never made: "0 actions" says the walk did nothing, which was false on
+  // every row. Where the field is missing the cell says so in words.
+  const missing = `<span class="sub">not recorded</span>`;
+  const started = (a) => a.timestamps?.startedAt ?? a.startedAt ?? null;
+  const ended = (a) => a.timestamps?.endedAt ?? a.endedAt ?? null;
+  const stopOf = (a) => a.stop?.reason ?? a.stopReason ?? null;
+  const detailOf = (a) => a.stop?.detail ?? a.outcomeDetail ?? null;
+  const targetsOf = (a) => a.targetItemIds ?? a.targetCaseIds ?? [];
+
   const rows = view.attempts
-    .map(
-      (a) => `<tr>
+    .map((a) => {
+      const actions = Array.isArray(a.actions) ? a.actions : null;
+      const states = Array.isArray(a.stateFingerprints) ? a.stateFingerprints : null;
+      const evidence = Array.isArray(a.evidenceIds) ? a.evidenceIds : null;
+      const screens = typeof a.screensAdvanced === "number" ? a.screensAdvanced : null;
+      const endingKind = a.ending && typeof a.ending === "object" ? a.ending.kind : null;
+      return `<tr>
       <th scope="row">${esc(a.attemptId)}</th>
       <td><span class="idref">${esc(a.pathId)}</span><span class="sub">attempt #${esc(a.attemptNumber)}${
         a.retryOfAttemptId ? ` · retry of ${esc(a.retryOfAttemptId)}` : ""
       }${a.retryReason ? ` (${esc(a.retryReason)})` : ""}</span></td>
-      <td>${esc(fmtDateTime(a.timestamps?.startedAt))}<span class="sub">→ ${esc(fmtDateTime(a.timestamps?.endedAt))}</span></td>
-      <td class="num">${(a.actions || []).length}<span class="sub">actions</span></td>
-      <td class="num">${(a.stateFingerprints || []).length}<span class="sub">states</span></td>
-      <td><span class="mono">${esc(a.stop?.reason)}</span><span class="sub">${esc(a.stop?.detail)}</span><span class="sub">last valid state ${esc(
-        a.stop?.lastValidStateId || "none"
-      )}</span></td>
-      <td>${(a.targetItemIds || []).map((id) => `<a class="idref" href="#row-${esc(id)}">${esc(id)}</a>`).join(", ")}</td>
-    </tr>`
-    )
+      <td>${started(a) ? esc(fmtDateTime(started(a))) : missing}<span class="sub">→ ${
+        ended(a) ? esc(fmtDateTime(ended(a))) : "not recorded"
+      }</span></td>
+      <td class="num">${screens === null ? missing : `${screens}<span class="sub">screens advanced</span>`}</td>
+      <td class="num">${
+        actions !== null
+          ? `${actions.length}<span class="sub">actions</span>`
+          : states !== null
+            ? `${states.length}<span class="sub">states</span>`
+            : evidence !== null
+              ? `${evidence.length}<span class="sub">evidence items</span>`
+              : missing
+      }</td>
+      <td>${stopOf(a) ? `<span class="mono">${esc(stopOf(a))}</span>` : missing}${
+        endingKind ? `<span class="sub">ending: ${esc(endingKind)}</span>` : ""
+      }${detailOf(a) ? `<span class="sub">${esc(detailOf(a))}</span>` : ""}</td>
+      <td>${targetsOf(a)
+        .map((id) => `<a class="idref" href="#row-${esc(id)}">${esc(id)}</a>`)
+        .join(", ")}</td>
+    </tr>`;
+    })
     .join("");
+
+  // NAMED ONCE, NOT IMPLIED PER ROW. Every v2 attempt lacks a per-action list, and a table
+  // that simply omitted the column would read as a walk that did nothing.
+  const noActionList = view.attempts.every((a) => !Array.isArray(a.actions));
 
   return `<section id="attempts" aria-labelledby="att-h">
       <div class="section-head">
         <h2 id="att-h">Attempt ledger</h2>
-        <p class="lead">Append-only record of what was actually walked. Retries never overwrite an earlier attempt. Full per-action drill-down is P2; the counts below are the harness-attested totals.</p>
+        <p class="lead">Append-only record of what was actually walked. Retries never overwrite an earlier attempt. The counts below are the totals the harness recorded.${
+          noActionList
+            ? " This record does not carry a step-by-step action list for these attempts — that is a gap in the record, not a walk that did nothing."
+            : ""
+        }</p>
       </div>
       <div class="scroll-x">
         <table class="plain">
           <caption>${view.attempts.length} attempt(s) recorded.</caption>
           <thead><tr>
             <th scope="col">Attempt</th><th scope="col">Path</th><th scope="col">Window</th>
-            <th scope="col">Actions</th><th scope="col">States</th><th scope="col">Stop</th><th scope="col">Targeted obligations</th>
+            <th scope="col">Screens</th><th scope="col">Recorded steps</th><th scope="col">Stop</th><th scope="col">Requirements aimed at</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>

@@ -140,7 +140,16 @@ const MUTANTS = [
       "a future ending kind silently promoted to the one answer that matters most — the same " +
       "collapse `unclassified` exists to prevent, one kind over",
     file: VIEW,
-    find: "    else if (ENDING_KINDS.includes(kind)) endingCounts[kind] += 1;",
+    // REPAIRED (merged-run bounce-back, 20 Aug). This replaced the middle arm of an
+    // if / else-if / else chain with a bare `else`, leaving `else` followed by `else` — a
+    // syntax error, so the build failed, no test ran, and the harness correctly refused to
+    // score it. A mutant that cannot compile is not a weak guard, it is NO guard, and it
+    // reported as one for two commits.
+    //
+    // Now it replaces the LAST arm instead: the chain stays valid, and the mutation is exactly
+    // what this mutant's name claims — an unrecognised kind folded into `completed` — rather
+    // than also swallowing the known kinds on its way past.
+    find: "    else unrecognisedEndings.set(kind, (unrecognisedEndings.get(kind) ?? 0) + 1);",
     replace: "    else endingCounts.completed += 1;",
     kills: ["AN ENDING KIND THIS READER DOES NOT KNOW IS COUNTED BY NAME, not dropped"],
   },
@@ -153,6 +162,83 @@ const MUTANTS = [
     find: "      if (screenedOut > 0) rest.push(`${screenedOut} ${screenedOut === 1 ? \"was\" : \"were\"} screened out`);",
     replace: "      if (false) rest.push(``);",
     kills: ["A SCREEN-OUT-ONLY RUN SAYS SO PLAINLY — no attempt reached the end, and that is not hidden"],
+  },
+
+  // ---- the five presentation blockers (docs/REPORT-PRESENTATION-REVIEW.md) ----
+  // Rendered from a REAL run through production's own chain, so each of these reinstates a
+  // sentence a customer actually met.
+  {
+    name: "B1: the customer summary goes back to printing the blocker's audit sentence",
+    breaks:
+      "the worst sentence on the reviewed page — \"DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE: " +
+      "Cross-window reconciliation compared all 110 candidate row(s)...\" — in front of a " +
+      "researcher, on every run of this contract. It passes the jargon gate and is unreadable",
+    file: SUMMARY,
+    find: '                (typeof f.plainSummary === "string" && f.plainSummary.length > 0 ? f.plainSummary : null) ??',
+    replace: "                null ??",
+    kills: ["B1 — a document-level blocker reads as prose, not as its own audit sentence"],
+  },
+  {
+    name: "B2: browser REACH is read from requirement COVERAGE again",
+    breaks:
+      "the page contradicting itself four paragraphs apart — \"the survey screened us out\" above " +
+      "\"this run did not reach the survey in a standard browser\" — because the claim about reach " +
+      "was read from a count of requirements settled",
+    file: SUMMARY,
+    find: "  const attempts = view?.completion?.testing?.endings?.attempts ?? 0;",
+    replace: "  const attempts = s.everExercised > 0 ? 1 : 0;",
+    kills: ["B2 — a run that drove the survey is never described as not reaching it"],
+  },
+  {
+    name: "B3: the attempt ledger reads v1's nested timestamps again",
+    breaks:
+      "every row of a real run rendering \"not recorded → not recorded\" — the v2 record writes " +
+      "flat `startedAt`/`endedAt` and `projectV2ToLegacy` passes attempts through untranslated",
+    file: HTML,
+    find: "  const started = (a) => a.timestamps?.startedAt ?? a.startedAt ?? null;",
+    replace: "  const started = (a) => a.timestamps?.startedAt ?? null;",
+    kills: ["B3 — the attempt ledger reports what the record holds, and absent is never a zero"],
+  },
+  {
+    name: "B3: an unrecorded depth is printed as a measured zero",
+    breaks:
+      "THE LOAD-BEARING HALF. A zero in this table is a measurement — it says the walk advanced " +
+      "no screens — and on the reviewed run every row said it about walks that had driven 43",
+    file: HTML,
+    find: '      <td class="num">${screens === null ? missing : `${screens}<span class="sub">screens advanced</span>`}</td>',
+    replace: '      <td class="num">${screens ?? 0}<span class="sub">screens advanced</span></td>',
+    kills: ["B3 — a ledger row that records no depth says so, and is not printed as zero screens"],
+  },
+  {
+    name: "B4: the record stops carrying how far the walk got",
+    breaks:
+      "the deployed state the review found: 43 screens driven and the number 43 nowhere on the " +
+      "page, because `deriveAttempts` dropped `screensAdvanced` and no surface COULD state it",
+    file: "src/workflow/stages/assemble-record.mjs",
+    find: '      ...(typeof w?.screensAdvanced === "number" ? { screensAdvanced: w.screensAdvanced } : {}),',
+    replace: "",
+    kills: ["B4 — HOW FAR WE GOT reaches the record and the page, and an absent depth is not a zero"],
+  },
+  {
+    name: "B4: INVERTED — an attempt with no recorded depth is read as zero screens",
+    breaks:
+      "the same absent-is-not-zero rule one layer up: a run whose rows predate the carry would " +
+      "report \"our deepest attempt got 0 screens into the survey\", which is a measurement nobody made",
+    file: VIEW,
+    find: "    .map((a) => (typeof a?.screensAdvanced === \"number\" && Number.isFinite(a.screensAdvanced) ? a : null))",
+    replace: "    .map((a) => ({ ...a, screensAdvanced: typeof a?.screensAdvanced === \"number\" ? a.screensAdvanced : 0 }))",
+    kills: ["B4 — a record with no depth says nothing rather than claiming zero screens"],
+  },
+  {
+    name: "B5: the stop reasons go back to raw machine tokens",
+    breaks:
+      "\"Recorded attempt stop reasons: no-advance-control ×3, blocked ×1\" printed directly above " +
+      "a plain sentence about the same attempts, with \"blocked\" reading as an accusation against " +
+      "a survey that had correctly refused an invalid answer",
+    file: VIEW,
+    find: '  "no-advance-control": "the survey offered nothing further to press",',
+    replace: "",
+    kills: ["B5 — the stop reasons are in the reader's words, and `blocked` is not an accusation"],
   },
 ];
 

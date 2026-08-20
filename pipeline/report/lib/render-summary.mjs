@@ -248,6 +248,12 @@ function stepLabel(a) {
 }
 
 function answerSequence(attempt) {
+  // CURRENTLY UNCALLED, AND READS A SHAPE v2 DOES NOT WRITE (review B3). `AttemptRecordV2` has
+  // no per-action list at all, so on every v2 run this returns null — which is the honest
+  // answer, and is why nothing renders rather than an empty "The answers we gave". Left in
+  // place with the gap named: a future caller must not read null here as "the walk gave no
+  // answers", because it means "this record does not carry the actions", and the durable fix
+  // is to carry them onto the attempt row rather than to invent a list here.
   const actions = Array.isArray(attempt?.actions) ? attempt.actions : [];
   if (!actions.length) return null;
   const steps = [];
@@ -577,6 +583,27 @@ function planLimitationsBlock(view) {
 
 /* ----------------------------- the view ----------------------------- */
 
+/**
+ * WHAT THE EMPTY LAUNCH-BLOCKER LANE MAY CLAIM — three states, because there are three.
+ *
+ * Reaching the survey and settling a requirement are different facts, and the lane used to
+ * read the second while talking about the first (review B2). A run can:
+ *   · never have got in at all               — the record shows no attempt;
+ *   · have got in and settled nothing        — attempts recorded, no requirement settled;
+ *   · have got in and settled something      — the original positive claim.
+ * Only the first may say "did not reach the survey", and only the third may say the run drove
+ * it to a result. The middle state is the one the live run was in, and it had no sentence.
+ */
+function runReachLede(view, s) {
+  const attempts = view?.completion?.testing?.endings?.attempts ?? 0;
+  if (attempts === 0) {
+    return "None recorded. This run did not reach the survey in a standard browser either, so that is a statement about the record and not about the survey.";
+  }
+  const took = attempts === 1 ? "took it once" : `took it ${attempts} times`;
+  if (s.everExercised > 0) return "None recorded. The run reached and drove the survey in a standard browser.";
+  return `None recorded. This run did reach the survey in an ordinary browser and ${took}; it simply did not settle any requirement, so that is a statement about the record and not about the survey.`;
+}
+
 export function renderSummaryView(view, summary) {
   const s = summary;
   const rowsById = s.rowsById;
@@ -654,12 +681,16 @@ ${
           /* "The survey opened in a standard browser in this run" is a POSITIVE claim
              about what happened, and it was printed whenever no launch blocker was
              recorded — including on a run whose first load threw and rendered nothing.
-             The honest empty state says what the record does and does not contain. */
-          esc(
-            s.everExercised > 0
-              ? "None recorded. The run reached and drove the survey in a standard browser."
-              : "None recorded. This run did not reach the survey in a standard browser either, so that is a statement about the record and not about the survey.",
-          )
+             The honest empty state says what the record does and does not contain.
+
+             AND THE CLAIM IS ABOUT REACH, SO IT IS READ FROM REACH (review B2). This asked
+             `everExercised`, which counts REQUIREMENTS SETTLED — so a run that drove the
+             survey 4 times over 43 screens and settled nothing printed "did not reach the
+             survey in a standard browser" four paragraphs under "the survey screened us
+             out", which is the page contradicting itself about the one thing the reader
+             most needs. Attempts are the evidence of reach; requirements are the evidence
+             of settlement; they are different facts and now they are read separately. */
+          esc(runReachLede(view, s))
         }</p>
       </section>`
 }
@@ -735,8 +766,17 @@ ${
               // written in DOM terms. The requirement text is extraction prose
               // about the questionnaire, so it is translated, not filtered.
               const rows = (f.itemRefs || []).map((id) => rowsById.get(id)).filter(Boolean);
+              // A DOCUMENT-LEVEL BLOCKER HAS NO REQUIREMENT ROWS, so the branch above finds
+              // nothing and the last resort used to be the record's own audit sentence run
+              // through `plainify` — which cannot rewrite an engineering sentence, only trim
+              // it. That put "DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE: Cross-window
+              // reconciliation compared all 110 candidate row(s)..." in front of a customer on
+              // every run of this contract. `plainSummary` is the same fact written where its
+              // numbers are understood (assemble-record via shared/cross-window-limitations),
+              // and it is preferred over the machine text for anything a reader meets.
               const what =
                 rows.map((r) => plainify(r.requirement, { maxChars: 300, dropTechnical: false }).text).find(Boolean) ??
+                (typeof f.plainSummary === "string" && f.plainSummary.length > 0 ? f.plainSummary : null) ??
                 plainify(f.summary, { maxChars: 260 }).text ??
                 "This one cannot be settled from a browser session.";
               const why = OBSERVED_PHRASE[f.category] ?? null;

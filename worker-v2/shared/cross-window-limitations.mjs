@@ -167,6 +167,41 @@ export function contractCrossWindowLimitations(supplements, expectedPassAHash) {
   return rows;
 }
 
+/**
+ * THE SAME LIMITATION, IN THE READER'S WORDS — emitted BESIDE the machine string, never
+ * instead of it.
+ *
+ * WHAT THIS FIXES (docs/REPORT-PRESENTATION-REVIEW.md B1). The customer summary printed the
+ * machine string raw, because a document-level blocker has no requirement rows to translate
+ * and the renderer's last resort was to plainify the audit sentence. What a researcher met,
+ * on every run of this contract, was:
+ *
+ *   "Whole survey — DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE: Cross-window reconciliation
+ *    compared all 110 candidate row(s) emitted by 12 primary window reader(s)..."
+ *
+ * It passes the jargon gate — every word in it is allowed — and it is still unreadable. The
+ * fix belongs HERE rather than in the renderer: this module knows what the numbers mean, and
+ * a renderer inventing prose from a counted structure it does not own is how the two drift.
+ *
+ * WHAT IT DELIBERATELY DOES NOT SAY. The machine sentence quotes "139 of 1131 block(s)", and
+ * the second number is not a field: `EXPECTED_KEYS` is a closed, sealed set and the document's
+ * total block count is not in it. So this sentence states the numerator it HAS and does not
+ * imply a fraction it cannot source. Parsing the denominator back out of `detail` prose would
+ * be reading a convention rather than a value, and inventing it is worse.
+ */
+export function crossWindowLimitationPlainDetail(row) {
+  if (!isObj(row)) throw new TypeError("PASS_A_CROSS_WINDOW_LIMITATION_INVALID: limitation detail row missing");
+  const { passAHash, ...rowInput } = row;
+  const value = validatePassACrossWindowLimitation(rowInput);
+  const quoted = value.sourceEvidenceBlocks;
+  return (
+    `We cannot promise we read every part of the questionnaire. Our readers worked through it in ` +
+    `${value.windowsTotal} passes and quoted ${quoted.toLocaleString("en")} section${quoted === 1 ? "" : "s"} of it ` +
+    `exactly; anything outside those quotes was never looked at, so a requirement written there would not appear ` +
+    `in this report at all.`
+  );
+}
+
 export function crossWindowLimitationDetail(row) {
   if (!isObj(row)) throw new TypeError("PASS_A_CROSS_WINDOW_LIMITATION_INVALID: limitation detail row missing");
   const { passAHash, ...rowInput } = row;

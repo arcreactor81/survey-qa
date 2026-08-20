@@ -40,6 +40,7 @@ import {
   CROSS_WINDOW_DISCOVERY_BLOCKER_KIND,
   contractCrossWindowLimitations,
   crossWindowLimitationDetail,
+  crossWindowLimitationPlainDetail,
 } from "../../../shared/cross-window-limitations.mjs";
 import {
   SOURCE_GROUNDING_BLOCKER_KIND,
@@ -325,6 +326,10 @@ export function deriveBlockers({ revision, walks, itemResults, observations, evi
         blockerId: "blk_document-cross-window-discovery-incomplete",
         kind: CROSS_WINDOW_DISCOVERY_BLOCKER_KIND,
         detail: crossWindowLimitationDetail(limitation),
+        // BESIDE the machine sentence, never instead of it: the audit trail keeps the counted
+        // provenance line verbatim, and the customer surfaces get prose written where the
+        // numbers are understood. See docs/REPORT-PRESENTATION-REVIEW.md B1.
+        plainDetail: crossWindowLimitationPlainDetail(limitation),
         count: limitation.candidatesSynthesized,
       }),
     );
@@ -458,6 +463,8 @@ const blocker = ({
   blockerId,
   kind,
   detail,
+  /** Customer prose for the same fact. Absent on blockers that have no reader-facing twin. */
+  plainDetail = undefined,
   pathId = null,
   attemptId = null,
   outcome = null,
@@ -477,6 +484,7 @@ const blocker = ({
   shimmed,
   at,
   detail,
+  ...(plainDetail !== undefined ? { plainDetail } : {}),
   evidenceIds,
   observationRefs,
   ...(count !== undefined ? { count } : {}),
@@ -533,8 +541,12 @@ function loadFailureEvidence(evidence, walk) {
  * `outcome === "completed"`, 1.1.0 rows read it as "this walk reached an ending". Two records
  * disagreeing about the same walk under one version id is the drift this field exists to
  * prevent. (Precedent: `BLOCKER_PROJECTION_ID` is at 1.1.0 for the same reason.)
+ *
+ * 1.2.0 — the projection also carries `screensAdvanced` and `outcomeDetail`. Additive, and
+ * bumped for the same reason as 1.1.0: a reader comparing two records must be able to tell a
+ * row whose walk went nowhere from a row produced before the projection carried the number.
  */
-export const ATTEMPT_PROJECTION_ID = "v2-attempt-projection/1.1.0";
+export const ATTEMPT_PROJECTION_ID = "v2-attempt-projection/1.2.0";
 
 /**
  * `attempts: []` WAS THE SAME DEFECT AS `claims: []`, ONE FIELD OVER — and it was
@@ -596,6 +608,13 @@ export function deriveAttempts({ walks, evidence }) {
       // `"ending" in attempt` would read a row that predates the field as one that HAS an
       // ending. There is no `??` here deliberately; a default is the whole defect.
       ...(w && typeof w === "object" && w.ending !== undefined ? { ending: w.ending } : {}),
+      // HOW FAR IT GOT, AND WHAT THE SURVEY SAID WHEN IT STOPPED. Same opt-in spread and the
+      // same reason: `screensAdvanced: 0` is a measurement and an absent key is not, so a row
+      // that predates the carry must not acquire a confident zero. Without these two the
+      // report had no field that could answer "how far did we get?" — the number 43 existed
+      // in the walk ledger and appeared nowhere a reader could reach it.
+      ...(typeof w?.screensAdvanced === "number" ? { screensAdvanced: w.screensAdvanced } : {}),
+      ...(w && typeof w === "object" && w.outcomeDetail !== undefined ? { outcomeDetail: w.outcomeDetail } : {}),
       evidenceIds: walkEvidenceIds(evidence, w),
       evidenceSharedWithSiblingWalks: (rowsPerKey.get(walkKey(w)) ?? 0) > 1,
       derivedBy: ATTEMPT_PROJECTION_ID,

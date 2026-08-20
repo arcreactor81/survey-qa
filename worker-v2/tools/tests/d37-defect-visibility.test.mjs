@@ -358,11 +358,15 @@ suite("D37 — the page reads the stop reason the record actually writes", () =>
   test("A V2 ATTEMPT'S STOP REASON IS NAMED, not counted as `other`", async () => {
     const { data } = await publishWith(withStops);
     const sentence = data.completion.testing.stoppingReason;
+    // The counts and the distinction are the property; the WORDING changed with review B5,
+    // which replaced the raw tally ("no-advance-control ×2, step-cap ×1") with one clause per
+    // reason in the reader's vocabulary. Both reasons must still be read from the flat v2
+    // field and still be told apart.
     assert(
-      /no-advance-control ×2/.test(sentence),
+      /2 stopped because the survey offered nothing further to press/.test(sentence),
       `the walker's own stop reason must reach the page: ${sentence}`,
     );
-    assert(/step-cap ×1/.test(sentence), sentence);
+    assert(/1 stopped because we reached the limit we set on how many screens one attempt may visit/.test(sentence), sentence);
     assert(!/other/.test(sentence), `a reason the record states plainly was filed as "other": ${sentence}`);
   });
 
@@ -372,10 +376,11 @@ suite("D37 — the page reads the stop reason the record actually writes", () =>
     const { data } = await publishWith((record) => {
       record.attempts = [{ ...record.attempts[0], attemptId: "att_silent1", stopReason: null }];
     });
-    assert(
-      /other ×1/.test(data.completion.testing.stoppingReason),
-      `an attempt that stated no reason must stay unnamed: ${data.completion.testing.stoppingReason}`,
-    );
+    // Same property, new wording (review B5): an attempt that recorded no reason is SAID to
+    // have recorded none, and is never handed one it did not state.
+    const sentence = data.completion.testing.stoppingReason;
+    assert(/did not record why it stopped/.test(sentence), `an attempt that stated no reason must stay unnamed: ${sentence}`);
+    assert(!/stopped because/.test(sentence), `a reason was invented for a row that carried none: ${sentence}`);
   });
 
   test("WHERE THE ATTEMPTS ENDED IS ON THE PAGE, in the summary a reader meets first", async () => {
@@ -481,17 +486,33 @@ suite("D37 — the page reads the stop reason the record actually writes", () =>
   });
 
   test("A PARTIAL LEDGER IS NEVER SILENTLY SHORTER: rows without an ending are counted out loud", async () => {
-    const { data, summary } = await publishWith((record) => {
+    const { data, html, summary } = await publishWith((record) => {
       const withEnding = { ...record.attempts[0], attemptId: "att_mix01", ending: { kind: "completed", evidence: ["done"] } };
       const without = { ...record.attempts[0], attemptId: "att_mix02" };
       delete without.ending;
       record.attempts = [withEnding, without];
     });
-    assertEq(data.completion.testing.endings.unstated, 1, JSON.stringify(data.completion.testing.endings));
+
+    // THE SENTENCE FIRST, AND ON EVERY SURFACE THAT CARRIES IT (merged-run bounce-back,
+    // 20 Aug). This test used to lead with the `unstated` COUNT, which is computed upstream of
+    // both sentences — so suppressing the sentence entirely left the count at 1 and this guard
+    // green. A guard against silent shortening that survives the sentence being silenced is
+    // precisely the check-that-cannot-fail CLAUDE.md warns about, and it took a merged campaign
+    // to catch. Each surface is asserted against the module that writes it: the audit line
+    // comes from the view model's headline, the hero line from plain-language.
+    const audit = visible(extractView(html, "audit") ?? "");
+    assert(
+      /recorded no ending at all, so this report cannot say where it stopped/.test(audit),
+      `the auditor surface went silent about the row that said nothing: ${audit.slice(0, 900)}`,
+    );
     assert(
       /1 recorded no ending at all/.test(visible(summary)),
-      `the row that said nothing was dropped from the sentence: ${visible(summary).slice(0, 900)}`,
+      `the row that said nothing was dropped from the summary sentence: ${visible(summary).slice(0, 900)}`,
     );
+
+    // ...and the count agrees with the sentences. Second, deliberately: it is corroboration,
+    // not the property — it was passing throughout the whole time the sentence could vanish.
+    assertEq(data.completion.testing.endings.unstated, 1, JSON.stringify(data.completion.testing.endings));
   });
 
   test("AN ENDING KIND THIS READER DOES NOT KNOW IS COUNTED BY NAME, not dropped", async () => {
@@ -502,6 +523,213 @@ suite("D37 — the page reads the stop reason the record actually writes", () =>
     assertEq(JSON.stringify(e.unrecognised), JSON.stringify([{ kind: "redirected-away", count: 1 }]));
     assertEq(e.counts.completed, 0, "an unknown kind must not be folded into a known one");
     assert(/does not recognise/.test(e.headline), e.headline);
+  });
+
+  test("B1 — a document-level blocker reads as prose, not as its own audit sentence", async () => {
+    // THE WORST SENTENCE THE REVIEW FOUND, verbatim from the rendered page:
+    //   "Whole survey — DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE: Cross-window reconciliation
+    //    compared all 110 candidate row(s) emitted by 12 primary window reader(s)..."
+    // It passes the jargon gate — every word is allowed — and is still unreadable. A
+    // document-level blocker has no requirement rows, so the renderer's last resort was the
+    // record's own machine sentence.
+    // Injected at `record.blockers`, NOT at `record.findings`: the findings list is rebuilt by
+    // `projectV2ToLegacy`, so seeding a finding directly would test a shape production never
+    // produces and would skip the projection hop this fix runs through.
+    const { html, summary } = await publishWith((record) => {
+      record.blockers = [
+        ...(record.blockers ?? []),
+        {
+          blockerId: "blk_document-cross-window-discovery-incomplete",
+          kind: "DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE",
+          pathId: null,
+          attemptId: null,
+          outcome: null,
+          shimmed: null,
+          at: null,
+          detail:
+            "DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE: Cross-window reconciliation compared all 110 candidate row(s) emitted by 12 primary window reader(s), using 143 exact candidate quote span(s) from 139 of 1131 block(s).",
+          plainDetail:
+            "We cannot promise we read every part of the questionnaire. Our readers worked through it in 12 passes and quoted 139 sections of it exactly; anything outside those quotes was never looked at, so a requirement written there would not appear in this report at all.",
+          evidenceIds: [],
+          observationRefs: [],
+          count: 110,
+          derivedBy: "v2-blocker-projection/1.1.0",
+        },
+      ];
+    });
+
+    const text = visible(summary);
+    assert(!/DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE/.test(text), `the machine sentence is still in customer copy: ${text.slice(0, 900)}`);
+    assert(!/candidate row\(s\)|primary window reader\(s\)/.test(text), `machine phrasing survived: ${text.slice(0, 900)}`);
+    assert(/cannot promise we read every part of the questionnaire/.test(text), `the plain twin is missing: ${text.slice(0, 900)}`);
+    // ...AND THE MACHINE SENTENCE IS NOT DELETED. The audit trail is entitled to it.
+    assert(
+      /DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE/.test(visible(extractView(html, "audit") ?? "")),
+      "the counted provenance line must survive on the auditor surface",
+    );
+  });
+
+  test("B2 — a run that drove the survey is never described as not reaching it", async () => {
+    // The page said "None of those reached the survey's own final page" and, four paragraphs
+    // later, "This run did not reach the survey in a standard browser either". The second
+    // claim was read from `everExercised`, which counts REQUIREMENTS SETTLED, not reach.
+    const { summary } = await publishWith((record) => {
+      record.attempts = [
+        { ...record.attempts[0], attemptId: "att_r1", ending: { kind: "screened-out", evidence: ["no"] } },
+        { ...record.attempts[0], attemptId: "att_r2", ending: { kind: "screened-out", evidence: ["no"] } },
+      ];
+      // Nothing settles: every result is stripped of a verdict, which is the live run's shape.
+      record.itemResults = (record.itemResults ?? []).map((r) => ({
+        ...r,
+        verdict: "incomplete",
+        facetResults: (r.facetResults ?? []).map((f) => ({ ...f, status: "not-reached" })),
+      }));
+    });
+    const text = visible(summary);
+    assert(!/did not reach the survey in a standard browser/.test(text), `the contradiction survived: ${text.slice(0, 1200)}`);
+    assert(/did reach the survey in an ordinary browser and took it 2 times/.test(text), `the honest middle state is missing: ${text.slice(0, 1200)}`);
+  });
+
+  test("B2 — a run with NO attempts still says it never reached the survey", async () => {
+    // The counterweight: the original sentence exists for a real state and must survive.
+    const { summary } = await publishWith((record) => {
+      record.attempts = [];
+      record.itemResults = (record.itemResults ?? []).map((r) => ({
+        ...r,
+        verdict: "incomplete",
+        facetResults: (r.facetResults ?? []).map((f) => ({ ...f, status: "not-reached" })),
+      }));
+    });
+    assert(
+      /did not reach the survey in a standard browser/.test(visible(summary)),
+      `a run that never got in must still say so: ${visible(summary).slice(0, 900)}`,
+    );
+  });
+
+  test("B3 — the attempt ledger reports what the record holds, and absent is never a zero", async () => {
+    // Every row rendered "not recorded → not recorded | 0 actions | 0 states" with an empty
+    // Stop column, for walks that had driven 43 screens: `renderAttempts` read v1's nested
+    // shape and `projectV2ToLegacy` passes v2 attempts through untranslated.
+    const { html } = await publishWith((record) => {
+      record.attempts = [
+        {
+          ...record.attempts[0],
+          attemptId: "att_led01",
+          startedAt: "2026-08-20T00:01:00.000Z",
+          endedAt: "2026-08-20T00:09:00.000Z",
+          stopReason: "blocked",
+          screensAdvanced: 43,
+          ending: { kind: "stalled", evidence: ["x"] },
+          evidenceIds: ["ev_1", "ev_2"],
+          targetCaseIds: ["fi_a"],
+        },
+      ];
+    });
+    const audit = visible(extractView(html, "audit") ?? "");
+    assert(/43\s*screens advanced/.test(audit), `the depth is missing from the ledger: ${audit.slice(0, 700)}`);
+    assert(/blocked/.test(audit), "the stop reason must reach the ledger");
+    assert(!/0\s*actions/.test(audit), `a walk that drove 43 screens was reported as doing nothing: ${audit.slice(0, 700)}`);
+    assert(
+      /does not carry a step-by-step action list/.test(audit),
+      `the missing action list must be named, not implied by a zero: ${audit.slice(0, 700)}`,
+    );
+    // The window is read from the flat v2 fields rather than v1's nested `timestamps`.
+    assert(!/not recorded → not recorded/.test(audit), `the v2 timestamps were not read: ${audit.slice(0, 700)}`);
+  });
+
+  test("B3 — a ledger row that records no depth says so, and is not printed as zero screens", async () => {
+    // The load-bearing half of B3. "0" in a table is a measurement: it says the walk advanced
+    // no screens. On the reviewed run every row said it, about walks that had driven 43.
+    const { html } = await publishWith((record) => {
+      const row = { ...record.attempts[0], attemptId: "att_nodepth", stopReason: "no-advance-control" };
+      delete row.screensAdvanced;
+      delete row.actions;
+      delete row.stateFingerprints;
+      record.attempts = [row];
+    });
+    const audit = visible(extractView(html, "audit") ?? "");
+    assert(/not recorded/.test(audit), `an unrecorded depth must be named: ${audit.slice(0, 700)}`);
+    assert(!/\b0\s*screens advanced/.test(audit), `an absent depth was printed as a measured zero: ${audit.slice(0, 700)}`);
+  });
+
+  test("B4 — HOW FAR WE GOT reaches the record and the page, and an absent depth is not a zero", async () => {
+    // docs/REPORT-PRESENTATION-REVIEW.md B4: the run drove 43 screens and the number 43
+    // appeared NOWHERE on the page, because `deriveAttempts` dropped `screensAdvanced` and
+    // `outcomeDetail`. "How far did we get?" is the team's first question.
+    const { data, summary } = await publishWith((record) => {
+      record.attempts = [
+        {
+          ...record.attempts[0],
+          attemptId: "att_deep01",
+          screensAdvanced: 43,
+          outcomeDetail:
+            'the survey did not advance from screen 43 even after a valid answer; validation said: Please make sure you choose different Profile Variation for both Best and Worst rows.',
+          ending: { kind: "stalled", evidence: ["blocked"] },
+        },
+        { ...record.attempts[0], attemptId: "att_deep02", screensAdvanced: 7, ending: { kind: "screened-out", evidence: ["no"] } },
+      ];
+    });
+
+    assertEq(data.completion.testing.endings.deepest.screens, 43, JSON.stringify(data.completion.testing.endings.deepest));
+    const text = visible(summary);
+    assert(/deepest attempt got 43 screens into the survey/.test(text), `the depth is not on the page: ${text.slice(0, 900)}`);
+    // ...and the survey's OWN words, which is the half a reader can act on.
+    assert(
+      /would not accept an answer we gave, saying/.test(text) && /different Profile Variation/.test(text),
+      `the survey's own message did not reach the page: ${text.slice(0, 900)}`,
+    );
+    // The engineering half of the same string must NOT come with it.
+    assert(!/did not advance from screen 43 even after a valid answer/.test(text), `raw stop prose leaked: ${text}`);
+  });
+
+  test("B4 — a record with no depth says nothing rather than claiming zero screens", async () => {
+    const { data, summary } = await publishWith((record) => {
+      record.attempts = record.attempts.map((a, i) => {
+        const row = { ...a, attemptId: `att_nodepth${i}`, ending: { kind: "screened-out", evidence: ["no"] } };
+        delete row.screensAdvanced;
+        delete row.outcomeDetail;
+        return row;
+      });
+    });
+    assertEq(data.completion.testing.endings.deepest, null, "an absent depth must not become a measurement");
+    assert(!/deepest attempt got/.test(visible(summary)), "a depth was claimed for a record that carries none");
+  });
+
+  test("B4 — a PARTIAL depth ledger does not let one row speak for the others", async () => {
+    const { data, summary } = await publishWith((record) => {
+      const deep = { ...record.attempts[0], attemptId: "att_p1", screensAdvanced: 5, ending: { kind: "stalled", evidence: ["x"] } };
+      const silent = { ...record.attempts[0], attemptId: "att_p2", ending: { kind: "stalled", evidence: ["x"] } };
+      delete silent.screensAdvanced;
+      record.attempts = [deep, silent];
+    });
+    assertEq(data.completion.testing.endings.depthUnstated, 1);
+    assert(
+      /did not record how far it got, so this may not be the deepest/.test(visible(summary)),
+      `a partial ledger implied a complete one: ${visible(summary).slice(0, 900)}`,
+    );
+  });
+
+  test("B5 — the stop reasons are in the reader's words, and `blocked` is not an accusation", async () => {
+    // The page printed "Recorded attempt stop reasons: no-advance-control ×3, blocked ×1"
+    // directly above a plain sentence about the same attempts — machine tokens contradicting
+    // the line beneath them, and "blocked ×1" reading as a fault in a survey that had
+    // correctly refused an invalid answer.
+    const { data } = await publishWith((record) => {
+      record.attempts = [
+        { ...record.attempts[0], attemptId: "att_s1", stopReason: "no-advance-control" },
+        { ...record.attempts[0], attemptId: "att_s2", stopReason: "no-advance-control" },
+        { ...record.attempts[0], attemptId: "att_s3", stopReason: "no-advance-control" },
+        { ...record.attempts[0], attemptId: "att_s4", stopReason: "blocked" },
+      ];
+    });
+    const sentence = data.completion.testing.stoppingReason;
+    assert(!/no-advance-control|blocked ×/.test(sentence), `machine tokens survived: ${sentence}`);
+    assert(/3 stopped because the survey offered nothing further to press/.test(sentence), sentence);
+    assert(/1 stopped because the survey would not accept an answer we gave/.test(sentence), sentence);
+    // AND IT DOES NOT CALL A SCREEN-OUT SOMETHING IT CANNOT KNOW. `no-advance-control` is what
+    // a finished survey, a screen-out page and a walk that never got in all record; which one
+    // it was is the ENDING's sentence, not this one.
+    assert(!/screened/.test(sentence), `a stop reason claimed an ending it cannot know: ${sentence}`);
   });
 
   test("...and the v1 NESTED shape still wins where a record carries it", async () => {

@@ -589,6 +589,14 @@ export function projectV2ToLegacy(record, revision) {
           severity: null,
           supported: null,
           summary: entry.detail,
+          // THE READER'S TWIN, CARRIED ONLY WHEN THE RECORD HAS ONE. `summary` stays the
+          // machine sentence — the audit trail is entitled to it and nothing downstream may
+          // lose it — and customer surfaces prefer this. A blocker with no twin keeps the key
+          // absent, so a renderer can tell "no plain wording was written for this" from "the
+          // plain wording is empty". See docs/REPORT-PRESENTATION-REVIEW.md B1.
+          ...(typeof entry.plainDetail === "string" && entry.plainDetail.length > 0
+            ? { plainSummary: entry.plainDetail }
+            : {}),
           itemRefs: [],
           evidenceRefs: arr(entry.evidenceIds),
           attemptRefs: [],

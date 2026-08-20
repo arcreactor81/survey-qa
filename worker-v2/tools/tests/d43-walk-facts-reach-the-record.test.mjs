@@ -676,7 +676,7 @@ test("END TO END THROUGH R2: the signed record's attempt row carries the ending"
   assert(row, `no attempt row for ${PATH_ID}: ${JSON.stringify(record.attempts)}`);
   assertEq(row.ending.kind, "screened-out", JSON.stringify(row));
   assertEq(row.ok, true, "reaching a screen-out page is reaching an ending");
-  assertEq(row.derivedBy, "v2-attempt-projection/1.1.0", "the projection version says which reading of `ok` produced it");
+  assertEq(row.derivedBy, "v2-attempt-projection/1.2.0", "the projection version says which reading of `ok` produced it");
 });
 
 // ===========================================================================
