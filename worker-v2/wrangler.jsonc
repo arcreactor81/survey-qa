@@ -176,7 +176,7 @@
     // ---- browser session policy (spike-derived) ----
     "BROWSER_KEEP_ALIVE_MS": "600000", // idle timeout, refreshed by every batch
     "SESSION_MAX_AGE_MS": "480000", // proactively recycle before the observed ~11min wall
-    "EXEC_BATCH_MAX_MS": "3900000", // wall-clock budget for ONE execute-batch step. MUST exceed EXEC_PER_CASE_TIMEOUT_MS plus the batch-residual minimum, or the residual guard refuses every walk (run v2r_01m05358wjeprcr01r5r3nn1vy: 120000==120000 started ZERO walks). The config-arithmetic test pins this relationship.
+    "EXEC_BATCH_MAX_MS": "1080000", // 18 min — wall-clock budget for ONE execute-batch step. MUST exceed EXEC_PER_CASE_TIMEOUT_MS plus the batch-residual minimum. Reduced from 3900000 (65 min) to bound zombie-browser hangs: the framework step timeout DOES fire at shorter durations (v53-v63 measured ~67:01 kill), and 3 retries (4 attempts) give 88 min worst case per batch, not 5+ hours. Config-arithmetic test pins this relationship.
     "EXEC_BATCH_MAX_ATTEMPTS": "4", // attempts committed per durable checkpoint
     "EXEC_MAX_BATCHES": "200", // hard stop on the batch loop
 
@@ -190,20 +190,15 @@
     "EXEC_MAX_STEPS_PER_PATH": "120", // a survey that never terminates must not hang a batch; 120 clears the measured ~85-100-screen full traversal (59-screen screener + ~15 body questions at the measured 2-3 screens/question)
     "EXEC_ADVANCE_TIMEOUT_MS": "12000", // how long a screen may take to change after Next
     "EXEC_ACQUIRE_TIMEOUT_MS": "45000", // a reconnect to a wedged session never returns
-    "EXEC_WALK_TIMEOUT_MS": "1800000", // one walk, bounded; a hang is a named outcome
-    // PER-CASE TIME BUDGET (owner directive, 17-Aug: a walk that is PROGRESSING must not be
-    // cut). 30 minutes: even at the worst measured pace (~28s/screen, v44 phase clocks) a
-    // walk covers ~60 screens; at the post-concurrency pace it covers the whole instrument
-    // with a wide margin. Cloudflare's current docs state NO fixed maximum lifetime for an
-    // ACTIVE browser session (keep_alive is an IDLE timeout; verified 17-Aug against
-    // developers.cloudflare.com/browser-run) — the once-measured ~11-minute wall predates
-    // the Apr-2026 platform release and is treated as stale unless a run reproduces it.
-    // Every batch starts a FRESH session (execute-batch retires at batch end). The per-case
-    // timeout remains the TIGHTER of this value and EXEC_WALK_TIMEOUT_MS; the walk itself
-    // exits ~20s earlier (walkDeadlineFor's wrap-up grace) and returns a "time-cap" PARTIAL
-    // observation, so the outer axe fires only on a genuine hang. The batch-residual guard
-    // means one long walk can own a whole batch.
-    "EXEC_PER_CASE_TIMEOUT_MS": "1800000",
+    "EXEC_WALK_TIMEOUT_MS": "900000", // 15 min — one walk, bounded; a hang is a named outcome. Reduced from 1800000 (30 min) to match per-case timeout; deep walk measured at ~9 min, 67% headroom.
+    // PER-CASE TIME BUDGET. 15 minutes: at the measured post-v90 pace (~7s/screen) a walk
+    // covers ~128 screens, well above the ~85-100 full traversal. The 28s/screen pace from
+    // v44 is stale; a regression to that speed would show as time-caps worth investigating,
+    // not a timeout to extend. Every batch starts a FRESH session. The per-case timeout is
+    // the TIGHTER of this value and EXEC_WALK_TIMEOUT_MS; the walk exits ~20s earlier via
+    // wrap-up grace and returns a "time-cap" PARTIAL, so the outer axe fires only on a
+    // genuine hang. The batch-residual guard means one walk owns a batch.
+    "EXEC_PER_CASE_TIMEOUT_MS": "900000",
     "BROWSER_COMPAT_SHIMS": "auto", // "auto" | "off" — see browser/page-script.ts HISTORY_SHIM
 
     // ---- run caps (proposal §5; each keeps its own name and denominator) ----

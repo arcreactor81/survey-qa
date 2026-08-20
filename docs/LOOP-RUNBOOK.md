@@ -27,10 +27,10 @@ Written 19 Aug 2026, after the v84 deploy. Update the STATE section whenever you
    from "the wall fell on the live site" — only a run proves the second.
 5. **Blind corpus** `test-suite/blind/**`: never read answer keys.
 
-## Current state (as of v95, 21 Aug 2026 ~08:15 IST)
+## Current state (as of v96, 21 Aug 2026)
 
-- Prod worker: `survey-qa-v2.wellshit.co.in`, version `42cdb290-2cd7-4958-9ecc-144acdfc428c`
-  (v95). Suite 1629/1629; tsc clean.
+- Prod worker: `survey-qa-v2.wellshit.co.in`, pending v96 deploy.
+  Suite green; tsc clean.
 - Sealed contract for this survey: `cr_7100eecf32196b4b156f3cf96f88087ed162e8eb` — typed
   route destinations (expander 1.11.0). Re-derives free every run via unit adoption.
 - Walk record: **81 screens (END OF SURVEY REACHED)** on v90-relaunch run
@@ -42,10 +42,16 @@ Written 19 Aug 2026, after the v84 deploy. Update the STATE section whenever you
   - v93 walk reached 82 screens (END). v93b batch 1 stuck for 5 hours (zombie browser).
 - **v94 ships phase-timeline fix** — monitoring page now shows phase timing strip, depth
   indicators, and walk timeline. Backend timing fields (startedAt/endedAt) were already wired.
-- **v95 ships hard batch abort timer** — defense against zombie browser sessions. When a batch
-  runs past batchMaxMs + 2 min, the timer closes the browser forcibly, unblocking all pending
-  Puppeteer Promises. Without this, the CF Workflow step timeout (80 min) was not firing while
-  holding a live WebSocket to Browser Rendering (v93b, v94: 5 hours stuck).
+- **v95 ships hard batch abort timer** — defense against zombie browser sessions. Timer calls
+  `browser.close()` after `batchMaxMs + 2 min`. But the timer DOES NOT FIRE when Puppeteer's
+  WebSocket is in a half-alive state (v93b, v94, v95: 5+ hours stuck each).
+- **v96 ships reduced-timeout defense** — the framework step timeout DID fire at shorter
+  durations (v53-v63 died at exactly ~67:01). The fix reduces all execution budgets:
+  - `EXEC_PER_CASE_TIMEOUT_MS`: 30 min → 15 min (deep walk ~9 min, 67% headroom)
+  - `EXEC_BATCH_MAX_MS`: 65 min → 18 min (1 walk/batch via residual guard)
+  - `BATCH_POLICY.timeout`: 80 min → 22 min
+  - `BATCH_POLICY.retries`: 1 → 3 (4 total attempts per batch step)
+  - Worst-case stuck: 22 min × 4 attempts = 88 min/batch, not 5+ hours
 - Wall history (all fixed, all general-class): consent race (2), S40 label-registration (7),
   screener steering lottery (S10), S150 input mask (48), doorstep plumbing (59), B10
   allocation grid (68: keyboard-only → staged validation → specify-pairing), C20 dwell gate
@@ -53,11 +59,10 @@ Written 19 Aug 2026, after the v84 deploy. Update the STATE section whenever you
   D10 oscillation (54: monotonic demand accumulation), D-section invisible advance (54:
   prose-progress signal), dwell gate second shape (26%: silent-refusal re-press), completion
   lexicon (81: optional article).
-- **Open reliability issue (MITIGATED by v95):** browser sessions can zombie. Root cause
-  not fully understood (Puppeteer WebSocket keeps alive without completing CDP calls). The
-  hard batch abort timer now forcibly closes the browser after 67 min. Remaining: audit all
-  error paths for browser.close(), add backoff between browser creation (1/s rate limit).
-- Run about to launch: v95 fresh run.
+- **Open reliability issue (MITIGATED by v96):** browser sessions can zombie (Puppeteer
+  WebSocket keeps alive without completing CDP calls). The reduced step timeout (22 min)
+  bounds the damage; the hard abort timer is retained as a secondary defense.
+- Run about to launch: v96 fresh run.
 
 ## The loop
 
@@ -193,10 +198,12 @@ The sealed contract: `v2/contracts/<cr_...>.json`.
   the existing half-step record, never a new fractional slot.
 - Persisted-progress invariant: a durable denominator never becomes unknown again
   (`preserveDurableReadingBase`).
-- **CF Workflow step timeouts don't fire on live WebSockets.** The 80-minute step timeout
-  (BATCH_POLICY) did not kill v93b batch 1 or v94 batch 0 — the Puppeteer WebSocket to
-  Browser Rendering kept the step "alive" for 5+ hours. The fix is an inner hard abort timer
-  (`hardBatchAbortMs`) that calls `browser.close()` to terminate the connection forcibly.
+- **CF Workflow step timeouts don't fire on live WebSockets at long durations.** The
+  80-minute step timeout (BATCH_POLICY) did not kill v93b batch 1 or v94 batch 0 — the
+  Puppeteer WebSocket kept the step "alive" for 5+ hours. But the framework DID enforce
+  shorter timeouts (v53-v63 at ~67:01). v96 reduces the step timeout to 22 minutes, inside
+  the range where enforcement was measured. The inner hard abort timer is retained as a
+  secondary defense.
 
 ## Why "gates green" does not mean "wall falls" (say this honestly)
 

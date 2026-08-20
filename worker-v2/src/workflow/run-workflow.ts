@@ -321,19 +321,18 @@ export async function launchVisualShadowAfterCoreFinalization(
  *  deterministic merge/diff/plan steps. */
 const EXTRACT_POLICY = { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "8 minutes" } as const;
 // The step axe must clear the batch's own work budget PLUS session-acquisition and commit
-// slack. When EXEC_BATCH_MAX_MS rose to 300000 (16 Aug), this stayed "5 minutes" — exactly
-// equal — and the engine killed every batch mid-walk before anything committed (run
-// v2r_01m05bh8scxkebmqd7h9wmmf5z: sessions churning, walks recording zero screens). The
-// d56 config-arithmetic test pins step-timeout >= EXEC_BATCH_MAX_MS + 120s slack.
+// slack. The d56 config-arithmetic test pins step-timeout >= EXEC_BATCH_MAX_MS + 120s slack.
 //
-// AND THE SLACK MUST BE REAL, NOT MINIMAL. At "67 minutes" the margin over the 65-minute
-// walk axe was 120 s — and a deep walk's wrap-up (final-slot epoch capture, evidence
-// uploads, session retirement) can exceed that. The step then dies at its own timeout,
-// which Cloudflare reports as the OPAQUE "WorkflowInternalError: Attempt failed due to
-// internal workflows error" — five runs (v53, v56, v61, v62 v2r_01m08ce0…, v63
-// v2r_01m08r1r…) were mis-read as platform failures before the instance trace showed the
-// failing attempts ending at exactly ~67:01. Fifteen minutes of wrap-up margin instead.
-const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "80 minutes" } as const;
+// ZOMBIE BROWSER LESSON (v93b, v94, v95 — 21 Aug): When the Puppeteer WebSocket to Browser
+// Rendering is in a half-alive state, ALL timer callbacks (setTimeout, step timeout) fail to
+// dispatch. Three consecutive runs hung 5+ hours each. The framework DID enforce the step
+// timeout at shorter durations (v53-v63 died at exactly ~67:01). The fix is:
+//   1. Reduce the step timeout to 22 min (inside the range where enforcement was measured).
+//   2. Increase retries to 3 (4 total attempts) so a killed batch gets another chance.
+//   3. Reduce EXEC_BATCH_MAX_MS to 18 min and per-case to 15 min — the deep walk measures
+//      ~9 min, so 15 min is generous. Each batch does 1 walk (residual guard = per-case).
+// Worst-case stuck time: 22 min × 4 attempts = 88 min per batch, not 5+ hours.
+const BATCH_POLICY = { retries: { limit: 3, delay: "30 seconds" }, timeout: "22 minutes" } as const;
 /**
  * THE JUDGING STAGES. `delay` is 30 seconds and NOT 5 for a reason that is not politeness.
  *

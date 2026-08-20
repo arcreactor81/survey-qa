@@ -805,15 +805,15 @@ suite("amendment 2: timeout and batch residual", () => {
     );
   });
 
-  test("EXEC_PER_CASE_TIMEOUT_MS is 540000 in wrangler.jsonc", async () => {
+  test("EXEC_PER_CASE_TIMEOUT_MS is 900000 in wrangler.jsonc", async () => {
     const { readFileSync } = await import("fs");
     const wrangler = readFileSync("wrangler.jsonc", "utf8");
     const perCase = wrangler.match(/"EXEC_PER_CASE_TIMEOUT_MS"\s*:\s*"(\d+)"/);
     assert(perCase, "EXEC_PER_CASE_TIMEOUT_MS must be declared");
-    assertEq(perCase[1], "1800000", "EXEC_PER_CASE_TIMEOUT_MS must be 540000");
+    assertEq(perCase[1], "900000", "EXEC_PER_CASE_TIMEOUT_MS must be 900000 (15 min)");
   });
 
-  test("all arm configs agree on EXEC_PER_CASE_TIMEOUT_MS=1800000", async () => {
+  test("all arm configs agree on EXEC_PER_CASE_TIMEOUT_MS=900000", async () => {
     const { readFileSync, readdirSync } = await import("fs");
     const armFiles = readdirSync(".").filter((f) => f.startsWith("wrangler.arm-") && f.endsWith(".jsonc"));
     assert(armFiles.length > 0, "there must be at least one arm config");
@@ -821,25 +821,25 @@ suite("amendment 2: timeout and batch residual", () => {
       const content = readFileSync(f, "utf8");
       const perCase = content.match(/"EXEC_PER_CASE_TIMEOUT_MS"\s*:\s*"(\d+)"/);
       assert(perCase, `${f} must declare EXEC_PER_CASE_TIMEOUT_MS`);
-      assertEq(perCase[1], "1800000", `${f} must have EXEC_PER_CASE_TIMEOUT_MS=1800000`);
+      assertEq(perCase[1], "900000", `${f} must have EXEC_PER_CASE_TIMEOUT_MS=900000`);
     }
   });
 
-  test("DEPLOY.md config gate pins EXEC_PER_CASE_TIMEOUT_MS to 1800000", async () => {
+  test("DEPLOY.md config gate pins EXEC_PER_CASE_TIMEOUT_MS to 900000", async () => {
     const { readFileSync } = await import("fs");
     const deploy = readFileSync("DEPLOY.md", "utf8");
     assert(
-      deploy.includes('eq(v.EXEC_PER_CASE_TIMEOUT_MS,"1800000"'),
-      "DEPLOY.md must pin EXEC_PER_CASE_TIMEOUT_MS to 1800000",
+      deploy.includes('eq(v.EXEC_PER_CASE_TIMEOUT_MS,"900000"'),
+      "DEPLOY.md must pin EXEC_PER_CASE_TIMEOUT_MS to 900000",
     );
   });
 
-  test("EXPECTED_STATIC_VARS pins EXEC_PER_CASE_TIMEOUT_MS to 1800000", async () => {
+  test("EXPECTED_STATIC_VARS pins EXEC_PER_CASE_TIMEOUT_MS to 900000", async () => {
     const { readFileSync } = await import("fs");
     const canary = readFileSync("tools/assert-no-active-canary-workflows.mjs", "utf8");
     assert(
-      canary.includes('EXEC_PER_CASE_TIMEOUT_MS: "1800000"'),
-      "EXPECTED_STATIC_VARS must pin EXEC_PER_CASE_TIMEOUT_MS to 1800000",
+      canary.includes('EXEC_PER_CASE_TIMEOUT_MS: "900000"'),
+      "EXPECTED_STATIC_VARS must pin EXEC_PER_CASE_TIMEOUT_MS to 900000",
     );
   });
 
