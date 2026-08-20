@@ -6,6 +6,14 @@
  * shortcut and must be killed by a named W4 negative.
  *
  *   node tools/mutate-w4-select.mjs
+ *
+ * CHILD TIMEOUT: run this with MUTATION_CHILD_TIMEOUT_MS=600000. Two mutants here deliberately
+ * remove a WAIT bound in the walker (the forward-release early return, and the silent-refusal
+ * press bound), so the mutated tree is genuinely slower than the unmutated one. Under the 120s
+ * default those children are killed mid-run and score NO-RUN — which is not a pass, and would
+ * leave two guards untested while the campaign reported a number. Measured 20 Aug 2026.
+ *
+ *   MUTATION_CHILD_TIMEOUT_MS=600000 node tools/mutate-w4-select.mjs
  */
 
 import { runMutantSuite } from "./mutate-runner.mjs";
@@ -958,7 +966,7 @@ await runMutantSuite({
         + "bounded number of times",
       file: DR,
       find: `        silentPresses < SILENT_REFUSAL_MAX_PRESSES &&`,
-      replace: `        silentPresses < 99 &&`,
+      replace: `        silentPresses < 6 &&`,
       kills: ["a press that is ignored forever stops at the bounded press count"],
     },
     {
