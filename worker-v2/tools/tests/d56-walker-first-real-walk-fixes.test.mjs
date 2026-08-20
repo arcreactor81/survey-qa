@@ -3077,3 +3077,188 @@ suite("amendment 17: the site's own position counter is movement evidence when i
       `the site's own rejection outranks every structural signal, got ${JSON.stringify(signals)}`);
   });
 });
+
+suite("amendment 18: a press the site ignores without complaint is not a wrong answer", () => {
+  // Measured live 20 Aug 2026 (run v2r_01m0enh6bjc1en2bgesvcnt5jc, screen 45, C20 "SCREEN 2 of 4"):
+  // the walk answered the best/worst grid correctly — the distinct-column repick fired and the
+  // readbacks confirm two different columns checked — pressed forward, and nothing happened. No
+  // movement and NO validation. The screen's own words: "You will be allowed to proceed in 4
+  // seconds" before the press, "…in 0 seconds" after. The press landed inside a minimum-dwell
+  // gate and was ignored, and the walk then spent its recovery rounds re-deriving a right answer.
+  //
+  // This is the gate's SECOND shape: the control stays VISIBLE and the press is simply ignored,
+  // so awaitForwardRelease (which waits for a WITHHELD control) never fires.
+  const NEXT_IDX = 8;
+  const mkOpt = (idx, label, checked) => ({
+    order: 0, idx, code: String(idx), label, checked, disabled: false,
+    visible: true, operable: true, actuatedVia: "self", labelIndex: null,
+  });
+
+  const screenOf = ({ validation = [], progress = "Survey progress: 26%", checked = new Set() } = {}) => ({
+    at: "2026-08-20T12:00:00.000Z",
+    url: "https://fixture.invalid/gated2",
+    title: "C20-like",
+    questionText: "C20",
+    instructionText: "",
+    visibleText: "best and worst",
+    grid: null,
+    collectedErrors: [],
+    readerLimitations: [],
+    controls: [0, 1].map((idx) => ({
+      idx, tag: "input", type: "radio", name: `q_${idx}`, id: null, code: null, label: `choice ${idx}`,
+      text: "", checked: checked.has(idx), value: "", valueIsUserSupplied: false, disabled: false,
+      required: false, visible: true, operable: true, actuatedVia: "self", labelIndex: null,
+      placeholder: null, maxlength: null, min: null, max: null, step: null, pattern: null, readOnly: false,
+    })),
+    optionGroups: [
+      { name: "q_0", kind: "radio", options: [mkOpt(0, "choice 0", checked.has(0))] },
+      { name: "q_1", kind: "radio", options: [mkOpt(1, "choice 1", checked.has(1))] },
+    ],
+    questionRoots: [],
+    // The control stays VISIBLE and enabled the whole time — that is what makes this shape
+    // invisible to the withheld-control patience.
+    buttons: [{ idx: NEXT_IDX, label: ">>", labelSource: "code", role: "other", roleVia: null, disabled: false, visible: true }],
+    validationMessages: validation,
+    progress: { present: true, kind: "div", now: null, max: null, text: progress },
+    counts: { controls: 2, optionGroups: 2, options: 2, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+    historyLength: 50,
+    screenSignature: "sig:gate2",
+  });
+
+  // `ignorePresses` presses are swallowed exactly as the live gate swallowed them: no movement,
+  // no complaint. `thenValidation` instead makes the site find its voice, which must hand over.
+  const walkWith = async ({ ignorePresses = 1, thenValidation = null, validationAfterReads = null, movesOnItsOwn = false } = {}) => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const checked = new Set();
+    let presses = 0;
+    let moved = false;
+    let complained = false;
+    let readsSincePress = 0;
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) {
+          if (presses >= 1) readsSincePress += 1;
+          // BOTH inner guards live INSIDE the silent-refusal wait, so the event they react to
+          // must land there and not on the advance-poll read that precedes it. Read 1 after the
+          // press is that poll; read 2 is the wait's first look.
+          if (movesOnItsOwn && readsSincePress >= 2) moved = true;
+          if (moved) {
+            return {
+              ...screenOf(), url: "https://fixture.invalid/gated2/next", screenSignature: "sig:after",
+              controls: [], optionGroups: [], validationMessages: [],
+              // The next screen carries its OWN forward control, so pressing through it is
+              // possible — which is exactly the harm the late-advance guard prevents.
+              buttons: [{ idx: NEXT_IDX, label: ">>", labelSource: "code", role: "other", roleVia: null, disabled: false, visible: true }],
+              counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+            };
+          }
+          const lateComplaint = validationAfterReads !== null && readsSincePress >= validationAfterReads;
+          return screenOf({ checked, validation: (complained && thenValidation) || lateComplaint ? [thenValidation ?? "Please answer this question."] : [] });
+        }
+        if (src.includes("checkedGroupIdxs")) {
+          const at = src.indexOf(")[");
+          const idx = at < 0 ? null : Number(src.slice(at + 2, src.indexOf("]", at + 2)));
+          return { idx, type: "radio", name: idx !== null ? `q_${idx}` : null, formOwner: 0, unnamedControlIdx: null, checked: idx !== null && checked.has(idx), checkedGroupIdxs: idx !== null && checked.has(idx) ? [idx] : [] };
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return Array.from({ length: 14 }, (_, idx) => ({
+          async click() {
+            if (idx === NEXT_IDX) {
+              presses += 1;
+              if (thenValidation) { complained = true; return; }
+              if (presses > ignorePresses) moved = true;   // the gate has expired
+              return;
+            }
+            if (idx <= 1) checked.add(idx);
+          },
+          async type() {}, async focus() {},
+        }));
+      },
+      async screenshot() { return new TextEncoder().encode("PNG-A18"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+    const runId = mod.ids.mintRunId();
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_a18", decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/gated2", runId, planRevisionId: "plan_a18gate01",
+        attemptId: "att_a18gate0001", tier: 1, maxSteps: 2, deadline: Date.now() + 60_000,
+        viewport: { width: 1280, height: 900 }, applyHistoryShim: false, advanceTimeoutMs: 120,
+        forwardReleasePollMs: 20, forwardReleaseTerminalMaxWaitMs: 60, forwardReleaseMaxWaitMs: 5_000,
+      },
+      { env, runId, attemptId: "att_a18gate0001", pathId: "path_a18", witnesses: [] },
+    );
+    return { obs, presses };
+  };
+
+  test("THE MEASURED SHAPE: an ignored press is waited out and re-pressed, and the walk advances", async () => {
+    const { obs } = await walkWith({ ignorePresses: 1 });
+    const step0 = obs.steps[0];
+    assertEq(step0.advanced, true,
+      `a momentarily inert control must not end the walk, outcome was ${JSON.stringify(obs.outcome)}`);
+    const repress = (step0.actions ?? []).find((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    assert(repress, `the re-press must be in the receipt, got ${JSON.stringify((step0.actions ?? []).map((a) => a.detail))}`);
+    assert(String(repress.detail).includes("neither movement nor any validation"),
+      "and it must say WHY it re-pressed rather than re-answering");
+  });
+
+  test("the walk does not re-answer a question the site never complained about", async () => {
+    const { obs } = await walkWith({ ignorePresses: 1 });
+    // Scoped to the step under test: a LATER step meeting its own unresponsive screen runs its
+    // own ladder, which is ordinary behaviour and not what this pins.
+    const recovery = obs.steps.find((st) => st.decisionSource === "recovery" && st.stepIndex === 0.5);
+    assertEq(recovery, undefined,
+      "silence is not rejection: the answer-recovery ladder must not run when nothing was refused");
+  });
+
+  test("counterproof: when the site DOES complain, it is handed to recovery and not re-pressed", async () => {
+    const { obs } = await walkWith({ thenValidation: "Please make sure you choose different Profile Variation for both rows." });
+    const all = obs.steps.flatMap((s) => s.actions ?? []);
+    const repress = all.find((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    assertEq(repress, undefined,
+      "a real validation belongs to the answer-recovery ladder, never to the re-press loop");
+  });
+
+  test("a complaint that arrives DURING the wait hands over instead of re-pressing", async () => {
+    const { obs } = await walkWith({ ignorePresses: 999, validationAfterReads: 2 });
+    const represses = obs.steps
+      .flatMap((s) => s.actions ?? [])
+      .filter((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    assertEq(represses.length, 0,
+      `once the site complains the answer-recovery ladder owns it, got ${represses.length} re-presses`);
+  });
+
+  test("a survey that moves on its own while we wait is NOT pressed through", async () => {
+    const { obs } = await walkWith({ movesOnItsOwn: true });
+    // The harm is a re-press fired INSIDE the wait after the screen had already moved — that
+    // press lands on the NEXT question. (The walk pressing the next screen as its own step is
+    // ordinary progress, so total presses cannot tell the two apart; the receipt can.)
+    // SCOPED TO THE STEP UNDER TEST. A later step meeting its own unresponsive screen re-presses
+    // legitimately; the defect is a re-press on THIS step after this screen had already moved.
+    const represses = (obs.steps[0].actions ?? [])
+      .filter((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    assertEq(represses.length, 0,
+      `a late advance must be noticed, not pressed through onto the next screen: ${JSON.stringify(represses.map((a) => a.detail))}`);
+    assertEq(obs.steps[0].advanced, true, "and the walk must record that it advanced");
+  });
+
+  test("a press that is ignored forever stops at the bounded press count", async () => {
+    const { obs } = await walkWith({ ignorePresses: 999 });
+    // Pin the guard itself: the SILENT re-presses are bounded. (The initial press and the
+    // answer-recovery ladder's own presses are separate machinery with their own bounds.)
+    const represses = obs.steps
+      .flatMap((s) => s.actions ?? [])
+      .filter((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    assertEq(represses.length, 3,
+      `a page that ignores every press must not be hammered, got ${represses.length} re-presses`);
+    assert((obs.readerLimitations ?? []).some((l) => l.kind === "silent-refusal-repressed"),
+      `the extra presses must be a counted limitation, got ${JSON.stringify(obs.readerLimitations)}`);
+  });
+});

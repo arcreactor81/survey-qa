@@ -4475,6 +4475,12 @@ export const FORWARD_RELEASE_MAX_WAIT_MS = 90_000;
  */
 export const FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS = 9_000;
 export const FORWARD_CONTROL_WITHHELD = "forward-control-withheld";
+/**
+ * How many extra presses a SILENT refusal earns — the site neither moved nor complained. Small on
+ * purpose: this is for a control that was momentarily inert, not for hammering a dead page.
+ */
+export const SILENT_REFUSAL_MAX_PRESSES = 3;
+export const SILENT_REFUSAL_REPRESSED = "silent-refusal-repressed";
 
 export type WithheldForwardControl = { idx: number; label: string; why: string };
 
@@ -5832,6 +5838,105 @@ export async function walkPath(
         ),
       );
       stepReadFailures.push(failure);
+    }
+    /**
+     * A SUBMIT THE SITE NEITHER ACCEPTED NOR COMPLAINED ABOUT IS NOT A WRONG ANSWER.
+     *
+     * MEASURED LIVE 20 Aug 2026 (run `v2r_01m0enh6bjc1en2bgesvcnt5jc`, screen 45, question C20
+     * "SCREEN 2 of 4"): the walk answered the best/worst grid correctly — the distinct-column
+     * repick fired and the readbacks confirm two different columns checked — pressed forward, and
+     * nothing happened. No movement, and NO validation message either. The screen's own words say
+     * why: "You will be allowed to proceed in 4 seconds" before the press, "…in 0 seconds" after
+     * it. The press landed during a minimum-dwell gate and was ignored.
+     *
+     * THIS IS THE SECOND SHAPE OF THE GATE. On the first C20 screen the platform HID its forward
+     * control, which `awaitForwardRelease` waits out. Here it leaves the control visible and
+     * simply ignores the press, so nothing up to this point notices — and the walk then spent its
+     * recovery rounds re-deriving an answer that was already right.
+     *
+     * THE RULE: silence is not rejection. When a press produces neither movement nor a new
+     * complaint, re-answering is the wrong response; waiting and pressing again is the right one.
+     * Bounded by presses AND by the same configured ceiling, and abandoned the moment the site
+     * DOES complain — a real validation belongs to the answer-recovery ladder below, not here.
+     *
+     * NOTHING HERE READS THE COUNTDOWN. The trigger is the absence of both movement and
+     * complaint, which is platform- and language-neutral. A site that is merely slow benefits
+     * identically, and each re-press re-checks for movement first so a late advance is never
+     * pressed through.
+     */
+    let silentPresses = 0;
+    let silentWaitedMs = 0;
+    if (!advanced && after && newValidationMessages(advanceBaseline, after).length === 0) {
+      // THE CADENCE IS THE ADVANCE WINDOW ITSELF, not a knob of its own. Waiting again before
+      // re-pressing is exactly "give this submit another advance window", so `advanceTimeoutMs`
+      // is the honest unit: production waits its real 3.5s between presses, and a fixture that
+      // declares a short advance window pays a short wait instead of a real-time one.
+      const pollMs = Math.max(1, Math.floor(opts.advanceTimeoutMs));
+      const startedSilent = Date.now();
+      while (
+        silentPresses < SILENT_REFUSAL_MAX_PRESSES &&
+        Date.now() + pollMs < opts.deadline
+      ) {
+        await sleep(pollMs);
+        silentWaitedMs = Date.now() - startedSilent;
+        let fresh: RenderedScreen | null = null;
+        try {
+          fresh = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `silent-refusal re-read on step ${stepIndex}`);
+        } catch {
+          break;
+        }
+        // It may have moved on its own while we waited — never press through a late advance.
+        const late = advanceSignals(advanceBaseline, fresh);
+        if (late.length > 0) {
+          after = fresh;
+          movementSignals = late;
+          advanced = true;
+          break;
+        }
+        // The site found its voice: this is a real rejection and belongs to the recovery ladder.
+        if (newValidationMessages(advanceBaseline, fresh).length > 0) {
+          after = fresh;
+          break;
+        }
+        const again = resolveAdvanceControl(fresh);
+        if (again.kind !== "unique") break;
+        const press = await clickIdx(page, again.control.idx);
+        silentPresses += 1;
+        actions.push({
+          kind: "click-next",
+          targetIdx: again.control.idx,
+          targetLabel: again.control.label,
+          targetCode: null,
+          value: null,
+          ok: press.ok,
+          detail:
+            `silent-refusal re-press ${silentPresses} after ${silentWaitedMs}ms — the previous press produced ` +
+            `neither movement nor any validation message, so the answer was not what the site refused ` +
+            `(${press.detail}) via ${again.control.via}`,
+        });
+        if (!press.ok) break;
+        await sleep(Math.min(pollMs, 1_000));
+        try {
+          const settled = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `silent-refusal settle read on step ${stepIndex}`);
+          const moved = advanceSignals(advanceBaseline, settled);
+          after = settled;
+          if (moved.length > 0) {
+            movementSignals = moved;
+            advanced = true;
+            break;
+          }
+        } catch {
+          break;
+        }
+      }
+      if (silentPresses > 0) {
+        recordReaderLimitation(
+          SILENT_REFUSAL_REPRESSED,
+          `screen ${stepIndex} refused a press without moving and without saying anything; the walk waited ` +
+            `${silentWaitedMs}ms and pressed ${silentPresses} more time(s) before ${advanced ? "the survey moved" : "giving up on it"}`,
+          silentPresses,
+        );
+      }
     }
     if (advanced) {
       const receipt = [...actions].reverse().find((action) => action.kind === "click-next");

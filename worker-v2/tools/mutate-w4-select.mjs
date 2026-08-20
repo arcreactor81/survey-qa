@@ -930,5 +930,46 @@ await runMutantSuite({
       replace: `    if (!p?.present || typeof p.text !== "string") return 0;`,
       kills: ["an ABSENT position indicator is never compared as a zero"],
     },
+    {
+      name: "a press the site silently ignored is treated as a wrong answer",
+      breaks:
+        "the C20 gate's second shape: the control stays visible, the press lands inside the dwell "
+        + "and is swallowed, and the walk spends its recovery rounds re-deriving an answer that "
+        + "was already correct while the survey sits one press from moving on",
+      file: DR,
+      find: `    if (!advanced && after && newValidationMessages(advanceBaseline, after).length === 0) {`,
+      replace: `    if (false && after && newValidationMessages(advanceBaseline, after).length === 0) {`,
+      kills: ["THE MEASURED SHAPE: an ignored press is waited out and re-pressed, and the walk advances"],
+    },
+    {
+      name: "a real validation is re-pressed instead of answered",
+      breaks:
+        "a site that DID complain would be hammered with the same rejected answer instead of "
+        + "handing the complaint to the ladder that exists to satisfy it",
+      file: DR,
+      find: `        if (newValidationMessages(advanceBaseline, fresh).length > 0) {`,
+      replace: `        if (false) {`,
+      kills: ["a complaint that arrives DURING the wait hands over instead of re-pressing"],
+    },
+    {
+      name: "the silent re-press loses its press bound",
+      breaks:
+        "a genuinely dead page would be pressed until the ceiling elapsed rather than a small "
+        + "bounded number of times",
+      file: DR,
+      find: `        silentPresses < SILENT_REFUSAL_MAX_PRESSES &&`,
+      replace: `        silentPresses < 99 &&`,
+      kills: ["a press that is ignored forever stops at the bounded press count"],
+    },
+    {
+      name: "a late advance is pressed through instead of noticed",
+      breaks:
+        "a merely SLOW site that moved while we waited would get a second press on the NEXT "
+        + "screen, skipping a question the respondent never answered",
+      file: DR,
+      find: `        if (late.length > 0) {`,
+      replace: `        if (false) {`,
+      kills: ["a survey that moves on its own while we wait is NOT pressed through"],
+    },
   ],
 });
