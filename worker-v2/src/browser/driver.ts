@@ -4658,6 +4658,43 @@ export function advanceSignals(before: RenderedScreen, after: RenderedScreen): A
     typeof after.progress.now === "number" && Number.isFinite(after.progress.now) &&
     after.progress.now > before.progress.now
   ) out.push("progress-value-increased");
+  /**
+   * THE SITE'S OWN POSITION COUNTER, WHEN IT IS PROSE RATHER THAN A WIDGET.
+   *
+   * MEASURED LIVE 20 Aug 2026 (run `v2r_01m0eddha4xfq66xhynfmaq2cw`, screen 54, question D10):
+   * the walk pressed forward three times and the survey MOVED each time — "Survey progress: 39%"
+   * became 43% and then 44%. Every structural signal above stayed silent, because the D-section
+   * repeats one question shape: the screen signature was byte-identical, the question identity
+   * unchanged, the URL unchanged, `historyLength` pinned at 50, and no validation appeared. The
+   * walk recorded `advance-timeout` and stopped, reporting 54 screens, while the respondent it
+   * was imitating had genuinely gone further into the survey.
+   *
+   * The existing numeric signal above could not help: this platform renders progress as a `div`
+   * whose `now`/`max` are null, so the only place the position lives is the sentence itself.
+   *
+   * THE RULE, AND WHY IT IS SAFE: take the first number in the progress text on each side and
+   * require it to INCREASE. The baseline is the POST-ACTION screen, so a counter that moves when
+   * an answer is entered has already moved before this comparison — what is left is navigation.
+   * Requiring an increase, rather than any change, keeps a re-render that merely reworded itself
+   * from reading as movement.
+   *
+   * STATED LIMITATION: a position indicator carrying NO number, or one that does not increase
+   * between two screens, produces no signal here and the walk falls back to the structural
+   * signals exactly as before. This adds evidence; it never removes any.
+   */
+  const progressTextNumber = (p: RenderedScreen["progress"]): number | null => {
+    if (!p?.present || typeof p.text !== "string") return null;
+    const m = /-?\d+(?:\.\d+)?/.exec(p.text);
+    if (!m) return null;
+    const n = Number(m[0]);
+    return Number.isFinite(n) ? n : null;
+  };
+  const beforeProgressText = progressTextNumber(before.progress);
+  const afterProgressText = progressTextNumber(after.progress);
+  if (
+    beforeProgressText !== null && afterProgressText !== null &&
+    afterProgressText > beforeProgressText
+  ) out.push("progress-text-increased");
   return out;
 }
 

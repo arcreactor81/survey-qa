@@ -2985,3 +2985,95 @@ suite("amendment 16: a demand the site has made stands until the step ends", () 
     assertEq(mod.driver.mergeStandingDemands([], []).length, 0, "no demand means no demand");
   });
 });
+
+suite("amendment 17: the site's own position counter is movement evidence when it is prose", () => {
+  // Measured live 20 Aug 2026 (run v2r_01m0eddha4xfq66xhynfmaq2cw, screen 54, question D10):
+  // the walk pressed forward three times and the survey MOVED each time — "Survey progress: 39%"
+  // became 43% then 44% — while every structural signal stayed silent, because the D-section
+  // repeats one question shape. Byte-identical screen signature, unchanged question identity,
+  // unchanged URL, historyLength pinned at 50, no validation. The walk called it advance-timeout
+  // and stopped at 54 screens while the respondent had genuinely gone further.
+  const screenAt = (progressText, over = {}) => ({
+    at: "2026-08-20T12:00:00.000Z",
+    url: "https://fixture.invalid/loop",
+    title: "D-section",
+    questionText: "D10",
+    instructionText: "",
+    visibleText: "allocation grid",
+    grid: null,
+    collectedErrors: [],
+    readerLimitations: [],
+    controls: [{
+      idx: 0, tag: "input", type: "text", name: "D10_1", id: null, code: null, label: "%", text: "",
+      checked: false, value: "", valueIsUserSupplied: false, disabled: false, required: false,
+      visible: true, operable: true, actuatedVia: "self", labelIndex: null, placeholder: null,
+      maxlength: null, min: null, max: null, step: null, pattern: null, readOnly: false,
+    }],
+    optionGroups: [],
+    questionRoots: [],
+    buttons: [{ idx: 9, label: ">>", labelSource: "code", role: "other", roleVia: null, disabled: false, visible: true }],
+    validationMessages: [],
+    // The live shape: a prose div, so now/max are null and the numeric signal cannot fire.
+    progress: { present: true, kind: "div", now: null, max: null, text: progressText },
+    counts: { controls: 1, optionGroups: 0, options: 0, textInputs: 1, valueInputs: 1, optionsNotOperable: 0, readerLimitations: 0 },
+    historyLength: 50,
+    screenSignature: "sig:identical",
+    ...over,
+  });
+
+  test("THE MEASURED SHAPE: identical structure, but the progress sentence moved 39% -> 43%", async () => {
+    const { mod } = await loadWorker();
+    const signals = mod.driver.advanceSignals(screenAt("Survey progress: 39%"), screenAt("Survey progress: 43%"));
+    assert(signals.includes("progress-text-increased"),
+      `the site's own counter moving forward is movement, got ${JSON.stringify(signals)}`);
+  });
+
+  test("counterproof: an unchanged counter on an identical screen is still NOT an advance", async () => {
+    const { mod } = await loadWorker();
+    const signals = mod.driver.advanceSignals(screenAt("Survey progress: 39%"), screenAt("Survey progress: 39%"));
+    assertEq(JSON.stringify(signals), "[]",
+      "a screen that did not move must never be read as movement");
+  });
+
+  test("counterproof: a counter that went BACKWARDS is not an advance", async () => {
+    const { mod } = await loadWorker();
+    const signals = mod.driver.advanceSignals(screenAt("Survey progress: 43%"), screenAt("Survey progress: 39%"));
+    assert(!signals.includes("progress-text-increased"),
+      `going backwards is not going forwards, got ${JSON.stringify(signals)}`);
+  });
+
+  test("a position counter with no number at all yields no signal, and says nothing false", async () => {
+    const { mod } = await loadWorker();
+    const signals = mod.driver.advanceSignals(screenAt("Nearly there"), screenAt("Almost done"));
+    assert(!signals.includes("progress-text-increased"),
+      `an unparseable counter must produce no claim, got ${JSON.stringify(signals)}`);
+  });
+
+  test("the counter works on a non-percentage wording too — it is a number, not a format", async () => {
+    const { mod } = await loadWorker();
+    const signals = mod.driver.advanceSignals(screenAt("Page 3 of 20"), screenAt("Page 4 of 20"));
+    assert(signals.includes("progress-text-increased"),
+      `nothing here may depend on percent signs or English, got ${JSON.stringify(signals)}`);
+  });
+
+  test("an ABSENT position indicator is never compared as a zero", async () => {
+    const { mod } = await loadWorker();
+    // ABSENT IS NOT ZERO — the standing rule in this repo. A screen with no counter compared
+    // against one showing 5% must not read as five points of progress.
+    const noCounter = screenAt("", { progress: { present: false, kind: null, now: null, max: null, text: null } });
+    const signals = mod.driver.advanceSignals(noCounter, screenAt("Survey progress: 5%"));
+    assert(!signals.includes("progress-text-increased"),
+      `an absent counter must make no claim at all, got ${JSON.stringify(signals)}`);
+  });
+
+  test("a rejected submit is STILL not an advance, whatever the counter says", async () => {
+    const { mod } = await loadWorker();
+    // The standing rule outranks this signal: validation visible + the same answerable skeleton
+    // is a re-render, and a re-render that also renumbered itself must not read as movement.
+    const before = screenAt("Survey progress: 39%");
+    const after = screenAt("Survey progress: 43%", { validationMessages: ["Please review your responses on this page."] });
+    const signals = mod.driver.advanceSignals(before, after);
+    assertEq(JSON.stringify(signals), "[]",
+      `the site's own rejection outranks every structural signal, got ${JSON.stringify(signals)}`);
+  });
+});

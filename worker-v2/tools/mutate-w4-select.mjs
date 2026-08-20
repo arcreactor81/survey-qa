@@ -889,5 +889,46 @@ await runMutantSuite({
       replace: `    if (!key) continue;`,
       kills: ["a repeated demand is not counted twice, however the site re-spaces it"],
     },
+    {
+      name: "the site's own prose position counter stops being movement evidence",
+      breaks:
+        "the D-section defect: a survey whose repeated question shape makes every structural "
+        + "signal silent advances three screens while the walk records advance-timeout and stops, "
+        + "reporting a depth the respondent had already passed",
+      file: DR,
+      find: `    afterProgressText > beforeProgressText`,
+      replace: `    false`,
+      kills: ["THE MEASURED SHAPE: identical structure, but the progress sentence moved 39% -> 43%"],
+    },
+    {
+      name: "any change in the position counter counts as forward",
+      breaks:
+        "a counter that renumbered itself downward, or a re-render that reworded it, would read "
+        + "as the survey moving on",
+      file: DR,
+      find: `    afterProgressText > beforeProgressText`,
+      replace: `    afterProgressText !== beforeProgressText`,
+      kills: ["counterproof: a counter that went BACKWARDS is not an advance"],
+    },
+    {
+      name: "the position counter is parsed as a whole-string number",
+      breaks:
+        "a counter embedded in a sentence — which is the only shape this platform renders — "
+        + "would never parse, so the signal would be silently dead on the survey it was built for",
+      file: DR,
+      find: String.raw`    const m = /-?\d+(?:\.\d+)?/.exec(p.text);`,
+      replace: String.raw`    const m = /^-?\d+(?:\.\d+)?$/.exec(p.text);`,
+      kills: ["THE MEASURED SHAPE: identical structure, but the progress sentence moved 39% -> 43%"],
+    },
+    {
+      name: "an absent position indicator is read as a zero",
+      breaks:
+        "a screen with no counter at all would compare as 0, so the first screen that HAS one "
+        + "would read as an advance that never happened",
+      file: DR,
+      find: `    if (!p?.present || typeof p.text !== "string") return null;`,
+      replace: `    if (!p?.present || typeof p.text !== "string") return 0;`,
+      kills: ["an ABSENT position indicator is never compared as a zero"],
+    },
   ],
 });

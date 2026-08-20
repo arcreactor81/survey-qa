@@ -537,6 +537,8 @@ export type AdvanceSignal =
   | "url-changed"
   | "history-length-changed"
   | "progress-value-increased"
+  /** The site's own position counter, read from its TEXT, moved forward. See advanceSignals. */
+  | "progress-text-increased"
   | "info-screen-text-changed";
 
 /**
