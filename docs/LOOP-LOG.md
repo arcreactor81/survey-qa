@@ -292,6 +292,33 @@ out, step ends named) when the accumulated demands still cannot be satisfied.
 
 Not built in this session: the walk record shows it clearly and it is the next class fix.
 
+### Third train: D10 fix built, and two more report bounce-backs
+
+Built the D10 monotonic-demand fix (`mergeStandingDemands`) — commit `9e0a3d5`, amendment 16, 5/5
+tests, 4/4 mutants killed including the exact regression: restore the old
+`roundValidation = recovered?.validationMessages ?? []` and the measured-shape test fails.
+
+Merged `report-blockers @ f58d399` (both earlier bounce-backs verified fixed) and
+`corpus-gate-hardening @ 7d77185`. Merged-tree suite **1612/1612**, tsc 0, corpus gate green.
+
+**`mutate-report-defects` came back 18/20 — two NEW mutants SURVIVED**, both from
+`report-blockers`, both the same shape: the fixture never exercises the case the mutant breaks.
+
+1. **B3 — "the attempt ledger reads v1's nested timestamps again".** The mutant strips the
+   `?? a.startedAt` fallback, leaving only `a.timestamps?.startedAt`. The guard
+   "B3 — the attempt ledger reports what the record holds, and absent is never a zero" still
+   passed, so its fixture must be supplying v1-style NESTED timestamps — the very shape the
+   fallback exists because v2 does NOT write. The fixture needs a v2 record with FLAT
+   `startedAt`/`endedAt` and no `timestamps` object.
+2. **B4 — "the record stops carrying how far the walk got".** The mutant deletes `screensAdvanced`
+   from `deriveAttempts` entirely. The guard "B4 — HOW FAR WE GOT reaches the record and the page"
+   still passed, so it is not asserting that the depth NUMBER reaches the rendered page. This is
+   the same field as the standing debt item below — the record carrying walk depth as typed data.
+
+Neither is a walker defect and neither blocks the walk: both are report-path guards that cannot
+fail, which is the repo's cardinal sin but not a shipped-behaviour break. Handed back to the
+report train; the deploy proceeds on the walker gates.
+
 ### Bounce-backs from the merged-tree campaigns (20 Aug)
 
 The builders' new mutants arrived unscored by agreement, so the merged-tree runs are their first
