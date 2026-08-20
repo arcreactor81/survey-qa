@@ -129,35 +129,6 @@
     "partial-blocked": "Testing stopped because something blocked it."
   };
 
-  // Durable document-reading progress is a separate denominator from requirements and
-  // browser activity. These maps translate the closed server contract; an unknown token
-  // is treated as unavailable rather than printed as product copy.
-  var READING_SCHEMA = "document-reading-progress/1.0.0";
-  var READING_STAGES = {
-    "primary-windows": "First read: document windows",
-    "cross-window-synthesis": "Joining the first-read windows",
-    "secondary-chunks": "Second read (Pass B): document chunks",
-    "secondary-sweep": "Second read (Pass B): final sweep",
-    complete: "Document reading complete",
-    unavailable: "Reading progress unavailable"
-  };
-  var SYNTHESIS_WORDS = {
-    "waiting-for-windows": "Waiting for the first-read windows",
-    pending: "Joining the first-read windows",
-    ok: "First-read synthesis saved",
-    failed: "First-read synthesis failed",
-    "not-required": "No cross-window synthesis was needed",
-    "reduced-provider-independence": "First-read synthesis saved with less independent provider review than planned",
-    unknown: "Not reported"
-  };
-  var READING_STATE_WORDS = {
-    reading: "Reading",
-    complete: "Reading finished",
-    stopped: "Reading stopped",
-    unavailable: "Progress unavailable"
-  };
-  var readingHeadingSequence = 0;
-
   // ---------------------------------------------------------------- DOM helpers
   // `text` is the ONLY way data enters the DOM. There is no innerHTML for data.
   function el(tag, opts, kids) {
@@ -1210,385 +1181,6 @@
     })]);
   }
 
-  // ---------------------------------------------------------- questionnaire reading
-  // This is a second closed projection in the browser. The server already validates the
-  // checkpoint, but a stale cache, partial rollout, or malformed fixture must not turn a
-  // contradictory count into a plausible progress display. Invalid input therefore loses
-  // all counts and becomes one named unavailable state.
-  function readingObject(value) {
-    return value !== null && typeof value === "object" && !Array.isArray(value);
-  }
-
-  function readingExactKeys(value, expected) {
-    if (!readingObject(value)) return false;
-    var keys = Object.keys(value);
-    if (keys.length !== expected.length) return false;
-    for (var i = 0; i < expected.length; i++) {
-      if (!Object.prototype.hasOwnProperty.call(value, expected[i])) return false;
-    }
-    return true;
-  }
-
-  function readingCount(value) {
-    return typeof value === "number" && isFinite(value) && Math.floor(value) === value &&
-      value >= 0 && value <= Number.MAX_SAFE_INTEGER;
-  }
-
-  function readingNumber(value) {
-    return typeof value === "number" && isFinite(value) && value >= 0;
-  }
-
-  function readingText(value, max, nullable) {
-    if (nullable && value === null) return true;
-    return typeof value === "string" && value.length > 0 && value.length <= max;
-  }
-
-  function readingCountsReconcile(total, landed, remaining) {
-    if (total === null) return landed === 0 && remaining === null;
-    return readingCount(total) && readingCount(landed) && readingCount(remaining) &&
-      landed <= total && remaining === total - landed;
-  }
-
-  function readingUnitIsValid(unit) {
-    if (!readingExactKeys(unit, ["kind", "name", "ordinal", "total", "sourceContext"]) ||
-      ["window", "synthesis", "chunk", "sweep"].indexOf(unit.kind) < 0 ||
-      !readingText(unit.name, 120, false) ||
-      (unit.ordinal !== null && !readingCount(unit.ordinal)) ||
-      (unit.total !== null && !readingCount(unit.total)) ||
-      (readingCount(unit.ordinal) && readingCount(unit.total) && unit.ordinal > unit.total)) return false;
-    var source = unit.sourceContext;
-    return source === null || (readingExactKeys(source,
-      ["authority", "blockCount", "firstBlockId", "lastBlockId", "label", "preview"]) &&
-      source.authority === "parsed-document-blocks" && readingCount(source.blockCount) &&
-      source.blockCount >= 1 && readingText(source.firstBlockId, 120, false) &&
-      readingText(source.lastBlockId, 120, false) && readingText(source.label, 160, true) &&
-      readingText(source.preview, 240, true));
-  }
-
-  function invalidReading(detail) {
-    return { kind: "invalid", detail: detail };
-  }
-
-  function documentReadingSnapshot(view) {
-    if (!view || !view.status) return { kind: "loading" };
-    if (!Object.prototype.hasOwnProperty.call(view.status, "documentReading") ||
-      view.status.documentReading == null) return { kind: "missing" };
-
-    var raw = view.status.documentReading;
-    if (!readingExactKeys(raw, ["schemaVersion", "state", "stage", "primary", "secondary",
-      "currentUnit", "lastDurableUnit", "failure", "limitations", "usage", "retention", "updatedAt"])) {
-      return invalidReading("The saved document-reading record has an unexpected shape.");
-    }
-    if (raw.schemaVersion !== READING_SCHEMA || !has(READING_STATE_WORDS, raw.state) ||
-      !has(READING_STAGES, raw.stage) || ms(raw.updatedAt) == null) {
-      return invalidReading("The saved document-reading record has an unsupported state, stage, or commit time.");
-    }
-
-    var primary = raw.primary;
-    if (!readingExactKeys(primary, ["total", "landed", "remaining", "synthesisState"]) ||
-      !readingCountsReconcile(primary.total, primary.landed, primary.remaining) ||
-      !has(SYNTHESIS_WORDS, primary.synthesisState)) {
-      return invalidReading("The saved first-read counts do not reconcile.");
-    }
-
-    var secondary = raw.secondary;
-    if (secondary !== null && (!readingExactKeys(secondary,
-      ["total", "landed", "remaining", "sweepRemaining"]) ||
-      !readingCountsReconcile(secondary.total, secondary.landed, secondary.remaining) ||
-      (secondary.sweepRemaining !== null && !readingCount(secondary.sweepRemaining)))) {
-      return invalidReading("The saved Pass B counts do not reconcile.");
-    }
-
-    var usage = raw.usage;
-    var usageValuesValid = readingObject(usage) &&
-      ((usage.authority === "unavailable" && usage.modelCalls === null && usage.costUsd === null) ||
-        (usage.authority === "checkpoint-usage-ledger" && readingCount(usage.modelCalls) &&
-          readingNumber(usage.costUsd)));
-    if (!readingExactKeys(usage, ["authority", "modelCalls", "costUsd"]) ||
-      !usageValuesValid) {
-      return invalidReading("The saved usage summary is not safe to display.");
-    }
-
-    var retention = raw.retention;
-    if (!readingExactKeys(retention, ["authority", "artifacts", "runIsolation", "compressionAllowed"]) ||
-      retention.authority !== "service-policy" || retention.artifacts !== "permanent" ||
-      retention.runIsolation !== "dedicated-run-id" || retention.compressionAllowed !== true) {
-      return invalidReading("The saved run-record retention statement is unsupported.");
-    }
-
-    var current = raw.currentUnit;
-    if (current !== null && !readingUnitIsValid(current)) {
-      return invalidReading("The saved latest-started-unit record or its source context is malformed.");
-    }
-    var last = raw.lastDurableUnit;
-    if (last !== null && !readingUnitIsValid(last)) {
-      return invalidReading("The saved latest-unit record or its source context is malformed.");
-    }
-
-    var failure = raw.failure;
-    if (failure !== null && (!readingExactKeys(failure, ["unit", "reasonCode", "detail"]) ||
-      !readingText(failure.unit, 120, true) || !readingText(failure.reasonCode, 100, false) ||
-      !readingText(failure.detail, 1000, false))) {
-      return invalidReading("The saved stopped-unit record is incomplete.");
-    }
-
-    if (!Array.isArray(raw.limitations) || raw.limitations.length > 20) {
-      return invalidReading("The saved reading limitations are not a bounded list.");
-    }
-    for (var li = 0; li < raw.limitations.length; li++) {
-      var limitation = raw.limitations[li];
-      if (!readingExactKeys(limitation, ["code", "count", "detail"]) ||
-        !readingText(limitation.code, 100, false) || !readingCount(limitation.count) ||
-        !readingText(limitation.detail, 1000, false)) {
-        return invalidReading("A saved reading limitation is incomplete.");
-      }
-    }
-
-    return { kind: "ok", value: raw };
-  }
-
-  function readingMetric(label, value, explanation) {
-    return el("div", { cls: "reading-metric" }, [
-      el("div", { cls: "reading-metric__label", text: label }),
-      el("div", { cls: "reading-metric__value num", text: value }),
-      el("div", { cls: "reading-metric__explain", text: explanation })
-    ]);
-  }
-
-  function readingFact(label, valueNode) {
-    return el("div", { cls: "reading-fact" }, [
-      el("div", { cls: "reading-fact__label", text: label }),
-      el("div", { cls: "reading-fact__value" }, [valueNode])
-    ]);
-  }
-
-  function renderReadingLimitations(reading) {
-    var box = el("section", {
-      cls: "reading-limitations",
-      attrs: { "aria-label": "Document-reading limitations" }
-    }, [el("h3", { text: "Recorded reading limitations" })]);
-    if (!reading.limitations.length) {
-      box.appendChild(el("p", { cls: "reading-none", text: "No document-reading limitation was recorded at this update." }));
-      return box;
-    }
-    box.appendChild(el("ul", {}, reading.limitations.map(function (limitation) {
-      return el("li", {}, [
-        el("div", { cls: "reading-limitation__head" }, [
-          machine(limitation.code),
-          el("span", { cls: "reading-limitation__count num", text: "Count " + limitation.count })
-        ]),
-        el("p", { text: limitation.detail })
-      ]);
-    })));
-    return box;
-  }
-
-  function renderReadingSource(source, ownerLabel) {
-    if (!source) {
-      return el("div", { cls: "reading-source is-missing" }, [
-        el("h3", { text: "Source context" }),
-        el("p", { text: "No exact parsed-document context was saved for the " + ownerLabel + "." })
-      ]);
-    }
-    var rows = [
-      readingMetric("Bound document blocks", String(source.blockCount),
-        "An exact count from the parsed document, not a page estimate."),
-      readingFact("First block", machine(source.firstBlockId)),
-      readingFact("Last block", machine(source.lastBlockId))
-    ];
-    if (source.label !== null) rows.push(readingFact("Section label", el("span", { text: source.label })));
-    if (source.preview !== null) rows.push(el("blockquote", { cls: "reading-source__preview", text: source.preview }));
-    return el("div", { cls: "reading-source" }, [
-      el("h3", { text: "Source context for the " + ownerLabel }),
-      el("div", { cls: "reading-source__rows" }, rows)
-    ]);
-  }
-
-  function renderReadingUsage(usage) {
-    var box = el("div", { cls: "reading-usage" }, [el("h3", { text: "Saved usage and spend" })]);
-    if (usage.authority !== "checkpoint-usage-ledger" ||
-      (usage.modelCalls === null && usage.costUsd === null)) {
-      box.appendChild(el("p", {
-        cls: "reading-none",
-        text: "No safe saved usage or spend figure is available for this reading update. Zero is not assumed."
-      }));
-      return box;
-    }
-    box.appendChild(el("div", { cls: "reading-usage__grid" }, [
-      readingMetric("Model calls", usage.modelCalls === null ? "Not reported" : String(usage.modelCalls),
-        "Durable whole-run total at this reading update."),
-      readingMetric("Spend", usage.costUsd === null ? "Not reported" : usd(usage.costUsd),
-        "Durable whole-run total at this reading update.")
-    ]));
-    box.appendChild(el("p", {
-      cls: "reading-usage__note",
-      text: "These whole-run checkpoint totals are not assigned to the displayed document unit."
-    }));
-    return box;
-  }
-
-  function readingEmptyCard(card, title, body, code) {
-    card.appendChild(el("div", { cls: "empty-state reading-empty" }, [
-      el("strong", { text: title }),
-      el("p", { text: body }),
-      code ? machineRow("Reference:", code) : null
-    ]));
-    return card;
-  }
-
-  function renderDocumentReading(view) {
-    var snapshot = documentReadingSnapshot(view);
-    var headingId = "document-reading-heading-" + (++readingHeadingSequence);
-    var state = snapshot.kind === "ok" ? snapshot.value.state : snapshot.kind;
-    var card = el("section", {
-      cls: "reading-card" + (state === "stopped" || state === "invalid" ? " is-stopped" : ""),
-      attrs: { "aria-labelledby": headingId, "data-document-reading-state": state }
-    });
-    card.appendChild(el("div", { cls: "reading-card__head" }, [
-      el("div", {}, [
-        el("p", { cls: "kicker", text: "Questionnaire reading" }),
-        el("h2", { attrs: { id: headingId }, text: "What the document reader has saved" })
-      ]),
-      el("span", { cls: "reading-state reading-state--" + state,
-        text: snapshot.kind === "ok" ? READING_STATE_WORDS[snapshot.value.state] :
-          snapshot.kind === "loading" ? "Waiting for update" :
-            snapshot.kind === "missing" ? "Not reported" : "Progress unavailable" })
-    ]));
-
-    if (snapshot.kind === "loading") {
-      return readingEmptyCard(card, "Waiting for the first status update.",
-        "No document-reading denominator has arrived yet, so this page does not show zero progress.", null);
-    }
-    if (snapshot.kind === "missing") {
-      return readingEmptyCard(card,
-        isTerminal(view) ? "The run ended without a document-reading record." : "No document-reading record has arrived yet.",
-        isTerminal(view)
-          ? "The page cannot say how much of the document was read. Missing progress is not zero and is not completion."
-          : "The page cannot yet say how much was read. Missing progress is not shown as zero.",
-        "document-reading-progress-missing");
-    }
-    if (snapshot.kind === "invalid") {
-      return readingEmptyCard(card, "Document-reading progress is unavailable.",
-        snapshot.detail + " Counts were withheld instead of being repaired or replaced with zero.",
-        "document-reading-progress-invalid");
-    }
-
-    var reading = snapshot.value;
-    card.appendChild(el("p", { cls: "reading-card__stage" }, [
-      el("span", { text: "Current reading step: " }),
-      el("strong", { text: READING_STAGES[reading.stage] })
-    ]));
-
-    if (reading.state === "unavailable") {
-      card.appendChild(el("div", { cls: "empty-state reading-empty" }, [
-        el("strong", { text: "Saved reading counts are unavailable." }),
-        el("p", { text: "The service named the limitation below. Its placeholder zeros are not displayed as progress." })
-      ]));
-    } else if (reading.primary.total === null) {
-      card.appendChild(el("div", { cls: "empty-state reading-empty" }, [
-        el("strong", { text: "The first-read denominator is not saved yet." }),
-        el("p", { text: "Until the total is durable, this page does not turn the placeholder count into progress." })
-      ]));
-    } else {
-      card.appendChild(el("div", { cls: "reading-pass" }, [
-        el("h3", { text: "First read" }),
-        el("div", { cls: "reading-metrics" }, [
-          readingMetric("Total units", String(reading.primary.total), "Fixed document-window denominator."),
-          readingMetric("Accounted for", String(reading.primary.landed),
-            "Durably retained units, including any retained failure."),
-          readingMetric("Unread", String(reading.primary.remaining), "Units not yet durably accounted for.")
-        ])
-      ]));
-    }
-
-    card.appendChild(el("div", { cls: "reading-states" }, [
-      readingFact("Cross-window synthesis", el("span", { text: SYNTHESIS_WORDS[reading.primary.synthesisState] })),
-      readingFact("Second read (Pass B)", el("span", { text: reading.secondary === null
-        ? "No saved Pass B progress yet; zero is not assumed."
-        : reading.secondary.total === null
-          ? "Its denominator is not saved yet."
-          : reading.secondary.remaining === 0 && reading.secondary.sweepRemaining === 0
-            ? "All saved Pass B units and sweep units are accounted for."
-            : "Saved Pass B progress is shown below." }))
-    ]));
-
-    if (reading.state !== "unavailable" && reading.secondary !== null && reading.secondary.total !== null) {
-      card.appendChild(el("div", { cls: "reading-pass" }, [
-        el("h3", { text: "Second read (Pass B)" }),
-        el("div", { cls: "reading-metrics reading-metrics--four" }, [
-          readingMetric("Total units", String(reading.secondary.total), "Fixed Pass B chunk denominator."),
-          readingMetric("Accounted for", String(reading.secondary.landed), "Durably retained Pass B units."),
-          readingMetric("Unread", String(reading.secondary.remaining), "Pass B chunks not yet accounted for."),
-          readingMetric("Sweep unread", reading.secondary.sweepRemaining === null ? "Not reported" : String(reading.secondary.sweepRemaining),
-            "Remaining units in the saved final sweep.")
-        ])
-      ]));
-    }
-
-    if (reading.state === "reading" && reading.currentUnit) {
-      var currentValue = el("span", {}, [machine(reading.currentUnit.name)]);
-      if (reading.currentUnit.ordinal !== null && reading.currentUnit.total !== null) {
-        currentValue.appendChild(document.createTextNode(" (" + reading.currentUnit.ordinal + " / " +
-          reading.currentUnit.total + ")"));
-      }
-      card.appendChild(el("div", { cls: "reading-current" }, [
-        readingFact("Latest unit started", currentValue),
-        renderReadingSource(reading.currentUnit.sourceContext, "latest unit started"),
-        reading.stage === "secondary-chunks"
-          ? el("p", { cls: "reading-none", text:
-            "Pass B may have other units in flight. This view names only the latest unit started; the exact active count is unavailable." })
-          : null
-      ]));
-    } else if (reading.state === "reading") {
-      card.appendChild(el("p", { cls: "reading-none", text: "No latest unit start is durably recorded at this update." }));
-    }
-
-    if (reading.lastDurableUnit) {
-      var lastValue = el("span", {}, [machine(reading.lastDurableUnit.name)]);
-      if (reading.lastDurableUnit.ordinal !== null && reading.lastDurableUnit.total !== null) {
-        lastValue.appendChild(document.createTextNode(" (" + reading.lastDurableUnit.ordinal + " / " +
-          reading.lastDurableUnit.total + ")"));
-      }
-      card.appendChild(el("div", { cls: "reading-latest" }, [
-        readingFact("Last saved unit", lastValue),
-        renderReadingSource(reading.lastDurableUnit.sourceContext, "last saved unit")
-      ]));
-    } else {
-      card.appendChild(el("p", { cls: "reading-none", text: "No durable document unit has been saved yet." }));
-    }
-
-    if (reading.failure) {
-      card.appendChild(el("div", { cls: "reading-failure", attrs: { role: "alert" } }, [
-        el("h3", { text: "Exact stopped unit and reason" }),
-        reading.failure.unit === null
-          ? el("p", { text: "The reader stopped before it could identify a durable unit." })
-          : machineRow("Stopped unit:", reading.failure.unit),
-        machineRow("Reason:", reading.failure.reasonCode),
-        el("p", { cls: "reading-failure__detail", text: reading.failure.detail })
-      ]));
-    } else if (reading.state === "stopped") {
-      card.appendChild(el("div", { cls: "reading-failure", attrs: { role: "alert" } }, [
-        el("h3", { text: "No exact stopped-unit reason was recorded." }),
-        el("p", { text: "The reading state says stopped, but this update cannot name the unit or cause." })
-      ]));
-    }
-
-    card.appendChild(el("div", { cls: "reading-updated" }, [
-      el("span", { text: "Last durable reading progress: " }),
-      el("time", { attrs: { datetime: reading.updatedAt }, text: clockTime(reading.updatedAt) || reading.updatedAt }),
-      el("span", { text: " (" }),
-      el("span", { attrs: { "data-age-of": "document-reading" }, text: ageWords(Math.max(0, Date.now() - ms(reading.updatedAt))) }),
-      el("span", { text: ")" })
-    ]));
-    card.appendChild(el("div", { cls: "reading-retention" }, [
-      el("strong", { text: "Run records retained permanently" }),
-      el("span", { text: "Artifacts for this run are kept permanently in its own run record. Compression may reduce size but does not delete evidence." })
-    ]));
-    card.appendChild(renderReadingUsage(reading.usage));
-    card.appendChild(renderReadingLimitations(reading));
-    return card;
-  }
-
   // ---------------------------------------------------------------- browser activity
   // This panel uses a separate server projection because attempts, screen changes, stable
   // screens and sealed-case credit have different grains. None is derived from another.
@@ -1610,7 +1202,6 @@
       "time-cap": "Stopped at the walk time limit",
       "load-crash": "Page crashed while loading",
       "browser-hung": "Browser stopped responding",
-      "per-case-timeout": "Walk exceeded its per-case time budget",
       "cycle-detected": "Repeated transition cycle detected",
       error: "Walker error",
       unrecognized: "Unrecognised recorded outcome"
@@ -1827,208 +1418,6 @@
         intOr(inspection.unreadableOrMismatchedWalks, "0") + " unreadable or mismatched, " +
         intOr(inspection.walksNotInspectedBecauseOfLimit, "0") + " outside the inspection limit."
     }));
-    return card;
-  }
-
-  var SCREEN_LIMITATION_WORDS = {
-    "walk-artifact-missing": "No saved browser record was found for this walk.",
-    "walk-artifact-mismatched": "The saved browser record belongs to a different attempt.",
-    "walk-artifact-ambiguous": "More than one saved browser record could match this walk.",
-    "legacy-walk-artifact-resolution": "This older browser record cannot be tied to one exact attempt.",
-    "walk-artifact-catalog-entry-missing": "The saved file list no longer contains this browser record.",
-    "walk-artifact-catalog-binding-failed": "The saved browser record did not verify.",
-    "walk-artifact-index-catalog-mismatch": "The saved file details do not match this browser record.",
-    "walk-artifact-bytes-unreadable": "The saved browser record did not pass its file check.",
-    "walk-artifact-envelope-invalid": "The saved browser record could not be read safely.",
-    "walk-artifact-identity-mismatch": "The saved browser record belongs to a different walk.",
-    "screen-captures-not-recorded-by-reader": "This older browser record did not include screen captures.",
-    "no-screen-capture-epochs-recorded": "This browser record contains no screen captures.",
-    "inconsistent-declared-capture-counts": "The saved capture total does not match the saved capture list.",
-    "pdf-not-recorded-by-reader": "This older capture did not record a PDF.",
-    "evidence-catalog-entry-missing": "The saved file list no longer contains this capture file.",
-    "evidence-catalog-binding-failed": "This capture file did not verify.",
-    "evidence-reference-catalog-mismatch": "The saved file details do not match this capture.",
-    "evidence-bytes-unreadable": "A recorded capture file did not pass its stored hash check.",
-    "walk-artifact-index-missing": "The run has no saved browser-walk list yet, so the screen list is not known."
-  };
-
-  function screenLimitationText(kind) {
-    return SCREEN_LIMITATION_WORDS[kind] || "A named capture limitation was recorded.";
-  }
-
-  function renderScreenLimitation(item) {
-    var count = item && typeof item.count === "number" && isFinite(item.count) ? item.count : 1;
-    return el("li", { text: screenLimitationText(item && item.kind) + " " + count + " occurrence(s)." });
-  }
-
-  function evidenceHref(view, modality) {
-    if (!modality || modality.status !== "catalog-bound" || modality.verification !== "on-content-request") return null;
-    if (typeof modality.evidenceId !== "string" || !/^ev_[0-9a-hjkmnp-tv-z]{12}$/.test(modality.evidenceId)) return null;
-    return "/api/v2/runs/" + encodeURIComponent(view.runId || "") +
-      "/evidence/" + encodeURIComponent(modality.evidenceId) + "/content";
-  }
-
-  function renderCapturedScreen(view, entry) {
-    var card = el("article", { cls: "screen-capture", attrs: { "data-screen-cursor": entry.cursor } });
-    var walkNumber = typeof entry.walkOrdinal === "number" && isFinite(entry.walkOrdinal)
-      ? Math.floor(entry.walkOrdinal) + 1
-      : null;
-    var captureNumber = typeof entry.epochOrdinal === "number" && isFinite(entry.epochOrdinal)
-      ? Math.floor(entry.epochOrdinal) + 1
-      : null;
-    var positionLabel = walkNumber !== null && captureNumber !== null
-      ? "Walk " + walkNumber + ", capture " + captureNumber
-      : "Recorded capture";
-    card.appendChild(el("div", { cls: "screen-capture__head" }, [
-      el("h3", { text: "Captured screen" }),
-      el("span", { cls: "screen-capture__ordinal", text: positionLabel })
-    ]));
-
-    var screenshotHref = evidenceHref(view, entry.screenshot);
-    if (screenshotHref) {
-      card.appendChild(el("img", {
-        cls: "screen-capture__image",
-        attrs: {
-          src: screenshotHref,
-          alt: "Captured screen image. " + positionLabel,
-          loading: "lazy",
-          decoding: "async"
-        }
-      }));
-    } else {
-      card.appendChild(el("p", {
-        cls: "screen-capture__missing",
-        text: "No verified screenshot is available for this recorded capture."
-      }));
-    }
-
-    var links = [];
-    var screenJsonHref = evidenceHref(view, entry.extractedJson);
-    if (screenJsonHref) {
-      links.push(el("a", {
-        text: "Extracted JSON", attrs: { href: screenJsonHref, target: "_blank", rel: "noopener" }
-      }));
-    }
-    var pdfHref = evidenceHref(view, entry.pdf);
-    if (pdfHref) {
-      links.push(el("a", { text: "Download print PDF", attrs: { href: pdfHref, download: "" } }));
-    }
-    var accessibilityHref = evidenceHref(view, entry.accessibility);
-    if (accessibilityHref) {
-      links.push(el("a", {
-        text: "Accessibility JSON", attrs: { href: accessibilityHref, target: "_blank", rel: "noopener" }
-      }));
-    }
-    if (links.length) card.appendChild(el("div", { cls: "screen-capture__links" }, links));
-
-    if (Array.isArray(entry.limitations) && entry.limitations.length) {
-      card.appendChild(el("div", { cls: "screen-capture__limits" }, [
-        el("h4", { text: "Limitations" }),
-        el("ul", {}, entry.limitations.map(renderScreenLimitation))
-      ]));
-    }
-    return card;
-  }
-
-  function renderScreenEvidence(view) {
-    if (transportState(view) === "not-found") return null;
-    var state = view.screenEvidence || {
-      state: "not-requested", entries: [], denominator: null, indexLimitations: [], nextCursor: null, code: null
-    };
-    var card = el("section", { cls: "screen-evidence", attrs: { id: "captured-screens" } }, [
-      el("p", { cls: "kicker", text: "Saved browser evidence" }),
-      el("h2", { text: "Captured screens" }),
-      el("p", {
-        cls: "screen-evidence__lead",
-        text: "Open the exact screen files saved by the browser. Each card is one recorded capture, not a guessed page or question."
-      }),
-      el("p", {
-        cls: "screen-evidence__print-note",
-        text: "The screenshot is the exact captured view. The PDF is an A4 browser print rendition; it may reflow or span pages."
-      })
-    ]);
-    card.appendChild(el("p", {
-      cls: "screen-evidence__file-check",
-      text: "Large capture files are not preloaded. Each file is checked against its saved fingerprint when it opens."
-    }));
-
-    if (state.denominator && typeof state.denominator.walks === "number") {
-      card.appendChild(el("p", {
-        cls: "screen-evidence__denominator",
-        text: state.denominator.walks + " browser walk(s) are recorded. Captures and any walk-level record limitations are listed below."
-      }));
-    }
-
-    if (Array.isArray(state.indexLimitations) && state.indexLimitations.length) {
-      card.appendChild(el("div", { cls: "screen-evidence__limits" }, [
-        el("h3", { text: "Known record limitations" }),
-        el("ul", {}, state.indexLimitations.map(function (item) {
-          return renderScreenLimitation({ kind: item.kind, count: item.occurrences });
-        }))
-      ]));
-    }
-
-    var entries = Array.isArray(state.entries) ? state.entries : [];
-    var captures = entries.filter(function (entry) { return entry && entry.kind === "captured-screen"; });
-    var walkLimits = entries.filter(function (entry) { return entry && entry.kind === "limitation"; });
-    if (captures.length) {
-      card.appendChild(el("div", { cls: "screen-evidence__grid" }, captures.map(function (entry) {
-        return renderCapturedScreen(view, entry);
-      })));
-    }
-    if (walkLimits.length) {
-      card.appendChild(el("div", { cls: "screen-evidence__limits" }, [
-        el("h3", { text: "Recorded walk-level capture limitations" }),
-        el("ul", {}, walkLimits.reduce(function (items, entry) {
-          var limitations = Array.isArray(entry.limitations) ? entry.limitations : [];
-          return items.concat(limitations.map(renderScreenLimitation));
-        }, []))
-      ]));
-    }
-
-    if (state.state === "unavailable") {
-      card.appendChild(el("p", {
-        cls: "screen-evidence__missing",
-        text: entries.length
-          ? "The next screen-evidence page could not be loaded. The verified captures already shown remain available."
-          : "Screen evidence is not available at this update. This is not evidence that no screens were captured."
-      }));
-    }
-
-    if (state.nextCursor !== null) {
-      card.appendChild(el("p", {
-        cls: "screen-evidence__partial",
-        text: "This view is incomplete: more saved captures are available. Load more before printing."
-      }));
-    }
-
-    var atLiveTail = state.state === "ready" && state.nextCursor === null && !isTerminal(view);
-    var shouldOffer = state.state === "not-requested" || state.state === "unavailable" ||
-      state.nextCursor !== null || atLiveTail;
-    if (state.state === "ready" && !entries.length) {
-      card.appendChild(el("p", {
-        cls: "screen-evidence__missing",
-        text: "The recorded browser walks contain no viewable screen captures. Any known limits are shown above."
-      }));
-    }
-    if (state.state === "loading") {
-      card.appendChild(el("button", {
-        cls: "btn btn-ghost", text: "Loading captured screensâ€¦", attrs: { type: "button", disabled: "" }
-      }));
-    } else if (shouldOffer) {
-      var label = state.state === "not-requested"
-        ? "Show captured screens"
-        : state.state === "unavailable"
-          ? "Try loading screen evidence again"
-          : state.nextCursor !== null
-            ? "Load more"
-            : "Check for newer captures";
-      card.appendChild(el("button", {
-        cls: "btn btn-ghost",
-        text: label,
-        attrs: { type: "button", "data-screen-evidence-action": "load" }
-      }));
-    }
     return card;
   }
 
@@ -2348,26 +1737,6 @@
 
   // One short sentence for the screen-reader live region. watch.js announces it only when
   // it CHANGES, so a polite region does not re-read the page every poll.
-  function summarizeDocumentReading(view) {
-    var snapshot = documentReadingSnapshot(view);
-    if (snapshot.kind === "loading") return "Waiting for the first document-reading update.";
-    if (snapshot.kind === "missing") return isTerminal(view)
-      ? "The run ended without a document-reading record."
-      : "No document-reading record has arrived yet.";
-    if (snapshot.kind === "invalid") return "Document-reading progress is unavailable because its saved counts did not verify.";
-    var reading = snapshot.value;
-    if (reading.state === "unavailable") return "Document-reading progress is unavailable; its recorded limitations are shown.";
-    var counts = reading.primary.total === null
-      ? "The first-read total is not known."
-      : reading.primary.landed + " of " + reading.primary.total +
-        " first-read units are accounted for; " + reading.primary.remaining + " unread.";
-    if (reading.state === "stopped") return "Document reading stopped" +
-      (reading.failure && reading.failure.unit ? " at " + reading.failure.unit : "") + ". " + counts;
-    if (reading.state === "complete") return "Document reading finished. " + counts;
-    return "Document reading is in progress" +
-      (reading.currentUnit ? " at " + reading.currentUnit.name : "") + ". " + counts;
-  }
-
   function summarize(view) {
     var t = transportState(view);
     if (t === "not-found") return "We cannot find this run. This page has stopped checking.";
@@ -2382,7 +1751,7 @@
         ? tot.requirementsChecked + " of " + tot.requirements + " requirements checked."
         : tot.done + " of " + tot.total + " checks completed.")
       : "The number of requirements is not known yet.";
-    return h.title + ". " + progress + " " + summarizeDocumentReading(view);
+    return h.title + ". " + progress;
   }
 
   // ---------------------------------------------------------------- main render
@@ -2445,17 +1814,13 @@
 
     root.appendChild(card);
 
-    // Direction 2: phase timing strip — between the card and the activity feed.
+    // Phase timing strip — between the card and the activity feed.
     var phaseStrip = renderPhaseTimingStrip(view);
     if (phaseStrip) root.appendChild(phaseStrip);
 
-    // Direction 2: depth indicators — unique screens and return visits.
+    // Depth indicators — unique screens and return visits.
     var depth = renderDepthIndicators(view);
     if (depth) root.appendChild(depth);
-
-    // Document reading has its own fixed denominators and durable unit identities. Keep it
-    // default-visible and separate from both QA coverage and browser movement.
-    if (transportState(view) !== "not-found") root.appendChild(renderDocumentReading(view));
 
     // Browser movement is a first-class, default-visible surface. It stays OUTSIDE the run
     // card and OUTSIDE the coverage details because a transition is neither a unique page nor
@@ -2463,12 +1828,9 @@
     var activity = renderBrowserActivity(view);
     if (activity) root.appendChild(activity);
 
-    // Direction 2: walk timeline with per-walk detail and mini filmstrips.
+    // Walk timeline with per-walk detail and mini filmstrips.
     var walkTl = renderWalkTimeline(view);
     if (walkTl) root.appendChild(walkTl);
-
-    var screens = renderScreenEvidence(view);
-    if (screens) root.appendChild(screens);
 
     if (view.status || view.coverage) root.appendChild(renderDetails(view));
 
@@ -2483,127 +1845,12 @@
     return root;
   }
 
-  // Age-only local update: the ONE class of value the client may recompute between
-  // snapshots, and only from the server's own timestamps.
-  function ageTick(root, view, nowMs) {
-    if (!view || !view.status) return;
-    var ages = root.querySelectorAll("[data-age-of]");
-    for (var i = 0; i < ages.length; i++) {
-      var which = ages[i].getAttribute("data-age-of");
-      var iso = which === "heartbeat" ? view.status.heartbeatAt
-        : which === "document-reading" && view.status.documentReading
-          ? view.status.documentReading.updatedAt
-          : view.status.lastProgressAt;
-      var t = ms(iso);
-      ages[i].textContent = t == null ? "—" : ageWords(nowMs - t);
-    }
-    var elapsedNodes = root.querySelectorAll("[data-elapsed]");
-    for (var j = 0; j < elapsedNodes.length; j++) {
-      var started = elapsedNodes[j].getAttribute("data-elapsed");
-      if (!started) continue; // frozen: the run is not moving, so neither is this number
-      var st = Number(started);
-      if (!isFinite(st)) continue;
-      elapsedNodes[j].textContent = clockMs(Math.max(0, nowMs - st));
-    }
-  }
-
-  // ---------------------------------------------------------------- Direction 2: walk timeline
-  //
-  // A vertical feed of completed walks, each showing ordinal, outcome badge, step
-  // count, screen-change count, wall time, credited execution cases, and a mini
-  // filmstrip placeholder (the screens API handles actual images in watch.js).
-  // Mid-run, when the walk-artifact-index is missing, the filmstrip degrades to a
-  // text note — the normal mid-run condition, not an error.
-
-  var OUTCOME_WORDS = {
-    completed: { label: "Completed", cls: "walk-outcome--completed" },
-    "no-advance-control": { label: "No advance control", cls: "walk-outcome--blocked" },
-    blocked: { label: "Blocked", cls: "walk-outcome--blocked" },
-    "blocked-after-probe": { label: "Blocked after probe", cls: "walk-outcome--blocked" },
-    "step-cap": { label: "Step cap", cls: "walk-outcome--step-cap" },
-    "time-cap": { label: "Time cap", cls: "walk-outcome--step-cap" },
-    "load-crash": { label: "Load crash", cls: "walk-outcome--blocked" },
-    "browser-hung": { label: "Browser hung", cls: "walk-outcome--blocked" },
-    "per-case-timeout": { label: "Timeout", cls: "walk-outcome--step-cap" },
-    "cycle-detected": { label: "Cycle detected", cls: "walk-outcome--blocked" },
-    error: { label: "Error", cls: "walk-outcome--blocked" }
-  };
-
-  function renderWalkTimeline(view) {
-    var execution = view.execution;
-    if (!execution) return null;
-    var walks = execution.walks;
-    if (!Array.isArray(walks) || walks.length === 0) return null;
-
-    var section = el("section", { cls: "walk-timeline-section" });
-    section.appendChild(el("div", { cls: "section-label", text: "Walk timeline · most recent first" }));
-
-    var list = el("ul", { cls: "walk-timeline-list" });
-    // walks are already in order from the execution-activity projection (last N walks).
-    // Render most-recent first.
-    var reversed = walks.slice().reverse();
-    for (var i = 0; i < reversed.length; i++) {
-      var w = reversed[i];
-      var ow = OUTCOME_WORDS[w.outcome] || { label: w.outcome || "unknown", cls: "walk-outcome--blocked" };
-
-      var header = el("div", { cls: "walk-entry__header" }, [
-        el("span", { cls: "walk-entry__ordinal", text: "Walk " + (w.ordinal || (reversed.length - i)) }),
-        el("span", { cls: "walk-entry__outcome " + ow.cls, text: ow.label }),
-        el("span", { cls: "walk-entry__stats" }, [
-          el("span", { text: intOr(w.steps, "?") + " steps" }),
-          el("span", { text: intOr(w.screensAdvanced, "?") + " screen changes" }),
-          el("span", { text: clockMs(w.wallMs || 0) })
-        ])
-      ]);
-
-      var entry = el("li", { cls: "walk-entry" }, [header]);
-
-      // Credited execution cases
-      var cases = Array.isArray(w.caseIds) ? w.caseIds : [];
-      if (cases.length > 0) {
-        var caseRow = el("div", { cls: "walk-entry__cases" });
-        for (var c = 0; c < Math.min(cases.length, 8); c++) {
-          caseRow.appendChild(el("span", { cls: "walk-entry__case-chip", text: cases[c] }));
-        }
-        if (cases.length > 8) {
-          caseRow.appendChild(el("span", { cls: "walk-entry__case-chip walk-entry__case-chip--more", text: "+" + (cases.length - 8) + " more" }));
-        }
-        entry.appendChild(caseRow);
-      }
-
-      // Mini filmstrip placeholder — walk.js handles actual image loading
-      // from the screens API. The artifact state tells us whether images
-      // are available.
-      var artifact = w.artifact;
-      if (artifact && artifact.state === "inspected" && typeof artifact.screenCaptureEpochs === "number" && artifact.screenCaptureEpochs > 0) {
-        var strip = el("div", { cls: "walk-entry__filmstrip" });
-        var count = Math.min(artifact.screenCaptureEpochs, 5);
-        for (var s = 0; s < count; s++) {
-          strip.appendChild(el("div", { cls: "walk-entry__thumb" }, [
-            el("span", { text: "Step " + (s + 1) })
-          ]));
-        }
-        entry.appendChild(strip);
-      } else if (artifact && (artifact.state === "not-yet-indexed" || artifact.state === "unresolved")) {
-        entry.appendChild(el("p", { cls: "walk-entry__filmstrip-note", text: "Screenshots available after run completes." }));
-      } else if (w.outcome === "blocked" || w.outcome === "load-crash" || w.outcome === "error") {
-        entry.appendChild(el("p", {
-          cls: "walk-entry__filmstrip-note",
-          text: "Walk stopped — " + (ow.label.toLowerCase()) + "."
-        }));
-      }
-
-      list.appendChild(entry);
-    }
-    section.appendChild(list);
-    return section;
-  }
-
-  // ---------------------------------------------------------------- Direction 2: phase timing strip
+  // ---------------------------------------------------------------- phase timing strip
   //
   // A horizontal stacked bar showing the six phases' wall-clock proportions.
-  // Completed phases show duration; the active phase pulses. Derived from
-  // status.phases[].startedAt / endedAt (the Direction 2 API addition).
+  // Completed phases show duration; the active phase is shown distinctly.
+  // Derived from status.phases[].startedAt / endedAt.
+  // Falls back to null render when no timing data exists (backward compat).
 
   function renderPhaseTimingStrip(view) {
     var status = view.status;
@@ -2612,7 +1859,7 @@
     var reported = {};
     status.phases.forEach(function (p) { if (p && p.name) reported[p.name] = p; });
 
-    // Check if any phase has timing data (startedAt/endedAt are the new fields)
+    // Check if any phase has timing data (startedAt/endedAt)
     var hasTimingData = false;
     status.phases.forEach(function (p) {
       if (p && (p.startedAt || p.endedAt)) hasTimingData = true;
@@ -2691,10 +1938,10 @@
     return section;
   }
 
-  // ---------------------------------------------------------------- Direction 2: depth indicators
+  // ---------------------------------------------------------------- depth indicators
   //
-  // Two compact stat tiles: unique screens observed and return visits.
-  // These already exist in the execution-activity response totals.
+  // Compact stat tiles: unique screens observed, return visits, and visited origins.
+  // These values already exist in the execution-activity response totals.
 
   function renderDepthIndicators(view) {
     var execution = view.execution;
@@ -2737,6 +1984,115 @@
     section.appendChild(el("div", { cls: "section-label", text: "Depth indicators" }));
     section.appendChild(el("div", { cls: "depth-tiles" }, tiles));
     return section;
+  }
+
+  // ---------------------------------------------------------------- walk timeline
+  //
+  // A vertical feed of completed walks, each showing ordinal, outcome badge, step
+  // count, screen-change count, wall time, credited execution cases, and a mini
+  // filmstrip placeholder. Mid-run, when the walk-artifact-index is missing, the
+  // filmstrip degrades to a text note — the normal mid-run condition, not an error.
+
+  var OUTCOME_WORDS = {
+    completed: { label: "Completed", cls: "walk-outcome--completed" },
+    "no-advance-control": { label: "No advance control", cls: "walk-outcome--blocked" },
+    blocked: { label: "Blocked", cls: "walk-outcome--blocked" },
+    "blocked-after-probe": { label: "Blocked after probe", cls: "walk-outcome--blocked" },
+    "step-cap": { label: "Step cap", cls: "walk-outcome--step-cap" },
+    "time-cap": { label: "Time cap", cls: "walk-outcome--step-cap" },
+    "load-crash": { label: "Load crash", cls: "walk-outcome--blocked" },
+    "browser-hung": { label: "Browser hung", cls: "walk-outcome--blocked" },
+    "per-case-timeout": { label: "Timeout", cls: "walk-outcome--step-cap" },
+    "cycle-detected": { label: "Cycle detected", cls: "walk-outcome--blocked" },
+    error: { label: "Error", cls: "walk-outcome--blocked" }
+  };
+
+  function renderWalkTimeline(view) {
+    var execution = view.execution;
+    if (!execution) return null;
+    var walks = execution.walks;
+    if (!Array.isArray(walks) || walks.length === 0) return null;
+
+    var section = el("section", { cls: "walk-timeline-section" });
+    section.appendChild(el("div", { cls: "section-label", text: "Walk timeline · most recent first" }));
+
+    var list = el("ul", { cls: "walk-timeline-list" });
+    // Render most-recent first.
+    var reversed = walks.slice().reverse();
+    for (var i = 0; i < reversed.length; i++) {
+      var w = reversed[i];
+      var ow = OUTCOME_WORDS[w.outcome] || { label: w.outcome || "unknown", cls: "walk-outcome--blocked" };
+
+      var header = el("div", { cls: "walk-entry__header" }, [
+        el("span", { cls: "walk-entry__ordinal", text: "Walk " + (w.ordinal || (reversed.length - i)) }),
+        el("span", { cls: "walk-entry__outcome " + ow.cls, text: ow.label }),
+        el("span", { cls: "walk-entry__stats" }, [
+          el("span", { text: intOr(w.steps, "?") + " steps" }),
+          el("span", { text: intOr(w.screenChanges, "?") + " screen changes" }),
+          el("span", { text: clockMs(w.wallMs || 0) })
+        ])
+      ]);
+
+      var entry = el("li", { cls: "walk-entry" }, [header]);
+
+      // Credited execution cases
+      var cases = Array.isArray(w.caseIds) ? w.caseIds : [];
+      if (cases.length > 0) {
+        var caseRow = el("div", { cls: "walk-entry__cases" });
+        for (var c = 0; c < Math.min(cases.length, 8); c++) {
+          caseRow.appendChild(el("span", { cls: "walk-entry__case-chip", text: cases[c] }));
+        }
+        if (cases.length > 8) {
+          caseRow.appendChild(el("span", { cls: "walk-entry__case-chip walk-entry__case-chip--more", text: "+" + (cases.length - 8) + " more" }));
+        }
+        entry.appendChild(caseRow);
+      }
+
+      // Mini filmstrip placeholder
+      var artifact = w.artifact;
+      if (artifact && artifact.state === "inspected" && typeof artifact.screenCaptureEpochs === "number" && artifact.screenCaptureEpochs > 0) {
+        var strip = el("div", { cls: "walk-entry__filmstrip" });
+        var count = Math.min(artifact.screenCaptureEpochs, 5);
+        for (var s = 0; s < count; s++) {
+          strip.appendChild(el("div", { cls: "walk-entry__thumb" }, [
+            el("span", { text: "Step " + (s + 1) })
+          ]));
+        }
+        entry.appendChild(strip);
+      } else if (artifact && (artifact.state === "not-yet-indexed" || artifact.state === "unresolved")) {
+        entry.appendChild(el("p", { cls: "walk-entry__filmstrip-note", text: "Screenshots available after run completes." }));
+      } else if (w.outcome === "blocked" || w.outcome === "load-crash" || w.outcome === "error") {
+        entry.appendChild(el("p", {
+          cls: "walk-entry__filmstrip-note",
+          text: "Walk stopped — " + (ow.label.toLowerCase()) + "."
+        }));
+      }
+
+      list.appendChild(entry);
+    }
+    section.appendChild(list);
+    return section;
+  }
+
+  // Age-only local update: the ONE class of value the client may recompute between
+  // snapshots, and only from the server's own timestamps.
+  function ageTick(root, view, nowMs) {
+    if (!view || !view.status) return;
+    var ages = root.querySelectorAll("[data-age-of]");
+    for (var i = 0; i < ages.length; i++) {
+      var which = ages[i].getAttribute("data-age-of");
+      var iso = which === "heartbeat" ? view.status.heartbeatAt : view.status.lastProgressAt;
+      var t = ms(iso);
+      ages[i].textContent = t == null ? "—" : ageWords(nowMs - t);
+    }
+    var elapsedNodes = root.querySelectorAll("[data-elapsed]");
+    for (var j = 0; j < elapsedNodes.length; j++) {
+      var started = elapsedNodes[j].getAttribute("data-elapsed");
+      if (!started) continue; // frozen: the run is not moving, so neither is this number
+      var st = Number(started);
+      if (!isFinite(st)) continue;
+      elapsedNodes[j].textContent = clockMs(Math.max(0, nowMs - st));
+    }
   }
 
   global.SurveyQATracker = {
