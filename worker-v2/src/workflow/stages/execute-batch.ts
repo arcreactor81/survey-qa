@@ -1324,6 +1324,42 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
 
   await pushUsage(env, args.runId, args.fence, [browserUsage()]);
 
+  // HARD BATCH ABORT — defense against platform step-timeout failures.
+  //
+  // Two consecutive runs (v93b batch 1, v94 batch 0) hung for 5+ hours on a single batch
+  // because the CF Workflow step timeout (BATCH_POLICY.timeout = "80 minutes") did not fire
+  // while the step held a live WebSocket to Browser Rendering. The per-case withTimeout
+  // (30 min) also failed to fire — the likely cause is that a dead Puppeteer WebSocket
+  // keeps the connection object alive without completing or erroring, starving the event
+  // loop and preventing setTimeout callbacks from dispatching.
+  //
+  // This inner timer is the LAST backstop. When it fires:
+  //   1. It closes the browser forcibly (browser.close()).
+  //   2. Every pending Puppeteer call (page.goto, page.evaluate, etc.) receives a
+  //      disconnect error and resolves, unblocking the withTimeout wrappers.
+  //   3. The walk loop's Date.now() >= batchDeadline check is true on the next iteration
+  //      (since this timer fires AFTER the batch deadline), so the loop breaks.
+  //   4. Cleanup runs normally — session close (already closed, caught), checkpoint update,
+  //      return done:false so the next batch continues with a fresh browser.
+  //
+  // Budget: batchMaxMs + 2 minutes headroom for wrap-up. The normal batchDeadline check
+  // should end the batch BEFORE this timer fires — if it fires, the batchDeadline check
+  // was starved by a hung walk.
+  const hardBatchAbortMs = batchMaxMs + 120_000;
+  let hardAbortFired = false;
+  const batchAbortTimer = setTimeout(() => {
+    hardAbortFired = true;
+    console.error(
+      `v2 exec batch ${args.batch}: HARD BATCH ABORT after ${hardBatchAbortMs}ms — ` +
+        `closing browser forcibly to unblock pending operations`,
+    );
+    try {
+      handle.browser.close();
+    } catch {
+      /* best-effort close — the browser may already be dead */
+    }
+  }, hardBatchAbortMs);
+
   let pathsWalked = 0;
   let sessionWedged = false;
   let casesClosed = 0;
@@ -1904,6 +1940,15 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       console.error(`v2 exec: ${what} failed or timed out: ${String(err).slice(0, 200)}`);
     }
   };
+
+  // Disarm the hard abort timer — the batch completed normally (or via executor error).
+  // If it already fired, the browser is closed and sessionWedged-equivalent, but the walk
+  // loop's batchDeadline guard broke normally. Record it for diagnostics.
+  clearTimeout(batchAbortTimer);
+  if (hardAbortFired) {
+    console.log(`v2 exec batch ${args.batch}: hard batch abort was the exit cause`);
+    if (!stopReason) stopReason = "hard-batch-abort";
+  }
 
   // EVERY BATCH RETURNS ITS BROWSER — reuse across batches ended with the long-walk
   // budgets (2026-08-17). A walk may now run ~9 minutes, and the platform enforces a
