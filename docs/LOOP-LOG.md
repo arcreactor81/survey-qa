@@ -292,6 +292,39 @@ out, step ends named) when the accumulated demands still cannot be satisfied.
 
 Not built in this session: the walk record shows it clearly and it is the next class fix.
 
+## THE END OF THE SURVEY WAS REACHED — 81 screens
+
+Run **`v2r_01m0f1zccejfmq8fd02r7xq8kv`** (relaunch of v90's version, `dd0e4c97`), deep walk
+`FLOOR-01`: **81 screens**, 104 steps. Deepest ever, against 54 the run before and 42 two trains
+ago. The final screen reads:
+
+> End of survey
+> End of test link.
+
+That is the completion page. The walk traversed the whole instrument.
+
+**And the system called it a screen-out.** `classifyEnding` returned `screened-out` with the
+evidence "no screen-out wording matched, but structural signals indicate a rejection page: the only
+visible button(s) are back controls and the page has no answerable controls".
+
+The cause is one missing article. The completion lexicon required "the end of THE survey"; the page
+says "End of survey". Nothing matched, so the STRUCTURAL rejection arm fired on a survey that had
+actually finished — a positive wrong claim about the single outcome this system exists to report,
+and exactly the failure mode the completion-path audit predicted.
+
+**Fixed:** the article is now optional in the completion pattern, the NOUN is not. The original
+caution is preserved and pinned by a counterproof — a bare "the end" in ordinary prose still never
+claims a completion, and a real disqualification page is still a screen-out. Amendment 19, 4/4
+tests, 1 new mutant killed (restore the article requirement and the measured page fails).
+
+That fix is in source and NOT yet deployed: the run above is still executing and must be left to
+finish and publish its report, which is the first report produced from a walk that reached the end.
+
+Standing caveat on this walk, from its own ending evidence: **62 of its answers were
+navigator-defaults the harness chose**, not answers the document asked for. Where this walk went is
+partly a fact about those fillers. The end-to-end bar — completion page plus terminations plus an
+honest published report — is not met by this run alone.
+
 ### v90 run: shallow, and NOT a logic regression — page reads failed
 
 Deployed `dd0e4c97-daa0-453c-8fcf-394a1a0f021e` (silent-refusal re-press). Gates: tsc 0, suite

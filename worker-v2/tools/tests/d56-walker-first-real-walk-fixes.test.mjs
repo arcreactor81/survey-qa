@@ -3262,3 +3262,70 @@ suite("amendment 18: a press the site ignores without complaint is not a wrong a
       `the extra presses must be a counted limitation, got ${JSON.stringify(obs.readerLimitations)}`);
   });
 });
+
+suite("amendment 19: the page that says the survey ended is a completion, not a rejection", () => {
+  // Measured live 20 Aug 2026 (run v2r_01m0f1zccejfmq8fd02r7xq8kv, screen 81): the deep walk
+  // traversed the whole instrument — 81 screens — and landed on a page reading
+  // "End of survey / End of test link." The completion lexicon required the ARTICLE ("the end of
+  // THE survey"), so nothing matched, and the structural arm then classified a COMPLETED survey
+  // as a rejection page. That is a positive wrong claim about the one outcome this system exists
+  // to report.
+  const terminalPage = (text) => ({
+    at: "2026-08-20T12:00:00.000Z",
+    url: "https://fixture.invalid/end",
+    title: "end",
+    questionText: "",
+    instructionText: "",
+    visibleText: text,
+    grid: null,
+    collectedErrors: [],
+    readerLimitations: [],
+    controls: [],
+    optionGroups: [],
+    questionRoots: [],
+    // The live shape: only a back control is visible, which is what made the structural
+    // rejection arm fire on a page that had actually finished.
+    buttons: [{ idx: 1, label: "<<", labelSource: "code", role: "back", roleVia: "code:<<", disabled: false, visible: true }],
+    validationMessages: [],
+    progress: { present: false, kind: null, now: null, max: null, text: null },
+    counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+    screenSignature: "sig:end",
+  });
+
+  test("THE MEASURED SHAPE: 'End of survey' is a completion, not a structural screen-out", async () => {
+    const { mod } = await loadWorker();
+    const ending = mod.driver.classifyEnding(terminalPage("End of survey\nEnd of test link."), {
+      outcome: "no-advance-control", unboundDecisions: 0,
+    });
+    assertEq(ending.kind, "completed",
+      `a survey that said it ended must not be reported as a rejection: ${JSON.stringify(ending)}`);
+  });
+
+  test("the article stays optional in both directions", async () => {
+    const { mod } = await loadWorker();
+    for (const text of ["This is the end of the survey.", "End of the questionnaire", "end of this interview"]) {
+      const ending = mod.driver.classifyEnding(terminalPage(text), { outcome: "no-advance-control", unboundDecisions: 0 });
+      assertEq(ending.kind, "completed", `${JSON.stringify(text)} -> ${JSON.stringify(ending.kind)}`);
+    }
+  });
+
+  test("counterproof: a bare 'the end' in ordinary prose is NOT a completion", async () => {
+    const { mod } = await loadWorker();
+    // The original caution, preserved: the noun is what anchors this, never the article.
+    const ending = mod.driver.classifyEnding(terminalPage("And that was the end of it."), {
+      outcome: "no-advance-control", unboundDecisions: 0,
+    });
+    assert(ending.kind !== "completed",
+      `"the end" alone must never claim a completion, got ${JSON.stringify(ending)}`);
+  });
+
+  test("counterproof: a screen-out page is still a screen-out", async () => {
+    const { mod } = await loadWorker();
+    const ending = mod.driver.classifyEnding(
+      terminalPage("Unfortunately you do not qualify for this study. Terminated at S80."),
+      { outcome: "no-advance-control", unboundDecisions: 0 },
+    );
+    assertEq(ending.kind, "screened-out",
+      "widening the completion lexicon must not swallow a real disqualification");
+  });
+});

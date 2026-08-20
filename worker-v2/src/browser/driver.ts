@@ -4911,9 +4911,19 @@ const COMPLETION_MARKERS: readonly RegExp[] = [
   /\bstatus[:\s]+complete(d)?\b/i,
   /\byou\s+have\s+(now\s+)?(successfully\s+)?(completed|finished)\b/i,
   /\b(you\s+have\s+)?reached\s+the\s+end\s+of\s+(the|this)\s+(survey|questionnaire|interview)\b/i,
-  // "This is the end of the survey." — REQUIRES the article, deliberately. A bare "the end"
-  // appears in ordinary prose; "the end of the survey" is a page describing its own finality.
-  /\b(this\s+is\s+)?the\s+end\s+of\s+(the|this)\s+(survey|questionnaire|interview)\b/i,
+  // "This is the end of the survey." / "End of survey." THE ARTICLE IS OPTIONAL, the NOUN is not.
+  //
+  // MEASURED LIVE 20 Aug 2026 (run `v2r_01m0f1zccejfmq8fd02r7xq8kv`, screen 81): the walk
+  // traversed the whole instrument and landed on a page reading "End of survey / End of test
+  // link." The older pattern required "the end of THE survey", so it did not match, no completion
+  // wording was found, and the structural arm below then classified a COMPLETED survey as a
+  // rejection page — a positive wrong claim about the one outcome this system exists to report.
+  //
+  // The original caution still holds and is preserved: what must never be matched is a bare "the
+  // end", which appears in ordinary prose. That risk lives in the ARTICLE being the only anchor,
+  // not in the noun — "end of survey" still names the instrument and still only reaches this
+  // lexicon on a screen with no forward control and nothing left to answer.
+  /\b(this\s+is\s+)?(the\s+)?end\s+of\s+(the\s+|this\s+)?(survey|questionnaire|interview)\b/i,
   /\bsubmission\s+(received|complete)\b/i,
 ];
 

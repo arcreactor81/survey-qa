@@ -979,5 +979,14 @@ await runMutantSuite({
       replace: `        if (false) {`,
       kills: ["a survey that moves on its own while we wait is NOT pressed through"],
     },
+    {
+      name: "the completion lexicon goes back to requiring the article",
+      breaks:
+        "the measured end of this instrument: a page reading 'End of survey' matches nothing, so a COMPLETED survey is classified by the structural arm as a rejection page — a positive wrong claim about the one outcome this system exists to report",
+      file: DR,
+      find: String.raw`  /\b(this\s+is\s+)?(the\s+)?end\s+of\s+(the\s+|this\s+)?(survey|questionnaire|interview)\b/i,`,
+      replace: String.raw`  /\b(this\s+is\s+)?the\s+end\s+of\s+(the|this)\s+(survey|questionnaire|interview)\b/i,`,
+      kills: ["THE MEASURED SHAPE: 'End of survey' is a completion, not a structural screen-out"],
+    },
   ],
 });
