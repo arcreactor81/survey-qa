@@ -27,19 +27,25 @@ Written 19 Aug 2026, after the v84 deploy. Update the STATE section whenever you
    from "the wall fell on the live site" — only a run proves the second.
 5. **Blind corpus** `test-suite/blind/**`: never read answer keys.
 
-## Current state (as of v84, 19 Aug 2026 ~23:00 IST)
+## Current state (as of v91, 20 Aug 2026 ~15:00 IST)
 
-- Prod worker: `survey-qa-v2.wellshit.co.in`, version `80123a63-0726-4b85-89ba-cf89ffb2ef77`
-  (v84). Suite 1514/1514; mutation campaigns all kill (46 harnesses; census gate enforces).
+- Prod worker: `survey-qa-v2.wellshit.co.in`, version `7a1e16b1-3a86-4f8a-bbbd-b5b007e0993c`
+  (v91). Suite 1629/1629; mutation campaigns all kill (46 harnesses; census gate enforces).
 - Sealed contract for this survey: `cr_7100eecf32196b4b156f3cf96f88087ed162e8eb` — typed
   route destinations (expander 1.11.0). Re-derives free every run via unit adoption.
-- Walk record: **68 screens (~9% progress)**. Wall history, all fixed: consent race (2),
-  S40 label-registration (7), screener steering lottery (S10), S150 input mask (48),
-  doorstep plumbing (59), B10 allocation grid (68: keyboard-only registration → staged
-  validation → specify-pairing; the last layer's fix is v84, unproven live as of writing).
-- The screener (S10) is passed deterministically: all documented terminate roles reach
-  avoid_labels via two joins (option-fact label join + validated section-title join).
-- Run in flight at time of writing: `v2r_01m0dcadeay20nhmh5wap22dag` (v84).
+- Walk record: **81 screens (END OF SURVEY REACHED)** on v90-relaunch run
+  `v2r_01m0f1zccejfmq8fd02r7xq8kv`. The completion page reads "End of survey / End of test
+  link." But that run mislabelled it as `screened-out` due to a missing optional article in
+  the completion lexicon. **v91 fixes that.**
+- Wall history (all fixed, all general-class): consent race (2), S40 label-registration (7),
+  screener steering lottery (S10), S150 input mask (48), doorstep plumbing (59), B10
+  allocation grid (68: keyboard-only → staged validation → specify-pairing), C20 dwell gate
+  (42: hidden forward control → adaptive patience), best/worst distinct-column (43),
+  D10 oscillation (54: monotonic demand accumulation), D-section invisible advance (54:
+  prose-progress signal), dwell gate second shape (26%: silent-refusal re-press), completion
+  lexicon (81: optional article).
+- Run in flight at time of writing: `v2r_01m0f81gbe7n28zvhgrt0dphvm` (v91) — the clean
+  end-to-end deliverable candidate.
 
 ## The loop
 
