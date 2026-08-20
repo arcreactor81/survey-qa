@@ -292,6 +292,33 @@ out, step ends named) when the accumulated demands still cannot be satisfied.
 
 Not built in this session: the walk record shows it clearly and it is the next class fix.
 
+## 2026-08-20 — v91 deployed (completion-lexicon fix), clean run launched
+
+### What was deployed
+
+Commit `e118ae5` — the completion-lexicon fix. The article "the" before "survey" in the
+completion pattern is now optional; the noun is still required. This is the fix for the
+mislabelling of the 81-screen completion page as `screened-out` on the previous run.
+
+Gates: tsc exit 0; full suite **1629/1629**, 0 failed (mutations already verified at 85/85
+on this exact code in the previous session).
+
+Deployed version `7a1e16b1-3a86-4f8a-bbbd-b5b007e0993c` at 100%, SUCCESS confirmed.
+`EXEC_MAX_STEPS_PER_PATH: "120"` verified present. Old run `v2r_01m0f1zccejfmq8fd02r7xq8kv`
+terminated, ~2 min drain observed.
+
+### Clean run launched
+
+Run **`v2r_01m0f81gbe7n28zvhgrt0dphvm`** on v91. This is the run that should:
+1. Reach the end of the survey again (81+ screens)
+2. Correctly label it as `completed` (not `screened-out`)
+3. Produce an honest published report
+
+Watch: `https://survey-qa-v2.wellshit.co.in/runs/v2r_01m0f81gbe7n28zvhgrt0dphvm`
+Report: `https://survey-qa-v2.wellshit.co.in/api/v2/runs/v2r_01m0f81gbe7n28zvhgrt0dphvm/report`
+
+---
+
 ## THE END OF THE SURVEY WAS REACHED — 81 screens
 
 Run **`v2r_01m0f1zccejfmq8fd02r7xq8kv`** (relaunch of v90's version, `dd0e4c97`), deep walk
