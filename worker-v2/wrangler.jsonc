@@ -199,6 +199,11 @@
     // wrap-up grace and returns a "time-cap" PARTIAL, so the outer axe fires only on a
     // genuine hang. The batch-residual guard means one walk owns a batch.
     "EXEC_PER_CASE_TIMEOUT_MS": "900000",
+    // STARTUP BUDGET: wall-clock cap on the pre-first-step stretch (page creation, survey goto,
+    // first screen read). A healthy startup finishes in <15s; 120s allows for cold-start headroom
+    // without letting a dead browser eat 15 silent minutes. When exceeded, the walk is recorded
+    // as "walk-never-started" with the sub-phase that hung, retried once, then moved past.
+    "EXEC_WALK_STARTUP_BUDGET_MS": "120000",
     "BROWSER_COMPAT_SHIMS": "auto", // "auto" | "off" — see browser/page-script.ts HISTORY_SHIM
 
     // ---- run caps (proposal §5; each keeps its own name and denominator) ----
