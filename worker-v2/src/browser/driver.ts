@@ -198,6 +198,22 @@ export interface WalkOptions {
    * random draw — the same inputs walk the same walk on every Workflow step replay.
    */
   variant?: number;
+  /**
+   * STARTUP PHASE INSTRUMENTATION — so the executor knows WHERE the walk hung.
+   *
+   * Called at two transitions inside `walkPath`:
+   *   - `"survey-load"` after `page.goto` resolves (success OR failure);
+   *   - `"first-read"` after the first screen read in the step loop completes.
+   *
+   * The `"page-create"` phase is OUTSIDE `walkPath` (the executor calls `newPage` before
+   * entering the driver), so the executor timestamps that one itself.
+   *
+   * When the walk hangs between two callbacks, the LAST callback that fired names the phase
+   * that completed; the NEXT phase is the one that hung. When NO callback fires, the hang
+   * is in the pre-goto setup (viewport, evaluateOnNewDocument) — effectively page-create's
+   * tail, but the executor already has its own timestamp for page creation.
+   */
+  onStartupPhase?: (phase: "survey-load" | "first-read") => void;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -5530,6 +5546,10 @@ export async function walkPath(
     outcome = "error";
     outcomeDetail = `navigation failed: ${String(err).slice(0, 300)}`;
   }
+  // STARTUP PHASE INSTRUMENTATION: the survey URL has been requested (or failed). The executor
+  // uses this to distinguish "hung during page.goto" from "hung after goto but before the first
+  // screen read", so a dead start names the sub-phase that actually hung.
+  opts.onStartupPhase?.("survey-load");
   await sleep(400);
 
   let stepIndex = 0;
@@ -5622,6 +5642,12 @@ export async function walkPath(
       outcomeDetail = `screen read failed: ${String(err).slice(0, 300)}`;
       break;
     }
+
+    // STARTUP PHASE INSTRUMENTATION: the first screen has been read. After this point the
+    // walk has STARTED — it has a screen to act on. Any hang from here on is an ordinary
+    // mid-walk hang, not a startup failure. The callback fires exactly once (step 0) so the
+    // executor can disarm its startup budget timer without per-step overhead.
+    if (stepIndex === 0) opts.onStartupPhase?.("first-read");
 
     for (const ce of before.collectedErrors ?? []) {
       const line = `${ce.kind}: ${ce.message}${ce.source ? ` @ ${ce.source}:${ce.line ?? "?"}` : ""}`;

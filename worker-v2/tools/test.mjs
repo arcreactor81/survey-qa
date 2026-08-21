@@ -570,6 +570,11 @@ const FILES = [
   // expected label. Evidence they can fail: mutation anchors in classifyFailure, failure.ts
   // usageDisagreement path, and dev-drive targetQuestionId validation.
   "./tests/completion-labels.test.mjs",
+  // D58 — STARTUP BUDGET: a walk that hangs before its first step is recorded as
+  // "walk-never-started" with the sub-phase that hung, the real wallMs, and ONE retry.
+  // Consumers bucket it as infrastructure ("not-reached"), never as a site accusation.
+  // Evidence they can fail: tools/mutate-startup-budget.mjs.
+  "./tests/d58-startup-budget.test.mjs",
 ];
 
 export async function runVerification({

@@ -68,6 +68,66 @@ export const execProgressKey = (runId: string) => k("runs", runId, "execution", 
 export const PER_CASE_WRAPUP_GRACE_MS = 20_000;
 
 /**
+ * STARTUP BUDGET — the wall-clock cap on the stretch between "session acquired" and "first
+ * step recorded".
+ *
+ * THE DEFECT THIS CLOSES. The 2026-08-16/17 runs recorded 27 walks as 0-screen "per-case-
+ * timeout" or "error" rows with wallMs=0 and steps=0, burning ~15 minutes each before the
+ * first step ever ran. Browser session ACQUISITION is already bounded and raced
+ * (`acquireSession`, line 810-830: reconnect raced against fresh launch). The UNBUDGETED
+ * stretch is everything between "session acquired" and "first step recorded": page creation,
+ * the survey goto, the first screen read. This budget bounds that stretch.
+ *
+ * THREE SUB-PHASES ARE INSTRUMENTED so the outcomeDetail names which one hung:
+ *   - `page-create`: `browser.newPage()` — tracked by the executor;
+ *   - `survey-load`: `page.goto(surveyUrl)` — tracked by `walkPath` via `onStartupPhase`;
+ *   - `first-read`: the first screen read in the step loop — also via `onStartupPhase`.
+ *
+ * When the budget expires the walk is recorded as outcome "walk-never-started" with the
+ * measured wallMs (the REAL elapsed time, never 0) and ONE retry on a completely fresh
+ * session. A dead start must cost ~2-4 minutes and produce a receipt, never 15 silent
+ * minutes.
+ *
+ * DEFAULT 120_000ms (2 minutes): page creation + goto + one screen read finishes in <15s on
+ * a healthy browser. 2 minutes allows for cold-start headroom without letting a dead browser
+ * eat the batch budget. Injectable via EXEC_WALK_STARTUP_BUDGET_MS for operators who need
+ * wider headroom on slow providers.
+ */
+export const DEFAULT_STARTUP_BUDGET_MS = 120_000;
+const STARTUP_BUDGET_FLOOR_MS = 10_000;
+const STARTUP_BUDGET_CEILING_MS = 600_000;
+
+/**
+ * Resolve the startup budget from the environment, floor/ceiling-guarded.
+ *
+ * Exported and pure for the same reason `resolveMaxStepsPerPath` is: the fallback is testable
+ * as BEHAVIOUR. A guard that can only read the source file is a guard a mutation cannot kill.
+ */
+export function resolveStartupBudgetMs(declared: string | undefined): number {
+  const raw = num(declared, DEFAULT_STARTUP_BUDGET_MS);
+  return Math.min(STARTUP_BUDGET_CEILING_MS, Math.max(STARTUP_BUDGET_FLOOR_MS, raw));
+}
+
+/**
+ * Which sub-phase of the startup the walk reached BEFORE it timed out. The executor
+ * records timestamps at each transition (page-create → survey-load → first-read) and this
+ * function returns the phase that HUNG — the one after the last completed phase.
+ */
+export type StartupSubPhase = "page-create" | "survey-load" | "first-read";
+
+export function hungStartupPhase(
+  completedPhases: StartupSubPhase[],
+): StartupSubPhase {
+  if (completedPhases.length === 0) return "page-create";
+  const last = completedPhases[completedPhases.length - 1];
+  if (last === "page-create") return "survey-load";
+  if (last === "survey-load") return "first-read";
+  // If first-read completed, the startup is done — this should never be called.
+  // Defensive: return the last known phase.
+  return "first-read";
+}
+
+/**
  * How many CONSECUTIVE hard batch aborts stop the run. A single abort is recoverable (the
  * next batch gets a fresh browser); three in a row indicates a persistently broken browser
  * environment for this survey URL. The number is small on purpose: each abort burns a full
@@ -1299,6 +1359,16 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
     num((env as unknown as { EXEC_PER_CASE_TIMEOUT_MS?: string }).EXEC_PER_CASE_TIMEOUT_MS, 45_000),
     walkTimeoutMs,
   );
+  // STARTUP BUDGET: bounds the pre-first-step stretch. See `DEFAULT_STARTUP_BUDGET_MS` for
+  // why this exists and what the three instrumented sub-phases are. Floor/ceiling guarded so
+  // a misconfigured env cannot zero the startup budget (making every walk "walk-never-started")
+  // or set it higher than the per-case timeout (making it inert).
+  const startupBudgetMs = Math.min(
+    resolveStartupBudgetMs(
+      (env as unknown as { EXEC_WALK_STARTUP_BUDGET_MS?: string }).EXEC_WALK_STARTUP_BUDGET_MS,
+    ),
+    perCaseTimeoutMs,
+  );
 
   // MULTI-LANE BRANCH — the import sits BEHIND the lane-count check (review
   // fix D), so EXEC_LANES=1 runs never load multilane.ts and cannot be
@@ -1484,14 +1554,23 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       // refs — the judge's manifest keys by basename) and the pivot ordinal as the driver's
       // deterministic filler variant. The shim retry deliberately keeps the defaults: its
       // attemptId reuse is a pre-existing, documented exposure this change must not widen.
+      //
+      // STARTUP PHASE TRACKING: three timestamps instrument the pre-first-step stretch so a
+      // "walk-never-started" outcome names WHICH sub-phase hung (page-create / survey-load /
+      // first-read) from measured data, not from guessing. The tracker is shared between the
+      // executor and the driver: `walkOnce` writes the page-create timestamp itself (newPage
+      // is its first call), and passes an `onStartupPhase` callback that the driver calls at
+      // each transition. See `WalkOptions.onStartupPhase` for the contract.
       const walkOnce = async (
         shim: boolean,
         walkAttemptId = attemptId,
         walkCap = cap,
         walkVariant = 0,
         walkVariantFromStep = 0,
+        startupPhases?: StartupSubPhase[],
       ): Promise<PathObservation> => {
         const page = (await withTimeout(handle.browser.newPage(), 30_000, "newPage")) as PageLike;
+        startupPhases?.push("page-create");
         try {
           return await walkPath(
             page,
@@ -1516,6 +1595,10 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
               ),
               variant: walkVariant,
               variantFromStep: walkVariantFromStep,
+              // STARTUP PHASE INSTRUMENTATION: the driver calls this at two transitions (after
+              // page.goto and after first screen read), so the executor can tell which sub-phase
+              // hung when the startup budget expires. See `WalkOptions.onStartupPhase`.
+              ...(startupPhases ? { onStartupPhase: (phase: "survey-load" | "first-read") => { startupPhases.push(phase); } } : {}),
             },
             walkCap,
           );
@@ -1531,17 +1614,27 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       let obs: PathObservation;
       let browserHung = false;
       let perCaseTimedOut = false;
+      // STARTUP BUDGET: a tighter race that fires before the per-case timeout when the walk
+      // is still in its pre-first-step stretch. When the startup budget expires AND no step
+      // has been recorded, the outcome is "walk-never-started" — a NEW outcome that names
+      // the specific sub-phase that hung, carries the real wallMs, and gets ONE retry on a
+      // completely fresh session. A dead start must cost ~2-4 minutes, never 15 silent minutes.
+      const startupPhases: StartupSubPhase[] = [];
+      const walkStartMs = Date.now();
       try {
-        obs = await withTimeout(walkOnce(progress.shimRequired && allowShim), perCaseTimeoutMs, `walk ${item.path.id}`);
+        obs = await withTimeout(walkOnce(progress.shimRequired && allowShim, attemptId, cap, 0, 0, startupPhases), perCaseTimeoutMs, `walk ${item.path.id}`);
       } catch (err) {
+        const elapsedMs = Date.now() - walkStartMs;
         // A BrowserTimeout from the per-case budget means the walk exceeded its time cap.
-        // The outcome is labelled "per-case-timeout" (not "error"), but the SESSION may still
-        // be wedged — a genuinely stuck browser manifests as a timeout too. Feeding the flag
-        // into browserHung keeps the session-recycling mechanism alive: the downstream check
-        // marks the session wedged, gives the path ONE retry on a fresh session (via the
-        // hungPaths guard), and breaks the batch if the hang persists. Without this, a wedged
-        // browser burns the full batch budget timing out each remaining walk at perCaseTimeoutMs.
+        // STARTUP BUDGET DISCRIMINATION: if the walk has no steps AND the elapsed time is
+        // within the startup budget range, the hang was in the pre-first-step stretch and
+        // the outcome is "walk-never-started" — an infrastructure fact about THIS attempt,
+        // not a site accusation. The startup budget is checked AGAINST the elapsed time
+        // rather than racing a second timer, because the phase tracker already tells us
+        // whether the walk started. A walk with 0 steps that timed out before any step
+        // could run is structurally the same whether it took 2 minutes or 15.
         perCaseTimedOut = err instanceof BrowserTimeout;
+        const neverStarted = perCaseTimedOut && !startupPhases.includes("first-read");
         browserHung = perCaseTimedOut;
         obs = {
           kind: "v2-path-observation/1.0.0",
@@ -1551,19 +1644,83 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
           attemptId,
           planRevisionId: args.planRevisionId,
           surveyUrl: program.surveyUrl || args.surveyUrl,
-          startedAt: new Date().toISOString(),
+          startedAt: new Date(walkStartMs).toISOString(),
           endedAt: new Date().toISOString(),
-          wallMs: 0,
+          wallMs: elapsedMs,
           plannedWitnesses: [],
           steps: [],
-          outcome: perCaseTimedOut ? "per-case-timeout" : "error",
-          outcomeDetail: perCaseTimedOut ? `walk exceeded its per-case budget of ${perCaseTimeoutMs}ms` : String(err).slice(0, 500),
+          outcome: neverStarted ? "walk-never-started" : perCaseTimedOut ? "per-case-timeout" : "error",
+          outcomeDetail: neverStarted
+            ? `walk never started: hung in ${hungStartupPhase(startupPhases)} after ${elapsedMs}ms (startup budget ${startupBudgetMs}ms, phases completed: ${startupPhases.join(", ") || "none"})`
+            : perCaseTimedOut ? `walk exceeded its per-case budget of ${perCaseTimeoutMs}ms` : String(err).slice(0, 500),
           shimmed: false,
           shimNote: null,
           loadFailure: null,
           evidenceIds: [],
           viewport: { width: 1280, height: 900 },
         };
+      }
+
+      // STARTUP BUDGET RETRY: a walk that never started gets ONE retry on a completely fresh
+      // session. The premise is that a dead browser page or a hung goto is transient — the
+      // second attempt uses a different page on the same session (newPage allocates a fresh
+      // tab). If the retry also never starts, both attempts are recorded and the walk is done.
+      // The retry uses the SAME attemptId/cap because the first attempt produced no artifacts
+      // — there is nothing to collide with.
+      if (obs.outcome === "walk-never-started") {
+        console.log(
+          `v2 exec batch ${args.batch}: ${item.path.id} walk-never-started ` +
+            `(hung in ${hungStartupPhase(startupPhases)}, ${obs.wallMs}ms) — retrying once on a fresh page`,
+        );
+        // Record the failed startup attempt before retrying, so it is never lost.
+        progress.walks.push(walkRecord(obs, []));
+        progress.totalSteps += obs.steps.length;
+        progress.totalEvidence += obs.evidenceIds.length;
+
+        // The retry gets its own startup phase tracker and its own start time.
+        const retryStartupPhases: StartupSubPhase[] = [];
+        const retryStartMs = Date.now();
+        try {
+          obs = await withTimeout(
+            walkOnce(progress.shimRequired && allowShim, attemptId, cap, 0, 0, retryStartupPhases),
+            // The retry uses the startup budget as its timeout — no point waiting longer
+            // than the startup budget for something that should complete in <15s.
+            startupBudgetMs,
+            `walk ${item.path.id} startup-retry`,
+          );
+          // The retry started successfully. Reset the browserHung flag — this session is alive.
+          browserHung = false;
+          perCaseTimedOut = false;
+        } catch (retryErr) {
+          const retryElapsedMs = Date.now() - retryStartMs;
+          const retryTimedOut = retryErr instanceof BrowserTimeout;
+          const retryNeverStarted = retryTimedOut && !retryStartupPhases.includes("first-read");
+          browserHung = retryTimedOut;
+          perCaseTimedOut = retryTimedOut;
+          obs = {
+            kind: "v2-path-observation/1.0.0",
+            runId: args.runId,
+            pathId: item.path.id,
+            tier: item.tier,
+            attemptId,
+            planRevisionId: args.planRevisionId,
+            surveyUrl: program.surveyUrl || args.surveyUrl,
+            startedAt: new Date(retryStartMs).toISOString(),
+            endedAt: new Date().toISOString(),
+            wallMs: retryElapsedMs,
+            plannedWitnesses: [],
+            steps: [],
+            outcome: retryNeverStarted ? "walk-never-started" : retryTimedOut ? "per-case-timeout" : "error",
+            outcomeDetail: retryNeverStarted
+              ? `walk never started (retry): hung in ${hungStartupPhase(retryStartupPhases)} after ${retryElapsedMs}ms (startup budget ${startupBudgetMs}ms, phases completed: ${retryStartupPhases.join(", ") || "none"})`
+              : retryTimedOut ? `walk exceeded its per-case budget of ${startupBudgetMs}ms (startup retry)` : String(retryErr).slice(0, 500),
+            shimmed: false,
+            shimNote: null,
+            loadFailure: null,
+            evidenceIds: [],
+            viewport: { width: 1280, height: 900 },
+          };
+        }
       }
 
       // THE CRASH IS THE FINDING; THE SHIM IS HOW THE REST STILL GETS TESTED.
