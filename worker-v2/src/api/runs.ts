@@ -703,13 +703,14 @@ export function checkOutboundUrl(url: URL, policy: string): { code: string; mess
  * That is the whole reason gate (3) is not tight. A watching page polls every couple of
  * seconds, so a threshold shorter than a legitimate quiet stage would bill every one of
  * those polls an engine round trip to be told "running" — and quiet stages are real here:
- * `project-observations` and `verify-observations` beat once on entry and then work for up
- * to a step attempt's timeout (3 minutes under `DERIVE_POLICY`) before saying anything else.
- * Five minutes is past that bound, so a run this quiet has already missed a step boundary,
- * and it is still an order of magnitude inside the sweeper's own silence threshold (45
- * minutes) — the reader learns the truth long before any recovery machinery would act on it.
+ * `project-observations` beats once on entry and then works for up to its step timeout
+ * (10 minutes under `PROJECTION_POLICY`; `verify-observations` is 3 minutes under
+ * `DERIVE_POLICY`). Twelve minutes is past the longest quiet bound, so a run this quiet
+ * has already missed a step boundary, and it is still well inside the sweeper's own
+ * silence threshold (45 minutes) — the reader learns the truth long before any recovery
+ * machinery would act on it.
  */
-const ENGINE_CAUSE_AFTER_MS = 5 * 60 * 1000;
+const ENGINE_CAUSE_AFTER_MS = 12 * 60 * 1000;
 
 /** The subset of `InstanceStatus` this file relies on, narrowed at the boundary. */
 interface EngineStatus {

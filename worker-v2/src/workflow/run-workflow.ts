@@ -351,6 +351,18 @@ const BATCH_POLICY = { retries: { limit: 3, delay: "30 seconds" }, timeout: "22 
  * certainty of being the dead one.
  */
 const DERIVE_POLICY = { retries: { limit: 3, delay: "30 seconds", backoff: "exponential" }, timeout: "3 minutes" } as const;
+/**
+ * `project-observations` calls `listCatalog` — one R2 LIST + one R2 GET per catalogue entry.
+ * With 28 walks averaging ~35 screens each the catalogue can exceed 2,000 entries and the
+ * fan-out needs well past the 3-minute DERIVE_POLICY ceiling. v96 run
+ * `v2r_01m0gntj754aszafnjy1xfr1nq` timed out at 3 minutes on all 4 attempts, killing the
+ * verify/report pipeline after a successful 28-walk execution.
+ *
+ * 10 minutes is sized to ~4,000 catalogue entries (double current peak). The retry delay is
+ * long enough that the retry resumes in a FRESH invocation with a full subrequest budget
+ * (the same lesson DERIVE_POLICY's own comment documents).
+ */
+const PROJECTION_POLICY = { retries: { limit: 3, delay: "60 seconds", backoff: "exponential" }, timeout: "10 minutes" } as const;
 const REPORT_POLICY = { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" } as const;
 
 /** Reason codes a run terminates with. Named so the report can say which. */
@@ -2081,7 +2093,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // and separate from it: the stage that records what happened may not be the stage
       // that decides whether it was right.
       // ---------------------------------------------------------------------
-      await step.do("project-observations", DERIVE_POLICY, async () => {
+      await step.do("project-observations", PROJECTION_POLICY, async () => {
         await beat(this.env, runId, "committing the observation ledger", "project");
         const projected = await projectObservations(this.env, runId);
         if (projected.state === "evaluated") {

@@ -27,31 +27,24 @@ Written 19 Aug 2026, after the v84 deploy. Update the STATE section whenever you
    from "the wall fell on the live site" — only a run proves the second.
 5. **Blind corpus** `test-suite/blind/**`: never read answer keys.
 
-## Current state (as of v96, 21 Aug 2026)
+## Current state (as of v97, 21 Aug 2026)
 
-- Prod worker: `survey-qa-v2.wellshit.co.in`, pending v96 deploy.
+- Prod worker: `survey-qa-v2.wellshit.co.in`, v96 deployed and run complete.
   Suite green; tsc clean.
 - Sealed contract for this survey: `cr_7100eecf32196b4b156f3cf96f88087ed162e8eb` — typed
   route destinations (expander 1.11.0). Re-derives free every run via unit adoption.
-- Walk record: **81 screens (END OF SURVEY REACHED)** on v90-relaunch run
-  `v2r_01m0f1zccejfmq8fd02r7xq8kv`. Completion page: "End of survey / End of test link."
-- **v93 reverted D65 (composite binding) and D58 (binding retry).**
-  - D65 was mis-binding decisions to wrong screens on surveys with repeated question shapes.
-    0 binding refusals was WORSE than 62 refusals — the navigator defaults correctly handle
-    unbound screens. D65 eliminated refusals by confidently binding to the wrong screen.
-  - v93 walk reached 82 screens (END). v93b batch 1 stuck for 5 hours (zombie browser).
-- **v94 ships phase-timeline fix** — monitoring page now shows phase timing strip, depth
-  indicators, and walk timeline. Backend timing fields (startedAt/endedAt) were already wired.
-- **v95 ships hard batch abort timer** — defense against zombie browser sessions. Timer calls
-  `browser.close()` after `batchMaxMs + 2 min`. But the timer DOES NOT FIRE when Puppeteer's
-  WebSocket is in a half-alive state (v93b, v94, v95: 5+ hours stuck each).
-- **v96 ships reduced-timeout defense** — the framework step timeout DID fire at shorter
-  durations (v53-v63 died at exactly ~67:01). The fix reduces all execution budgets:
-  - `EXEC_PER_CASE_TIMEOUT_MS`: 30 min → 15 min (deep walk ~9 min, 67% headroom)
-  - `EXEC_BATCH_MAX_MS`: 65 min → 18 min (1 walk/batch via residual guard)
-  - `BATCH_POLICY.timeout`: 80 min → 22 min
-  - `BATCH_POLICY.retries`: 1 → 3 (4 total attempts per batch step)
-  - Worst-case stuck: 22 min × 4 attempts = 88 min/batch, not 5+ hours
+- Walk record: **82 screens (END OF SURVEY REACHED)** on v96 run
+  `v2r_01m0gntj754aszafnjy1xfr1nq`. 28 walks, 362/429 obligations exercised (84%),
+  67 time-exhausted (behind screening-gate answer combinations the walker couldn't reach).
+  **Zero zombie browser hangs** — reduced-timeout defense validated.
+- **v96 run result: execution SUCCEEDED, report FAILED.**
+  - `project-observations` step timed out at 3 minutes (DERIVE_POLICY) on all 4 attempts.
+    With 28 walks and ~2,000+ catalogue entries, the `listCatalog` fan-out exceeds the
+    3-minute ceiling. Killed the verify/adjudicate/report pipeline.
+  - `record-target-identity` hit CPU time limit on first attempt but recovered on retry.
+- **v97 ships PROJECTION_POLICY** — `project-observations` gets its own 10-minute step
+  timeout (was 3 min under DERIVE_POLICY). `ENGINE_CAUSE_AFTER_MS` bumped from 5 → 12 min
+  to match the longer quiet period.
 - Wall history (all fixed, all general-class): consent race (2), S40 label-registration (7),
   screener steering lottery (S10), S150 input mask (48), doorstep plumbing (59), B10
   allocation grid (68: keyboard-only → staged validation → specify-pairing), C20 dwell gate
@@ -59,10 +52,11 @@ Written 19 Aug 2026, after the v84 deploy. Update the STATE section whenever you
   D10 oscillation (54: monotonic demand accumulation), D-section invisible advance (54:
   prose-progress signal), dwell gate second shape (26%: silent-refusal re-press), completion
   lexicon (81: optional article).
-- **Open reliability issue (MITIGATED by v96):** browser sessions can zombie (Puppeteer
-  WebSocket keeps alive without completing CDP calls). The reduced step timeout (22 min)
-  bounds the damage; the hard abort timer is retained as a secondary defense.
-- Run about to launch: v96 fresh run.
+- **Open reliability issues (BOTH MITIGATED):**
+  1. Browser zombie (Puppeteer WebSocket half-alive): reduced step timeout (22 min) bounds it.
+  2. C20 dwell gate: probabilistic (~50% of deep walks stall at 42-47 screens). Walks that
+     pass through reach END OF SURVEY. Not blocking completion — mitigated by multi-walk.
+- v97 pending: deploy and relaunch.
 
 ## The loop
 
