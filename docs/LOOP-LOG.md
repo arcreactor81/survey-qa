@@ -578,3 +578,110 @@ Carried notes from its builder, to be checked rather than trusted:
 clear this survey's ~85–100 screen traversal. A deploy that lost that variable would silently cap
 every deep walk at 40 screens and report it as a step cap. Verified present before this deploy;
 `wrangler.jsonc` was not touched.
+
+---
+
+## 2026-08-21 — BACKFILL: the unlogged window, v91's run through v97 (written after the fact)
+
+**Why this entry exists.** The log above stops at the v91 deploy (20 Aug 15:04). The eighteen
+hours that followed — the most operationally consequential of the whole loop — were never
+logged: the sessions that ran them were firefighting and the discipline lapsed. This entry is a
+RECONSTRUCTION, written 21 Aug by the returning session, from durable receipts only: R2
+checkpoints and progress ledgers fetched today, git history, and the Workflows engine's own step
+table. Where a fact could not be recovered it is named as missing rather than filled in.
+
+**What the lapse cost, in one sentence:** v93's report died on 20 Aug 19:24 with
+`project-observations: Execution timed out after 180000ms` — and because no one wrote that down,
+v96 was launched into the identical death nine hours later and the defect was only diagnosed
+after it had killed a second 4-hour run.
+
+### v91 run — the browser-error class appears (receipts)
+
+Run `v2r_01m0f81gbe7n28zvhgrt0dphvm`, 11 walks, terminated by operator at 199 min
+(`operator-terminated`, per its checkpoint failure record). Deep walks: 67 screens (time-cap)
+and 8 screens (blocked). The new signal: **three walks recorded 0 screens with outcome
+`error`** — the first cluster of walks that died before reaching the survey at all. The
+completion-lexicon fix it carried was never exercised against the end page: no walk reached it.
+
+### v92 — the D65/D58 train, and its walks drowned (receipts)
+
+Commits `a14d406` (D65 composite binding score) + `7fa5b9c` (D58 bounded binding retry), merged
+`1f67a32`. Run `v2r_01m0fmk3zr3k7jfsbqhmbg2y7m`: 13 walks, **seven of them 0-screen `error`
+walks**, two more 0-screen per-case-timeouts; best real walks 54 and 14 screens; operator
+terminated at 96 min. Diagnosis recorded in the revert commit and runbook: D65 was confidently
+binding decisions to the WRONG screens on surveys with repeated question shapes — zero binding
+refusals was WORSE than 62 refusals, because the navigator defaults handle unbound screens
+correctly while a wrong binding steers positively. Both features were reverted the same evening
+(`6f406c0`), tests and mutation campaigns removed with them.
+
+### v93 — the revert run reached the END, and its report died first (receipts)
+
+Run `v2r_01m0ftb0vcdfwvc1ctes58y19x` on the reverted tree: 13 walks, again seven 0-screen
+`error` walks — but walk 13 reached **82 screens, ending `completed`**: the second traversal to
+the end of the survey, confirming the revert cost no depth. Wall clock capped at 241 min, the
+run moved into its judging tail, and:
+
+> failure: step=`project-observations` — `Error: Execution timed out after 180000ms` (20 Aug 19:24:19)
+
+`checkpoint.completion` closed as `test: failed, report: failed, reason: workflow-error`. This
+is the FIRST report-tail death by projection timeout. It was not diagnosed at the time.
+
+### v93b, v94, v95 — three runs lost to zombie browser sessions (receipts)
+
+- v93b `v2r_01m0gd3qctvhfpmz2ewwgnyd7x`: 4 walks then stranded; operator-terminated.
+- v94 `v2r_01m0gg88ycgwd2en7jbz1fs9js`: 0 walks, stranded from batch 0; operator-terminated.
+  (v94 itself shipped the tracker phase-timeline work, `c066803` — a UI train, not a walker fix.)
+- v95 `v2r_01m0gktc0rdy8tpac2mm8t5bst`: 0 walks, stranded again; operator-terminated. v95's own
+  fix — the hard batch-abort timer (`c5d25e5`) — did NOT fire, which is how it was learned that
+  when Puppeteer's WebSocket goes half-alive, NO timer callback in the isolate dispatches: not
+  the abort timer, not the 80-minute Workflow step timeout. Each stranding held its step "alive"
+  for 5+ hours.
+
+The class and its measured boundary: CF Workflow step timeouts were enforced reliably at shorter
+durations (v53–v63 died at exactly ~67 min) and not at 80 min over a live WebSocket.
+
+### v96 — the timeout fix worked; the unfixed projection death took the report anyway
+
+Commit `9c6f545`, version `11bbe5ed` at 100%: `EXEC_PER_CASE_TIMEOUT_MS` 30→15 min,
+`EXEC_BATCH_MAX_MS` 65→18 min, `BATCH_POLICY` 80→22 min with retries 1→3. Run
+`v2r_01m0gntj754aszafnjy1xfr1nq`, 28 walks over 244 min, **zero zombie strandings** — the
+reduced ceiling is inside the enforcement range and the class is closed.
+
+The run itself was the best yet: walk 5 reached **82 screens, `completed`**; deep walks of 75,
+63, 61, 59, 57, 55 behind it; all six 2-screen termination probes fired; **362/429 obligations
+exercised, 67 time-exhausted, 0 pending; $0.00 spent** (full extraction cache replay). Two new
+facts it measured:
+
+1. Walks 22–28 all stalled at 10–12 screens on "unable to accept" — that is the SCREENER
+   working as designed against navigator-default filler answers, a coverage limitation to plan
+   around, not a walker defect.
+2. The halved per-case budget has a real cost: five walks time-capped at 55–63 screens that
+   under the old 30-minute budget would have kept walking. Traded knowingly for the zombie fix.
+
+Then the tail: `record-target-identity` burned its first attempt on "Worker exceeded CPU time
+limit" (10 min) and succeeded on retry — and `project-observations` timed out at 180000ms on
+ALL FOUR attempts, the v93 death repeated verbatim. `completion` closed `test: failed, report:
+failed`. With 28 walks the evidence catalogue is ~2,000+ entries and `listCatalog` pays one R2
+GET per entry; three minutes cannot cover it.
+
+### v97 — the projection fix (this session)
+
+Commit `172a3a5`, version `c0a13b71` at 100%: new `PROJECTION_POLICY` gives
+`project-observations` a 10-minute step timeout with 60-second retry delays (sized to ~double
+the current catalogue); `ENGINE_CAUSE_AFTER_MS` 5→12 min so the status reader's staleness gate
+stays past the longest legitimate quiet stage; the failure-cause test's `goQuiet` fixture moved
+to 15 min accordingly. Gates: tsc 0, suite 1629/1629. Run
+`v2r_01m0h811506rysmn1hzgd886fn` launched and in flight at time of writing — walk 9 reached
+**81 screens `completed`**; four 0-screen per-case-timeout walks so far (the browser-acquisition
+shape, milder than v91–v93's `error` wave). Whether the report tail survives is the question
+this run exists to answer; no projection timeout has been proven fixed until it does.
+
+### Where the loop actually is (the honest summary)
+
+The walker has now reached the end of the instrument on FOUR runs (v90-relaunch 81, v93 82,
+v96 82, v97 81) — walker logic has not been the blocker since v90. What has blocked, in order:
+browser-session `error` waves (v91–v93), zombie strandings (v93b–v95, closed by v96), and the
+projection timeout that has eaten every report attempt to date (v93, v96; fix live in v97,
+unproven). The open walker-logic items are the probabilistic C20 dwell-gate stall (walks still
+stop at 42–47 roughly half the time; patience shows 0 polls in those receipts — unexplained)
+and the screener-steering coverage question the 67 time-exhausted obligations pose.
