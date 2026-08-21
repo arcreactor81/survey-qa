@@ -746,3 +746,49 @@ The kill now goes through what production actually emits.
 survives end to end → the FIRST REPORT; (b) deep walks stop coin-flipping at the dwell
 gates; (c) an aborted browser costs one batch, not the run. The 67 screener-blocked
 obligations are NOT expected to move — that fix (screener-screen recognition) is next.
+
+## 2026-08-21 (evening) — THE FIRST REPORT
+
+### Receipts
+
+Run **`v2r_01m0hzte6qmz28dpn7sgrf2kvj`** on v98 (`a0985e81`), 28 walks, 211 min, $0.00:
+
+> `completion: test=partial-blocked, report=COMPLETE, reportAvailable=true`
+
+The report is live at `/api/v2/runs/v2r_01m0hzte6qmz28dpn7sgrf2kvj/report` (6.2MB, HTTP 200,
+fetched and archived to `.local-private/v98-report.html`). Every stage ran: extraction
+(cache), planning, 28 walks, projection, verification, verdict derivation, record assembly,
+judgement, report build and publication. No prior run in this project's history got past
+verification.
+
+### What the run itself proved
+
+1. **The judging-tail fix holds.** All five catalogue-reading steps ran inside their 10-minute
+   budgets. The three-run death streak (v93, v96 at projection; v97 at verdicts) is over.
+2. **The dwell-gate fix holds.** Six deep walks (39, 48, 52, 56, 38, 42 screens, all
+   time-cap) crossed the screens-42–47 zone with ZERO stalls — the class that previously
+   ended ~half of deep walks. The cost is visible too: the re-press patience spends budget,
+   so deep walks now time-cap shallower than v96/v97's range. Depth is budget-bound now,
+   not stall-bound.
+3. **The report is honest when there is nothing to claim.** No walk completed this run
+   (deepest 73, ending `unclassified`); 12 walks were screened out (6 of them the planner
+   probing screener-gated cases at screens 10–11); 6 died at 0 screens. The published page
+   says: settled requirements 0, "no result on this run cleared our evidence check", screened
+   out early "is the survey working". No fabricated findings. Exactly the degradation the
+   standing rules demand.
+
+### What it did NOT prove, named
+
+- **No requirement settled.** The checkpoint's own executor count said 13 exercised; the
+  record shows 0. Whether that gap is correct demotion (verification refusing partial-scope
+  evidence) or a projection defect needs one read of the record's demotion reasons — queued
+  with #21.
+- The 67 screener-gated obligations did not move (expected — the fix is #28, not shipped).
+- The zero-screen class (6 walks) and the run's `executor-error` stop reason on the last
+  batch are #30's evidence.
+
+### The stage-2 trigger has fired
+
+Owner's rule (21 Aug): report produced + wait-screen fix held live → stage-2 work un-parks.
+Both conditions met by this run. Next: v99 (screener recognition #28 + startup budget #30)
+with multilane (#14) and multimodel (#16) design starting in parallel.
