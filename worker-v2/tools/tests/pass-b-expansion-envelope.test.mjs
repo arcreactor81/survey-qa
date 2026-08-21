@@ -128,7 +128,10 @@ suite("pass-B expansion envelope normalization", () => {
       kind: "route",
       surprise: 1,
     });
-    assertThrows(
+    // `assertThrows` is async — it awaits the callback internally — so omitting `await` here
+    // causes the test to resolve BEFORE the throw is checked. The four un-awaited calls that
+    // shipped passed even with their guards deleted in `pass-b-decode.ts`.
+    await assertThrows(
       () => m.passB.decodePassBOutput(raw, "UNIT1", [sourceBlock("b0001")]),
       "unknown field",
     );
@@ -137,7 +140,7 @@ suite("pass-B expansion envelope normalization", () => {
   test("invalid kind still rejects", async () => {
     const m = await mod();
     const raw = fullPayload("UNIT1", ["b0001"], { kind: "fabricated" });
-    assertThrows(
+    await assertThrows(
       () => m.passB.decodePassBOutput(raw, "UNIT1", [sourceBlock("b0001")]),
       "closed expansion kind",
     );
@@ -149,7 +152,7 @@ suite("pass-B expansion envelope normalization", () => {
       kind: "route",
       route_answers: "TERMINATE",
     });
-    assertThrows(
+    await assertThrows(
       () => m.passB.decodePassBOutput(raw, "UNIT1", [sourceBlock("b0001")]),
       "must be an array",
     );
@@ -162,7 +165,7 @@ suite("pass-B expansion envelope normalization", () => {
       min_selections: 5,
       max_selections: 2,
     });
-    assertThrows(
+    await assertThrows(
       () => m.passB.decodePassBOutput(raw, "UNIT1", [sourceBlock("b0001")]),
       "min_selections exceeds max_selections",
     );

@@ -217,7 +217,7 @@ const MUTANTS = [
     file: "src/workflow/stages/assemble-record.mjs",
     find: '      ...(typeof w?.screensAdvanced === "number" ? { screensAdvanced: w.screensAdvanced } : {}),',
     replace: "",
-    kills: ["B4 — HOW FAR WE GOT reaches the record and the page, and an absent depth is not a zero"],
+    kills: ["B4 — THE REAL CARRY: screensAdvanced from the walk ledger survives deriveAttempts and reaches the page"],
   },
   {
     name: "B4: INVERTED — an attempt with no recorded depth is read as zero screens",

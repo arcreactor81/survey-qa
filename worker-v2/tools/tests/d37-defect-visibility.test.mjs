@@ -634,7 +634,15 @@ suite("D37 — the page reads the stop reason the record actually writes", () =>
       `the missing action list must be named, not implied by a zero: ${audit.slice(0, 700)}`,
     );
     // The window is read from the flat v2 fields rather than v1's nested `timestamps`.
-    assert(!/not recorded → not recorded/.test(audit), `the v2 timestamps were not read: ${audit.slice(0, 700)}`);
+    // PIN EACH TIMESTAMP INDEPENDENTLY. The original assertion — `!/not recorded → not recorded/` —
+    // only fired when BOTH timestamps were missing. The B3 mutant (mutate-report-defects.mjs)
+    // strips the `?? a.startedAt` fallback in render-html.mjs, which drops the START timestamp
+    // while leaving the END intact. That single-timestamp regression slipped through the combined
+    // assertion because "not recorded → 2026-08-20T00:09:00.000Z" does not match the pattern.
+    // The start time is the one the mutant breaks; the end time is the one its survival proved
+    // the assertion was not checking.
+    assert(/2026-08-20T00:01/.test(audit), `the v2 start timestamp was not read (startedAt must render as a real date): ${audit.slice(0, 700)}`);
+    assert(/2026-08-20T00:09/.test(audit), `the v2 end timestamp was not read (endedAt must render as a real date): ${audit.slice(0, 700)}`);
   });
 
   test("B3 — a ledger row that records no depth says so, and is not printed as zero screens", async () => {
@@ -680,6 +688,61 @@ suite("D37 — the page reads the stop reason the record actually writes", () =>
     );
     // The engineering half of the same string must NOT come with it.
     assert(!/did not advance from screen 43 even after a valid answer/.test(text), `raw stop prose leaked: ${text}`);
+  });
+
+  test("B4 — THE REAL CARRY: screensAdvanced from the walk ledger survives deriveAttempts and reaches the page", async () => {
+    // THE DEFECT THIS CLOSES. The original B4 test (above) injects screensAdvanced:43
+    // directly into record.attempts, bypassing `deriveAttempts` entirely. The B4 mutant in
+    // mutate-report-defects.mjs deletes the screensAdvanced carry in
+    // assemble-record.mjs#deriveAttempts (~line 616), and no test in the tree exercises that
+    // line — so the mutant survived and the guard was structurally incapable of failing.
+    //
+    // This test seeds a walk ledger row with screensAdvanced, runs the REAL deriveAttempts
+    // code, and asserts the number reaches the assembled attempt AND the rendered page.
+    const mod = await worker();
+
+    // 1. The carry through the REAL deriveAttempts function.
+    const walksWithDepth = [{
+      pathId: "p1",
+      attemptId: "att_b4_carry",
+      outcome: "no-advance-control",
+      loadCrash: false,
+      caseIds: ["fi_a"],
+      wallMs: 60000,
+      at: "2026-08-20T00:01:00.000Z",
+      screensAdvanced: 43,
+      outcomeDetail:
+        "the survey did not advance from screen 43 even after a valid answer; validation said: Please make sure you choose different Profile Variation for both Best and Worst rows.",
+      ending: { kind: "stalled", evidence: ["blocked"] },
+    }];
+    const derivedAttempts = mod.assembleRecordProjection.deriveAttempts({ walks: walksWithDepth, evidence: [] });
+    assertEq(derivedAttempts[0].screensAdvanced, 43, "screensAdvanced must survive deriveAttempts");
+
+    // 2. ABSENT stays absent — never zero. A walk that never reported depth must not acquire
+    //    a confident measurement through deriveAttempts.
+    const walksWithoutDepth = [{
+      pathId: "p1",
+      attemptId: "att_b4_absent",
+      outcome: "no-advance-control",
+      loadCrash: false,
+      caseIds: ["fi_a"],
+      wallMs: 60000,
+      at: "2026-08-20T00:01:00.000Z",
+      ending: { kind: "stalled", evidence: ["blocked"] },
+    }];
+    const absentDerived = mod.assembleRecordProjection.deriveAttempts({ walks: walksWithoutDepth, evidence: [] });
+    assertEq("screensAdvanced" in absentDerived[0], false, "an absent screensAdvanced must not become a zero through deriveAttempts");
+
+    // 3. The page: inject the DERIVED attempts (not hand-seeded ones) and render.
+    const { data, summary } = await publishWith((record) => {
+      record.attempts = [
+        ...derivedAttempts,
+        { ...record.attempts[0], attemptId: "att_deep02_carry", screensAdvanced: 7, ending: { kind: "screened-out", evidence: ["no"] } },
+      ];
+    });
+    assertEq(data.completion.testing.endings.deepest.screens, 43, JSON.stringify(data.completion.testing.endings.deepest));
+    const text = visible(summary);
+    assert(/deepest attempt got 43 screens into the survey/.test(text), `the depth from the real carry did not reach the page: ${text.slice(0, 900)}`);
   });
 
   test("B4 — a record with no depth says nothing rather than claiming zero screens", async () => {
@@ -743,4 +806,62 @@ suite("D37 — the page reads the stop reason the record actually writes", () =>
       `the legacy nested reason stopped being read: ${data.completion.testing.stoppingReason}`,
     );
   });
+});
+
+// ===========================================================================
+suite("D37 — the terminal state a real run reaches renders honestly", () => {});
+
+test("a run with test:failed, a RunRecord, and walk facts renders an honest page", async () => {
+  // THE GAP: every real run whose test axis failed has reached checkpoint state
+  // { test: "failed", report: "failed" } with a RunRecord present in R2. No test in the tree
+  // had ever seeded `testCompletion:"failed"` (the helper's default is "complete"), so the
+  // report builder's handling of a failed test axis was never exercised. A reader seeing a
+  // blank page or a page that claims the test completed would both be failures.
+  const mod = await worker();
+  const env = testEnv();
+  const seeded = await seedRun(mod, env, { testCompletion: "failed" });
+  const { runId } = seeded;
+
+  // Edit the record to carry walk facts a reader can verify are shown.
+  const record = JSON.parse(await (await env.EVIDENCE.get(mod.keys.recordKey(runId))).text());
+  record.attempts = [
+    {
+      ...record.attempts[0],
+      attemptId: "att_fail01",
+      screensAdvanced: 12,
+      stopReason: "blocked",
+      ending: { kind: "stalled", evidence: ["the survey refused our answer"] },
+      startedAt: "2026-08-20T00:01:00.000Z",
+      endedAt: "2026-08-20T00:04:00.000Z",
+    },
+  ];
+  await env.EVIDENCE.put(mod.keys.recordKey(runId), JSON.stringify(record), {
+    httpMetadata: { contentType: "application/json" },
+  });
+
+  // Also write the checkpoint's completion.reasonCode so the failure is named.
+  await mod.checkpoint.updateCheckpoint(env, runId, (d) => {
+    d.completion.reasonCode = "workflow-error";
+  });
+
+  const result = await mod.reportBuild.buildAndStoreReport(env, runId);
+  assert(result.ok, `report did not build for a failed test axis: ${JSON.stringify(result)}`);
+
+  const manifest = await mod.publish.readReportPointer(env, runId);
+  const html = await (await env.EVIDENCE.get(manifest.artifacts.html.key)).text();
+  const text = visible(html);
+
+  // The page is not blank.
+  assert(text.trim().length > 200, `the page is blank or near-blank for a failed run: ${text.slice(0, 300)}`);
+
+  // Walk facts are shown — the reader can tell what the run did before it failed.
+  assert(/12\s*screens advanced/.test(visible(extractView(html, "audit") ?? "")), `the walk depth is missing from a failed run's page`);
+
+  // NOTHING claims the test axis completed. The run failed, and the page must not say it
+  // succeeded. `final` is the build.ts flag derived from `cp.completion.test === "complete"`;
+  // a failed test axis must not produce a final report. "Report complete" on the page refers
+  // to the report BUILD (the artifact was stored successfully), not to the testing — so it
+  // is legitimate even for a failed test axis. The `final` flag is the load-bearing
+  // distinction between "current and authoritative" and "current but not finished".
+  assert(!result.summary.final, "a failed test axis produced a final report");
 });
