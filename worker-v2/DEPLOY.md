@@ -17,7 +17,7 @@ newer promotions and must not be edited until a real promotion completes.
 | Worker and origin | **survey-qa-v2** / **https://survey-qa-v2.wellshit.co.in** behind Access |
 | Workflows | **survey-qa-v2-run** / **SurveyRunWorkflowV2**; **survey-qa-v2-visual-shadow** / **SurveyVisualShadowWorkflowV1** |
 | Storage boundary | **EVIDENCE**, bucket **survey-qa-artifacts**, keys under **v2/**; runs use **v2r_** |
-| Standard source cap | exactly **$5** in the frozen config and authenticated policy |
+| Standard source cap | exactly **$15** in the frozen config and authenticated policy |
 | Wall cap | exactly **14,400,000 ms** (4 hours) |
 | Source-map boundary | top-level `upload_source_maps` is exactly boolean `false`; fresh pinned-Wrangler outdirs contain zero maps and supersede prior map-bearing evidence |
 | Normal extraction topology | exact `grok-4.5` Pass A + `deepseek-v4-pro` Pass B |
@@ -144,6 +144,8 @@ if ($LASTEXITCODE -ne 0) { throw "typecheck failed" }
 if ($LASTEXITCODE -ne 0) { throw "core suite failed" }
 & $Node ui\test-activity-view.mjs
 if ($LASTEXITCODE -ne 0) { throw "activity UI suite failed" }
+& $Node ui\test-document-reading-view.mjs
+if ($LASTEXITCODE -ne 0) { throw "document-reading UI suite failed" }
 & $Node tools\test-visual.mjs
 if ($LASTEXITCODE -ne 0) { throw "visual suite failed" }
 & $Node tools\probe-input-types.mjs
@@ -540,6 +542,13 @@ foreach ($Harness in $MutationHarnesses) {
   $WatchdogPath = Join-Path $MutationEvidence ($Stem + ".watchdog.json")
   $HarnessSha256 =
     (Get-FileHash -LiteralPath $HarnessPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  # PER-HARNESS CHILD TIMEOUT: mutate-w4-select.mjs deliberately removes a WAIT bound in the
+  # walker (the forward-release early return and the silent-refusal press bound), so two of its
+  # mutated children are genuinely slower than the unmutated tree. Under the default 120 000 ms
+  # those children are killed mid-run and score NO-RUN — fail-closed but untested, which is
+  # the same as zero coverage for those guards. The documented requirement is 600 000 ms
+  # (see the mutate-w4-select.mjs header, commit 8235e36).
+  $HarnessChildTimeoutMs = if ($Harness -ceq "mutate-w4-select.mjs") { 600000 } else { $MutationChildTimeoutMs }
   $MutationRequest = [ordered]@{
     schema = "survey-qa-windows-job-supervisor-request/2.0.0"
     supervisorScriptPath = $MutationSupervisor
@@ -558,13 +567,13 @@ foreach ($Harness in $MutationHarnesses) {
     stderrPath = $StderrLog
     receiptPath = $ReceiptPath
     timeoutMs = $MutationTimeoutMs
-    innerTimeoutMs = $MutationChildTimeoutMs
+    innerTimeoutMs = $HarnessChildTimeoutMs
     drainGraceMs = $MutationDrainGraceMs
     transcriptLimitBytes = $MutationTranscriptLimitBytes
     environment = [ordered]@{
       mode = "replace"
       entries = [ordered]@{
-        MUTATION_CHILD_TIMEOUT_MS = [string] $MutationChildTimeoutMs
+        MUTATION_CHILD_TIMEOUT_MS = [string] $HarnessChildTimeoutMs
         OS = "Windows_NT"
         PATH = ""
         PSMODULEPATH = ""
@@ -1321,7 +1330,7 @@ Repeat anonymous Access and workers.dev checks. Then authenticate through Access
 operator browser or service-token environment without writing credentials to disk:
 
 - GET **/api/v2/health** must be 200 and identify v2;
-- GET **/api/v2/policy** must report the exposed standard maximum **$5** and wall
+- GET **/api/v2/policy** must report the exposed standard maximum **$15** and wall
   **14,400,000 ms**;
 - dev-only routes stay 404 because DEV_SEED is absent;
 - submit a reviewed .docx and survey URL only after the Workflow interlock remains clear.
