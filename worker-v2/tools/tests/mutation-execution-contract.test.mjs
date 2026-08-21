@@ -1259,7 +1259,7 @@ suite("MUTATION EXECUTION CONTRACT — exact guards and closed release census", 
       .filter((name) => /^mutate-[A-Za-z0-9._-]+\.mjs$/u.test(name))
       .sort();
 
-    assertEq(harnesses.length, 46, "all actual harnesses remain mandatory");
+    assertEq(harnesses.length, 47, "all actual harnesses remain mandatory");
     assertEq(libraries.length, 1, "only the shared runner is library-only");
     assertEq(libraries[0], "mutate-runner.mjs");
     assert(!harnesses.includes("mutate-runner.mjs"), "library cannot pass as a harness");
