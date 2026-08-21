@@ -570,6 +570,12 @@ const FILES = [
   // expected label. Evidence they can fail: mutation anchors in classifyFailure, failure.ts
   // usageDisagreement path, and dev-drive targetQuestionId validation.
   "./tests/completion-labels.test.mjs",
+  // D58 — PLATFORM NAVIGATION WIDGET TEXT STRIPPING. The skip menu select renders question ids
+  // into visibleText; tokenOnScreen found 23+ sealed ids on every screen and screenIsQuestion
+  // returned false for every target on the v98 run (12/12 STEP_NOT_BOUND). The fix strips
+  // navigation widget option labels from the text before scanning. Evidence they can fail:
+  // tools/mutate-verifier-identity.mjs (nav-widget strip mutant).
+  "./tests/d58-nav-widget-text-stripping.test.mjs",
 ];
 
 export async function runVerification({
