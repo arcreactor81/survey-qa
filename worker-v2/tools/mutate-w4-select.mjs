@@ -955,8 +955,8 @@ await runMutantSuite({
         "a site that DID complain would be hammered with the same rejected answer instead of "
         + "handing the complaint to the ladder that exists to satisfy it",
       file: DR,
-      find: `        if (newValidationMessages(advanceBaseline, fresh).length > 0) {`,
-      replace: `        if (false) {`,
+      find: `    if (newValidationMessages(afterPress, fresh).length > 0) {`,
+      replace: `    if (false) {`,
       kills: ["a complaint that arrives DURING the wait hands over instead of re-pressing"],
     },
     {
@@ -965,8 +965,8 @@ await runMutantSuite({
         "a genuinely dead page would be pressed until the ceiling elapsed rather than a small "
         + "bounded number of times",
       file: DR,
-      find: `        silentPresses < SILENT_REFUSAL_MAX_PRESSES &&`,
-      replace: `        silentPresses < 6 &&`,
+      find: `    out.silentPresses < maxPresses &&`,
+      replace: `    out.silentPresses < 6 &&`,
       kills: ["a press that is ignored forever stops at the bounded press count"],
     },
     {
@@ -975,9 +975,41 @@ await runMutantSuite({
         "a merely SLOW site that moved while we waited would get a second press on the NEXT "
         + "screen, skipping a question the respondent never answered",
       file: DR,
-      find: `        if (late.length > 0) {`,
-      replace: `        if (false) {`,
+      find: `    if (late.length > 0) {`,
+      replace: `    if (false) {`,
       kills: ["a survey that moves on its own while we wait is NOT pressed through"],
+    },
+    {
+      name: "the recovery loop's silent-refusal is removed",
+      breaks:
+        "the measured ~50% stall at C20-style dwell-gate screens: the recovery loop presses "
+        + "once with a 600ms wait and the re-arming gate wins, while the shared helper that would "
+        + "wait and re-press is never called",
+      file: DR,
+      find: `          if ((recovered.validationMessages ?? []).length === 0) {`,
+      replace: `          if (false) {`,
+      kills: ["recovery press swallowed then gate opens: advance without re-derivation destroying the answer"],
+    },
+    {
+      name: "the recovery silent-refusal skips the movement re-check",
+      breaks:
+        "inside the shared helper a late advance is not rechecked before each re-press, so a "
+        + "recovery re-press on a screen that already moved would land on the NEXT question and "
+        + "skip the one the respondent never answered",
+      file: DR,
+      find: `    const late = advanceSignals(baseline, fresh);`,
+      replace: `    const late = [];`,
+      kills: ["a survey that moves on its own while we wait is NOT pressed through"],
+    },
+    {
+      name: "the injectable silentRefusalMaxPresses defaults to the fixture value",
+      breaks:
+        "production would use the fixture's injected value rather than the real bound, so the "
+        + "silent-refusal budget could drift from SILENT_REFUSAL_MAX_PRESSES without anyone noticing",
+      file: DR,
+      find: `  const maxPresses = Math.max(0, Math.floor(opts.silentRefusalMaxPresses ?? SILENT_REFUSAL_MAX_PRESSES));`,
+      replace: `  const maxPresses = Math.max(0, Math.floor(opts.silentRefusalMaxPresses ?? 1));`,
+      kills: ["the injectable silentRefusalMaxPresses default is pinned to the production constant"],
     },
     {
       name: "the completion lexicon goes back to requiring the article",

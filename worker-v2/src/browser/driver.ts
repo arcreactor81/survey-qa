@@ -162,6 +162,14 @@ export interface WalkOptions {
    */
   forwardReleasePollMs?: number;
   forwardReleaseTerminalMaxWaitMs?: number;
+  /**
+   * How many SILENT re-presses a swallowed advance earns — the site neither moved nor
+   * complained after the first press. INJECTABLE FOR THE SAME REASON the forward-release
+   * timings are: a fixture must exercise the real decision procedure in milliseconds, and
+   * a mutant that weakens the production default must die against a pin test.
+   * Default `SILENT_REFUSAL_MAX_PRESSES`.
+   */
+  silentRefusalMaxPresses?: number;
   /** Bound on EVERY page call before it rejects as hung (default PAGE_CALL_TIMEOUT_MS). */
   pageCallTimeoutMs?: number;
   /**
@@ -4482,6 +4490,172 @@ export const FORWARD_CONTROL_WITHHELD = "forward-control-withheld";
 export const SILENT_REFUSAL_MAX_PRESSES = 3;
 export const SILENT_REFUSAL_REPRESSED = "silent-refusal-repressed";
 
+/**
+ * Result of a silent-refusal re-press attempt. Used by both the main step loop and the
+ * recovery loop — the SAME mechanism, same bound, same receipts, never a second constant
+ * that can drift from the first. The recovery loop's stall at C20-style dwell gates was
+ * measured in run v2r_01m0enh6bjc1en2bgesvcnt5jc: after the main loop exhausted its 3
+ * presses (~16.5s) a re-arming 15s gate won the race, the walk fell into recovery, and
+ * recovery pressed once with a 600ms wait — six times short of one advance window — while
+ * the gate sat one press from opening.
+ */
+export type SilentRefusalResult = {
+  /** The freshest screen read during the refusal handling (null if no read succeeded). */
+  screen: RenderedScreen | null;
+  /** Movement signals detected, if any. Empty when the survey did not advance. */
+  movementSignals: AdvanceSignal[];
+  /** Whether the survey advanced during the silent-refusal wait. */
+  advanced: boolean;
+  /** How many re-presses were fired. */
+  silentPresses: number;
+  /** Total wall-clock ms the re-press loop waited. */
+  silentWaitedMs: number;
+  /** Actions recorded during the refusal handling — every re-press is receipted. */
+  actions: PerformedAction[];
+  /**
+   * True when the forward control BECAME HIDDEN during the wait — shape 2 flipping to shape 1
+   * on a platform re-render. The caller must hand the returned `screen` to `awaitForwardRelease`
+   * rather than burning another press against a control the respondent can no longer reach.
+   */
+  shapeFlipped: boolean;
+};
+
+/**
+ * THE BOUNDED SILENT-REFUSAL RE-PRESS — a press that produced neither movement nor complaint
+ * is waited out and re-pressed, bounded by a press count and by the walk deadline.
+ *
+ * SHARED BY THE MAIN STEP LOOP AND THE RECOVERY LOOP. The defect this closes: the recovery
+ * loop had NO silent-refusal mechanism at all — after its press the only wait was sleep(600),
+ * roughly 6x short of one advance window. When a dwell gate re-armed after a rejected submit,
+ * the recovery pressed once, saw no movement, and the walk stalled.
+ *
+ * THE CADENCE IS THE ADVANCE WINDOW ITSELF, not a knob of its own. Waiting before re-pressing
+ * is exactly "give this submit another advance window", so `advanceTimeoutMs` is the honest
+ * unit: production waits its real 3.5s between presses, and a fixture that declares a short
+ * advance window pays a short wait instead of a real-time one.
+ *
+ * SHAPE FLIP DETECTION: if during the re-press wait the control BECOMES hidden (shape 2
+ * flipping to shape 1 on a platform re-render), the loop returns `shapeFlipped: true` rather
+ * than burning a press against a control the respondent can no longer reach. The caller must
+ * hand the returned screen to `awaitForwardRelease`, which is the mechanism for shape 1.
+ *
+ * NOTHING HERE READS THE COUNTDOWN. The trigger is the absence of both movement and complaint,
+ * which is platform- and language-neutral. A site that is merely slow benefits identically.
+ */
+export async function silentRefusalRepress(
+  page: PageLike,
+  /** The screen BEFORE the press that was swallowed — the advance baseline. */
+  baseline: RenderedScreen,
+  /** The screen AFTER the press that was swallowed — must already show no new validation. */
+  afterPress: RenderedScreen,
+  opts: {
+    advanceTimeoutMs: number;
+    readTimeoutMs?: number;
+    deadline: number;
+    silentRefusalMaxPresses?: number;
+    forwardReleaseMaxWaitMs?: number;
+    forwardReleasePollMs?: number;
+    forwardReleaseTerminalMaxWaitMs?: number;
+  },
+  what: string,
+): Promise<SilentRefusalResult> {
+  const maxPresses = Math.max(0, Math.floor(opts.silentRefusalMaxPresses ?? SILENT_REFUSAL_MAX_PRESSES));
+  const pollMs = Math.max(1, Math.floor(opts.advanceTimeoutMs));
+  const out: SilentRefusalResult = {
+    screen: afterPress,
+    movementSignals: [],
+    advanced: false,
+    silentPresses: 0,
+    silentWaitedMs: 0,
+    actions: [],
+    shapeFlipped: false,
+  };
+  const started = Date.now();
+  while (
+    out.silentPresses < maxPresses &&
+    Date.now() + pollMs < opts.deadline
+  ) {
+    await sleep(pollMs);
+    out.silentWaitedMs = Date.now() - started;
+    let fresh: RenderedScreen | null = null;
+    try {
+      fresh = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `silent-refusal re-read on ${what}`);
+    } catch {
+      break;
+    }
+    // It may have moved on its own while we waited — never press through a late advance.
+    const late = advanceSignals(baseline, fresh);
+    if (late.length > 0) {
+      out.screen = fresh;
+      out.movementSignals = late;
+      out.advanced = true;
+      break;
+    }
+    // The site found its voice: this is a real rejection and belongs to the recovery ladder.
+    // Compare against `afterPress` (the screen immediately after the swallowed press), NOT
+    // `baseline` (which may already carry validation from a previous round). The entry
+    // condition of this helper guarantees `afterPress` has no validation — that absence is
+    // what "silence" means. Any validation appearing in a later read IS the site finding its
+    // voice, even if the same text was on a previous round's screen.
+    if (newValidationMessages(afterPress, fresh).length > 0) {
+      out.screen = fresh;
+      break;
+    }
+    // SHAPE FLIP: the control that was visible when this loop began has become hidden — the
+    // platform re-rendered and started a new forced-exposure timer. Pressing a hidden control
+    // is useless; the caller must hand this screen to `awaitForwardRelease` which is the
+    // mechanism for shape 1 (hidden forward control). Stated assumption: a control that goes
+    // from visible to hidden is re-arming, not disappearing. If it genuinely disappeared,
+    // awaitForwardRelease will run its own bounded wait and the walk ends with the limitation
+    // named — the same outcome, just slower.
+    const again = resolveAdvanceControl(fresh);
+    if (again.kind === "none") {
+      // The control is no longer visible or is no longer there. Check if there is a withheld
+      // forward control — that is the shape-1 signal.
+      if (withheldForwardControls(fresh).length > 0) {
+        out.screen = fresh;
+        out.shapeFlipped = true;
+        break;
+      }
+      // No control at all — the page layout changed unexpectedly. Stop and let the caller
+      // decide what to do with no forward control.
+      out.screen = fresh;
+      break;
+    }
+    if (again.kind !== "unique") break;
+    const press = await clickIdx(page, again.control.idx);
+    out.silentPresses += 1;
+    out.actions.push({
+      kind: "click-next",
+      targetIdx: again.control.idx,
+      targetLabel: again.control.label,
+      targetCode: null,
+      value: null,
+      ok: press.ok,
+      detail:
+        `silent-refusal re-press ${out.silentPresses} after ${out.silentWaitedMs}ms — the previous press produced ` +
+        `neither movement nor any validation message, so the answer was not what the site refused ` +
+        `(${press.detail}) via ${again.control.via}`,
+    });
+    if (!press.ok) break;
+    await sleep(Math.min(pollMs, 1_000));
+    try {
+      const settled = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `silent-refusal settle read on ${what}`);
+      const moved = advanceSignals(baseline, settled);
+      out.screen = settled;
+      if (moved.length > 0) {
+        out.movementSignals = moved;
+        out.advanced = true;
+        break;
+      }
+    } catch {
+      break;
+    }
+  }
+  out.silentWaitedMs = Date.now() - started;
+  return out;
+}
+
 export type WithheldForwardControl = { idx: number; label: string; why: string };
 
 export type ForwardReleaseWait = {
@@ -5877,67 +6051,59 @@ export async function walkPath(
     let silentPresses = 0;
     let silentWaitedMs = 0;
     if (!advanced && after && newValidationMessages(advanceBaseline, after).length === 0) {
-      // THE CADENCE IS THE ADVANCE WINDOW ITSELF, not a knob of its own. Waiting again before
-      // re-pressing is exactly "give this submit another advance window", so `advanceTimeoutMs`
-      // is the honest unit: production waits its real 3.5s between presses, and a fixture that
-      // declares a short advance window pays a short wait instead of a real-time one.
-      const pollMs = Math.max(1, Math.floor(opts.advanceTimeoutMs));
-      const startedSilent = Date.now();
-      while (
-        silentPresses < SILENT_REFUSAL_MAX_PRESSES &&
-        Date.now() + pollMs < opts.deadline
-      ) {
-        await sleep(pollMs);
-        silentWaitedMs = Date.now() - startedSilent;
-        let fresh: RenderedScreen | null = null;
-        try {
-          fresh = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `silent-refusal re-read on step ${stepIndex}`);
-        } catch {
-          break;
-        }
-        // It may have moved on its own while we waited — never press through a late advance.
-        const late = advanceSignals(advanceBaseline, fresh);
-        if (late.length > 0) {
-          after = fresh;
-          movementSignals = late;
-          advanced = true;
-          break;
-        }
-        // The site found its voice: this is a real rejection and belongs to the recovery ladder.
-        if (newValidationMessages(advanceBaseline, fresh).length > 0) {
-          after = fresh;
-          break;
-        }
-        const again = resolveAdvanceControl(fresh);
-        if (again.kind !== "unique") break;
-        const press = await clickIdx(page, again.control.idx);
-        silentPresses += 1;
-        actions.push({
-          kind: "click-next",
-          targetIdx: again.control.idx,
-          targetLabel: again.control.label,
-          targetCode: null,
-          value: null,
-          ok: press.ok,
-          detail:
-            `silent-refusal re-press ${silentPresses} after ${silentWaitedMs}ms — the previous press produced ` +
-            `neither movement nor any validation message, so the answer was not what the site refused ` +
-            `(${press.detail}) via ${again.control.via}`,
-        });
-        if (!press.ok) break;
-        await sleep(Math.min(pollMs, 1_000));
-        try {
-          const settled = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `silent-refusal settle read on step ${stepIndex}`);
-          const moved = advanceSignals(advanceBaseline, settled);
-          after = settled;
-          if (moved.length > 0) {
-            movementSignals = moved;
-            advanced = true;
-            break;
+      const refusal = await silentRefusalRepress(
+        page, advanceBaseline, after, opts, `step ${stepIndex}`,
+      );
+      silentPresses = refusal.silentPresses;
+      silentWaitedMs = refusal.silentWaitedMs;
+      actions.push(...refusal.actions);
+      if (refusal.advanced) {
+        after = refusal.screen;
+        movementSignals = refusal.movementSignals;
+        advanced = true;
+      } else if (refusal.shapeFlipped && refusal.screen) {
+        // THE CONTROL FLIPPED FROM VISIBLE TO HIDDEN — shape 2 became shape 1. Hand off to
+        // `awaitForwardRelease`, which is the mechanism that waits for a withheld control.
+        const held = await awaitForwardRelease(page, refusal.screen, opts, `step ${stepIndex} shape-flip`);
+        if (held.screen) {
+          after = held.screen;
+          const nav = resolveAdvanceControl(held.screen);
+          if (nav.kind === "unique") {
+            const press = await clickIdx(page, nav.control.idx);
+            actions.push({
+              kind: "click-next",
+              targetIdx: nav.control.idx,
+              targetLabel: nav.control.label,
+              targetCode: null,
+              value: null,
+              ok: press.ok,
+              detail: `shape-flip re-press after silent-refusal detected hidden control, waited ${held.waitedMs}ms (${press.detail}) via ${nav.control.via}`,
+            });
+            if (press.ok) {
+              await sleep(Math.min(opts.advanceTimeoutMs, 1_000));
+              try {
+                const settled = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `shape-flip settle on step ${stepIndex}`);
+                const moved = advanceSignals(advanceBaseline, settled);
+                after = settled;
+                if (moved.length > 0) {
+                  movementSignals = moved;
+                  advanced = true;
+                }
+              } catch { /* survivable — the step records what happened */ }
+            }
           }
-        } catch {
-          break;
         }
+        if (held.withheld.length > 0 && !held.released) {
+          recordReaderLimitation(
+            FORWARD_CONTROL_WITHHELD,
+            `screen ${stepIndex} silent-refusal shape-flip kept ${held.withheld.length} forward control(s) out of reach for ` +
+              `${held.waitedMs}ms across ${held.polls} re-read(s)`,
+            held.withheld.length,
+          );
+        }
+      } else {
+        // Neither advanced nor shape-flipped — update `after` with the freshest screen.
+        if (refusal.screen) after = refusal.screen;
       }
       if (silentPresses > 0) {
         recordReaderLimitation(
@@ -6218,6 +6384,95 @@ export async function walkPath(
           const receipt = [...recovery.actions].reverse().find((action) => action.kind === "click-next");
           if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${recoveryMovement.join("+")}`;
           break;
+        }
+        // RECOVERY SILENT-REFUSAL RE-PRESS — the SAME bounded mechanism the main step loop uses.
+        // Without this the recovery loop pressed once with a 600ms wait, roughly 6x short of one
+        // advance window, and a re-arming dwell gate won the race every time (measured: ~50% stall
+        // rate at C20-style screens, walks stopping at 42-47 screens with "0 patience polls").
+        // The shared helper `silentRefusalRepress` uses the same constants and the same press-count
+        // bound as the main loop, so the two sites cannot drift.
+        if (recoveryClicked && recoveryBaseline && recovered && recoveryMovement.length === 0) {
+          // THE GUARD IS TIGHTER THAN THE MAIN LOOP'S. The main loop checks for NEW validation
+          // relative to its advance baseline (which typically has none). In recovery, the
+          // baseline often ALREADY carries validation — that is why recovery entered in the first
+          // place. Checking only for NEW validation would let the re-press loop fire on a screen
+          // that is STILL COMPLAINING with the same message. "Silence is not rejection" means the
+          // site said NOTHING AT ALL — neither moved nor showed ANY validation. A repeated
+          // complaint is still a complaint and belongs to the next recovery round's re-derivation.
+          if ((recovered.validationMessages ?? []).length === 0) {
+            const refusal = await silentRefusalRepress(
+              page, recoveryBaseline, recovered, opts, `step ${stepIndex} recovery round ${round}`,
+            );
+            recovery.actions.push(...refusal.actions);
+            if (refusal.advanced) {
+              recovered = refusal.screen;
+              recoveryMovement = refusal.movementSignals as string[];
+              const receipt = [...recovery.actions].reverse().find((action) => action.kind === "click-next");
+              if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${recoveryMovement.join("+")}`;
+              if (refusal.silentPresses > 0) {
+                recordReaderLimitation(
+                  SILENT_REFUSAL_REPRESSED,
+                  `screen ${stepIndex} recovery round ${round} refused a press without moving and without saying anything; ` +
+                    `the walk waited ${refusal.silentWaitedMs}ms and pressed ${refusal.silentPresses} more time(s) before the survey moved`,
+                  refusal.silentPresses,
+                );
+              }
+              break;
+            }
+            if (refusal.shapeFlipped && refusal.screen) {
+              // Shape 2 flipped to shape 1: the control became hidden. Hand to awaitForwardRelease
+              // rather than burning a press against a control the respondent can no longer reach.
+              const held = await awaitForwardRelease(page, refusal.screen, opts, `step ${stepIndex} recovery round ${round} shape-flip`);
+              if (held.screen) {
+                recoveryBaseline = held.screen;
+                const nav = resolveAdvanceControl(held.screen);
+                if (nav.kind === "unique") {
+                  const press = await clickIdx(page, nav.control.idx);
+                  recovery.actions.push({
+                    kind: "click-next",
+                    targetIdx: nav.control.idx,
+                    targetLabel: nav.control.label,
+                    targetCode: null,
+                    value: null,
+                    ok: press.ok,
+                    detail: `recovery shape-flip re-press round ${round} after silent-refusal detected hidden control, waited ${held.waitedMs}ms (${press.detail}) via ${nav.control.via}`,
+                  });
+                  if (press.ok) {
+                    await sleep(Math.min(opts.advanceTimeoutMs, 1_000));
+                    try {
+                      const settled = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `recovery shape-flip settle on step ${stepIndex} round ${round}`);
+                      const moved = advanceSignals(recoveryBaseline, settled);
+                      recovered = settled;
+                      if (moved.length > 0) {
+                        recoveryMovement = moved as string[];
+                        const receipt = [...recovery.actions].reverse().find((action) => action.kind === "click-next");
+                        if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${recoveryMovement.join("+")}`;
+                      }
+                    } catch { /* survivable — the step records what happened */ }
+                  }
+                }
+              }
+              if (held.withheld.length > 0 && !held.released) {
+                recordReaderLimitation(
+                  FORWARD_CONTROL_WITHHELD,
+                  `screen ${stepIndex} recovery round ${round} shape-flip kept ${held.withheld.length} forward control(s) out of reach ` +
+                    `for ${held.waitedMs}ms across ${held.polls} re-read(s)`,
+                  held.withheld.length,
+                );
+              }
+              if (recoveryMovement.length > 0) break;
+            }
+            if (refusal.silentPresses > 0) {
+              recordReaderLimitation(
+                SILENT_REFUSAL_REPRESSED,
+                `screen ${stepIndex} recovery round ${round} refused a press without moving and without saying anything; ` +
+                  `the walk waited ${refusal.silentWaitedMs}ms and pressed ${refusal.silentPresses} more time(s) before giving up on it`,
+                refusal.silentPresses,
+              );
+            }
+            // Update recovered with the freshest screen the refusal loop saw.
+            if (refusal.screen) recovered = refusal.screen;
+          }
         }
         if (!recoveryClicked) break;
         roundScreen = recovered ?? roundScreen;

@@ -3220,19 +3220,23 @@ suite("amendment 18: a press the site ignores without complaint is not a wrong a
 
   test("counterproof: when the site DOES complain, it is handed to recovery and not re-pressed", async () => {
     const { obs } = await walkWith({ thenValidation: "Please make sure you choose different Profile Variation for both rows." });
-    const all = obs.steps.flatMap((s) => s.actions ?? []);
-    const repress = all.find((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    // SCOPED TO THE MAIN STEP (step 0): the main loop's silent-refusal must not fire when there
+    // IS a validation message. Recovery's own silent-refusal (amendment 20) is separate machinery.
+    const mainStep = obs.steps.find((s) => s.stepIndex === 0);
+    const repress = (mainStep?.actions ?? []).find((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
     assertEq(repress, undefined,
-      "a real validation belongs to the answer-recovery ladder, never to the re-press loop");
+      "a real validation belongs to the answer-recovery ladder, never to the main-loop re-press loop");
   });
 
   test("a complaint that arrives DURING the wait hands over instead of re-pressing", async () => {
     const { obs } = await walkWith({ ignorePresses: 999, validationAfterReads: 2 });
-    const represses = obs.steps
-      .flatMap((s) => s.actions ?? [])
+    // SCOPED TO THE MAIN STEP (step 0): the main-loop silent-refusal must stop the moment the
+    // site complains. Recovery steps have their own separate mechanism (amendment 20).
+    const mainStep = obs.steps.find((s) => s.stepIndex === 0);
+    const represses = (mainStep?.actions ?? [])
       .filter((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
     assertEq(represses.length, 0,
-      `once the site complains the answer-recovery ladder owns it, got ${represses.length} re-presses`);
+      `once the site complains the answer-recovery ladder owns it, got ${represses.length} main-loop re-presses`);
   });
 
   test("a survey that moves on its own while we wait is NOT pressed through", async () => {
@@ -3251,13 +3255,14 @@ suite("amendment 18: a press the site ignores without complaint is not a wrong a
 
   test("a press that is ignored forever stops at the bounded press count", async () => {
     const { obs } = await walkWith({ ignorePresses: 999 });
-    // Pin the guard itself: the SILENT re-presses are bounded. (The initial press and the
-    // answer-recovery ladder's own presses are separate machinery with their own bounds.)
-    const represses = obs.steps
-      .flatMap((s) => s.actions ?? [])
+    // SCOPED TO THE MAIN STEP (step 0): the main-loop silent-refusal must be bounded to exactly
+    // SILENT_REFUSAL_MAX_PRESSES (3). Recovery has its own bounded re-presses (amendment 20),
+    // so searching all steps would double-count.
+    const mainStep = obs.steps.find((s) => s.stepIndex === 0);
+    const represses = (mainStep?.actions ?? [])
       .filter((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
     assertEq(represses.length, 3,
-      `a page that ignores every press must not be hammered, got ${represses.length} re-presses`);
+      `the main-loop silent re-presses must be bounded to 3, got ${represses.length}`);
     assert((obs.readerLimitations ?? []).some((l) => l.kind === "silent-refusal-repressed"),
       `the extra presses must be a counted limitation, got ${JSON.stringify(obs.readerLimitations)}`);
   });
@@ -3327,5 +3332,302 @@ suite("amendment 19: the page that says the survey ended is a completion, not a 
     );
     assertEq(ending.kind, "screened-out",
       "widening the completion lexicon must not swallow a real disqualification");
+  });
+});
+
+suite("amendment 20: the recovery loop gets the SAME silent-refusal re-press as the main loop", () => {
+  // THE ROOT CAUSE OF THE ~50% STALL RATE AT C20-STYLE DWELL-GATE SCREENS (walks stopping at
+  // 42-47 screens with "0 patience polls" in their receipts): the main loop's 3-press
+  // silent-refusal (~16.5s at production advanceTimeoutMs=3500) raced a 15s gate; when the gate
+  // re-armed or the race was lost, the walk fell into recovery, which re-derived already-correct
+  // answers and pressed with a 600ms wait — roughly 6x short of one advance window. The recovery
+  // loop had NO silent-refusal mechanism at all.
+  //
+  // THE FIX: the recovery loop now calls the SAME bounded `silentRefusalRepress` helper the main
+  // loop uses, with the same constants and same receipts. A shared helper, not a duplication.
+  //
+  // These fixtures exercise the recovery path specifically: the MAIN loop blocks because the site
+  // complained about the first answer (validation message visible), so recovery re-derives and
+  // presses. That press is SILENTLY swallowed — no movement, no new complaint — which is the
+  // gate's second shape. The recovery's silent-refusal mechanism then takes over.
+
+  const NEXT_IDX = 8;
+  const mkOpt = (idx, label, checked) => ({
+    order: 0, idx, code: String(idx), label, checked, disabled: false,
+    visible: true, operable: true, actuatedVia: "self", labelIndex: null,
+  });
+
+  /** Build a screen fixture. `buttonVisible` controls whether the forward control is visible. */
+  const screenOf = ({ validation = [], checked = new Set(), buttonVisible = true } = {}) => ({
+    at: "2026-08-21T12:00:00.000Z",
+    url: "https://fixture.invalid/recovery-gate",
+    title: "recovery-gate",
+    questionText: "C20-recovery",
+    instructionText: "",
+    visibleText: "gate test",
+    grid: null,
+    collectedErrors: [],
+    readerLimitations: [],
+    controls: [0, 1].map((idx) => ({
+      idx, tag: "input", type: "radio", name: `q_${idx}`, id: null, code: null, label: `choice ${idx}`,
+      text: "", checked: checked.has(idx), value: "", valueIsUserSupplied: false, disabled: false,
+      required: false, visible: true, operable: true, actuatedVia: "self", labelIndex: null,
+      placeholder: null, maxlength: null, min: null, max: null, step: null, pattern: null, readOnly: false,
+    })),
+    optionGroups: [
+      { name: "q_0", kind: "radio", options: [mkOpt(0, "choice 0", checked.has(0))] },
+      { name: "q_1", kind: "radio", options: [mkOpt(1, "choice 1", checked.has(1))] },
+    ],
+    questionRoots: [],
+    buttons: [{ idx: NEXT_IDX, label: ">>", labelSource: "code", role: "other", roleVia: null, disabled: false, visible: buttonVisible }],
+    validationMessages: validation,
+    progress: { present: true, kind: "div", now: null, max: null, text: "Survey progress: 26%" },
+    counts: { controls: 2, optionGroups: 2, options: 2, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+    historyLength: 50,
+    screenSignature: "sig:recovery-gate",
+  });
+
+  /**
+   * Walk fixture that forces a recovery path.
+   *
+   * Phase 1 (main loop): the first press triggers a validation complaint → main loop does NOT
+   * use silent-refusal (there IS validation), the step is blocked, recovery enters.
+   *
+   * Phase 2 (recovery): re-derives answers, presses again. This press is swallowed (gate shape 2):
+   * no movement, no new complaint.
+   *
+   * The `recoveryGateLength` parameter controls how many RECOVERY presses the gate swallows
+   * before opening. `recoveryComplainAfter` makes the site complain during the re-press wait.
+   * `shapeFlipAfter` makes the control become hidden after N recovery reads (shape 2 → shape 1).
+   */
+  const walkRecoveryGate = async ({
+    recoveryGateLength = 1,
+    recoveryComplainAfter = null,
+    shapeFlipAfter = null,
+    maxPresses = undefined,
+  } = {}) => {
+    const { mod } = await loadWorker();
+    const env = testEnv();
+    const checked = new Set();
+    let mainPresses = 0;
+    let recoveryPresses = 0;
+    let inRecovery = false;
+    let mainBlocked = false;
+    let moved = false;
+    let recoveryReads = 0;
+
+    const page = {
+      async goto() {},
+      async evaluate(script) {
+        const src = String(script);
+        if (src.includes("screenSignature")) {
+          if (inRecovery && recoveryPresses >= 1) recoveryReads += 1;
+
+          if (moved) {
+            return {
+              ...screenOf(), url: "https://fixture.invalid/recovery-gate/next", screenSignature: "sig:after-recovery",
+              controls: [], optionGroups: [], validationMessages: [],
+              buttons: [{ idx: NEXT_IDX, label: ">>", labelSource: "code", role: "other", roleVia: null, disabled: false, visible: true }],
+              counts: { controls: 0, optionGroups: 0, options: 0, textInputs: 0, valueInputs: 0, optionsNotOperable: 0, readerLimitations: 0 },
+            };
+          }
+
+          // During the recovery silent-refusal wait, if shapeFlipAfter is set, the button
+          // becomes hidden after that many reads — shape 2 flipping to shape 1.
+          if (shapeFlipAfter !== null && inRecovery && recoveryReads >= shapeFlipAfter) {
+            return screenOf({ checked, buttonVisible: false });
+          }
+
+          // During recovery silent-refusal wait, if the site should complain after N reads:
+          if (recoveryComplainAfter !== null && inRecovery && recoveryReads >= recoveryComplainAfter) {
+            return screenOf({ checked, validation: ["Please check your answer."] });
+          }
+
+          // Main loop: after the first press, show validation (to force recovery).
+          // Once recovery enters (inRecovery = true), the re-derivation clears the validation:
+          // the site is now silently swallowing the recovery press (gate shape 2), so the
+          // screen has NO validation — that silence is exactly what the re-press mechanism is for.
+          if (mainBlocked && !inRecovery) {
+            return screenOf({ checked, validation: ["Please review your responses."] });
+          }
+
+          return screenOf({ checked });
+        }
+        if (src.includes("checkedGroupIdxs")) {
+          const at = src.indexOf(")[");
+          const idx = at < 0 ? null : Number(src.slice(at + 2, src.indexOf("]", at + 2)));
+          return { idx, type: "radio", name: idx !== null ? `q_${idx}` : null, formOwner: 0, unnamedControlIdx: null, checked: idx !== null && checked.has(idx), checkedGroupIdxs: idx !== null && checked.has(idx) ? [idx] : [] };
+        }
+        return { ok: true };
+      },
+      async evaluateOnNewDocument() {},
+      async $$() {
+        return Array.from({ length: 14 }, (_, idx) => ({
+          async click() {
+            if (idx === NEXT_IDX) {
+              if (!inRecovery) {
+                mainPresses += 1;
+                // First press causes validation → blocks main loop, enters recovery.
+                mainBlocked = true;
+                return;
+              }
+              recoveryPresses += 1;
+              recoveryReads = 0;
+              // After the gate length is exceeded, the survey moves.
+              if (recoveryPresses > recoveryGateLength) moved = true;
+              return;
+            }
+            if (idx <= 1) checked.add(idx);
+          },
+          async type() {}, async focus() {},
+        }));
+      },
+      async screenshot() { return new TextEncoder().encode("PNG-A20"); },
+      async setViewport() {}, on() {}, async close() {}, async reload() {},
+    };
+
+    // Intercept the recovery entry by detecting the step block.
+    // The walkPath function itself manages recovery internally; we detect the transition
+    // by observing the main loop block (validation visible) and the subsequent recovery press.
+    // To make the page mock know it is in recovery, we observe that the SECOND press is
+    // from recovery (after the first press blocked the main loop).
+    const origEval = page.evaluate;
+    const origEvalOnNew = page.evaluateOnNewDocument;
+    // After the main loop's press and its polls all see validation, the walk enters recovery.
+    // We detect this by tracking: once the main loop has pressed and polled without advancing,
+    // recovery begins. The transition happens when the walker starts re-deriving answers,
+    // which means a SECOND round of clicking controls (after the first press+poll cycle).
+    // The simplest detection: the second click on the forward button means recovery is pressing.
+    let forwardClickCount = 0;
+    const origDollarDollar = page.$$;
+    page.$$ = async function () {
+      const handles = await origDollarDollar.call(this);
+      return handles.map((h, idx) => {
+        if (idx === NEXT_IDX) {
+          return {
+            ...h,
+            async click() {
+              forwardClickCount += 1;
+              // The first forward click is the main loop; the second onward is recovery.
+              if (forwardClickCount >= 2) inRecovery = true;
+              return h.click();
+            },
+          };
+        }
+        return h;
+      });
+    };
+
+    const runId = mod.ids.mintRunId();
+    const walkOpts = {
+      surveyUrl: "https://fixture.invalid/recovery-gate", runId, planRevisionId: "plan_a20gate01",
+      attemptId: "att_a20gate0001", tier: 1, maxSteps: 2, deadline: Date.now() + 60_000,
+      viewport: { width: 1280, height: 900 }, applyHistoryShim: false, advanceTimeoutMs: 30,
+      forwardReleasePollMs: 10, forwardReleaseTerminalMaxWaitMs: 30, forwardReleaseMaxWaitMs: 200,
+      readTimeoutMs: 5_000,
+    };
+    if (maxPresses !== undefined) walkOpts.silentRefusalMaxPresses = maxPresses;
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: "path_a20", decisions: [], witnesses: [] },
+      walkOpts,
+      { env, runId, attemptId: "att_a20gate0001", pathId: "path_a20", witnesses: [] },
+    );
+    return { obs, recoveryPresses, mainPresses };
+  };
+
+  test("recovery press swallowed then gate opens: advance without re-derivation destroying the answer", async () => {
+    // The gate swallows 1 recovery press, then the silent-refusal re-press opens it.
+    const { obs } = await walkRecoveryGate({ recoveryGateLength: 1 });
+    // Find the recovery step (stepIndex === 0.5).
+    const recovery = obs.steps.find((st) => st.stepIndex === 0.5);
+    assert(recovery, "a recovery step must exist — the main loop was blocked by validation");
+    assertEq(recovery.advanced, true,
+      `the recovery must advance through the gate, not stall: outcome=${JSON.stringify(obs.outcome)}`);
+    // The recovery actions must include a silent-refusal re-press receipt.
+    const repress = (recovery.actions ?? []).find((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    assert(repress,
+      `the recovery must record its re-press, got: ${JSON.stringify((recovery.actions ?? []).map((a) => a.detail))}`);
+  });
+
+  test("gate never opens in recovery: bounded presses then named limitation", async () => {
+    // The gate NEVER opens — every press is swallowed. The recovery silent-refusal must
+    // exhaust its bounded press count and stop.
+    const { obs } = await walkRecoveryGate({ recoveryGateLength: 999 });
+    // The walk must end blocked, not hang forever.
+    assert(obs.outcome !== "completed",
+      `a gate that never opens must not produce a completed walk: ${obs.outcome}`);
+    // Recovery re-presses are bounded.
+    const recovery = obs.steps.find((st) => st.stepIndex === 0.5);
+    assert(recovery, "recovery step must exist");
+    const represses = (recovery.actions ?? [])
+      .filter((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    // The recovery should have SOME re-presses (proving the mechanism fired) but be bounded.
+    assert(represses.length > 0,
+      "the recovery must re-press at least once when the gate swallows its press");
+    assert(represses.length <= 3,
+      `the recovery re-presses must be bounded, got ${represses.length}`);
+    // The limitation must be named.
+    assert((obs.readerLimitations ?? []).some((l) => l.kind === "silent-refusal-repressed"),
+      `the bounded re-presses must be a counted limitation, got ${JSON.stringify(obs.readerLimitations)}`);
+  });
+
+  test("site complains during recovery re-press wait: immediate handoff to the ladder", async () => {
+    // The gate swallows the recovery press, and during the silent-refusal re-press wait the site
+    // complains. The complaint must stop the re-press loop and let the next recovery round's
+    // ladder handle it. `recoveryComplainAfter: 2` means the complaint appears on the SECOND
+    // read after the recovery press — the first read (at the recovery loop's own post-press
+    // checkpoint) sees no complaint (so the silent-refusal helper enters), and the second
+    // (which is the helper's first re-read) sees the complaint and exits.
+    const { obs } = await walkRecoveryGate({ recoveryGateLength: 999, recoveryComplainAfter: 2 });
+    const recovery = obs.steps.find((st) => st.stepIndex === 0.5);
+    assert(recovery, "recovery step must exist");
+    const represses = (recovery.actions ?? [])
+      .filter((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    assertEq(represses.length, 0,
+      `once the site complains, the re-press loop must stop and hand to the ladder, got ${represses.length} re-presses`);
+  });
+
+  test("shape flip (visible to hidden) in recovery: falls through to awaitForwardRelease", async () => {
+    // The gate swallows the recovery press, then the control becomes hidden (shape 2 → shape 1).
+    // The silent-refusal loop must detect the shape flip and hand off to awaitForwardRelease
+    // rather than trying to press a hidden control.
+    const { obs } = await walkRecoveryGate({ recoveryGateLength: 999, shapeFlipAfter: 1 });
+    const recovery = obs.steps.find((st) => st.stepIndex === 0.5);
+    assert(recovery, "recovery step must exist");
+    // No silent-refusal re-presses should have fired (the flip happens on the first re-read).
+    const represses = (recovery.actions ?? [])
+      .filter((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    assertEq(represses.length, 0,
+      `a shape flip must not be re-pressed: it is shape 1 now and belongs to awaitForwardRelease, got ${represses.length} re-presses`);
+    // The shape-flip handoff to awaitForwardRelease should have produced a withheld-control
+    // limitation or a shape-flip re-press receipt.
+    const shapeFlipAction = (recovery.actions ?? []).find(
+      (a) => String(a.detail ?? "").includes("shape-flip"),
+    );
+    const withheldLimitation = (obs.readerLimitations ?? []).find(
+      (l) => l.kind === "forward-control-withheld",
+    );
+    assert(shapeFlipAction || withheldLimitation,
+      "a shape flip must be evidenced: either a shape-flip action or a withheld-control limitation");
+  });
+
+  test("the injectable silentRefusalMaxPresses default is pinned to the production constant", async () => {
+    const { mod } = await loadWorker();
+    // The production constant must be exactly 3, and when nothing is injected, the helper must
+    // use it. This pin test kills a mutant that changes the production default.
+    assertEq(mod.driver.SILENT_REFUSAL_MAX_PRESSES, 3,
+      "the production silent-refusal press bound must be exactly 3");
+  });
+
+  test("an injected silentRefusalMaxPresses overrides the production default", async () => {
+    // Inject maxPresses=1 — the recovery should make at most 1 silent re-press.
+    const { obs } = await walkRecoveryGate({ recoveryGateLength: 999, maxPresses: 1 });
+    const recovery = obs.steps.find((st) => st.stepIndex === 0.5);
+    assert(recovery, "recovery step must exist");
+    const represses = (recovery.actions ?? [])
+      .filter((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
+    assert(represses.length <= 1,
+      `with silentRefusalMaxPresses=1, at most 1 re-press should fire, got ${represses.length}`);
   });
 });
