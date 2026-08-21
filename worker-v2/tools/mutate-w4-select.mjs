@@ -22,10 +22,7 @@ const DR = "src/browser/driver.ts";
 const VW = "src/store/visual-work.ts";
 const VR = "src/workflow/stages/verify-observations.ts";
 
-await runMutantSuite({
-  title: "W4 — can scoped native-select/readback guards fail?",
-  filter: "W4",
-  mutants: [
+const W4_MUTANTS = [
     {
       name: "trust adapter ok:true without exact select readback",
       breaks:
@@ -1009,7 +1006,10 @@ await runMutantSuite({
       file: DR,
       find: `  const maxPresses = Math.max(0, Math.floor(opts.silentRefusalMaxPresses ?? SILENT_REFUSAL_MAX_PRESSES));`,
       replace: `  const maxPresses = Math.max(0, Math.floor(opts.silentRefusalMaxPresses ?? 1));`,
-      kills: ["the injectable silentRefusalMaxPresses default is pinned to the production constant"],
+      // The pin test asserts the CONSTANT's value, which this mutant does not touch — the
+      // campaign proved it SURVIVED there. The no-injection exhaustion test is the one that
+      // reddens: it counts the actual re-presses against the constant.
+      kills: ["gate never opens in recovery: bounded presses then named limitation"],
     },
     {
       name: "the completion lexicon goes back to requiring the article",
@@ -1020,5 +1020,22 @@ await runMutantSuite({
       replace: String.raw`  /\b(this\s+is\s+)?the\s+end\s+of\s+(the|this)\s+(survey|questionnaire|interview)\b/i,`,
       kills: ["THE MEASURED SHAPE: 'End of survey' is a completion, not a structural screen-out"],
     },
-  ],
+];
+
+// CHUNKED EXECUTION — for environments that kill long-running tasks. W4_CHUNK_FROM /
+// W4_CHUNK_TO slice the mutant list (half-open, 0-based). DEFAULT IS THE FULL LIST, so the
+// release gate's single-invocation run is byte-for-byte what it always was; a chunked
+// verification is only as good as the union of its chunks, and whoever runs chunks owns
+// proving the union covers [0, length) with no gap and no overlap-blind spot. Each chunk
+// re-runs the baseline and both self-checks — more scrutiny, not less.
+const W4_CHUNK_FROM = Math.max(0, Number(process.env.W4_CHUNK_FROM ?? 0) || 0);
+const W4_CHUNK_TO = Math.min(W4_MUTANTS.length, Number(process.env.W4_CHUNK_TO ?? W4_MUTANTS.length) || W4_MUTANTS.length);
+if (process.env.W4_CHUNK_FROM || process.env.W4_CHUNK_TO) {
+  console.log(`W4 chunk: mutants [${W4_CHUNK_FROM}, ${W4_CHUNK_TO}) of ${W4_MUTANTS.length}`);
+}
+
+await runMutantSuite({
+  title: "W4 — can scoped native-select/readback guards fail?",
+  filter: "W4",
+  mutants: W4_MUTANTS.slice(W4_CHUNK_FROM, W4_CHUNK_TO),
 });

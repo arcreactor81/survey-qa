@@ -3562,11 +3562,17 @@ suite("amendment 20: the recovery loop gets the SAME silent-refusal re-press as 
     assert(recovery, "recovery step must exist");
     const represses = (recovery.actions ?? [])
       .filter((a) => String(a.detail ?? "").includes("silent-refusal re-press"));
-    // The recovery should have SOME re-presses (proving the mechanism fired) but be bounded.
-    assert(represses.length > 0,
-      "the recovery must re-press at least once when the gate swallows its press");
-    assert(represses.length <= 3,
-      `the recovery re-presses must be bounded, got ${represses.length}`);
+    // EXACTLY THE PRODUCTION BUDGET, DERIVED FROM THE CONSTANT. This walk injects NO
+    // silentRefusalMaxPresses, so the helper's fallback decides the count — and against a
+    // gate that never opens and never complains, the loop spends its whole budget. The first
+    // version of this assertion was `> 0 && <= 3`, and the campaign proved that a mutant
+    // rewiring the fallback from SILENT_REFUSAL_MAX_PRESSES to 1 SURVIVED it: one press is
+    // both "some" and "bounded". An under-provisioned fallback is exactly how the re-press
+    // budget would silently drift from the constant, so the count is pinned to the constant
+    // itself, not to a literal.
+    const { mod } = await loadWorker();
+    assertEq(represses.length, mod.driver.SILENT_REFUSAL_MAX_PRESSES,
+      "with nothing injected, a never-opening gate must receive exactly the production press budget");
     // The limitation must be named.
     assert((obs.readerLimitations ?? []).some((l) => l.kind === "silent-refusal-repressed"),
       `the bounded re-presses must be a counted limitation, got ${JSON.stringify(obs.readerLimitations)}`);
