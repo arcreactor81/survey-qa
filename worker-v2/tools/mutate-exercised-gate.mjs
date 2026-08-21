@@ -223,8 +223,12 @@ const MUTANTS = [
     file: FILE,
     find: "  EXEC_STOP_BROWSER_ABORT_CAP,\n] as const;",
     replace: "] as const;",
+    // The registry-contents test is the one that reddens: it compares the registry's exact
+    // membership. The routing test reads the CONSTANT (still exported, still "-cap"-suffixed
+    // under this mutant) and stays green — the first campaign run proved that, scoring this
+    // mutant SURVIVED while it was pointed at the routing test.
     kills: [
-      "`browser-abort-cap` routes to `budget-exhausted` and `partial-budget` — an honest internal shortfall, not a site accusation",
+      "the executor's stop-reason vocabulary is CLOSED and every non-cap reason is in it",
     ],
   },
   {

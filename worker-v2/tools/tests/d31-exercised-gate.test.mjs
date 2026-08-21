@@ -634,10 +634,18 @@ suite("D31 — our shortfall is not their refusal", () => {
     // `unsettledBucketFor` maps it to `budget-exhausted`. A code without the suffix would
     // route to `not-reached` (unsettled bucket) and `partial-blocked` (test completion) —
     // the latter accuses the site.
-    assertEq(mod.contracts.unsettledBucketFor("browser-abort-cap"), "budget-exhausted",
-      "consecutive hard aborts are an internal budget exhaustion, not a site refusal");
-    // The HARD_ABORT_CONSECUTIVE_CAP must be exported and > 0.
+    //
+    // THE ASSERTIONS GO THROUGH THE CONSTANT, NOT A STRING LITERAL. The first version of
+    // this test pinned the literal "browser-abort-cap", and the campaign proved that a
+    // mutant renaming the CONSTANT's value (dropping the suffix) survived: production would
+    // have routed the abort to a site accusation while this test kept checking a string
+    // nothing emits. What production emits is the constant — so the constant is what the
+    // routing assertions must consume.
     const eb = mod.executeBatch;
+    assert(eb.EXEC_STOP_BROWSER_ABORT_CAP.endsWith("-cap"),
+      "the constant's value must keep the -cap suffix — it is what routes the stop to partial-budget instead of a site accusation");
+    assertEq(mod.contracts.unsettledBucketFor(eb.EXEC_STOP_BROWSER_ABORT_CAP), "budget-exhausted",
+      "consecutive hard aborts are an internal budget exhaustion, not a site refusal");
     assert(typeof eb.HARD_ABORT_CONSECUTIVE_CAP === "number" && eb.HARD_ABORT_CONSECUTIVE_CAP > 0,
       "HARD_ABORT_CONSECUTIVE_CAP must be a positive number");
     assertEq(eb.HARD_ABORT_CONSECUTIVE_CAP, 3, "the cap must be 3 (matched the design intent)");
