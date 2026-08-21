@@ -339,7 +339,7 @@ import type { WalkProjectionPayload } from "./project-observations";
 // resolver, imported rather than reproduced: a copy here would be free to drift from the binder
 // it is supposed to agree with, which is the defect 1.4.0 exists to close. Neither import
 // carries a walk fact — the index is built from the SEALED revision this stage already loads.
-import { questionWordingScore } from "../../browser/driver";
+import { questionWordingScore, stripNavigationWidgetText } from "../../browser/driver";
 import { buildQuestionWordingIndex, resolveQuestionWording } from "./plan";
 import type { QuestionWordingIndex } from "./plan";
 
@@ -1041,7 +1041,15 @@ const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
  */
 function tokenOnScreen(screen: RenderedScreen | null, token: string): boolean {
   if (!screen || !token) return false;
-  return wholeWordIn(`${screen.questionText ?? ""} ${screen.title ?? ""} ${screen.visibleText ?? ""}`, token);
+  // USE STRIPPED TEXT: the platform's question-skip-menu select renders question ids into
+  // `visibleText` via `document.body.innerText`. MEASURED on v98: EVERY screen carried 23+
+  // sealed ids from the skip menu in its text, making `screenIdentity` non-singleton on
+  // every screen and causing all 12 cases to return STEP_NOT_BOUND_TO_TARGET_QUESTION.
+  // `stripNavigationWidgetText` removes the contiguous block of menu-option labels, leaving
+  // the question's own heading token and any legitimate references. This and the driver's
+  // `questionWordingScore` now apply the same strip, so they agree on what text a screen has.
+  const strippedVisible = screen ? stripNavigationWidgetText(screen) : "";
+  return wholeWordIn(`${screen.questionText ?? ""} ${screen.title ?? ""} ${strippedVisible}`, token);
 }
 
 const wholeWordIn = (haystack: string, token: string): boolean => {

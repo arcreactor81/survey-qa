@@ -82,7 +82,7 @@ const MUTANTS = [
     name: "recall is taken over the heading instead of the whole screen",
     breaks: "a document sentence the site renders BELOW the heading still counts (S2: 0.556 -> 1.000)",
     file: DRIVER,
-    find: '  const full = tokenSet(`${screen.questionText ?? ""} ${screen.instructionText ?? ""} ${screen.visibleText ?? ""}`);',
+    find: '  const full = tokenSet(`${screen.questionText ?? ""} ${screen.instructionText ?? ""} ${strippedVisible}`);',
     replace: "  const full = heading;",
     kills: ["…and the S2 decision it produces binds the S2 screen, whose heading is only the FIRST sentence"],
   },

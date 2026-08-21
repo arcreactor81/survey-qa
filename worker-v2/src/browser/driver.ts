@@ -302,11 +302,16 @@ const MIN_WORDING_TOKENS = 4;
 export function questionWordingScore(wording: string | null | undefined, screen: RenderedScreen): number {
   const w = tokenSet(String(wording ?? ""));
   if (w.size < MIN_WORDING_TOKENS) return 0;
+  // USE STRIPPED TEXT: the platform's question-skip-menu select renders question ids into
+  // `visibleText`, and each one is a token that inflates the heading set (lowering precision)
+  // and pollutes the full-text set. `stripNavigationWidgetText` removes the menu block, leaving
+  // the question's own text intact — so precision measures the question, not the platform chrome.
+  const strippedVisible = stripNavigationWidgetText(screen);
   const headingText =
-    screen.questionText && screen.questionText.length > 0 ? screen.questionText : screen.visibleText.slice(0, 600);
+    screen.questionText && screen.questionText.length > 0 ? screen.questionText : strippedVisible.slice(0, 600);
   const heading = tokenSet(headingText);
   if (heading.size === 0) return 0;
-  const full = tokenSet(`${screen.questionText ?? ""} ${screen.instructionText ?? ""} ${screen.visibleText ?? ""}`);
+  const full = tokenSet(`${screen.questionText ?? ""} ${screen.instructionText ?? ""} ${strippedVisible}`);
   let inHeading = 0;
   let inFull = 0;
   for (const t of w) {
@@ -5201,6 +5206,85 @@ export function isPlatformNavigationWidget(
   if (/\b(skip|jump|nav|menu|goto)\b/.test(nameOrId)) return true;
 
   return false;
+}
+
+/**
+ * STRIP TEXT CONTRIBUTED BY PLATFORM NAVIGATION WIDGETS FROM THE SCREEN'S VISIBLE TEXT.
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE. A platform's "QUESTION SKIP MENU" select renders its option
+ * labels — which are QUESTION IDS — into `visibleText` via `document.body.innerText`. MEASURED
+ * on the v98 run: `tokenOnScreen` (in verify-observations.ts) and `questionWordingScore` (here)
+ * both scan `visibleText` for sealed question ids, and on EVERY screen the skip menu donated 23+
+ * false-positive sealed ids to the text. The verifier's `screenIdentity` union was then never a
+ * singleton, so `screenIsQuestion` returned false for every target on every screen, and all 12
+ * exercised cases came back `STEP_NOT_BOUND_TO_TARGET_QUESTION`.
+ *
+ * THE FIX IS STRUCTURAL, NOT PLATFORM-SPECIFIC. Any `<select>` that `isPlatformNavigationWidget`
+ * classifies as a navigation control has its option labels collected; consecutive lines in
+ * `visibleText` that consist entirely of those labels are stripped. The remaining text still
+ * carries the question's own id (e.g. "S10" printed as the question heading), and nothing else
+ * sealed — so `tokenOnScreen` finds a singleton and binding proceeds.
+ *
+ * ASSUMPTION STATED (CLAUDE.md): the navigation widget's option labels appear as CONSECUTIVE
+ * LINES in `visibleText` because a `<select>` renders its options as text in `innerText`. If a
+ * platform scatters navigation destinations across the DOM instead of listing them in a select,
+ * this function will not detect them and binding will refuse — which is the safe direction.
+ *
+ * WHAT IT DOES NOT STRIP, and why. A navigation label that also appears ELSEWHERE in the text
+ * (e.g. "S10" printed as the question heading AND listed in the skip menu) survives: only the
+ * contiguous block of menu lines is removed. The legitimate heading occurrence stays, which is
+ * what the token scanner needs.
+ */
+export function stripNavigationWidgetText(screen: RenderedScreen): string {
+  const vt = screen.visibleText ?? "";
+  if (!Array.isArray(screen.controls) || screen.controls.length === 0) return vt;
+
+  // Collect option labels from all navigation widget selects on this screen.
+  const navLabels = new Set<string>();
+  for (const c of screen.controls) {
+    if (!isPlatformNavigationWidget(c, screen)) continue;
+    for (const o of c.options ?? []) {
+      const label = String(o.label ?? "").trim();
+      if (label.length > 0) navLabels.add(label);
+    }
+  }
+  if (navLabels.size === 0) return vt;
+
+  // Strip contiguous blocks of lines where EVERY line is either empty/whitespace or a
+  // navigation label. A block must contain at least 3 navigation labels to be stripped —
+  // a single label line matching by coincidence is not a menu block, it is a survey word.
+  const lines = vt.split("\n");
+  const result: string[] = [];
+  let blockStart = -1;
+  let blockNavCount = 0;
+
+  const flushBlock = (end: number): void => {
+    if (blockStart >= 0 && blockNavCount >= 3) {
+      // Drop the block — do NOT add those lines to result.
+    } else if (blockStart >= 0) {
+      // Too few nav labels — keep the block as-is.
+      for (let j = blockStart; j < end; j++) result.push(lines[j]!);
+    }
+    blockStart = -1;
+    blockNavCount = 0;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i]!.trim();
+    const isNavLabel = navLabels.has(trimmed);
+    const isBlank = trimmed.length === 0;
+
+    if (isNavLabel || (isBlank && blockStart >= 0)) {
+      if (blockStart < 0) blockStart = i;
+      if (isNavLabel) blockNavCount++;
+    } else {
+      flushBlock(i);
+      result.push(lines[i]!);
+    }
+  }
+  flushBlock(lines.length);
+
+  return result.join("\n");
 }
 
 /**

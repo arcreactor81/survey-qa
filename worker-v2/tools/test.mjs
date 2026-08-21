@@ -575,6 +575,14 @@ const FILES = [
   // Consumers bucket it as infrastructure ("not-reached"), never as a site accusation.
   // Evidence they can fail: tools/mutate-startup-budget.mjs.
   "./tests/d58-startup-budget.test.mjs",
+  // D59 — PLATFORM NAVIGATION WIDGET TEXT STRIPPING. (Built as "d58" in a parallel worktree
+  // the same hour as the startup-budget suite; renumbered here at integration — the file name
+  // keeps its birth name, the suite ordinal is what this list orders by.) The skip menu select
+  // renders question ids into visibleText; tokenOnScreen found 23+ sealed ids on every screen
+  // and screenIsQuestion returned false for every target on the v98 run (12/12 STEP_NOT_BOUND).
+  // The fix strips navigation widget option labels from the text before scanning. Evidence
+  // they can fail: tools/mutate-verifier-identity.mjs (nav-widget strip mutant).
+  "./tests/d58-nav-widget-text-stripping.test.mjs",
 ];
 
 export async function runVerification({

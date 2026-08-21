@@ -107,6 +107,16 @@ const MUTANTS = [
     replace: "  const neverBound = undefined;",
     kills: ["VETO: the walk says it never bound a decision to this question at all"],
   },
+
+  // -------- D58: the navigation-widget text strip on tokenOnScreen --------
+  {
+    name: "tokenOnScreen scans raw visibleText instead of stripped — the v98 defect returns",
+    breaks: "a skip menu that lists question ids must not pollute screen identity",
+    file: VERIFY,
+    find: '  const strippedVisible = screen ? stripNavigationWidgetText(screen) : "";',
+    replace: '  const strippedVisible = screen ? (screen.visibleText ?? "") : "";',
+    kills: ["S10 screen with skip menu identifies as exactly S10"],
+  },
 ];
 
 await runMutantSuite({
