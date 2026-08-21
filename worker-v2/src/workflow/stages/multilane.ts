@@ -61,6 +61,7 @@ import {
   acquireWithRetry,
   emptyCursor,
   hungStartupPhase,
+  walkNeverStarted,
 } from "./execute-batch";
 import { type ExecutionProgram } from "./plan";
 import { walkPath, type PageLike } from "../../browser/driver";
@@ -292,7 +293,7 @@ export async function walkLane(
       // pre-first-step stretch and the outcome is "walk-never-started" — an
       // infrastructure fact about THIS attempt, not a site accusation. Mirrors
       // the sequential path's startup-budget detection.
-      const neverStarted = perCaseTimedOut && !startupPhases.includes("first-read");
+      const neverStarted = walkNeverStarted(perCaseTimedOut, startupPhases);
       browserHung = perCaseTimedOut;
       obs = makeErrorObs(
         neverStarted ? "walk-never-started" : perCaseTimedOut ? "per-case-timeout" : "error",
@@ -370,7 +371,7 @@ export async function walkLane(
       } catch (retryErr) {
         const retryElapsedMs = Date.now() - retryStartMs;
         const retryTimedOut = retryErr instanceof BrowserTimeout;
-        const retryNeverStarted = retryTimedOut && !retryStartupPhases.includes("first-read");
+        const retryNeverStarted = walkNeverStarted(retryTimedOut, retryStartupPhases);
         browserHung = retryTimedOut;
         perCaseTimedOut = retryTimedOut;
         obs = makeErrorObs(

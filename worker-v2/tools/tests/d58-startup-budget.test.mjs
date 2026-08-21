@@ -29,7 +29,7 @@
 
 import { readFileSync } from "node:fs";
 import { assert, assertEq, suite, test } from "../testkit.mjs";
-import { worker } from "./_helpers.mjs";
+import { worker, testEnv } from "./_helpers.mjs";
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -93,6 +93,31 @@ suite("hungStartupPhase: the sub-phase detector names the right phase", () => {
   test("all phases completed → first-read (defensive)", async () => {
     const { hungStartupPhase } = await loadBatch();
     assertEq(hungStartupPhase(["page-create", "survey-load", "first-read"]), "first-read");
+  });
+});
+
+/* ------------------------------------------------------------------ unit: walkNeverStarted pure function */
+
+suite("walkNeverStarted: the determination drives the real function, not a hand-built shape", () => {
+  test("true when timed out without first-read", async () => {
+    const { walkNeverStarted } = await loadBatch();
+    assertEq(walkNeverStarted(true, []), true, "timed out, no phases at all");
+    assertEq(walkNeverStarted(true, ["page-create"]), true, "timed out, only page-create");
+    assertEq(walkNeverStarted(true, ["page-create", "survey-load"]), true, "timed out, page-create + survey-load");
+  });
+
+  test("false when first-read completed", async () => {
+    const { walkNeverStarted } = await loadBatch();
+    assertEq(walkNeverStarted(true, ["page-create", "survey-load", "first-read"]), false,
+      "timed out but first-read completed means the walk DID start");
+  });
+
+  test("false when not timed out", async () => {
+    const { walkNeverStarted } = await loadBatch();
+    assertEq(walkNeverStarted(false, []), false, "not timed out, no phases");
+    assertEq(walkNeverStarted(false, ["page-create"]), false, "not timed out, some phases");
+    assertEq(walkNeverStarted(false, ["page-create", "survey-load", "first-read"]), false,
+      "not timed out, all phases");
   });
 });
 
@@ -317,5 +342,195 @@ suite("healthy walk: the startup budget is transparent", () => {
     assertEq(record.outcome, "completed");
     assertEq(record.steps, 1);
     assert(record.wallMs > 0, "wallMs must be the real elapsed time");
+  });
+});
+
+/* ------------------------------------------------------------------ executor-level: startup retry on a hanging page */
+
+/**
+ * A fake page whose screen read hangs forever. walkPath proceeds through goto and fires
+ * onStartupPhase("survey-load"), then hangs on the first screen read — so "first-read"
+ * is never reached and the startup-budget determination produces "walk-never-started".
+ * Copied from multilane.test.mjs's hangingReadPage, with the same contract.
+ */
+function hangingPage() {
+  return {
+    _newPageAt: Date.now(),
+    async goto() {},
+    async evaluate(script) {
+      if (typeof script !== "string") return { ok: true };
+      if (script.includes("screenSignature")) {
+        // Hang forever — the withTimeout race fires and produces BrowserTimeout.
+        return new Promise(() => {});
+      }
+      return { ok: true };
+    },
+    async evaluateOnNewDocument() {},
+    async $$(selector) { return []; },
+    async screenshot() { throw new Error("no screenshot in hanging harness"); },
+    async setViewport() {},
+    on() {},
+    async close() {},
+    async reload() {},
+  };
+}
+
+/** Install a browser whose pages always hang on the first screen read. */
+async function withHangingBrowser(fn) {
+  const browser = {
+    async newPage() { return hangingPage(); },
+    async close() {},
+    disconnect() {},
+    sessionId() { return "sess_hanging"; },
+  };
+  globalThis.__V2_TEST_BROWSER__ = {
+    async launch() { return browser; },
+    async connect() { return browser; },
+  };
+  try {
+    return await fn();
+  } finally {
+    delete globalThis.__V2_TEST_BROWSER__;
+  }
+}
+
+/**
+ * Seed a run bed whose plan has ONE floor path with delegated decisions, and whose env
+ * has a SHORT per-case timeout so the test runs in ms-scale. The startup budget is even
+ * shorter so the startup-budget race fires first.
+ */
+async function hangingBed(mod, env) {
+  const { seedRun } = await import("./_helpers.mjs");
+  const seeded = await seedRun(mod, env, { testCompletion: "running" });
+  const sealed = (await mod.contractRevision.getContractRevision(env, seeded.contractRevisionId))
+    .facetInstances.map((fi) => fi.facetInstanceId);
+  const planRevisionId = "plan_d58hang001";
+  const path = {
+    id: "FLOOR-HANG",
+    tier: 1,
+    kind: "floor",
+    intent: "walk the survey",
+    decisions: [{
+      question: "Q1",
+      select: [],
+      source: "default:navigator-discretion",
+      strategy: "navigator:choose-the-first-valid-answer",
+      note: "delegated",
+    }],
+    skipped_questions: [],
+    terminated_at: null,
+    witnesses: [],
+    witness_notes: [],
+    needs_repeats: [],
+    steps: 3,
+  };
+  await env.EVIDENCE.put(
+    mod.keys.planKey(seeded.runId, planRevisionId),
+    JSON.stringify({
+      kind: "v2-execution-program/2.0.0",
+      runId: seeded.runId,
+      planRevisionId,
+      contractRevisionId: seeded.contractRevisionId,
+      contractHash: seeded.contractHash,
+      generatedAt: "2026-08-14T00:00:00.000Z",
+      surveyUrl: "https://fixture.invalid/survey",
+      floor: [{ pathId: "FLOOR-HANG", caseIds: [sealed[0]] }],
+      exploration: [],
+      caseOrder: sealed,
+      unassignedCaseIds: sealed.slice(1),
+      coverage: {
+        obligations: 2,
+        witnessedByFloor: 1,
+        coversAllObligations: false,
+        coversAllAfterMandatoryExploration: false,
+        uncovered: [],
+      },
+      warnings: [],
+      plan: { floor: { paths: [path] }, exploration: { queue: [] } },
+    }),
+    { httpMetadata: { contentType: "application/json" } },
+  );
+
+  const fence = await mod.checkpoint.claimOwnership(env, seeded.runId, seeded.runId, 0);
+  const cursor = {
+    batchIndex: 0,
+    sessionId: null,
+    sessionOpenedAt: null,
+    pendingCaseIds: [...sealed],
+    completedCaseIds: [],
+    planRevisionId,
+  };
+  await mod.checkpoint.updateCheckpoint(env, seeded.runId, (d) => {
+    d.execution = { ...cursor };
+    d.counts = { ...d.counts, exercised: 0, pending: sealed.length };
+  }, { fence });
+
+  return { runId: seeded.runId, fence, cursor, planRevisionId, sealed };
+}
+
+suite("D58 — the LIVE executor: a hanging startup gets exactly one retry", () => {
+  test("walk-never-started retry: the walk ledger records EXACTLY TWO rows for the path", async () => {
+    // WHAT THIS PROVES: when the startup hangs, the executor records the initial
+    // walk-never-started observation AND retries once on a fresh page. Both the
+    // initial failure and the retry (also a failure with a hanging page) are
+    // recorded in the walk ledger as two separate rows for the same path.
+    //
+    // WHY THIS IS A REAL TEST, NOT A SHAPE TEST:
+    //   - It drives executeBatch end-to-end with fakes (the D31 pattern).
+    //   - The determination runs through the real walkNeverStarted function.
+    //   - Removing the retry block (mutant 2) leaves one row, not two.
+    //   - Removing the startup budget (mutant 1) makes the outcome
+    //     "per-case-timeout" instead of "walk-never-started", so no retry fires
+    //     and only one row appears.
+    //
+    // TIMING: EXEC_PER_CASE_TIMEOUT_MS=1200, EXEC_WALK_STARTUP_BUDGET_MS=800.
+    // The hanging page returns a never-resolving promise on screen reads, so the
+    // 1200ms withTimeout fires. walkNeverStarted returns true (no "first-read"
+    // phase), and the retry block runs with an 800ms timeout. Both complete in
+    // ~2s total with NO real-second sleeps.
+    const mod = await worker();
+    const env = testEnv({
+      EXEC_PER_CASE_TIMEOUT_MS: "1200",
+      EXEC_WALK_TIMEOUT_MS: "1200",
+      EXEC_WALK_STARTUP_BUDGET_MS: "800",
+      EXEC_BATCH_MAX_MS: "30000",
+    });
+    const bed = await hangingBed(mod, env);
+
+    const out = await withHangingBrowser(() =>
+      mod.executeBatch.executeBatch(env, {
+        runId: bed.runId,
+        batch: 0,
+        fence: bed.fence,
+        cursor: bed.cursor,
+        surveyUrl: "https://fixture.invalid/survey",
+        planRevisionId: bed.planRevisionId,
+      }),
+    );
+
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    const pathRows = progress.walks.filter((w) => w.pathId === "FLOOR-HANG");
+
+    // THE CRITICAL ASSERTION: exactly two rows for this path — the initial failure
+    // plus the retry. With the retry removed (mutant 2) this is 1; with an unbounded
+    // retry it would be more. Either mutation reddens this test.
+    assertEq(pathRows.length, 2,
+      `expected exactly 2 walk rows for FLOOR-HANG (initial + retry), got ${pathRows.length}: ` +
+      pathRows.map((r) => `${r.outcome}/${r.wallMs}ms`).join(", "));
+
+    // Both rows must be walk-never-started — the page hangs unconditionally.
+    assertEq(pathRows[0].outcome, "walk-never-started",
+      "first row must be walk-never-started");
+    assertEq(pathRows[1].outcome, "walk-never-started",
+      "retry row must also be walk-never-started (page hangs unconditionally)");
+
+    // Both must carry non-zero wallMs — the real elapsed time, never 0.
+    assert(pathRows[0].wallMs > 0, `first row wallMs must be non-zero, got ${pathRows[0].wallMs}`);
+    assert(pathRows[1].wallMs > 0, `retry row wallMs must be non-zero, got ${pathRows[1].wallMs}`);
+
+    // The batch must have walked the path (even though both attempts failed).
+    assertEq(out.pathsWalked, 1, "the path was walked (attempted)");
+    // No cases closed — the walk never started.
+    assertEq(out.casesClosed, 0, "a walk-never-started must close no cases");
   });
 });

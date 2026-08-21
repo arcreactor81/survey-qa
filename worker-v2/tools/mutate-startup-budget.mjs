@@ -32,10 +32,10 @@ const MUTANTS = [
       "is classified as per-case-timeout with wallMs=0 instead of walk-never-started with the " +
       "real elapsed time and the sub-phase that hung",
     file: BATCH_FILE,
-    find: "const neverStarted = perCaseTimedOut && !startupPhases.includes(\"first-read\");",
-    replace: "const neverStarted = false;",
+    find: "return perCaseTimedOut && !startupPhases.includes(\"first-read\");",
+    replace: "return false;",
     kills: [
-      "walk-never-started observation produces a valid WalkRecord with real wallMs",
+      "true when timed out without first-read",
     ],
   },
   {
@@ -48,7 +48,7 @@ const MUTANTS = [
     find: "if (obs.outcome === \"walk-never-started\") {",
     replace: "if (false) {",
     kills: [
-      "walk-never-started observation produces a valid WalkRecord with real wallMs",
+      "walk-never-started retry: the walk ledger records EXACTLY TWO rows for the path",
     ],
   },
   {

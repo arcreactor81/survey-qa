@@ -128,6 +128,27 @@ export function hungStartupPhase(
 }
 
 /**
+ * Did this walk never start?
+ *
+ * True when the per-case timeout fired AND the startup sub-phases never reached "first-read"
+ * — the hang was in the pre-first-step stretch (page-create, survey-load, or the first screen
+ * read itself) and the outcome is "walk-never-started", an infrastructure fact about THIS
+ * attempt, not a site accusation.
+ *
+ * Exported and pure so:
+ *   (a) both the sequential path (execute-batch.ts) and the multi-lane path (multilane.ts)
+ *       call this ONE function — the two cannot drift;
+ *   (b) the determination is testable as BEHAVIOUR, not by reading the source;
+ *   (c) the mutation harness can target the body and kill it.
+ */
+export function walkNeverStarted(
+  perCaseTimedOut: boolean,
+  startupPhases: StartupSubPhase[],
+): boolean {
+  return perCaseTimedOut && !startupPhases.includes("first-read");
+}
+
+/**
  * How many CONSECUTIVE hard batch aborts stop the run. A single abort is recoverable (the
  * next batch gets a fresh browser); three in a row indicates a persistently broken browser
  * environment for this survey URL. The number is small on purpose: each abort burns a full
@@ -1747,7 +1768,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         // whether the walk started. A walk with 0 steps that timed out before any step
         // could run is structurally the same whether it took 2 minutes or 15.
         perCaseTimedOut = err instanceof BrowserTimeout;
-        const neverStarted = perCaseTimedOut && !startupPhases.includes("first-read");
+        const neverStarted = walkNeverStarted(perCaseTimedOut, startupPhases);
         browserHung = perCaseTimedOut;
         obs = {
           kind: "v2-path-observation/1.0.0",
@@ -1807,7 +1828,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         } catch (retryErr) {
           const retryElapsedMs = Date.now() - retryStartMs;
           const retryTimedOut = retryErr instanceof BrowserTimeout;
-          const retryNeverStarted = retryTimedOut && !retryStartupPhases.includes("first-read");
+          const retryNeverStarted = walkNeverStarted(retryTimedOut, retryStartupPhases);
           browserHung = retryTimedOut;
           perCaseTimedOut = retryTimedOut;
           obs = {
