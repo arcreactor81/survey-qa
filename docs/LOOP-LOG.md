@@ -685,3 +685,64 @@ projection timeout that has eaten every report attempt to date (v93, v96; fix li
 unproven). The open walker-logic items are the probabilistic C20 dwell-gate stall (walks still
 stop at 42–47 roughly half the time; patience shows 0 polls in those receipts — unexplained)
 and the screener-steering coverage question the 67 time-exhausted obligations pose.
+
+---
+
+## 2026-08-21 — v98: three builders, one integrator, every gate green including the one nobody ran
+
+### What shipped (version `a0985e81-dc68-4b98-9546-bc50c9447ba7` at 100%, SUCCESS confirmed)
+
+Six fixes, all from adversarially-verified review findings, built by three Opus 4.6 builders
+in sha-pinned worktrees off `482b978` and integrated after line-review:
+
+1. **Completeness reads the typed ending** (`c851543`): `completenessFor` read `walk.outcome`
+   — the step-loop exit code — so walks that FINISHED the survey were marked partial and
+   their exhaustive option-set verdicts refused downstream. Now reads `ending.kind`; absent
+   and unclassified stay partial.
+2. **A zombie browser no longer ends the run** (`c851543`): the hard-abort timer's bare
+   `"hard-batch-abort"` stopReason broke the batch loop and labeled the run `partial-blocked`
+   — a site accusation for an internal browser death. Single abort → next batch, fresh
+   browser; three CONSECUTIVE aborts (durable counter) → registered `browser-abort-cap` →
+   `partial-budget`.
+3. **The whole judging tail gets the catalogue-sized budget** (`c851543` + the follow-up):
+   v97 proved the projection fix then died in `derive-verdicts` at the same 3-minute limit
+   (failure recorded 08:59:54Z). `derive-verdicts`, `assemble-record`, `mint-judgement`,
+   `record-target-identity` and `project-observations` all reach the full evidence-catalogue
+   fan-out; all five now carry the 10-minute policy.
+4. **The dwell-gate re-press reaches the recovery loop** (`dfc827c`): the measured ~50%
+   stall at screens 42–47 was the recovery loop pressing once with a 600ms wait against a
+   re-arming 15s gate, while the 90-second patience budget was unreachable for a VISIBLE
+   button. A shared `silentRefusalRepress` helper now serves both loops — same bound, same
+   receipts; a visible control that goes hidden mid-wait hands off to the patience wait.
+5. **Test guards proven able to fail** (`a9654e2` + follow-ups): four un-awaited
+   assertThrows (guards deleted, tests stayed green — now awaited and re-proven); B3/B4
+   report guards rebuilt to exercise the real code paths; first-ever test rendering the
+   test:failed-with-record state; two abort-cap mutants and one re-press mutant re-aimed at
+   the tests that actually redden after the campaigns scored them SURVIVED.
+6. **The canary config gate is green for the first time** (`c851543`): the missing
+   `EXEC_PER_CASE_TIMEOUT_MS` entry had 24 of `test-visual.mjs`'s 482 tests failing —
+   invisible, because that runner was in no routine command. It is now in the runbook's
+   gate list.
+
+### Gates on the deploy sha (`f6f7f02`)
+
+| Gate | Result |
+|---|---|
+| `npx tsc --noEmit` | exit 0 |
+| full suite | **1640/1640** |
+| `mutate-w4-select` | **89/89** (chunked union [0,89), no gaps — chunk slicing added for environments that kill long tasks) |
+| `mutate-projection-carry` | 16/16 |
+| `mutate-exercised-gate` | 17/17 (after re-aiming two mutants the first run scored SURVIVED) |
+| `mutate-report-defects` | 20/20 (B3/B4 killed for the first time) |
+| `test-visual.mjs` | **482/482, exit 0** (was 24 failing) |
+
+Two campaign survivors were found and fixed DURING this integration — both the same class:
+the guard asserted a value (a string literal, a constant) that the mutant never touched.
+The kill now goes through what production actually emits.
+
+### Run launched
+
+**`v2r_01m0hzte6qmz28dpn7sgrf2kvj`** on v98. What it must show: (a) the judging tail
+survives end to end → the FIRST REPORT; (b) deep walks stop coin-flipping at the dwell
+gates; (c) an aborted browser costs one batch, not the run. The 67 screener-blocked
+obligations are NOT expected to move — that fix (screener-screen recognition) is next.
