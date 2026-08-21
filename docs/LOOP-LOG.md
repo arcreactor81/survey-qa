@@ -792,3 +792,44 @@ verification.
 Owner's rule (21 Aug): report produced + wait-screen fix held live → stage-2 work un-parks.
 Both conditions met by this run. Next: v99 (screener recognition #28 + startup budget #30)
 with multilane (#14) and multimodel (#16) design starting in parallel.
+
+## 2026-08-22 (early) — v99: fourteen verified observations, and the last two gates named
+
+### The night's chain, receipts first
+
+**v99 first launch** (`v2r_01m0jsdt4gdntytn42hjykyk5m`): drew a poisoned browser chain —
+deep walks dead at 0 screens with the wedge signature (the internal 14:40 deadline never ran;
+only the external 15:00 axe fired — one page call blocked everything), probes healthy on the
+same code. Terminated at 6 walks. The new instrumentation named the shape precisely; a
+follow-up remains on #30 (the first attempt's startup stretch is renamed at the axe, not cut
+at 120s — the cut applies only to the retry).
+
+**v99 relaunch** (`v2r_01m0jxa06v5348rfg9c4d9sb61`): healthy end to end. 32 walks, walk 5
+reached the survey's final page (81 screens), zero dwell-gate stalls, zero dead starts,
+$0.00, and the SECOND complete report (7.6MB, archived).
+
+### What the run proved
+
+- **The skip-menu fix works.** The verifier credited **14 observations as VERIFIED —
+  ROUTE_TERMINAL_AS_DOCUMENTED** — the first positive verifications this system has ever
+  produced. Record-level exercised went 0 → 7 requirements. Only 2 observations insufficient
+  (NO_TYPED_EXPECTATION — the unwired model verifier; TARGET_QUESTION_NEVER_BOUND_IN_WALK —
+  a walk that never reached its target).
+- The report still publishes NO settled results, for one stated reason, now fully diagnosed:
+
+### The two defects between 14 verified observations and a published result
+
+1. **The judge refuses over self-collisions.** `mint-judgement` returned
+   `not-evaluated: EVIDENCE_NAME_COLLISION — 390 artifact(s) named ambiguously`, and every
+   example in its own output is a path colliding WITH ITSELF (same artifactRef listed twice —
+   duplicate catalogue entries, most plausibly from a retried batch step re-recording its
+   captures). A name mapping to two DIFFERENT contents deserves refusal; identical
+   (name, ref, hash) duplicates are one artifact recorded twice and must be deduped before
+   the ambiguity check. No judgement ⇒ "Result review not run" ⇒ verdicts shown as history.
+2. **The trust card mislabels the audit budget.** `build.ts#auditEvidence` caps re-hashing
+   at 500 entries by design, and the code stamps beyond-budget entries `state: "missing"` —
+   under a comment that says "Say 'not audited', never..." — so the card read "500 of 8,007
+   hash-verified, 6,556 ABSENT", accusing storage of losing files the render never opened.
+   Beyond-budget needs its own state, counted as "not audited at render time".
+
+Both fixes are small, precise, and evidence-backed; going to a builder now as v100.
