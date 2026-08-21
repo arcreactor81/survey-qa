@@ -134,5 +134,69 @@ await runMutantSuite({
         "EXEC_LANES=2: both walks recorded, commit ordering held, evidence names disjoint, stagger measured",
       ],
     },
+    // ==================== STAGE 0 RELIABILITY PORT MUTANTS ====================
+    {
+      name: "waveAbortFired always true (0b: hardAbortFired return inverted)",
+      breaks:
+        "the hardAbortFired return. With waveAbortFired always true, every " +
+        "multi-lane batch returns hardAbortFired: true — even healthy batches " +
+        "that completed normally. The test asserts that a normal batch does " +
+        "NOT have hardAbortFired === true, so the inversion is detected",
+      file: EB,
+      find: "  let waveAbortFired = false;",
+      replace: "  let waveAbortFired = true; // MUTANT: always fires",
+      kills: [
+        "executeMultiLaneBatch surfaces waveAbortFired as hardAbortFired on the BatchOutcome",
+      ],
+    },
+    {
+      name: "forwardReleaseMaxWaitMs threading removed from executeBatch (0c)",
+      breaks:
+        "the option threading. Without forwardReleaseMaxWaitMs in the " +
+        "executeMultiLaneBatch call, the lane walks fall back to the driver's " +
+        "code default instead of using the operator's environment override. " +
+        "The test checks that executeBatch.toString() references " +
+        "forwardReleaseMaxWaitMs at least twice (once in the sequential " +
+        "walkOnce, once in the multilane threading). The mutation removes " +
+        "the multilane reference, dropping the count to 1",
+      file: EB,
+      find: "      // THREADED WALK OPTIONS (0c): resolved once HERE, threaded to every\n      // wave and every lane inside it, exactly as the sequential path does.\n      // forwardReleaseMaxWaitMs: from EXEC_FORWARD_RELEASE_MAX_WAIT_MS, same\n      // env read as sequential walkOnce line ~1593.\n      forwardReleaseMaxWaitMs: num(\n        (env as unknown as { EXEC_FORWARD_RELEASE_MAX_WAIT_MS?: string }).EXEC_FORWARD_RELEASE_MAX_WAIT_MS,\n        FORWARD_RELEASE_MAX_WAIT_MS,\n      ),\n      // startupBudgetMs: already resolved above from EXEC_WALK_STARTUP_BUDGET_MS\n      // with floor/ceiling guard, same as the sequential path.\n      startupBudgetMs,",
+      replace: "      // MUTANT: walk-option threading removed from multilane call",
+      kills: [
+        "forwardReleaseMaxWaitMs threaded from executeBatch to multilane waves",
+      ],
+    },
+    {
+      name: "wave handle registry nullified (0a: backstop cannot close handles)",
+      breaks:
+        "the wave zombie backstop's handle registry. With waveHandles set " +
+        "to null, the registerBrowserHandle callback's push() call throws " +
+        "a TypeError (null has no push method). Every lane that acquires a " +
+        "browser crashes in registerBrowserHandle, producing error results " +
+        "instead of walk completions. The live two-lane test fails because " +
+        "it expects both walks to complete and close their cases",
+      file: EB,
+      find: "      const waveHandles: import(\"../browser-session\").SessionHandle[] = [];",
+      replace: "      const waveHandles: any = null; // MUTANT: registry nullified",
+      kills: [
+        "EXEC_LANES=2: both walks recorded, commit ordering held, evidence names disjoint, stagger measured",
+      ],
+    },
+    {
+      name: "lane startup-budget determination removed (0c: neverStarted always false)",
+      breaks:
+        "the walk-never-started outcome. With neverStarted always false, a " +
+        "lane whose screen read hangs is recorded as 'per-case-timeout' " +
+        "instead of 'walk-never-started', and the one-retry-on-fresh-page " +
+        "path is never taken. The test exercises walkLane with a hanging " +
+        "fake browser and asserts outcome === 'walk-never-started' — the " +
+        "mutation produces 'per-case-timeout' instead",
+      file: ML,
+      find: "      const neverStarted = perCaseTimedOut && !startupPhases.includes(\"first-read\");",
+      replace: "      const neverStarted = false; // MUTANT: startup-budget discrimination removed",
+      kills: [
+        "lane-level walk-never-started recorded with sub-phase and real wallMs",
+      ],
+    },
   ],
 });

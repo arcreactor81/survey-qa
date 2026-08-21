@@ -965,6 +965,19 @@ export function selectWork(program: ExecutionProgram, progress: ExecProgress, ma
  * results one at a time. Called only when effectiveLaneCount > 1 and no
  * seed work is in the queue. Screen-out pivots run AFTER each wave in the
  * existing sequential pivot loop with the identical-actions stop intact.
+ *
+ * WAVE-LEVEL ZOMBIE BACKSTOP (0a): a timer at (batchMaxMs + 120_000) force-
+ * closes every lane's browser when a wave hangs. Each lane REGISTERS its
+ * live browser handle into a wave-level registry (via the registerBrowserHandle
+ * callback threaded through runLaneWave), and the backstop force-closes all
+ * registered handles and marks waveAbortFired. This mirrors the sequential
+ * path's hard batch abort timer (execute-batch.ts ~1438-1472).
+ *
+ * WHY A WAVE-LEVEL BACKSTOP AND NOT A BATCH-LEVEL ONE. The sequential path
+ * has one browser for the whole batch, so one timer suffices. Multi-lane has
+ * one browser PER LANE PER WAVE — a batch-level timer that fires between
+ * waves would try to close browsers that were already retired, while a
+ * wave-level timer scopes its handle set exactly to the wave in flight.
  */
 async function executeMultiLaneBatch(
   env: Env,
@@ -985,13 +998,39 @@ async function executeMultiLaneBatch(
     requiredProbeStop: string | null;
     lanes: number;
     multilane: typeof import("./multilane");
+    /**
+     * FORWARD RELEASE MAX WAIT (0c): the ceiling on waiting for a withheld
+     * forward control to open. Resolved once by the caller (executeBatch)
+     * from EXEC_FORWARD_RELEASE_MAX_WAIT_MS exactly as the sequential path
+     * does, so every lane in every wave uses the same resolved value.
+     */
+    forwardReleaseMaxWaitMs: number;
+    /**
+     * STARTUP BUDGET (0c): wall-clock cap on the pre-first-step stretch,
+     * resolved once by the caller from EXEC_WALK_STARTUP_BUDGET_MS exactly
+     * as the sequential path does. Each lane gets its own startupPhases
+     * tracker and its own walk-never-started determination.
+     */
+    startupBudgetMs: number;
   },
 ): Promise<BatchOutcome> {
   const {
     batchDeadline, batchMaxMs, maxAttempts, maxSteps, advanceTimeoutMs,
     allowShim, acquireTimeoutMs, perCaseTimeoutMs, maxExploration,
-    requiredProbeStop, lanes, multilane,
+    requiredProbeStop, lanes, multilane, forwardReleaseMaxWaitMs,
+    startupBudgetMs,
   } = opts;
+  // WAVE RESIDUAL MATH (0e): the minimum batch budget remaining before starting
+  // a new wave. The sequential path uses `perCaseTimeoutMs` as the floor — a walk
+  // that cannot run for at least that long has no chance of completing.
+  //
+  // DESIGN CHOICE: the startup budget does NOT tighten this bound further. The
+  // startup budget is a SUB-BUDGET within the per-case timeout, not additive —
+  // a walk's startup is PART of its per-case budget, not on top of it. If we
+  // required (perCaseTimeoutMs + startupBudgetMs) remaining, we would refuse to
+  // start waves that have enough time for a full walk. The per-case timeout alone
+  // is the right floor because it is the total time one walk can consume, startup
+  // included.
   const minBatchResidualMs = perCaseTimeoutMs;
   const seededCaseIds = new Set((program.seedPlan?.alternatives ?? []).map((row) => row.caseId));
 
@@ -999,6 +1038,10 @@ async function executeMultiLaneBatch(
   let casesClosed = 0;
   let steps = 0;
   let stopReason: string | null = null;
+  // WAVE ZOMBIE BACKSTOP (0a/0b): tracks whether any wave's backstop timer fired.
+  // Returned as `hardAbortFired` so the caller (run-workflow.ts) can track
+  // consecutive hard aborts across batches in the durable execution state.
+  let waveAbortFired = false;
 
   console.log(
     `v2 exec batch ${args.batch}: multi-lane enabled, ${lanes} concurrent lanes`,
@@ -1026,6 +1069,17 @@ async function executeMultiLaneBatch(
       const waveItems = work.slice(workIndex, workIndex + waveSize);
       workIndex += waveSize;
 
+      // WAVE VISIBILITY (0d): the pre-wave beat already lists lane path ids.
+      // DESIGN CHOICE: we do NOT fake a per-lane currentAttempt on the checkpoint
+      // because currentAttempt is a scalar field that the sequential path sets to
+      // ONE walk at a time. Writing multiple concurrent values to it would either
+      // interleave checkpoint writes (which the wiring contract forbids) or show
+      // only the last lane written (misleading). The beat message below is the
+      // visibility mechanism for waves: it lists all path ids in the wave, and the
+      // post-wave sequential commit sets currentAttempt=null for each lane result.
+      // There is no existing batch-level note field on the checkpoint to attach
+      // wave path ids to; adding one would change the checkpoint schema for a
+      // dark-mode feature. The beat is sufficient and honest.
       await beat(
         env,
         args.runId,
@@ -1034,23 +1088,64 @@ async function executeMultiLaneBatch(
         `${args.batch}:wave:${workIndex}`,
       );
 
-      const results = await multilane.runLaneWave(env, waveItems, {
-        runId: args.runId,
-        batch: args.batch,
-        planRevisionId: args.planRevisionId,
-        surveyUrl: args.surveyUrl,
-        fence: args.fence,
-        batchDeadline,
-        batchMaxMs,
-        perCaseTimeoutMs,
-        maxSteps,
-        advanceTimeoutMs,
-        shimRequired: progress.shimRequired,
-        allowShim,
-        acquireTimeoutMs,
-        program,
-        progress,
-      });
+      // WAVE-LEVEL ZOMBIE BACKSTOP (0a): a timer at (batchMaxMs + 120_000) that
+      // force-closes every lane's browser when a wave hangs. Each lane registers
+      // its handle via the callback, and the backstop iterates the registry.
+      // Budget mirrors the sequential path: batchMaxMs + 2 minutes headroom.
+      const waveHandles: import("../browser-session").SessionHandle[] = [];
+      const hardWaveAbortMs = batchMaxMs + 120_000;
+      const waveAbortTimer = setTimeout(() => {
+        waveAbortFired = true;
+        console.error(
+          `v2 exec batch ${args.batch}: WAVE ZOMBIE BACKSTOP after ${hardWaveAbortMs}ms — ` +
+            `force-closing ${waveHandles.length} lane browser(s) to unblock pending operations`,
+        );
+        for (const h of waveHandles) {
+          try {
+            h.browser.close();
+          } catch {
+            /* best-effort close — the browser may already be dead */
+          }
+        }
+      }, hardWaveAbortMs);
+
+      const registerBrowserHandle = (handle: import("../browser-session").SessionHandle) => {
+        waveHandles.push(handle);
+      };
+
+      let results: import("./multilane").LaneResult[];
+      try {
+        results = await multilane.runLaneWave(env, waveItems, {
+          runId: args.runId,
+          batch: args.batch,
+          planRevisionId: args.planRevisionId,
+          surveyUrl: args.surveyUrl,
+          fence: args.fence,
+          batchDeadline,
+          batchMaxMs,
+          perCaseTimeoutMs,
+          maxSteps,
+          advanceTimeoutMs,
+          shimRequired: progress.shimRequired,
+          allowShim,
+          acquireTimeoutMs,
+          program,
+          progress,
+          // THREADED WALK OPTIONS (0c): forwardReleaseMaxWaitMs and startupBudgetMs
+          // are resolved once by the caller (executeBatch) and threaded through
+          // runLaneWave to each lane, exactly as the sequential path does.
+          forwardReleaseMaxWaitMs,
+          startupBudgetMs,
+          // WAVE ZOMBIE BACKSTOP (0a): the registration callback. Each lane calls
+          // this after acquiring its browser, so the backstop can force-close it.
+          registerBrowserHandle,
+        });
+      } finally {
+        // Disarm the wave backstop — the wave completed (or failed). If it already
+        // fired, waveAbortFired is set and the walk loop will break on the
+        // batchDeadline check.
+        clearTimeout(waveAbortTimer);
+      }
 
       // SEQUENTIAL COMMIT — each lane's result is applied one at a time so
       // no two checkpoint writes interleave. This reproduces the exact
@@ -1195,6 +1290,10 @@ async function executeMultiLaneBatch(
             progress,
             variant: ordinal,
             variantFromStep: pivotFromStep,
+            // THREADED WALK OPTIONS (0c): pivots also get the resolved values so
+            // their lane walks use the same forward-release and startup budgets.
+            forwardReleaseMaxWaitMs,
+            startupBudgetMs,
           });
           const pivotResult = pivotResults[0]!;
           obs = pivotResult.obs;
@@ -1299,7 +1398,10 @@ async function executeMultiLaneBatch(
     stopReason,
     walks: progress.walks,
   });
-  return { done, stopReason, pathsWalked, casesClosed, steps };
+  // RETURN hardAbortFired (0b): the wave abort flag is surfaced to the caller so
+  // run-workflow.ts can track consecutive hard aborts across batches in the durable
+  // execution state. A single fire is recoverable; the caller bounds the retry budget.
+  return { done, stopReason, pathsWalked, casesClosed, steps, ...(waveAbortFired ? { hardAbortFired: true } : {}) };
 }
 
 /**
@@ -1394,6 +1496,17 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       requiredProbeStop,
       lanes: multilane.effectiveLaneCount(env),
       multilane,
+      // THREADED WALK OPTIONS (0c): resolved once HERE, threaded to every
+      // wave and every lane inside it, exactly as the sequential path does.
+      // forwardReleaseMaxWaitMs: from EXEC_FORWARD_RELEASE_MAX_WAIT_MS, same
+      // env read as sequential walkOnce line ~1593.
+      forwardReleaseMaxWaitMs: num(
+        (env as unknown as { EXEC_FORWARD_RELEASE_MAX_WAIT_MS?: string }).EXEC_FORWARD_RELEASE_MAX_WAIT_MS,
+        FORWARD_RELEASE_MAX_WAIT_MS,
+      ),
+      // startupBudgetMs: already resolved above from EXEC_WALK_STARTUP_BUDGET_MS
+      // with floor/ceiling guard, same as the sequential path.
+      startupBudgetMs,
     });
   }
 

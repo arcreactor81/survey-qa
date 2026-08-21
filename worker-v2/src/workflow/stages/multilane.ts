@@ -54,11 +54,13 @@ import {
 import {
   type WorkItem,
   type ExecProgress,
+  type StartupSubPhase,
   walkDeadlineFor,
   withTimeout,
   BrowserTimeout,
   acquireWithRetry,
   emptyCursor,
+  hungStartupPhase,
 } from "./execute-batch";
 import { type ExecutionProgram } from "./plan";
 import { walkPath, type PageLike } from "../../browser/driver";
@@ -91,6 +93,16 @@ export function isMultiLane(env: Env): boolean {
   return effectiveLaneCount(env) > 1;
 }
 
+/**
+ * Callback a lane uses to register its live browser handle into the wave-level
+ * zombie backstop registry. The backstop owns the decision to force-close;
+ * the lane owns the decision to register and deregister (via finally). This
+ * separation means a lane that crashes in its own finally block does not
+ * prevent the backstop from closing its browser — the handle is already in the
+ * registry before the lane's try block starts.
+ */
+export type RegisterBrowserHandle = (handle: SessionHandle) => void;
+
 /** Result from one lane's walk. */
 export interface LaneResult {
   item: WorkItem;
@@ -107,6 +119,13 @@ export interface LaneResult {
    * concurrent writers can lose events silently).
    */
   usageEvents: BrowserSessionUsageEvent[];
+  /**
+   * STARTUP INSTRUMENTATION: which sub-phases of the startup the lane completed
+   * before the walk's per-case timeout (or startup budget) fired. Empty means
+   * "page-create never finished". Each lane gets its own tracker, mirroring
+   * the sequential path where each walkOnce has its own startupPhases array.
+   */
+  startupPhases: StartupSubPhase[];
 }
 
 /**
@@ -118,6 +137,12 @@ export interface LaneResult {
  * instead of re-reading env with a potentially different fallback. The
  * sequential path resolves `num(env.EXEC_BATCH_MAX_MS, 120_000)` once at
  * batch start; this function receives that resolved value.
+ *
+ * WAVE ZOMBIE BACKSTOP (0a): the lane REGISTERS its acquired browser handle
+ * into the wave-level registry via `registerBrowserHandle`, so the backstop
+ * timer can force-close every lane's browser when a wave hangs. The lane
+ * still owns its own retirement in a finally block — the backstop is the
+ * LAST resort, not the primary cleanup.
  */
 export async function walkLane(
   env: Env,
@@ -141,13 +166,39 @@ export async function walkLane(
     attemptId: string;
     variant?: number;
     variantFromStep?: number;
+    /**
+     * FORWARD RELEASE MAX WAIT — the ceiling on waiting for a withheld forward
+     * control to open (a forced-exposure / minimum-dwell gate). Threading this
+     * from the caller mirrors the sequential path, which reads
+     * EXEC_FORWARD_RELEASE_MAX_WAIT_MS once at batch start.
+     */
+    forwardReleaseMaxWaitMs?: number;
+    /**
+     * STARTUP BUDGET — the wall-clock cap on the stretch between "session
+     * acquired" and "first step recorded". Each lane gets its own budget,
+     * mirroring the sequential path's per-walk startup budget. The budget is
+     * resolved once by the caller (executeMultiLaneBatch) and threaded here
+     * so every lane in a wave uses the same resolved value.
+     */
+    startupBudgetMs?: number;
+    /**
+     * WAVE ZOMBIE BACKSTOP (0a): callback to register this lane's browser
+     * handle into the wave-level registry. When present, the lane registers
+     * its handle immediately after acquisition so the backstop can force-close
+     * it if the wave hangs.
+     */
+    registerBrowserHandle?: RegisterBrowserHandle;
   },
 ): Promise<LaneResult> {
   const attemptId = args.attemptId;
   let handle: SessionHandle | null = null;
   const usageEvents: BrowserSessionUsageEvent[] = [];
+  // STARTUP PHASE TRACKING (0c): each lane gets its own tracker, exactly
+  // mirroring the sequential path where each walkOnce has its own
+  // startupPhases array. The phases are: page-create, survey-load, first-read.
+  const startupPhases: StartupSubPhase[] = [];
 
-  const makeErrorObs = (reason: string, detail: string): PathObservation => ({
+  const makeErrorObs = (reason: string, detail: string, wallMs = 0, startedAt?: string): PathObservation => ({
     kind: "v2-path-observation/1.0.0",
     runId: args.runId,
     pathId: args.item.path.id,
@@ -155,9 +206,9 @@ export async function walkLane(
     attemptId,
     planRevisionId: args.planRevisionId,
     surveyUrl: args.program.surveyUrl || args.surveyUrl,
-    startedAt: new Date().toISOString(),
+    startedAt: startedAt ?? new Date().toISOString(),
     endedAt: new Date().toISOString(),
-    wallMs: 0,
+    wallMs,
     plannedWitnesses: [],
     steps: [],
     outcome: reason,
@@ -173,6 +224,12 @@ export async function walkLane(
     handle = await acquireWithRetry(env, { ...emptyCursor(), sessionId: null, sessionOpenedAt: null }, args.acquireTimeoutMs);
     usageEvents.push(browserUsage());
 
+    // WAVE ZOMBIE BACKSTOP (0a): register the handle so the wave-level
+    // timer can force-close this lane's browser if the wave hangs. The
+    // registration happens BEFORE any page work so the backstop can act
+    // even if newPage itself hangs.
+    args.registerBrowserHandle?.(handle);
+
     const cap: CaptureContext = {
       env,
       runId: args.runId,
@@ -182,7 +239,9 @@ export async function walkLane(
       witnesses: Array.isArray(args.item.path.witnesses) ? (args.item.path.witnesses as string[]) : [],
     };
 
+    const walkStartMs = Date.now();
     const page = (await withTimeout(handle.browser.newPage(), 30_000, "newPage")) as PageLike;
+    startupPhases.push("page-create");
     let obs: PathObservation;
     let browserHung = false;
     let perCaseTimedOut = false;
@@ -207,8 +266,18 @@ export async function walkLane(
             viewport: { width: 1280, height: 900 },
             applyHistoryShim: args.shimRequired && args.allowShim,
             advanceTimeoutMs: args.advanceTimeoutMs,
+            // FORWARD RELEASE MAX WAIT (0c): threaded from the caller, mirroring
+            // the sequential path which reads EXEC_FORWARD_RELEASE_MAX_WAIT_MS
+            // once at batch start and passes the resolved value to every walkOnce.
+            ...(args.forwardReleaseMaxWaitMs !== undefined
+              ? { forwardReleaseMaxWaitMs: args.forwardReleaseMaxWaitMs }
+              : {}),
             variant: args.variant ?? 0,
             variantFromStep: args.variantFromStep ?? 0,
+            // STARTUP PHASE INSTRUMENTATION (0c): the driver calls this at two
+            // transitions (after page.goto and after first screen read), so a
+            // "walk-never-started" outcome names WHICH sub-phase hung.
+            onStartupPhase: (phase: "survey-load" | "first-read") => { startupPhases.push(phase); },
           },
           cap,
         ),
@@ -216,19 +285,111 @@ export async function walkLane(
         `walk ${args.item.path.id}`,
       );
     } catch (err) {
+      const elapsedMs = Date.now() - walkStartMs;
       perCaseTimedOut = err instanceof BrowserTimeout;
+      // STARTUP BUDGET DISCRIMINATION (0c): if the walk has no steps AND the
+      // startup sub-phases never reached "first-read", the hang was in the
+      // pre-first-step stretch and the outcome is "walk-never-started" — an
+      // infrastructure fact about THIS attempt, not a site accusation. Mirrors
+      // the sequential path's startup-budget detection.
+      const neverStarted = perCaseTimedOut && !startupPhases.includes("first-read");
       browserHung = perCaseTimedOut;
       obs = makeErrorObs(
-        perCaseTimedOut ? "per-case-timeout" : "error",
-        perCaseTimedOut
-          ? `walk exceeded its per-case budget of ${args.perCaseTimeoutMs}ms`
-          : String(err).slice(0, 500),
+        neverStarted ? "walk-never-started" : perCaseTimedOut ? "per-case-timeout" : "error",
+        neverStarted
+          ? `walk never started: hung in ${hungStartupPhase(startupPhases)} after ${elapsedMs}ms (startup budget ${args.startupBudgetMs ?? "unset"}ms, phases completed: ${startupPhases.join(", ") || "none"})`
+          : perCaseTimedOut
+            ? `walk exceeded its per-case budget of ${args.perCaseTimeoutMs}ms`
+            : String(err).slice(0, 500),
+        elapsedMs,
+        new Date(walkStartMs).toISOString(),
       );
     } finally {
       try {
         await page.close();
       } catch {
         /* a page that will not close must not lose the observation */
+      }
+    }
+
+    // STARTUP BUDGET RETRY (0c): a walk that never started gets ONE retry on a
+    // completely fresh page in THIS LANE's own session — mirroring the sequential
+    // path's retry. The premise is the same: a dead browser page or a hung goto
+    // is transient. The retry uses the SAME attemptId/cap because the first attempt
+    // produced no artifacts — there is nothing to collide with.
+    if (obs.outcome === "walk-never-started") {
+      console.log(
+        `v2 exec lane ${args.item.path.id}: walk-never-started ` +
+          `(hung in ${hungStartupPhase(startupPhases)}, ${obs.wallMs}ms) — retrying once on a fresh page`,
+      );
+      const retryStartupPhases: StartupSubPhase[] = [];
+      const retryStartMs = Date.now();
+      const retryPage = (await withTimeout(handle.browser.newPage(), 30_000, "newPage (startup retry)")) as PageLike;
+      retryStartupPhases.push("page-create");
+      try {
+        obs = await withTimeout(
+          walkPath(
+            retryPage,
+            args.item.path,
+            {
+              surveyUrl: args.program.surveyUrl || args.surveyUrl,
+              runId: args.runId,
+              planRevisionId: args.planRevisionId,
+              attemptId,
+              tier: args.item.tier,
+              maxSteps: args.maxSteps,
+              deadline: walkDeadlineFor(
+                args.batchDeadline,
+                Date.now(),
+                args.batchMaxMs,
+                args.perCaseTimeoutMs,
+              ),
+              viewport: { width: 1280, height: 900 },
+              applyHistoryShim: args.shimRequired && args.allowShim,
+              advanceTimeoutMs: args.advanceTimeoutMs,
+              ...(args.forwardReleaseMaxWaitMs !== undefined
+                ? { forwardReleaseMaxWaitMs: args.forwardReleaseMaxWaitMs }
+                : {}),
+              variant: args.variant ?? 0,
+              variantFromStep: args.variantFromStep ?? 0,
+              onStartupPhase: (phase: "survey-load" | "first-read") => { retryStartupPhases.push(phase); },
+            },
+            cap,
+          ),
+          // The retry uses the startup budget as its timeout — no point waiting
+          // longer than the startup budget for something that should complete in <15s.
+          args.startupBudgetMs ?? args.perCaseTimeoutMs,
+          `walk ${args.item.path.id} startup-retry`,
+        );
+        // The retry started successfully. Reset the browserHung flag.
+        browserHung = false;
+        perCaseTimedOut = false;
+        // Replace the startupPhases with the retry's phases for reporting.
+        startupPhases.length = 0;
+        startupPhases.push(...retryStartupPhases);
+      } catch (retryErr) {
+        const retryElapsedMs = Date.now() - retryStartMs;
+        const retryTimedOut = retryErr instanceof BrowserTimeout;
+        const retryNeverStarted = retryTimedOut && !retryStartupPhases.includes("first-read");
+        browserHung = retryTimedOut;
+        perCaseTimedOut = retryTimedOut;
+        obs = makeErrorObs(
+          retryNeverStarted ? "walk-never-started" : retryTimedOut ? "per-case-timeout" : "error",
+          retryNeverStarted
+            ? `walk never started (retry): hung in ${hungStartupPhase(retryStartupPhases)} after ${retryElapsedMs}ms (startup budget ${args.startupBudgetMs ?? "unset"}ms, phases completed: ${retryStartupPhases.join(", ") || "none"})`
+            : retryTimedOut ? `walk exceeded its per-case budget of ${args.startupBudgetMs ?? args.perCaseTimeoutMs}ms (startup retry)` : String(retryErr).slice(0, 500),
+          retryElapsedMs,
+          new Date(retryStartMs).toISOString(),
+        );
+        // Keep the retry's phases for reporting.
+        startupPhases.length = 0;
+        startupPhases.push(...retryStartupPhases);
+      } finally {
+        try {
+          await retryPage.close();
+        } catch {
+          /* */
+        }
       }
     }
 
@@ -254,6 +415,9 @@ export async function walkLane(
             viewport: { width: 1280, height: 900 },
             applyHistoryShim: true,
             advanceTimeoutMs: args.advanceTimeoutMs,
+            ...(args.forwardReleaseMaxWaitMs !== undefined
+              ? { forwardReleaseMaxWaitMs: args.forwardReleaseMaxWaitMs }
+              : {}),
             variant: args.variant ?? 0,
             variantFromStep: args.variantFromStep ?? 0,
           },
@@ -277,6 +441,7 @@ export async function walkLane(
       sessionWedged: browserHung,
       acquisitionError: null,
       usageEvents,
+      startupPhases,
     };
   } catch (err) {
     const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -289,6 +454,7 @@ export async function walkLane(
       sessionWedged: false,
       acquisitionError: detail,
       usageEvents,
+      startupPhases,
     };
   } finally {
     if (handle) {
@@ -309,6 +475,11 @@ export async function walkLane(
  *
  * Review fix B: each lane's attemptId is pre-minted BEFORE launch, so the
  * Promise.allSettled fallback uses a real id, never "unknown".
+ *
+ * WAVE ZOMBIE BACKSTOP (0a): accepts a `registerBrowserHandle` callback and
+ * threads it to each lane. The wave caller (executeMultiLaneBatch) owns the
+ * backstop timer and the handle registry; this function is the relay that
+ * connects lanes to that registry.
  */
 export async function runLaneWave(
   env: Env,
@@ -377,6 +548,7 @@ export async function runLaneWave(
       sessionWedged: false,
       acquisitionError: detail,
       usageEvents: [],
+      startupPhases: [],
     };
   });
 }

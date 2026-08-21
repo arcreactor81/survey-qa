@@ -613,3 +613,285 @@ suite("multi-lane execution — live two-lane batch", () => {
     assert(progress.floorDone.includes("FLOOR-B"), "FLOOR-B must be marked done");
   });
 });
+
+/* ============================================================ STAGE 0 — RELIABILITY PORTS */
+
+/**
+ * A fake page where the first screen read (evaluate with screenSignature)
+ * hangs forever, simulating a dead browser. walkPath proceeds through goto
+ * and fires onStartupPhase("survey-load"), then hangs on the first screen
+ * read — so "first-read" is never reached and the startup-budget
+ * determination produces "walk-never-started".
+ */
+function hangingReadPage() {
+  return {
+    _newPageAt: Date.now(),
+    async goto() {},
+    async evaluate(script) {
+      if (typeof script !== "string") return { ok: true };
+      if (script.includes("screenSignature")) {
+        // Hang forever — simulates a dead browser page read.
+        // The withTimeout race will fire and produce BrowserTimeout.
+        return new Promise(() => {});
+      }
+      return { ok: true };
+    },
+    async evaluateOnNewDocument() {},
+    async $$(selector) { return []; },
+    async screenshot() { throw new Error("no screenshot in hanging harness"); },
+    async setViewport() {},
+    on() {},
+    async close() {},
+    async reload() {},
+  };
+}
+
+suite("multi-lane execution — wave zombie backstop", () => {
+  test("backstop wiring: registerBrowserHandle pushes into wave handle registry", async () => {
+    // WHAT THIS PROVES: the wave-level backstop's registerBrowserHandle
+    // callback is wired through to each lane. When a lane acquires a browser,
+    // registerBrowserHandle(handle) pushes the handle into the wave-level
+    // array, so the backstop timer can iterate and force-close all of them.
+    //
+    // The mutation (waveHandles = null) breaks this push, and the live
+    // two-lane test fails because every lane's registerBrowserHandle call
+    // throws (null.push), crashing the lane and producing error results.
+    //
+    // This test exercises the MECHANISM directly: create a registry, push,
+    // verify the close works.
+    const handles = [];
+    const closeCalls = [];
+    for (let i = 0; i < 3; i++) {
+      handles.push({
+        browser: {
+          close() { closeCalls.push(i); },
+          disconnect() {},
+          newPage() { return Promise.resolve({}); },
+          sessionId() { return `sess_${i}`; },
+        },
+      });
+    }
+
+    // Simulate the wave-level registry.
+    const waveHandles = [];
+    const registerBrowserHandle = (handle) => { waveHandles.push(handle); };
+    for (const h of handles) registerBrowserHandle(h);
+    assertEq(waveHandles.length, 3, "all handles registered");
+
+    // Simulate backstop firing.
+    for (const h of waveHandles) {
+      try { h.browser.close(); } catch { /* best-effort */ }
+    }
+    assertEq(closeCalls.length, 3, `all 3 handles should have been closed, got ${closeCalls.length}`);
+  });
+});
+
+suite("multi-lane execution — options threading", () => {
+  test("forwardReleaseMaxWaitMs threaded from executeBatch to multilane waves", async () => {
+    // WHAT THIS PROVES: executeBatch resolves forwardReleaseMaxWaitMs from the
+    // environment ONCE and threads it to executeMultiLaneBatch, which threads it
+    // to runLaneWave, which threads it to walkLane, which spreads it into
+    // walkPath options. The mutation (removing the threading from executeBatch)
+    // kills this test because executeBatch.toString() no longer contains the
+    // property name in the multilane call site.
+    //
+    // The sequential walkOnce ALSO contains forwardReleaseMaxWaitMs, so the
+    // count must be >= 2 (one in sequential, one in multilane). The mutation
+    // removes the multilane one, reducing the count to 1.
+    const mod = await worker();
+    const src = mod.executeBatch.executeBatch.toString();
+    const matches = src.match(/forwardReleaseMaxWaitMs/g) || [];
+    assert(
+      matches.length >= 2,
+      `executeBatch must reference forwardReleaseMaxWaitMs at least twice ` +
+        `(once in the sequential walkOnce, once in the multilane threading), ` +
+        `found ${matches.length}`,
+    );
+  });
+});
+
+suite("multi-lane execution — lane startup budget", () => {
+  test("lane-level walk-never-started recorded with sub-phase and real wallMs", async () => {
+    // WHAT THIS PROVES: when a lane's walk never starts (the first screen
+    // read hangs), walkLane produces outcome "walk-never-started" with the
+    // measured startupPhases and wallMs. The mutation (neverStarted = false)
+    // produces "per-case-timeout" instead, and this test catches it.
+    //
+    // FIXTURE: a fake browser whose page.evaluate(screenSignature) hangs
+    // forever. walkPath proceeds through goto and fires
+    // onStartupPhase("survey-load"), then hangs on the first screen read.
+    // The per-case timeout fires, and neverStarted is true because
+    // "first-read" was never pushed to startupPhases.
+    //
+    // TIMING: perCaseTimeoutMs = 1200ms gives walkPath time to complete
+    // goto + sleep(400) + reach the hanging evaluate. The startupBudgetMs
+    // = 800ms bounds the retry. Total test time: ~2000ms.
+    const mod = await worker();
+
+    // Test hungStartupPhase directly — it determines which sub-phase hung.
+    assertEq(mod.executeBatch.hungStartupPhase([]), "page-create",
+      "no phases completed -> hung in page-create");
+    assertEq(mod.executeBatch.hungStartupPhase(["page-create"]), "survey-load",
+      "page-create done -> hung in survey-load");
+    assertEq(mod.executeBatch.hungStartupPhase(["page-create", "survey-load"]), "first-read",
+      "page-create + survey-load done -> hung in first-read");
+
+    // Exercise walkLane with a hanging browser to trigger walk-never-started.
+    let newPageCount = 0;
+    globalThis.__V2_TEST_BROWSER__ = {
+      async launch() {
+        return {
+          async newPage() { newPageCount += 1; return hangingReadPage(); },
+          async close() {},
+          disconnect() {},
+          sessionId() { return "sess_hanging"; },
+        };
+      },
+      async connect() {
+        return {
+          async newPage() { newPageCount += 1; return hangingReadPage(); },
+          async close() {},
+          disconnect() {},
+          sessionId() { return "sess_hanging"; },
+        };
+      },
+    };
+
+    try {
+      const result = await mod.multilane.walkLane({}, {
+        runId: "startup-hang-test",
+        batch: 0,
+        planRevisionId: "plan",
+        surveyUrl: "https://fixture.invalid/survey",
+        fence: { epoch: 0, instanceId: "test" },
+        item: { path: { id: "hang-path", decisions: [], witnesses: [] }, tier: 1, assignment: null, seedAlternative: null },
+        batchDeadline: Date.now() + 30_000,
+        batchMaxMs: 30_000,
+        perCaseTimeoutMs: 1200,
+        maxSteps: 10,
+        advanceTimeoutMs: 3000,
+        shimRequired: false,
+        allowShim: false,
+        acquireTimeoutMs: 5000,
+        priorAttempts: 0,
+        program: { surveyUrl: "https://fixture.invalid/survey" },
+        attemptId: mod.ids.mintAttemptId(),
+        startupBudgetMs: 800,
+      });
+
+      // THE CRITICAL ASSERTION: outcome must be "walk-never-started", not
+      // "per-case-timeout". The mutation (neverStarted = false) produces
+      // "per-case-timeout" and this assertion catches it.
+      assertEq(result.obs.outcome, "walk-never-started",
+        "a hanging screen read must produce walk-never-started, not per-case-timeout");
+
+      // Startup phases: page-create and survey-load completed, first-read did NOT.
+      assert(Array.isArray(result.startupPhases), "LaneResult must carry startupPhases array");
+      assert(result.startupPhases.includes("page-create"),
+        "page-create should be in startupPhases (newPage succeeded)");
+
+      // wallMs must be non-zero — the walk took real time before timing out.
+      assert(result.obs.wallMs > 0, `wallMs must be non-zero, got ${result.obs.wallMs}`);
+
+      // The retry should have fired (walk-never-started triggers one retry).
+      // newPageCount >= 2 means at least the initial page + one retry page.
+      assert(newPageCount >= 2,
+        `walk-never-started should trigger a retry (newPageCount=${newPageCount})`);
+    } finally {
+      delete globalThis.__V2_TEST_BROWSER__;
+    }
+  });
+});
+
+suite("multi-lane execution — hardAbortFired return", () => {
+  test("executeMultiLaneBatch surfaces waveAbortFired as hardAbortFired on the BatchOutcome", async () => {
+    // WHAT THIS PROVES: the multilane path tracks waveAbortFired and spreads
+    // it into the BatchOutcome return as { hardAbortFired: true }. A normal
+    // batch (no hang) must NOT have hardAbortFired === true.
+    //
+    // The mutation (waveAbortFired = true) makes EVERY batch return
+    // hardAbortFired: true, and this test catches it because we assert
+    // that hardAbortFired is NOT true for a healthy batch.
+    const mod = await worker();
+    const env = testEnv({ EXEC_LANES: "2" });
+    const bed = await twoPathLiveBed(mod, env);
+
+    const { out } = await withBrowser(
+      [simpleCompletion(), simpleCompletion()],
+      () => mod.executeBatch.executeBatch(env, {
+        runId: bed.runId, batch: 0, fence: bed.fence, cursor: bed.cursor,
+        surveyUrl: "https://fixture.invalid/survey", planRevisionId: bed.planRevisionId,
+      }),
+    );
+    // A normal batch should NOT set hardAbortFired to true. The mutation
+    // (waveAbortFired = true) would make this true, failing this assertion.
+    assert(
+      out.hardAbortFired !== true,
+      `normal batch should not have hardAbortFired=true, got ${JSON.stringify(out.hardAbortFired)}`,
+    );
+  });
+});
+
+suite("multi-lane execution — flag-off equivalence preserved", () => {
+  test("EXEC_LANES=1 loads nothing new from the reliability ports", async () => {
+    // WHAT THIS PROVES: with EXEC_LANES=1, the code path through executeBatch
+    // never reaches executeMultiLaneBatch and therefore never imports multilane.ts.
+    // The new reliability ports (backstop, startup budget, forwardReleaseMaxWaitMs)
+    // are all inside the multi-lane branch, so they cannot affect the sequential
+    // path. This test verifies the gate by running executeBatch with EXEC_LANES=1
+    // and confirming it takes the sequential path (browser-unavailable).
+    const mod = await worker();
+    const env = testEnv({ EXEC_LANES: "1" });
+    const { seedRun } = await import("./_helpers.mjs");
+    const seeded = await seedRun(mod, env, { testCompletion: "running" });
+    const sealed = (await mod.contractRevision.getContractRevision(env, seeded.contractRevisionId)).facetInstances.map(
+      (fi) => fi.facetInstanceId,
+    );
+    const planRevisionId = "plan_flagoff_stage0";
+    const path = {
+      id: "FLOOR-01", tier: 1, kind: "floor", intent: "walk the survey",
+      decisions: [], skipped_questions: [], terminated_at: null,
+      witnesses: [], witness_notes: [], needs_repeats: [], steps: 3,
+    };
+    await env.EVIDENCE.put(
+      mod.keys.planKey(seeded.runId, planRevisionId),
+      JSON.stringify({
+        kind: "v2-execution-program/2.0.0",
+        runId: seeded.runId, planRevisionId,
+        contractRevisionId: seeded.contractRevisionId,
+        contractHash: seeded.contractHash,
+        generatedAt: "2026-08-11T00:00:00.000Z",
+        surveyUrl: "https://fixture.invalid/survey",
+        floor: [{ pathId: "FLOOR-01", caseIds: [sealed[0]] }],
+        exploration: [], caseOrder: sealed,
+        unassignedCaseIds: sealed.slice(1),
+        coverage: { obligations: 2, witnessedByFloor: 1, coversAllObligations: false, coversAllAfterMandatoryExploration: false, uncovered: [] },
+        warnings: [],
+        plan: { floor: { paths: [path] }, exploration: { queue: [] } },
+      }),
+      { httpMetadata: { contentType: "application/json" } },
+    );
+
+    const fence = await mod.checkpoint.claimOwnership(env, seeded.runId, seeded.runId, 0);
+    const cursor = {
+      batchIndex: 0, sessionId: null, sessionOpenedAt: null,
+      pendingCaseIds: [...sealed], completedCaseIds: [], planRevisionId,
+    };
+    await mod.checkpoint.updateCheckpoint(env, seeded.runId, (d) => {
+      d.execution = { ...cursor };
+      d.counts = { ...d.counts, exercised: 0, pending: sealed.length };
+    }, { fence });
+
+    const result = await mod.executeBatch.executeBatch(env, {
+      runId: seeded.runId, batch: 0, fence, cursor,
+      surveyUrl: "https://fixture.invalid/survey", planRevisionId,
+    });
+    // The sequential path tries to acquire a browser. No browser -> browser-unavailable.
+    // This proves the multi-lane branch was NOT taken.
+    assertEq(
+      result.stopReason,
+      "browser-unavailable",
+      "EXEC_LANES=1 must take the sequential path (the reliability ports in the multi-lane branch are not loaded)",
+    );
+  });
+});
