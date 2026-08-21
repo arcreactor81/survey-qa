@@ -70,13 +70,21 @@ Classify the newest wall from run evidence → fix the CLASS in `worker-v2/` →
 npx tsc --noEmit > ../.local-private/tsc.log 2>&1; echo "TSC_EXIT:$?"
 
 # Full suite (test names are the selector, not file names):
-node tools/test.mjs                     # everything (~1514 tests)
+node tools/test.mjs                     # everything (1640 tests as of v98)
 node tools/test.mjs "substring"         # tests whose suite/name contains substring
 
-# Mutation campaigns relevant to walker/plan work:
-node tools/mutate-w4-select.mjs         # driver fills/selects/recovery (39 mutants)
+# THE SECOND RUNNER — not part of test.mjs, and it sat failing for days unnoticed
+# (24/482 red behind every "full suite green" claim until 21 Aug). Run it every cycle:
+node tools/test-visual.mjs              # canary-config gates + visual/DOM tests (482)
+
+# Mutation campaigns relevant to walker/plan work (the runner prints the true mutant
+# count — do not trust a stale number written here):
+MUTATION_CHILD_TIMEOUT_MS=600000 node tools/mutate-w4-select.mjs   # driver fills/selects/recovery (~90; two wait-bound mutants need the 600s child timeout)
 node tools/mutate-route-labels.mjs      # route typing + owner joins (12)
 node tools/mutate-reading-base.mjs      # document-reading progress guard (3)
+node tools/mutate-projection-carry.mjs  # walk facts -> record carry (16)
+node tools/mutate-exercised-gate.mjs    # coverage gate + stop-reason registry (17)
+node tools/mutate-report-defects.mjs    # report-page guards (20)
 ```
 
 A change is NOT done until: tsc exit 0, full suite green, and the campaigns that cover the
@@ -208,21 +216,27 @@ each was invisible until the previous one fell. The live run is the only gate fo
 behavior, and it costs a ~35-minute walk per answer. Report accordingly: "gates green,
 live-unproven" until the run's own receipts show the screen passed.
 
-## Next steps (in order)
+## Next steps (in order — rewritten 21 Aug after v97; the v84-era list was stale by 13 versions)
 
-1. **Verify v84 at B10** (run `v2r_01m0dcadeay20nhmh5wap22dag` or relaunch): does the deep
-   walk pass screen 68? If yes — new territory; classify the next wall from its receipts.
-2. **Speed up the loop** (owner priority): (a) a dev-only jump — use the test link's own
-   on-page "QUESTION SKIP MENU" select to reach a target question directly for iteration
-   runs (the driver already DETECTS it: `isPlatformNavigationWidget`; dev-drive already
-   validates `targetQuestionId` but only steers the plan today). Gate it like `DEV_SEED`
-   (dark in prod), run it on a scratch/bench worker, never prod. (b) capture diet for
-   iteration walks — ~21s of every ~28s step is screenshot/epoch capture (task #20);
-   sparse-capture mode with a named limitation.
-3. **First complete end-to-end report** once the completion page is reached: full honest
-   walk (no jump, full capture), every termination triggered, report published.
-4. Deferred polish: anchor-cleaner on route labels; multi-lane flag-on (EXEC_LANES);
-   three-leg pass A; seed receipt refusals (#18).
+Owner's staging (binding): stage 1 = runs deterministic + system works as expected; once a
+report lands AND the wait-screen fix holds live, stage-2 work (multilane, multimodel) starts
+in parallel. Do not gold-plate stage 1.
+
+1. **Deploy v98, launch, read its tail.** v98 carries: the whole judging tail on the
+   10-minute catalogue budget (v97 died in `derive-verdicts` after proving the projection
+   fix), completeness derived from `ending.kind`, hard-abort no longer run-fatal
+   (`browser-abort-cap` after 3 consecutive), recovery-loop silent-refusal re-press for the
+   dwell gates, canary config var, test-guard repairs. If the tail survives → FIRST REPORT.
+2. **Screener-screen recognition** (task #28): seven v96 walks carried planned screener
+   answers, never identified those screens, got screened out at ~11 — the cause of all 67
+   unreached obligations. Narrow binding where the plan holds an answer; NOT D65's broad
+   scoring (reverted for confident misbinding).
+3. **Zero-screen walks** (6 of 23 on v97): diagnose from v97's receipts — browser
+   acquisition vs page load; classify and fix.
+4. **Post-execution failure page** (task #29): a run dying between execution and report
+   currently publishes nothing ("failure-report-not-authorized" is extraction-scoped).
+5. Then stage 2 in parallel: multilane (#14), multimodel (#16); deferred polish behind
+   them: anchor-cleaner, seed receipt refusals (#18), capture diet (#20).
 
 ## Where things live
 
