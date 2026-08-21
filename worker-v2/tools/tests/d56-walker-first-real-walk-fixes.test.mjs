@@ -2467,8 +2467,8 @@ suite("amendment 13: a forward control the page withholds is waited for, bounded
     // pinned somewhere a weakening mutant cannot slip past — this is that place.
     assertEq(mod.driver.FORWARD_RELEASE_POLL_MS, 3_000,
       "production polls every 3s; a fixture-speed interval must never reach the deployed walk");
-    assertEq(mod.driver.FORWARD_RELEASE_MAX_WAIT_MS, 90_000,
-      "the production ceiling is a generous safety bound, not a dwell estimate");
+    assertEq(mod.driver.FORWARD_RELEASE_MAX_WAIT_MS, 300_000,
+      "the production ceiling is five minutes by owner instruction (21 Aug 2026) — a safety bound, not a dwell estimate");
     assertEq(mod.driver.FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS, 9_000,
       "the terminal-looking patience must stay long enough to clear a short gate");
     assert(mod.driver.FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS < mod.driver.FORWARD_RELEASE_MAX_WAIT_MS,

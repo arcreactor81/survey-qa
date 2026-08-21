@@ -4462,8 +4462,15 @@ export const FORWARD_RELEASE_POLL_MS = 3_000;
 /**
  * The DEFAULT ceiling, deliberately generous: it exists to stop an infinite wait, not to predict
  * any survey's dwell. Override per deployment with `EXEC_FORWARD_RELEASE_MAX_WAIT_MS`.
+ *
+ * FIVE MINUTES BY OWNER INSTRUCTION (21 Aug 2026): forced-viewing gates are survey-authored
+ * and unbounded in principle — a five-minute stimulus dwell is a design choice some
+ * instruments make, and a walk that gives up at 90s on such a survey reports a wall that
+ * does not exist. The cost of the larger ceiling is bounded and stated: it is paid ONLY on a
+ * screen that still has a withheld forward control after answering (never on terminal-looking
+ * screens, which keep the short cap below), and the walk deadline still outranks it.
  */
-export const FORWARD_RELEASE_MAX_WAIT_MS = 90_000;
+export const FORWARD_RELEASE_MAX_WAIT_MS = 300_000;
 /**
  * THE SHORT PATIENCE FOR A SCREEN THAT LOOKS LIKE AN ENDING, and the discrimination is stated
  * because it is a real trade: a screen with NOTHING LEFT TO ANSWER is what every completed walk

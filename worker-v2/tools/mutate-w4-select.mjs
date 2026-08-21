@@ -627,7 +627,7 @@ const W4_MUTANTS = [
         "every real minimum-dwell gate would outlast the ceiling and every gated screen would end "
         + "the walk, which is precisely the defect this mechanism exists to close",
       file: DR,
-      find: `export const FORWARD_RELEASE_MAX_WAIT_MS = 90_000;`,
+      find: `export const FORWARD_RELEASE_MAX_WAIT_MS = 300_000;`,
       replace: `export const FORWARD_RELEASE_MAX_WAIT_MS = 300;`,
       kills: ["PRODUCTION TIMING DEFAULTS are pinned — fixtures inject milliseconds, the deployed walk must not"],
     },
@@ -638,7 +638,7 @@ const W4_MUTANTS = [
         + "pay the whole wait on every walk of every run",
       file: DR,
       find: `export const FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS = 9_000;`,
-      replace: `export const FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS = 90_000;`,
+      replace: `export const FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS = 300_000;`,
       kills: ["PRODUCTION TIMING DEFAULTS are pinned — fixtures inject milliseconds, the deployed walk must not"],
     },
     {
