@@ -358,13 +358,18 @@ const BATCH_POLICY = { retries: { limit: 3, delay: "30 seconds" }, timeout: "22 
  */
 const DERIVE_POLICY = { retries: { limit: 3, delay: "30 seconds", backoff: "exponential" }, timeout: "3 minutes" } as const;
 /**
- * `project-observations` and `record-target-identity` both call `listCatalog` — one R2 LIST
- * + one R2 GET per catalogue entry. With 28 walks averaging ~35 screens each the catalogue
- * can exceed 2,000 entries and the fan-out needs well past the 3-minute DERIVE_POLICY
- * ceiling. v96 run `v2r_01m0gntj754aszafnjy1xfr1nq` timed out at 3 minutes on all 4
- * attempts, killing the verify/report pipeline after a successful 28-walk execution. The
- * same run burned a 10-min CPU-limit attempt on `record-target-identity` with no step
- * policy at all.
+ * FIVE steps pay the full evidence-catalogue fan-out — one R2 LIST + one R2 GET per
+ * catalogue entry: `project-observations` and `record-target-identity` call `listCatalog`
+ * directly, and `derive-verdicts`, `assemble-record` and `mint-judgement` reach it through
+ * `loadRunInputs`' default (`run-inputs.ts` — "the two callers that do read `evidence` use
+ * the default"; the judge additionally re-reads and re-hashes the artifact bytes). With 28
+ * walks averaging ~35 screens each the catalogue can exceed 2,000 entries and the fan-out
+ * needs well past the 3-minute DERIVE_POLICY ceiling. Two measured deaths, one per organ:
+ * v96 `v2r_01m0gntj754aszafnjy1xfr1nq` lost `project-observations` at 3 minutes on all 4
+ * attempts (and burned a 10-min CPU-limit attempt on `record-target-identity`, which then
+ * had no step policy at all); v97 `v2r_01m0h811506rysmn1hzgd886fn` got PAST projection with
+ * this policy and then lost `derive-verdicts` at the same 3-minute limit one step later.
+ * Each of the five steps therefore carries THIS policy, not DERIVE_POLICY.
  *
  * 10 minutes is sized to ~4,000 catalogue entries (double current peak). The retry delay is
  * long enough that the retry resumes in a FRESH invocation with a full subrequest budget
@@ -2198,7 +2203,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // ---------------------------------------------------------------------
       // PHASE: adjudicating — DERIVE verdicts. NO MODEL CALL IS PERMITTED HERE.
       // ---------------------------------------------------------------------
-      const adjudication = await step.do("derive-verdicts", DERIVE_POLICY, async () => {
+      const adjudication = await step.do("derive-verdicts", PROJECTION_POLICY, async () => {
         await updateCheckpoint(this.env, runId, (d) => setPhase(d, "adjudicating", "active"), {
           progressed: true,
           fence,
@@ -2253,7 +2258,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // the RECORD — so the order is aggregate → assemble → judge and cannot be otherwise:
       // the JudgementRecord's binding names the record's payload hash, its sealed revision
       // and its evidence-manifest root, none of which exist before the record does.
-      const assembled = await step.do("assemble-record", DERIVE_POLICY, async () => {
+      const assembled = await step.do("assemble-record", PROJECTION_POLICY, async () => {
         await beat(this.env, runId, "assembling run record", "record");
         if (adjudication.state !== "evaluated") {
           return stageNotEvaluated<{ recordHash: string }>(
@@ -2282,7 +2287,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // ITS FAILURE IS NOT THE RUN'S FAILURE. A run with no judgement still reports; it
       // reports ONE column and says the second is unavailable, which is strictly more
       // honest than a run that refuses to publish what it did observe.
-      const judgement = await step.do("mint-judgement", DERIVE_POLICY, async () => {
+      const judgement = await step.do("mint-judgement", PROJECTION_POLICY, async () => {
         if (assembled.state !== "evaluated") {
           return stageNotEvaluated<{ status: string }>(
             "NO_RUN_RECORD",
