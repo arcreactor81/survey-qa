@@ -510,6 +510,7 @@ suite("D31 — `walks-blocked-by-site` requires EVIDENCE of blocking", () => {
     const mod = await worker();
     const eb = mod.executeBatch;
     assertEq(JSON.stringify([...eb.EXEC_STOP_REASONS].sort()), JSON.stringify([
+      "browser-abort-cap",
       "browser-unavailable",
       "coverage-shortfall-unexercised",
       "executor-error",
@@ -517,9 +518,16 @@ suite("D31 — `walks-blocked-by-site` requires EVIDENCE of blocking", () => {
       "required-probe-capability-unsupported",
       "walks-blocked-by-site",
     ]));
-    // Neither may end in `-cap`: `run-workflow.ts#stopBucket`/`stopCompletion` key off that
-    // suffix to mean "a budget limit stopped us", and neither of these is a budget.
-    for (const r of eb.EXEC_STOP_REASONS) assert(!r.endsWith("-cap"), `${r} would be read as a budget cap`);
+    // Only `browser-abort-cap` may end in `-cap`: it IS a budget limit (consecutive hard
+    // aborts exhausted the internal retry budget). The other executor reasons are NOT budgets
+    // and must never acquire the suffix, because `run-workflow.ts#stopBucket`/`stopCompletion`
+    // key off `-cap` to mean "a budget limit stopped us".
+    const allowedCaps = new Set(["browser-abort-cap"]);
+    for (const r of eb.EXEC_STOP_REASONS) {
+      if (r.endsWith("-cap") && !allowedCaps.has(r)) {
+        assert(false, `${r} would be read as a budget cap but is not in the allowed set`);
+      }
+    }
   });
 });
 
@@ -611,13 +619,28 @@ suite("D31 — our shortfall is not their refusal", () => {
     // contradict the signed record it was written beside. Every bucket this returns must be a
     // real coverage bucket, or `stopBucket` would credit a key that does not exist and the
     // ledger would silently stop reconciling.
-    for (const reason of ["walks-blocked-by-site", "wall-clock-cap", "cost-cap", "coverage-shortfall-unexercised", null]) {
+    for (const reason of ["walks-blocked-by-site", "wall-clock-cap", "cost-cap", "coverage-shortfall-unexercised", "browser-abort-cap", null]) {
       const bucket = mod.contracts.unsettledBucketFor(reason);
       assert(
         mod.contracts.COVERAGE_BUCKETS.includes(bucket),
         `${JSON.stringify(reason)} produced ${bucket}, which is not one of the seven coverage buckets`,
       );
     }
+  });
+
+  test("`browser-abort-cap` routes to `budget-exhausted` and `partial-budget` — an honest internal shortfall, not a site accusation", async () => {
+    const mod = await worker();
+    // The `-cap` suffix is load-bearing: `stopCompletion` maps it to `partial-budget` and
+    // `unsettledBucketFor` maps it to `budget-exhausted`. A code without the suffix would
+    // route to `not-reached` (unsettled bucket) and `partial-blocked` (test completion) —
+    // the latter accuses the site.
+    assertEq(mod.contracts.unsettledBucketFor("browser-abort-cap"), "budget-exhausted",
+      "consecutive hard aborts are an internal budget exhaustion, not a site refusal");
+    // The HARD_ABORT_CONSECUTIVE_CAP must be exported and > 0.
+    const eb = mod.executeBatch;
+    assert(typeof eb.HARD_ABORT_CONSECUTIVE_CAP === "number" && eb.HARD_ABORT_CONSECUTIVE_CAP > 0,
+      "HARD_ABORT_CONSECUTIVE_CAP must be a positive number");
+    assertEq(eb.HARD_ABORT_CONSECUTIVE_CAP, 3, "the cap must be 3 (matched the design intent)");
   });
 });
 

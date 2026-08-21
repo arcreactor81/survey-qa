@@ -526,6 +526,55 @@ test("...and none of THOSE is defaulted either when the walk never reported them
   assertEq(payload.exercised, true);
 });
 
+test("completeness is `complete-scoped-inventory` for a walk whose ending.kind is `completed`", async () => {
+  const mod = await worker();
+  // A walk that genuinely reaches the survey's final page has outcome "no-advance-control"
+  // (the step loop exit value) and ending.kind "completed". The old code read
+  // outcome === "completed" which was backwards — outcome "completed" means "the step loop
+  // exited under budget", not "the survey finished". This test proves the fix reads the
+  // ending, not the outcome.
+  const walk = mod.executeBatch.walkRecord(
+    walkArtifact("v2r_d43", { ending: ended("completed") }),
+    ["fi_out_q7"],
+    AUDIT,
+  );
+  // outcome is "no-advance-control", NOT "completed" — that is the shape a real completion takes
+  assertEq(walk.outcome, "no-advance-control");
+  const rows = await projectOne(mod, walk);
+  assertEq(rows[0].completeness, "complete-scoped-inventory",
+    "a walk with ending.kind=completed must project complete-scoped-inventory");
+});
+
+test("completeness stays `partial` when ending is absent (ledger row predates typed endings)", async () => {
+  const mod = await worker();
+  // A ledger row written before endings existed must NEVER be promoted to
+  // complete-scoped-inventory — absent stays partial.
+  const stale = {
+    pathId: PATH_ID,
+    tier: 1,
+    attemptId: ATTEMPT_ID,
+    outcome: "completed",
+    outcomeDetail: null,
+    steps: 2,
+    wallMs: 60000,
+    shimmed: false,
+    loadCrash: false,
+    evidenceCount: 1,
+    caseIds: ["fi_out_q7"],
+    exercised: true,
+    plannedDecisions: 1,
+    matchedDecisions: 1,
+    constrainingDecisions: 1,
+    matchedConstraining: 1,
+    screensAdvanced: 1,
+    at: "2026-08-08T00:05:00.000Z",
+  };
+  const rows = await projectOne(mod, stale);
+  // Even though outcome is "completed", the absent ending means partial.
+  assertEq(rows[0].completeness, "partial",
+    "an absent ending must never be promoted to complete-scoped-inventory");
+});
+
 test("END TO END THROUGH R2: the stored `observations.json` carries the ending", async () => {
   const mod = await worker();
   const env = testEnv();

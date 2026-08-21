@@ -68,6 +68,15 @@ export const execProgressKey = (runId: string) => k("runs", runId, "execution", 
 export const PER_CASE_WRAPUP_GRACE_MS = 20_000;
 
 /**
+ * How many CONSECUTIVE hard batch aborts stop the run. A single abort is recoverable (the
+ * next batch gets a fresh browser); three in a row indicates a persistently broken browser
+ * environment for this survey URL. The number is small on purpose: each abort burns a full
+ * batch step (22 min worst-case with retries), and 3 × 22 = 66 min of wasted platform time
+ * is enough to be certain the problem is structural.
+ */
+export const HARD_ABORT_CONSECUTIVE_CAP = 3;
+
+/**
  * The wall-clock deadline handed to ONE walk. Strictly tighter than the per-case axe by the
  * wrap-up grace, so a walk that merely runs long exits its own step loop and RETURNS a
  * "time-cap" partial observation — steps recorded, ending classified, evidence kept — while
@@ -126,6 +135,17 @@ export const EXEC_STOP_WALKS_BLOCKED_BY_SITE = "walks-blocked-by-site";
 export const EXEC_STOP_COVERAGE_SHORTFALL = "coverage-shortfall-unexercised";
 /** Required planned work uses an action vocabulary this executor cannot perform or prove. */
 export const EXEC_STOP_REQUIRED_PROBE_UNSUPPORTED = "required-probe-capability-unsupported";
+/**
+ * THREE CONSECUTIVE BATCHES WERE TERMINATED BY THE HARD ABORT TIMER.
+ *
+ * A single hard abort is a RECOVERABLE zombie-browser condition: the next batch launches a
+ * fresh browser and tries again. THREE in a row means the browser environment is persistently
+ * broken for this run's survey URL, and continuing would burn batches on a target that cannot
+ * be driven. The `-cap` suffix is deliberate: `stopCompletion` maps it to `partial-budget`
+ * (an internal retry budget ran out), which is honest — the site is not accused, and the
+ * reader can see that the system stopped because it exhausted its own resilience budget.
+ */
+export const EXEC_STOP_BROWSER_ABORT_CAP = "browser-abort-cap";
 
 /**
  * HOW MANY SCREENS ONE WALK MAY VISIT, when the environment does not say.
@@ -164,6 +184,7 @@ export const EXEC_STOP_REASONS = [
   EXEC_STOP_WALKS_BLOCKED_BY_SITE,
   EXEC_STOP_COVERAGE_SHORTFALL,
   EXEC_STOP_REQUIRED_PROBE_UNSUPPORTED,
+  EXEC_STOP_BROWSER_ABORT_CAP,
 ] as const;
 
 export interface WalkRecord {
@@ -266,6 +287,15 @@ export interface ExecProgress {
   seedReceiptRefusals?: Array<{ alternativeId: string; caseId: string; attemptId: string; reason: string }>;
   /** Set once a walk proves the site cannot load unshimmed. Later walks start shimmed. */
   shimRequired: boolean;
+  /**
+   * CONSECUTIVE HARD ABORT COUNT — tracked DURABLY so it survives step boundaries. A hard
+   * abort fires when the batch's backstop timer kills a zombie browser; the next batch
+   * launches a fresh browser and resets the counter on any successful walk. After
+   * HARD_ABORT_CONSECUTIVE_CAP consecutive hard aborts the run stops with
+   * `browser-abort-cap` — an honest internal-budget reason that does not accuse the site.
+   * Absent on progress.json written before this field existed; absence means zero.
+   */
+  consecutiveHardAborts?: number;
   /** Paths whose browser hung. A path here has had its one retry on a fresh session. */
   hungPaths?: string[];
   /**
@@ -435,6 +465,7 @@ const emptyProgress = (runId: string, planRevisionId: string): ExecProgress => (
   shimEvidence: null,
   hungPaths: [],
   screenoutPivots: {},
+  consecutiveHardAborts: 0,
   totalSteps: 0,
   totalEvidence: 0,
 });
@@ -510,6 +541,10 @@ export function decodeProgress(value: unknown, runId: string, planRevisionId: st
       if (pathId.length === 0) progressCorrupt("$.screenoutPivots has an empty path id");
       progressCount(count, `$.screenoutPivots[${JSON.stringify(pathId)}]`);
     }
+  }
+  // Additive like `screenoutPivots`: a progress.json from before this field re-reads as zero.
+  if (root.consecutiveHardAborts !== undefined) {
+    progressCount(root.consecutiveHardAborts, "$.consecutiveHardAborts");
   }
   return root as unknown as ExecProgress;
 }
@@ -662,6 +697,12 @@ export interface BatchOutcome {
   pathsWalked: number;
   casesClosed: number;
   steps: number;
+  /**
+   * Whether the batch's hard-abort backstop timer fired. Reported so the caller can track
+   * CONSECUTIVE hard aborts across batches in the durable execution state. A single fire is
+   * recoverable (the next batch gets a fresh browser); the caller bounds the retry budget.
+   */
+  hardAbortFired?: boolean;
 }
 
 export function applySeedAttemptCommit(
@@ -1943,11 +1984,16 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
 
   // Disarm the hard abort timer — the batch completed normally (or via executor error).
   // If it already fired, the browser is closed and sessionWedged-equivalent, but the walk
-  // loop's batchDeadline guard broke normally. Record it for diagnostics.
+  // loop's batchDeadline guard broke normally. Record it for diagnostics but DO NOT stop the
+  // run: a single hard abort is a RECOVERABLE zombie-browser condition. The next batch
+  // launches a fresh browser and tries again. Consecutive aborts are tracked durably (below)
+  // and capped at HARD_ABORT_CONSECUTIVE_CAP before the run stops.
   clearTimeout(batchAbortTimer);
   if (hardAbortFired) {
     console.log(`v2 exec batch ${args.batch}: hard batch abort was the exit cause`);
-    if (!stopReason) stopReason = "hard-batch-abort";
+    // DO NOT set stopReason here. The batch returns done:false so the loop launches the
+    // next batch with a fresh browser. The abort is recorded on the progress ledger via
+    // the checkpoint event below.
   }
 
   // EVERY BATCH RETURNS ITS BROWSER — reuse across batches ended with the long-walk
@@ -1979,7 +2025,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
     stopReason,
     walks: progress.walks,
   });
-  return { done, stopReason, pathsWalked, casesClosed, steps };
+  return { done, stopReason, pathsWalked, casesClosed, steps, ...(hardAbortFired ? { hardAbortFired: true } : {}) };
 }
 
 /**

@@ -193,9 +193,25 @@ const evidenceForAttempt = (catalog: EvidenceCatalogEntry[], attemptId: string):
  * recorded carries the COMPLETE positive inventory (`browser/types.ts` — a subset "would
  * make every absence claim unfalsifiable"). Anything else saw part of the survey, and
  * `partial` is what forbids a later absence claim from resting on it.
+ *
+ * THE FALSE-FRIEND BUG (commit 38af67b, assemble-record.mjs ~L648). `walk.outcome` is set
+ * by the STEP LOOP, not by the ending classifier: `outcome: "completed"` means "the loop
+ * exited under budget", while a walk that genuinely reaches the survey's final page has
+ * `outcome: "no-advance-control"` and `ending.kind: "completed"`. Reading `outcome` here
+ * was backwards — the walks that finished the survey were marked `partial` (they exit on
+ * `no-advance-control`) and the walks that merely ran out of plan steps were marked
+ * `complete-scoped-inventory`.
+ *
+ * THE FIX: derive completeness from `ending.kind`, the typed field the ending classifier
+ * stamps after classifying the final screen. An ABSENT ending (a ledger row that predates
+ * typed endings) must NEVER be promoted to `complete-scoped-inventory` — absent stays
+ * `partial`, because treating "we did not look" as "we saw everything" is the one collapse
+ * CLAUDE.md's coverage rule exists to prevent. Likewise `unclassified` — "the page said
+ * nothing about which kind of ending it was" — stays `partial`: a confident answer to an
+ * undecidable question is a fabrication.
  */
 const completenessFor = (walk: WalkRecord): Observation["completeness"] =>
-  walk.outcome === "completed" ? "complete-scoped-inventory" : "partial";
+  walk.ending?.kind === "completed" ? "complete-scoped-inventory" : "partial";
 
 export async function projectObservations(env: Env, runId: string): Promise<StageResult<ProjectionSummary>> {
   const loaded = await loadCheckpoint(env, runId);

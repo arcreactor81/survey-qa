@@ -210,6 +210,36 @@ const MUTANTS = [
   // a permanently-surviving mutant reads as a missing guard rather than as an unmutatable one.
   // The behavioural half (the resolver above) is mutated; the call site is a source-level drift
   // guard, in the same spirit as d56's amendment 3b.
+
+  // --------------------------------------------------------- BROWSER-ABORT-CAP
+  // The consecutive hard abort cap is an internal retry budget. Removing it from the
+  // registry or misspelling its suffix changes how `stopCompletion` / `unsettledBucketFor`
+  // classify the pending cases — either accusing the site or routing to the wrong bucket.
+  {
+    name: "`browser-abort-cap` removed from the EXEC_STOP_REASONS registry",
+    breaks:
+      "the d31 registry test would no longer list it and the test would fail, " +
+      "proving the registry test is load-bearing",
+    file: FILE,
+    find: "  EXEC_STOP_BROWSER_ABORT_CAP,\n] as const;",
+    replace: "] as const;",
+    kills: [
+      "`browser-abort-cap` routes to `budget-exhausted` and `partial-budget` — an honest internal shortfall, not a site accusation",
+    ],
+  },
+  {
+    name: "`browser-abort-cap` loses its `-cap` suffix and is misclassified",
+    breaks:
+      "`stopCompletion` would map a reason without the `-cap` suffix to `partial-blocked`, " +
+      "which accuses the customer's site. The `-cap` suffix is what routes it to " +
+      "`partial-budget` (an internal budget exhaustion)",
+    file: FILE,
+    find: 'export const EXEC_STOP_BROWSER_ABORT_CAP = "browser-abort-cap";',
+    replace: 'export const EXEC_STOP_BROWSER_ABORT_CAP = "browser-abort-exhausted";',
+    kills: [
+      "`browser-abort-cap` routes to `budget-exhausted` and `partial-budget` — an honest internal shortfall, not a site accusation",
+    ],
+  },
 ];
 
 await runMutantSuite({

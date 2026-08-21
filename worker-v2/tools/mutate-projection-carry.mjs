@@ -162,6 +162,20 @@ await runMutantSuite({
       kills: ["...and none of THOSE is defaulted either when the walk never reported them"],
     },
 
+    // --------------------------------------------------------- COMPLETENESS
+    {
+      name: "completenessFor reverts to the false-friend outcome read",
+      breaks:
+        "THE FALSE-FRIEND BUG (commit 38af67b): `outcome: \"completed\"` means the step loop " +
+        "exited under budget, not that the survey finished. Reading it here marks walks that " +
+        "ran out of PLAN as complete and walks that ran out of SURVEY as partial — exactly " +
+        "backwards. The fix reads `ending.kind`, and this mutant restores the old line.",
+      file: PO,
+      find: '  walk.ending?.kind === "completed" ? "complete-scoped-inventory" : "partial";',
+      replace: '  walk.outcome === "completed" ? "complete-scoped-inventory" : "partial";',
+      kills: ["completeness is `complete-scoped-inventory` for a walk whose ending.kind is `completed`"],
+    },
+
     // ------------------------------------------------------------- TRUSTED
     {
       name: "THE COUNTERWEIGHT: the verifier prefers the payload's ending over the artifact's",

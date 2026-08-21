@@ -1905,8 +1905,9 @@
       var glyphCls = key === "complete" || key === "stopped" || key === "skipped"
         ? "phase-glyph--done"
         : key === "active" ? "phase-glyph--active" : "phase-glyph--pending";
-      var glyph = key === "complete" || key === "stopped" || key === "skipped"
-        ? "✓"
+      var glyph = key === "complete" ? "✓"
+        : key === "stopped" ? PHASE_STATE.stopped.glyph
+        : key === "skipped" ? PHASE_STATE.skipped.glyph
         : key === "active" ? "●" : "○";
 
       legendItems.push(el("div", { cls: "phase-timing-item" }, [

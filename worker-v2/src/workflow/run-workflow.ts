@@ -81,7 +81,13 @@ import { edgeCoverageKey, structureModelKey } from "../keys";
 // component (arms/registry.ts). Reverting the seam means restoring this import and calling
 // planStage directly at the one site below — two lines, both marked.
 import { resolveArm } from "../arms/resolve";
-import { executeBatch, loadProgress } from "./stages/execute-batch";
+import {
+  executeBatch,
+  loadProgress,
+  EXEC_STOP_BROWSER_ABORT_CAP,
+  HARD_ABORT_CONSECUTIVE_CAP,
+  saveProgress,
+} from "./stages/execute-batch";
 import {
   loadProgram,
   probeCapabilityLimitations,
@@ -352,11 +358,13 @@ const BATCH_POLICY = { retries: { limit: 3, delay: "30 seconds" }, timeout: "22 
  */
 const DERIVE_POLICY = { retries: { limit: 3, delay: "30 seconds", backoff: "exponential" }, timeout: "3 minutes" } as const;
 /**
- * `project-observations` calls `listCatalog` — one R2 LIST + one R2 GET per catalogue entry.
- * With 28 walks averaging ~35 screens each the catalogue can exceed 2,000 entries and the
- * fan-out needs well past the 3-minute DERIVE_POLICY ceiling. v96 run
- * `v2r_01m0gntj754aszafnjy1xfr1nq` timed out at 3 minutes on all 4 attempts, killing the
- * verify/report pipeline after a successful 28-walk execution.
+ * `project-observations` and `record-target-identity` both call `listCatalog` — one R2 LIST
+ * + one R2 GET per catalogue entry. With 28 walks averaging ~35 screens each the catalogue
+ * can exceed 2,000 entries and the fan-out needs well past the 3-minute DERIVE_POLICY
+ * ceiling. v96 run `v2r_01m0gntj754aszafnjy1xfr1nq` timed out at 3 minutes on all 4
+ * attempts, killing the verify/report pipeline after a successful 28-walk execution. The
+ * same run burned a 10-min CPU-limit attempt on `record-target-identity` with no step
+ * policy at all.
  *
  * 10 minutes is sized to ~4,000 catalogue entries (double current peak). The retry delay is
  * long enough that the retry resumes in a FRESH invocation with a full subrequest budget
@@ -1960,9 +1968,34 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           await beat(
             this.env,
             runId,
-            `batch ${batch}: ${exec.pathsWalked} path(s), ${exec.steps} screen(s), ${exec.casesClosed} case(s) closed`,
+            `batch ${batch}: ${exec.pathsWalked} path(s), ${exec.steps} screen(s), ${exec.casesClosed} case(s) closed` +
+              (exec.hardAbortFired ? " [hard-abort-fired]" : ""),
             `${batch}:done`,
           );
+
+          // CONSECUTIVE HARD ABORT TRACKING. A single hard abort is recoverable: the next
+          // batch launches a fresh browser. Consecutive aborts are tracked durably in the
+          // progress ledger. After HARD_ABORT_CONSECUTIVE_CAP consecutive aborts the run
+          // stops with `browser-abort-cap` — an internal-budget reason that does not accuse
+          // the site. Any batch that completes WITHOUT a hard abort resets the counter.
+          if (exec.hardAbortFired || exec.pathsWalked > 0) {
+            const planRevId = cursor.planRevisionId ?? plan.planRevisionId;
+            const progress = await loadProgress(this.env, runId, planRevId);
+            const prev = progress.consecutiveHardAborts ?? 0;
+            if (exec.hardAbortFired) {
+              progress.consecutiveHardAborts = prev + 1;
+              if (progress.consecutiveHardAborts >= HARD_ABORT_CONSECUTIVE_CAP) {
+                await saveProgress(this.env, progress);
+                return { done: true, stopReason: EXEC_STOP_BROWSER_ABORT_CAP };
+              }
+            } else {
+              // A batch that walked paths without a hard abort proves the browser
+              // environment is not persistently broken. Reset the counter.
+              progress.consecutiveHardAborts = 0;
+            }
+            await saveProgress(this.env, progress);
+          }
+
           return { done: exec.done, stopReason: exec.stopReason };
         });
 
@@ -2034,7 +2067,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // captured no screen keeps `null` and stays unbindable with the reason it already has;
       // a failure to record is reported as a note and never fails the run.
       // ---------------------------------------------------------------------
-      await step.do("record-target-identity", async () => {
+      await step.do("record-target-identity", PROJECTION_POLICY, async () => {
         const identity = await ensureRecordedTargetIdentity(this.env, runId);
         await beat(
           this.env,
