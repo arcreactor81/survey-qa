@@ -66,8 +66,14 @@ const MUTANTS = [
   },
 ];
 
+// The runner's inputs are `title` and `filter` (see mutate-runner.mjs#runMutantSuite);
+// the first version of this call passed `name`/`testFile` — neither exists — and crashed
+// on the banner write before any mutant ran. The release battery caught it: a campaign
+// that has never executed is a guard that has never been tested.
 await runMutantSuite({
-  name: "d58-startup-budget",
-  testFile: "tools/tests/d58-startup-budget.test.mjs",
+  title: "D58 startup budget — can the walk-never-started guards fail?",
+  // No filter: the guards live in execute-batch.ts and contracts.ts, which D31/D30/D11
+  // also exercise; a baseline over only D58 would miss a mutation that reddens those.
+  filter: "",
   mutants: MUTANTS,
 });
