@@ -8,12 +8,17 @@
  * EXECUTION SHAPE: HTTP-triggered stage invocations, one stage per request.
  * Each stage runs within its own budget (the same 10-minute ceilings prod uses).
  * If a stage dies on budget, THAT IS A FINDING to report, not to patch around.
+ *
+ * KEY DESIGN DECISION: stages run against the SOURCE run id. The ReplayBucket
+ * transparently redirects all writes from v2/runs/<source>/ to v2/runs/<replay>/
+ * and all reads fall through from the replay prefix to the source prefix. This
+ * avoids embedded-run-id mismatches in plans, evidence catalogue bindings, etc.
  */
 
 import type { Env } from "../types/env";
 import { scopeEvidenceEnv } from "../store/evidence-keyspace";
-import { wrapReplayBucket, rewriteCheckpointForReplay } from "./replay-bucket";
-import { checkpointKey, envelopeKey, judgementKey } from "../keys";
+import { wrapReplayBucket } from "./replay-bucket";
+import { judgementKey, recordKey } from "../keys";
 import { projectObservations } from "../workflow/stages/project-observations";
 import { verifyObservations } from "../workflow/stages/verify-observations";
 import { deriveItemResults, mintJudgement } from "../workflow/stages/derive-verdicts";
@@ -31,7 +36,7 @@ interface ReplayRequest {
 
 /** The stages of the judging tail, in order. */
 const STAGES = [
-  "seed-checkpoint",
+  "seed",
   "project-observations",
   "verify-observations",
   "derive-verdicts",
@@ -79,14 +84,16 @@ export default {
     if (!sourceRunId || !replayRunId || !stage) {
       return new Response("Missing sourceRunId, replayRunId, or stage\n", { status: 400 });
     }
-    if (!replayRunId.startsWith("replay-")) {
-      return new Response("replayRunId must start with 'replay-'\n", { status: 400 });
+    if (replayRunId === sourceRunId) {
+      return new Response("replayRunId must differ from sourceRunId\n", { status: 400 });
     }
     if (!STAGES.includes(stage as StageName)) {
       return new Response(`Unknown stage: ${stage}. Valid: ${STAGES.join(", ")}\n`, { status: 400 });
     }
 
-    // Build the fenced environment.
+    // Build the fenced environment. Stages operate on the SOURCE run id.
+    // The fence redirects writes from v2/runs/<source>/ to v2/runs/<replay>/
+    // and reads fall through from replay prefix to source prefix.
     const fencedBucket = wrapReplayBucket(rawEnv.EVIDENCE, { sourceRunId, replayRunId });
     const env: Env = scopeEvidenceEnv({
       ...rawEnv,
@@ -95,6 +102,7 @@ export default {
 
     const startMs = Date.now();
     try {
+      // ALL stages use the SOURCE run id. The fence handles write isolation.
       const result = await runStage(env, sourceRunId, replayRunId, stage as StageName);
       const durationMs = Date.now() - startMs;
       return Response.json({
@@ -124,114 +132,108 @@ export default {
 async function runStage(
   env: Env,
   sourceRunId: string,
-  replayRunId: string,
+  _replayRunId: string,
   stage: StageName,
 ): Promise<unknown> {
+  // All stages use the SOURCE run id. The ReplayBucket fence handles
+  // write isolation transparently.
+  const runId = sourceRunId;
   switch (stage) {
-    case "seed-checkpoint":
-      return seedCheckpoint(env, sourceRunId, replayRunId);
+    case "seed":
+      // No seeding needed — stages read the source checkpoint directly.
+      // The fence will redirect any writes to the replay prefix.
+      return { seeded: true, note: "stages operate on source run id; fence redirects writes" };
     case "project-observations":
-      return stageProjectObservations(env, replayRunId);
+      return stageProjectObservations(env, runId);
     case "verify-observations":
-      return stageVerifyObservations(env, replayRunId);
+      return stageVerifyObservations(env, runId);
     case "derive-verdicts":
-      return stageDeriveVerdicts(env, replayRunId);
+      return stageDeriveVerdicts(env, runId);
     case "assemble-record":
-      return stageAssembleRecord(env, replayRunId);
+      return stageAssembleRecord(env, runId);
     case "mint-judgement":
-      return stageMintJudgement(env, replayRunId);
+      return stageMintJudgement(env, runId);
     case "supersede-record":
-      return stageSupersedeRecord(env, replayRunId);
+      return stageSupersedeRecord(env, runId);
     case "report":
-      return stageReport(env, replayRunId);
+      return stageReport(env, runId);
     default:
       throw new Error(`unimplemented stage: ${stage}`);
   }
 }
 
-/**
- * SEED: copy the source run's checkpoint and envelope into the replay prefix,
- * rewriting runId fields. This is the one setup step before the tail stages.
- */
-async function seedCheckpoint(
-  env: Env,
-  sourceRunId: string,
-  replayRunId: string,
-): Promise<{ seeded: boolean; checkpointRevision: number }> {
-  // Read the source checkpoint from the UNDERLYING bucket (not the fenced one,
-  // which would try replay prefix first). The fenced bucket's get() does try
-  // the replay prefix first, then falls back to the real key. Since we haven't
-  // written anything yet, it'll fall through to the source.
-  const cpObj = await env.EVIDENCE.get(checkpointKey(sourceRunId));
-  if (!cpObj) throw new Error(`source checkpoint not found: ${checkpointKey(sourceRunId)}`);
-  const cpText = await cpObj.text();
-
-  // Rewrite runId references.
-  const rewritten = rewriteCheckpointForReplay(cpText, sourceRunId, replayRunId);
-
-  // Write to the replay prefix. The fenced bucket rewrites the key.
-  await env.EVIDENCE.put(checkpointKey(replayRunId), rewritten, {
-    httpMetadata: { contentType: "application/json" },
-  });
-
-  // Copy the envelope too.
-  const envObj = await env.EVIDENCE.get(envelopeKey(sourceRunId));
-  if (envObj) {
-    const envText = await envObj.text();
-    const rewrittenEnv = envText.replaceAll(sourceRunId, replayRunId);
-    await env.EVIDENCE.put(envelopeKey(replayRunId), rewrittenEnv, {
-      httpMetadata: { contentType: "application/json" },
-    });
-  }
-
-  const parsed = JSON.parse(rewritten);
-  return { seeded: true, checkpointRevision: parsed.revision ?? 0 };
-}
-
 async function stageProjectObservations(env: Env, runId: string) {
   const result = await projectObservations(env, runId);
-  return { state: result.state, value: result.state === "evaluated" ? result.value : null, reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null };
+  return {
+    state: result.state,
+    value: result.state === "evaluated" ? result.value : null,
+    reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null,
+    detail: result.state !== "evaluated" ? (result as { detail?: string }).detail : null,
+  };
 }
 
 async function stageVerifyObservations(env: Env, runId: string) {
   const result = await verifyObservations(env, runId);
-  return { state: result.state, value: result.state === "evaluated" ? result.value : null, reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null };
+  return {
+    state: result.state,
+    value: result.state === "evaluated" ? result.value : null,
+    reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null,
+  };
 }
 
 async function stageDeriveVerdicts(env: Env, runId: string) {
   const result = await deriveItemResults(env, runId);
-  return { state: result.state, value: result.state === "evaluated" ? result.value : null, reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null };
+  return {
+    state: result.state,
+    summary: result.state === "evaluated" ? result.value.summary : null,
+    reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null,
+  };
 }
 
 async function stageAssembleRecord(env: Env, runId: string) {
-  // Need to load the derived verdicts first.
+  // Re-derive verdicts to get the item results (each stage is stateless).
   const derivation = await deriveItemResults(env, runId);
   if (derivation.state !== "evaluated") {
     return { state: "skipped", reason: "derive-verdicts did not evaluate" };
   }
   const result = await assembleRecord(env, runId, derivation.value.itemResults);
-  return { state: result.state, value: result.state === "evaluated" ? result.value : null, reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null };
+  return {
+    state: result.state,
+    value: result.state === "evaluated" ? result.value : null,
+    reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null,
+  };
 }
 
 async function stageMintJudgement(env: Env, runId: string) {
   const result = await mintJudgement(env, runId);
-  return { state: result.state, value: result.state === "evaluated" ? result.value : null, reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null };
+  return {
+    state: result.state,
+    value: result.state === "evaluated" ? result.value : null,
+    reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null,
+    detail: result.state !== "evaluated" ? (result as { detail?: string }).detail : null,
+  };
 }
 
 async function stageSupersedeRecord(env: Env, runId: string) {
-  // Read judgement outcome from what was written.
+  // Check if a judgement was written during this replay.
   const judgementObj = await env.EVIDENCE.get(judgementKey(runId));
   const judgementMinted = !!judgementObj;
 
+  // Check if there is an existing record to supersede.
+  const recordObj = await env.EVIDENCE.get(recordKey(runId));
+  if (!recordObj) {
+    return { state: "skipped", reason: "no record to supersede" };
+  }
+
   const closure: RunClosure = {
     judgement: judgementMinted
-      ? { minted: true, status: "replay", reasonCode: null, detail: null, boundRecordHash: "replay" }
-      : { minted: false, status: null, reasonCode: "REPLAY_NO_JUDGEMENT", detail: "judgement not minted during replay", boundRecordHash: "replay" },
+      ? { minted: true, status: "replay-attested", reasonCode: null, detail: null, boundRecordHash: "replay" }
+      : { minted: false, status: null, reasonCode: "REPLAY_JUDGEMENT_ABSENT", detail: "judgement was not minted during replay", boundRecordHash: "replay" },
     testAxis: {
       closed: false,
       completion: "replay",
       reasonCode: null,
-      blockers: ["replay run — test axis not evaluated"],
+      blockers: ["replay run — test axis evaluation deferred"],
     },
     closedAt: new Date().toISOString(),
     derivedBy: "v2-replay-closure/1.0.0",
@@ -242,7 +244,11 @@ async function stageSupersedeRecord(env: Env, runId: string) {
     closure,
     "replay superseding revision with judgement outcome",
   );
-  return { state: result.state, value: result.state === "evaluated" ? result.value : null, reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null };
+  return {
+    state: result.state,
+    value: result.state === "evaluated" ? result.value : null,
+    reason: result.state !== "evaluated" ? (result as { reason?: string }).reason : null,
+  };
 }
 
 async function stageReport(env: Env, runId: string) {

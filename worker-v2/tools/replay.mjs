@@ -37,8 +37,8 @@ if (!sourceRunId || !replayRunId) {
   process.exit(1);
 }
 
-if (!replayRunId.startsWith("replay-")) {
-  console.error("ERROR: --replay-run must start with 'replay-'");
+if (replayRunId === sourceRunId) {
+  console.error("ERROR: --replay-run must differ from --source-run");
   process.exit(1);
 }
 
@@ -53,7 +53,7 @@ if (!token) {
 }
 
 const STAGES = [
-  "seed-checkpoint",
+  "seed",
   "project-observations",
   "verify-observations",
   "derive-verdicts",

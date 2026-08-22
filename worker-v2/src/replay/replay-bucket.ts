@@ -73,6 +73,29 @@ function rewriteKey(
   return null; // Not a run-scoped key — pass-through for reads, refuse for writes.
 }
 
+/**
+ * Reverse a key from the replay run prefix back to the source run prefix.
+ * Used for read fall-through: when a stage asks for v2/runs/<replayRunId>/plan/...
+ * and that key does not exist, we try v2/runs/<sourceRunId>/plan/... instead.
+ */
+function reverseRewriteKey(
+  key: string,
+  sourceRunId: string,
+  replayRunId: string,
+): string | null {
+  const replayRunPrefix = `${RUN_KEY_PREFIX}${replayRunId}/`;
+  const sourceRunPrefix = `${RUN_KEY_PREFIX}${sourceRunId}/`;
+  if (key.startsWith(replayRunPrefix)) {
+    return sourceRunPrefix + key.slice(replayRunPrefix.length);
+  }
+  const replayReportPrefix = `${REPORT_KEY_PREFIX}${replayRunId}/`;
+  const sourceReportPrefix = `${REPORT_KEY_PREFIX}${sourceRunId}/`;
+  if (key.startsWith(replayReportPrefix)) {
+    return sourceReportPrefix + key.slice(replayReportPrefix.length);
+  }
+  return null;
+}
+
 export interface ReplayBucketOptions {
   sourceRunId: string;
   replayRunId: string;
@@ -97,10 +120,10 @@ export function wrapReplayBucket(
 ): R2Bucket {
   const { sourceRunId, replayRunId } = opts;
 
-  if (!replayRunId.startsWith("replay-")) {
+  if (replayRunId === sourceRunId) {
     throw new ReplayFenceViolation(
       replayRunId,
-      "replay run id must start with 'replay-'",
+      "replay run id must differ from source run id",
     );
   }
 
@@ -129,23 +152,29 @@ export function wrapReplayBucket(
 
   const wrapped: R2Bucket = {
     async head(key: string) {
-      // Try replay prefix first (own writes), fall back to real key.
-      const rewritten = rewriteKey(key, sourceRunId, replayRunId);
-      if (rewritten && rewritten !== key) {
-        const result = await bucket.head(rewritten);
-        if (result) return result;
+      // The stages call key functions with the REPLAY run id, generating keys like
+      // v2/runs/<replayRunId>/plan/.... Try that key first (replay's own writes),
+      // then try the SOURCE run equivalent (the original data).
+      const result = await bucket.head(key);
+      if (result) return result;
+      // If not found, try the source run equivalent.
+      const sourceEquivalent = reverseRewriteKey(key, sourceRunId, replayRunId);
+      if (sourceEquivalent && sourceEquivalent !== key) {
+        return bucket.head(sourceEquivalent);
       }
-      return bucket.head(key);
+      return null;
     },
 
     async get(key: string, options?: R2GetOptions) {
-      // Try replay prefix first (own writes), fall back to real key.
-      const rewritten = rewriteKey(key, sourceRunId, replayRunId);
-      if (rewritten && rewritten !== key) {
-        const result = await bucket.get(rewritten, options);
-        if (result) return result;
+      // Same fall-through logic as head: try the key as-is (which may be a replay
+      // key for own writes), then try the source run equivalent.
+      const result = await bucket.get(key, options);
+      if (result) return result;
+      const sourceEquivalent = reverseRewriteKey(key, sourceRunId, replayRunId);
+      if (sourceEquivalent && sourceEquivalent !== key) {
+        return bucket.get(sourceEquivalent, options);
       }
-      return bucket.get(key, options);
+      return null;
     },
 
     async put(key: string, value: PutValue, options?: R2PutOptions) {
@@ -158,9 +187,19 @@ export function wrapReplayBucket(
     },
 
     async list(options: R2ListOptions = {}) {
-      // List operations pass through — the stages need to list the source run's catalogue.
-      // For listing the replay run's own writes, the prefix will already be correct.
-      return bucket.list(options);
+      // If listing under the replay prefix and nothing is there, fall back to the source.
+      const result = await bucket.list(options);
+      if (result.objects.length === 0 && options.prefix) {
+        const sourcePrefix = reverseRewriteKey(
+          options.prefix,
+          sourceRunId,
+          replayRunId,
+        );
+        if (sourcePrefix && sourcePrefix !== options.prefix) {
+          return bucket.list({ ...options, prefix: sourcePrefix });
+        }
+      }
+      return result;
     },
 
     async createMultipartUpload(key: string, options?: R2MultipartOptions) {

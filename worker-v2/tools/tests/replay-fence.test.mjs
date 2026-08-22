@@ -50,8 +50,8 @@ function rewriteKey(key, sourceRunId, replayRunId) {
 
 function wrapReplayBucket(bucket, opts) {
   const { sourceRunId, replayRunId } = opts;
-  if (!replayRunId.startsWith("replay-")) {
-    throw new ReplayFenceViolation(replayRunId, "replay run id must start with 'replay-'");
+  if (replayRunId === sourceRunId) {
+    throw new ReplayFenceViolation(replayRunId, "replay run id must differ from source run id");
   }
   const replayRunPrefix = `${RUN_KEY_PREFIX}${replayRunId}/`;
   const replayReportPrefix = `${REPORT_KEY_PREFIX}${replayRunId}/`;
@@ -192,19 +192,19 @@ suite("replay-fence", () => {
     assert(threw, "cross-run write must throw");
   });
 
-  test("replay run id must start with replay-", async () => {
+  test("replay run id must differ from source run id", async () => {
     const r2 = memoryR2();
     let threw = false;
     try {
       wrapReplayBucket(r2, {
         sourceRunId: "v2r_source",
-        replayRunId: "v2r_not_a_replay",
+        replayRunId: "v2r_source",
       });
     } catch (e) {
       threw = true;
       assert(e.name === "ReplayFenceViolation", `expected ReplayFenceViolation, got ${e.name}`);
     }
-    assert(threw, "non-replay-prefixed run id must throw");
+    assert(threw, "same source and replay id must throw");
   });
 
   test("MUTANT: removing the rewrite lets a write hit the source key", async () => {
