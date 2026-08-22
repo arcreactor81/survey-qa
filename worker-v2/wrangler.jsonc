@@ -204,6 +204,10 @@
     // without letting a dead browser eat 15 silent minutes. When exceeded, the walk is recorded
     // as "walk-never-started" with the sub-phase that hung, retried once, then moved past.
     "EXEC_WALK_STARTUP_BUDGET_MS": "120000",
+    // PER-WALK PROGRESS WATCHDOG: fires when no step has completed for this many ms. The walk
+    // returns its partial observation with outcome "walk-stalled" — steps, captures, and the
+    // PathObservation up to the stall are committed, never discarded. See DEFAULT_WALK_STALL_MS.
+    "EXEC_WALK_STALL_MS": "240000",
     "BROWSER_COMPAT_SHIMS": "auto", // "auto" | "off" — see browser/page-script.ts HISTORY_SHIM
 
     // ---- run caps (proposal §5; each keeps its own name and denominator) ----

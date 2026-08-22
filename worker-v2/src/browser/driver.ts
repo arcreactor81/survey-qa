@@ -214,6 +214,35 @@ export interface WalkOptions {
    * tail, but the executor already has its own timestamp for page creation.
    */
   onStartupPhase?: (phase: "survey-load" | "first-read") => void;
+  /**
+   * PER-WALK PROGRESS WATCHDOG — the executor's stall detector, signalling INTO the walk.
+   *
+   * Called at the END of every completed step (after the step observation is pushed), so the
+   * executor can maintain a "last progress" timestamp OUTSIDE the walk's own await chain. A
+   * page call that wedges inside the step loop blocks the in-loop deadline check; this
+   * callback is the only way the executor learns that the walk is still making forward
+   * progress.
+   *
+   * When no callback has fired for the configured stall window, the executor closes the PAGE
+   * (not the browser) from its own timer callback. Every pending page call then receives a
+   * disconnect error and resolves, the step loop catches it, the walk exits, and everything
+   * recorded up to the stall is committed as a partial observation.
+   */
+  onStepCompleted?: (stepIndex: number) => void;
+  /**
+   * ABORT SIGNAL — the executor's stall detector telling the walk to stop.
+   *
+   * A mutable object. When `aborted` becomes true, the step loop exits at its next check and
+   * the walk returns its partial observation with outcome "walk-stalled". The executor sets
+   * this BEFORE closing the page, so the walk can distinguish a stall-abort from an ordinary
+   * page error.
+   *
+   * WHY MUTABLE AND NOT A PROMISE. A promise is part of the await chain — it has to be
+   * raced against every page call, which means threading it through every call site. The
+   * mutable flag is polled at two points (the loop top and every catch site) and costs nothing
+   * when it is false, which is every step of every healthy walk.
+   */
+  abortSignal?: { aborted: boolean; reason?: string };
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -5686,7 +5715,7 @@ export async function walkPath(
       .map((u) => `<control type="${u.type}">${u.label ? ` "${u.label.slice(0, 60)}"` : ""}${u.required ? " (required)" : ""} — ${u.detail}`)
       .join("; ");
 
-  while (stepIndex < opts.maxSteps && Date.now() < opts.deadline && outcome !== "error") {
+  while (stepIndex < opts.maxSteps && Date.now() < opts.deadline && outcome !== "error" && !opts.abortSignal?.aborted) {
     const stepT0 = Date.now();
     const errAt = pageErrors.length;
     // Reset per step: only the dedup site below may set this, so an early-exit branch
@@ -5714,6 +5743,10 @@ export async function walkPath(
         (ms) => (phaseReadMs += ms),
       );
     } catch (err) {
+      // PER-WALK PROGRESS WATCHDOG: if the abort signal fired, this error is the page closure
+      // the executor triggered — not a site problem. Break cleanly so the post-loop stall
+      // detection assigns outcome "walk-stalled" with all steps recorded up to this point.
+      if (opts.abortSignal?.aborted) break;
       recordCaptureFailure(
         captureFailureRow(
           "screen-read-failed",
@@ -6662,7 +6695,34 @@ export async function walkPath(
         break;
       }
     }
+    // PER-WALK PROGRESS WATCHDOG: the step completed — tell the executor so it can reset its
+    // stall timer. This fires AFTER the step observation is pushed and BEFORE the loop counter
+    // increments, so the executor's stall window is measured from the last completed step, and
+    // a step that hangs mid-way is caught by the stall detector, not by the step-completion
+    // callback.
+    opts.onStepCompleted?.(stepIndex);
+
     stepIndex += 1;
+  }
+
+  // PER-WALK PROGRESS WATCHDOG: the abort signal was set by the executor's stall detector.
+  // The walk returns its partial observation with outcome "walk-stalled" — everything recorded
+  // up to the stall is committed, never discarded.
+  //
+  // WHY THIS OVERRIDES ANY NON-ERROR OUTCOME. When the executor's watchdog fires BEFORE the
+  // step loop, the while condition (`!opts.abortSignal?.aborted`) prevents entry and the
+  // outcome stays "completed" — which this block catches. When the watchdog fires MID-STEP
+  // and the catch block breaks cleanly, the outcome is also "completed". But when the watchdog
+  // fires after a step already set a terminal outcome ("no-advance-control", "blocked", etc.),
+  // the step's own outcome is HONEST — the walk really did hit that condition — so only
+  // "completed" is overridden. An "error" is NOT overridden because the error is the stall's
+  // own page-close error, and the catch-abort check in the step loop already handles that path.
+  if (opts.abortSignal?.aborted && outcome === "completed") {
+    outcome = "walk-stalled";
+    outcomeDetail =
+      `walk stalled: no step completed for the configured stall window` +
+      (opts.abortSignal.reason ? ` (${opts.abortSignal.reason})` : "") +
+      ` — ${steps.length} step(s) were recorded before the stall and are committed as a partial observation`;
   }
 
   if (outcome === "completed" && stepIndex >= opts.maxSteps) {
