@@ -1,112 +1,33 @@
 /**
- * REPLAY FENCE — proves the ReplayBucket write fence can fail.
+ * REPLAY FENCE — proves the SHIPPED ReplayBucket can fail.
  *
- * The fence guarantees: reads pass through, writes land under the replay prefix,
- * deletes throw, and writes to cross-run keys throw. The MUTANT (removing the
- * rewrite) makes a guard test go red before any real key is touched.
+ * The fence guarantees: reads prefer the replay's own writes and fall back to
+ * the source, writes land under the replay prefix, deletes throw, and writes
+ * to cross-run keys throw.
+ *
+ * HISTORY, BECAUSE IT IS THE POINT OF THIS FILE'S SHAPE: this suite used to
+ * test an inline COPY of the fence algorithm, introduced with the comment
+ * "test the logic inline — the exact same algorithm". It was not the same
+ * algorithm. The copy read forward-first (replay writes shadow the source);
+ * the shipped module read the raw key first — so on gate attempt #3 the
+ * mint stage read PROD's signed record instead of the record the replay's own
+ * assemble stage wrote three minutes earlier, and the judgement went
+ * diagnostic-only (RUN_RECORD_ATTESTATION_INVALID) while every test here
+ * stayed green. A test of a copy proves the copy. This suite now imports the
+ * REAL module through the same esbuild bundle every other suite uses.
  */
 
 import { suite, test, assert, assertEq, memoryR2 } from "../testkit.mjs";
+import { worker } from "./_helpers.mjs";
 
-// Direct import of the replay-bucket module. Since it has no platform dependencies
-// (it wraps an R2Bucket interface), we import it from the compiled bundle.
-// But since it's TypeScript, we need to import the compiled version.
-// For now, test the logic inline — the exact same algorithm.
-
-const RUN_KEY_PREFIX = "v2/runs/";
-const REPORT_KEY_PREFIX = "v2/reports/";
-
-class ReplayFenceViolation extends Error {
-  constructor(key, reason) {
-    super(`ReplayBucket refused: ${reason}. Key: ${JSON.stringify(key)}.`);
-    this.name = "ReplayFenceViolation";
-  }
-}
-
-class ReplayDeleteForbidden extends Error {
-  constructor(keys) {
-    const display = Array.isArray(keys) ? keys.join(", ") : keys;
-    super(`ReplayBucket forbids all deletes. Attempted keys: ${display}.`);
-    this.name = "ReplayDeleteForbidden";
-  }
-}
-
-function rewriteKey(key, sourceRunId, replayRunId) {
-  const sourceRunPrefix = `${RUN_KEY_PREFIX}${sourceRunId}/`;
-  const replayRunPrefix = `${RUN_KEY_PREFIX}${replayRunId}/`;
-  if (key.startsWith(sourceRunPrefix)) {
-    return replayRunPrefix + key.slice(sourceRunPrefix.length);
-  }
-  const sourceReportPrefix = `${REPORT_KEY_PREFIX}${sourceRunId}/`;
-  const replayReportPrefix = `${REPORT_KEY_PREFIX}${replayRunId}/`;
-  if (key.startsWith(sourceReportPrefix)) {
-    return replayReportPrefix + key.slice(sourceReportPrefix.length);
-  }
-  if (key.startsWith(replayRunPrefix) || key.startsWith(replayReportPrefix)) {
-    return key;
-  }
-  return null;
-}
-
-function wrapReplayBucket(bucket, opts) {
-  const { sourceRunId, replayRunId } = opts;
-  if (replayRunId === sourceRunId) {
-    throw new ReplayFenceViolation(replayRunId, "replay run id must differ from source run id");
-  }
-  const replayRunPrefix = `${RUN_KEY_PREFIX}${replayRunId}/`;
-  const replayReportPrefix = `${REPORT_KEY_PREFIX}${replayRunId}/`;
-
-  function assertReplayWrite(key) {
-    const rewritten = rewriteKey(key, sourceRunId, replayRunId);
-    if (rewritten === null) {
-      throw new ReplayFenceViolation(key, "write targets a cross-run key");
-    }
-    if (!rewritten.startsWith(replayRunPrefix) && !rewritten.startsWith(replayReportPrefix)) {
-      throw new ReplayFenceViolation(key, "rewritten key escapes replay prefix");
-    }
-    return rewritten;
-  }
-
-  return {
-    async head(key) {
-      const rewritten = rewriteKey(key, sourceRunId, replayRunId);
-      if (rewritten && rewritten !== key) {
-        const result = await bucket.head(rewritten);
-        if (result) return result;
-      }
-      return bucket.head(key);
-    },
-    async get(key, options) {
-      const rewritten = rewriteKey(key, sourceRunId, replayRunId);
-      if (rewritten && rewritten !== key) {
-        const result = await bucket.get(rewritten, options);
-        if (result) return result;
-      }
-      return bucket.get(key, options);
-    },
-    async put(key, value, options) {
-      const target = assertReplayWrite(key);
-      return bucket.put(target, value, options);
-    },
-    async delete(keys) {
-      throw new ReplayDeleteForbidden(keys);
-    },
-    async list(options) {
-      return bucket.list(options);
-    },
-    async createMultipartUpload(key, options) {
-      const target = assertReplayWrite(key);
-      return bucket.createMultipartUpload(target, options);
-    },
-    resumeMultipartUpload(key, uploadId) {
-      const target = assertReplayWrite(key);
-      return bucket.resumeMultipartUpload(target, uploadId);
-    },
-  };
+async function fence() {
+  const mod = await worker();
+  return mod.replayBucket;
 }
 
 suite("replay-fence", () => {
   test("reads pass through to the source run", async () => {
+    const { wrapReplayBucket } = await fence();
     const r2 = memoryR2();
     const sourceKey = "v2/runs/v2r_source/checkpoint.json";
     await r2.put(sourceKey, '{"runId": "v2r_source"}');
@@ -123,6 +44,7 @@ suite("replay-fence", () => {
   });
 
   test("writes are rewritten to the replay prefix", async () => {
+    const { wrapReplayBucket } = await fence();
     const r2 = memoryR2();
     const wrapped = wrapReplayBucket(r2, {
       sourceRunId: "v2r_source",
@@ -143,6 +65,7 @@ suite("replay-fence", () => {
   });
 
   test("report writes are rewritten to the replay prefix", async () => {
+    const { wrapReplayBucket } = await fence();
     const r2 = memoryR2();
     const wrapped = wrapReplayBucket(r2, {
       sourceRunId: "v2r_source",
@@ -158,6 +81,7 @@ suite("replay-fence", () => {
   });
 
   test("deletes throw ReplayDeleteForbidden", async () => {
+    const { wrapReplayBucket } = await fence();
     const r2 = memoryR2();
     const wrapped = wrapReplayBucket(r2, {
       sourceRunId: "v2r_source",
@@ -175,6 +99,7 @@ suite("replay-fence", () => {
   });
 
   test("writes to cross-run keys throw ReplayFenceViolation", async () => {
+    const { wrapReplayBucket } = await fence();
     const r2 = memoryR2();
     const wrapped = wrapReplayBucket(r2, {
       sourceRunId: "v2r_source",
@@ -193,6 +118,7 @@ suite("replay-fence", () => {
   });
 
   test("replay run id must differ from source run id", async () => {
+    const { wrapReplayBucket } = await fence();
     const r2 = memoryR2();
     let threw = false;
     try {
@@ -210,6 +136,7 @@ suite("replay-fence", () => {
   test("MUTANT: removing the rewrite lets a write hit the source key", async () => {
     // This is the MUTANT proof. If the rewrite is removed (assertReplayWrite
     // just returns the key unchanged), the source key would be written.
+    const { wrapReplayBucket } = await fence();
     const r2 = memoryR2();
     const sourceKey = "v2/runs/v2r_source/observations.json";
     await r2.put(sourceKey, '{"original": true}');
@@ -240,30 +167,51 @@ suite("replay-fence", () => {
     );
   });
 
-  test("reads prefer replay writes over source data", async () => {
+  test("reads prefer replay writes over source data — THE GATE-3 DEFECT", async () => {
+    // GATE ATTEMPT #3, measured: the source run had completed its tail in
+    // production, so record.json existed at the source key. The shipped get()
+    // tried the raw key first and served PROD's record; the replay's own
+    // assemble output was invisible; the judge refused prod's signature
+    // against the bench key and minted diagnostic-only. This test seeds
+    // exactly that state — both keys populated — and requires the fence to
+    // serve the replay's own bytes. Against the pre-fix module it fails.
+    const { wrapReplayBucket } = await fence();
     const r2 = memoryR2();
-    // Source data.
-    await r2.put("v2/runs/v2r_source/observations.json", '{"source": true}');
+    // Source data — the "prod record".
+    await r2.put("v2/runs/v2r_source/record.json", '{"signer": "prod"}');
 
     const wrapped = wrapReplayBucket(r2, {
       sourceRunId: "v2r_source",
       replayRunId: "replay-v100-a",
     });
 
-    // Write through the fence.
-    await wrapped.put(
-      "v2/runs/v2r_source/observations.json",
-      '{"replayed": true}',
-    );
+    // The replay's own assemble writes through the fence.
+    await wrapped.put("v2/runs/v2r_source/record.json", '{"signer": "bench"}');
 
-    // Reading the source key should now return the replay version.
-    const obj = await wrapped.get("v2/runs/v2r_source/observations.json");
+    // Reading the source key must now return the replay's record — via get AND head.
+    const obj = await wrapped.get("v2/runs/v2r_source/record.json");
     assert(obj !== null, "should get a result");
     const text = await obj.text();
-    assert(
-      text.includes('"replayed"'),
-      `should read replay data, got: ${text}`,
-    );
+    assert(text.includes('"bench"'), `must read the replay's own write, got: ${text}`);
+    const h = await wrapped.head("v2/runs/v2r_source/record.json");
+    assert(h !== null, "head should resolve");
+  });
+
+  test("a replay-prefixed key never written falls back to the source copy", async () => {
+    const { wrapReplayBucket } = await fence();
+    const r2 = memoryR2();
+    await r2.put("v2/runs/v2r_source/plan.json", '{"plan": "source"}');
+
+    const wrapped = wrapReplayBucket(r2, {
+      sourceRunId: "v2r_source",
+      replayRunId: "replay-v100-a",
+    });
+
+    // A stage that addresses the replay spelling directly still reads source data.
+    const obj = await wrapped.get("v2/runs/replay-v100-a/plan.json");
+    assert(obj !== null, "reverse fall-through should find the source copy");
+    const text = await obj.text();
+    assert(text.includes('"source"'), `should read source data, got: ${text}`);
   });
 
   test("REPLAY_ENABLED refusal — entrypoint rejects without it", async () => {

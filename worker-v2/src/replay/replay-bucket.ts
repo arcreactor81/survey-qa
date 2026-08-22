@@ -151,19 +151,31 @@ export function wrapReplayBucket(
   }
 
   const wrapped: R2Bucket = {
+    // READ ORDER: THE REPLAY'S OWN WRITES MUST SHADOW THE SOURCE.
+    //
+    // THE DEFECT THIS ORDER FIXES (gate attempt #3, measured): reads tried the
+    // key AS-IS first. Stages run under the SOURCE run id, and the source run
+    // had already completed its whole tail in production — so record.json
+    // existed at the source key, and mint-judgement read PROD's record instead
+    // of the record the replay's own assemble stage wrote three minutes
+    // earlier. The judge then correctly refused the prod signature against the
+    // bench key (RUN_RECORD_ATTESTATION_INVALID: record-ed25519-922c16e8f6fb
+    // not in the registry) and the judgement went diagnostic-only. A replay
+    // that reads the source's tail outputs is not replaying — it is grading
+    // production's homework.
+    //
+    // So: (1) forward — the replay-prefixed spelling of the key, where this
+    // replay's own writes landed; (2) the key as-is — the original run's data;
+    // (3) reverse — a replay-prefixed key that was never written falls back to
+    // the source's copy.
     async head(key: string) {
-      // Try the key as-is first. Then try both directions:
-      //   source -> replay (own writes landed under replay prefix)
-      //   replay -> source (data from the original run)
-      const result = await bucket.head(key);
-      if (result) return result;
-      // Forward: source key -> replay prefix (where writes went).
       const forwardKey = rewriteKey(key, sourceRunId, replayRunId);
       if (forwardKey && forwardKey !== key) {
         const fwd = await bucket.head(forwardKey);
         if (fwd) return fwd;
       }
-      // Reverse: replay key -> source prefix (original data).
+      const result = await bucket.head(key);
+      if (result) return result;
       const reverseKey = reverseRewriteKey(key, sourceRunId, replayRunId);
       if (reverseKey && reverseKey !== key) {
         return bucket.head(reverseKey);
@@ -172,15 +184,13 @@ export function wrapReplayBucket(
     },
 
     async get(key: string, options?: R2GetOptions) {
-      const result = await bucket.get(key, options);
-      if (result) return result;
-      // Forward: source key -> replay prefix (where writes went).
       const forwardKey = rewriteKey(key, sourceRunId, replayRunId);
       if (forwardKey && forwardKey !== key) {
         const fwd = await bucket.get(forwardKey, options);
         if (fwd) return fwd;
       }
-      // Reverse: replay key -> source prefix (original data).
+      const result = await bucket.get(key, options);
+      if (result) return result;
       const reverseKey = reverseRewriteKey(key, sourceRunId, replayRunId);
       if (reverseKey && reverseKey !== key) {
         return bucket.get(reverseKey, options);

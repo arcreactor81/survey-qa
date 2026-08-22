@@ -238,6 +238,12 @@ export async function loadWorker() {
       // two things that turn a walk into a published coverage number and a published
       // accusation, and until D31 the module was not even importable by a test.
       `export * as executeBatch from ${p("src/workflow/stages/execute-batch.ts")};`,
+      // THE REPLAY FENCE ITSELF. `tests/replay-fence.test.mjs` used to test an inline COPY
+      // of this module's algorithm ("the exact same algorithm" — it was not): the copy read
+      // forward-first while the shipped module read the raw key first, so a replay whose
+      // source run had already completed its tail read PROD's record instead of its own,
+      // and every fence test stayed green while it happened. Tests must import THIS export.
+      `export * as replayBucket from ${p("src/replay/replay-bucket.ts")};`,
       `export * as sweeper from ${p("src/sweeper.ts")};`,
       `export * as retention from ${p("src/store/retention.ts")};`,
       // D40 needs the WRITE side of the target identity. `report/build.ts` re-exports only the
