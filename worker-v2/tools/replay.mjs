@@ -75,6 +75,13 @@ for (const stage of STAGES) {
   process.stdout.write(`  ${stage.padEnd(28)} `);
 
   try {
+    // Node's fetch (undici) has its OWN headers/body timeouts of 300s that fire BEFORE the
+    // AbortSignal — measured: the first replay reported project-observations "crash: fetch
+    // failed" at 305s while the stage completed fine on the worker (its observations.json
+    // landed). A per-request dispatcher raises those to the same 10-minute ceiling the
+    // AbortSignal (and the prod Workflow step policy) uses.
+    const { Agent } = await import("undici");
+    const dispatcher = new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 });
     const res = await fetch(`${workerUrl}/api/replay`, {
       method: "POST",
       headers: {
@@ -84,6 +91,7 @@ for (const stage of STAGES) {
       body: JSON.stringify({ sourceRunId, replayRunId, stage }),
       // 10-minute timeout per stage — the same ceiling prod Workflow steps use.
       signal: AbortSignal.timeout(600_000),
+      dispatcher,
     });
 
     const body = await res.json();
