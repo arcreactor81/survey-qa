@@ -82,6 +82,8 @@ for (const stage of STAGES) {
         authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({ sourceRunId, replayRunId, stage }),
+      // 10-minute timeout per stage — the same ceiling prod Workflow steps use.
+      signal: AbortSignal.timeout(600_000),
     });
 
     const body = await res.json();
