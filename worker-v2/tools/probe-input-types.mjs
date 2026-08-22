@@ -736,13 +736,48 @@ process.stdout.write("\nFIXTURE 8 — one radio group across table rows, followe
 }
 
 /* ---- 9. P0: disjoint visible question ownership ---- */
-process.stdout.write("\nFIXTURE 9 - two disjoint fieldset questions fail closed before actuation\n");
+// CONTRACT CHANGE, DELIBERATE (driver.ts "PER-ROOT TRAVERSAL"): a multi-question screen
+// whose reader scoped each root's controls is now filled root-by-root with navigator
+// defaults so the rest of the survey stays reachable — the old hard stop left 80% of a
+// real survey unreached behind one conjoint block. The honesty properties are unchanged
+// and pinned here: the limitation is recorded with its count, NO planned decision binds,
+// and each root receives exactly one default with an exact retained-state receipt. The
+// hard stop still holds for multi-root screens WITHOUT scoped ownership — that side is
+// pinned by the fake-page walker tests in tools/tests/p0-honesty-blockers.test.mjs.
+process.stdout.write("\nFIXTURE 9 - two scoped fieldset questions traverse per-root without binding\n");
 {
   const obs = await walkHtml(mod, P0_MULTI_QUESTION);
   const step0 = obs.steps[0] ?? null;
-  check("multi-question ownership is named", obs.outcome === "multi-question-screen-actuation-unsupported", JSON.stringify({ outcome: obs.outcome, detail: obs.outcomeDetail }));
-  check("the two fieldset roots are counted", step0?.screenBefore?.questionRoots?.length === 2 && obs.readerLimitationCount === 2, JSON.stringify({ roots: step0?.screenBefore?.questionRoots, limitations: obs.readerLimitations }));
-  check("no response or forward act was emitted", (step0?.actions ?? []).length === 0, JSON.stringify(step0?.actions));
+  const roots = step0?.screenBefore?.questionRoots ?? [];
+  const rootSets = roots.map((r) => (r?.controlIdxs ?? []).join(","));
+  const choices = (step0?.actions ?? []).filter((a) => a.kind === "click-option");
+  check(
+    "the standing limitation is recorded with the root count, not dropped in traversal",
+    (obs.readerLimitations ?? []).some((l) => l.kind === "multi-question-screen-actuation-unsupported" && l.count === 2),
+    JSON.stringify(obs.readerLimitations),
+  );
+  check(
+    "the two fieldset roots are counted with disjoint scoped control sets",
+    roots.length === 2 && rootSets[0] !== rootSets[1] && rootSets.every((s) => s.length > 0),
+    JSON.stringify(roots),
+  );
+  check(
+    "NO planned decision binds on a multi-question screen — traversal is navigator-default only",
+    step0?.decisionQuestion === null && step0?.bindingVia === null && step0?.decisionSource === "navigator-default",
+    JSON.stringify({ decisionQuestion: step0?.decisionQuestion, bindingVia: step0?.bindingVia, decisionSource: step0?.decisionSource }),
+  );
+  check(
+    "exactly one default per root, each with an exact retained-state receipt",
+    choices.length === 2 &&
+      choices.every((a) => a.ok && a.choiceReadback?.checked === true) &&
+      new Set(choices.map((a) => a.choiceReadback?.name ?? a.targetIdx)).size === 2,
+    JSON.stringify(choices),
+  );
+  check(
+    "this static fixture cannot navigate, and the walk says so honestly instead of inventing an advance",
+    step0?.advanced === false && obs.outcome === "blocked",
+    JSON.stringify({ advanced: step0?.advanced, outcome: obs.outcome, detail: obs.outcomeDetail }),
+  );
 }
 
 /* ---- 10. P0: native form-scoped choice identity ---- */

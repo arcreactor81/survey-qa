@@ -120,6 +120,13 @@ export const CANARY_STATIC_VARS = Object.freeze({
   EXEC_MAX_EXPLORATION: "0",
   EXEC_MAX_STEPS_PER_PATH: "120",
   EXEC_PER_CASE_TIMEOUT_MS: "900000",
+  // The per-walk stall watchdog (C1). The canary GATE's closed census learned this
+  // name when the watchdog shipped, but this generator — the single source the
+  // canary config is built from — did not, so every generated config failed the
+  // census and the whole visual/canary gate suite went red at release time.
+  // Same value as production: a frozen walk ends in 4 minutes with its partial
+  // recording kept.
+  EXEC_WALK_STALL_MS: "240000",
   EXEC_WALK_TIMEOUT_MS: "900000",
   EXTRACTION_MODEL: "claude-sonnet-4-6",
   EXTRACT_BUDGET_FRACTION: "0.5",
