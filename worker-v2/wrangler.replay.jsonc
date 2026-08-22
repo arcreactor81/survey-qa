@@ -32,7 +32,7 @@
   "r2_buckets": [{ "binding": "EVIDENCE", "bucket_name": "survey-qa-artifacts" }],
 
   // Same subrequest/time limits as prod — budget deaths ARE findings.
-  "limits": { "subrequests": 100000 },
+  "limits": { "subrequests": 100000, "cpu_ms": 300000 },
 
   // Same Secrets Store bindings for signing keys.
   "secrets_store_secrets": [

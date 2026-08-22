@@ -155,7 +155,7 @@ export function produceAcceptanceArtifact({ runDir = REAL_RUN_DIR, sealedPath = 
     allowFixtureKeys: true,
   });
 
-  const out = judgeRun({
+  const out = await judgeRun({
     runDir,
     checklist,
     priorObservations,

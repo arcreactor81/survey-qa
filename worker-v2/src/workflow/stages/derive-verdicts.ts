@@ -26,7 +26,7 @@ import type { Env } from "../../types/env";
 import { unsettledBucketFor } from "../../types/contracts";
 import { judgementKey, recordKey } from "../../keys";
 import { getContractRevision } from "../../store/contract-revision";
-import { ArtifactNameCollision, EngineReadBudgetExceeded, loadRunInputs, loadArtifactBytesStreaming, signingKeys, type RunInputs, type StreamingArtifactResult } from "./run-inputs";
+import { ArtifactNameCollision, loadRunInputs, loadArtifactBytesStreaming, buildR2Source, signingKeys, type RunInputs, type StreamingArtifactResult } from "./run-inputs";
 import { stageNotEvaluated, type StageResult } from "../gates";
 import { itemResultsKey } from "../../keys";
 import { sha256Hex } from "../../store/hash";
@@ -40,6 +40,8 @@ import { execProgressKey, type ExecProgress, type WalkRecord } from "./execute-b
 import { aggregate, rejectModelDerivedVerdicts, AGGREGATOR_ID } from "./assemble-record.mjs";
 // @ts-ignore -- untyped ESM
 import { judgeRunInIsolate, publicRegistryFor } from "./judge-runtime.mjs";
+// @ts-ignore -- untyped ESM — engine-side budget errors caught below
+import { EngineRetainedBudgetExceeded, SingleArtifactTooLarge } from "../../../../pipeline/judge/lib/evidence-store.mjs";
 // @ts-ignore -- untyped ESM
 import { checklistFromExtraction, checklistFromRevision } from "./checklist-projection.mjs";
 import { runChecklistKey, readRunChecklist } from "./checklist-store";
@@ -370,9 +372,6 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
     if (err instanceof ArtifactNameCollision) {
       return stageNotEvaluated<MintedJudgement>("EVIDENCE_NAME_COLLISION", err.message);
     }
-    if (err instanceof EngineReadBudgetExceeded) {
-      return stageNotEvaluated<MintedJudgement>("ENGINE_READ_BUDGET_EXCEEDED", err.message);
-    }
     throw err;
   }
   const keys = signingKeys(env);
@@ -385,21 +384,48 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
     ? publicRegistryFor(keys.recordKeyPem, keys.recordKeyId)
     : null;
 
-  const { judged } = judgeRunInIsolate({
-    runId,
-    checklist,
-    record,
-    revision,
-    // A3: only engine-read artifacts (JSON) go to the tmpdir mount.
-    artifacts: streamResult.engineRead,
-    keyRegistry,
-    signer: keys.judgementKeyPem
-      ? { privateKeyPem: keys.judgementKeyPem, keyId: keys.judgementKeyId, signedAt: new Date().toISOString() }
-      : null,
-    // A3: pre-verified hashes for artifacts NOT written to tmpdir. The authority uses
-    // these so `manifestComplete` covers the full evidence set.
-    preVerifiedArtifacts: streamResult.preVerifiedHashes,
-  }) as { judged: JudgeOutput };
+  // A3b — BUILD THE R2-BACKED SOURCE AND CATALOGUE DESCRIPTORS.
+  //
+  // The engine-read descriptors carry catalogue metadata (name, contentHash, byteLength)
+  // but NO bytes. The R2-backed source fetches bytes on demand when the engine reads them.
+  // All catalogue entries (engine-read + hash-verify-only) are passed to the authority as
+  // preVerifiedArtifacts so manifestComplete covers the full set.
+  const r2Source = buildR2Source(env, streamResult.engineRead);
+  const catalogueDescriptors = new Map<string, { contentHash: string; byteLength: number }>();
+  for (const d of streamResult.engineRead) {
+    catalogueDescriptors.set(d.name, { contentHash: d.contentHash, byteLength: d.byteLength });
+  }
+  for (const [name, pv] of streamResult.preVerifiedHashes) {
+    catalogueDescriptors.set(name, { contentHash: pv.contentHash, byteLength: pv.byteLength });
+  }
+
+  let judged: JudgeOutput;
+  try {
+    const result = await judgeRunInIsolate({
+      runId,
+      checklist,
+      record,
+      revision,
+      // A3b: catalogue descriptors for the authority's manifest check.
+      catalogueDescriptors,
+      // A3b: R2-backed source for the engine's async byte reads.
+      source: r2Source,
+      keyRegistry,
+      signer: keys.judgementKeyPem
+        ? { privateKeyPem: keys.judgementKeyPem, keyId: keys.judgementKeyId, signedAt: new Date().toISOString() }
+        : null,
+    }) as { judged: JudgeOutput };
+    judged = result.judged;
+  } catch (err: unknown) {
+    // A3b — engine-side budget errors become named stageNotEvaluated results.
+    if (err instanceof EngineRetainedBudgetExceeded) {
+      return stageNotEvaluated<MintedJudgement>("ENGINE_RETAINED_BUDGET_EXCEEDED", (err as Error).message);
+    }
+    if (err instanceof SingleArtifactTooLarge) {
+      return stageNotEvaluated<MintedJudgement>("SINGLE_ARTIFACT_TOO_LARGE", (err as Error).message);
+    }
+    throw err;
+  }
 
   await env.EVIDENCE.put(judgementKey(runId), JSON.stringify(judged.judgement), {
     httpMetadata: { contentType: "application/json" },

@@ -33,7 +33,7 @@
 
 import { normLine } from './normalize.mjs';
 import { EVIDENCE_CLASS, REASON } from './vocab.mjs';
-import { captureSpineState } from './evidence-store.mjs';
+import { captureSpineState, isSessionCandidate } from './evidence-store.mjs';
 
 const BACKNAV_RE = /^(back hop|arrived back|mutated |reached the screen after)/i;
 const MUTATION_RE = /^mutated\s+([A-Z0-9]+)\s+to\s+(\[.*\])\s*$/i;
@@ -289,14 +289,39 @@ function extractAction(t, e, sessionId, integrity, inventory) {
   };
 }
 
-/** Load every primary session artifact in the store. Quarantined sessions are
- *  returned separately so the run can report them instead of losing them. */
-export function loadSessions(store) {
+/**
+ * Load every primary session artifact in the store. Quarantined sessions are
+ * returned separately so the run can report them instead of losing them.
+ *
+ * A3b: this function is now async. Under the async source, only session
+ * candidates are FETCHED (isSessionCandidate). Names outside that set are
+ * COUNTED as "listed, hash-verified upstream, not engine-read" — a named,
+ * visible category, not silence.
+ *
+ * The scope-attest module's fresh sweeps mean each session may be streamed
+ * up to ~3 times across the full judging pass (~340 MB total R2 reads for
+ * the v100 run, all transient-bounded). That bandwidth cost is acceptable
+ * and is stated here rather than cache-defeated to save it — the "fresh"
+ * semantics are non-negotiable for independent re-verification.
+ */
+export async function loadSessions(store) {
   const sessions = [];
   const quarantined = [];
+  let listedNotFetched = 0;
   for (const name of store.listArtifacts()) {
     if (!/\.json$/i.test(name)) continue;
-    const rec = store.read(name);
+
+    // A3b — ITERATION PRE-FILTER: only fetch session candidates through the
+    // async source. Names outside this set exist in the signed manifest (the
+    // authority's word on what they are) but are not engine-read artifacts.
+    // Step captures, accessibility JSONs, and other non-session files are
+    // hash-verified upstream and are not needed for verdict derivation.
+    if (!isSessionCandidate(name)) {
+      listedNotFetched += 1;
+      continue;
+    }
+
+    const rec = await store.read(name);
     if (!rec.ok && rec.reason && rec.reason !== 'parse-error') {
       quarantined.push({ id: name.replace(/\.json$/, ''), artifact: name, integrity: [{ code: rec.reason, session: name, detail: `artifact rejected by the evidence store: ${rec.reason}` }], quarantined: true, steps: [] });
       continue;
@@ -323,5 +348,7 @@ export function loadSessions(store) {
   sessions.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   quarantined.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   sessions.quarantined = quarantined;
+  /** A3b — count of names listed in the manifest but not fetched (hash-verified upstream). */
+  sessions.listedNotFetched = listedNotFetched;
   return sessions;
 }
