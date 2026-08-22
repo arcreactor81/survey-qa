@@ -184,3 +184,83 @@ export function filterCommittedEvidence(
 
   return { kept, droppedOrphans, droppedByRef, sentence };
 }
+
+// ---------------------------------------------------------------------------
+// RETRY-RECORDING SURVIVORS — one deterministic rule, used by BOTH the record
+// assembler and the judge's load path.
+// ---------------------------------------------------------------------------
+
+export interface RetryRecordingResolution {
+  /** The input minus every superseded retry recording. */
+  resolved: EvidenceCatalogEntry[];
+  /** The rows that lost — same (basename, artifactRef), different contentHash. */
+  superseded: EvidenceCatalogEntry[];
+  /** Plain sentence for the record: counted, never silent. */
+  sentence: string;
+}
+
+/**
+ * ORDER TWO RECORDINGS OF THE SAME REF: the survivor sorts FIRST.
+ *
+ * A COMMITTED Workflow-step retry re-captures the same screens under the same
+ * refs with different bytes (both rows carry a committed attemptId, so the
+ * committed-attempt filter rightly keeps both). Exactly one row may enter the
+ * signed record — under content-addressed storage BOTH blobs exist and verify,
+ * so bytes cannot adjudicate (gate attempt #4, measured: 20 such pairs reached
+ * the signed catalogue and the authority refused with MANIFEST_DUPLICATE_ARTIFACT
+ * x20). The rule that CAN adjudicate, deterministically and without a fetch:
+ * the LATER capture supersedes the earlier (the retry exists because the first
+ * write was interrupted); equal timestamps fall back to the lexicographically
+ * greater contentHash — arbitrary but stable, and stated here rather than
+ * hidden in iteration order.
+ */
+export function retryRecencyOrder(a: EvidenceCatalogEntry, b: EvidenceCatalogEntry): number {
+  const at = String(a.capturedAt ?? "");
+  const bt = String(b.capturedAt ?? "");
+  if (at !== bt) return at > bt ? -1 : 1;
+  const ah = String(a.contentHash ?? "");
+  const bh = String(b.contentHash ?? "");
+  if (ah !== bh) return ah > bh ? -1 : 1;
+  return 0;
+}
+
+/**
+ * Drop the superseded half of every retry-recording pair. Pure — no fetches,
+ * no environment. Groups rows by (basename, artifactRef); a group is a retry
+ * conflict when it has 2+ rows with 2+ distinct contentHashes and ONE ref.
+ * Rows whose basename collides across DIFFERENT refs are left untouched —
+ * that is a true collision and the existing refusal owns it.
+ */
+export function resolveRetryRecordings(entries: EvidenceCatalogEntry[]): RetryRecordingResolution {
+  const groups = new Map<string, EvidenceCatalogEntry[]>();
+  for (const entry of entries) {
+    const ref = String(entry.artifactRef ?? entry.sourceEvidenceId ?? entry.evidenceId);
+    const name = ref.split("/").pop() ?? entry.evidenceId;
+    const key = `${name}\0${ref}`;
+    const group = groups.get(key);
+    if (group) group.push(entry);
+    else groups.set(key, [entry]);
+  }
+
+  const supersededIds = new Set<string>();
+  const superseded: EvidenceCatalogEntry[] = [];
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    if (new Set(group.map((e) => e.contentHash)).size < 2) continue;
+    const ordered = [...group].sort(retryRecencyOrder);
+    for (const loser of ordered.slice(1)) {
+      if (!supersededIds.has(loser.evidenceId)) {
+        supersededIds.add(loser.evidenceId);
+        superseded.push(loser);
+      }
+    }
+  }
+
+  const resolved = supersededIds.size === 0 ? entries : entries.filter((e) => !supersededIds.has(e.evidenceId));
+  const sentence =
+    superseded.length === 0
+      ? "0 superseded retry recordings excluded."
+      : `${superseded.length} superseded retry recording(s) excluded — a committed step retry re-captured ` +
+        `the same ref(s); the latest capture is the one the record carries.`;
+  return { resolved, superseded, sentence };
+}

@@ -625,8 +625,22 @@ function bindChecklist(checklist, contract) {
       }
     }
   }
+  // A REQUIREMENT THE CHECKLIST ACCOUNTS AS UNJUDGEABLE IS ACCOUNTED, NOT ABSENT.
+  //
+  // Both checklist forms (extraction-native and the revision projection) carry the
+  // requirements no browser can verify under `unverifiable_from_browser`, each with a
+  // stated reason — that IS the honest disposition for them, not an omission. This
+  // check used to read only `obligations`, so a run whose signed contract carried any
+  // not-browser-observable requirement could NEVER bind its checklist: gate attempt #4
+  // (v100 recordings) refused with CONTRACT_ITEM_NOT_JUDGED x24 over items the
+  // checklist listed, with reasons, three lines further down the same document. An id
+  // in NEITHER list is still exactly that finding — that path must stay refusable.
+  const unverifiableIds = new Set();
+  for (const u of checklist.unverifiable_from_browser || []) {
+    if (u && u.id !== undefined) unverifiableIds.add(u.id);
+  }
   for (const id of items.keys()) {
-    if (!oblIds.has(id)) {
+    if (!oblIds.has(id) && !unverifiableIds.has(id)) {
       findings.push({ code: 'CONTRACT_ITEM_NOT_JUDGED', detail: `${id} is in the signed contract but absent from the checklist being judged` });
     }
   }

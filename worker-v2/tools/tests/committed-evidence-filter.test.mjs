@@ -316,3 +316,71 @@ suite("committed-evidence filter — core logic", () => {
     assert(result.sentence.length > 0, "sentence is still present");
   });
 });
+
+// ===========================================================================
+suite("retry-recording survivors — one rule for the record and the mount", () => {
+
+  test("a committed retry pair keeps the LATEST capture, deterministically", async () => {
+    const mod = await worker();
+    // GATE ATTEMPT #4, measured: 20 pairs of same-(basename, ref) rows from a
+    // committed step retry reached the signed record and the judge's authority
+    // refused with MANIFEST_DUPLICATE_ARTIFACT x20. Both blobs exist and verify
+    // under content-addressed storage, so bytes cannot adjudicate — recency does.
+    const early = entry({
+      evidenceId: "ev_early",
+      attemptId: "att_committed1",
+      artifactRef: "observations/FLOOR-01/FLOOR-01-step-004-before.png",
+      contentHash: `sha256:${"a".repeat(64)}`,
+      capturedAt: "2026-08-22T10:00:00.000Z",
+    });
+    const late = entry({
+      evidenceId: "ev_late",
+      attemptId: "att_committed2",
+      artifactRef: "observations/FLOOR-01/FLOOR-01-step-004-before.png",
+      contentHash: `sha256:${"b".repeat(64)}`,
+      capturedAt: "2026-08-22T10:05:00.000Z",
+    });
+    const bystander = entry({
+      evidenceId: "ev_bystander",
+      attemptId: "att_committed1",
+      artifactRef: "observations/FLOOR-01/FLOOR-01-step-005-before.png",
+    });
+
+    const out = mod.committedEvidence.resolveRetryRecordings([early, late, bystander]);
+    assertEq(out.resolved.length, 2, "one of the pair plus the bystander survive");
+    assert(out.resolved.some((e) => e.evidenceId === "ev_late"), "the LATEST capture is the survivor");
+    assert(!out.resolved.some((e) => e.evidenceId === "ev_early"), "the earlier capture is superseded");
+    assertEq(out.superseded.length, 1, "the loss is counted");
+    assert(out.sentence.includes("1 superseded"), `the sentence names the count, got: ${out.sentence}`);
+
+    // Input order must not change the survivor — the rule is recency, not position.
+    const flipped = mod.committedEvidence.resolveRetryRecordings([late, early, bystander]);
+    assert(flipped.resolved.some((e) => e.evidenceId === "ev_late"), "survivor is order-independent");
+  });
+
+  test("equal timestamps fall to the greater contentHash — stated, stable, and still one survivor", async () => {
+    const mod = await worker();
+    const t = "2026-08-22T10:00:00.000Z";
+    const a = entry({ evidenceId: "ev_a", attemptId: "att_x", artifactRef: "obs/P/P-step-001.png", contentHash: `sha256:${"a".repeat(64)}`, capturedAt: t });
+    const b = entry({ evidenceId: "ev_b", attemptId: "att_y", artifactRef: "obs/P/P-step-001.png", contentHash: `sha256:${"b".repeat(64)}`, capturedAt: t });
+    const out = mod.committedEvidence.resolveRetryRecordings([a, b]);
+    assertEq(out.resolved.length, 1, "exactly one survivor");
+    assertEq(out.resolved[0].evidenceId, "ev_b", "tie falls to the lexicographically greater hash");
+  });
+
+  test("distinct refs sharing a basename are NOT resolved here — that is a true collision", async () => {
+    const mod = await worker();
+    const a = entry({ evidenceId: "ev_r1", attemptId: "att_x", artifactRef: "obs/P1/shot.png", contentHash: `sha256:${"a".repeat(64)}` });
+    const b = entry({ evidenceId: "ev_r2", attemptId: "att_y", artifactRef: "obs/P2/shot.png", contentHash: `sha256:${"b".repeat(64)}` });
+    const out = mod.committedEvidence.resolveRetryRecordings([a, b]);
+    assertEq(out.resolved.length, 2, "true collisions pass through untouched for the existing refusal to own");
+    assertEq(out.superseded.length, 0);
+  });
+
+  test("zero conflicts: sentence present and distinguishable from never-ran", async () => {
+    const mod = await worker();
+    const out = mod.committedEvidence.resolveRetryRecordings([entry({}), entry({})]);
+    assertEq(out.superseded.length, 0);
+    assert(out.sentence.includes("0 superseded"), "zero is stated, not omitted");
+  });
+});

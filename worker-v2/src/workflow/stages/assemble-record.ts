@@ -26,7 +26,7 @@ import { readRunChecklist } from "./checklist-store";
 // storage key is how two readers come to disagree about where the run's own state lives.
 import { execProgressKey, type ExecProgress, type WalkRecord } from "./execute-batch";
 import { loadProgram, probeCapabilityLimitations, type PlanLimitation } from "./plan";
-import { filterCommittedEvidence, MissingWalkLedgerError, type CommittedEvidenceResult } from "../../store/committed-evidence";
+import { filterCommittedEvidence, MissingWalkLedgerError, resolveRetryRecordings, type CommittedEvidenceResult } from "../../store/committed-evidence";
 import { CROSS_WINDOW_DISCOVERY_BLOCKER_KIND } from "../../../shared/cross-window-limitations.mjs";
 import { SOURCE_GROUNDING_BLOCKER_KIND } from "../../../shared/pass-a-grounding-limitations.mjs";
 
@@ -181,10 +181,18 @@ export async function assembleRecord(
       throw err;
     }
   }
-  const committedEvidence = evidenceFilter.kept;
-  if (evidenceFilter.droppedOrphans.length > 0) {
+  // RETRY-RECORDING SURVIVORS. A COMMITTED step retry leaves two rows per ref
+  // (both attempts committed, different bytes) — the committed filter rightly keeps
+  // both, but the signed record may carry only one per basename or the judge's
+  // authority refuses with MANIFEST_DUPLICATE_ARTIFACT (gate attempt #4: 20 pairs,
+  // measured). One deterministic rule — latest capture wins — shared with the
+  // judge's load path so the record and the mount can never disagree about which
+  // member survived.
+  const retryResolution = resolveRetryRecordings(evidenceFilter.kept);
+  const committedEvidence = retryResolution.resolved;
+  if (evidenceFilter.droppedOrphans.length > 0 || retryResolution.superseded.length > 0) {
     console.log(
-      `assemble-record: ${runId} — ${evidenceFilter.sentence}`,
+      `assemble-record: ${runId} — ${evidenceFilter.sentence} ${retryResolution.sentence}`,
     );
   }
 
@@ -241,7 +249,10 @@ export async function assembleRecord(
       kept: committedEvidence.length,
       droppedOrphans: evidenceFilter.droppedOrphans.length,
       droppedByRef: evidenceFilter.droppedByRef.length,
-      sentence: evidenceFilter.sentence,
+      // COUNTED, NEVER SILENT: how many committed-retry recordings the record does
+      // NOT carry because a later capture of the same ref superseded them.
+      supersededRetryRecordings: retryResolution.superseded.length,
+      sentence: `${evidenceFilter.sentence} ${retryResolution.sentence}`,
     },
   }) as Record<string, unknown>;
 

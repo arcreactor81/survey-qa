@@ -27,6 +27,7 @@ import {
   loadCachedCatalogListing,
   persistCatalogListing,
 } from "../../store/evidence";
+import { retryRecencyOrder } from "../../store/committed-evidence";
 import { evidenceBlobKey } from "../../keys";
 import { sha256Hex } from "../../store/hash";
 import { mapConcurrent, R2_READ_CONCURRENCY } from "../../store/concurrent-pool";
@@ -540,7 +541,16 @@ async function resolveSupersededRecordings(
   const integrityFailures: SupersededResolution["integrityFailures"] = [];
 
   for (const group of conflictGroups) {
-    const uniqueHashes = [...new Set(group.entries.map((e) => e.contentHash))];
+    // SURVIVOR ORDER IS THE SHARED RULE, NOT ITERATION ORDER. Under content-addressed
+    // storage BOTH competing blobs exist and verify, so "first hash that verifies"
+    // degenerates to catalogue-listing order — which need not match the survivor the
+    // record assembler kept (resolveRetryRecordings: latest capture wins), and a
+    // record/mount disagreement is a hash-mismatch refusal at judge time. Trying the
+    // shared rule's survivor FIRST keeps this resolver's blob-existence semantics
+    // (a survivor whose blob is genuinely missing still falls through to the next)
+    // while agreeing with the record in every healthy case.
+    const ordered = [...group.entries].sort(retryRecencyOrder);
+    const uniqueHashes = [...new Set(ordered.map((e) => e.contentHash))];
     let liveEntry: EvidenceCatalogEntry | null = null;
     let liveBytes: Uint8Array | null = null;
 

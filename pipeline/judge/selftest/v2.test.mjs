@@ -182,6 +182,41 @@ test('D1: a stitched multi-span quote binds by its own digest, not by pretending
   assert.ok(bindChecklist(checklist, contract).findings.some((finding) => finding.code === 'OBLIGATION_QUOTE_DRIFT'));
 });
 
+test('D3: a contract item the checklist accounts as unverifiable-from-browser is accounted, not absent', () => {
+  // GATE ATTEMPT #4 (v100 recordings), measured: 24 not-browser-observable
+  // requirements sat in the checklist's `unverifiable_from_browser` section —
+  // each with a stated reason — and bindChecklist, reading only `obligations`,
+  // refused all 24 as CONTRACT_ITEM_NOT_JUDGED. A run whose contract carries
+  // ANY unobservable requirement could never bind. Accounted-as-unjudgeable
+  // and absent are different facts; only the second is a finding.
+  const contract = {
+    items: [
+      { itemId: 'req_observable01', requirement: 'The next button is visible.' },
+      { itemId: 'req_unobservable', requirement: 'Quota cells fill evenly across the field period.' },
+    ],
+  };
+  const checklist = {
+    obligations: [{ id: 'req_observable01', statement: 'The next button is visible.', doc_quote: '' }],
+    unverifiable_from_browser: [{
+      id: 'req_unobservable',
+      mandate: 'Quota cells fill evenly across the field period.',
+      why_not_observable: 'quota state is server-side and never rendered',
+    }],
+  };
+  assert.deepEqual(
+    bindChecklist(checklist, contract).findings, [],
+    'an item accounted under unverifiable_from_browser must not raise CONTRACT_ITEM_NOT_JUDGED',
+  );
+
+  // THE CAN-FAIL HALF: an id in NEITHER list is still exactly that finding.
+  const short = { obligations: checklist.obligations, unverifiable_from_browser: [] };
+  const findings = bindChecklist(short, contract).findings;
+  assert.ok(
+    findings.some((f) => f.code === 'CONTRACT_ITEM_NOT_JUDGED' && f.detail.includes('req_unobservable')),
+    `an unaccounted contract item must still refuse, got ${JSON.stringify(findings)}`,
+  );
+});
+
 test('D1: without a pinned key registry nothing is publishable', async () => {
   const out = await judge(V2, { keyRegistryPath: null });
   assert.equal(out.status, 'diagnostic-only');

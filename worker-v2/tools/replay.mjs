@@ -14,6 +14,7 @@
  */
 
 import { parseArgs } from "node:util";
+import { ALL_STAGES, driveStage } from "./replay-driver.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -57,17 +58,6 @@ if (!token) {
   process.exit(1);
 }
 
-const ALL_STAGES = [
-  "seed",
-  "project-observations",
-  "verify-observations",
-  "derive-verdicts",
-  "assemble-record",
-  "mint-judgement",
-  "supersede-record",
-  "report",
-];
-
 let STAGES = ALL_STAGES;
 if (values.stages) {
   const requested = values.stages.split(",").map((s) => s.trim()).filter(Boolean);
@@ -89,34 +79,17 @@ console.log(`Worker: ${workerUrl}`);
 console.log(`Stages: ${STAGES.length}\n`);
 
 for (const stage of STAGES) {
-  const startMs = Date.now();
   process.stdout.write(`  ${stage.padEnd(28)} `);
 
-  try {
-    // Node's fetch (undici) has its OWN headers/body timeouts of 300s that fire BEFORE the
-    // AbortSignal — measured: the first replay reported project-observations "crash: fetch
-    // failed" at 305s while the stage completed fine on the worker (its observations.json
-    // landed). A per-request dispatcher raises those to the same 10-minute ceiling the
-    // AbortSignal (and the prod Workflow step policy) uses.
-    const { Agent } = await import("undici");
-    const dispatcher = new Agent({ headersTimeout: 600_000, bodyTimeout: 600_000 });
-    const res = await fetch(`${workerUrl}/api/replay`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ sourceRunId, replayRunId, stage }),
-      // 10-minute timeout per stage — the same ceiling prod Workflow steps use.
-      signal: AbortSignal.timeout(600_000),
-      dispatcher,
-    });
-
-    const body = await res.json();
-    const durationMs = body.durationMs ?? (Date.now() - startMs);
+  {
+    // The wire call lives in replay-driver.mjs, shared with gate-loop.mjs — one
+    // driver, one timeout policy, so the two tools cannot drift apart.
+    const driven = await driveStage({ workerUrl, token, sourceRunId, replayRunId, stage });
+    const { durationMs } = driven;
+    const body = driven.body ?? {};
     const durationStr = `${(durationMs / 1000).toFixed(1)}s`;
 
-    if (res.ok && body.result === "ok") {
+    if (driven.result === "ok") {
       console.log(`OK    ${durationStr}`);
       results.push({
         stage,
@@ -145,29 +118,28 @@ for (const stage of STAGES) {
           console.log(`    report NOT built: ${d.reasonCode ?? "unknown"}`);
         }
       }
-    } else {
-      const reason = body.errorMessage || body.errorName || "unknown error";
+    } else if (driven.result === "error") {
+      const reason = driven.errorMessage ?? "unknown error";
       console.log(`FAIL  ${durationStr}  ${reason.slice(0, 120)}`);
       results.push({
         stage,
         result: "error",
         durationMs,
         errorName: body.errorName ?? null,
-        errorMessage: (body.errorMessage ?? reason).slice(0, 500),
+        errorMessage: reason,
+      });
+      anyError = true;
+    } else {
+      const msg = driven.errorMessage ?? "unknown crash";
+      console.log(`CRASH ${durationStr}  ${msg.slice(0, 120)}`);
+      results.push({
+        stage,
+        result: "crash",
+        durationMs,
+        errorMessage: msg,
       });
       anyError = true;
     }
-  } catch (err) {
-    const durationMs = Date.now() - startMs;
-    const msg = err instanceof Error ? err.message : String(err);
-    console.log(`CRASH ${(durationMs / 1000).toFixed(1)}s  ${msg.slice(0, 120)}`);
-    results.push({
-      stage,
-      result: "crash",
-      durationMs,
-      errorMessage: msg.slice(0, 500),
-    });
-    anyError = true;
   }
 }
 
