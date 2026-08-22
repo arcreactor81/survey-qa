@@ -593,6 +593,14 @@ const FILES = [
   // data. The mutant proof: removing the rewrite lets a write hit the source key, and
   // the guard test goes red before anything touches a real key.
   "./tests/replay-fence.test.mjs",
+  // A1 — THE COMMITTED-ATTEMPT EVIDENCE FILTER. Keeps only evidence rows whose attemptId
+  // appears in the committed walk ledger (progress.walks), plus document-side rows with no
+  // attemptId. Kills the duplicate-evidence refusal at its source by removing orphan rows
+  // from killed attempts before they reach the signed record, the judge's manifest, or any
+  // downstream consumer. The same-ref different-hash shape from v99/v100 is covered
+  // deterministically without byte-fetching. Missing ledger = loud refusal.
+  // Evidence they can fail: tools/mutate-committed-evidence.mjs.
+  "./tests/committed-evidence-filter.test.mjs",
 ];
 
 export async function runVerification({

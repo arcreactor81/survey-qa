@@ -29,6 +29,10 @@ import { getContractRevision } from "../../store/contract-revision";
 import { ArtifactNameCollision, loadRunInputs, loadArtifactBytes, signingKeys, type RunInputs } from "./run-inputs";
 import { stageNotEvaluated, type StageResult } from "../gates";
 import type { ItemResult } from "../../types/record";
+import { filterCommittedEvidence, MissingWalkLedgerError, type CommittedEvidenceResult } from "../../store/committed-evidence";
+// The execution ledger's key and shape — the committed-evidence filter needs the walk
+// records and the R2 key to load them. Imported from execute-batch rather than re-spelled.
+import { execProgressKey, type ExecProgress, type WalkRecord } from "./execute-batch";
 
 // @ts-ignore -- untyped ESM, shared with the offline pipeline
 import { aggregate, rejectModelDerivedVerdicts, AGGREGATOR_ID } from "./assemble-record.mjs";
@@ -37,6 +41,30 @@ import { judgeRunInIsolate, publicRegistryFor } from "./judge-runtime.mjs";
 // @ts-ignore -- untyped ESM
 import { checklistFromExtraction, checklistFromRevision } from "./checklist-projection.mjs";
 import { runChecklistKey, readRunChecklist } from "./checklist-store";
+
+/**
+ * The walk ledger for the committed-evidence filter, loaded the same way assemble-record
+ * loads it — one keyed R2 GET, same key, same shape.
+ *
+ * WHY DUPLICATED. The assembler's `executionWalks` is a private function (not exported),
+ * and rightly so — assemble-record.ts owns the record's walk facts. The judge needs the
+ * same ledger for a DIFFERENT reason: to filter evidence before mounting it. A shared
+ * helper would couple two stages whose independence is the point, so the read is restated
+ * once here with the same semantics: null means "missing or unreadable", and the committed-
+ * evidence filter refuses loudly on null.
+ */
+async function executionWalks(env: Env, runId: string): Promise<WalkRecord[] | null> {
+  const obj = await env.EVIDENCE.get(execProgressKey(runId));
+  if (!obj) return null;
+  try {
+    const progress = (await obj.json()) as ExecProgress;
+    return progress?.kind === "v2-execution-progress/1.0.0" && Array.isArray(progress.walks)
+      ? progress.walks
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface DerivedVerdicts {
   itemResults: ItemResult[];
@@ -202,6 +230,45 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
       sourceDocument: inputs.envelope?.input.documentName ?? null,
     });
 
+  // -----------------------------------------------------------------------
+  // THE COMMITTED-ATTEMPT EVIDENCE FILTER — applied on the judge side too, so the judge's
+  // mount contains exactly the same evidence the signed record was built from. Without this
+  // the judge would re-inherit orphan rows from killed attempts and either collide on them
+  // (the v99/v100 defect) or judge evidence the record does not carry.
+  //
+  // The walk ledger is loaded the same way assemble-record loads it: one keyed R2 GET.
+  // A missing ledger makes the filter REFUSE LOUDLY (throw MissingWalkLedgerError). The
+  // caller catches that refusal and degrades to unfiltered evidence with a log — the
+  // record was already assembled with the filter's output (or its own degradation), so
+  // the judge using unfiltered evidence when the ledger is missing is an honest fallback,
+  // not a silent pass-through.
+  // -----------------------------------------------------------------------
+  const walks = await executionWalks(env, runId);
+  let evidenceFilter: CommittedEvidenceResult;
+  try {
+    evidenceFilter = filterCommittedEvidence(inputs.evidence, walks);
+  } catch (err) {
+    if (err instanceof MissingWalkLedgerError) {
+      console.error(
+        `mint-judgement: ${runId} — committed-evidence filter refused: ${err.message}`,
+      );
+      evidenceFilter = {
+        kept: inputs.evidence,
+        droppedOrphans: [],
+        droppedByRef: [],
+        sentence: "committed-evidence filter could not run: walk ledger unavailable. Evidence passed unfiltered.",
+      };
+    } else {
+      throw err;
+    }
+  }
+  const committedEvidence = evidenceFilter.kept;
+  if (evidenceFilter.droppedOrphans.length > 0) {
+    console.log(
+      `mint-judgement: ${runId} — ${evidenceFilter.sentence}`,
+    );
+  }
+
   // A catalogue whose basenames collide cannot be judged honestly: the mount would lose
   // evidence and the signed manifest would double-count it. Saying so is the right outcome;
   // judging the survivors would report a smaller evidence set as if it were the whole one.
@@ -214,7 +281,7 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
   let supersededRecordings: number | null = null;
   let supersededNote: string | null = null;
   try {
-    const loaded = await loadArtifactBytes(env, inputs.evidence);
+    const loaded = await loadArtifactBytes(env, committedEvidence);
     artifacts = loaded.artifacts;
     duplicatesCollapsed = loaded.duplicatesCollapsed;
     supersededRecordings = loaded.supersededRecordings;

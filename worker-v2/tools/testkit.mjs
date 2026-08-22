@@ -267,6 +267,9 @@ export async function loadWorker() {
       `export * as devDrive from ${p("src/workflow/stages/dev-drive.ts")};`,
       `export * as failureReport from ${p("src/report/failure.ts")};`,
       `export * as multilane from ${p("src/workflow/stages/multilane.ts")};`,
+      // THE COMMITTED-EVIDENCE FILTER. Exported so the test suite and mutation harness can
+      // exercise filterCommittedEvidence and MissingWalkLedgerError against the real code.
+      `export * as committedEvidence from ${p("src/store/committed-evidence.ts")};`,
     ].join("\n"),
     "utf8",
   );
