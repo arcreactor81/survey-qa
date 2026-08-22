@@ -19,9 +19,17 @@ import { observationsKey } from "../../keys";
 import { getEnvelope } from "../../store/envelope";
 import { loadCheckpoint } from "../../store/checkpoint";
 import { getContractRevision } from "../../store/contract-revision";
-import { getVerifiedEvidence, listCatalog } from "../../store/evidence";
+import {
+  EvidenceCatalogTampered,
+  EvidenceIntegrityFailure,
+  getVerifiedEvidence,
+  listCatalog,
+  loadCachedCatalogListing,
+  persistCatalogListing,
+} from "../../store/evidence";
 import { evidenceBlobKey } from "../../keys";
 import { sha256Hex } from "../../store/hash";
+import { mapConcurrent, R2_READ_CONCURRENCY } from "../../store/concurrent-pool";
 import type { ContractRevision, EvidenceCatalogEntry, Observation, RunEnvelopeV2 } from "../../types/record";
 import type { RunCheckpoint } from "../../types/contracts";
 
@@ -75,6 +83,40 @@ export async function loadRunInputs(
     ? await getContractRevision(env, contractRevisionId, { contractHash })
     : null;
 
+  // EVIDENCE CATALOGUE LOADING STRATEGY — three tiers, cheapest first.
+  //
+  // 1. `catalog: false` → `[]`. The caller does not need the catalogue at all. The
+  //    aggregator (`deriveItemResults`) uses this: its job is arithmetic over 16
+  //    observations and a sealed revision, and loading 9,340 catalogue entries cost
+  //    19 minutes across three attempts on the real v100 run (bench-measured 22 Aug).
+  //
+  // 2. SHARED LISTING → one R2 GET. The first tail stage that lists the catalogue
+  //    persists the result under `catalogListingKey(runId)`. Subsequent stages read
+  //    that single object instead of the full fan-out.
+  //    THE CONSISTENCY ASSUMPTION (stated, not silent): the catalogue is APPEND-ONLY
+  //    after execution closes. No new captures can arrive because the Workflow has
+  //    moved past the batch loop by the time any tail stage runs.
+  //
+  // 3. LIVE LIST → the full fan-out. First tail stage on a fresh run, or old runs /
+  //    bench replays where no materialised listing exists. The first stage that pays
+  //    this cost persists the result so the next stage hits tier 2.
+  let evidence: EvidenceCatalogEntry[];
+  if (opts.catalog === false) {
+    // EMPTY BECAUSE IT WAS NOT ASKED FOR — NOT BECAUSE THE RUN HAS NO EVIDENCE. Any
+    // caller that reads `evidence` must therefore not pass `catalog: false`.
+    evidence = [];
+  } else {
+    const cached = await loadCachedCatalogListing(env, runId);
+    if (cached) {
+      evidence = cached;
+    } else {
+      evidence = await listCatalog(env, runId);
+      // Persist for the stages that follow. Fire-and-forget: a failed persist means
+      // the next stage re-lists, which is the same cost as before this optimisation.
+      await persistCatalogListing(env, runId, evidence).catch(() => {});
+    }
+  }
+
   return {
     runId,
     envelope,
@@ -82,10 +124,7 @@ export async function loadRunInputs(
     revision,
     contractHash,
     observations: await readObservations(env, runId),
-    // EMPTY BECAUSE IT WAS NOT ASKED FOR — NOT BECAUSE THE RUN HAS NO EVIDENCE. Any caller
-    // that reads `evidence` must therefore not pass `catalog: false`; the two callers that
-    // do read it (`derive-verdicts`, `assemble-record`) use the default.
-    evidence: opts.catalog === false ? [] : await listCatalog(env, runId),
+    evidence,
   };
 }
 
@@ -131,20 +170,59 @@ async function readObservations(env: Env, runId: string): Promise<Observation[]>
  * than the primary fix. It is a REFUSAL and not a rename: renaming here would desynchronise
  * the mount from the signed catalogue, which names artifacts by the ref the record carries.
  */
+/**
+ * HOW MANY COLLISION PAIRS TO PRINT IN THE ERROR MESSAGE.
+ *
+ * The old constructor enumerated EVERY pair, which at 588 collisions produced a ~120KB
+ * message. Workflow step state has a 1 MiB platform cap, and step outputs carry this
+ * message as the `detail` field of a `stageNotEvaluated` result. Truncating to the
+ * first 10 + a count preserves diagnosability without risking the cap.
+ */
+const COLLISION_SAMPLE_SIZE = 10;
+
 export class ArtifactNameCollision extends Error {
   readonly collisions: Array<{ name: string; refs: string[] }>;
+  readonly totalCollisions: number;
+
   constructor(collisions: Array<{ name: string; refs: string[] }>) {
+    const total = collisions.length;
+    const sample = collisions.slice(0, COLLISION_SAMPLE_SIZE);
+    const sampleText = sample
+      .map((c) => `${c.name} <- ${c.refs.join(", ")}`)
+      .join(" | ");
+    const truncationNote =
+      total > COLLISION_SAMPLE_SIZE
+        ? ` (showing ${COLLISION_SAMPLE_SIZE} of ${total}; ${total - COLLISION_SAMPLE_SIZE} more omitted)`
+        : "";
     super(
-      `the evidence catalogue names ${collisions.length} artifact(s) ambiguously: ` +
-        collisions
-          .map((c) => `${c.name} <- ${c.refs.join(", ")}`)
-          .join(" | ") +
+      `the evidence catalogue names ${total} artifact(s) ambiguously: ` +
+        sampleText +
+        truncationNote +
         `. A basename is the judge's whole identity for an artifact, so this would both ` +
         `overwrite evidence on the mount and duplicate entries in the signed manifest.`,
     );
     this.name = "ArtifactNameCollision";
     this.collisions = collisions;
+    this.totalCollisions = total;
   }
+}
+
+/**
+ * A SINGLE EVIDENCE ENTRY THAT COULD NOT BE LOADED, NAMED SO THE REPORT CAN SAY WHICH.
+ *
+ * Tamper signals (`EvidenceCatalogTampered`) are NOT demoted — they represent a security
+ * boundary violation and must stay loud. Everything else — missing blobs, hash mismatches,
+ * transient R2 failures — becomes a per-item limitation. The caller carries these into the
+ * judgement/report so a reader can see "4 of 1 707 artifacts could not be read" instead
+ * of the whole run dying at its last step.
+ */
+export interface EvidenceLimitation {
+  /** The basename the record would have mounted this artifact under. */
+  name: string;
+  /** The evidence id from the catalogue. */
+  evidenceId: string;
+  /** A one-sentence explanation of why the entry could not be loaded. */
+  reason: string;
 }
 
 export interface LoadArtifactBytesResult {
@@ -174,6 +252,15 @@ export interface LoadArtifactBytesResult {
    * recordings exist, so the report can distinguish "no retries" from "zero superseded."
    */
   supersededNote: string | null;
+  /**
+   * EVIDENCE ENTRIES THAT COULD NOT BE LOADED — named limitations, not silent drops.
+   *
+   * ABSENCE vs ZERO: an empty array means every entry loaded successfully; the array is
+   * always present so a reader never has to guess whether limitations were checked.
+   * Tamper signals (`EvidenceCatalogTampered`) are NEVER demoted to a limitation — they
+   * propagate as thrown errors because they represent a security boundary violation.
+   */
+  limitations: EvidenceLimitation[];
 }
 
 /**
@@ -335,6 +422,25 @@ async function resolveSupersededRecordings(
   return { resolved, superseded: supersededIds.size, prefetchedBytes, integrityFailures };
 }
 
+/**
+ * BOUNDED-CONCURRENT ARTIFACT LOADING WITH PER-ENTRY DEMOTION.
+ *
+ * CONCURRENCY: R2_READ_CONCURRENCY (24) overlapping GETs. The subrequest COUNT is unchanged
+ * from serial — the same number of GETs are issued, just overlapped. With 1 707 entries at
+ * ~46ms per GET, serial takes ~78s; at 24-wide it is ~3.3s.
+ * Math: 1 707 entries × 1 GET each = 1 707 subrequests for this phase. The full step
+ * budget (wrangler.jsonc limits.subrequests = 100 000) also covers the LIST phase (~10
+ * pages), the superseded-resolution GETs (~588 worst case), and the other stages' work.
+ * 1 707 + 10 + 588 = 2 305, well within budget.
+ *
+ * DEMOTION (A4): a `getVerifiedEvidence` failure for ONE entry — missing blob, hash
+ * mismatch, transient R2 error — records that entry as a NAMED per-item limitation
+ * carried to the caller (and ultimately the judgement/report), never an uncaught throw
+ * that fails the step. EXCEPT: `EvidenceCatalogTampered` signals stay loud because they
+ * represent a security boundary violation (a catalogue entry whose derived id no longer
+ * matches its own metadata — meaning somebody altered the mapping from citation to
+ * content hash).
+ */
 export async function loadArtifactBytes(
   env: Env,
   evidence: EvidenceCatalogEntry[],
@@ -367,15 +473,54 @@ export async function loadArtifactBytes(
     .map(([name, refs]) => ({ name, refs }));
   if (collisions.length > 0) throw new ArtifactNameCollision(collisions);
 
-  const artifacts: Array<{ name: string; bytes: Uint8Array }> = [];
-  for (const entry of resolved) {
+  // BOUNDED-CONCURRENT FETCH + PER-ENTRY DEMOTION.
+  //
+  // Each entry's result is either { ok: true, artifact } or { ok: false, limitation }.
+  // Tamper signals (`EvidenceCatalogTampered`) propagate through `mapConcurrent`'s
+  // contract §3 (one rejection → whole pool rejects). Every other failure is caught
+  // and recorded as a limitation.
+  const results = await mapConcurrent(resolved, R2_READ_CONCURRENCY, async (entry) => {
     const ref = entry.artifactRef ?? entry.sourceEvidenceId ?? entry.evidenceId;
+    const name = String(ref).split("/").pop() ?? entry.evidenceId;
+
     // Reuse bytes that were already fetched and verified during superseded resolution,
     // avoiding a second R2 GET for the same blob.
     const cached = prefetchedBytes.get(entry.evidenceId);
-    const bytes = cached ?? (await getVerifiedEvidence(env, entry)).bytes;
-    artifacts.push({ name: String(ref).split("/").pop() ?? entry.evidenceId, bytes });
+    if (cached) {
+      return { ok: true as const, artifact: { name, bytes: cached } };
+    }
+
+    try {
+      const { bytes } = await getVerifiedEvidence(env, entry);
+      return { ok: true as const, artifact: { name, bytes } };
+    } catch (err) {
+      // TAMPER SIGNALS STAY LOUD — they are a security boundary violation, not a
+      // recoverable data problem. Re-throw so `mapConcurrent` propagates them.
+      if (err instanceof EvidenceCatalogTampered) throw err;
+
+      // EVERYTHING ELSE IS DEMOTED to a per-item limitation. Missing blobs, hash
+      // mismatches (`EvidenceIntegrityFailure`), transient R2 errors — each becomes
+      // a named entry the caller carries to the report. The run proceeds over the
+      // artifacts it CAN read rather than dying at its last step because one of
+      // 9 340 blobs was missing.
+      const reason =
+        err instanceof EvidenceIntegrityFailure
+          ? err.message
+          : `failed to load evidence ${entry.evidenceId}: ${err instanceof Error ? err.message : String(err)}`;
+      return {
+        ok: false as const,
+        limitation: { name, evidenceId: entry.evidenceId, reason } satisfies EvidenceLimitation,
+      };
+    }
+  });
+
+  const artifacts: Array<{ name: string; bytes: Uint8Array }> = [];
+  const limitations: EvidenceLimitation[] = [];
+  for (const r of results) {
+    if (r.ok) artifacts.push(r.artifact);
+    else limitations.push(r.limitation);
   }
+
   return {
     artifacts,
     duplicatesCollapsed: collapsed,
@@ -383,6 +528,7 @@ export async function loadArtifactBytes(
     supersededNote: superseded > 0
       ? `${superseded} earlier recording(s) of retried steps were superseded by the bytes now in storage`
       : null,
+    limitations,
   };
 }
 

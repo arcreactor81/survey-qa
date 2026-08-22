@@ -15,9 +15,10 @@
 
 import type { Env } from "../types/env";
 import type { EvidenceCatalogEntry } from "../types/record";
-import { evidenceBlobKey, evidenceCatalogKey, evidenceCatalogPrefix, captureRefGuardKey } from "../keys";
+import { evidenceBlobKey, evidenceCatalogKey, evidenceCatalogPrefix, catalogListingKey, captureRefGuardKey } from "../keys";
 import { assertV2RunId, evidenceIdFor } from "../ids";
 import { sha256Hex } from "./hash";
+import { mapConcurrent, R2_READ_CONCURRENCY } from "./concurrent-pool";
 
 export class EvidenceIntegrityFailure extends Error {
   constructor(evidenceId: string, expected: string, actual: string) {
@@ -236,19 +237,107 @@ export async function getBoundCatalogEntry(
   return assertCatalogBinding(runId, entry);
 }
 
+/**
+ * BOUNDED-CONCURRENT CATALOGUE LISTING.
+ *
+ * The listing is an R2 LIST (paginated) followed by one R2 GET per entry. The GETs are
+ * I/O-bound and independent, so they overlap at R2_READ_CONCURRENCY. The LIST itself is
+ * sequential (cursor-chained) but typically exhausts in 1-10 pages of 1 000.
+ *
+ * SUBREQUEST BUDGET: one LIST per page (ceil(N/1000)) + one GET per entry (N). For a
+ * 9 340-entry catalogue that is ~10 + 9 340 ≈ 9 350 subrequests, well within the
+ * wrangler.jsonc ceiling of 100 000. Concurrency does not increase the COUNT — it
+ * overlaps the I/O wait.
+ */
 export async function listCatalog(env: Env, runId: string): Promise<EvidenceCatalogEntry[]> {
   assertV2RunId(runId);
-  const out: EvidenceCatalogEntry[] = [];
+
+  // Phase 1: collect all keys (LIST is cursor-chained, must be sequential).
+  const keys: string[] = [];
   let cursor: string | undefined;
   do {
     const page = await env.EVIDENCE.list({ prefix: evidenceCatalogPrefix(runId), cursor, limit: 1000 });
-    for (const obj of page.objects) {
-      const body = await env.EVIDENCE.get(obj.key);
-      if (body) out.push(await assertCatalogBinding(runId, JSON.parse(await body.text()) as EvidenceCatalogEntry));
-    }
+    for (const obj of page.objects) keys.push(obj.key);
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
-  return out;
+
+  // Phase 2: fetch + bind entries at bounded concurrency.
+  // mapConcurrent preserves input order (contract §1) and propagates the first failure
+  // (contract §3), so a tampered entry still fails the whole listing loudly.
+  const entries = await mapConcurrent(keys, R2_READ_CONCURRENCY, async (key) => {
+    const body = await env.EVIDENCE.get(key);
+    if (!body) return null;
+    return assertCatalogBinding(runId, JSON.parse(await body.text()) as EvidenceCatalogEntry);
+  });
+  return entries.filter((e): e is EvidenceCatalogEntry => e !== null);
+}
+
+/**
+ * CATALOG LISTING VERSION — increment when `assertCatalogBinding` or the entry schema
+ * changes. Any materialised listing at a different version is silently ignored, forcing a
+ * live re-list that applies the new binding logic.
+ */
+const CATALOG_LISTING_VERSION = 1;
+
+interface PersistedCatalogListing {
+  version: typeof CATALOG_LISTING_VERSION;
+  entries: EvidenceCatalogEntry[];
+  materializedAt: string;
+}
+
+/**
+ * PERSIST THE CATALOGUE LISTING so subsequent tail stages pay one R2 GET instead of a
+ * full fan-out.
+ *
+ * THE CONSISTENCY ASSUMPTION (stated, not silent): the catalogue is APPEND-ONLY after
+ * execution closes. Captures happen during the execute-batch steps; by the time the first
+ * tail stage materialises this listing, no new captures can arrive because the execution
+ * cursor is exhausted and the Workflow has moved past the batch loop. A second execution
+ * (recovery instance) would re-list from scratch because the listing's version key
+ * includes the run id — and the recovery instance starts a new workflow, not a new step
+ * inside this one.
+ */
+export async function persistCatalogListing(
+  env: Env,
+  runId: string,
+  entries: EvidenceCatalogEntry[],
+): Promise<void> {
+  const payload: PersistedCatalogListing = {
+    version: CATALOG_LISTING_VERSION,
+    entries,
+    materializedAt: new Date().toISOString(),
+  };
+  await env.EVIDENCE.put(catalogListingKey(runId), JSON.stringify(payload), {
+    httpMetadata: { contentType: "application/json" },
+  });
+}
+
+/**
+ * READ A PREVIOUSLY MATERIALISED CATALOGUE LISTING.
+ *
+ * Returns null when:
+ *   - no materialised listing exists (old runs, bench replay, first tail stage),
+ *   - the listing is at a different version (code changed since materialisation),
+ *   - the listing fails to parse (corrupt object).
+ *
+ * In ALL three cases the caller falls through to the live `listCatalog` path. The
+ * materialised listing is a PERFORMANCE CACHE, not a source of truth — the truth is
+ * always the individual per-entry objects that `listCatalog` reads and re-binds.
+ */
+export async function loadCachedCatalogListing(
+  env: Env,
+  runId: string,
+): Promise<EvidenceCatalogEntry[] | null> {
+  try {
+    const obj = await env.EVIDENCE.get(catalogListingKey(runId));
+    if (!obj) return null;
+    const parsed = JSON.parse(await obj.text()) as PersistedCatalogListing;
+    if (parsed.version !== CATALOG_LISTING_VERSION) return null;
+    if (!Array.isArray(parsed.entries)) return null;
+    return parsed.entries;
+  } catch {
+    return null;
+  }
 }
 
 /**

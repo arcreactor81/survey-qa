@@ -275,6 +275,37 @@ export const evidenceCatalogKey = (runId: string, evidenceId: string) =>
 export const evidenceCatalogPrefix = (runId: string) => k("runs", runId, "evidence") + "/";
 
 /**
+ * SHARED CATALOGUE LISTING — materialised once per run after execution closes.
+ *
+ * THE LISTING IS THE MOST EXPENSIVE THING THE TAIL STAGES DO. Four of the five tail stages
+ * call `listCatalog` independently, each paying one R2 LIST plus one R2 GET per catalogue
+ * entry. On the v100 run with 9,340 entries that is ~5 minutes per stage for arithmetic that
+ * never reads a blob (derive-verdicts fetched the catalogue three times for 19 minutes total
+ * and never used it — bench-measured 22 Aug receipt). Persisting the listing once after
+ * execution closes lets subsequent stages read ONE R2 GET instead of a fan-out.
+ *
+ * VERSION-STAMPED so a code change that alters `assertCatalogBinding` invalidates any stale
+ * materialisation. Old runs and bench replay instances that predate the materialisation find
+ * no object at this key and fall through to the live LIST path transparently.
+ */
+export const catalogListingKey = (runId: string) =>
+  k("runs", runId, "catalog-listing.json");
+
+/**
+ * DERIVED ITEM RESULTS — persisted so the Workflow step state carries only a summary.
+ *
+ * The derive-verdicts step produces an `ItemResult[]` that the assembler consumes. At 588
+ * requirements with facet results the array can exceed several hundred KB, and the platform
+ * per-step state cap is 1 MiB. Persisting to R2 and returning only (count + hash) in the
+ * step state avoids the cap and keeps the Workflow engine's serialisation budget for the
+ * things only it can carry (proofs, phase transitions).
+ *
+ * The assembler reads this key instead of receiving the array through the step boundary.
+ */
+export const itemResultsKey = (runId: string) =>
+  k("runs", runId, "item-results.json");
+
+/**
  * CAPTURE REF GUARD — prevents a Workflow re-execution from writing a second catalogue entry
  * for the same artifactRef with different bytes.
  *

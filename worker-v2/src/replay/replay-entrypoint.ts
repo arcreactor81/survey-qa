@@ -196,6 +196,8 @@ async function stageAssembleRecord(env: Env, runId: string) {
   if (derivation.state !== "evaluated") {
     return { state: "skipped", reason: "derive-verdicts did not evaluate" };
   }
+  // Direct call — the full in-memory `itemResults` is available without crossing a
+  // Workflow step boundary (the R2 persistence is for the step boundary path only).
   const result = await assembleRecord(env, runId, derivation.value.itemResults);
   return {
     state: result.state,

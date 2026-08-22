@@ -28,6 +28,8 @@ import { judgementKey, recordKey } from "../../keys";
 import { getContractRevision } from "../../store/contract-revision";
 import { ArtifactNameCollision, loadRunInputs, loadArtifactBytes, signingKeys, type RunInputs } from "./run-inputs";
 import { stageNotEvaluated, type StageResult } from "../gates";
+import { itemResultsKey } from "../../keys";
+import { sha256Hex } from "../../store/hash";
 import type { ItemResult } from "../../types/record";
 
 // @ts-ignore -- untyped ESM, shared with the offline pipeline
@@ -39,9 +41,60 @@ import { checklistFromExtraction, checklistFromRevision } from "./checklist-proj
 import { runChecklistKey, readRunChecklist } from "./checklist-store";
 
 export interface DerivedVerdicts {
+  /**
+   * THE FULL ITEM RESULTS ARRAY.
+   *
+   * Direct callers (tests, dev endpoints, replay) receive this in memory. The Workflow
+   * step body STRIPS this field before returning through `step.do` so the step state
+   * carries only the summary (the platform per-step state cap is 1 MiB; with 588
+   * requirements the full ItemResult[] array was several hundred KB). The array is also
+   * persisted to R2 at `itemResultsKey(runId)` so the assembler step can load it without
+   * receiving it through the Workflow boundary.
+   */
   itemResults: ItemResult[];
+  /** Content hash of the persisted itemResults JSON for verification. */
+  itemResultsHash: string;
   /** For the checkpoint's phase note; each is a sentence a report can print verbatim. */
   summary: { requirements: number; cases: number; byVerdict: Record<string, number> };
+}
+
+/**
+ * THE WORKFLOW-SAFE SUBSET of DerivedVerdicts that fits within the 1 MiB step state cap.
+ *
+ * `step.do("derive-verdicts", ...)` returns this through the Workflow boundary instead of
+ * the full `DerivedVerdicts`. The assembler loads the full itemResults from R2 via
+ * `loadDerivedItemResults(env, runId)`.
+ */
+export interface DerivedVerdictsSummary {
+  itemResultsHash: string;
+  summary: DerivedVerdicts["summary"];
+}
+
+/**
+ * Strip the full itemResults array from a stage result, keeping only the summary.
+ * The result type changes from StageResult<DerivedVerdicts> to StageResult<DerivedVerdictsSummary>
+ * so the Workflow step state stays small.
+ */
+export function summarizeDerivedVerdicts(
+  result: StageResult<DerivedVerdicts>,
+): StageResult<DerivedVerdictsSummary> {
+  if (result.state !== "evaluated") return result;
+  const { itemResults: _stripped, ...rest } = result.value;
+  return { ...result, value: rest };
+}
+
+/**
+ * LOAD THE PERSISTED ITEM RESULTS from R2.
+ *
+ * This is the read path for the assembler (and any consumer that receives only the
+ * summary through the Workflow step boundary). The derive-verdicts step persists the
+ * full array to `itemResultsKey(runId)` before returning.
+ * Returns null when the key is absent (old runs that pre-date this change).
+ */
+export async function loadDerivedItemResults(env: Env, runId: string): Promise<ItemResult[] | null> {
+  const obj = await env.EVIDENCE.get(itemResultsKey(runId));
+  if (!obj) return null;
+  return JSON.parse(await obj.text()) as ItemResult[];
 }
 
 /**
@@ -49,7 +102,13 @@ export interface DerivedVerdicts {
  * SEALED revision rather than from what happened to be observed.
  */
 export async function deriveItemResults(env: Env, runId: string): Promise<StageResult<DerivedVerdicts>> {
-  const inputs = await loadRunInputs(env, runId);
+  // THE AGGREGATOR NEVER READS THE EVIDENCE CATALOGUE. Its job is arithmetic over a
+  // tri-state verifier decision and a sealed denominator — `observations` and `revision`,
+  // nothing more. Loading the catalogue cost 19 minutes across three attempts on the real
+  // v100 run (9 340 entries, ~5 minutes per fetch, all three fetches discarded — bench-
+  // measured 22 Aug receipt). `catalog: false` is the fix: `loadRunInputs` returns
+  // `evidence: []` and never touches R2's evidence prefix.
+  const inputs = await loadRunInputs(env, runId, { catalog: false });
   if (!inputs.revision) {
     return stageNotEvaluated<DerivedVerdicts>(
       "NO_SEALED_CONTRACT",
@@ -72,10 +131,21 @@ export async function deriveItemResults(env: Env, runId: string): Promise<StageR
   const byVerdict: Record<string, number> = {};
   for (const r of itemResults) byVerdict[r.verdict] = (byVerdict[r.verdict] ?? 0) + 1;
 
+  // PERSIST THE FULL ARRAY TO R2 so the Workflow step state carries only the summary.
+  // The platform per-step state cap is 1 MiB; with 588 requirements the full
+  // ItemResult[] was several hundred KB. The assembler loads from R2 via
+  // `loadDerivedItemResults(env, runId)` instead of receiving it through the boundary.
+  const serialized = JSON.stringify(itemResults);
+  const itemResultsHash = await sha256Hex(serialized);
+  await env.EVIDENCE.put(itemResultsKey(runId), serialized, {
+    httpMetadata: { contentType: "application/json" },
+  });
+
   return {
     state: "evaluated",
     value: {
       itemResults,
+      itemResultsHash,
       summary: {
         requirements: itemResults.length,
         cases: itemResults.reduce((n, r) => n + r.facetResults.length, 0),
@@ -135,6 +205,11 @@ export interface MintedJudgement {
   supersededRecordings: number | null;
   /** Plain sentence surfaced on the report alongside duplicatesCollapsed. */
   supersededNote: string | null;
+  /**
+   * EVIDENCE ENTRIES THAT COULD NOT BE LOADED — named limitations carried to the report.
+   * Zero means every entry loaded successfully.
+   */
+  evidenceLimitations: number;
 }
 
 /**
@@ -213,12 +288,23 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
   let duplicatesCollapsed = 0;
   let supersededRecordings: number | null = null;
   let supersededNote: string | null = null;
+  let evidenceLimitations = 0;
   try {
     const loaded = await loadArtifactBytes(env, inputs.evidence);
     artifacts = loaded.artifacts;
     duplicatesCollapsed = loaded.duplicatesCollapsed;
     supersededRecordings = loaded.supersededRecordings;
     supersededNote = loaded.supersededNote;
+    evidenceLimitations = loaded.limitations.length;
+    // Surface limitations as log so they are visible in Workflow step output,
+    // but do NOT block the judging — the run proceeds with the artifacts it has.
+    if (loaded.limitations.length > 0) {
+      console.log(
+        `v2 ${runId}: ${loaded.limitations.length} evidence limitation(s): ` +
+          loaded.limitations.slice(0, 5).map((l) => l.reason).join("; ") +
+          (loaded.limitations.length > 5 ? ` (and ${loaded.limitations.length - 5} more)` : ""),
+      );
+    }
   } catch (err) {
     if (err instanceof ArtifactNameCollision) {
       return stageNotEvaluated<MintedJudgement>("EVIDENCE_NAME_COLLISION", err.message);
@@ -276,6 +362,7 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
       // which blob exists in storage. null when no superseded recordings were found.
       supersededRecordings,
       supersededNote,
+      evidenceLimitations,
     },
     proof: {
       evaluatorId: "pipeline/judge",
