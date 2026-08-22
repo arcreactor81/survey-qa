@@ -211,10 +211,16 @@ export function isSessionCandidate(name) {
   if (!/\.json$/i.test(b)) return false;
   // Derived summaries are never sessions.
   if (DERIVED_SUMMARIES.has(b)) return false;
-  // Step-level capture files: step-NNN-*.json or NNN.accessibility.json.
-  // These are the bulk of the non-session .json files in a v2 run (~4,650
-  // step-slot.json + ~4,650 accessibility.json in the v100 census).
+  // Step-level capture files. The walker's real leaf names carry the step
+  // marker MID-NAME after the pathId slug — `FLOOR-01--fi_x-step-020-before.json`,
+  // `...-retry-1-step-010-before.json` — so the marker must match anywhere,
+  // not only at the start. Checked against the real v100 catalogue: an
+  // anchored-only `^step-` admitted 2,330 step captures (73.6 MB raw) into
+  // the session sweep, where each would have been fetched, parsed, and cached
+  // — the OOM this module exists to prevent, reborn. The anchored form is
+  // kept for leaves that ARE the whole basename (`step-000-slot.json`).
   if (/^step-\d+-/i.test(b)) return false;
+  if (/-step-\d+-/i.test(b)) return false;
   if (/\.accessibility\.json$/i.test(b)) return false;
   // Everything else could be a session — the engine will classify by shape.
   return true;
@@ -459,10 +465,14 @@ export class EvidenceStore {
       else if (spine.looksLikeSession) cls = EVIDENCE_CLASS.UNKNOWN;
     }
 
-    // RESIDENCY ACCOUNTING: track cumulative retained size of cached session
-    // projections. The raw buffer `buf` goes out of scope here, so only the
-    // projected `data` contributes to retained memory.
-    if (!fresh && cls === EVIDENCE_CLASS.PRIMARY_SESSION && data) {
+    // RESIDENCY ACCOUNTING: track the cumulative retained size of EVERYTHING the
+    // cache keeps parsed data for — sessions (projections) AND any other cached
+    // .json read (cited artifacts, probes, files the shape check declined to
+    // promote). Counting only sessions would leave a class of retention the
+    // budget cannot see: a sweep filter defect or a cite-heavy run could fill
+    // the cache with unaccounted parses and OOM below a "respected" budget.
+    // The raw buffer `buf` goes out of scope here; only `data` is retained.
+    if (!fresh && data) {
       const jsonLen = JSON.stringify(data).length;
       this._retainedBytes += jsonLen;
       if (this._retainedBytes > RETAINED_PROJECTION_BUDGET) {

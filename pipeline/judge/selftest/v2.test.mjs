@@ -28,7 +28,7 @@ import { CONSUMED_FIELDS } from '../lib/ambiguity.mjs';
 import { certify } from '../lib/certification.mjs';
 import { loadEvidenceAuthority, evidenceManifestRoot, bindChecklist, sha256Of } from '../lib/authority.mjs';
 import { contractItemFromRequirement } from '../../../worker-v2/shared/v2-record.mjs';
-import { EvidenceStore, EvidenceIntegrityError } from '../lib/evidence-store.mjs';
+import { EvidenceStore, EvidenceIntegrityError, isSessionCandidate } from '../lib/evidence-store.mjs';
 import { PREDICATES, runPredicate } from '../lib/predicates.mjs';
 import { OUTCOME, REASON, VERDICT, COVERAGE, DISPOSITION, PROOF_KIND, EVIDENCE_CLASS, CERT_FACET } from '../lib/vocab.mjs';
 import { precedenceFor, ambiguityLocus, locusTouchesExpectation, LOCKED_POLICY } from '../lib/ambiguity.mjs';
@@ -473,7 +473,7 @@ test('D5: a conditional-presence witness attests the GATE as well as the occurre
 });
 
 test('D5: a predicate-authored scope count cannot certify its own completeness', async () => {
-  const out = withPredicate('option-present', () => ({
+  const out = await withPredicate('option-present', () => ({
     outcome: OUTCOME.SATISFIED,
     reason: REASON.COMPLETE_POSITIVE_INVENTORY,
     witnesses: [{ artifact: 'V2-CLEAN-A.json', locator: 'evidence[0].screen_id', equals: 'Q1' }],
@@ -487,7 +487,7 @@ test('D5: a predicate-authored scope count cannot certify its own completeness',
 });
 
 test('D5: an absence claim over an unreproducible population is refused', async () => {
-  const out = withPredicate('option-present', () => ({
+  const out = await withPredicate('option-present', () => ({
     outcome: OUTCOME.SATISFIED,
     reason: REASON.COMPLETE_POSITIVE_INVENTORY,
     witnesses: [{ artifact: 'V2-CLEAN-A.json', locator: 'evidence[0].screen_id', equals: 'Q1' }],
@@ -501,7 +501,7 @@ test('D5: an absence claim over an unreproducible population is refused', async 
 });
 
 test('D5: a VIOLATION built on a partial scan is refused too, not just a pass', async () => {
-  const out = withPredicate('option-present', () => ({
+  const out = await withPredicate('option-present', () => ({
     outcome: OUTCOME.VIOLATED,
     reason: REASON.OPTION_ABSENT,
     witnesses: [],
@@ -514,7 +514,7 @@ test('D5: a VIOLATION built on a partial scan is refused too, not just a pass', 
 });
 
 test('D5: a structural claim may not be attested by a single-field lookup', async () => {
-  const out = withPredicate('route', () => ({
+  const out = await withPredicate('route', () => ({
     outcome: OUTCOME.SATISFIED,
     reason: REASON.POSITIVE_WITNESS,
     // A perfectly TRUE single-field witness — and still not a proof of the edge.
@@ -697,7 +697,7 @@ test('advisory: a locator cannot reach an inherited or prototype property', asyn
 });
 
 test('advisory: allVerified is FALSE for an empty witness collection', async () => {
-  const out = withPredicate('option-present', () => ({
+  const out = await withPredicate('option-present', () => ({
     outcome: OUTCOME.INSUFFICIENT, reason: REASON.INSUFFICIENT_SAMPLE, witnesses: [], counterWitnesses: [],
   }), () => judge(V2));
   const r = byId(out).get('V2-OPT-1');
@@ -830,7 +830,7 @@ test('N3: every SCOPE_REQUIRED predicate can reach a violation that attests its 
     assert.ok(res.scope, `${id}: a violation carries a population-scoped count, so it must declare its scope`);
     assert.ok(ATTESTABLE_SCOPES.has(res.scope.claimKind), `${id}: claimKind ${res.scope.claimKind} is not attestable`);
     assert.notEqual(res.absenceClaim, true, `${id}: a violation is a PRESENCE finding, never an absence claim`);
-    const att = on.scopeAttestor.attest(res.scope);
+    const att = await on.scopeAttestor.attest(res.scope);
     assert.equal(att.ok, true, `${id}: the declared population must re-derive from the signed artifacts: ${JSON.stringify(att.detail)}`);
   }
 });
@@ -870,7 +870,7 @@ test('N3: an observed violation demoted below fail can never report defectFree',
   // The facet's own guard, independent of the five predicates: whatever demotes
   // a violation — this D5 tripwire, or the next one — `defectFree: true` would
   // be the claim that nothing was wrong, and a violation WAS observed.
-  const out = withPredicate('option-present', () => ({
+  const out = await withPredicate('option-present', () => ({
     outcome: OUTCOME.VIOLATED,
     reason: REASON.OPTION_ABSENT,
     witnesses: [],
@@ -903,7 +903,7 @@ test('N3: the D5 gate was not narrowed to buy this — an unreproducible violati
   for (const c of N3_CLASSES) {
     const kind = c.predicateId.replace(/@1$/, '');
     // (a) a violation that declares no scope at all
-    const noScope = withPredicate(kind, () => ({
+    const noScope = await withPredicate(kind, () => ({
       outcome: OUTCOME.VIOLATED, reason: c.reason, witnesses: [], counterWitnesses: counter,
     }), async () => byId(await judge(N3)).get(c.id));
     assert.notEqual(noScope.verdict, VERDICT.FAIL, `${c.predicateId}: an unscoped violation must not publish`);
@@ -917,7 +917,7 @@ test('N3: the D5 gate was not narrowed to buy this — an unreproducible violati
       `${c.predicateId}: the scope gate must be one of the wires that fired, got ${JSON.stringify(noScope.tripwires.map((t) => t.code))}`);
 
     // (b) a violation whose declared population does not exist
-    const badScope = withPredicate(kind, () => ({
+    const badScope = await withPredicate(kind, () => ({
       outcome: OUTCOME.VIOLATED, reason: c.reason, witnesses: [], counterWitnesses: counter,
       scope: { claimKind: 'scoped-absence', screen: 'WELCOME', filter: {}, capturesEnumerated: 999, memberCount: 999, membersDigest: `sha256:${'0'.repeat(64)}` },
     }), async () => byId(await judge(N3)).get(c.id));
@@ -1104,7 +1104,7 @@ test('D5: ambiguitiesSigned is a checked fact and gates publication', async () =
   // A harness run carries extraction ambiguities and no signed tokens.
   const declared = t1Checklist().ambiguities.length;
   assert.ok(declared > 0, 'the run must actually declare ambiguities, or this check is vacuous');
-  const out = t1Judge();
+  const out = await t1Judge();
   assert.equal(out.authority.ambiguitiesSigned, false);
   assert.equal(out.authority.ambiguityBinding.localAmbiguities, declared);
   assert.equal(out.authority.ambiguityBinding.signedTokens, 0);
@@ -1259,7 +1259,7 @@ test('D7: sealed, humanReviewed and certified stay THREE separate facts', async 
 });
 
 test('D7: incomplete route coverage can never certify', async () => {
-  const out = t1Judge();
+  const out = await t1Judge();
   const domainRows = out.results.filter((r) => r.reason === REASON.DOMAIN_CASE_UNEXERCISED || r.reason === REASON.ANSWER_DOMAIN_UNSEALED);
   assert.ok(domainRows.length > 0, 'the frozen run really does contain rows decided on an incomplete domain');
   assert.equal(out.certification.facets.testComplete, false);
@@ -1270,7 +1270,7 @@ test('D7: incomplete route coverage can never certify', async () => {
 });
 
 test('D7: an inconclusive row is an open question, not a reviewed result', async () => {
-  const out = t1Judge();
+  const out = await t1Judge();
   assert.ok(out.counts.byVerdict.inconclusive > 0);
   assert.equal(out.certification.facets.resultsReviewed, false);
   const someInconclusive = out.results.find((r) => r.verdict === VERDICT.INCONCLUSIVE);
@@ -1401,7 +1401,7 @@ test('D8: each of the four declares a filter the scope authority rebuilds', asyn
     assert.equal(res.scope.claimKind, claimKind);
     assert.ok(res.scope.memberCount >= 1, `${id}: an empty population would make this check vacuous`);
     assert.match(res.scope.membersDigest, /^sha256:[0-9a-f]{64}$/);
-    const att = ctx.scopeAttestor.attest(res.scope);
+    const att = await ctx.scopeAttestor.attest(res.scope);
     assert.equal(att.ok, true, `${id}: the authority must rebuild the same population: ${JSON.stringify(att.detail)}`);
     // The rebuild is INDEPENDENT: it counted the population itself and got the
     // same number, rather than echoing the declaration back.
@@ -1419,19 +1419,19 @@ test('D8: a population the predicate under-reports is refused', async () => {
     // Drop one member and re-declare — the shape a predicate that scanned less
     // than it claims produces.
     const shrunk = { ...res.scope, memberCount: res.scope.memberCount - 1 };
-    const att = ctx.scopeAttestor.attest(shrunk);
+    const att = await ctx.scopeAttestor.attest(shrunk);
     assert.equal(att.ok, false, `${id}: an under-counted population must not attest`);
     assert.equal(att.reason, REASON.SCOPE_DIGEST_MISMATCH);
     // and an inflated digest is refused as well
     const faked = { ...res.scope, membersDigest: `sha256:${'0'.repeat(64)}` };
-    assert.equal(ctx.scopeAttestor.attest(faked).reason, REASON.SCOPE_DIGEST_MISMATCH, `${id}: a fabricated digest must not attest`);
+    assert.equal((await ctx.scopeAttestor.attest(faked)).reason, REASON.SCOPE_DIGEST_MISMATCH, `${id}: a fabricated digest must not attest`);
   }
 });
 
 test('D8: an unattestable population demotes the verdict rather than publishing it', async () => {
   // Drive route@1 through the ENGINE with a scope whose population does not
   // exist, and confirm the whole row is demoted.
-  const bad = withPredicate('route', () => ({
+  const bad = await withPredicate('route', () => ({
     outcome: OUTCOME.VIOLATED, reason: REASON.ROUTE_DESTINATION_MISMATCH,
     witnesses: [],
     counterWitnesses: [{
@@ -1556,7 +1556,7 @@ test('D10: screenControlsOnly cites the whole control census, not the option lis
 
   // The engine refuses the old shape outright.
   const cap = allCapturesOf(ctx, target).find((c) => c.inventory.length === 0 && (c.textInputs || []).length > 0);
-  const oldShape = withPredicate('screen-controls-only', () => ({
+  const oldShape = await withPredicate('screen-controls-only', () => ({
     outcome: OUTCOME.VIOLATED, reason: REASON.CONTROL_PRESENT_WHERE_FORBIDDEN, witnesses: [],
     counterWitnesses: [{ artifact: cap.artifact, sha256: cap.sha256, locator: `${cap.locatorBase}.option_inventory`, equals: [], derive: 'labels', proofKind: PROOF_KIND.INVENTORY_DIGEST }],
     scope: res.scope,
@@ -1776,6 +1776,38 @@ test('N4: a signed locus may still ADD, and still earns its certification credit
 // ===========================================================================
 
 /** Write `checklist`, re-sign the run over it, and judge the result. */
+// ===========================================================================
+// A3b — the session-candidate pre-filter against the WALKER'S REAL LEAF NAMES
+// ===========================================================================
+
+test('A3b: the sweep filter excludes step captures named the way the walker actually names them', () => {
+  // Measured on the real v100 catalogue: the step marker sits MID-NAME after
+  // the pathId slug. An exclusion anchored at the start admitted 2,330 step
+  // captures (73.6 MB raw) into the session sweep — each would have been
+  // fetched, parsed, and cached. These exact shapes are from that catalogue.
+  for (const stepLeaf of [
+    'observations/FLOOR-01--fi_7187372b190ccf6f190c/FLOOR-01--fi_7187372b190ccf6f190c-step-000-after-action.json',
+    'FLOOR-01--fi_dcba98cae8f76d0e28d1-step-074-blocked.json',
+    'FLOOR-01--fi_421a7c07db164accd308-retry-1-step-010-before.json',
+    'step-000-slot.json',
+    'steps/EXP-001/007.accessibility.json',
+    'FLOOR-01--fi_x-step-020-before.png',
+  ]) {
+    assert.equal(isSessionCandidate(stepLeaf), false, `${stepLeaf} is a step capture, never a session candidate`);
+  }
+  // And the sessions those steps belong to STAY candidates — including a path
+  // family the plan generator has never used and a dotted slug.
+  for (const sessionLeaf of [
+    'observations/FLOOR-01--fi_dcba98cae8f76d0e28d1/FLOOR-01--fi_dcba98cae8f76d0e28d1-observation.json',
+    'FLOOR-01--fi_421a7c07db164accd308-retry-1-observation.json',
+    'SCR-2.1--fi_0a1b2c3d4e5f60718293-observation.json',
+    'EXP-07.json',
+    'SELF-01.json',
+  ]) {
+    assert.equal(isSessionCandidate(sessionLeaf), true, `${sessionLeaf} must stay in the sweep`);
+  }
+});
+
 async function resignAndJudge(runDir, checklist) {
   writeFileSync(join(runDir, 'checklist.json'), `${JSON.stringify(checklist, null, 2)}\n`, 'utf8');
   writeSignedRunRecord({ runDir, repoRoot: REPO, runId: SUBSTRATE_RUN_ID, checklist });
