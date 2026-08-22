@@ -275,6 +275,22 @@ export const evidenceCatalogKey = (runId: string, evidenceId: string) =>
 export const evidenceCatalogPrefix = (runId: string) => k("runs", runId, "evidence") + "/";
 
 /**
+ * CAPTURE REF GUARD — prevents a Workflow re-execution from writing a second catalogue entry
+ * for the same artifactRef with different bytes.
+ *
+ * A retried step replays the same attemptId and step ordinals, so the observationRef names
+ * repeat by construction and the capture writes a second catalogue entry alongside the first.
+ * The guard key records the evidenceId of the FIRST capture at a given (sourceEvidenceId,
+ * artifactRef) pair. A subsequent capture with different bytes finds the guard, looks up the
+ * original entry, and returns it — making the capture idempotent at the ref level.
+ *
+ * The guard uses the sha-256 of the (sourceEvidenceId, artifactRef) pair as the key segment,
+ * so it is deterministic and collision-free within a run's evidence namespace.
+ */
+export const captureRefGuardKey = (runId: string, guardHash: string) =>
+  k("runs", runId, "capture-guards", `${guardHash}.json`);
+
+/**
  * CUMULATIVE CROSS-RUN PROVIDER SPEND LEDGER — one object for the entire Worker lifetime.
  *
  * This is the durable authority for how much has been spent on each LLM provider across

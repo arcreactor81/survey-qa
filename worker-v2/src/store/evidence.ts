@@ -15,7 +15,7 @@
 
 import type { Env } from "../types/env";
 import type { EvidenceCatalogEntry } from "../types/record";
-import { evidenceBlobKey, evidenceCatalogKey, evidenceCatalogPrefix } from "../keys";
+import { evidenceBlobKey, evidenceCatalogKey, evidenceCatalogPrefix, captureRefGuardKey } from "../keys";
 import { assertV2RunId, evidenceIdFor } from "../ids";
 import { sha256Hex } from "./hash";
 
@@ -89,8 +89,52 @@ export async function putEvidence(env: Env, input: PutEvidenceInput): Promise<Ev
   assertV2RunId(input.runId);
   const bytes = input.bytes instanceof Uint8Array ? input.bytes : new Uint8Array(input.bytes);
   const contentHash = await sha256Hex(bytes);
-  const blobKey = evidenceBlobKey(contentHash);
 
+  // REF GUARD — a re-execution of the same Workflow step must not create a second catalogue
+  // entry for the same (sourceEvidenceId, artifactRef) pair with different bytes.
+  //
+  // The step retry replays the SAME attemptId and ordinals, so the capture's observationRef
+  // names repeat by construction. Without this guard, the catalogue carries two entries for
+  // the same ref, the collision check fires, and the run mints no judgement.
+  //
+  // The guard records which evidenceId first claimed each (sourceEvidenceId, artifactRef)
+  // pair. A subsequent capture at the same pair with different bytes finds the guard and
+  // returns the ORIGINAL entry — the capture is idempotent at the ref level. A capture with
+  // IDENTICAL bytes produces the same evidenceId and lands on the existing catalogue entry's
+  // write-once guard below, which is already idempotent.
+  //
+  // COST: one conditional PUT per capture (typically a no-op on first execution since the
+  // guard does not exist yet). On a re-execution, one GET to read the original evidenceId
+  // plus one GET for the original catalogue entry.
+  if (input.sourceEvidenceId && input.artifactRef) {
+    const guardInput = `${input.sourceEvidenceId}\0${input.artifactRef}`;
+    const guardHash = await sha256Hex(guardInput);
+    const guardKey = captureRefGuardKey(input.runId, guardHash);
+    // Try to claim this ref. The onlyIf guard makes the first writer win.
+    const guardPayload = JSON.stringify({ evidenceId: "__pending__", contentHash });
+    const guardWritten = await env.EVIDENCE.put(guardKey, guardPayload, {
+      httpMetadata: { contentType: "application/json" },
+      onlyIf: { etagDoesNotMatch: "*" },
+    });
+    if (guardWritten === null) {
+      // Guard already exists — a previous capture claimed this ref.
+      const existingGuard = await env.EVIDENCE.get(guardKey);
+      if (existingGuard) {
+        const guard = JSON.parse(await existingGuard.text()) as { evidenceId: string; contentHash: string };
+        if (guard.contentHash !== contentHash) {
+          // Different bytes at the same ref: return the original entry without creating a
+          // new catalogue row. The new bytes are NOT written to the CAS — no orphaned blob.
+          const original = await getCatalogEntry(env, input.runId, guard.evidenceId);
+          if (original) return original;
+          // Guard points to an entry that no longer exists — fall through to normal write.
+        }
+        // Same contentHash: same bytes, same evidenceId — fall through to the write-once
+        // catalogue guard below, which handles this idempotently.
+      }
+    }
+  }
+
+  const blobKey = evidenceBlobKey(contentHash);
   const existing = await env.EVIDENCE.head(blobKey);
   if (!existing) {
     // Content-addressed: if two writers race, they are writing identical bytes.
@@ -144,6 +188,20 @@ export async function putEvidence(env: Env, input: PutEvidenceInput): Promise<Ev
     }
     return existing;
   }
+
+  // Update the ref guard with the REAL evidenceId now that the catalogue entry is committed.
+  // The guard was written with "__pending__" before the evidenceId was known. This overwrites
+  // the pending guard unconditionally — only the first writer reaches this point, so the
+  // overwrite is safe.
+  if (input.sourceEvidenceId && input.artifactRef) {
+    const guardInput = `${input.sourceEvidenceId}\0${input.artifactRef}`;
+    const guardHash = await sha256Hex(guardInput);
+    const guardKey = captureRefGuardKey(input.runId, guardHash);
+    await env.EVIDENCE.put(guardKey, JSON.stringify({ evidenceId, contentHash }), {
+      httpMetadata: { contentType: "application/json" },
+    });
+  }
+
   return entry;
 }
 

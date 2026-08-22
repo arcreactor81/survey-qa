@@ -128,6 +128,13 @@ export interface MintedJudgement {
   artifacts: number;
   /** How many identical catalogue rows were collapsed before judging (retried steps record twice). */
   duplicatesCollapsed: number;
+  /**
+   * How many catalogue rows were superseded by a live recording of a retried step.
+   * null when no superseded recordings were found — distinguishable from zero.
+   */
+  supersededRecordings: number | null;
+  /** Plain sentence surfaced on the report alongside duplicatesCollapsed. */
+  supersededNote: string | null;
 }
 
 /**
@@ -204,10 +211,14 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
   // ambiguity. Only DIFFERENT refs or hashes sharing a basename trigger the refusal.
   let artifacts: Array<{ name: string; bytes: Uint8Array }>;
   let duplicatesCollapsed = 0;
+  let supersededRecordings: number | null = null;
+  let supersededNote: string | null = null;
   try {
     const loaded = await loadArtifactBytes(env, inputs.evidence);
     artifacts = loaded.artifacts;
     duplicatesCollapsed = loaded.duplicatesCollapsed;
+    supersededRecordings = loaded.supersededRecordings;
+    supersededNote = loaded.supersededNote;
   } catch (err) {
     if (err instanceof ArtifactNameCollision) {
       return stageNotEvaluated<MintedJudgement>("EVIDENCE_NAME_COLLISION", err.message);
@@ -261,6 +272,10 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
       // A retried step records its captures twice; identical rows are collapsed before the
       // collision check. Zero when the catalogue had no duplicates.
       duplicatesCollapsed,
+      // Superseded recordings: same (basename, ref), different hash — resolved by verifying
+      // which blob exists in storage. null when no superseded recordings were found.
+      supersededRecordings,
+      supersededNote,
     },
     proof: {
       evaluatorId: "pipeline/judge",

@@ -583,6 +583,12 @@ const FILES = [
   // The fix strips navigation widget option labels from the text before scanning. Evidence
   // they can fail: tools/mutate-verifier-identity.mjs (nav-widget strip mutant).
   "./tests/d58-nav-widget-text-stripping.test.mjs",
+  // D101 — SUPERSEDED RECORDINGS OF RETRIED STEPS. The last blocker before the first
+  // attested, publishable result: a retried Workflow step re-captures the same screens with
+  // different bytes, the collision check fires on what is actually a retried recording, and
+  // the run mints no judgement. FIX 1 resolves at the judge side; FIX 2 guards the capture
+  // path. Evidence they can fail: tools/mutate-verifier.mjs (superseded mutants).
+  "./tests/d101-superseded-recordings.test.mjs",
 ];
 
 export async function runVerification({
