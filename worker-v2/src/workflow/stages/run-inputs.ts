@@ -305,9 +305,29 @@ function withSha256Prefix(hash: string): string {
  * `attest()` as non-primary evidence. So the engine never opens a non-JSON file for
  * anything beyond hash verification — which the authority already does up front.
  */
+/**
+ * A3b — ENGINE-READ DESCRIPTOR.
+ *
+ * An engine-read artifact contributes only its catalogue-level metadata to the
+ * loader's output. The actual bytes are fetched on demand through the R2-backed
+ * source the engine's EvidenceStore is given. This descriptor carries enough
+ * information for the authority's manifest check (contentHash, byteLength) and
+ * for constructing the R2-backed source (the catalogue entry itself).
+ */
+export interface EngineReadDescriptor {
+  name: string;
+  contentHash: string;
+  byteLength: number;
+  entry: EvidenceCatalogEntry;
+}
+
 export interface StreamingArtifactResult extends Omit<LoadArtifactBytesResult, "artifacts"> {
-  /** Artifacts the engine needs on disk — JSON files only. */
-  engineRead: Array<{ name: string; bytes: Uint8Array }>;
+  /**
+   * A3b — descriptors for engine-read artifacts (sessions, probes).
+   * NO BYTES: the engine fetches them through its async source at read time.
+   * The descriptors carry catalogue metadata for the authority's manifest check.
+   */
+  engineRead: EngineReadDescriptor[];
   /** Hash-verified but not retained in memory — PNGs, PDFs, etc. */
   preVerifiedHashes: Map<string, PreVerifiedArtifact>;
   /** Total artifacts verified (engineRead + preVerifiedHashes + limitations). */
@@ -340,65 +360,6 @@ export interface StreamingArtifactResult extends Omit<LoadArtifactBytesResult, "
  * the run reports partial verification honestly (see authority.mjs `manifestComplete`).
  */
 export const STREAMING_BATCH_SIZE = R2_READ_CONCURRENCY;
-
-/**
- * A3 — MAXIMUM RAW BYTES FOR THE ENGINE-READ SET.
- *
- * The engine reads ALL session files simultaneously: `loadSessions` iterates the full set,
- * `buildRouteTable` and `buildCensus` aggregate across all sessions at once, and `attest()`
- * re-reads witnesses by name from the same set. Route edges span sessions and census counts
- * are global — the engine's structure does not permit windowed processing of sessions.
- *
- * The resident bytes are copied up to three times at peak:
- *   1. The `engineRead` array returned from this loader (from R2)
- *   2. Written to memory-backed tmpdir via `writeFileSync` in `judge-runtime.mjs`
- *   3. Read back via `readFileSync` + JSON.parse in the engine
- *
- * Copy 1 becomes unreachable once `judgeRunInIsolate` finishes writing to tmpdir. Copy 3
- * is per-artifact in the EvidenceStore cache (each parsed JSON object, not the raw buffer).
- * The peak is approximately 2x raw bytes (tmpdir + parsed objects), plus ~40 MB for the
- * engine's own structures (route table, census, scope attestor, compiled obligations).
- *
- * With a 128 MB isolate:
- *   128 MB total - 40 MB engine overhead = 88 MB for artifact bytes
- *   88 MB / 2 (tmpdir + parsed) = 44 MB safe raw budget
- *
- * But workerd's tmpdir may share memory pages with the Buffer passed to writeFileSync,
- * and JSON.parse releases the raw buffer. Real measurement: 35 sessions x 3 MB = 105 MB
- * succeeds on the v100 run. The budget is set generously above measured success but below
- * the point where even optimistic assumptions fail.
- *
- * When the budget is exceeded, the run REFUSES with a named limitation ("engine-read set
- * too large to judge in one isolate") rather than crashing with exceededMemory. This is the
- * honest degradation the CLAUDE.md standing rules require.
- */
-export const ENGINE_READ_BYTE_BUDGET = 200 * 1024 * 1024; // 200 MB
-
-/**
- * Thrown when the engine-read set exceeds ENGINE_READ_BYTE_BUDGET.
- *
- * NOT an integrity failure — the evidence is fine, the isolate just cannot hold it all.
- * The caller catches this and returns a named `stageNotEvaluated` result.
- */
-export class EngineReadBudgetExceeded extends Error {
-  readonly totalBytes: number;
-  readonly budget: number;
-  readonly artifactCount: number;
-
-  constructor(totalBytes: number, budget: number, artifactCount: number) {
-    super(
-      `the engine-read set is ${(totalBytes / (1024 * 1024)).toFixed(1)} MB ` +
-        `(${artifactCount} artifacts), which exceeds the ${(budget / (1024 * 1024)).toFixed(0)} MB ` +
-        `isolate budget. The engine reads all sessions simultaneously (route table, census, ` +
-        `and scope attestation aggregate across the full set) so windowed processing is not ` +
-        `possible. This run is too large to judge in one isolate.`,
-    );
-    this.name = "EngineReadBudgetExceeded";
-    this.totalBytes = totalBytes;
-    this.budget = budget;
-    this.artifactCount = artifactCount;
-  }
-}
 
 /**
  * A3 — IS THIS ARTIFACT ONE THE ENGINE ACTUALLY READS FROM DISK?
@@ -811,50 +772,30 @@ export async function loadArtifactBytesStreaming(
     }
   }
 
-  const engineRead: Array<{ name: string; bytes: Uint8Array }> = [];
+  const engineRead: EngineReadDescriptor[] = [];
   const preVerifiedHashes = new Map<string, PreVerifiedArtifact>();
   const limitations: EvidenceLimitation[] = [];
   let peakResident = 0;
 
-  // --- PHASE 1: Fetch engine-read artifacts (JSON). These stay in memory. ---
-  // Concurrency bounded, per-entry demotion, same as before.
-  const engineResults = await mapConcurrent(engineEntries, R2_READ_CONCURRENCY, async ({ entry, name }) => {
-    const cached = prefetchedBytes.get(entry.evidenceId);
-    if (cached) {
-      return { ok: true as const, artifact: { name, bytes: cached } };
-    }
-    try {
-      const { bytes } = await getVerifiedEvidence(env, entry);
-      return { ok: true as const, artifact: { name, bytes } };
-    } catch (err) {
-      if (err instanceof EvidenceCatalogTampered) throw err;
-      const reason =
-        err instanceof EvidenceIntegrityFailure
-          ? err.message
-          : `failed to load evidence ${entry.evidenceId}: ${err instanceof Error ? err.message : String(err)}`;
-      return {
-        ok: false as const,
-        limitation: { name, evidenceId: entry.evidenceId, reason } satisfies EvidenceLimitation,
-      };
-    }
-  });
-
-  for (const r of engineResults) {
-    if (r.ok) engineRead.push(r.artifact);
-    else limitations.push(r.limitation);
-  }
-
-  // A3 — ENGINE-READ BYTE BUDGET CHECK.
+  // --- PHASE 1: Engine-read artifacts contribute DESCRIPTORS ONLY. ---
   //
-  // The engine reads ALL sessions simultaneously (route table, census, scope attestation
-  // aggregate across the full set). Windowed processing is not possible. If the raw bytes
-  // exceed ENGINE_READ_BYTE_BUDGET, refuse with a named error rather than OOM at mount time.
-  const engineReadTotalBytes = engineRead.reduce((sum, a) => sum + a.bytes.byteLength, 0);
-  if (engineReadTotalBytes > ENGINE_READ_BYTE_BUDGET) {
-    throw new EngineReadBudgetExceeded(engineReadTotalBytes, ENGINE_READ_BYTE_BUDGET, engineRead.length);
+  // A3b: the engine-read set (sessions, probes) is NOT fetched here. Instead,
+  // each entry contributes a descriptor with its catalogue-level metadata. The
+  // engine's async byte source fetches actual bytes on demand at read time,
+  // streaming one session at a time through the R2-backed source. This is the
+  // fix for the OOM: 112.8 MB of raw sessions never needs to be in memory at
+  // once — only the ~1.89 MB projection of each session is retained, and the
+  // raw buffer is released after each read.
+  for (const { entry, name } of engineEntries) {
+    engineRead.push({
+      name,
+      contentHash: withSha256Prefix(entry.contentHash),
+      byteLength: entry.size ?? 0,
+      entry,
+    });
   }
 
-  // Track residency: all engine-read artifacts are resident now.
+  // Track residency: engine-read descriptors are lightweight (no bytes).
   let currentResident = engineRead.length;
   if (currentResident > peakResident) peakResident = currentResident;
   residencyHook(currentResident);
@@ -967,5 +908,41 @@ export function signingKeys(env: Env): SigningKeys {
     recordKeyId: e.RECORD_SIGNING_KEY_ID ?? "v2-producer-key-1",
     judgementKeyPem: pem(e.JUDGEMENT_SIGNING_KEY),
     judgementKeyId: e.JUDGEMENT_SIGNING_KEY_ID ?? "v2-judge-key-1",
+  };
+}
+
+/**
+ * A3b — BUILD AN R2-BACKED BYTE SOURCE FOR THE JUDGE ENGINE.
+ *
+ * The source is dumb transport: name -> catalogue entry -> evidenceBlobKey(contentHash)
+ * (keys.ts:265, sharded two levels) -> env.EVIDENCE.get -> bytes. The store does all
+ * verification (signed-manifest membership, hash-at-read, fresh attest re-fetch).
+ *
+ * @param env         The Worker env with the EVIDENCE R2 bucket binding.
+ * @param descriptors The engine-read descriptors from loadArtifactBytesStreaming.
+ *                    Maps artifact name -> catalogue entry with contentHash.
+ */
+export function buildR2Source(
+  env: Env,
+  descriptors: EngineReadDescriptor[],
+): { names(): string[]; fetch(name: string): Promise<Uint8Array | null> } {
+  const byName = new Map<string, EngineReadDescriptor>();
+  for (const d of descriptors) byName.set(d.name, d);
+
+  return {
+    names() {
+      return [...byName.keys()].sort();
+    },
+    async fetch(name: string): Promise<Uint8Array | null> {
+      const d = byName.get(name);
+      if (!d) return null;
+      // The contentHash carries the sha256: prefix. Strip it to get the raw hex
+      // digest that evidenceBlobKey expects.
+      const hex = d.contentHash.replace(/^sha256:/, "");
+      const key = evidenceBlobKey(hex);
+      const obj = await env.EVIDENCE.get(key);
+      if (!obj) return null;
+      return new Uint8Array(await obj.arrayBuffer());
+    },
   };
 }

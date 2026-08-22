@@ -102,7 +102,7 @@
   // Requires the Standard Usage Model — `workers/scripts/survey-qa-v2/settings` reports
   // `usage_model: "standard"`, so `limits` is honoured. It is enforced only when deployed;
   // `wrangler dev` ignores it, which is why no local test can exercise this.
-  "limits": { "subrequests": 100000 },
+  "limits": { "subrequests": 100000, "cpu_ms": 300000 },
 
   // Distinct Workflow NAME, BINDING and CLASS. A v1 sweeper holding RUN_WORKFLOW can
   // never probe, restart or recreate a v2 instance, and vice versa.

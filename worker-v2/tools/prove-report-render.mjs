@@ -164,7 +164,7 @@ async function publishSyntheticReport({ targetBuildId } = {}) {
     keyRegistryPath: HARNESS_REGISTRY,
     contractRevisionPath: revisionPath,
   });
-  const judged = judgeRun({
+  const judged = await judgeRun({
     runDir: RUN_DIR,
     checklist: source.checklist,
     authority,

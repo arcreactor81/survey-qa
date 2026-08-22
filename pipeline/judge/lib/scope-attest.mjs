@@ -54,12 +54,21 @@
  * intermediate state. `scoped-eligible-sessions` is rebuilt from the DOCUMENT
  * MODEL (signed contract items), never from the survey's own progress control
  * (D9).
+ *
+ * A3b — ASYNC METHODS.
+ *
+ * index(), edges(), population(), attest() are now async because the store's
+ * read() is async. The fresh:true sweeps mean the engine streams each session
+ * up to ~3 times (~340 MB total R2 reads for the v100 run, all transient-
+ * bounded). That bandwidth cost is acceptable — do NOT cache-defeat the fresh
+ * semantics to save it. The "fresh" property is the entire point: re-verification
+ * that reuses cached bytes is not re-verification.
  */
 
 import { digestOf, inventorySetOf, PROOFS, controlCensusOfEvidence } from './proof.mjs';
 import { REASON, PROOF_KIND } from './vocab.mjs';
 import { EVIDENCE_CLASS } from './vocab.mjs';
-import { captureSpineState } from './evidence-store.mjs';
+import { captureSpineState, isSessionCandidate } from './evidence-store.mjs';
 import { normLine } from './normalize.mjs';
 
 export const SCOPE_ATTEST_VERSION = '2.0.0';
@@ -96,8 +105,14 @@ export class ScopeAttestor {
     this._edges = null;
   }
 
-  /** Independent re-read of every signed session artifact. */
-  index() {
+  /**
+   * Independent re-read of every signed session artifact.
+   *
+   * A3b: async — the store's read() is async. Under the async source, only
+   * session candidates are fetched (isSessionCandidate pre-filter). The fresh
+   * re-read means each session is streamed once per index() call.
+   */
+  async index() {
     if (this._index) return this._index;
     /** @type {Map<string, Array<object>>} */
     const byScreen = new Map();
@@ -106,7 +121,9 @@ export class ScopeAttestor {
     const sessions = new Map();
     for (const name of this.store.listArtifacts()) {
       if (!/\.json$/i.test(name)) continue;
-      const rec = this.store.read(name, { fresh: true });
+      // A3b — pre-filter: only fetch session candidates, same rule as loadSessions.
+      if (!isSessionCandidate(name)) continue;
+      const rec = await this.store.read(name, { fresh: true });
       if (!rec.ok || !rec.data) continue;
       if (rec.evidenceClass !== EVIDENCE_CLASS.PRIMARY_SESSION) continue;
       if (!captureSpineState(rec.data).wellFormed) continue;
@@ -146,14 +163,18 @@ export class ScopeAttestor {
    * `route-edge` proof projection as the admission oracle. The route table had
    * no part in this: the candidate claims are read straight out of the artifact
    * and each one must survive `PROOFS['route-edge']`.
+   *
+   * A3b: async — the store's read() is async.
    */
-  edges() {
+  async edges() {
     if (this._edges) return this._edges;
     const out = [];
     const proof = PROOFS[PROOF_KIND.ROUTE_EDGE];
     for (const name of this.store.listArtifacts()) {
       if (!/\.json$/i.test(name)) continue;
-      const rec = this.store.read(name, { fresh: true });
+      // A3b — pre-filter: only fetch session candidates.
+      if (!isSessionCandidate(name)) continue;
+      const rec = await this.store.read(name, { fresh: true });
       if (!rec.ok || !rec.data) continue;
       if (rec.evidenceClass !== EVIDENCE_CLASS.PRIMARY_SESSION) continue;
       const data = rec.data;
@@ -229,20 +250,22 @@ export class ScopeAttestor {
    * declares WHICH members it looked at only through a reproducible filter —
    * never through a hand-written count.
    *
-   * @returns {{ok:true, members:string[], rows:object[]}|{ok:false, reason:string, detail:any}}
+   * A3b: async — calls this.index() and this.edges() which are async.
+   *
+   * @returns {Promise<{ok:true, members:string[], rows:object[]}|{ok:false, reason:string, detail:any}>}
    */
-  population(scope) {
+  async population(scope) {
     const f = scope.filter || {};
     switch (scope.claimKind) {
-      case 'scoped-eligible-sessions': return this._eligibleSessions(scope);
-      case 'scoped-route-edges': return this._routeEdgePopulation(scope);
+      case 'scoped-eligible-sessions': return await this._eligibleSessions(scope);
+      case 'scoped-route-edges': return await this._routeEdgePopulation(scope);
       case 'scoped-occurrence-set': {
-        const idx = this.index();
+        const idx = await this.index();
         const rows = (idx.byScreen.get(scope.screen) || []).filter((r) => (f.excludeBackNav ? !r.isBackNav : true));
         return { ok: true, members: rows.map((r) => `${r.artifact}#${r.seq}`).sort(), rows };
       }
       default: {
-        const idx = this.index();
+        const idx = await this.index();
         const screens = Array.isArray(scope.screens) ? scope.screens
           : (scope.screen && scope.screen !== '(any)' ? [scope.screen] : null);
         const base = screens ? screens.flatMap((s) => idx.byScreen.get(s) || []) : idx.all;
@@ -265,15 +288,17 @@ export class ScopeAttestor {
    * reaching one it names as a screen-out, completed the survey; that is a fact
    * about the walk and the document, and the survey's own progress control has
    * no part in it.
+   *
+   * A3b: async.
    */
-  _eligibleSessions(scope) {
+  async _eligibleSessions(scope) {
     const f = scope.filter || {};
     if (f.documentEligibility === 'any-recorded-session') {
       // "the FIRST screen shown to every respondent" is a claim about every
       // session that exists, not about who completed. No document model is
       // needed, but the population is still rebuilt rather than counted by the
       // claimant.
-      const idx = this.index();
+      const idx = await this.index();
       const members = [...idx.sessions.keys()].sort();
       return { ok: true, members, rows: members.map((a) => idx.sessions.get(a)) };
     }
@@ -284,7 +309,7 @@ export class ScopeAttestor {
         detail: { why: dm ? dm.why : 'no document model was supplied to the scope authority' },
       };
     }
-    const idx = this.index();
+    const idx = await this.index();
     const completion = new Set(dm.completionScreens);
     const screenout = new Set(dm.screenoutScreens);
     const members = [];
@@ -298,8 +323,8 @@ export class ScopeAttestor {
     return { ok: true, members: members.sort(), rows };
   }
 
-  /** D8 — the edges a routing rule considered, rebuilt from the artifacts. */
-  _routeEdgePopulation(scope) {
+  /** D8 — the edges a routing rule considered, rebuilt from the artifacts. A3b: async. */
+  async _routeEdgePopulation(scope) {
     const f = scope.filter || {};
     if (!f.question) return { ok: false, reason: REASON.POPULATION_NOT_RECONSTRUCTIBLE, detail: 'the route scope declares no question' };
     const mode = f.mode === 'exclude' ? 'exclude' : 'include';
@@ -311,7 +336,8 @@ export class ScopeAttestor {
     }
     const complement = mode === 'exclude' ? f.domainCodes.map(String).filter((c) => !codes.includes(c)) : null;
 
-    const rows = this.edges().filter((e) => {
+    const allEdges = await this.edges();
+    const rows = allEdges.filter((e) => {
       if (e.question !== f.question) return false;
       if (mode === 'include') {
         if (identity === 'code') return codes.length > 0 && e.codes.some((c) => c !== null && codes.includes(String(c)));
@@ -326,17 +352,18 @@ export class ScopeAttestor {
   }
 
   /**
+   * A3b: async.
    * @param {object} scope the predicate's scope claim
-   * @returns {{ok:boolean, reason?:string, detail?:any}}
+   * @returns {Promise<{ok:boolean, reason?:string, detail?:any}>}
    */
-  attest(scope) {
+  async attest(scope) {
     if (!scope || !scope.claimKind) {
       return { ok: false, reason: REASON.SCOPE_INCOMPLETE_FOR_CLAIM, detail: 'no scope claim supplied' };
     }
     if (!ATTESTABLE_SCOPES.has(scope.claimKind)) {
       return { ok: false, reason: REASON.SCOPE_INCOMPLETE_FOR_CLAIM, detail: `claimKind ${scope.claimKind} declares no attestable population` };
     }
-    const pop = this.population(scope);
+    const pop = await this.population(scope);
     if (!pop.ok) return { ok: false, reason: pop.reason, detail: pop.detail };
     const contentDigest = scope.claimKind === 'scoped-inventory'
       ? (rows) => digestOf([...new Set(rows.flatMap((r) => r.inventorySet))].sort())

@@ -23,6 +23,10 @@
  * proof projection. If a cited artifact does not support the verdict, that is
  * an ERROR CONDITION and the obligation goes to NOT-ASSESSED. It never becomes
  * a pass.
+ *
+ * A3b: all public entry points are now async. The store fetches bytes through
+ * an injected async source, so every read/attest call returns a Promise. The
+ * algorithms are unchanged — this is mechanical await-propagation.
  */
 
 import { COVERAGE, VERDICT, DISPOSITION, OUTCOME, REASON, ENGINE_VERSION, EVIDENCE_CLASS, PROOF_KIND } from './vocab.mjs';
@@ -35,7 +39,7 @@ import { buildDocumentModel, DOCUMENT_MODEL_VERSION } from './document-model.mjs
 import { runPredicate, PREDICATE_VERSION } from './predicates.mjs';
 import { buildAmbiguityIndex, precedenceFor, LOCKED_POLICY, AMBIGUITY_POLICY_VERSION } from './ambiguity.mjs';
 import { ScopeAttestor, ATTESTABLE_SCOPES, SCOPE_ATTEST_VERSION } from './scope-attest.mjs';
-import { PROOF_VERSION } from './proof.mjs';
+import { PROOF_VERSION, PROOFS } from './proof.mjs';
 import { certify } from './certification.mjs';
 import { buildJudgementRecord, attestJudgementRecord } from './judgement-record.mjs';
 import { nullAuthority, checkEvidenceSource } from './authority.mjs';
@@ -146,7 +150,10 @@ export function evidenceIdentityBinding(ctx, authority) {
   };
 }
 
-export function buildContext(runDir, checklist, { store: injectedStore, sessions: injectedSessions, authority = null } = {}) {
+/**
+ * A3b: async — store.read() and loadSessions() are async.
+ */
+export async function buildContext(runDir, checklist, { store: injectedStore, sessions: injectedSessions, authority = null, source = null } = {}) {
   // D3: the compiler is fed the SIGNED ContractRevision items, never the local
   // checklist. An unverified authority binds nothing and the run is already
   // diagnostic-only.
@@ -158,9 +165,9 @@ export function buildContext(runDir, checklist, { store: injectedStore, sessions
   const docIndex = buildDocumentIndex(checklist, authority);
   const screenIdVocabulary = documentScreens(docIndex);
 
-  const store = injectedStore || new EvidenceStore(runDir, { authority, screenIdVocabulary });
+  const store = injectedStore || new EvidenceStore(runDir, { authority, screenIdVocabulary, source });
   if (!injectedStore) EVIDENCE_PROVENANCE.set(store, { kind: 'evidence-store', authority, runDir });
-  const sessions = injectedSessions || loadSessions(store);
+  const sessions = injectedSessions || await loadSessions(store);
   if (!injectedSessions) EVIDENCE_PROVENANCE.set(sessions, { kind: 'sessions', store });
   const routeTable = buildRouteTable(sessions);
   const census = buildCensus(sessions);
@@ -179,29 +186,159 @@ export function buildContext(runDir, checklist, { store: injectedStore, sessions
 
 /**
  * Independent re-verification of every witness a predicate produced.
- * Runs AFTER the predicate, from the artifact on disk, with no cache, and
- * recomputes the witness's whole PROOF PROJECTION rather than one field.
+ * Runs AFTER the predicate, from the artifact through the source, with no cache,
+ * and recomputes the witness's whole PROOF PROJECTION rather than one field.
+ *
+ * A3b: async. Groups witnesses by artifact and does ONE fresh fetch per artifact
+ * per attest pass, attesting all of that artifact's witnesses against that single
+ * fresh record. This preserves "fresh and uncached": the bytes come from the
+ * source (fresh from R2/disk, never from the store's main cache), and each
+ * artifact is fetched exactly once per attestAll call. The grouping avoids
+ * redundant fetches without reusing cached data.
  */
-function attestAll(store, list) {
-  const results = [];
-  for (const w of list) {
-    if (!w || !w.artifact) { results.push({ witness: w, ok: false, reason: REASON.WITNESS_LOCATOR_UNRESOLVED }); continue; }
-    const r = store.attest(w);
-    results.push({
-      witness: {
-        artifact: w.artifact, session: w.session ?? null, seq: w.seq ?? null, locator: w.locator,
-        expected: w.equals, note: w.note ?? null,
-        proofKind: w.proofKind || PROOF_KIND.CAPTURE_FIELD,
-        proofClaim: w.proof ? w.proof.claim : null,
-      },
-      ok: r.ok,
-      reason: r.ok ? null : r.reason,
-      detail: r.ok ? undefined : r.detail,
-      observed: r.ok ? undefined : r.observed,
-      proofKind: r.proofKind || w.proofKind || PROOF_KIND.CAPTURE_FIELD,
-      sha256: r.sha256 ?? w.sha256 ?? null,
-    });
+async function attestAll(store, list) {
+  // Group witnesses by artifact name so each artifact is fetched only once.
+  const byArtifact = new Map();
+  for (let i = 0; i < list.length; i++) {
+    const w = list[i];
+    if (!w || !w.artifact) continue;
+    if (!byArtifact.has(w.artifact)) byArtifact.set(w.artifact, []);
+    byArtifact.get(w.artifact).push({ index: i, witness: w });
   }
+
+  const results = new Array(list.length);
+
+  // Handle witnesses without artifacts first.
+  for (let i = 0; i < list.length; i++) {
+    const w = list[i];
+    if (!w || !w.artifact) {
+      results[i] = { witness: w, ok: false, reason: REASON.WITNESS_LOCATOR_UNRESOLVED };
+    }
+  }
+
+  // For each artifact, fetch once and attest all its witnesses.
+  for (const [artifactName, witnesses] of byArtifact) {
+    // Fresh read: bytes come from the source, not the cache.
+    const rec = await store.read(artifactName, { fresh: true });
+
+    for (const { index, witness } of witnesses) {
+      if (!rec.ok) {
+        const reason = rec.reason === REASON.CITED_ARTIFACT_MISSING ? REASON.CITED_ARTIFACT_MISSING
+          : rec.reason === REASON.ARTIFACT_NOT_IN_SIGNED_MANIFEST ? REASON.ARTIFACT_NOT_IN_SIGNED_MANIFEST
+            : rec.reason === REASON.ARTIFACT_HASH_MISMATCH ? REASON.ARTIFACT_HASH_MISMATCH
+              : rec.reason === REASON.ARTIFACT_OUTSIDE_EVIDENCE_ROOT ? REASON.ARTIFACT_OUTSIDE_EVIDENCE_ROOT
+                : REASON.WITNESS_REREAD_FAILED;
+        results[index] = {
+          witness: {
+            artifact: witness.artifact, session: witness.session ?? null, seq: witness.seq ?? null,
+            locator: witness.locator, expected: witness.equals, note: witness.note ?? null,
+            proofKind: witness.proofKind || PROOF_KIND.CAPTURE_FIELD,
+            proofClaim: witness.proof ? witness.proof.claim : null,
+          },
+          ok: false, reason, sha256: rec.sha256 ?? null,
+          proofKind: witness.proofKind || PROOF_KIND.CAPTURE_FIELD,
+        };
+        continue;
+      }
+
+      // A witness may pin a hash; it must agree with the signed one as well.
+      if (witness.sha256 && witness.sha256 !== rec.sha256) {
+        results[index] = {
+          witness: {
+            artifact: witness.artifact, session: witness.session ?? null, seq: witness.seq ?? null,
+            locator: witness.locator, expected: witness.equals, note: witness.note ?? null,
+            proofKind: witness.proofKind || PROOF_KIND.CAPTURE_FIELD,
+            proofClaim: witness.proof ? witness.proof.claim : null,
+          },
+          ok: false, reason: REASON.WITNESS_REREAD_FAILED,
+          observed: rec.sha256, sha256: rec.sha256,
+          proofKind: witness.proofKind || PROOF_KIND.CAPTURE_FIELD,
+        };
+        continue;
+      }
+
+      // Non-primary evidence class check.
+      const NON_PRIMARY = new Set([EVIDENCE_CLASS.IMAGE, EVIDENCE_CLASS.DERIVED_SUMMARY, EVIDENCE_CLASS.UNKNOWN]);
+      const CLASS_REF = {
+        [EVIDENCE_CLASS.IMAGE]: REASON.IMAGE_ONLY_EVIDENCE,
+        [EVIDENCE_CLASS.DERIVED_SUMMARY]: REASON.DERIVED_SUMMARY_CITED_AS_PRIMARY,
+        [EVIDENCE_CLASS.UNKNOWN]: REASON.UNKNOWN_ARTIFACT_CLASS_CITED,
+      };
+      if (NON_PRIMARY.has(rec.evidenceClass)) {
+        results[index] = {
+          witness: {
+            artifact: witness.artifact, session: witness.session ?? null, seq: witness.seq ?? null,
+            locator: witness.locator, expected: witness.equals, note: witness.note ?? null,
+            proofKind: witness.proofKind || PROOF_KIND.CAPTURE_FIELD,
+            proofClaim: witness.proof ? witness.proof.claim : null,
+          },
+          ok: false, reason: CLASS_REF[rec.evidenceClass], sha256: rec.sha256,
+          evidenceClass: rec.evidenceClass,
+          proofKind: witness.proofKind || PROOF_KIND.CAPTURE_FIELD,
+        };
+        continue;
+      }
+
+      const kind = witness.proofKind || (witness.proof && witness.proof.kind) || PROOF_KIND.CAPTURE_FIELD;
+      const proof = PROOFS[kind];
+      if (!proof) {
+        results[index] = {
+          witness: {
+            artifact: witness.artifact, session: witness.session ?? null, seq: witness.seq ?? null,
+            locator: witness.locator, expected: witness.equals, note: witness.note ?? null,
+            proofKind: kind, proofClaim: witness.proof ? witness.proof.claim : null,
+          },
+          ok: false, reason: REASON.PROOF_PROJECTION_MISSING, sha256: rec.sha256, proofKind: kind,
+        };
+        continue;
+      }
+
+      const claim = kind === PROOF_KIND.CAPTURE_FIELD
+        ? { locator: witness.locator, derive: witness.derive, ...('equals' in witness ? { equals: witness.equals } : {}) }
+        : (witness.proof && witness.proof.claim) || null;
+      if (!claim) {
+        results[index] = {
+          witness: {
+            artifact: witness.artifact, session: witness.session ?? null, seq: witness.seq ?? null,
+            locator: witness.locator, expected: witness.equals, note: witness.note ?? null,
+            proofKind: kind, proofClaim: null,
+          },
+          ok: false, reason: REASON.PROOF_PROJECTION_MISSING, sha256: rec.sha256, proofKind: kind,
+        };
+        continue;
+      }
+
+      let r;
+      try { r = proof(rec.data, claim); } catch (e) {
+        results[index] = {
+          witness: {
+            artifact: witness.artifact, session: witness.session ?? null, seq: witness.seq ?? null,
+            locator: witness.locator, expected: witness.equals, note: witness.note ?? null,
+            proofKind: kind, proofClaim: witness.proof ? witness.proof.claim : null,
+          },
+          ok: false, reason: REASON.PROOF_PROJECTION_FAILED, sha256: rec.sha256, proofKind: kind,
+          observed: String(e && e.message ? e.message : e),
+        };
+        continue;
+      }
+
+      results[index] = {
+        witness: {
+          artifact: witness.artifact, session: witness.session ?? null, seq: witness.seq ?? null, locator: witness.locator,
+          expected: witness.equals, note: witness.note ?? null,
+          proofKind: witness.proofKind || PROOF_KIND.CAPTURE_FIELD,
+          proofClaim: witness.proof ? witness.proof.claim : null,
+        },
+        ok: r.ok,
+        reason: r.ok ? null : r.reason,
+        detail: r.ok ? undefined : r.detail,
+        observed: r.ok ? undefined : r.observed,
+        proofKind: r.proofKind || kind,
+        sha256: rec.sha256,
+      };
+    }
+  }
+
   return results;
 }
 
@@ -209,8 +346,10 @@ function attestAll(store, list) {
  * FALSE-PASS TRIPWIRES. Every one of these turns a would-be pass into a
  * non-pass — and, since D5, every one of them turns a would-be FAIL into a
  * non-fail too where the claim's completeness is part of the assertion.
+ *
+ * A3b: async — scopeAttestor.attest() is async.
  */
-function tripwires(predicateResult, attestations, expectation, ctx) {
+async function tripwires(predicateResult, attestations, expectation, ctx) {
   const fired = [];
   const positives = predicateResult.witnesses || [];
   const counters = predicateResult.counterWitnesses || [];
@@ -249,7 +388,7 @@ function tripwires(predicateResult, attestations, expectation, ctx) {
     if (!s || !ATTESTABLE_SCOPES.has(s.claimKind)) {
       fired.push({ code: REASON.SCOPE_INCOMPLETE_FOR_CLAIM, detail: `${pid} asserts a completeness claim with no attestable scope` });
     } else {
-      const r = ctx.scopeAttestor.attest(s);
+      const r = await ctx.scopeAttestor.attest(s);
       if (!r.ok) fired.push({ code: r.reason, detail: `scope re-derivation failed: ${JSON.stringify(r.detail)}` });
     }
   }
@@ -266,7 +405,7 @@ function tripwires(predicateResult, attestations, expectation, ctx) {
       if (!s || !s.claimKind || !enumerated) {
         fired.push({ code: REASON.INVENTORY_INCOMPLETE, detail: 'absence claim without a complete scoped inventory' });
       } else if (ATTESTABLE_SCOPES.has(s.claimKind)) {
-        const r = ctx.scopeAttestor.attest(s);
+        const r = await ctx.scopeAttestor.attest(s);
         if (!r.ok) fired.push({ code: r.reason, detail: `absence scope re-derivation failed: ${JSON.stringify(r.detail)}` });
       }
     }
@@ -344,17 +483,20 @@ function deriveVerdict({ expectation, predicateResult, trippedWires, precedence 
  * Diagnostic ONLY. The derived verdict is computed without ever looking at the
  * prior claim; this cross-check exists so the run can report where the previous
  * prose contradicted the artifact it cited. It must never feed the verdict.
+ *
+ * A3b: async — store.read() is async.
  */
-function crossCheckPriorClaim(store, obligationId, prior) {
+async function crossCheckPriorClaim(store, obligationId, prior) {
   if (!prior) return null;
   // The prior `evidence` field is FREE TEXT, which is the root of the whole
   // problem: a citation nothing can resolve is a citation nothing can check.
   const cited = String(prior.evidence || '').split(',').map((s) => s.trim()).filter(Boolean);
   const looksLikeRef = (s) => /\.(json|png|jpe?g)(#|$)/i.test(s) && !/[*]/.test(s) && !/\/\d{3}/.test(s);
-  const refs = cited.map((c) => {
+  const refs = [];
+  for (const c of cited) {
     const machineResolvable = looksLikeRef(c);
-    const rec = machineResolvable ? store.read(c) : { ok: false, evidenceClass: EVIDENCE_CLASS.UNKNOWN, sha256: null };
-    return {
+    const rec = machineResolvable ? await store.read(c) : { ok: false, evidenceClass: EVIDENCE_CLASS.UNKNOWN, sha256: null };
+    refs.push({
       cited: c,
       machineResolvable,
       resolved: rec.ok,
@@ -364,8 +506,8 @@ function crossCheckPriorClaim(store, obligationId, prior) {
         : !rec.ok ? REASON.CITED_ARTIFACT_MISSING
           : rec.evidenceClass === EVIDENCE_CLASS.DERIVED_SUMMARY ? REASON.DERIVED_SUMMARY_CITED_AS_PRIMARY
             : rec.evidenceClass === EVIDENCE_CLASS.IMAGE ? REASON.IMAGE_ONLY_EVIDENCE : null,
-    };
-  });
+    });
+  }
   return {
     priorVerdict: prior.verdict || null,
     priorObservationText: prior.observation || null,
@@ -385,7 +527,10 @@ const PRIOR_TO_AXIS = {
   NOT_OBSERVABLE: VERDICT.NOT_ASSESSED,
 };
 
-export function judgeObligation(obligation, ctx, ambIndex, prior = null) {
+/**
+ * A3b: async — attestAll and tripwires are async.
+ */
+export async function judgeObligation(obligation, ctx, ambIndex, prior = null) {
   const { expectation, ruleId } = compileObligation(obligation, ctx.docIndex);
   const precedence = precedenceFor(obligation.id, ambIndex);
 
@@ -396,10 +541,10 @@ export function judgeObligation(obligation, ctx, ambIndex, prior = null) {
   if (expectation) {
     predicateResult = runPredicate(expectation, ctx);
     attestations = {
-      positive: attestAll(ctx.store, predicateResult.witnesses || []),
-      counter: attestAll(ctx.store, predicateResult.counterWitnesses || []),
+      positive: await attestAll(ctx.store, predicateResult.witnesses || []),
+      counter: await attestAll(ctx.store, predicateResult.counterWitnesses || []),
     };
-    trippedWires = tripwires(predicateResult, attestations, expectation, ctx);
+    trippedWires = await tripwires(predicateResult, attestations, expectation, ctx);
   }
 
   const d = deriveVerdict({ expectation, predicateResult, trippedWires, precedence });
@@ -453,7 +598,7 @@ export function judgeObligation(obligation, ctx, ambIndex, prior = null) {
     ambiguityPrecedence: (precedence.ambiguities.length || (precedence.declinedAsIrrelevant || []).length) ? precedence : null,
 
     // --- diagnostic only --------------------------------------------------
-    priorClaim: crossCheckPriorClaim(ctx.store, obligation.id, prior),
+    priorClaim: await crossCheckPriorClaim(ctx.store, obligation.id, prior),
     priorVerdictAxis: prior && prior.verdict ? (PRIOR_TO_AXIS[prior.verdict] || null) : null,
   };
 }
@@ -481,6 +626,7 @@ function dedupeRefs(list) {
 }
 
 /**
+ * A3b: async.
  * @param {object} o
  * @param {string} o.runDir
  * @param {object} o.checklist
@@ -488,8 +634,10 @@ function dedupeRefs(list) {
  *   one the run is DIAGNOSTIC ONLY: it still derives verdicts so an operator
  *   can see what happened, but nothing it produces may be published.
  * @param {{privateKeyPem:string,keyId:string,signedAt:string}} [o.signer]
+ * @param {{names():string[], fetch(name:string):Promise<Uint8Array|null>}} [o.source]
+ *   A3b: async byte source. When null the store creates a disk-backed source.
  */
-export function judgeRun({ runDir, checklist, priorObservations = null, authority = null, signer = null, ...rest }) {
+export async function judgeRun({ runDir, checklist, priorObservations = null, authority = null, signer = null, source = null, ...rest }) {
   // D4: the ambiguity gate is locked. A caller-supplied policy was a documented
   // bypass of a rule the whole design calls non-negotiable.
   if ('policy' in rest) {
@@ -508,13 +656,13 @@ export function judgeRun({ runDir, checklist, priorObservations = null, authorit
   // The previous guard named `policy`, `store` and `sessions` and let every
   // other key through unread. Naming the known-bad arguments means the next
   // parameter added anywhere in this file is admitted by default; the surface is
-  // now the five parameters below and nothing else, so a fourth injection point
+  // now the six parameters below and nothing else, so a fourth injection point
   // cannot appear by omission.
   const extra = Object.keys(rest);
   if (extra.length) {
-    throw new Error(`judgeRun does not accept [${extra.join(', ')}]: its parameters are exactly {runDir, checklist, priorObservations, authority, signer}. Anything else would be an input to a signed result that nothing verified.`);
+    throw new Error(`judgeRun does not accept [${extra.join(', ')}]: its parameters are exactly {runDir, checklist, priorObservations, authority, signer, source}. Anything else would be an input to a signed result that nothing verified.`);
   }
-  return runJudgement({ runDir, checklist, priorObservations, authority, signer, injected: null });
+  return runJudgement({ runDir, checklist, priorObservations, authority, signer, injected: null, source });
 }
 
 /**
@@ -523,12 +671,17 @@ export function judgeRun({ runDir, checklist, priorObservations = null, authorit
  * and is never signed, whatever authority it is handed. That is the whole point
  * of separating it: injection and publication are now mutually exclusive by
  * construction rather than by convention.
+ *
+ * A3b: async.
  */
-export function judgeRunWithInjectedEvidence({ runDir, checklist, priorObservations = null, store = undefined, sessions = undefined, authority = null }) {
-  return runJudgement({ runDir, checklist, priorObservations, authority, signer: null, injected: { store, sessions } });
+export async function judgeRunWithInjectedEvidence({ runDir, checklist, priorObservations = null, store = undefined, sessions = undefined, authority = null }) {
+  return runJudgement({ runDir, checklist, priorObservations, authority, signer: null, injected: { store, sessions }, source: null });
 }
 
-function runJudgement({ runDir, checklist, priorObservations, authority, signer, injected }) {
+/**
+ * A3b: async — buildContext, judgeObligation, crossCheckPriorClaim are all async.
+ */
+async function runJudgement({ runDir, checklist, priorObservations, authority, signer, injected, source = null }) {
   const auth = authority || nullAuthority(REASON.EVIDENCE_AUTHORITY_UNVERIFIED, 'no signed evidence authority was supplied to judgeRun');
   // N2 — THE EVIDENCE SOURCE IS BOUND TO THE AUTHORITY, AND A MISMATCH REFUSES.
   //
@@ -545,10 +698,11 @@ function runJudgement({ runDir, checklist, priorObservations, authority, signer,
       { expected: src.expected, actual: src.actual },
     );
   }
-  const ctx = buildContext(runDir, checklist, {
+  const ctx = await buildContext(runDir, checklist, {
     store: injected ? injected.store : undefined,
     sessions: injected ? injected.sessions : undefined,
     authority: auth.verified ? auth : null,
+    source,
   });
   // D2: recomputed here, from object identity, immediately before it is used.
   // Passing NOTHING through the injection entry point would otherwise let it
@@ -567,7 +721,10 @@ function runJudgement({ runDir, checklist, priorObservations, authority, signer,
 
   const priorMap = priorObservations && priorObservations.obligation_observations ? priorObservations.obligation_observations : {};
 
-  const results = ctx.docIndex.bound.list.map((o) => judgeObligation(o, ctx, ambIndex, priorMap[o.id] || null));
+  const results = [];
+  for (const o of ctx.docIndex.bound.list) {
+    results.push(await judgeObligation(o, ctx, ambIndex, priorMap[o.id] || null));
+  }
 
   const counts = tally(results);
   const certification = certify({
@@ -587,11 +744,13 @@ function runJudgement({ runDir, checklist, priorObservations, authority, signer,
   };
 
   const generatedAt = new Date().toISOString();
-  const source = {
+  const source_ = {
     runDir,
     artifactsRead: ctx.store.readCount,
     sessions: ctx.sessions.length,
     sessionsQuarantined: (ctx.sessions.quarantined || []).length,
+    /** A3b — names listed in manifest but not fetched (hash-verified upstream, not engine-read). */
+    listedNotFetched: ctx.sessions.listedNotFetched ?? 0,
     hashAuthority: ctx.store.authoritative ? 'signed-run-record' : 'unattested-local-read',
     // D2: stated on every output, not only when it fails.
     evidenceIdentityBound: evidenceBinding.bound,
@@ -608,6 +767,8 @@ function runJudgement({ runDir, checklist, priorObservations, authority, signer,
     compilerFieldsBound: ctx.docIndex.fieldsBound,
     // D9
     eligibilitySource: ctx.documentModel && ctx.documentModel.available ? ctx.documentModel.source : 'unavailable',
+    // A3b — retained projection accounting
+    retainedProjectionBytes: ctx.store.retainedBytes,
   };
   const denominator = {
     obligations: checklist.obligations.length,
@@ -626,7 +787,7 @@ function runJudgement({ runDir, checklist, priorObservations, authority, signer,
 
   let judgement = buildJudgementRecord({
     authority: auth, versions, generatedAt, denominator, counts, certification,
-    results, routeTable: publicRt, ambiguityIndex: publicAmbiguityIndex, source,
+    results, routeTable: publicRt, ambiguityIndex: publicAmbiguityIndex, source: source_,
     // D2/D3/D5: three separate facts a signature may not be issued without —
     // the evidence was built from THIS authority, every field the compiler read
     // was covered by it, and the ambiguity set that governs withholding is too.
@@ -661,7 +822,7 @@ function runJudgement({ runDir, checklist, priorObservations, authority, signer,
       findings: ctx.docIndex.bindingFindings,
     },
     evidenceBinding,
-    source,
+    source: source_,
     denominator,
     counts,
     certification,
