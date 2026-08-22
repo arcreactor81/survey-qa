@@ -236,6 +236,18 @@ const MUTANTS = [
     kills: ["NEGATIVE: the destination cannot be identified — `insufficient`, and NOT a fabricated fail"],
   },
 
+  // ------------------------------------------------------- catalogue deduplication
+  {
+    name: "the dedupe collapses DIFFERENT-hash entries too — the dangerous weakening",
+    breaks:
+      "two artifacts that share a basename but differ in content are collapsed into one, " +
+      "so the mount loses evidence and the judgement proceeds over a smaller set in silence",
+    file: INPUTS,
+    find: "    const dedupeKey = `${name}\\0${ref}\\0${entry.contentHash}`;",
+    replace: "    const dedupeKey = `${name}`;",
+    kills: ["a TRUE collision (same basename, different hash) is still refused after the dedupe pass"],
+  },
+
   // ------------------------------------------------------------- signing posture
   {
     name: "a signing key materializes when none was configured",

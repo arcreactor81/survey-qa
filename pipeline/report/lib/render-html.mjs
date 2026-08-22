@@ -2370,6 +2370,8 @@ function renderEvidence(view) {
         badge = `<span class="badge badge--fail"><span class="glyph" aria-hidden="true">✕</span>Hash mismatch — link withheld</span>`;
       else if (a.state === "missing")
         badge = `<span class="badge badge--warn"><span class="glyph" aria-hidden="true">!</span>Bytes not found</span>`;
+      else if (a.state === "unaudited")
+        badge = `<span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not audited — render budget exhausted</span>`;
       else
         badge = `<span class="badge badge--neutral"><span class="glyph" aria-hidden="true">·</span>Not checked — no artifacts directory supplied</span>`;
 
@@ -2381,7 +2383,9 @@ function renderEvidence(view) {
                 ? "withheld: stored bytes do not match the signed hash"
                 : a.state === "missing"
                   ? "unavailable: artifact bytes are not present"
-                  : "metadata only in this render"
+                  : a.state === "unaudited"
+                    ? "not audited: render budget exhausted"
+                    : "metadata only in this render"
             )}</span>`;
 
       return `<tr id="ev-${esc(e.evidenceId)}">

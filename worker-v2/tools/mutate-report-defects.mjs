@@ -240,6 +240,28 @@ const MUTANTS = [
     replace: "",
     kills: ["B5 — the stop reasons are in the reader's words, and `blocked` is not an accusation"],
   },
+
+  // ---- the trust card: unaudited is not absent (D100) ----
+  {
+    name: "unaudited counted as verified — a budget-exhausted artifact is promoted to hash-checked",
+    breaks:
+      "the trust card says 8007 of 8007 hash-verified, when only 500 were opened — the render " +
+      "budget is a cost cap, not a proof",
+    file: "../pipeline/report/lib/publication.mjs",
+    find: '  const unaudited = audits.filter((a) => a.state === "unaudited").length;',
+    replace: '  const unaudited = 0;',
+    kills: ["the trust card words verified + unaudited + missing honestly, never folding unaudited into absent"],
+  },
+  {
+    name: "unaudited folded back into missing — budget exhaustion reads as storage losing files",
+    breaks:
+      "the card prints '6556 absent' over files the render never opened, accusing storage of " +
+      "losing artifacts it simply did not have budget to check",
+    file: "../pipeline/report/lib/publication.mjs",
+    find: '  const missing = audits.filter((a) => a.state === "missing").length;\n  const unaudited = audits.filter((a) => a.state === "unaudited").length;',
+    replace: '  const missing = audits.filter((a) => a.state === "missing" || a.state === "unaudited").length;\n  const unaudited = 0;',
+    kills: ["the trust card words verified + unaudited + missing honestly, never folding unaudited into absent"],
+  },
 ];
 
 await runMutantSuite({

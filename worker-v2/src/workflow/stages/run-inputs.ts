@@ -145,12 +145,47 @@ export class ArtifactNameCollision extends Error {
   }
 }
 
+export interface LoadArtifactBytesResult {
+  artifacts: Array<{ name: string; bytes: Uint8Array }>;
+  /** How many duplicate catalogue rows were collapsed (retried steps record their captures twice). */
+  duplicatesCollapsed: number;
+}
+
+/**
+ * DEDUPLICATE identical catalogue entries before the collision check.
+ *
+ * A Workflow step that retries re-records its captures, so the catalogue may contain N
+ * entries whose (basename, artifactRef, contentHash) triple is byte-identical. Those are
+ * ONE artifact recorded N times, not N ambiguous artifacts. Collapse them (keep one) and
+ * count the collapse.
+ *
+ * A basename that maps to two DIFFERENT artifactRefs or two different contentHashes is a
+ * TRUE collision — the refusal fires exactly as before.
+ */
+function deduplicateEvidence(evidence: EvidenceCatalogEntry[]): { deduped: EvidenceCatalogEntry[]; collapsed: number } {
+  const seen = new Map<string, EvidenceCatalogEntry>();
+  let collapsed = 0;
+  for (const entry of evidence) {
+    const ref = String(entry.artifactRef ?? entry.sourceEvidenceId ?? entry.evidenceId);
+    const name = ref.split("/").pop() ?? entry.evidenceId;
+    const dedupeKey = `${name}\0${ref}\0${entry.contentHash}`;
+    if (seen.has(dedupeKey)) {
+      collapsed += 1;
+    } else {
+      seen.set(dedupeKey, entry);
+    }
+  }
+  return { deduped: [...seen.values()], collapsed };
+}
+
 export async function loadArtifactBytes(
   env: Env,
   evidence: EvidenceCatalogEntry[],
-): Promise<Array<{ name: string; bytes: Uint8Array }>> {
+): Promise<LoadArtifactBytesResult> {
+  const { deduped, collapsed } = deduplicateEvidence(evidence);
+
   const byName = new Map<string, string[]>();
-  for (const entry of evidence) {
+  for (const entry of deduped) {
     const ref = String(entry.artifactRef ?? entry.sourceEvidenceId ?? entry.evidenceId);
     const name = ref.split("/").pop() ?? entry.evidenceId;
     const refs = byName.get(name);
@@ -162,13 +197,13 @@ export async function loadArtifactBytes(
     .map(([name, refs]) => ({ name, refs }));
   if (collisions.length > 0) throw new ArtifactNameCollision(collisions);
 
-  const out: Array<{ name: string; bytes: Uint8Array }> = [];
-  for (const entry of evidence) {
+  const artifacts: Array<{ name: string; bytes: Uint8Array }> = [];
+  for (const entry of deduped) {
     const ref = entry.artifactRef ?? entry.sourceEvidenceId ?? entry.evidenceId;
     const { bytes } = await getVerifiedEvidence(env, entry);
-    out.push({ name: String(ref).split("/").pop() ?? entry.evidenceId, bytes });
+    artifacts.push({ name: String(ref).split("/").pop() ?? entry.evidenceId, bytes });
   }
-  return out;
+  return { artifacts, duplicatesCollapsed: collapsed };
 }
 
 /**

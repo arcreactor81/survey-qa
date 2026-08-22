@@ -538,3 +538,66 @@ test("the contract-review statement no longer claims a human sealed anything", a
   assert.match(contract.scope, /may be automated/i);
   assert.match(contract.scope, /a seal is not a review/i);
 });
+
+/* ================================================================= *
+ * Trust card: unaudited artifacts are not absent                      *
+ * ================================================================= */
+
+test("the trust card words verified + unaudited + missing honestly, never folding unaudited into absent", async () => {
+  const { buildTrustStatements } = await import("../lib/publication.mjs");
+  const audit = new Map();
+  audit.set("ev1", { state: "verified" });
+  audit.set("ev2", { state: "verified" });
+  audit.set("ev3", { state: "verified" });
+  audit.set("ev4", { state: "unaudited", note: "not audited at render time: byte budget exhausted" });
+  audit.set("ev5", { state: "unaudited", note: "not audited at render time: byte budget exhausted" });
+  audit.set("ev6", { state: "missing", note: "GET failed" });
+  const statements = buildTrustStatements({
+    attestation: { state: "verified", reason: "ok" },
+    evidenceAudit: audit,
+    evidenceCount: 6,
+    revision: { sealed: true, humanReviewed: true, revisionId: "cr_tc" },
+    resultReview: { state: "complete", headline: "complete", policyVersion: null },
+  });
+  const ev = statements.find((s) => s.id === "evidence-files");
+  assert.match(ev.value, /3 of 6 hash-verified/, "verified count must appear");
+  assert.match(ev.value, /2 not audited at render time/, "unaudited count must appear as 'not audited'");
+  assert.match(ev.value, /1 absent/, "truly missing count must appear as 'absent'");
+  assert.ok(!/2 absent/.test(ev.value), "unaudited must never read as absent");
+  assert.equal(ev.state, "partial", "anything unaudited or missing keeps state partial");
+});
+
+test("a trust card with zero unaudited and zero missing omits both groups", async () => {
+  const { buildTrustStatements } = await import("../lib/publication.mjs");
+  const audit = new Map();
+  audit.set("ev1", { state: "verified" });
+  audit.set("ev2", { state: "verified" });
+  const statements = buildTrustStatements({
+    attestation: { state: "verified", reason: "ok" },
+    evidenceAudit: audit,
+    evidenceCount: 2,
+    revision: { sealed: true, humanReviewed: true, revisionId: "cr_tc" },
+    resultReview: { state: "complete", headline: "complete", policyVersion: null },
+  });
+  const ev = statements.find((s) => s.id === "evidence-files");
+  assert.equal(ev.value, "2 of 2 hash-verified");
+  assert.equal(ev.state, "verified");
+});
+
+test("a real GET failure still reads as absent, not as unaudited", async () => {
+  const { buildTrustStatements } = await import("../lib/publication.mjs");
+  const audit = new Map();
+  audit.set("ev1", { state: "verified" });
+  audit.set("ev2", { state: "missing", note: "GET returned 404" });
+  const statements = buildTrustStatements({
+    attestation: { state: "verified", reason: "ok" },
+    evidenceAudit: audit,
+    evidenceCount: 2,
+    revision: { sealed: true, humanReviewed: true, revisionId: "cr_tc" },
+    resultReview: { state: "complete", headline: "complete", policyVersion: null },
+  });
+  const ev = statements.find((s) => s.id === "evidence-files");
+  assert.match(ev.value, /1 absent/, "a real GET failure must still read as absent");
+  assert.ok(!/not audited/.test(ev.value), "a real GET failure must not read as unaudited");
+  assert.equal(ev.state, "partial");
+});

@@ -126,6 +126,8 @@ export interface MintedJudgement {
   checklistSource: "extraction" | "revision-projection";
   ambiguitiesAvailable: boolean;
   artifacts: number;
+  /** How many identical catalogue rows were collapsed before judging (retried steps record twice). */
+  duplicatesCollapsed: number;
 }
 
 /**
@@ -196,9 +198,16 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
   // A catalogue whose basenames collide cannot be judged honestly: the mount would lose
   // evidence and the signed manifest would double-count it. Saying so is the right outcome;
   // judging the survivors would report a smaller evidence set as if it were the whole one.
+  //
+  // Identical duplicates (same basename, same artifactRef, same contentHash) are collapsed
+  // first — a retried Workflow step records its captures twice, and that is routine, not
+  // ambiguity. Only DIFFERENT refs or hashes sharing a basename trigger the refusal.
   let artifacts: Array<{ name: string; bytes: Uint8Array }>;
+  let duplicatesCollapsed = 0;
   try {
-    artifacts = await loadArtifactBytes(env, inputs.evidence);
+    const loaded = await loadArtifactBytes(env, inputs.evidence);
+    artifacts = loaded.artifacts;
+    duplicatesCollapsed = loaded.duplicatesCollapsed;
   } catch (err) {
     if (err instanceof ArtifactNameCollision) {
       return stageNotEvaluated<MintedJudgement>("EVIDENCE_NAME_COLLISION", err.message);
@@ -249,6 +258,9 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
       checklistSource: fromExtraction ? "extraction" : "revision-projection",
       ambiguitiesAvailable: !!checklist.ambiguitiesAvailable,
       artifacts: artifacts.length,
+      // A retried step records its captures twice; identical rows are collapsed before the
+      // collision check. Zero when the catalogue had no duplicates.
+      duplicatesCollapsed,
     },
     proof: {
       evaluatorId: "pipeline/judge",
