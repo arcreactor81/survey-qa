@@ -589,6 +589,10 @@ const FILES = [
   // the run mints no judgement. FIX 1 resolves at the judge side; FIX 2 guards the capture
   // path. Evidence they can fail: tools/mutate-verifier.mjs (superseded mutants).
   "./tests/d101-superseded-recordings.test.mjs",
+  // REPLAY FENCE — the write fence that keeps a replay from mutating the source run's
+  // data. The mutant proof: removing the rewrite lets a write hit the source key, and
+  // the guard test goes red before anything touches a real key.
+  "./tests/replay-fence.test.mjs",
 ];
 
 export async function runVerification({

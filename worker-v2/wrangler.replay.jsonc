@@ -1,0 +1,188 @@
+// survey-qa-replay — SCRATCH WORKER for offline replay of the judging tail.
+//
+// NEVER PROD. This worker replays archived runs' tail stages (project-observations
+// through report build/publish) against the real R2 evidence store, with every write
+// fenced under a replay-prefixed run id. It exists so the judging pipeline can be
+// iterated in minutes without a live production run.
+//
+// REPLAY_ENABLED is set ONLY here. The entrypoint hard-refuses without it, the same
+// way DEV_SEED works — absent from every prod/arm config, so deploying this config to
+// the prod worker name is not possible (the name is different) and deploying the prod
+// config here would disable the replay routes (REPLAY_ENABLED would be absent).
+//
+// workers_dev: true is acceptable here — the worker is protected by REPLAY_TOKEN,
+// a secret set via `wrangler secret put` on this worker only.
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+
+  "name": "survey-qa-replay",
+  "main": "src/replay/replay-entrypoint.ts",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "upload_source_maps": false,
+
+  "rules": [{ "type": "Text", "globs": ["**/report.css"], "fallthrough": false }],
+
+  // Scratch worker — workers.dev is fine, protected by REPLAY_TOKEN secret.
+  "workers_dev": true,
+  "preview_urls": false,
+
+  // SAME bucket as prod — reads pass through, writes are fenced by ReplayBucket.
+  "r2_buckets": [{ "binding": "EVIDENCE", "bucket_name": "survey-qa-artifacts" }],
+
+  // Same subrequest/time limits as prod — budget deaths ARE findings.
+  "limits": { "subrequests": 100000 },
+
+  // Same Secrets Store bindings for signing keys.
+  "secrets_store_secrets": [
+    {
+      "binding": "ANTHROPIC_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "ANTHROPIC_API_KEY"
+    },
+    {
+      "binding": "DEEPSEEK_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "DEEPSEEK_API_KEY"
+    },
+    {
+      "binding": "GEMINI_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "GEMINI_API_KEY"
+    },
+    {
+      "binding": "MISTRAL_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "MISTRAL_API_KEY"
+    },
+    {
+      "binding": "XAI_API_KEY",
+      "store_id": "55e6ce4174d645cfa68a6c27eef7847f",
+      "secret_name": "XAI_API_KEY"
+    }
+  ],
+
+  "vars": {
+    "V2_PREFIX": "v2/",
+
+    // ---- REPLAY-ONLY: this var is absent from every prod/arm config ----
+    "REPLAY_ENABLED": "true",
+
+    // ---- AI Gateway routing (copied from prod) ----
+    "CF_AIG_ACCOUNT_ID": "f0cbb2076e484454e6567789b9be85d8",
+    "CF_AIG_GATEWAY_ID": "firstgateway",
+
+    // ---- retention (permanent, same as prod) ----
+    "RETENTION_RAW_EVIDENCE_DAYS": "0",
+    "RETENTION_REPORT_DAYS": "0",
+    "RETENTION_CONTRACT_DAYS": "0",
+    "RETENTION_MODE": "permanent",
+    "RETENTION_SCAN_BUDGET": "500",
+
+    // ---- browser session policy (copied from prod, though replay does not walk) ----
+    "BROWSER_KEEP_ALIVE_MS": "600000",
+    "SESSION_MAX_AGE_MS": "480000",
+    "EXEC_BATCH_MAX_MS": "1080000",
+    "EXEC_BATCH_MAX_ATTEMPTS": "4",
+    "EXEC_MAX_BATCHES": "200",
+    "EXEC_MAX_EXPLORATION": "24",
+    "EXEC_MAX_STEPS_PER_PATH": "120",
+    "EXEC_ADVANCE_TIMEOUT_MS": "12000",
+    "EXEC_ACQUIRE_TIMEOUT_MS": "45000",
+    "EXEC_WALK_TIMEOUT_MS": "900000",
+    "EXEC_PER_CASE_TIMEOUT_MS": "900000",
+    "EXEC_WALK_STARTUP_BUDGET_MS": "120000",
+    "BROWSER_COMPAT_SHIMS": "auto",
+
+    // ---- caps (same as prod) ----
+    "CAP_STANDARD_MAX_USD": "15",
+    "CAP_STANDARD_MIN_USD": "5",
+    "CAP_DEEP_MAX_USD": "75",
+    "CAP_VERIFICATION_RESERVE_FRACTION": "0.15",
+    "CAP_REPORT_RESERVE_FRACTION": "0.10",
+    "CAP_MODEL_CALLS": "400",
+    "CAP_TOOL_CALLS": "4000",
+    "CAP_WALL_CLOCK_MS": "14400000",
+
+    // ---- policy switches (same as prod) ----
+    "HUMAN_REVIEW_MODE": "high-risk-only",
+    "ORACLE_GAP_POLICY": "neutral-blocking",
+
+    // ---- attestation (same prod registry) ----
+    "JUDGEMENT_KEY_REGISTRY": "{\"keys\":{\"judgement-ed25519-c66c5185cc1a\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEA3MhosLSUGY4GocN6qXlY0bT6x1bkJ7nBCWhzUo2qako=\",\"trust\":\"production\",\"note\":\"production judgement signer, generated 2 Aug 2026\"},\"fixture-judge-ed25519-1\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEAnLc2qf/YrOD6qP1zAsHHQBIzea2kYaeJ/fFH/9QAQdM=\",\"trust\":\"fixture\",\"note\":\"local smoke suite only; rejected unless DEV_SEED=enabled\"},\"judgement-ed25519-fd11213761e7\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEAZl9EY/sscbE+VuxFt+haQfYa0yu4iSO6fkF1HbXpmes=\",\"trust\":\"production\",\"note\":\"shared production+bench judgement signer, minted 22 Aug 2026 with owner approval; private half in prod secrets, bench secrets, and git-ignored .local-private/keys\"}}}",
+
+    // ---- submission limits (same as prod) ----
+    "MAX_DOCUMENT_BYTES": "26214400",
+    "MAX_HUMAN_REQUIREMENTS_BYTES": "1048576",
+    "MAX_SUBMISSION_BYTES": "37748736",
+    "MAX_VIEWPORTS": "6",
+    "MAX_LOCALE_LENGTH": "35",
+    "OUTBOUND_URL_POLICY": "block-private",
+
+    // ---- extraction models (same as prod) ----
+    "GROK_MODEL": "grok-4.5",
+    "GROK_REASONING_EFFORT": "high",
+    "GROK_RATE_BINDING_SCHEMA": "survey-qa-grok-rate-binding/1.0.0",
+    "GROK_RATE_POLICY": "max-known-text-tier/1.0.0",
+    "GROK_RATE_SOURCE": "owner-console-confirmation",
+    "GROK_RATE_ATTESTED_MODEL": "grok-4.5",
+    "GROK_RATE_ATTESTED_AT": "2026-08-15",
+    "GROK_RATE_RECEIPT_SHA256": "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
+    "GROK_CONTEXT_WINDOW_TOKENS": "500000",
+    "GROK_INPUT_USD_PER_MTOK": "2",
+    "GROK_CACHED_INPUT_USD_PER_MTOK": "0.3",
+    "GROK_OUTPUT_USD_PER_MTOK": "6",
+    "GROK_LONG_CONTEXT_THRESHOLD_TOKENS": "200000",
+    "GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK": "4",
+    "GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK": "0.6",
+    "GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK": "12",
+    "GROK_MAX_INPUT_USD_PER_MTOK": "4",
+    "GROK_MAX_OUTPUT_USD_PER_MTOK": "12",
+    "DEEPSEEK_MODEL": "deepseek-v4-flash",
+    "DEEPSEEK_CONTEXT_WINDOW_TOKENS": "1000000",
+    "DEEPSEEK_REASONING_EFFORT": "medium",
+    "DEEPSEEK_INPUT_USD_PER_MTOK": "0.44",
+    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "1.32",
+    "DEEPSEEK_FALLBACK_MODE": "on-error",
+    "DEEPSEEK_FALLBACK_MODEL": "deepseek-v4-pro",
+    "DEEPSEEK_FALLBACK_REASONING_EFFORT": "medium",
+    "DEEPSEEK_FALLBACK_MAX_ATTEMPTS": "1",
+    "DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK": "1.32",
+    "DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK": "3.96",
+
+    // ---- extraction shape (same as prod) ----
+    "EXTRACT_PASS_A_WINDOW_CHARS": "90000",
+    "EXTRACT_PASS_A_WINDOW_MAX_BLOCKS": "100",
+    "EXTRACT_CHUNK_CHARS": "3000",
+    "EXTRACT_CHUNK_MAX_BLOCKS": "15",
+    "EXTRACT_CHUNK_CONCURRENCY": "5",
+    "EXTRACT_MODEL_INPUT_MAX_BYTES": "450000",
+    "EXTRACT_MAX_OUTPUT_TOKENS": "32000",
+    "LLM_TIMEOUT_MS": "300000",
+    "EXTRACT_BUDGET_FRACTION": "0.5",
+    "EXTRACT_MAX_ATTEMPTS": "2",
+    "EXTRACT_SWEEP_MAX_CALLS": "3",
+    "EXTRACT_SWEEP_BLOCKS_PER_CALL": "40",
+    "EXTRACT_PASS_A_WAVE_BUDGET_MS": "600000",
+    "EXTRACT_PASS_A_MAX_WAVES": "20",
+    "EXTRACT_PASS_A_WINDOW_MAX_ISSUES": "2",
+    "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES": "120000",
+    "EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES": "2",
+    "EXTRACT_WAVE_BUDGET_MS": "600000",
+    "EXTRACT_PASS_B_MAX_WAVES": "40",
+    "EXTRACT_CHUNK_MAX_ISSUES": "2",
+
+    // ---- models (same as prod) ----
+    "EXTRACTION_MODEL": "claude-sonnet-4-6",
+    "JUDGE_MODEL": "claude-sonnet-4-6",
+    "WORKERSAI_VALIDATOR_MODEL": "@cf/openai/gpt-oss-120b",
+    "WORKERSAI_ENABLED": "false",
+    "VISUAL_SHADOW_ENABLED": "false",
+
+    "AGGREGATOR_VERSION": "v2-aggregator/1.0.0",
+    "RESULT_POLICY_VERSION": "v2-result-policy/1.0.0"
+  },
+
+  "observability": { "enabled": true }
+}
