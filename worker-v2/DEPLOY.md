@@ -155,6 +155,7 @@ $MutationHarnesses = @(
   "mutate-allocation.mjs",
   "mutate-api-authority.mjs",
   "mutate-axis-closure.mjs",
+  "mutate-a3-memory.mjs",
   "mutate-binding.mjs",
   "mutate-claims.mjs",
   "mutate-closure.mjs",
