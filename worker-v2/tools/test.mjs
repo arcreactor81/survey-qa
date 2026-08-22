@@ -601,6 +601,15 @@ const FILES = [
   // deterministically without byte-fetching. Missing ledger = loud refusal.
   // Evidence they can fail: tools/mutate-committed-evidence.mjs.
   "./tests/committed-evidence-filter.test.mjs",
+  // A2+A4+A5 — THE LOAD PATH: economics, resilience, bounded refusals. Receipts: the
+  // v100 judging tail paid ~5 minutes per stage fetching a 9,340-entry catalogue serially;
+  // derive-verdicts fetched it three times for 19 minutes of pure waste; one corrupt blob
+  // among 9,340 killed the whole run; the collision message at 588 pairs was ~120KB.
+  // Four properties: catalog:false (aggregator never lists), shared listing (list once,
+  // read many), bounded concurrency (R2 GETs overlap at 24-wide), demotion (one bad
+  // entry = limitation, not a death), truncation (collision message < 10KB, count kept).
+  // Evidence they can fail: each test documents its mutant anchor.
+  "./tests/a2-loadpath.test.mjs",
 ];
 
 export async function runVerification({

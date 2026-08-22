@@ -147,7 +147,7 @@ import { grokFlashRouteIdentity } from "../llm/grok";
 import { projectObservations } from "./stages/project-observations";
 import { launchVisualShadowWorkflow } from "./visual-shadow-workflow";
 import { verifyObservations } from "./stages/verify-observations";
-import { deriveItemResults, mintJudgement } from "./stages/derive-verdicts";
+import { deriveItemResults, loadDerivedItemResults, mintJudgement, summarizeDerivedVerdicts } from "./stages/derive-verdicts";
 import { assembleRecord, supersedeRecord } from "./stages/assemble-record";
 import { computeEdgeCoverage } from "../structure/index";
 import type { StructureModel } from "../structure/index";
@@ -2251,7 +2251,16 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             "derive-done",
           );
         }
-        return result;
+        // RETURN ONLY THE SUMMARY THROUGH THE WORKFLOW STEP BOUNDARY.
+        //
+        // `deriveItemResults` persists the full ItemResult[] to R2 at
+        // `itemResultsKey(runId)`. The Workflow step state carries only the summary
+        // (counts + content hash) to stay within the platform's 1 MiB per-step state
+        // cap. The assembler step loads the full array from R2 via
+        // `loadDerivedItemResults`. The `itemResults` field in the in-memory result
+        // is only useful for direct callers (tests, dev endpoints) that do not cross
+        // a step boundary.
+        return summarizeDerivedVerdicts(result);
       });
 
       // THE RECORD IS ASSEMBLED FROM THE AGGREGATOR'S OUTPUT, and the judge is run against
@@ -2266,7 +2275,21 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             "the aggregator produced no ItemResults, so there is nothing for a record to record",
           );
         }
-        const out = await assembleRecord(this.env, runId, adjudication.value.itemResults);
+        // THE ITEM RESULTS ARE LOADED FROM R2, NOT FROM THE STEP BOUNDARY.
+        //
+        // `deriveItemResults` persists the full ItemResult[] to R2 at `itemResultsKey(runId)`
+        // and returns only a summary through the Workflow step boundary. This avoids the
+        // platform's 1 MiB per-step state cap on large runs (588 requirements = several
+        // hundred KB of ItemResult JSON). The step result still carries the content hash
+        // for verification.
+        const itemResults = await loadDerivedItemResults(this.env, runId);
+        if (!itemResults) {
+          return stageNotEvaluated<{ recordHash: string }>(
+            "NO_VERDICTS",
+            "the aggregator's persisted ItemResults could not be loaded from R2",
+          );
+        }
+        const out = await assembleRecord(this.env, runId, itemResults);
         if (out.state === "evaluated") {
           await beat(
             this.env,
