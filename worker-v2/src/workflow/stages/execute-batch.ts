@@ -109,6 +109,77 @@ export function resolveStartupBudgetMs(declared: string | undefined): number {
 }
 
 /**
+ * PER-WALK PROGRESS WATCHDOG — fires when a walk makes no forward progress for this many ms.
+ *
+ * THE DEFECT THIS CLOSES. Across five archived runs, 19 zero-step walks burned ~285 minutes.
+ * Every one passed startup (page-create, survey-load, first-read all completed) and froze
+ * mid-walk: a wedged page call blocks the step loop, the in-loop deadline check never runs
+ * (it is INSIDE the blocked await chain), and only the 15-minute external per-case axe fires —
+ * destroying the entire recording. A walk that advanced 15 screens and then stalled should
+ * NEVER be a steps=0 row.
+ *
+ * THE WATCHDOG TIMER LADDER — three layers, each with a different job:
+ *
+ *   1. STALL WATCHDOG (this, ~4 min default): fires when NO STEP has completed for the
+ *      configured window. Closes the PAGE (not the browser), which unblocks all pending
+ *      page calls. The walk returns its partial observation with outcome "walk-stalled",
+ *      all steps and captures committed. The browser stays alive for the next walk.
+ *
+ *   2. PER-CASE AXE (withTimeout, ~15 min): fires when the ENTIRE walk exceeds its time
+ *      budget. Rejects the walkOnce promise. The observation is synthesized from the outside
+ *      with outcome "per-case-timeout" and no steps. The STALL WATCHDOG fires first on any
+ *      walk that is making no progress, so the axe only fires on a walk whose steps are
+ *      individually long but each one completes (a legitimately slow survey).
+ *
+ *   3. HARD BATCH ABORT (setTimeout, batch budget + 2 min): fires when the entire batch
+ *      hangs — typically because a dead browser's WebSocket has starved the event loop and
+ *      prevented all setTimeout callbacks from dispatching. Closes the BROWSER. This is the
+ *      last backstop, and it fires only when timers 1 and 2 themselves cannot dispatch.
+ *
+ * DEFAULT 240_000ms (4 minutes): a healthy step takes ~20-30s (measured phase clocks). 4 min
+ * allows a step to fail and retry several times before the watchdog fires, while catching the
+ * defect class where a page call simply never resolves. Injectable via EXEC_WALK_STALL_MS.
+ */
+export const DEFAULT_WALK_STALL_MS = 240_000;
+const WALK_STALL_FLOOR_MS = 30_000;
+const WALK_STALL_CEILING_MS = 600_000;
+
+/**
+ * Resolve the stall watchdog window from the environment, floor/ceiling-guarded.
+ *
+ * Exported and pure for the same reason `resolveStartupBudgetMs` is: the fallback is testable
+ * as BEHAVIOUR, and a mutant that changes the default is killed by a pin test.
+ */
+export function resolveWalkStallMs(declared: string | undefined): number {
+  const raw = num(declared, DEFAULT_WALK_STALL_MS);
+  return Math.min(WALK_STALL_CEILING_MS, Math.max(WALK_STALL_FLOOR_MS, raw));
+}
+
+/**
+ * IS THIS ERROR A BROWSER-DEATH SIGNAL?
+ *
+ * Conservatively enumerated from the ARCHIVED error strings in the two instrumented runs
+ * where a dead browser burned three paths as permanent zero-evidence rows in 1.2 seconds
+ * ("Protocol error: Connection closed" x3, 600ms apart, v98 walks 13-15).
+ *
+ * ONLY CONNECTION-LEVEL ERRORS ARE MATCHED — a page-level error ("Execution context was
+ * destroyed", "Target closed") is a dead PAGE, not a dead BROWSER, and a new page might
+ * still work. The caller (the batch loop) uses this to STOP feeding remaining paths to a
+ * dead session: not error rows, just unwalked.
+ *
+ * Exported and pure so the determination is testable and mutable.
+ */
+export function isBrowserDeathSignal(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    /Protocol error[:\s].*Connection closed/i.test(msg) ||
+    /WebSocket is not open/i.test(msg) ||
+    /browser has disconnected/i.test(msg) ||
+    /detached frame/i.test(msg)
+  );
+}
+
+/**
  * Which sub-phase of the startup the walk reached BEFORE it timed out. The executor
  * records timestamps at each transition (page-create → survey-load → first-read) and this
  * function returns the phase that HUNG — the one after the last completed phase.
@@ -1033,6 +1104,11 @@ async function executeMultiLaneBatch(
      * tracker and its own walk-never-started determination.
      */
     startupBudgetMs: number;
+    /**
+     * STALL WATCHDOG (0c): wall-clock window after which a walk with no step
+     * progress is abandoned. Resolved once by the caller from EXEC_WALK_STALL_MS.
+     */
+    walkStallMs: number;
   },
 ): Promise<BatchOutcome> {
   const {
@@ -1040,7 +1116,12 @@ async function executeMultiLaneBatch(
     allowShim, acquireTimeoutMs, perCaseTimeoutMs, maxExploration,
     requiredProbeStop, lanes, multilane, forwardReleaseMaxWaitMs,
     startupBudgetMs,
+    // walkStallMs is carried on the opts type so the multilane module can consume it when it
+    // adds its own stall watchdog; destructured to a void reference here to keep the type in
+    // sync without a TS6133 warning. The sequential path resolves its own walkStallMs from
+    // the same env var and threads it through walkOnce directly.
   } = opts;
+  void opts.walkStallMs;
   // WAVE RESIDUAL MATH (0e): the minimum batch budget remaining before starting
   // a new wave. The sequential path uses `perCaseTimeoutMs` as the floor — a walk
   // that cannot run for at least that long has no chance of completing.
@@ -1492,6 +1573,15 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
     ),
     perCaseTimeoutMs,
   );
+  // STALL WATCHDOG: bounds the mid-walk stall. See `DEFAULT_WALK_STALL_MS` for the defect
+  // and the timer ladder. Floor/ceiling guarded for the same reasons as the startup budget.
+  // Capped at perCaseTimeoutMs so the stall window cannot exceed the per-case budget.
+  const walkStallMs = Math.min(
+    resolveWalkStallMs(
+      (env as unknown as { EXEC_WALK_STALL_MS?: string }).EXEC_WALK_STALL_MS,
+    ),
+    perCaseTimeoutMs,
+  );
 
   // MULTI-LANE BRANCH — the import sits BEHIND the lane-count check (review
   // fix D), so EXEC_LANES=1 runs never load multilane.ts and cannot be
@@ -1528,6 +1618,8 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       // startupBudgetMs: already resolved above from EXEC_WALK_STARTUP_BUDGET_MS
       // with floor/ceiling guard, same as the sequential path.
       startupBudgetMs,
+      // walkStallMs: already resolved above from EXEC_WALK_STALL_MS.
+      walkStallMs,
     });
   }
 
@@ -1705,6 +1797,35 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       ): Promise<PathObservation> => {
         const page = (await withTimeout(handle.browser.newPage(), 30_000, "newPage")) as PageLike;
         startupPhases?.push("page-create");
+
+        // PER-WALK PROGRESS WATCHDOG — see DEFAULT_WALK_STALL_MS for the defect and the
+        // timer ladder (stall watchdog 4 min → per-case axe 15 min → hard batch abort).
+        // The abort signal is a mutable flag the walk loop polls; when set, the walk exits
+        // cleanly and returns its partial observation with outcome "walk-stalled".
+        const abortSignal: { aborted: boolean; reason?: string } = { aborted: false };
+        let lastStepCompletedAt = Date.now();
+        const stallCheckInterval = setInterval(() => {
+          const stalledFor = Date.now() - lastStepCompletedAt;
+          if (stalledFor >= walkStallMs) {
+            abortSignal.aborted = true;
+            abortSignal.reason =
+              `no step completed for ${stalledFor}ms (stall window ${walkStallMs}ms)`;
+            console.log(
+              `v2 exec batch ${args.batch}: walk ${item.path.id} STALL WATCHDOG — ` +
+                `no step completed for ${stalledFor}ms, closing page to unblock pending calls`,
+            );
+            // Close the PAGE (not the browser) to unblock all pending page calls. Each
+            // pending call receives a disconnect error and resolves, the step loop catches
+            // it, sees abortSignal.aborted, and breaks cleanly. The browser stays alive for
+            // the next walk — only a dead browser (C2) retires the session.
+            try {
+              page.close();
+            } catch {
+              /* best-effort — the page may already be closed or unreachable */
+            }
+          }
+        }, 10_000);
+
         try {
           return await walkPath(
             page,
@@ -1733,10 +1854,16 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
               // page.goto and after first screen read), so the executor can tell which sub-phase
               // hung when the startup budget expires. See `WalkOptions.onStartupPhase`.
               ...(startupPhases ? { onStartupPhase: (phase: "survey-load" | "first-read") => { startupPhases.push(phase); } } : {}),
+              // PER-WALK PROGRESS WATCHDOG: the step-completion callback resets the stall
+              // timer, and the abort signal tells the walk loop to stop when the stall window
+              // expires. Both are OUTSIDE the walk's own await chain.
+              onStepCompleted: () => { lastStepCompletedAt = Date.now(); },
+              abortSignal,
             },
             walkCap,
           );
         } finally {
+          clearInterval(stallCheckInterval);
           try {
             await page.close();
           } catch {
@@ -1755,6 +1882,13 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
       // completely fresh session. A dead start must cost ~2-4 minutes, never 15 silent minutes.
       const startupPhases: StartupSubPhase[] = [];
       const walkStartMs = Date.now();
+      // BROWSER-DEATH BATCH ABANDONMENT (C2): when a walk dies on a connection-dead signal,
+      // the batch stops feeding remaining paths to this session. The dead browser's error
+      // row stays as-is, but the remaining paths are left UNWALKED — the next batch gets a
+      // fresh browser. This closes the defect where one dead browser burned three paths as
+      // permanent zero-evidence rows in 1.2 seconds ("Protocol error: Connection closed" x3,
+      // 600ms apart, v98 walks 13-15).
+      let browserDead = false;
       try {
         obs = await withTimeout(walkOnce(progress.shimRequired && allowShim, attemptId, cap, 0, 0, startupPhases), perCaseTimeoutMs, `walk ${item.path.id}`);
       } catch (err) {
@@ -1770,6 +1904,9 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         perCaseTimedOut = err instanceof BrowserTimeout;
         const neverStarted = walkNeverStarted(perCaseTimedOut, startupPhases);
         browserHung = perCaseTimedOut;
+        // BROWSER-DEATH DETECTION: if the error matches a connection-closed pattern, the
+        // browser process is gone and no further walks on this session can succeed.
+        browserDead = !perCaseTimedOut && isBrowserDeathSignal(err);
         obs = {
           kind: "v2-path-observation/1.0.0",
           runId: args.runId,
@@ -1930,6 +2067,51 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         });
       }
       const walkedOk = obs.outcome !== "error";
+
+      // BROWSER-DEATH BATCH ABANDONMENT (C2): when a walk died on a connection-dead signal,
+      // the batch stops feeding remaining paths to this session immediately. The error row for
+      // THIS path stays as-is, but remaining paths are left UNWALKED (not error rows). The
+      // next batch gets a fresh browser. A path that already produced an error row from the
+      // dead browser stays as-is — but the pattern must not repeat within the batch.
+      if (browserDead) {
+        console.log(
+          `v2 exec batch ${args.batch}: browser DEAD after walk ${item.path.id} — ` +
+            `ending batch early, remaining paths left unwalked for the next batch`,
+        );
+        sessionWedged = true;
+        // Record this walk — the error observation is real evidence.
+        if (!item.seedAlternative) {
+          if (item.tier === 1 && !progress.floorDone.includes(item.path.id)) progress.floorDone.push(item.path.id);
+          else if (item.tier !== 1 && !progress.explorationDone.includes(item.path.id)) progress.explorationDone.push(item.path.id);
+          progress.walks.push(walkRecord(obs, [], audit));
+          progress.totalSteps += obs.steps.length;
+          progress.totalEvidence += obs.evidenceIds.length;
+          await saveProgress(env, progress);
+        }
+        // Commit the checkpoint so the error is durably recorded, then break.
+        await updateCheckpoint(
+          env,
+          args.runId,
+          (d) => {
+            const c = d.execution;
+            if (!c) return false;
+            const next: ExecutionCursor = applySessionToCursor(
+              { ...c, batchIndex: args.batch + 1 },
+              handle,
+            );
+            d.execution = next;
+            d.attempts.started += 1;
+            d.currentAttempt = null;
+            return true;
+          },
+          { progressed: true, fence: args.fence },
+        );
+        pathsWalked += 1;
+        steps += obs.steps.length;
+        // Break the batch loop — remaining work items are NOT walked and NOT recorded as
+        // errors. They stay pending and the next batch (with a fresh browser) picks them up.
+        break;
+      }
 
       // A WEDGED BROWSER GETS THE PATH ONE MORE CHANCE, ON A FRESH SESSION — AND ONLY ONE.
       // Marking a hung path "done" would discard a whole floor path over a transient

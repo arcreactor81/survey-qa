@@ -575,6 +575,10 @@ const FILES = [
   // Consumers bucket it as infrastructure ("not-reached"), never as a site accusation.
   // Evidence they can fail: tools/mutate-startup-budget.mjs.
   "./tests/d58-startup-budget.test.mjs",
+  // C1+C2 — WALKER ECONOMY. Per-walk progress watchdog: fires when no step completes for
+  // EXEC_WALK_STALL_MS and commits the partial observation. Browser-death batch abandonment:
+  // stops feeding paths to a dead browser session. Evidence: tools/mutate-walker-economy.mjs.
+  "./tests/d58-walker-economy.test.mjs",
   // D59 — PLATFORM NAVIGATION WIDGET TEXT STRIPPING. (Built as "d58" in a parallel worktree
   // the same hour as the startup-budget suite; renumbered here at integration — the file name
   // keeps its birth name, the suite ordinal is what this list orders by.) The skip menu select
