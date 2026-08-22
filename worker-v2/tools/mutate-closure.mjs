@@ -189,7 +189,10 @@ const MUTANTS = [
     name: "the tested identity is resolved over an empty catalogue",
     breaks: "a record must be able to name what it tested from its own captured screens",
     file: STAGE,
-    find: "    catalog: inputs.evidence,",
+    // Re-anchored after the committed-evidence filter renamed the catalogue variable
+    // (`inputs.evidence` -> `committedEvidence`). The stale anchor made this mutant a
+    // NO-RUN — caught by the release battery, which refuses NO-RUN as a pass.
+    find: "    catalog: committedEvidence,",
     replace: "    catalog: [],",
     kills: [T_IDENTITY],
   },
