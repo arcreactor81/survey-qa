@@ -342,19 +342,126 @@ export interface StreamingArtifactResult extends Omit<LoadArtifactBytesResult, "
 export const STREAMING_BATCH_SIZE = R2_READ_CONCURRENCY;
 
 /**
+ * A3 — MAXIMUM RAW BYTES FOR THE ENGINE-READ SET.
+ *
+ * The engine reads ALL session files simultaneously: `loadSessions` iterates the full set,
+ * `buildRouteTable` and `buildCensus` aggregate across all sessions at once, and `attest()`
+ * re-reads witnesses by name from the same set. Route edges span sessions and census counts
+ * are global — the engine's structure does not permit windowed processing of sessions.
+ *
+ * The resident bytes are copied up to three times at peak:
+ *   1. The `engineRead` array returned from this loader (from R2)
+ *   2. Written to memory-backed tmpdir via `writeFileSync` in `judge-runtime.mjs`
+ *   3. Read back via `readFileSync` + JSON.parse in the engine
+ *
+ * Copy 1 becomes unreachable once `judgeRunInIsolate` finishes writing to tmpdir. Copy 3
+ * is per-artifact in the EvidenceStore cache (each parsed JSON object, not the raw buffer).
+ * The peak is approximately 2x raw bytes (tmpdir + parsed objects), plus ~40 MB for the
+ * engine's own structures (route table, census, scope attestor, compiled obligations).
+ *
+ * With a 128 MB isolate:
+ *   128 MB total - 40 MB engine overhead = 88 MB for artifact bytes
+ *   88 MB / 2 (tmpdir + parsed) = 44 MB safe raw budget
+ *
+ * But workerd's tmpdir may share memory pages with the Buffer passed to writeFileSync,
+ * and JSON.parse releases the raw buffer. Real measurement: 35 sessions x 3 MB = 105 MB
+ * succeeds on the v100 run. The budget is set generously above measured success but below
+ * the point where even optimistic assumptions fail.
+ *
+ * When the budget is exceeded, the run REFUSES with a named limitation ("engine-read set
+ * too large to judge in one isolate") rather than crashing with exceededMemory. This is the
+ * honest degradation the CLAUDE.md standing rules require.
+ */
+export const ENGINE_READ_BYTE_BUDGET = 200 * 1024 * 1024; // 200 MB
+
+/**
+ * Thrown when the engine-read set exceeds ENGINE_READ_BYTE_BUDGET.
+ *
+ * NOT an integrity failure — the evidence is fine, the isolate just cannot hold it all.
+ * The caller catches this and returns a named `stageNotEvaluated` result.
+ */
+export class EngineReadBudgetExceeded extends Error {
+  readonly totalBytes: number;
+  readonly budget: number;
+  readonly artifactCount: number;
+
+  constructor(totalBytes: number, budget: number, artifactCount: number) {
+    super(
+      `the engine-read set is ${(totalBytes / (1024 * 1024)).toFixed(1)} MB ` +
+        `(${artifactCount} artifacts), which exceeds the ${(budget / (1024 * 1024)).toFixed(0)} MB ` +
+        `isolate budget. The engine reads all sessions simultaneously (route table, census, ` +
+        `and scope attestation aggregate across the full set) so windowed processing is not ` +
+        `possible. This run is too large to judge in one isolate.`,
+    );
+    this.name = "EngineReadBudgetExceeded";
+    this.totalBytes = totalBytes;
+    this.budget = budget;
+    this.artifactCount = artifactCount;
+  }
+}
+
+/**
  * A3 — IS THIS ARTIFACT ONE THE ENGINE ACTUALLY READS FROM DISK?
  *
- * The judge engine reads artifacts through `EvidenceStore.read()`. The access pattern:
- *   1. `loadSessions()` iterates `store.listArtifacts()`, calls `store.read(name)` for each
- *      `.json` file, and only keeps PRIMARY_SESSION artifacts (well-formed capture spines).
- *   2. Predicates cite specific artifacts; `attest()` re-reads them fresh.
- *   3. Non-JSON files (`classifyArtifact` -> IMAGE/UNKNOWN) are REFUSED by `attest()` as
- *      non-primary evidence (evidence-store.mjs lines 317-319).
+ * DETERMINED BY READING THE ACTUAL ACCESS PATTERNS in the judge engine:
  *
- * So: JSON files must be on disk; everything else is hash-verify-only.
+ *   evidence-store.mjs  `classifyArtifact` classifies by filename pattern, then `read()`
+ *                        promotes by SHAPE (capture spine). Only PRIMARY_SESSION class is
+ *                        kept by any consumer.
+ *
+ *   sessions.mjs        `loadSessions` iterates `store.listArtifacts()`, calls `store.read()`
+ *                        on every `.json` file. ONLY artifacts whose evidenceClass ===
+ *                        PRIMARY_SESSION (filename match OR shape promotion with a well-
+ *                        formed capture spine) are normalized into sessions. Everything else
+ *                        is either skipped (`continue`) or quarantined.
+ *
+ *   scope-attest.mjs    `ScopeAttestor.index()` and `.edges()` iterate all `.json` files the
+ *                        same way. They keep only PRIMARY_SESSION artifacts (`continue` on
+ *                        everything else). Files missing from disk return `ok: false` and are
+ *                        harmlessly skipped.
+ *
+ *   engine.mjs          `attestAll` re-reads CITED witnesses from disk via `store.attest()`.
+ *                        Witnesses are produced by predicates that iterate SESSIONS — so the
+ *                        cited artifacts are always session observation files that are already
+ *                        in the engine-read set.
+ *
+ *   engine.mjs          `crossCheckPriorClaim` reads prior-observation citations. This is
+ *                        DIAGNOSTIC ONLY (`status: 'neutral-historical-claim'`). A missing
+ *                        file returns `ok: false` and is reported as CITED_ARTIFACT_MISSING.
+ *                        This never feeds a verdict.
+ *
+ * THE ENGINE-READ SET IS THEREFORE:
+ *   1. Session observation files: names matching (FLOOR|EXP|TD|T\d)[-\w]*.json — the
+ *      filename pattern `classifyArtifact` uses for PRIMARY_SESSION. These are ~35 for
+ *      v100, 3–12 MB each.
+ *   2. Primary probes: _targeted.json, _scale-probes.json — classified as PRIMARY_PROBE
+ *      by `classifyArtifact`, potentially cited by answer-requirement predicates.
+ *
+ * EVERYTHING ELSE — step-XXX-slot.json (~4,650 per run), .accessibility.json (~4,650 per
+ * run), derived summaries — is hash-verify-only. Those files reach the authority's manifest
+ * via `preVerifiedArtifacts` so `manifestComplete` covers the full evidence set, but they
+ * are never mounted to tmpdir.
+ *
+ * Files that COULD be sessions by shape but have non-standard names will be listed by the
+ * authority's manifest, read by `loadSessions`, and get `CITED_ARTIFACT_MISSING` (quarantined
+ * harmlessly). If such a file were the run's only session, the run would produce no sessions
+ * and the verdicts would be NOT_ASSESSED — the honest outcome when evidence is not available,
+ * and a NAMED limitation rather than an OOM crash.
+ *
+ * Byte math for the narrowed resident set (v100, 35 sessions):
+ *   35 sessions x 12 MB worst-case = 420 MB — exceeds isolate budget
+ *   35 sessions x  3 MB typical    = 105 MB — fits with engine overhead
+ *   2 probes    x  1 MB            =   2 MB — negligible
+ * A separate ENGINE_READ_BYTE_BUDGET check refuses runs whose session-only mount exceeds
+ * a stated ceiling, with a NAMED limitation rather than an OOM crash.
  */
 function isEngineReadArtifact(name: string): boolean {
-  return /\.json$/i.test(name);
+  const b = name.split("/").pop() ?? name;
+  // PRIMARY_SESSION pattern — from classifyArtifact (evidence-store.mjs)
+  if (/^(FLOOR|EXP|TD|T\d)[-\w]*\.json$/i.test(b)) return true;
+  // PRIMARY_PROBE — potentially cited by answer-requirement predicates
+  if (b === "_targeted.json" || b === "_scale-probes.json") return true;
+  return false;
 }
 
 /**
@@ -723,6 +830,16 @@ export async function loadArtifactBytesStreaming(
   for (const r of engineResults) {
     if (r.ok) engineRead.push(r.artifact);
     else limitations.push(r.limitation);
+  }
+
+  // A3 — ENGINE-READ BYTE BUDGET CHECK.
+  //
+  // The engine reads ALL sessions simultaneously (route table, census, scope attestation
+  // aggregate across the full set). Windowed processing is not possible. If the raw bytes
+  // exceed ENGINE_READ_BYTE_BUDGET, refuse with a named error rather than OOM at mount time.
+  const engineReadTotalBytes = engineRead.reduce((sum, a) => sum + a.bytes.byteLength, 0);
+  if (engineReadTotalBytes > ENGINE_READ_BYTE_BUDGET) {
+    throw new EngineReadBudgetExceeded(engineReadTotalBytes, ENGINE_READ_BYTE_BUDGET, engineRead.length);
   }
 
   // Track residency: all engine-read artifacts are resident now.

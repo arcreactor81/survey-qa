@@ -26,7 +26,7 @@ import type { Env } from "../../types/env";
 import { unsettledBucketFor } from "../../types/contracts";
 import { judgementKey, recordKey } from "../../keys";
 import { getContractRevision } from "../../store/contract-revision";
-import { ArtifactNameCollision, loadRunInputs, loadArtifactBytesStreaming, signingKeys, type RunInputs, type StreamingArtifactResult } from "./run-inputs";
+import { ArtifactNameCollision, EngineReadBudgetExceeded, loadRunInputs, loadArtifactBytesStreaming, signingKeys, type RunInputs, type StreamingArtifactResult } from "./run-inputs";
 import { stageNotEvaluated, type StageResult } from "../gates";
 import { itemResultsKey } from "../../keys";
 import { sha256Hex } from "../../store/hash";
@@ -369,6 +369,9 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
   } catch (err) {
     if (err instanceof ArtifactNameCollision) {
       return stageNotEvaluated<MintedJudgement>("EVIDENCE_NAME_COLLISION", err.message);
+    }
+    if (err instanceof EngineReadBudgetExceeded) {
+      return stageNotEvaluated<MintedJudgement>("ENGINE_READ_BUDGET_EXCEEDED", err.message);
     }
     throw err;
   }
