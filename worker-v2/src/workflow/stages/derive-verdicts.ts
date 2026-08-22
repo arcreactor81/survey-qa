@@ -26,7 +26,7 @@ import type { Env } from "../../types/env";
 import { unsettledBucketFor } from "../../types/contracts";
 import { judgementKey, recordKey } from "../../keys";
 import { getContractRevision } from "../../store/contract-revision";
-import { ArtifactNameCollision, loadRunInputs, loadArtifactBytes, signingKeys, type RunInputs } from "./run-inputs";
+import { ArtifactNameCollision, loadRunInputs, loadArtifactBytesStreaming, signingKeys, type RunInputs, type StreamingArtifactResult } from "./run-inputs";
 import { stageNotEvaluated, type StageResult } from "../gates";
 import { itemResultsKey } from "../../keys";
 import { sha256Hex } from "../../store/hash";
@@ -344,32 +344,26 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
     );
   }
 
+  // A3 — MEMORY-SAFE JUDGING: use the streaming loader to bound residency.
+  //
+  // The streaming loader splits artifacts into engine-read (JSON, written to tmpdir) and
+  // hash-verify-only (PNGs, etc., hashed and released). This bounds the memory footprint:
+  // instead of ~530MB of blobs in a single array, only the ~60-200MB of observation JSONs
+  // stays resident, and the ~9,000 step PNGs are verified in 24-entry batches.
+  //
   // A catalogue whose basenames collide cannot be judged honestly: the mount would lose
   // evidence and the signed manifest would double-count it. Saying so is the right outcome;
   // judging the survivors would report a smaller evidence set as if it were the whole one.
-  //
-  // Identical duplicates (same basename, same artifactRef, same contentHash) are collapsed
-  // first — a retried Workflow step records its captures twice, and that is routine, not
-  // ambiguity. Only DIFFERENT refs or hashes sharing a basename trigger the refusal.
-  let artifacts: Array<{ name: string; bytes: Uint8Array }>;
-  let duplicatesCollapsed = 0;
-  let supersededRecordings: number | null = null;
-  let supersededNote: string | null = null;
-  let evidenceLimitations = 0;
+  let streamResult: StreamingArtifactResult;
   try {
-    const loaded = await loadArtifactBytes(env, committedEvidence);
-    artifacts = loaded.artifacts;
-    duplicatesCollapsed = loaded.duplicatesCollapsed;
-    supersededRecordings = loaded.supersededRecordings;
-    supersededNote = loaded.supersededNote;
-    evidenceLimitations = loaded.limitations.length;
+    streamResult = await loadArtifactBytesStreaming(env, committedEvidence);
     // Surface limitations as log so they are visible in Workflow step output,
     // but do NOT block the judging — the run proceeds with the artifacts it has.
-    if (loaded.limitations.length > 0) {
+    if (streamResult.limitations.length > 0) {
       console.log(
-        `v2 ${runId}: ${loaded.limitations.length} evidence limitation(s): ` +
-          loaded.limitations.slice(0, 5).map((l) => l.reason).join("; ") +
-          (loaded.limitations.length > 5 ? ` (and ${loaded.limitations.length - 5} more)` : ""),
+        `v2 ${runId}: ${streamResult.limitations.length} evidence limitation(s): ` +
+          streamResult.limitations.slice(0, 5).map((l) => l.reason).join("; ") +
+          (streamResult.limitations.length > 5 ? ` (and ${streamResult.limitations.length - 5} more)` : ""),
       );
     }
   } catch (err) {
@@ -393,17 +387,22 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
     checklist,
     record,
     revision,
-    artifacts,
+    // A3: only engine-read artifacts (JSON) go to the tmpdir mount.
+    artifacts: streamResult.engineRead,
     keyRegistry,
     signer: keys.judgementKeyPem
       ? { privateKeyPem: keys.judgementKeyPem, keyId: keys.judgementKeyId, signedAt: new Date().toISOString() }
       : null,
+    // A3: pre-verified hashes for artifacts NOT written to tmpdir. The authority uses
+    // these so `manifestComplete` covers the full evidence set.
+    preVerifiedArtifacts: streamResult.preVerifiedHashes,
   }) as { judged: JudgeOutput };
 
   await env.EVIDENCE.put(judgementKey(runId), JSON.stringify(judged.judgement), {
     httpMetadata: { contentType: "application/json" },
   });
 
+  const totalArtifacts = streamResult.engineRead.length + streamResult.preVerifiedHashes.size;
   return {
     state: "evaluated",
     value: {
@@ -421,15 +420,15 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
       },
       checklistSource: fromExtraction ? "extraction" : "revision-projection",
       ambiguitiesAvailable: !!checklist.ambiguitiesAvailable,
-      artifacts: artifacts.length,
+      artifacts: totalArtifacts,
       // A retried step records its captures twice; identical rows are collapsed before the
       // collision check. Zero when the catalogue had no duplicates.
-      duplicatesCollapsed,
+      duplicatesCollapsed: streamResult.duplicatesCollapsed,
       // Superseded recordings: same (basename, ref), different hash — resolved by verifying
       // which blob exists in storage. null when no superseded recordings were found.
-      supersededRecordings,
-      supersededNote,
-      evidenceLimitations,
+      supersededRecordings: streamResult.supersededRecordings,
+      supersededNote: streamResult.supersededNote,
+      evidenceLimitations: streamResult.limitations.length,
     },
     proof: {
       evaluatorId: "pipeline/judge",

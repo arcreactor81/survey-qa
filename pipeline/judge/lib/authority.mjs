@@ -214,6 +214,19 @@ export { evidenceManifestRoot };
  *        has to be resolvable; defaults to <runDir>/contract-revision.json and
  *        then <runDir>/contracts/<contractRevisionId>.json — the filesystem
  *        analogue of the Worker's `v2/contracts/<id>.json`.
+ * @param {Map<string,{contentHash:string,byteLength:number}>} [o.preVerifiedArtifacts]
+ *        A3 — MEMORY-SAFE JUDGING: artifact hashes verified upstream (in the Worker's
+ *        R2 fetch loop) for entries that are NOT on disk. The authority treats these
+ *        exactly as it would a file read from disk: the content hash is compared against
+ *        the signed manifest entry. The guarantee is unchanged — every artifact is still
+ *        hash-verified against the signed catalogue — the verification just happened at
+ *        a different point in time, in the same process, from the same R2 bytes.
+ *
+ *        An entry that appears in BOTH `preVerifiedArtifacts` AND on disk is verified from
+ *        disk (disk wins), so a pre-verified entry cannot suppress a disk-resident mismatch.
+ *
+ *        Absent or empty: the authority falls back to disk-only verification (the pre-A3
+ *        behaviour). This is the default so no existing caller changes behaviour.
  * @returns {EvidenceAuthority}
  */
 export function loadEvidenceAuthority({
@@ -224,6 +237,7 @@ export function loadEvidenceAuthority({
   allowFixtureKeys = false,
   artifactsSubdir = 'artifacts',
   contractRevisionPath = null,
+  preVerifiedArtifacts = null,
 }) {
   const recPath = runRecordPath || join(runDir, 'run-record.json');
   if (!existsSync(recPath)) {
@@ -337,20 +351,41 @@ export function loadEvidenceAuthority({
       findings.push({ code: 'ARTIFACT_NOT_IN_SIGNED_MANIFEST', artifact: f, detail: `${f} is present on disk but absent from the signed catalogue` });
     }
   }
-  for (const [name, entry] of manifest.entries()) {
-    if (!onDisk.includes(name)) {
-      findings.push({ code: 'CITED_ARTIFACT_MISSING', artifact: name, detail: `${name} is in the signed catalogue but missing on disk` });
-      continue;
+  // A3 — PRE-VERIFIED ARTIFACTS: a Map<name, {contentHash, byteLength}> of artifacts that
+  // were hash-verified upstream (in the Worker's R2 fetch loop) and are NOT on disk. The
+  // authority treats their verified hashes as equivalent to a disk read. An entry that is
+  // BOTH on disk AND pre-verified is verified from disk (disk wins).
+  const preVerified = preVerifiedArtifacts instanceof Map ? preVerifiedArtifacts : new Map();
+  // Entries in preVerified but not in the manifest are the same class as extra files on disk.
+  for (const [pvName] of preVerified) {
+    if (!manifest.has(pvName) && !onDisk.includes(pvName)) {
+      findings.push({ code: 'ARTIFACT_NOT_IN_SIGNED_MANIFEST', artifact: pvName, detail: `${pvName} is pre-verified but absent from the signed catalogue` });
     }
-    // Verify the WHOLE allowlist up front. Checking lazily, at first citation,
-    // means a substituted artifact that no predicate happens to cite never gets
-    // noticed — and the run still reports a verified authority.
-    const buf = readFileSync(join(artifactsDir, name));
-    const digest = sha256Of(buf);
-    if (digest !== entry.contentHash) {
-      findings.push({ code: 'ARTIFACT_HASH_MISMATCH', artifact: name, detail: `${name} is sha256 ${digest} on disk, ${entry.contentHash} in the signed catalogue` });
-    } else if (entry.byteLength !== null && entry.byteLength !== buf.length) {
-      findings.push({ code: 'ARTIFACT_HASH_MISMATCH', artifact: name, detail: `${name} is ${buf.length} bytes on disk, ${entry.byteLength} in the signed catalogue` });
+  }
+  for (const [name, entry] of manifest.entries()) {
+    if (onDisk.includes(name)) {
+      // DISK-RESIDENT: verify from the bytes on disk (the original path).
+      const buf = readFileSync(join(artifactsDir, name));
+      const digest = sha256Of(buf);
+      if (digest !== entry.contentHash) {
+        findings.push({ code: 'ARTIFACT_HASH_MISMATCH', artifact: name, detail: `${name} is sha256 ${digest} on disk, ${entry.contentHash} in the signed catalogue` });
+      } else if (entry.byteLength !== null && entry.byteLength !== buf.length) {
+        findings.push({ code: 'ARTIFACT_HASH_MISMATCH', artifact: name, detail: `${name} is ${buf.length} bytes on disk, ${entry.byteLength} in the signed catalogue` });
+      }
+    } else if (preVerified.has(name)) {
+      // A3 — PRE-VERIFIED: the bytes were fetched from R2, hashed, and verified upstream.
+      // The pre-verified entry carries the content hash that was compared against the
+      // R2 bytes. We compare it against the SIGNED manifest entry here: the guarantee
+      // is that the chain R2-bytes -> verified-hash -> manifest-entry is unbroken.
+      const pv = preVerified.get(name);
+      if (pv.contentHash !== entry.contentHash) {
+        findings.push({ code: 'ARTIFACT_HASH_MISMATCH', artifact: name, detail: `${name} pre-verified as ${pv.contentHash}, ${entry.contentHash} in the signed catalogue` });
+      } else if (entry.byteLength !== null && pv.byteLength !== entry.byteLength) {
+        findings.push({ code: 'ARTIFACT_HASH_MISMATCH', artifact: name, detail: `${name} pre-verified at ${pv.byteLength} bytes, ${entry.byteLength} in the signed catalogue` });
+      }
+    } else {
+      // NEITHER ON DISK NOR PRE-VERIFIED: the artifact is genuinely missing.
+      findings.push({ code: 'CITED_ARTIFACT_MISSING', artifact: name, detail: `${name} is in the signed catalogue but missing on disk and not pre-verified` });
     }
   }
 

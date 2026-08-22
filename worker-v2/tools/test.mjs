@@ -614,6 +614,13 @@ const FILES = [
   // entry = limitation, not a death), truncation (collision message < 10KB, count kept).
   // Evidence they can fail: each test documents its mutant anchor.
   "./tests/a2-loadpath.test.mjs",
+  // A3 — MEMORY-SAFE JUDGING. The last Phase A blocker: `mintJudgement` died at 185s on the
+  // v100 bench replay because the isolate ran out of memory loading ~530MB of artifact bytes.
+  // The streaming loader splits artifacts into engine-read (JSON, written to tmpdir) and
+  // hash-verify-only (PNGs, hashed and released in batches). The authority accepts pre-verified
+  // hashes so `manifestComplete` covers the full set without requiring every blob on disk.
+  // Evidence they can fail: tools/mutate-a3-memory.mjs.
+  "./tests/a3-memory-safe-judge.test.mjs",
 ];
 
 export async function runVerification({

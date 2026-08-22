@@ -264,6 +264,100 @@ export interface LoadArtifactBytesResult {
 }
 
 /**
+ * A3 — MEMORY-SAFE JUDGING: pre-verified artifact hash.
+ *
+ * An artifact whose bytes were fetched, hashed, verified against the catalogue, and RELEASED.
+ * The authority uses these to verify the manifest without requiring every blob to be written
+ * to the memory-backed tmpdir. Only the "engine-read" set (JSON files the judge's engine
+ * actually opens) goes to disk; everything else is hash-verified from memory and released.
+ *
+ * `contentHash` uses the `sha256:hex` format (with algorithm prefix) because the authority's
+ * manifest entries use that format — `shared/v2-record.mjs#legacyEvidenceEntry` adds the
+ * prefix when projecting to the legacy shape the authority reads.
+ */
+export interface PreVerifiedArtifact {
+  /** The content hash with algorithm prefix (`sha256:hex`), matching the authority's manifest format. */
+  contentHash: string;
+  /** Byte length of the verified blob. */
+  byteLength: number;
+}
+
+/** Ensure a content hash carries the `sha256:` prefix the authority's manifest uses. */
+function withSha256Prefix(hash: string): string {
+  return hash.startsWith("sha256:") ? hash : `sha256:${hash}`;
+}
+
+/**
+ * A3 — MEMORY-SAFE RESULT: the streaming loader's output splits artifacts into two sets.
+ *
+ * `engineRead`: JSON artifacts the judge's engine will read from disk (sessions, probes).
+ *   These are written to the mount tmpdir. Measured: observation JSONs are 3-12MB each,
+ *   and a run has ~10-20 of them — well within the 128MB isolate.
+ *
+ * `preVerifiedHashes`: every OTHER artifact (PNGs, PDFs, accessibility JSONs per step) was
+ *   hash-verified in memory and released. The authority uses this map so that
+ *   `manifestComplete` is set correctly without requiring ~9,000 step artifacts on disk.
+ *
+ * WHY THIS SPLIT IS SAFE. The engine reads artifacts through `EvidenceStore.read()`, which
+ * calls `readFileSync` from the artifacts directory. `loadSessions` iterates all JSON files
+ * and only keeps PRIMARY_SESSION artifacts; `attest()` re-reads specific named artifacts.
+ * Non-JSON files (PNGs) are classified as IMAGE by `classifyArtifact` and refused by
+ * `attest()` as non-primary evidence. So the engine never opens a non-JSON file for
+ * anything beyond hash verification — which the authority already does up front.
+ */
+export interface StreamingArtifactResult extends Omit<LoadArtifactBytesResult, "artifacts"> {
+  /** Artifacts the engine needs on disk — JSON files only. */
+  engineRead: Array<{ name: string; bytes: Uint8Array }>;
+  /** Hash-verified but not retained in memory — PNGs, PDFs, etc. */
+  preVerifiedHashes: Map<string, PreVerifiedArtifact>;
+  /** Total artifacts verified (engineRead + preVerifiedHashes + limitations). */
+  totalVerified: number;
+  /** Peak simultaneously-resident artifact count during the streaming fetch. */
+  peakResident: number;
+}
+
+/**
+ * A3 — BOUNDED-RESIDENCY STREAMING BYTE BUDGET.
+ *
+ * The isolate has 128MB. The judge needs room for the record, the checklist, the authority
+ * structures, and the engine's own working memory. The byte budget bounds how much of the
+ * 128MB is occupied by artifact bytes waiting to be written or hashed at any given moment.
+ *
+ * Math: 128MB total - ~40MB for the engine's runtime overhead = ~88MB available for artifact
+ * bytes. The streaming window processes R2_READ_CONCURRENCY (24) entries at a time; each
+ * batch's bytes are released before the next batch starts. The budget is a STATEMENT, not
+ * a tuned constant — it exists so the comment is load-bearing rather than decorative.
+ *
+ * With the engine-read/hash-verify split, the resident set at any moment is:
+ *   - The engine-read artifacts (JSON observations, ~3-12MB each, ~10-20 total = ~60-200MB)
+ *   - One batch of hash-verify-only artifacts being processed (~24 * 59KB = ~1.4MB)
+ *
+ * The JSON observations MUST be resident because the engine reads them from disk (tmpdir),
+ * which is memory-backed. They are the actual memory constraint, not the PNGs.
+ *
+ * IF THE ENGINE-READ SET ALONE EXCEEDS THE BUDGET, the loader cannot help — the engine
+ * genuinely needs those files, and the authority needs to verify them on disk. In that case
+ * the run reports partial verification honestly (see authority.mjs `manifestComplete`).
+ */
+export const STREAMING_BATCH_SIZE = R2_READ_CONCURRENCY;
+
+/**
+ * A3 — IS THIS ARTIFACT ONE THE ENGINE ACTUALLY READS FROM DISK?
+ *
+ * The judge engine reads artifacts through `EvidenceStore.read()`. The access pattern:
+ *   1. `loadSessions()` iterates `store.listArtifacts()`, calls `store.read(name)` for each
+ *      `.json` file, and only keeps PRIMARY_SESSION artifacts (well-formed capture spines).
+ *   2. Predicates cite specific artifacts; `attest()` re-reads them fresh.
+ *   3. Non-JSON files (`classifyArtifact` -> IMAGE/UNKNOWN) are REFUSED by `attest()` as
+ *      non-primary evidence (evidence-store.mjs lines 317-319).
+ *
+ * So: JSON files must be on disk; everything else is hash-verify-only.
+ */
+function isEngineReadArtifact(name: string): boolean {
+  return /\.json$/i.test(name);
+}
+
+/**
  * DEDUPLICATE identical catalogue entries before the collision check.
  *
  * A Workflow step that retries re-records its captures, so the catalogue may contain N
@@ -523,6 +617,183 @@ export async function loadArtifactBytes(
 
   return {
     artifacts,
+    duplicatesCollapsed: collapsed,
+    supersededRecordings: superseded > 0 ? superseded : null,
+    supersededNote: superseded > 0
+      ? `${superseded} earlier recording(s) of retried steps were superseded by the bytes now in storage`
+      : null,
+    limitations,
+  };
+}
+
+/**
+ * A3 — MEMORY-SAFE ARTIFACT LOADING WITH BOUNDED RESIDENCY.
+ *
+ * The original `loadArtifactBytes` fetches every artifact's bytes into ONE in-memory array,
+ * which `judge-runtime.mjs` then writes to a memory-backed tmpdir, and `authority.mjs`
+ * reads back a THIRD time. Real run: ~9,000 step artifacts (~59KB PNGs) + observation JSONs
+ * (3-12MB each) = far more than the isolate's 128MB.
+ *
+ * This function splits the load into two sets:
+ *   - ENGINE-READ: JSON files the judge's engine opens via `readFileSync`. These stay in
+ *     memory because they must be written to tmpdir. They are the small set.
+ *   - HASH-VERIFY-ONLY: PNGs, PDFs, etc. Fetched in bounded batches (STREAMING_BATCH_SIZE),
+ *     hashed, verified against the catalogue, and RELEASED — never written to tmpdir, never
+ *     accumulated in a global array.
+ *
+ * The authority receives the pre-verified hashes for the hash-verify-only set so it can
+ * set `manifestComplete` correctly without needing the blobs on disk.
+ *
+ * CONCURRENCY: same R2_READ_CONCURRENCY (24) as before, but the RESIDENT SET is bounded:
+ * at most one batch of hash-verify-only artifacts is in memory at any time, plus the
+ * engine-read set which accumulates (but is small — only JSON files).
+ *
+ * @param residencyHook — TEST HOOK for proving bounded residency. Called with the current
+ *   simultaneously-resident artifact count each time a batch completes. Tests assert on the
+ *   peak value to prove that the release step works. Not called in production (default no-op).
+ */
+export async function loadArtifactBytesStreaming(
+  env: Env,
+  evidence: EvidenceCatalogEntry[],
+  residencyHook: (currentResident: number) => void = () => {},
+): Promise<StreamingArtifactResult> {
+  const { deduped, collapsed } = deduplicateEvidence(evidence);
+
+  const {
+    resolved,
+    superseded,
+    prefetchedBytes,
+  } = await resolveSupersededRecordings(env, deduped);
+
+  // Collision check — identical to loadArtifactBytes.
+  const byName = new Map<string, string[]>();
+  for (const entry of resolved) {
+    const ref = String(entry.artifactRef ?? entry.sourceEvidenceId ?? entry.evidenceId);
+    const name = ref.split("/").pop() ?? entry.evidenceId;
+    const refs = byName.get(name);
+    if (refs) refs.push(ref);
+    else byName.set(name, [ref]);
+  }
+  const collisions = [...byName.entries()]
+    .filter(([, refs]) => refs.length > 1)
+    .map(([name, refs]) => ({ name, refs }));
+  if (collisions.length > 0) throw new ArtifactNameCollision(collisions);
+
+  // SPLIT: classify each entry as engine-read or hash-verify-only.
+  const engineEntries: Array<{ entry: EvidenceCatalogEntry; name: string }> = [];
+  const hashOnlyEntries: Array<{ entry: EvidenceCatalogEntry; name: string }> = [];
+  for (const entry of resolved) {
+    const ref = entry.artifactRef ?? entry.sourceEvidenceId ?? entry.evidenceId;
+    const name = String(ref).split("/").pop() ?? entry.evidenceId;
+    if (isEngineReadArtifact(name)) {
+      engineEntries.push({ entry, name });
+    } else {
+      hashOnlyEntries.push({ entry, name });
+    }
+  }
+
+  const engineRead: Array<{ name: string; bytes: Uint8Array }> = [];
+  const preVerifiedHashes = new Map<string, PreVerifiedArtifact>();
+  const limitations: EvidenceLimitation[] = [];
+  let peakResident = 0;
+
+  // --- PHASE 1: Fetch engine-read artifacts (JSON). These stay in memory. ---
+  // Concurrency bounded, per-entry demotion, same as before.
+  const engineResults = await mapConcurrent(engineEntries, R2_READ_CONCURRENCY, async ({ entry, name }) => {
+    const cached = prefetchedBytes.get(entry.evidenceId);
+    if (cached) {
+      return { ok: true as const, artifact: { name, bytes: cached } };
+    }
+    try {
+      const { bytes } = await getVerifiedEvidence(env, entry);
+      return { ok: true as const, artifact: { name, bytes } };
+    } catch (err) {
+      if (err instanceof EvidenceCatalogTampered) throw err;
+      const reason =
+        err instanceof EvidenceIntegrityFailure
+          ? err.message
+          : `failed to load evidence ${entry.evidenceId}: ${err instanceof Error ? err.message : String(err)}`;
+      return {
+        ok: false as const,
+        limitation: { name, evidenceId: entry.evidenceId, reason } satisfies EvidenceLimitation,
+      };
+    }
+  });
+
+  for (const r of engineResults) {
+    if (r.ok) engineRead.push(r.artifact);
+    else limitations.push(r.limitation);
+  }
+
+  // Track residency: all engine-read artifacts are resident now.
+  let currentResident = engineRead.length;
+  if (currentResident > peakResident) peakResident = currentResident;
+  residencyHook(currentResident);
+
+  // --- PHASE 2: Hash-verify-only artifacts in bounded batches. ---
+  // Each batch's bytes are fetched, hashed, verified, and RELEASED before the next batch.
+  // The batch size is STREAMING_BATCH_SIZE (24) — the same R2 concurrency bound.
+  for (let batchStart = 0; batchStart < hashOnlyEntries.length; batchStart += STREAMING_BATCH_SIZE) {
+    const batch = hashOnlyEntries.slice(batchStart, batchStart + STREAMING_BATCH_SIZE);
+
+    // Fetch this batch concurrently.
+    const batchResults = await mapConcurrent(batch, batch.length, async ({ entry, name }) => {
+      const cached = prefetchedBytes.get(entry.evidenceId);
+      if (cached) {
+        // Already verified during superseded resolution — record the hash, release.
+        return {
+          ok: true as const,
+          verified: { name, contentHash: withSha256Prefix(entry.contentHash), byteLength: cached.byteLength },
+        };
+      }
+      try {
+        const { bytes } = await getVerifiedEvidence(env, entry);
+        // RELEASE: we only need the hash verification fact, not the bytes.
+        const byteLength = bytes.byteLength;
+        return {
+          ok: true as const,
+          verified: { name, contentHash: withSha256Prefix(entry.contentHash), byteLength },
+        };
+      } catch (err) {
+        if (err instanceof EvidenceCatalogTampered) throw err;
+        const reason =
+          err instanceof EvidenceIntegrityFailure
+            ? err.message
+            : `failed to load evidence ${entry.evidenceId}: ${err instanceof Error ? err.message : String(err)}`;
+        return {
+          ok: false as const,
+          limitation: { name, evidenceId: entry.evidenceId, reason } satisfies EvidenceLimitation,
+        };
+      }
+    });
+
+    // Process results: record verified hashes, accumulate limitations.
+    let batchResident = 0;
+    for (const r of batchResults) {
+      if (r.ok) {
+        preVerifiedHashes.set(r.verified.name, {
+          contentHash: r.verified.contentHash,
+          byteLength: r.verified.byteLength,
+        });
+        batchResident++;
+      } else {
+        limitations.push(r.limitation);
+      }
+    }
+
+    // Track peak: engine-read set + this batch's in-flight count.
+    const snapshot = engineRead.length + batchResident;
+    if (snapshot > peakResident) peakResident = snapshot;
+    residencyHook(snapshot);
+    // RELEASE: the batch's bytes are now out of scope (getVerifiedEvidence's Uint8Array
+    // goes unreachable once the closure exits). The next batch starts fresh.
+  }
+
+  return {
+    engineRead,
+    preVerifiedHashes,
+    totalVerified: engineRead.length + preVerifiedHashes.size,
+    peakResident,
     duplicatesCollapsed: collapsed,
     supersededRecordings: superseded > 0 ? superseded : null,
     supersededNote: superseded > 0

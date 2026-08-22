@@ -79,6 +79,11 @@ let mountSeq = 0;
  *                                      JudgementRecord. Absent ⇒ nothing is signed.
  * @param {object|null} o.priorObservations  diagnostic cross-check only; never an input
  *                                      to a verdict.
+ * @param {Map<string,{contentHash:string,byteLength:number}>|null} o.preVerifiedArtifacts
+ *                   A3 — MEMORY-SAFE JUDGING: hashes of artifacts that were verified
+ *                   upstream and are NOT in the `artifacts` array (not written to tmpdir).
+ *                   Passed through to `loadEvidenceAuthority` so the manifest check covers
+ *                   the full set without requiring every blob to be on disk.
  */
 export function judgeRunInIsolate({
   runId,
@@ -89,6 +94,7 @@ export function judgeRunInIsolate({
   keyRegistry = null,
   signer = null,
   priorObservations = null,
+  preVerifiedArtifacts = null,
 }) {
   const runDir = join(MOUNT_ROOT, `${runId}-${mountSeq++}`);
   const artifactsDir = join(runDir, "artifacts");
@@ -105,6 +111,15 @@ export function judgeRunInIsolate({
     writeFileSync(recordPath, JSON.stringify(record), "utf8");
     writeFileSync(revisionPath, JSON.stringify(revision), "utf8");
     if (keyRegistry) writeFileSync(registryPath, JSON.stringify(keyRegistry), "utf8");
+
+    // A3 — MEMORY-SAFE MOUNT: only ENGINE-READ artifacts (JSON) are written to tmpdir.
+    // The pre-A3 code wrote ALL artifacts to the memory-backed tmpdir, which was the
+    // second copy of ~530MB of blobs (9,000 step PNGs + observation JSONs). The third
+    // copy happened when authority.mjs readFileSync'd each one back to hash it.
+    //
+    // Now: the `artifacts` array contains only the engine-read set (JSON files), and
+    // `preVerifiedArtifacts` carries the hashes of everything else. The authority's
+    // manifest check uses both, so `manifestComplete` is computed over the FULL set.
 
     // A basename is all the judge resolves by, so two artifacts sharing one is not a
     // cosmetic problem: the second write DESTROYS the first walk's evidence and the run
@@ -133,6 +148,8 @@ export function judgeRunInIsolate({
       runRecordPath: recordPath,
       keyRegistryPath: keyRegistry ? registryPath : null,
       contractRevisionPath: revisionPath,
+      // A3: pre-verified hashes for artifacts not written to disk.
+      preVerifiedArtifacts: preVerifiedArtifacts || null,
     });
 
     const judged = judgeRun({ runDir, checklist, priorObservations, authority, signer });
