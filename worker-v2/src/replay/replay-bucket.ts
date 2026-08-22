@@ -152,27 +152,38 @@ export function wrapReplayBucket(
 
   const wrapped: R2Bucket = {
     async head(key: string) {
-      // The stages call key functions with the REPLAY run id, generating keys like
-      // v2/runs/<replayRunId>/plan/.... Try that key first (replay's own writes),
-      // then try the SOURCE run equivalent (the original data).
+      // Try the key as-is first. Then try both directions:
+      //   source -> replay (own writes landed under replay prefix)
+      //   replay -> source (data from the original run)
       const result = await bucket.head(key);
       if (result) return result;
-      // If not found, try the source run equivalent.
-      const sourceEquivalent = reverseRewriteKey(key, sourceRunId, replayRunId);
-      if (sourceEquivalent && sourceEquivalent !== key) {
-        return bucket.head(sourceEquivalent);
+      // Forward: source key -> replay prefix (where writes went).
+      const forwardKey = rewriteKey(key, sourceRunId, replayRunId);
+      if (forwardKey && forwardKey !== key) {
+        const fwd = await bucket.head(forwardKey);
+        if (fwd) return fwd;
+      }
+      // Reverse: replay key -> source prefix (original data).
+      const reverseKey = reverseRewriteKey(key, sourceRunId, replayRunId);
+      if (reverseKey && reverseKey !== key) {
+        return bucket.head(reverseKey);
       }
       return null;
     },
 
     async get(key: string, options?: R2GetOptions) {
-      // Same fall-through logic as head: try the key as-is (which may be a replay
-      // key for own writes), then try the source run equivalent.
       const result = await bucket.get(key, options);
       if (result) return result;
-      const sourceEquivalent = reverseRewriteKey(key, sourceRunId, replayRunId);
-      if (sourceEquivalent && sourceEquivalent !== key) {
-        return bucket.get(sourceEquivalent, options);
+      // Forward: source key -> replay prefix (where writes went).
+      const forwardKey = rewriteKey(key, sourceRunId, replayRunId);
+      if (forwardKey && forwardKey !== key) {
+        const fwd = await bucket.get(forwardKey, options);
+        if (fwd) return fwd;
+      }
+      // Reverse: replay key -> source prefix (original data).
+      const reverseKey = reverseRewriteKey(key, sourceRunId, replayRunId);
+      if (reverseKey && reverseKey !== key) {
+        return bucket.get(reverseKey, options);
       }
       return null;
     },
