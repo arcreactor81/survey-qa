@@ -252,7 +252,7 @@
     // service that is ceremony rather than security, but it IS a real separation to restore
     // if this ever serves anyone else — the registry is the place that decides who may
     // certify, and it should not be edited by whoever holds the key.
-    "JUDGEMENT_KEY_REGISTRY": "{\"keys\":{\"judgement-ed25519-c66c5185cc1a\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEA3MhosLSUGY4GocN6qXlY0bT6x1bkJ7nBCWhzUo2qako=\",\"trust\":\"production\",\"note\":\"production judgement signer, generated 2 Aug 2026\"},\"fixture-judge-ed25519-1\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEAnLc2qf/YrOD6qP1zAsHHQBIzea2kYaeJ/fFH/9QAQdM=\",\"trust\":\"fixture\",\"note\":\"local smoke suite only; rejected unless DEV_SEED=enabled\"}}}",
+    "JUDGEMENT_KEY_REGISTRY": "{\"keys\":{\"judgement-ed25519-c66c5185cc1a\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEA3MhosLSUGY4GocN6qXlY0bT6x1bkJ7nBCWhzUo2qako=\",\"trust\":\"production\",\"note\":\"production judgement signer, generated 2 Aug 2026\"},\"fixture-judge-ed25519-1\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEAnLc2qf/YrOD6qP1zAsHHQBIzea2kYaeJ/fFH/9QAQdM=\",\"trust\":\"fixture\",\"note\":\"local smoke suite only; rejected unless DEV_SEED=enabled\"},\"judgement-ed25519-fd11213761e7\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEAZl9EY/sscbE+VuxFt+haQfYa0yu4iSO6fkF1HbXpmes=\",\"trust\":\"production\",\"note\":\"shared production+bench judgement signer, minted 22 Aug 2026 with owner approval; private half in prod secrets, bench secrets, and git-ignored .local-private/keys\"}}}",
 
     // ---- submission limits (each keeps its own name and denominator) ----
     "MAX_DOCUMENT_BYTES": "26214400", // 25 MiB of .docx
