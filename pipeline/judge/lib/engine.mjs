@@ -30,7 +30,7 @@
  */
 
 import { COVERAGE, VERDICT, DISPOSITION, OUTCOME, REASON, ENGINE_VERSION, EVIDENCE_CLASS, PROOF_KIND } from './vocab.mjs';
-import { EvidenceStore, EvidenceIntegrityError } from './evidence-store.mjs';
+import { EvidenceStore, EvidenceIntegrityError, PRIMARY_PROBES } from './evidence-store.mjs';
 import { loadSessions } from './sessions.mjs';
 import { buildRouteTable, sessionWalks, ROUTE_TABLE_VERSION } from './route-table.mjs';
 import { buildCensus } from './census.mjs';
@@ -169,6 +169,18 @@ export async function buildContext(runDir, checklist, { store: injectedStore, se
   if (!injectedStore) EVIDENCE_PROVENANCE.set(store, { kind: 'evidence-store', authority, runDir });
   const sessions = injectedSessions || await loadSessions(store);
   if (!injectedSessions) EVIDENCE_PROVENANCE.set(sessions, { kind: 'sessions', store });
+
+  // PRELOAD THE PRIMARY PROBES. The predicates are SYNC functions and read the
+  // probe artifacts through `store.readCached()`, which never fetches. Awaiting
+  // a real read() here — with all of its verification — is what makes that
+  // cache-only read honest: by predicate time a probe is either verified in the
+  // cache or genuinely absent from the run. Skipping this preload is exactly
+  // the defect the pinned v1 baseline caught (two probe-backed obligations
+  // silently demoted to NO_OBSERVATION_FOR_OBLIGATION).
+  for (const probeName of PRIMARY_PROBES) {
+    if (store.listArtifacts().includes(probeName)) await store.read(probeName);
+  }
+
   const routeTable = buildRouteTable(sessions);
   const census = buildCensus(sessions);
   const walks = sessionWalks(sessions);

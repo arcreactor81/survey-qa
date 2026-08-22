@@ -1780,6 +1780,31 @@ test('N4: a signed locus may still ADD, and still earns its certification credit
 // A3b — the session-candidate pre-filter against the WALKER'S REAL LEAF NAMES
 // ===========================================================================
 
+test('A3b: readCached serves only verified cache entries and never fetches', async () => {
+  // The predicates are sync and read the targeted-probe artifact through
+  // readCached. When read() went async, the old sync read returned a Promise
+  // whose `.ok` was undefined, and two probe-backed t1 obligations silently
+  // demoted to NO_OBSERVATION_FOR_OBLIGATION (pass 89 -> 88 on the pinned v1
+  // baseline). This pins the accessor's two-sided contract.
+  const checklist = readJson(join(V2, 'checklist.json'));
+  const authority = loadEvidenceAuthority({ runDir: V2, checklist, keyRegistryPath: REGISTRY });
+  const store = new EvidenceStore(V2, { authority });
+
+  // Not preloaded -> an honest miss, synchronously — never a Promise, never a fetch.
+  const readsBefore = store.readCount;
+  const miss = store.readCached('V2-CLEAN-B.json');
+  assert.equal(typeof miss.then, 'undefined', 'readCached must be synchronous');
+  assert.equal(miss.ok, false);
+  assert.equal(store.readCount, readsBefore, 'a cache miss must not trigger a fetch');
+
+  // After a real read() — with its verification — the same name serves from cache.
+  const real = await store.read('V2-CLEAN-B.json');
+  assert.equal(real.ok, true);
+  const hit = store.readCached('V2-CLEAN-B.json');
+  assert.equal(hit.ok, true);
+  assert.equal(hit.sha256, real.sha256);
+});
+
 test('A3b: the sweep filter excludes step captures named the way the walker actually names them', () => {
   // Measured on the real v100 catalogue: the step marker sits MID-NAME after
   // the pathId slug. An exclusion anchored at the start admitted 2,330 step

@@ -1183,7 +1183,10 @@ function answerRequirement(exp, ctx) {
 // ---------------------------------------------------------------------------
 
 function mobileSingleStatement(exp, ctx) {
-  const t = ctx.store.read('_targeted.json');
+  // Predicates are sync; read() is async (A3b). readCached serves the probe
+  // buildContext preloaded — a sync read() here returns a Promise whose `.ok`
+  // is undefined, which silently became "no observation" (pinned-baseline flip).
+  const t = ctx.store.readCached('_targeted.json');
   if (!t.ok || !t.data || !t.data[`mobile_${exp.screen}`]) {
     return thin(REASON.NO_OBSERVATION_FOR_OBLIGATION, { detail: { screen: exp.screen, note: 'no mobile-viewport probe recorded for this screen' } });
   }
@@ -1202,7 +1205,8 @@ function mobileSingleStatement(exp, ctx) {
 }
 
 function desktopGrid(exp, ctx) {
-  const t = ctx.store.read('_targeted.json');
+  // Same contract as mobileSingleStatement: cache-only read of the preloaded probe.
+  const t = ctx.store.readCached('_targeted.json');
   if (!t.ok || !t.data || !t.data[`desktop_${exp.screen}`]) {
     return thin(REASON.NO_OBSERVATION_FOR_OBLIGATION, { detail: { screen: exp.screen } });
   }

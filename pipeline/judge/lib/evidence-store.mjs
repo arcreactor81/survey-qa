@@ -154,7 +154,7 @@ export { resolvePath };
 export const PROJECTIONS = FIELD_PROJECTIONS;
 
 const DERIVED_SUMMARIES = new Set(['_analysis.json', '_textdiff.json', '_run-summary.json']);
-const PRIMARY_PROBES = new Set(['_targeted.json', '_scale-probes.json']);
+export const PRIMARY_PROBES = new Set(['_targeted.json', '_scale-probes.json']);
 
 /** Classes that may never carry a machine verdict. */
 const NON_PRIMARY_CLASSES = new Set([
@@ -495,6 +495,39 @@ export class EvidenceStore {
     };
     if (!fresh) this._cache.set(name, rec);
     return { ...rec, fragment };
+  }
+
+  /**
+   * SYNCHRONOUS, CACHE-ONLY read — for the predicates, which are sync functions.
+   *
+   * WHY THIS EXISTS. When read() went async (A3b), two predicates that read the
+   * targeted-probe artifact mid-flight (`mobileSingleStatement`, `desktopGrid` in
+   * predicates.mjs) kept calling it synchronously: the returned Promise's `.ok`
+   * is undefined, so both quietly concluded "no observation" and two t1
+   * obligations moved off the pinned v1 baseline (pass 89 -> 88) — caught by
+   * d1-acceptance, not by any engine selftest. Silent Promise-as-record is the
+   * exact silent-wrongness class this repo bans.
+   *
+   * The contract: `buildContext` (engine.mjs) awaits a real read() of every
+   * PRIMARY_PROBE artifact present in the manifest BEFORE any predicate runs,
+   * so by predicate time a probe is either in the cache (returned here with all
+   * of read()'s verification already applied) or genuinely absent from the run
+   * (an honest CITED_ARTIFACT_MISSING). This method NEVER fetches: a sync fetch
+   * cannot verify, and an unverified byte must not reach a predicate.
+   */
+  readCached(ref) {
+    const { name, fragment, traversal } = EvidenceStore.normalizeRef(ref);
+    if (traversal) {
+      return {
+        ok: false, name, path: null, evidenceClass: EVIDENCE_CLASS.UNKNOWN,
+        reason: REASON.ARTIFACT_OUTSIDE_EVIDENCE_ROOT, sha256: null, data: null, fragment,
+      };
+    }
+    if (this._cache.has(name)) return { ...this._cache.get(name), fragment };
+    return {
+      ok: false, name, path: null, evidenceClass: classifyArtifact(name),
+      reason: REASON.CITED_ARTIFACT_MISSING, sha256: null, data: null, fragment,
+    };
   }
 
   /**
