@@ -21,6 +21,11 @@ const { values } = parseArgs({
     "replay-run": { type: "string" },
     "worker-url": { type: "string" },
     token: { type: "string" },
+    // Comma-separated subset of stages to run, in the canonical order (e.g.
+    // "seed,project-observations" or "mint-judgement,supersede-record,report").
+    // A full tail is ~12 minutes, which straddles this environment's background-task
+    // kill ceiling; chunking keeps each invocation inside a foreground timeout.
+    stages: { type: "string" },
   },
   strict: true,
 });
@@ -52,7 +57,7 @@ if (!token) {
   process.exit(1);
 }
 
-const STAGES = [
+const ALL_STAGES = [
   "seed",
   "project-observations",
   "verify-observations",
@@ -62,6 +67,19 @@ const STAGES = [
   "supersede-record",
   "report",
 ];
+
+let STAGES = ALL_STAGES;
+if (values.stages) {
+  const requested = values.stages.split(",").map((s) => s.trim()).filter(Boolean);
+  const unknown = requested.filter((s) => !ALL_STAGES.includes(s));
+  if (unknown.length > 0) {
+    console.error(`ERROR: unknown stage(s): ${unknown.join(", ")}`);
+    console.error(`Valid stages: ${ALL_STAGES.join(", ")}`);
+    process.exit(1);
+  }
+  // Preserve canonical order regardless of how the subset was written.
+  STAGES = ALL_STAGES.filter((s) => requested.includes(s));
+}
 
 const results = [];
 let anyError = false;
