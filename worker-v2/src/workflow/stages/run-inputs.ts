@@ -457,8 +457,20 @@ export class EngineReadBudgetExceeded extends Error {
  */
 function isEngineReadArtifact(name: string): boolean {
   const b = name.split("/").pop() ?? name;
-  // PRIMARY_SESSION pattern — from classifyArtifact (evidence-store.mjs)
+  // PRIMARY_SESSION filename pattern — from classifyArtifact (evidence-store.mjs). This
+  // covers legacy v1 refs (`runs/<id>/artifacts/EXP-07.json`) and any capture whose pathId
+  // family the engine names directly.
   if (/^(FLOOR|EXP|TD|T\d)[-\w]*\.json$/i.test(b)) return true;
+  // WALKER SESSION LEAF — capture.ts writes every session observation as
+  // `<artifactSlug(pathId)>-observation.json` (retries: `<slug>-retry-<n>-observation.json`),
+  // so the `-observation.json` suffix identifies sessions INDEPENDENTLY of the pathId
+  // prefix convention the pattern above keys on. Without this disjunct, a path family the
+  // plan generator names outside (FLOOR|EXP|TD|T\d) — or a pathId carrying a `.` (legal in
+  // the artifactSlug alphabet but unmatched by `[-\w]`) — would pass the engine's
+  // shape-promotion yet never reach the mount, and the loss would surface as a misleading
+  // CITED_ARTIFACT_MISSING quarantine. The walker owns this leaf name, so the suffix is a
+  // codebase invariant, not a corpus convention.
+  if (/-observation\.json$/i.test(b)) return true;
   // PRIMARY_PROBE — potentially cited by answer-requirement predicates
   if (b === "_targeted.json" || b === "_scale-probes.json") return true;
   return false;

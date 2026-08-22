@@ -4,7 +4,7 @@
  *
  *   node tools/mutate-a3-memory.mjs
  *
- * Four mutants, each reversing one specific guarantee:
+ * Five mutants, each reversing one specific guarantee:
  *
  *   1. ENGINE-READ FILTER WIDENED: `isEngineReadArtifact` returns true for ALL artifacts,
  *      so step-slot and accessibility JSONs stay resident alongside sessions. The peak-
@@ -21,6 +21,10 @@
  *   4. STEP-JSON EXCLUSION REMOVED: `isEngineReadArtifact` matches all `.json` (the old
  *      behaviour). The step-exclusion test must kill this because step-slot and accessibility
  *      JSONs would land in engineRead instead of hash-verify-only.
+ *
+ *   5. WALKER SESSION LEAF DISJUNCT REMOVED: the `-observation.json` suffix branch is
+ *      deleted, so a session from a path family outside (FLOOR|EXP|TD|T\d) never mounts.
+ *      The unfamiliar-path-family test must kill this.
  *
  * NOTHING IS WRITTEN TO `src/**`. The rewrite happens inside esbuild's load step
  * (`testkit.mjs#mutantPlugin`).
@@ -42,8 +46,8 @@ const MUTANTS = [
     // The isEngineReadArtifact classification is the split point. Making it always return
     // true means every artifact goes to engineRead (the old behaviour) and nothing is
     // released via the hash-verify-only batch path.
-    find: "function isEngineReadArtifact(name: string): boolean {\n  const b = name.split(\"/\").pop() ?? name;\n  // PRIMARY_SESSION pattern",
-    replace: "function isEngineReadArtifact(name: string): boolean {\n  return true; // MUTANT: widened to all\n  const b = name.split(\"/\").pop() ?? name;\n  // PRIMARY_SESSION pattern",
+    find: "function isEngineReadArtifact(name: string): boolean {\n  const b = name.split(\"/\").pop() ?? name;",
+    replace: "function isEngineReadArtifact(name: string): boolean {\n  return true; // MUTANT: widened to all\n  const b = name.split(\"/\").pop() ?? name;",
     kills: ["peak residency is bounded by session-pattern JSONs + one batch, not the full set"],
   },
 
@@ -78,10 +82,23 @@ const MUTANTS = [
       "without the narrowed pattern, step-XXX-slot.json and .accessibility.json files land " +
       "in engineRead instead of hash-verify-only — the same OOM cliff as the original defect",
     file: INPUTS,
-    // Revert to the old "all .json" behaviour by replacing the narrowed classifier.
-    find: "function isEngineReadArtifact(name: string): boolean {\n  const b = name.split(\"/\").pop() ?? name;\n  // PRIMARY_SESSION pattern — from classifyArtifact (evidence-store.mjs)\n  if (/^(FLOOR|EXP|TD|T\\d)[-\\w]*\\.json$/i.test(b)) return true;\n  // PRIMARY_PROBE — potentially cited by answer-requirement predicates\n  if (b === \"_targeted.json\" || b === \"_scale-probes.json\") return true;\n  return false;\n}",
-    replace: "function isEngineReadArtifact(name: string): boolean {\n  return /\\.json$/i.test(name);\n}",
+    // Revert the session-pattern branch to the old "all .json" behaviour.
+    find: "  if (/^(FLOOR|EXP|TD|T\\d)[-\\w]*\\.json$/i.test(b)) return true;",
+    replace: "  if (/\\.json$/i.test(b)) return true; // MUTANT: all .json engine-read",
     kills: ["step-level JSONs are NOT resident — they join the hash-verify-only stream"],
+  },
+
+  // ------------------------------------------------- walker session leaf
+  {
+    name: "the -observation.json disjunct is removed — unfamiliar path families never mount",
+    breaks:
+      "with only the (FLOOR|EXP|TD|T\\d) prefix pattern, a session whose path family the " +
+      "plan generator names differently passes the engine's shape-promotion but never " +
+      "reaches the mount, and the loss surfaces as a misleading CITED_ARTIFACT_MISSING",
+    file: INPUTS,
+    find: "  if (/-observation\\.json$/i.test(b)) return true;",
+    replace: "  // MUTANT: walker session leaf disjunct removed",
+    kills: ["a session from an unfamiliar path family still mounts via the walker's -observation.json leaf"],
   },
 ];
 

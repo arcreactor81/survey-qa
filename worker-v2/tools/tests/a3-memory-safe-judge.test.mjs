@@ -435,13 +435,66 @@ suite("A3 — bounded residency: the peak resident count is bounded by sessions,
         `with all .json as engine-read it would be ${entries.length}`,
     );
 
-    // Verify the engine-read set contains only session-pattern names.
+    // Verify the engine-read set contains only session names — the classifyArtifact
+    // filename pattern or the walker's `-observation.json` session leaf.
     for (const a of result.engineRead) {
       assert(
-        /^(FLOOR|EXP|TD|T\d)[-\w]*\.json$/i.test(a.name),
-        `engine-read artifact ${a.name} must match session pattern`,
+        /^(FLOOR|EXP|TD|T\d)[-\w]*\.json$/i.test(a.name) || /-observation\.json$/i.test(a.name),
+        `engine-read artifact ${a.name} must be a session name`,
       );
     }
+  });
+
+  test("a session from an unfamiliar path family still mounts via the walker's -observation.json leaf", async () => {
+    // THE CONVENTION THIS GUARDS: the (FLOOR|EXP|TD|T\d) prefix pattern is the PLAN
+    // GENERATOR'S current path-family naming, not a property of sessions. A path family
+    // named outside it — or a pathId carrying a `.`, legal in the artifactSlug alphabet
+    // but unmatched by `[-\w]` — passes the engine's shape-promotion, so excluding it from
+    // the mount would lose the session behind a misleading CITED_ARTIFACT_MISSING. The
+    // walker's own leaf (`<slug>-observation.json`, capture.ts) identifies sessions
+    // independently of that convention. This test FAILS on a prefix-pattern-only filter.
+    const mod = await worker();
+    const env = testEnv();
+    const runId = mod.ids.mintRunId();
+
+    const entries = [];
+    // Path family "SCR" with a dotted id — matches NEITHER branch of the prefix pattern.
+    for (const slug of ["SCR-2.1--fi_0a1b2c3d4e5f60718293", "SCR-2.2--fi_ffeeddccbbaa99887766-retry-1"]) {
+      entries.push(await mod.evidence.putEvidence(env, {
+        runId,
+        bytes: enc.encode(JSON.stringify({ id: slug, evidence: [] })),
+        mediaType: "application/json",
+        type: "state",
+        attemptId: "att_scr_family",
+        routeId: slug,
+        witnesses: [],
+        sourceEvidenceId: `EV-${slug}-observation`,
+        artifactRef: `observations/${slug}/${slug}-observation.json`,
+      }));
+    }
+    // A step-level JSON from the same family stays hash-verify-only.
+    entries.push(await mod.evidence.putEvidence(env, {
+      runId,
+      bytes: enc.encode(JSON.stringify({ step: 1, slot: "data" })),
+      mediaType: "application/json",
+      type: "state",
+      attemptId: "att_scr_family",
+      routeId: "SCR-2.1--fi_0a1b2c3d4e5f60718293",
+      witnesses: [],
+      sourceEvidenceId: "EV-SCR-step-1",
+      artifactRef: "steps/SCR-2.1--fi_0a1b2c3d4e5f60718293/step-001-slot.json",
+    }));
+
+    const result = await mod.runInputs.loadArtifactBytesStreaming(env, entries);
+
+    assertEq(
+      result.engineRead.length, 2,
+      `both -observation.json sessions must mount despite the unfamiliar prefix, got ${result.engineRead.length}`,
+    );
+    assertEq(
+      result.preVerifiedHashes.size, 1,
+      `the step-level JSON must stay hash-verify-only, got ${result.preVerifiedHashes.size}`,
+    );
   });
 });
 
