@@ -19,14 +19,20 @@ await runMutantSuite({
       file: DR,
       find: "      rootCount >= 2",
       replace: "      false",
-      kills: ["two visible question roots stop before binding, defaults, forward click, or coverage"],
+      // kill name drifted: anchor matches initialStop (unscoped roots), not multiRootTraversal
+      kills: ["roots WITHOUT scoped control indexes still stop before binding, defaults, or coverage"],
     },
     {
+      // RE-AIMED: old premise patched one advanceSignals call site in the advance poll loop,
+      // but silentRefusalRepress now calls advanceSignals independently and catches progress
+      // movement through a second path. New premise: patch advanceSignals itself at the
+      // progress-value-increased signal so ALL call sites lose the detection. The property
+      // (progress movement on identical templates is observed) is preserved.
       name: "identical-template movement returns to signature-only",
       breaks: "real roster/progress movement on an unchanged template is recorded as blocked",
       file: DR,
-      find: "      movementSignals = advanceSignals(advanceBaseline, after);",
-      replace: "      movementSignals = after.screenSignature !== advanceBaseline.screenSignature ? [\"screen-signature-changed\"] : [];",
+      find: "  ) out.push(\"progress-value-increased\");",
+      replace: "  ) { /* mutant: progress-value-increased signal dropped */ }",
       kills: ["identical template with delayed numeric progress is advanced and names its proof"],
     },
     {
