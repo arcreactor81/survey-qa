@@ -24,8 +24,9 @@ await runMutantSuite({
         "would no longer become an avoid_labels entry, so the walker would click documented " +
         "screen-out answers whenever the requirement facet happens not to say terminate",
       file: PLAN,
-      find: '    if (dest?.terminal) out.push({ question, label, kind: "terminate" });',
-      replace: '    if (false) out.push({ question, label, kind: "terminate" });',
+      // Re-anchored after D1 added `code` to the route-destination rows.
+      find: '    if (dest?.terminal) out.push({ question, label, code, kind: "terminate" });',
+      replace: '    if (false) out.push({ question, label, code, kind: "terminate" });',
       kills: ["a route with its OWN bound terminal is a terminate whatever its requirement facet says"],
     },
     {
@@ -34,8 +35,9 @@ await runMutantSuite({
         "the typed route source's continue channel. A route bound to a named question would " +
         "no longer become a prefer_labels entry, so the walker would get no positive steering",
       file: PLAN,
-      find: '    else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, kind: "continue" });',
-      replace: '    else if (false) out.push({ question, label, kind: "continue" });',
+      // Re-anchored after D1 added `code` to the route-destination rows.
+      find: '    else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, code, kind: "continue" });',
+      replace: '    else if (false) out.push({ question, label, code, kind: "continue" });',
       kills: [
         "extracts continue destinations with verbatim labels",
         "continue routes become prefer entries",
@@ -98,8 +100,9 @@ await runMutantSuite({
         "the honesty rule that walked run v2r_01m0cjew… into a documented termination: a row " +
         "whose destination the binder could not read must never become a prefer label",
       file: PLAN,
-      find: '    else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, kind: "continue" });',
-      replace: '    else if (true) out.push({ question, label, kind: "continue" });',
+      // Re-anchored after D1 added `code` to the route-destination rows.
+      find: '    else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, code, kind: "continue" });',
+      replace: '    else if (true) out.push({ question, label, code, kind: "continue" });',
       kills: ["typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped"],
     },
     {

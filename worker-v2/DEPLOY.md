@@ -138,6 +138,12 @@ fresh evidence directory.
 
 ~~~powershell
 Set-Location $V2
+# STATIC ANCHOR CHECK FIRST — seconds, not hours. Five drifted mutation anchors were each
+# discovered by a multi-hour battery run during the 23-24 Aug release trains; this check
+# resolves every campaign's find-anchors against current source up front, so drift fails
+# here in seconds instead of deep inside the supervised battery.
+& $Node tools\check-mutation-anchors.mjs
+if ($LASTEXITCODE -ne 0) { throw "mutation anchor check failed" }
 & $Node "..\node_modules\typescript\bin\tsc" --noEmit -p tsconfig.json
 if ($LASTEXITCODE -ne 0) { throw "typecheck failed" }
 & $Node tools\test.mjs

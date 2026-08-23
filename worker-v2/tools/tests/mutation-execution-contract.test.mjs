@@ -251,6 +251,9 @@ function assertSameSet(actual, expected, label) {
 }
 
 const RUNBOOK_EXECUTION_TOKENS = Object.freeze([
+  // The fast pre-battery anchor check (24 Aug): drift fails in seconds, not deep in the
+  // supervised battery. Its removal from the runbook must fail this audit.
+  "tools\\check-mutation-anchors.mjs",
   "$MutationTimeoutMs = 7200000",
   "$MutationChildTimeoutMs = 120000",
   "$MutationDrainGraceMs = 30000",
