@@ -95,64 +95,73 @@ suite("D101 — superseded recording resolution (judge-side)", () => {
     const runId = mod.ids.mintRunId();
 
     const ref = "observations/FLOOR-02/FLOOR-02-step-010-before.png";
-    const newerBytes = enc.encode("second-capture-bytes");
-    const olderBytes = enc.encode("first-capture-bytes");
 
-    // Write NEWER entry first so it appears first in the array. This ensures the mutant
-    // (which always picks entries[0]) would pick the wrong entry when the newer blob is
-    // deleted. The resolution must follow the BYTES, not the array order.
-    const newerEntry = await mod.evidence.putEvidence(env, {
+    // Create two entries with different bytes at the same artifactRef, simulating a
+    // Workflow retry. We create both, then use retryRecencyOrder to determine which
+    // one the resolver tries FIRST (latest capturedAt wins, contentHash tiebreaker).
+    // We delete THAT entry's blob so the existence check is exercised on the FIRST
+    // iteration of the resolver's loop.
+    //
+    // OLD FIXTURE (pre-sort): wrote the "dead" entry first so it was entries[0].
+    // That relied on array-position iteration, which the deterministic
+    // retryRecencyOrder sort replaced. The sort made the old fixture inert: the
+    // live entry sorted first and won before the existence check was reached.
+    const entryA = await mod.evidence.putEvidence(env, {
       runId,
-      bytes: newerBytes,
+      bytes: enc.encode("capture-alpha-bytes"),
       mediaType: "image/png",
       type: "screenshot",
       attemptId: "att_d101_c",
       routeId: "FLOOR-02",
       witnesses: [],
-      sourceEvidenceId: "EV-FLOOR-02-10-new",
+      sourceEvidenceId: "EV-FLOOR-02-10-A",
       artifactRef: ref,
     });
-    const olderEntry = await mod.evidence.putEvidence(env, {
+    const entryB = await mod.evidence.putEvidence(env, {
       runId,
-      bytes: olderBytes,
+      bytes: enc.encode("capture-bravo-bytes"),
       mediaType: "image/png",
       type: "screenshot",
       attemptId: "att_d101_d",
       routeId: "FLOOR-02",
       witnesses: [],
-      sourceEvidenceId: "EV-FLOOR-02-10-old",
+      sourceEvidenceId: "EV-FLOOR-02-10-B",
       artifactRef: ref,
     });
 
-    // Delete the NEWER blob from storage, leaving only the older one accessible.
-    // The newer entry is FIRST in the array, so the mutant (entries[0]) would pick it
-    // even though its blob no longer exists.
-    await env.EVIDENCE.delete(mod.keys.evidenceBlobKey(newerEntry.contentHash));
+    assert(entryA.contentHash !== entryB.contentHash, "fixture: entries must have different contentHash");
 
-    // Pass newerEntry FIRST so it is entries[0] in the group.
-    const result = await mod.runInputs.loadArtifactBytes(env, [newerEntry, olderEntry]);
+    // Determine which entry retryRecencyOrder sorts first. The resolver iterates
+    // uniqueHashes in this order, so the first entry's hash is tried first.
+    const sorted = [entryA, entryB].sort(mod.committedEvidence.retryRecencyOrder);
+    const recencyPreferred = sorted[0]; // tried first by the resolver
+    const recencyFallback = sorted[1];  // tried second — the one that must survive
+
+    // Delete the recency-preferred entry's blob. The resolver MUST skip it via
+    // `if (!obj) continue` and fall through to the fallback entry whose blob exists.
+    // Without the existence check (the mutant), `obj.arrayBuffer()` throws on null.
+    await env.EVIDENCE.delete(mod.keys.evidenceBlobKey(recencyPreferred.contentHash));
+
+    const result = await mod.runInputs.loadArtifactBytes(env, [entryA, entryB]);
     assertEq(result.artifacts.length, 1, "only the live recording survives");
     assertEq(result.supersededRecordings, 1, "one entry was superseded");
 
-    // The live entry is the OLDER one (its blob exists), proving no recency assumption
-    // and no array-position assumption.
-    const liveBytes = result.artifacts[0].bytes;
-    const liveHash = await mod.hash.sha256Hex(liveBytes);
-    assertEq(liveHash, olderEntry.contentHash, "the OLDER entry is live because its blob verifies");
+    // The fallback entry is live — its blob exists and verifies. This proves no
+    // recency assumption: the recency-preferred entry was skipped because its blob
+    // was absent, and the BYTES decided.
+    const liveHash = await mod.hash.sha256Hex(result.artifacts[0].bytes);
+    assertEq(liveHash, recencyFallback.contentHash,
+      "the fallback entry is live because its blob verifies — the recency-preferred entry was skipped");
 
-    // THE MOUNT MUST BE VERIFIABLE: the content the mount serves must be retrievable by
-    // the entry that claims it. A resolution that picks entries[0] regardless of hash match
-    // would serve olderEntry's bytes under newerEntry's identity — the bytes are correct
-    // but the catalogue binding is broken. Verify the live bytes are fetchable through the
-    // evidence store by the hash the mount carries.
+    // Round-trip: the resolved entry must be fetchable through the evidence store.
     const { bytes: roundTrip } = await mod.evidence.getVerifiedEvidence(env, {
-      evidenceId: olderEntry.evidenceId,
-      contentHash: olderEntry.contentHash,
+      evidenceId: recencyFallback.evidenceId,
+      contentHash: recencyFallback.contentHash,
     });
     assertEq(
       await mod.hash.sha256Hex(roundTrip),
-      olderEntry.contentHash,
-      "the resolved entry's contentHash must match the stored blob — resolution picked the correct entry, not just the correct bytes",
+      recencyFallback.contentHash,
+      "the resolved entry's contentHash must match the stored blob",
     );
   });
 

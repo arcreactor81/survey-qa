@@ -277,8 +277,12 @@ const MUTANTS = [
       "cannot say retried steps were resolved and 'no retries' is indistinguishable from " +
       "'retried and resolved'",
     file: INPUTS,
-    find: "    supersededRecordings: superseded > 0 ? superseded : null,",
-    replace: "    supersededRecordings: null,",
+    // RE-ANCHORED: the old single-line anchor matched both loadArtifactBytes (line 711)
+    // and loadArtifactBytesStreaming (line 878). Extended to include the preceding
+    // `artifacts,` line which is unique to loadArtifactBytes (the streaming variant
+    // has `peakResident,` at that position).
+    find: "    artifacts,\n    duplicatesCollapsed: collapsed,\n    supersededRecordings: superseded > 0 ? superseded : null,",
+    replace: "    artifacts,\n    duplicatesCollapsed: collapsed,\n    supersededRecordings: null,",
     kills: ["same-ref different-hash where stored bytes match the newer row: judgement proceeds, superseded count = 1"],
   },
 
