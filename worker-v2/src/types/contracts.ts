@@ -639,10 +639,30 @@ export interface RunCheckpoint {
 
 export const RUN_STATUS_SCHEMA = "run-status/2.0.0" as const;
 
+/**
+ * THE RUN-LEVEL PHASE — what a reader can truthfully be told.
+ *
+ * The six `PhaseName` values describe a run that is still working. The three terminal
+ * values describe one whose work is over:
+ *
+ *   `"done"`           — test complete + report complete. The cleanest outcome.
+ *   `"done-at-limit"`  — test stopped at a limit (time, cost, site-blocked) but the
+ *                         report was built from what was recorded. This is a NORMAL,
+ *                         HEALTHY ending today — the time cap is expected to fire on
+ *                         most real runs — and must NOT render as a failure or as
+ *                         still-running.
+ *   `"done-failed"`    — test failed OR report failed. Something went wrong.
+ *
+ * The checkpoint's `phase` field is always a `PhaseName` (set on transition to active),
+ * so the terminal state is derived HERE in the projection, from the completion facts the
+ * checkpoint already records. It is never written back.
+ */
+export type RunPhase = PhaseName | "done" | "done-at-limit" | "done-failed";
+
 export interface RunStatusV2 {
   schemaVersion: typeof RUN_STATUS_SCHEMA;
   runId: string;
-  phase: PhaseName;
+  phase: RunPhase;
   phases: Phase[];
   completion: Completion;
   /** Proof the process checked in. A heartbeat is not progress. */
@@ -685,6 +705,33 @@ export interface RunStatusV2 {
   failure?: RunFailure;
   /** Durable questionnaire-reading facts. Omitted before extraction has durable facts. */
   documentReading?: DocumentReadingProgress;
+}
+
+/**
+ * DERIVE THE TERMINAL RUN-LEVEL PHASE from the completion facts.
+ *
+ * Returns null when the run is still working — the checkpoint's own `phase` is the
+ * honest answer in that case. Returns a terminal `RunPhase` when all work is over.
+ *
+ * THE RULE: every per-phase state must be terminal (complete, stopped, skipped) AND the
+ * completion pair must be terminal. When both hold, the flavor is read from `completion`:
+ *
+ *   - test complete + report complete → `"done"`
+ *   - test partial-* + report complete → `"done-at-limit"` (normal, healthy)
+ *   - anything else terminal → `"done-failed"` (something went wrong)
+ */
+export function deriveTerminalPhase(completion: Completion, phases: Phase[]): RunPhase | null {
+  const terminalPhaseStates: PhaseState[] = ["complete", "stopped", "skipped"];
+  const allPhasesTerminal = phases.every((p) => terminalPhaseStates.includes(p.state));
+  if (!allPhasesTerminal) return null;
+  if (!isTerminalTest(completion.test)) return null;
+  // Both axes must have stopped — a terminal test with a running report is not done.
+  if (completion.report !== "complete" && completion.report !== "failed") return null;
+
+  if (completion.test === "complete" && completion.report === "complete") return "done";
+  if (isPartialTestCompletion(completion.test) && completion.report === "complete") return "done-at-limit";
+  // test failed, report failed, or both — something went wrong.
+  return "done-failed";
 }
 
 /**
@@ -731,10 +778,17 @@ export function projectStatus(
     ? publicExtractionDetail
     : cp.error === null || cp.error === undefined ? null : sanitiseErrorText(cp.error, ERROR_TEXT_MAX);
   const publicNote = publicExtractionDetail && note ? publicExtractionDetail : note;
+  // THE TOP-LEVEL PHASE IS DERIVED, NOT COPIED.
+  //
+  // The checkpoint's `phase` is the name of the last stage that became active. When the
+  // run finishes it stays stuck at the last active stage — typically "reporting" — and
+  // nothing ever writes a terminal value there. The projection derives one from the
+  // completion facts so the page can tell the reader the run is over.
+  const terminalPhase = deriveTerminalPhase(cp.completion, cp.phases);
   return {
     schemaVersion: RUN_STATUS_SCHEMA,
     runId: cp.runId,
-    phase: cp.phase,
+    phase: terminalPhase ?? cp.phase,
     phases: cp.phases,
     completion: cp.completion,
     heartbeatAt,

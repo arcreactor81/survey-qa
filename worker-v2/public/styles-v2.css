@@ -1412,6 +1412,14 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .phase-glyph--pending { color: var(--muted); }
 .phase-timing-name { color: var(--text); }
 .phase-timing-time { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.phase-timing-terminal {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ok);
+}
+.phase-timing-terminal[data-run-phase="done-at-limit"] { color: var(--warn-text, var(--slate)); }
+.phase-timing-terminal[data-run-phase="done-failed"] { color: var(--danger-text, var(--danger)); }
 
 /* --- depth indicators --- */
 .depth-section { margin: 18px 0; }

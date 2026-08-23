@@ -67,6 +67,31 @@
     unknown: { word: "Not reported", glyph: "?", cls: "is-unknown", sr: "the server did not report this stage" }
   };
 
+  // THE RUN-LEVEL TERMINAL STATES. These are the `status.phase` values that mean "all work
+  // is over". A run-level phase that is NOT one of these and NOT one of the six stage names
+  // is VISIBLY UNKNOWN rather than silently ignored.
+  //
+  // `done`          — test complete + report complete. The cleanest outcome.
+  // `done-at-limit` — test stopped at a limit (time, cost, site-blocked) but the report
+  //                    was built from what was recorded. This is a NORMAL, HEALTHY ending
+  //                    today and must NOT render as a failure or as still-running.
+  // `done-failed`   — test failed OR report failed. Something went wrong.
+  var TERMINAL_PHASES = {
+    "done": {
+      word: "Run finished",
+      sub: "Every check on the list was completed, and the report was built."
+    },
+    "done-at-limit": {
+      word: "Run finished at the approved limit",
+      sub: "Testing stopped at its approved limit. The report was built from what was recorded. " +
+        "Stopping at a limit is a normal outcome, not an error — but a check that did not run is not a pass."
+    },
+    "done-failed": {
+      word: "Run did not finish",
+      sub: "Something stopped this run before it could produce a complete result."
+    }
+  };
+
   // What the run is doing, in the reader's language, while a stage is active.
   var PHASE_LEAD = {
     extracting: "Reading your questionnaire",
@@ -242,7 +267,23 @@
   function testState(view) { var c = completion(view); return c ? c.test : null; }
   function reportState(view) { var c = completion(view); return c ? c.report : null; }
 
+  // THE RUN-LEVEL PHASE from the status feed. This is the field the owner was looking at
+  // when the run appeared to be forever mid-flight.
+  function runPhase(view) {
+    return (view.status && typeof view.status.phase === "string") ? view.status.phase : null;
+  }
+
+  // Is the run-level phase a known terminal value?
+  function isTerminalPhase(view) {
+    var p = runPhase(view);
+    return p !== null && has(TERMINAL_PHASES, p);
+  }
+
   function isTerminal(view) {
+    // If the server sent a terminal run-level phase, that is authoritative.
+    if (isTerminalPhase(view)) return true;
+    // Fall back to completion facts for backward compatibility with status feeds that
+    // have not been re-projected yet.
     var c = completion(view);
     if (!c) return false;
     return (c.report === "complete" || c.report === "failed") &&
@@ -511,6 +552,27 @@
     if (test === "failed") {
       return { kicker: "Run status", title: "Testing could not finish", lead: null };
     }
+    // THE TERMINAL RUN-LEVEL PHASE, when the server sent one. The three terminal values
+    // carry the honest flavor: fully complete, ended at a limit, or failed.
+    var rp = runPhase(view);
+    if (rp === "done") {
+      return { kicker: "Finished", title: "Your report is ready", lead: null };
+    }
+    if (rp === "done-at-limit") {
+      var limitWord = has(STOP_REASON, test) ? STOP_REASON[test] : "Testing stopped at its approved limit.";
+      return {
+        kicker: "Finished",
+        title: "Your report is ready",
+        lead: limitWord + " The report was built from what was recorded."
+      };
+    }
+    if (rp === "done-failed") {
+      return {
+        kicker: "Run status",
+        title: report === "failed" ? "The report could not be built" : "Testing could not finish",
+        lead: null
+      };
+    }
     if (report === "complete") {
       return { kicker: "Run status", title: "Your report is ready", lead: null };
     }
@@ -519,6 +581,15 @@
     }
     if (test === "not-started" && report === "not-started") {
       return { kicker: "Run in progress", title: "Getting your run started", lead: null };
+    }
+    // AN UNKNOWN RUN-LEVEL PHASE RENDERS VISIBLY, never silently as progress.
+    if (rp !== null && !has(PHASE_LEAD, rp) && !has(TERMINAL_PHASES, rp)) {
+      return {
+        kicker: "Run status",
+        title: "The run is in a state this page does not recognise",
+        lead: "The server reported a run phase this page has no rendering for. " +
+          "The raw value is shown under Run details."
+      };
     }
     return { kicker: "Run in progress", title: "Testing your survey", lead: null };
   }
@@ -1932,6 +2003,10 @@
         "outcomes. A finished report is allowed to describe testing that stopped early."
     }));
     if (c.reasonCode) kids.push(machineRow("Reason recorded:", c.reasonCode));
+    // The run-level phase is the server's own terminal summary. Show it when present so
+    // a reader can see the exact token alongside the two axis words.
+    var rp = runPhase(view);
+    if (rp !== null) kids.push(machineRow("Run phase:", rp));
 
     // THE CAUSE, BESIDE THE VERDICT, IN ITS FOUR PARTS.
     //
@@ -2368,6 +2443,16 @@
     section.appendChild(el("div", { cls: "section-label", text: "Phase timeline" }));
     section.appendChild(bar);
     section.appendChild(el("div", { cls: "phase-timing-legend" }, legendItems));
+    // THE TERMINAL RUN-LEVEL STATE, stated in words below the timeline bar.
+    var rp = runPhase(view);
+    if (rp !== null && has(TERMINAL_PHASES, rp)) {
+      var tp = TERMINAL_PHASES[rp];
+      section.appendChild(el("p", {
+        cls: "phase-timing-terminal",
+        text: tp.word,
+        attrs: { "data-run-phase": rp }
+      }));
+    }
     return section;
   }
 

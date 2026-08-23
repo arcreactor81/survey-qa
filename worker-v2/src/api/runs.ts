@@ -806,6 +806,13 @@ async function reconcileWithEngine(
     copy.completion.test = "failed";
     copy.completion.reasonCode = found.failure.reasonCode;
   }
+  // A dead instance cannot build a report either. If the report was still provisional
+  // (not-started/building), it is now failed — otherwise the run-level phase stays in
+  // limbo with a failed test beside a non-terminal report, and the page renders as if
+  // work is still happening.
+  if (copy.completion.report !== "complete" && copy.completion.report !== "failed") {
+    copy.completion.report = "failed";
+  }
   for (const ph of copy.phases) {
     if (ph.state === "active") {
       ph.state = "stopped";
