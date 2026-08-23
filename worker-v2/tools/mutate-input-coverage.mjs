@@ -92,8 +92,9 @@ await runMutantSuite({
         "a range reports its midpoint before anyone touches it, so keying the skip off `value` alone " +
         "skips every slider on every survey for ever while recording the screen as answered",
       file: DR,
-      find: "    const alreadyAnswered = c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0);",
-      replace: "    const alreadyAnswered = !!(c.value && c.value.length > 0);",
+      // RE-ANCHORED: alreadyAnswered was widened to a multi-line ternary (revalidateValidation + placeholderValue guards added)
+      find: "    const alreadyAnswered =\n      revalidateValidation.length > 0 || placeholderValue\n        ? false\n        : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));",
+      replace: "    const alreadyAnswered =\n      revalidateValidation.length > 0 || placeholderValue\n        ? false\n        : !!(c.value && c.value.length > 0);",
       kills: ["AN UNTOUCHED SLIDER IS NOT 'ALREADY ANSWERED' — `value` alone would skip every one, for ever"],
     },
 
