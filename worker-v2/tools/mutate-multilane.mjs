@@ -191,9 +191,12 @@ await runMutantSuite({
         "path is never taken. The test exercises walkLane with a hanging " +
         "fake browser and asserts outcome === 'walk-never-started' — the " +
         "mutation produces 'per-case-timeout' instead",
-      file: ML,
-      find: "      const neverStarted = perCaseTimedOut && !startupPhases.includes(\"first-read\");",
-      replace: "      const neverStarted = false; // MUTANT: startup-budget discrimination removed",
+      // Re-anchored: inline expression was extracted to shared walkNeverStarted()
+      // in execute-batch.ts; old anchor targeted the call site in multilane.ts
+      // which no longer contains the logic inline.
+      file: EB,
+      find: "  return perCaseTimedOut && !startupPhases.includes(\"first-read\");",
+      replace: "  return false; // MUTANT: startup-budget discrimination removed",
       kills: [
         "lane-level walk-never-started recorded with sub-phase and real wallMs",
       ],
