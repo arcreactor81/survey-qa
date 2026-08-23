@@ -238,7 +238,10 @@ await runMutantSuite({
         "unrecognised terminal page becomes a confident completion — which is the defect typing " +
         "the ending existed to remove",
       file: DR,
-      find: "  /\\b(this\\s+is\\s+)?the\\s+end\\s+of\\s+(the|this)\\s+(survey|questionnaire|interview)\\b/i,",
+      // Re-anchored: the lexicon entry was tightened to require "reached the end of ..."
+      // (optionally "you have"); the old anchor text no longer exists and the mutant went
+      // NO-RUN — caught by the release battery, which refuses NO-RUN as a pass.
+      find: "  /\\b(you\\s+have\\s+)?reached\\s+the\\s+end\\s+of\\s+(the|this)\\s+(survey|questionnaire|interview)\\b/i,",
       replace: "  /\\bthe\\s+end\\b/i,",
       kills: ["A TERMINAL PAGE OUTSIDE BOTH LEXICONS IS STILL `unclassified` — widening added wordings, not a default"],
     },
