@@ -269,7 +269,15 @@ const RUNBOOK_EXECUTION_TOKENS = Object.freeze([
   "$SupervisorKillSucceeded = $SupervisorExitedAfterKill -eq $true",
   "$SupervisorStartInfo.CreateNoWindow = $true",
   "$SupervisorStartInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden",
-  "$SupervisorProcess.WaitForExit([int] $MutationSupervisorWatchdogMs)",
+  // PER-HARNESS OUTER TIMEOUT (23 Aug 2026): mutate-w4-select outgrew the generic
+  // two-hour supervisor ceiling (phaseB.6 receipt: exitCode 124, timedOut true, after
+  // the other 49 campaigns passed). The runbook now derives the outer timeout and its
+  // watchdog per harness, the same precedent as the per-harness child timeout — and
+  // this audit requires the per-harness form so a revert to the generic ceiling (or a
+  // silent removal of the wait bound) fails here.
+  "$HarnessTimeoutMs = if ($Harness -ceq \"mutate-w4-select.mjs\") { 14400000 } else { $MutationTimeoutMs }",
+  "$HarnessWatchdogMs = [int64] $HarnessTimeoutMs +",
+  "$SupervisorProcess.WaitForExit([int] $HarnessWatchdogMs)",
   "$SupervisorProcess.Kill()",
   "$SupervisorProcess.WaitForExit($MutationDrainGraceMs)",
   "$SupervisorKillAttempted -and $SupervisorExitedAfterKill -ne $true",
