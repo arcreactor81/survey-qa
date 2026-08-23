@@ -734,8 +734,8 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
     assertEq(
       JSON.stringify(routes),
       JSON.stringify([
-        { question: "S10", label: "Physician", kind: "terminate" },
-        { question: "S10", label: "Director of Population Health", kind: "continue" },
+        { question: "S10", label: "Physician", code: "17", kind: "terminate" },
+        { question: "S10", label: "Director of Population Health", code: "19", kind: "continue" },
       ]),
     );
   });
@@ -884,10 +884,17 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
 
     assertEq(JSON.stringify(p.decisions[0].avoid_labels), JSON.stringify(["Physician"]));
     assertEq(JSON.stringify(p.decisions[0].prefer_labels), JSON.stringify(["Director of Population Health"]));
+    // OUTCOME 1 (D1): codes are now stamped alongside labels.
     assertEq(
       JSON.stringify(p.survival_hints),
       JSON.stringify([
-        { question: "S10", avoid_labels: ["Physician"], prefer_labels: ["Director of Population Health"] },
+        {
+          question: "S10",
+          avoid_labels: ["Physician"],
+          prefer_labels: ["Director of Population Health"],
+          avoid_codes: [{ label: "Physician", code: "17" }],
+          prefer_codes: [{ label: "Director of Population Health", code: "19" }],
+        },
       ]),
     );
     assertEq(result.decisionsStamped, 1);

@@ -1,12 +1,12 @@
 /**
- * EVIDENCE THAT THE SURVIVAL-HINT GUARDS (D36 extension + D54) CAN FAIL.
+ * EVIDENCE THAT THE SURVIVAL-HINT GUARDS (D36 extension + D54 + D1) CAN FAIL.
  *
  * Survival hints are a reach change with one hard invariant: hints are INPUT, never
- * EVIDENCE. Each mutant below re-opens one of the three ways that invariant (or the
- * fallback contract) could quietly break — the stamp leaking into `select` (the one field
- * that fabricates missing-option evidence AND moves the exercised gate), the driver
- * refusing an answer instead of falling back to position-1, and a pass that is NOT a hint
- * consumer starting to consume them — and the named guard test must go red for it.
+ * EVIDENCE. Each mutant below re-opens one of the ways that invariant (or the fallback
+ * contract) could quietly break — the stamp leaking into `select`, the driver refusing
+ * an answer, a non-consumer starting to consume them, and the D1 extensions (code
+ * matching, recovery prefer, announcement detection, accepted-region values) — and the
+ * named guard test must go red for it.
  *
  *   node tools/mutate-survival-hints.mjs
  */
@@ -88,8 +88,8 @@ await runMutantSuite({
         "steered INTO every documented screen-out instead of around them",
       file: PLAN,
       // re-anchored: facet arm refactored from single-line `if (facet ===` to else-if block with facetByLineage.get()
-      find: '    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {\n      out.push({ question, label, kind: "terminate" });\n    }',
-      replace: '    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {\n      out.push({ question, label, kind: "continue" });\n    }',
+      find: '    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {\n      out.push({ question, label, code, kind: "terminate" });\n    }',
+      replace: '    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {\n      out.push({ question, label, code, kind: "continue" });\n    }',
       kills: [
         "typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped",
         "THE MEASURED STARVATION: empty model + sealed routes still stamps avoid AND prefer",
@@ -125,8 +125,8 @@ await runMutantSuite({
         "driver must not TRUST the stamp: an adversarial or stale plan artifact could carry a " +
         "label in both lists, and honouring prefer over avoid clicks a documented terminator",
       file: DR,
-      find: "          ? g.options.find((o) => answerable(o) && !flagged(o) && prefer.some((p) => labelMatches(o.label, p)))",
-      replace: "          ? g.options.find((o) => answerable(o) && prefer.some((p) => labelMatches(o.label, p)))",
+      find: "          ? g.options.find((o) => answerable(o) && !flagged(o) &&\n              (prefer.some((p) => labelMatches(o.label, p)) ||\n               preferCodeEntries.some((e) => codeMatches(o.code, e.code))))",
+      replace: "          ? g.options.find((o) => answerable(o) &&\n              (prefer.some((p) => labelMatches(o.label, p)) ||\n               preferCodeEntries.some((e) => codeMatches(o.code, e.code))))",
       kills: ["prefer NEVER overrules avoid: a label stamped both ways is not clicked"],
     },
     {
@@ -142,6 +142,60 @@ await runMutantSuite({
         "THE MEASURED DEFECT, other half: the filler takes the documented continue answer, not the nearest unflagged",
         "an UNBOUND screen consumes path-level prefer by the same offered-label overlap",
       ],
+    },
+
+    // ---- D1-OUTCOME 1: code matching ----
+    {
+      name: "code matching dropped — avoid_codes ignored by the driver",
+      breaks:
+        "the code-based steering channel. A survey whose site renders codes without verbatim " +
+        "labels would get no avoid steering, and the walker would click documented screen-out " +
+        "answers by exact code",
+      file: DR,
+      find: "  const avoidCodeEntries = survivalAvoidCodes(decision, pathHints, screen);",
+      replace: "  const avoidCodeEntries = [];",
+      kills: ["an avoid_codes entry flags an option by exact code, even when labels differ"],
+    },
+
+    // ---- D1-OUTCOME 2: recovery prefer ----
+    {
+      name: "recovery re-pick stops carrying prefer_labels (the pre-fix gap for prefer)",
+      breaks:
+        "the recovery's documented-continue steering. When a screen blocks and the recovery " +
+        "re-invokes applyDecision, dropping prefer_labels sends the re-pick back to " +
+        "first-non-flagged — it may pick an undocumented option that also terminates",
+      file: DR,
+      find: "            prefer_labels: survivalPreferLabels(decision, pathHints, roundScreen ?? before),",
+      replace: "            // (recovery prefer_labels stamp dropped by mutant)",
+      kills: [
+        "THE GAP CLOSED: a recovery on a screener screen picks the documented-continue answer",
+      ],
+    },
+
+    // ---- D1-OUTCOME 3: announcement detection widened past the lexicon ----
+    {
+      name: "announcement detection fires on any screen mentioning 'end' (widened past lexicon)",
+      breaks:
+        "the lexicon's precision. A screen mentioning 'end' in ordinary prose (\"At the end of " +
+        "the day\") would be labeled as a termination announcement, creating false positives " +
+        "that make the count meaningless",
+      file: DR,
+      find: "  for (let i = 0; i < SCREENOUT_MARKERS.length; i++) {",
+      replace: "  const WIDENED = [/\\bend\\b/i, ...SCREENOUT_MARKERS]; for (let i = 0; i < WIDENED.length; i++) {",
+      kills: ["NOT recorded on a normal screen mentioning 'end' in prose — the lexicon's precision"],
+    },
+
+    // ---- D1-OUTCOME 4: accepted-region pick replaced by blind quantile ----
+    {
+      name: "accepted-region numeric pick replaced by blind midpoint (prefer_value dropped)",
+      breaks:
+        "the boundary-value channel. A numeric screener whose accepted region is documented " +
+        "would fall back to the blind midpoint, which may sit in the rejected region — the " +
+        "exact gap that caused the S80 stall in the door-map run",
+      file: DR,
+      find: "  const numericPreferValue = survivalPreferValue(decision, pathHints);",
+      replace: "  const numericPreferValue = null;",
+      kills: ["a number control uses the documented-accepted value instead of blind midpoint"],
     },
   ],
 });

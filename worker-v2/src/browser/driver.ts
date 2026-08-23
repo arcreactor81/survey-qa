@@ -3063,11 +3063,78 @@ export interface SurvivalHint {
   avoid_labels: string[];
   /** Labels the document states CONTINUE the survey; same channel, same boundary. */
   prefer_labels?: string[];
+  /**
+   * OUTCOME 1 (D1): {label, code} pairs for code-based matching. An offered option matches
+   * a hint by normalized label OR exact code (CODES ARE EXACT-MATCH ONLY — they are platform-
+   * assigned identifiers, never prose; stated here, enforced in `codeMatches` below). When
+   * absent or empty, label-only matching applies — the pre-existing behavior.
+   */
+  avoid_codes?: Array<{ label: string; code: string | null }>;
+  prefer_codes?: Array<{ label: string; code: string | null }>;
+  /**
+   * OUTCOME 4 (D1): a documented-accepted numeric value from BoundaryInputPayload. When a
+   * screen's bound question has boundary rows whose expectedOutcome is "accepted", the
+   * numeric default filler prefers this value over the blind midpoint. Same evidence
+   * boundary: the value is input, never evidence. Absent when no boundary rows exist.
+   */
+  prefer_value?: { value: string; bound: string; derivation: string };
+}
+
+/**
+ * OUTCOME 1 (D1): does an option's code match a hint code? EXACT MATCH ONLY. Codes are
+ * platform-assigned identifiers (Confirmit renders them as DOM `value` attributes, Decipher
+ * as `name` suffixes) and may be numeric strings, short slugs, or GUIDs — normalizing them
+ * would lose distinctions ("01" vs "1"). ASSUMPTION STATED: a match means the site's option
+ * represents the same answer the document's route row names. A code without a corresponding
+ * option is an unmatched code and DOES NOT steer — it degrades to label-only matching.
+ */
+function codeMatches(optionCode: string | null | undefined, wantedCode: string | null): boolean {
+  if (!optionCode || !wantedCode) return false;
+  return String(optionCode) === String(wantedCode);
+}
+
+/**
+ * OUTCOME 1 (D1): does an option match ANY hint entry by label OR code? The code arm is
+ * tried first (exact, no normalization); the label arm is the pre-existing `labelMatches`.
+ * Both arms are independent: an option matching by code but not label still matches, and
+ * vice versa.
+ */
+function hintEntryMatchesOption(
+  optionLabel: string,
+  optionCode: string | null | undefined,
+  entries: ReadonlyArray<{ label: string; code: string | null }> | undefined,
+  labels: readonly string[],
+): boolean {
+  // Code arm: exact match against any entry's code.
+  if (entries && entries.length > 0) {
+    for (const e of entries) {
+      if (codeMatches(optionCode, e.code)) return true;
+    }
+  }
+  // Label arm: the pre-existing normalized match.
+  for (const wanted of labels) {
+    if (labelMatches(optionLabel, wanted)) return true;
+  }
+  return false;
 }
 
 /** Non-empty strings only; everything else in a hint row is noise, never a crash. */
 const hintLabels = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
+
+/** Sanitize a code-pair array from a hint row. Unknown shapes degrade to []. */
+const hintCodePairs = (v: unknown): Array<{ label: string; code: string | null }> => {
+  if (!Array.isArray(v)) return [];
+  const out: Array<{ label: string; code: string | null }> = [];
+  for (const e of v) {
+    if (!e || typeof e !== "object") continue;
+    const label = (e as Record<string, unknown>)["label"];
+    if (typeof label !== "string" || label.trim().length === 0) continue;
+    const code = (e as Record<string, unknown>)["code"];
+    out.push({ label, code: typeof code === "string" && code.trim().length > 0 ? code : null });
+  }
+  return out;
+};
 
 /** The path's `survival_hints`, sanitized once per walk. Unknown shapes degrade to []. */
 export function survivalHintsOf(path: unknown): SurvivalHint[] {
@@ -3078,12 +3145,36 @@ export function survivalHintsOf(path: unknown): SurvivalHint[] {
     if (!row || typeof row !== "object") continue;
     const labels = hintLabels((row as Record<string, unknown>)["avoid_labels"]);
     const liked = hintLabels((row as Record<string, unknown>)["prefer_labels"]);
-    if (labels.length === 0 && liked.length === 0) continue;
+    // OUTCOME 4 (D1): a hint row that carries ONLY a prefer_value (no labels/codes) is
+    // still useful — it steers the numeric filler. Keep it even when labels are empty.
+    const pvRawCheck = (row as Record<string, unknown>)["prefer_value"];
+    const hasPv = pvRawCheck && typeof pvRawCheck === "object" &&
+      typeof (pvRawCheck as Record<string, unknown>)["value"] === "string" &&
+      (pvRawCheck as Record<string, unknown>)["value"];
+    if (labels.length === 0 && liked.length === 0 && !hasPv) continue;
     const q = (row as Record<string, unknown>)["question"];
+    // OUTCOME 1 (D1): carry code pairs through sanitization.
+    const ac = hintCodePairs((row as Record<string, unknown>)["avoid_codes"]);
+    const pc = hintCodePairs((row as Record<string, unknown>)["prefer_codes"]);
+    // OUTCOME 4 (D1): carry prefer_value through sanitization.
+    const pvRaw = (row as Record<string, unknown>)["prefer_value"];
+    const pv =
+      pvRaw && typeof pvRaw === "object" &&
+      typeof (pvRaw as Record<string, unknown>)["value"] === "string" &&
+      (pvRaw as Record<string, unknown>)["value"]
+        ? {
+            value: String((pvRaw as Record<string, unknown>)["value"]),
+            bound: String((pvRaw as Record<string, unknown>)["bound"] ?? ""),
+            derivation: String((pvRaw as Record<string, unknown>)["derivation"] ?? ""),
+          }
+        : undefined;
     out.push({
       ...(typeof q === "string" ? { question: q } : {}),
       avoid_labels: labels,
       ...(liked.length > 0 ? { prefer_labels: liked } : {}),
+      ...(ac.length > 0 ? { avoid_codes: ac } : {}),
+      ...(pc.length > 0 ? { prefer_codes: pc } : {}),
+      ...(pv ? { prefer_value: pv } : {}),
     });
   }
   return out;
@@ -3092,8 +3183,10 @@ export function survivalHintsOf(path: unknown): SurvivalHint[] {
 /**
  * The avoid labels in force for THIS screen. A bound decision speaks for itself
  * (`avoid_labels`, stamped from the same terminate data); an unbound screen consults the
- * path's hints, and a hint applies only when its labels overlap what the screen OFFERS —
- * matching a hint for one screen against another would steer fillers on a guess.
+ * path's hints, and a hint applies only when its labels/codes overlap what the screen
+ * OFFERS — matching a hint for one screen against another would steer fillers on a guess.
+ *
+ * OUTCOME 1 (D1): the overlap check now also tests exact code matches via `codeMatches`.
  */
 export function survivalAvoidLabels(
   decision: PlannedDecision | null,
@@ -3102,27 +3195,121 @@ export function survivalAvoidLabels(
 ): string[] {
   if (decision) return hintLabels((decision as Record<string, unknown>)["avoid_labels"]);
   if (pathHints.length === 0) return [];
-  const offered = screen.optionGroups.flatMap((g) => g.options.map((o) => o.label));
-  if (offered.length === 0) return [];
+  const offeredOptions = screen.optionGroups.flatMap((g) => g.options);
+  if (offeredOptions.length === 0) return [];
   const out: string[] = [];
   for (const hint of pathHints) {
     const labels = hintLabels(hint?.avoid_labels);
     if (labels.length === 0) continue;
-    if (!labels.some((a) => offered.some((o) => labelMatches(o, a)))) continue;
+    // OUTCOME 1 (D1): overlap check uses both label and code matching.
+    const codes = hint.avoid_codes;
+    const overlaps = offeredOptions.some((o) => hintEntryMatchesOption(o.label, o.code, codes, labels));
+    if (!overlaps) continue;
     for (const l of labels) if (!out.includes(l)) out.push(l);
   }
   return out;
 }
 
 /**
+ * OUTCOME 1 (D1): the avoid CODES in force for THIS screen, for code-based flagging.
+ * Same precedence as `survivalAvoidLabels`: a bound decision speaks for itself; an unbound
+ * screen consults path hints by offered overlap. Returns {label, code} pairs so the option
+ * default can flag by exact code as well as by normalized label.
+ */
+export function survivalAvoidCodes(
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+  screen: RenderedScreen,
+): Array<{ label: string; code: string | null }> {
+  if (decision) return hintCodePairs((decision as Record<string, unknown>)["avoid_codes"]);
+  if (pathHints.length === 0) return [];
+  const offeredOptions = screen.optionGroups.flatMap((g) => g.options);
+  if (offeredOptions.length === 0) return [];
+  const out: Array<{ label: string; code: string | null }> = [];
+  for (const hint of pathHints) {
+    const labels = hintLabels(hint?.avoid_labels);
+    const codes = hint.avoid_codes;
+    if (labels.length === 0 && (!codes || codes.length === 0)) continue;
+    const overlaps = offeredOptions.some((o) => hintEntryMatchesOption(o.label, o.code, codes, labels));
+    if (!overlaps) continue;
+    for (const e of codes ?? []) {
+      if (!out.some((x) => x.label === e.label && x.code === e.code)) out.push(e);
+    }
+  }
+  return out;
+}
+
+/**
+ * OUTCOME 1 (D1): the prefer CODES in force for THIS screen, for code-based preference.
+ */
+export function survivalPreferCodes(
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+  screen: RenderedScreen,
+): Array<{ label: string; code: string | null }> {
+  if (decision) return hintCodePairs((decision as Record<string, unknown>)["prefer_codes"]);
+  if (pathHints.length === 0) return [];
+  const offeredOptions = screen.optionGroups.flatMap((g) => g.options);
+  if (offeredOptions.length === 0) return [];
+  const out: Array<{ label: string; code: string | null }> = [];
+  for (const hint of pathHints) {
+    const liked = hintLabels(hint?.prefer_labels);
+    const codes = hint.prefer_codes;
+    if (liked.length === 0 && (!codes || codes.length === 0)) continue;
+    const rowLabels = [...hintLabels(hint?.avoid_labels), ...liked];
+    const allCodes = [...(hint.avoid_codes ?? []), ...(codes ?? [])];
+    const overlaps = offeredOptions.some((o) => hintEntryMatchesOption(o.label, o.code, allCodes, rowLabels));
+    if (!overlaps) continue;
+    for (const e of codes ?? []) {
+      if (!out.some((x) => x.label === e.label && x.code === e.code)) out.push(e);
+    }
+  }
+  return out;
+}
+
+/**
+ * OUTCOME 4 (D1): the documented-accepted VALUE in force for THIS screen's numeric controls.
+ * Same precedence: a bound decision speaks for itself; an unbound screen consults path hints.
+ * For path hints, ANY hint row with a prefer_value is considered (not just ones with label
+ * overlap — a boundary row may have NO label/code stamps at all if the question only has
+ * boundary facets, not route facets). When multiple hint rows carry a prefer_value, the first
+ * one wins (deterministic from insertion order). Returns null when no documented-accepted
+ * value exists.
+ */
+export function survivalPreferValue(
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+): { value: string; bound: string; derivation: string } | null {
+  if (decision) {
+    const pv = (decision as Record<string, unknown>)["prefer_value"];
+    if (pv && typeof pv === "object" &&
+        typeof (pv as Record<string, unknown>)["value"] === "string" &&
+        (pv as Record<string, unknown>)["value"]) {
+      return {
+        value: String((pv as Record<string, unknown>)["value"]),
+        bound: String((pv as Record<string, unknown>)["bound"] ?? ""),
+        derivation: String((pv as Record<string, unknown>)["derivation"] ?? ""),
+      };
+    }
+    return null;
+  }
+  for (const hint of pathHints) {
+    if (hint.prefer_value) return hint.prefer_value;
+  }
+  return null;
+}
+
+/**
  * The prefer labels in force for THIS screen — `survivalAvoidLabels`' twin for the labels
  * the document states CONTINUE the survey. Same precedence (a bound decision speaks for
  * itself; an unbound screen consults the path's hints) and the SAME applicability rule: a
- * path-level hint row speaks only when its own labels overlap what the screen OFFERS —
+ * path-level hint row speaks only when its own labels/codes overlap what the screen OFFERS —
  * avoid and prefer together, since either half identifies the row's screen. Same evidence
  * boundary too: a prefer label re-orders which invented answer the option default clicks,
  * never joins `select`, and never overrides an avoid flag (a label both stamped and flagged
  * is a conflict the index already resolved by dropping it from prefer).
+ *
+ * OUTCOME 1 (D1): overlap now also checks exact code matches via `codeMatches`.
  */
 export function survivalPreferLabels(
   decision: PlannedDecision | null,
@@ -3131,14 +3318,17 @@ export function survivalPreferLabels(
 ): string[] {
   if (decision) return hintLabels((decision as Record<string, unknown>)["prefer_labels"]);
   if (pathHints.length === 0) return [];
-  const offered = screen.optionGroups.flatMap((g) => g.options.map((o) => o.label));
-  if (offered.length === 0) return [];
+  const offeredOptions = screen.optionGroups.flatMap((g) => g.options);
+  if (offeredOptions.length === 0) return [];
   const out: string[] = [];
   for (const hint of pathHints) {
     const liked = hintLabels(hint?.prefer_labels);
     if (liked.length === 0) continue;
     const rowLabels = [...hintLabels(hint?.avoid_labels), ...liked];
-    if (!rowLabels.some((a) => offered.some((o) => labelMatches(o, a)))) continue;
+    // OUTCOME 1 (D1): overlap check uses both label and code matching.
+    const allCodes = [...(hint.avoid_codes ?? []), ...(hint.prefer_codes ?? [])];
+    const overlaps = offeredOptions.some((o) => hintEntryMatchesOption(o.label, o.code, allCodes, rowLabels));
+    if (!overlaps) continue;
     for (const l of liked) if (!out.includes(l)) out.push(l);
   }
   return out;
@@ -3414,6 +3604,11 @@ async function applyDecision(
   // `survivalPreferLabels` for the evidence boundary.
   const avoid = survivalAvoidLabels(decision, pathHints, screen);
   const prefer = survivalPreferLabels(decision, pathHints, screen);
+  // OUTCOME 1 (D1): code-pair sets for code-based flagging/preference.
+  const avoidCodeEntries = survivalAvoidCodes(decision, pathHints, screen);
+  const preferCodeEntries = survivalPreferCodes(decision, pathHints, screen);
+  // OUTCOME 4 (D1): documented-accepted value for numeric controls.
+  const numericPreferValue = survivalPreferValue(decision, pathHints);
 
   // ---- constant-sum ("allocate 100 points") groups: claimed BEFORE the grid and value passes ----
   //
@@ -3762,14 +3957,21 @@ async function applyDecision(
     // heuristic below covers the single-group shape).
     const screenOptionRows = screen.optionGroups.flatMap((g) => g.options.map((o) => ({ group: g, option: o })));
     const checkboxGroupCount = screen.optionGroups.filter((g) => g.kind === "checkbox").length;
-    const notFlagged = (o: { label: string }): boolean => !avoid.some((a) => labelMatches(o.label, a));
+    // OUTCOME 1 (D1): notFlagged checks both label and code matching.
+    const notFlagged = (o: { label: string; code?: string | null }): boolean =>
+      !avoid.some((a) => labelMatches(o.label, a)) &&
+      !avoidCodeEntries.some((e) => codeMatches(o.code, e.code));
     // A documented prefer-label anywhere on the screen outranks everything — including on
     // fragmented screens where the per-group loop would answer an EARLIER group and stop
     // before ever reaching the preferred option's group.
+    // OUTCOME 1 (D1): prefer match checks both label and code.
     const preferAcrossScreen =
-      checkboxGroupCount >= 2 && prefer.length > 0
+      checkboxGroupCount >= 2 && (prefer.length > 0 || preferCodeEntries.length > 0)
         ? screenOptionRows.find(
-            ({ option: o }) => answerable(o) && notFlagged(o) && prefer.some((p) => labelMatches(o.label, p)),
+            ({ option: o }) =>
+              answerable(o) && notFlagged(o) &&
+              (prefer.some((p) => labelMatches(o.label, p)) ||
+               preferCodeEntries.some((e) => codeMatches(o.code, e.code))),
           )
         : undefined;
     const noneAcrossScreen =
@@ -3841,7 +4043,10 @@ async function applyDecision(
       // screen-out label. A hint may re-order which filler is picked — it may NEVER refuse
       // an answer: when every answerable option is flagged, today's position-1 choice
       // stands, because a filler that keeps walking beats a stall on a hint.
-      const flagged = (o: (typeof g.options)[number]): boolean => avoid.some((a) => labelMatches(o.label, a));
+      // OUTCOME 1 (D1): flagged checks both label and code matching.
+      const flagged = (o: (typeof g.options)[number]): boolean =>
+        avoid.some((a) => labelMatches(o.label, a)) ||
+        avoidCodeEntries.some((e) => codeMatches(o.code, e.code));
       // ---- BOUNDED SCREEN-OUT RETRY: the Nth eligible option, AFTER hint filtering ----
       //
       // The first walk's position-1 pick (below) reached a documented screen-out, so the
@@ -3881,9 +4086,12 @@ async function applyDecision(
       // betting on whichever unflagged option is closest to position 1 — undocumented
       // options can terminate too. Never an avoid-flagged option: prefer re-orders among
       // survivors, it does not overrule a documented screen-out.
+      // OUTCOME 1 (D1): prefer match checks both label and code.
       const preferredByDoc =
-        prefer.length > 0
-          ? g.options.find((o) => answerable(o) && !flagged(o) && prefer.some((p) => labelMatches(o.label, p)))
+        (prefer.length > 0 || preferCodeEntries.length > 0)
+          ? g.options.find((o) => answerable(o) && !flagged(o) &&
+              (prefer.some((p) => labelMatches(o.label, p)) ||
+               preferCodeEntries.some((e) => codeMatches(o.code, e.code))))
           : undefined;
       // EXCLUSION-SCREENER DEFAULT (assumption stated, CLAUDE.md discipline). A multi-select
       // whose options are affiliations/conditions with an exclusive "None of the above" row
@@ -4291,7 +4499,21 @@ async function applyDecision(
               via: numericFillVia,
             };
           })()
-        : navigatorValueFor(c, variant);
+        // OUTCOME 4 (D1): when a documented-accepted value exists for this screen and the
+        // control is a number or range input, prefer that value over the blind midpoint.
+        // The derivation is stated in the provenance string. Same evidence boundary: this
+        // is still an invented answer (navigator-default prefix), only a better-informed one.
+        : (() => {
+            if (numericPreferValue && (c.type === "number" || c.type === "range")) {
+              return {
+                value: numericPreferValue.value,
+                how: `documented-accepted-value(${JSON.stringify(numericPreferValue.value)}, ` +
+                  `bound="${numericPreferValue.bound}"; ${numericPreferValue.derivation})`,
+                via: (c.type === "range" ? "set" : "type") as "type" | "set",
+              };
+            }
+            return navigatorValueFor(c, variant);
+          })();
     if (planned === undefined && !derived) {
       // NO RULE IS NOT "NOTHING TO ANSWER". The type is one the reader classes as fillable and
       // this harness has no value for it — said out loud rather than passed over.
@@ -5167,6 +5389,61 @@ const firstMatch = (text: string, res: readonly RegExp[]): string | null => {
 };
 
 /**
+ * OUTCOME 3 (D1): IS THIS A MID-WALK TERMINATION ANNOUNCEMENT?
+ *
+ * The door-map measured that choosing a terminating answer on a test link shows an
+ * interstitial announcing termination (e.g. "Survey status: Terminated at S10") which the
+ * walker clicks through as an unlabeled navigator-default step. On a live link that walk is
+ * dead at screener end, but the walk record says nothing about it.
+ *
+ * REUSES THE EXISTING SCREENOUT_MARKERS LEXICON — does NOT invent a new one. The existing
+ * lexicon is calibrated for terminal pages; a mid-walk screen matching the SAME patterns is
+ * an announcement of termination, not a terminal page (the screen still has a forward
+ * control — otherwise classifyEnding would type it). The detection is LABELING ONLY: it does
+ * not change navigation behavior.
+ *
+ * Returns a receipt when the screen's text matches a screenout marker, or null otherwise.
+ * The receipt carries the matched text and, when the text names a question id token that
+ * matches a sealed question, that id.
+ */
+export interface TerminationAnnouncement {
+  /** The screenout-marker text that matched. */
+  matchedText: string;
+  /** Which lexicon entry matched (index into SCREENOUT_MARKERS). */
+  lexiconIndex: number;
+  /** When the announcement text names a question id token that matches a sealed question on
+   *  this walk, that id. null otherwise. */
+  questionToken: string | null;
+}
+
+export function detectTerminationAnnouncement(
+  screen: RenderedScreen,
+  walkQuestionIds: readonly string[],
+): TerminationAnnouncement | null {
+  const text = `${screen.questionText ?? ""}\n${screen.visibleText ?? ""}`;
+  // Try each SCREENOUT_MARKERS entry. SAME lexicon, same order, same precision —
+  // no entries added, no entries removed. A mid-walk screen that says none of this
+  // is not an announcement, just as a terminal page that says none of this is
+  // unclassified.
+  for (let i = 0; i < SCREENOUT_MARKERS.length; i++) {
+    const m = SCREENOUT_MARKERS[i]!.exec(text);
+    if (!m) continue;
+    // When the screen text names a question id token that matches a sealed question,
+    // extract it. ASSUMPTION STATED: the pattern `Terminated at X` or `status: Terminated`
+    // followed by a question token is a platform convention (measured on Confirmit).
+    // The token shape is the same as the section-scope owner in plan.ts.
+    let questionToken: string | null = null;
+    const tokenMatch = /\bat\s+([A-Za-z]{1,4}\d{1,4}[a-z]?)\b/i.exec(text);
+    if (tokenMatch) {
+      const candidate = tokenMatch[1]!;
+      if (walkQuestionIds.includes(candidate)) questionToken = candidate;
+    }
+    return { matchedText: m[0], lexiconIndex: i, questionToken };
+  }
+  return null;
+}
+
+/**
  * IS THIS CONTROL A PLATFORM NAVIGATION WIDGET — NOT A SURVEY QUESTION?
  *
  * ASSUMPTION STATED (CLAUDE.md north star): platform-chrome/navigation widgets live
@@ -5706,6 +5983,8 @@ export async function walkPath(
   const unfillableControls: Array<UnfillableControl & { stepIndex: number }> = [];
   /** How many answers on this walk the harness invented. See PathObservation. */
   let navigatorDefaultAnswerCount = 0;
+  /** OUTCOME 3 (D1): how many steps crossed a mid-walk termination announcement. */
+  let terminationAnnouncementCount = 0;
   const countDefaults = (as: PerformedAction[]): void => {
     for (const a of as) if (a.ok && typeof a.detail === "string" && a.detail.startsWith("navigator-default")) navigatorDefaultAnswerCount += 1;
   };
@@ -5916,6 +6195,12 @@ export async function walkPath(
     if (matched) remaining.splice(matched.index, 1);
     bindingRefusalCount += binding.refusals.length;
 
+    // OUTCOME 3 (D1): detect mid-walk termination announcements BEFORE acting. A screen
+    // whose text matches a SCREENOUT_MARKERS entry while the walk is still mid-survey is
+    // announcing termination. This is LABELING ONLY — does not change navigation.
+    const stepAnnouncement = detectTerminationAnnouncement(before, walkQuestionIds);
+    if (stepAnnouncement) terminationAnnouncementCount += 1;
+
     const stepVariant = stepIndex >= variantFromStep ? fillerVariant : 0;
     const { actions, notOffered, unfillable } = await timed(
       () => applyAcrossQuestionRoots(page, before, decision, pathHints, stepVariant),
@@ -6040,6 +6325,7 @@ export async function walkPath(
         evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
         wallMs: Date.now() - stepT0,
         phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
+        ...(stepAnnouncement ? { terminationAnnouncement: stepAnnouncement } : {}),
       });
       outcome = NAVIGATION_FORWARD_AMBIGUOUS;
       outcomeDetail = detail;
@@ -6078,6 +6364,7 @@ export async function walkPath(
         evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
         wallMs: Date.now() - stepT0,
         phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
+        ...(stepAnnouncement ? { terminationAnnouncement: stepAnnouncement } : {}),
       });
       outcome = "no-advance-control";
       // NAME THE UNANSWERED CONTROL, OR THIS SENTENCE IS A NORMAL ENDING.
@@ -6350,6 +6637,7 @@ export async function walkPath(
       evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
       wallMs: Date.now() - stepT0,
       phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
+      ...(stepAnnouncement ? { terminationAnnouncement: stepAnnouncement } : {}),
     });
 
     if (repeatedTransition) {
@@ -6436,6 +6724,15 @@ export async function walkPath(
             select: decision?.select ?? [],
             source: "recovery",
             avoid_labels: survivalAvoidLabels(decision, pathHints, roundScreen ?? before),
+            // OUTCOME 2 (D1): the recovery re-pick now carries prefer_labels alongside
+            // avoid_labels. Pre-fix the recovery stamped avoid only, so a recovery on a
+            // screener lost documented-continue steering and picked by luck of ordering
+            // (door-map: two walks survived S10 only via recovery, by luck). Same provenance
+            // discipline: the pick records a counted navigator-default provenance.
+            prefer_labels: survivalPreferLabels(decision, pathHints, roundScreen ?? before),
+            // OUTCOME 1 (D1): code pairs for code-based matching on recovery too.
+            avoid_codes: survivalAvoidCodes(decision, pathHints, roundScreen ?? before),
+            prefer_codes: survivalPreferCodes(decision, pathHints, roundScreen ?? before),
           } as PlannedDecision,
           pathHints,
           stepVariant,
@@ -6797,6 +7094,8 @@ export async function walkPath(
     unfillableControls,
     unfillableControlCount: unfillableControls.length,
     navigatorDefaultAnswerCount,
+    // OUTCOME 3 (D1): how many steps crossed a mid-walk termination announcement.
+    terminationAnnouncementCount,
     // New reader: present-but-empty means every attempted visual/AX capture completed. Older
     // artifacts omit all four fields and therefore never masquerade as checked-and-clean.
     screenCaptures,

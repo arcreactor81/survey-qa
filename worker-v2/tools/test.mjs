@@ -621,6 +621,10 @@ const FILES = [
   // hashes so `manifestComplete` covers the full set without requiring every blob on disk.
   // Evidence they can fail: tools/mutate-a3-memory.mjs.
   "./tests/a3-memory-safe-judge.test.mjs",
+  // D1 — SCREENER-SURVIVAL IMPROVEMENTS. Four outcomes: code-based matching, recovery
+  // prefer_labels, termination announcement detection, documented-accepted numeric values.
+  // Evidence they can fail: tools/mutate-survival-hints.mjs (extended).
+  "./tests/d1-screener-survival.test.mjs",
 ];
 
 export async function runVerification({
