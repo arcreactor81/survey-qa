@@ -43,10 +43,10 @@ reviewed config is now the only variable source.
 
 ## Known baseline and rollback target
 
-The last audited control-plane state served
-**bfb69e09-726b-46a3-b1e7-5e0d34b91e23** alone at 100%. The prior known Version was
-**58412f12-235d-47b7-8d45-bd5d0f52d0a7**. Therefore the exact rollback target for the next
-promotion is **bfb69e09-726b-46a3-b1e7-5e0d34b91e23**.
+The last audited control-plane state (release 2026-08-23-phaseB.8, DEPLOYED.md §13) serves
+**de8b83fb-340f-43d3-b4fe-92f311336bb9** alone at 100%. The prior serving Version was
+**be5d8337-32e9-4de9-b1d3-7cfc09ad2af3**. Therefore the exact rollback target for the next
+promotion is **de8b83fb-340f-43d3-b4fe-92f311336bb9**.
 
 If the fresh pre-upload snapshot differs, stop and record a new baseline. DEPLOYED.md is
 history, not current rollback authority.
@@ -1219,8 +1219,19 @@ or unknown-state instance in either production Workflow.
 
 ~~~powershell
 $WorkflowNames = @("survey-qa-v2-run","survey-qa-v2-visual-shadow")
-function Invoke-WorkflowPage([string]$Name,[string]$Suffix,[string[]]$Args) {
-  $text = (& $Node $Wrangler workflows instances list $Name --config $Config @Args 2>&1 | Out-String)
+# TWO POWERSHELL 5.1 TRAPS, both measured at release 2026-08-23-phaseB.8 §5:
+# (1) under $ErrorActionPreference=Stop, PowerShell's own 2>&1 wraps each native stderr
+#     line as an ErrorRecord — wrangler prints the empty-proof sentence as a WARNING on
+#     stderr, and the record formatting prefixes and line-wraps it, breaking the exact
+#     match even when production is genuinely quiet. The OS-level merge (cmd /c ... 2>&1)
+#     returns plain text with the same evidence and exit code.
+# (2) a parameter named $Args collides with the automatic variable; the body can read the
+#     (empty) automatic instead of the bound list, silently dropping --status/--per-page
+#     and turning a filtered emptiness proof into an unfiltered history listing.
+function Invoke-WorkflowPage([string]$Name,[string]$Suffix,[string[]]$ListArgs) {
+  $CmdLine = '"' + $Node + '" "' + $Wrangler + '" workflows instances list ' + $Name +
+    ' --config "' + $Config + '" ' + ($ListArgs -join ' ') + ' 2>&1'
+  $text = (& $env:ComSpec /d /c $CmdLine | Out-String)
   if ($LASTEXITCODE -ne 0) { throw ("Workflow query failed: "+$Name+" "+$Suffix) }
   if ([string]::IsNullOrWhiteSpace($text)) { throw ("Empty Workflow response: "+$Name) }
   $text | Set-Content -LiteralPath (Join-Path $Evidence ($Name+"-"+$Suffix+".txt")) -Encoding utf8

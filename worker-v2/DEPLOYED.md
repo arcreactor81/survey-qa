@@ -9,8 +9,9 @@ pass-B purchase-ceiling fix in §11.
 |---|---|
 | Live URL | **https://survey-qa-v2.wellshit.co.in** |
 | Worker | `survey-qa-v2` |
-| Version (current) | `823be409-42b3-4c68-baf8-f1c8d59e1418` — deployed 2026-08-08, see §12 |
-| Version (rollback to) | `91c3606c-cab3-48b8-82dd-5988a1f294da` — the 2026-08-07 build this replaced, see §11 |
+| Version (current) | `de8b83fb-340f-43d3-b4fe-92f311336bb9` — deployed 2026-08-23 by the full runbook, see §13 |
+| Version (rollback to) | `be5d8337-32e9-4de9-b1d3-7cfc09ad2af3` — the previous serving version, see §13 |
+| Version (2026-08-08 build) | `823be409-42b3-4c68-baf8-f1c8d59e1418` — see §12 |
 | Version (previous rollback point) | `9aec39cd-34d2-4a30-81b1-62681635ec15` — the earlier 2026-08-07 build |
 | Version (2 Aug build) | `3b6bdf57-8d1f-48e8-898b-b817500c9f67` |
 | Version (first, hostname-less) | `296dac88-2d6b-47be-bdcc-88a14cf288ff` |
@@ -454,3 +455,39 @@ deployments API confirms v2 is serving `823be409…` and v1 `survey-qa` still se
 **Open, unchanged by this deploy:** `DEFAULT_TARGET_BUILD_ID` (§3.1, the reason reports are
 non-final), and the uncapped edge spend in §6.1 — now more relevant, because the button that
 starts the spending is live.
+
+## 13. Deploy 2026-08-23 — the Phase A/B train: attestable judging, released by the full runbook
+
+**Version `de8b83fb-340f-43d3-b4fe-92f311336bb9` at 100%** (deployment created 2026-08-23T13:59:59Z,
+message `promote release-6f01b2944977-2026-08-23-phaseB.8 at 100%`).
+**Exact rollback target: `be5d8337-32e9-4de9-b1d3-7cfc09ad2af3`** (the previous serving version).
+
+Frozen identity: head `6f01b2944977f09ed45b3519c29f095572613301`, config sha256
+`3dc3fde7e6f41c8383a2e1d078aff36ef7bb32c1b5be47cde04cd95591d05f47`; full evidence in
+`.local-private/v2-release-2026-08-23-phaseB.8/` (frozen-identity, all 50 supervised mutation
+receipts, dry-run output census, quiescence pages, control-plane and secret-name snapshots,
+versions/deployments before and after).
+
+Gates: typecheck; core suite 1758/1758 in-battery; activity and document-reading real-Chrome
+suites; visual suite 482/482; input probe 60/60; **all 50 mutation campaigns exit 0 under the
+Windows Job supervisor** (mutate-w4-select 9,452s under its new per-harness 4h allowance);
+release-integrity tail 124/124; config gate PASS; strict dry-run census clean (3 files per
+outdir, no maps/source/secrets); quiescence proven before upload, before promotion, and after.
+
+What shipped (since the last recorded deploy): the attestable judging pipeline — committed-attempt
+evidence filter at record and mount; streaming judge (async evidence source, one session resident
+at a time, retained-projection budget, named refusals); retry-recording survivor rule (latest
+capture wins, one rule at record and mount); checklist binding accounts unverifiable-from-browser
+requirements; judgement signing with the pinned registry (bench-verified attested judgement +
+results-bearing report, twice); walker stall watchdog + browser-death abandonment; restored
+document-reading surface; per-walk pivot retry cap; and the release-gate repairs this runbook
+run itself forced (per-harness supervisor timeouts, coherent receipt validation).
+
+Confirming live run (test link, extraction served from cache):
+**https://survey-qa-v2.wellshit.co.in/runs/v2r_01m0qetzd0hqvk8gnnemf1ernb**
+
+Recording honestly: deploys between 2026-08-08 (§12) and this section (versions `19046a1c`,
+`465bccbb`, `1b10a0b7`, `be5d8337`, 20–22 Aug) were made outside this runbook during the
+bench-loop era and have no sections here — that is doc debt (task #8), not a claim they were
+gated. Runbook amendments earned by this release (per-harness timeouts; §5's PowerShell 5.1
+stderr/`$Args` traps) are committed alongside this section.
