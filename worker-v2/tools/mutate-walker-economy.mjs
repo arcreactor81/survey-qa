@@ -91,10 +91,41 @@ const MUTANTS = [
       "unsettledBucketFor routes walk-stalled to not-reached",
     ],
   },
+  // ---------------------------------------------------------------- PROPERTY 5
+  // The capture diet must not suppress the "before" epoch — it is the verdict-bearing
+  // capture that the judge spine reads. A mutant that skips BOTH the after-action AND
+  // the before epoch would silently thin the evidence without a policy entry. The test
+  // that pins the before epoch must newly fail.
+  {
+    name: "CAPTURE DIET OVER-APPLIED: before epoch is skipped alongside after-action",
+    breaks:
+      "the 'before' epoch is the judge spine's screen capture for each step. Skipping it " +
+      "destroys the spine's seq-ordered capture chain and removes all step-level visual " +
+      "evidence. The test that asserts at least one epoch per step must fail.",
+    file: DR,
+    find: `    const beforeCapture = recordEpoch(
+      await timed(() => captureScreenEpoch(page, cap, before, "before", stepIndex, opts.viewport), (ms) => (phaseCaptureMs += ms)),
+    );`,
+    replace: `    const beforeCapture = /** @type {any} */ ({
+      screenJson: { evidenceId: null, artifactRef: "", sourceEvidenceId: "", contentHash: "", mediaType: "application/json", size: 0, kind: "screen-json" },
+      screenshot: { status: "failed", failure: { kind: "screenshot-capture-failed", detail: "mutant: silently dropped", count: 1, at: "", stepIndex, slot: "before" } },
+      accessibility: { status: "failed", failure: { kind: "accessibility-snapshot-failed", detail: "mutant: silently dropped", count: 1, at: "", stepIndex, slot: "before" } },
+      pdf: { status: "failed", failure: { kind: "pdf-capture-failed", detail: "mutant: silently dropped", count: 1, at: "", stepIndex, slot: "before" } },
+      captureFailures: [], captureFailureCount: 0,
+      epochId: "epoch_mutant", stepIndex, slot: "before",
+      scope: { kind: "viewport", tileIndex: null, tileCount: null },
+      startedAt: "", endedAt: "", screenReadAt: "", screenSignatureHash: "",
+      geometry: { width: 0, height: 0, deviceScaleFactor: null, scrollX: null, scrollY: null, documentWidth: null, documentHeight: null, source: "configured-fallback" },
+      kind: "v2-screen-capture-epoch/1.1.0",
+    });`,
+    kills: [
+      "a terminal screen carries before/final PNG+AX refs at both step and walk scope",
+    ],
+  },
 ];
 
 await runMutantSuite({
-  title: "Walker economy — can the stall watchdog and browser-death guards fail?",
+  title: "Walker economy — can the stall watchdog, browser-death guards, and capture diet fail?",
   filter: "",
   mutants: MUTANTS,
 });
