@@ -553,6 +553,19 @@ foreach ($Harness in $MutationHarnesses) {
   # the same as zero coverage for those guards. The documented requirement is 600 000 ms
   # (see the mutate-w4-select.mjs header, commit 8235e36).
   $HarnessChildTimeoutMs = if ($Harness -ceq "mutate-w4-select.mjs") { 600000 } else { $MutationChildTimeoutMs }
+  # PER-HARNESS OUTER TIMEOUT: the same campaign has 89 mutants, each cycle rebuilding the
+  # bundle and running its kill selection, and two mutants legitimately run children up to
+  # the 600 000 ms child bound above. At release 2026-08-23-phaseB.6 the whole campaign hit
+  # the generic 7 200 000 ms ceiling and the supervisor killed it (receipt exitCode 124,
+  # timedOut true) after every one of the other 49 campaigns had passed. The campaign is
+  # healthy — chunked execution (W4_CHUNK_FROM/TO) scores 89/89 — it has simply outgrown
+  # the generic two-hour budget. Three times the child bound's headroom: 14 400 000 ms.
+  $HarnessTimeoutMs = if ($Harness -ceq "mutate-w4-select.mjs") { 14400000 } else { $MutationTimeoutMs }
+  $HarnessWatchdogMs = [int64] $HarnessTimeoutMs +
+    [int64] $MutationDrainGraceMs + [int64] $MutationSupervisorStartupGraceMs
+  if ($HarnessWatchdogMs -gt [int]::MaxValue) {
+    throw "Per-harness supervisor watchdog exceeds Process.WaitForExit capacity"
+  }
   $MutationRequest = [ordered]@{
     schema = "survey-qa-windows-job-supervisor-request/2.0.0"
     supervisorScriptPath = $MutationSupervisor
@@ -570,7 +583,7 @@ foreach ($Harness in $MutationHarnesses) {
     stdoutPath = $StdoutLog
     stderrPath = $StderrLog
     receiptPath = $ReceiptPath
-    timeoutMs = $MutationTimeoutMs
+    timeoutMs = $HarnessTimeoutMs
     innerTimeoutMs = $HarnessChildTimeoutMs
     drainGraceMs = $MutationDrainGraceMs
     transcriptLimitBytes = $MutationTranscriptLimitBytes
@@ -706,7 +719,7 @@ foreach ($Harness in $MutationHarnesses) {
     $SupervisorPid = $SupervisorProcess.Id
     $SupervisorStartTimeUtc = $SupervisorProcess.StartTime.ToUniversalTime().ToString("o")
     $SupervisorExitedWithinBound =
-      $SupervisorProcess.WaitForExit([int] $MutationSupervisorWatchdogMs)
+      $SupervisorProcess.WaitForExit([int] $HarnessWatchdogMs)
     if (-not $SupervisorExitedWithinBound) {
       $SupervisorWatchdogFired = $true
       $SupervisorKillReason = "outer-watchdog"
@@ -766,9 +779,9 @@ foreach ($Harness in $MutationHarnesses) {
       processStarted = $SupervisorStarted
       processId = $SupervisorPid
       processStartTimeUtc = $SupervisorStartTimeUtc
-      waitTimeoutMs = $MutationSupervisorWatchdogMs
-      outerTimeoutMs = $MutationTimeoutMs
-      innerTimeoutMs = $MutationChildTimeoutMs
+      waitTimeoutMs = $HarnessWatchdogMs
+      outerTimeoutMs = $HarnessTimeoutMs
+      innerTimeoutMs = $HarnessChildTimeoutMs
       drainGraceMs = $MutationDrainGraceMs
       startupGraceMs = $MutationSupervisorStartupGraceMs
       transcriptLimitBytes = $MutationTranscriptLimitBytes
@@ -821,9 +834,9 @@ foreach ($Harness in $MutationHarnesses) {
       $PersistedWatchdog.processId -ne $SupervisorPid -or
       $PersistedWatchdog.processId -le 0 -or
       $PersistedWatchdog.processStartTimeUtc -cne $SupervisorStartTimeUtc -or
-      $PersistedWatchdog.waitTimeoutMs -ne $MutationSupervisorWatchdogMs -or
-      $PersistedWatchdog.outerTimeoutMs -ne $MutationTimeoutMs -or
-      $PersistedWatchdog.innerTimeoutMs -ne $MutationChildTimeoutMs -or
+      $PersistedWatchdog.waitTimeoutMs -ne $HarnessWatchdogMs -or
+      $PersistedWatchdog.outerTimeoutMs -ne $HarnessTimeoutMs -or
+      $PersistedWatchdog.innerTimeoutMs -ne $HarnessChildTimeoutMs -or
       $PersistedWatchdog.drainGraceMs -ne $MutationDrainGraceMs -or
       $PersistedWatchdog.startupGraceMs -ne $MutationSupervisorStartupGraceMs -or
       $PersistedWatchdog.transcriptLimitBytes -ne $MutationTranscriptLimitBytes -or
@@ -878,7 +891,7 @@ foreach ($Harness in $MutationHarnesses) {
       $ReceiptStartedUtc.UtcDateTime.ToString("o") -cne $Receipt.startedUtc -or
       $ReceiptEndedUtc.UtcDateTime.ToString("o") -cne $Receipt.endedUtc -or
       $ReceiptEndedUtc -lt $ReceiptStartedUtc -or
-      $Receipt.durationMs -gt $MutationSupervisorWatchdogMs) {
+      $Receipt.durationMs -gt $HarnessWatchdogMs) {
     throw ("Mutation supervisor receipt timestamps are incoherent: " + $Harness)
   }
   foreach ($HashValue in @(
@@ -950,8 +963,8 @@ foreach ($Harness in $MutationHarnesses) {
       $Receipt.initialActiveProcesses -ne 1 -or
       -not $Receipt.handlesClosed -or
       -not $Receipt.outputHashesCapturedBeforeClose -or
-      $Receipt.timeoutMs -ne $MutationTimeoutMs -or
-      $Receipt.innerTimeoutMs -ne $MutationChildTimeoutMs -or
+      $Receipt.timeoutMs -ne $HarnessTimeoutMs -or
+      $Receipt.innerTimeoutMs -ne $HarnessChildTimeoutMs -or
       $Receipt.drainGraceMs -ne $MutationDrainGraceMs -or
       $Receipt.transcriptLimitBytes -ne $MutationTranscriptLimitBytes -or
       $Receipt.transcriptLimitExceeded -ne $false -or
