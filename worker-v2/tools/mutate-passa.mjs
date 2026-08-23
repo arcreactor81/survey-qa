@@ -550,7 +550,13 @@ await runMutantSuite({
       replace:
         "  // nobody ever made.\n" +
         "  await chargeUsage(env, runId, result.calls, fence);",
-      kills: [HALF_READ],
+      // re-aimed: the original kills target (HALF_READ) checks modelCalls.used count,
+      // but pushModelUsageStrict deduplicates by eventId so the count is identical
+      // regardless of whether calls or accountingCalls is passed. The new test defeats
+      // dedup by clearing checkpoint events, then checks that replay events carry nonzero
+      // originalCostUsd — which only accountingCalls replays provide (calls replays are
+      // pre-zeroed by replayUsage).
+      kills: ["reclaimed windows are charged to the ledger as replays preserving original cost"],
     },
     {
       name: "a receipted Flash result does not stop later pass-A windows",

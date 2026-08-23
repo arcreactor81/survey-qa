@@ -862,6 +862,70 @@ test("(a) the STAGE refuses to evaluate an unfinished pass A, and evaluates the 
   }
 });
 
+test("reclaimed windows are charged to the ledger as replays preserving original cost", async () => {
+  // THE PROPERTY: chargeUsage receives `result.accountingCalls`, whose replay entries
+  // carry the ORIGINAL nonzero costUsd so the CAS settlement can write the correct
+  // `originalCostUsd` provenance. Passing `result.calls` (whose replays are pre-zeroed
+  // by `replayUsage`) would produce `originalCostUsd: 0`, losing the paid-cost provenance
+  // that the accounting path exists to preserve.
+  //
+  // WHY THE EXISTING COUNT ASSERTION DOES NOT CATCH THIS: pushModelUsageStrict deduplicates
+  // replay events by eventId. In the normal flow, the original live event is already stored,
+  // so the replay event is silently skipped — regardless of its cost fields. To make the
+  // difference observable, this test clears the checkpoint events between waves so replays
+  // bypass dedup and are stored as new events. Then `originalCostUsd` on those events
+  // distinguishes the two paths.
+  const { m, env, runId, fence } = await stageBed({ EXTRACT_PASS_A_WINDOW_CHARS: "1000" });
+  const provider = stubProvider();
+  try {
+    const { documentKey, documentSha256 } = await seedSampleDocument(m, env, runId);
+    const beat = async () => {};
+
+    // Wave 1: buy at least one window.
+    const first = await m.extractStage.stagePassASlice(env, runId, documentKey, "questionnaire.docx", fence, beat, {
+      budgetMs: 0,
+    }, "none/1.0.0", documentSha256);
+    assertEq(first.result.state, "not-evaluated", "wave 1 is incomplete (precondition)");
+
+    const cpAfter1 = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint;
+    const wave1Events = cpAfter1.usage.events.filter((e) => e.kind === "model-call");
+    assert(wave1Events.length >= 1, "wave 1 charged at least one live event (precondition)");
+    const wave1Cost = wave1Events[0].costUsd;
+    assert(wave1Cost > 0, "the first purchase has a nonzero cost to trace through originalCostUsd");
+
+    // Defeat deduplication: clear the events but keep the accounting mode intact.
+    // This simulates the crash-recovery window where the model call was billed and
+    // persisted as a window artifact but the checkpoint's event CAS never committed.
+    await m.checkpoint.updateCheckpoint(env, runId, (d) => {
+      d.usage.events = [];
+      d.usage.modelCalls.used = 0;
+      d.usage.cost.usedUsd = 0;
+    }, { progressed: true, fence });
+
+    // Wave 2: the first wave's window is reclaimed (its R2 artifact exists), and the
+    // replay event now has no matching eventId in the cleared checkpoint — it is stored.
+    await m.extractStage.stagePassASlice(env, runId, documentKey, "questionnaire.docx", fence, beat, {
+      budgetMs: 0,
+    }, "none/1.0.0", documentSha256);
+
+    const cpAfter2 = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint;
+    const allEvents = cpAfter2.usage.events.filter((e) => e.kind === "model-call");
+    const replayEvents = allEvents.filter((e) => e.usageSource === "reused-prior-artifact");
+    assert(replayEvents.length >= 1,
+      "with dedup defeated, at least one replay event is stored (precondition for the cost check)");
+    for (const event of replayEvents) {
+      assert(
+        event.originalCostUsd > 0,
+        `a replay event must carry the original paid cost as provenance (got ${event.originalCostUsd}). ` +
+          "If originalCostUsd is 0, chargeUsage received result.calls (pre-zeroed by replayUsage) " +
+          "instead of result.accountingCalls (which preserves the original cost for the CAS).",
+      );
+    }
+  } finally {
+    provider.restore();
+  }
+});
+
 });
 
 // ===========================================================================

@@ -1342,6 +1342,23 @@ test("(c) the ledger sweep resumes too — its calls used to be written and neve
     );
     assertEq(again.slice.sweepCallsIssued, 0, "zero sweep calls issued on the second pass");
     assertEq(again.slice.done, true, "and it is immediately done");
+
+    // THE RESUME PATH, NOT THE ADOPTION PATH. Without the per-run sweep-resume read, the
+    // cross-run unit-reuse index would adopt the same run's sweep output and mask the gap.
+    // The two paths differ in their replay detail: resume says "already persisted", adoption
+    // says "adopted ... from prior run". Asserting on the detail proves the in-run resume
+    // path is live, not silently bypassed by cross-run adoption.
+    const sweepReplays = again.calls.filter(
+      (c) => c.usageSource === "reused-prior-artifact" && c.role?.startsWith("extract-pass-b-SWEEP"),
+    );
+    assert(sweepReplays.length > 0, "sweep replay events must exist on re-entry for the resume assertion to mean anything");
+    for (const replay of sweepReplays) {
+      assert(
+        replay.detail?.includes("already persisted"),
+        `sweep must resume from its persisted artifact, not fall through to cross-run adoption. ` +
+          `Got detail: ${replay.detail}`,
+      );
+    }
   } finally {
     provider.restore();
   }
@@ -1516,6 +1533,101 @@ test("(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the fi
       `the run adds exactly the ${provider.requests.length} Pass-B call(s) it bought to the canonical ` +
         `${passABaselineCalls}-call Pass-A baseline, not one charge per reuse`,
     );
+  } finally {
+    provider?.restore();
+  }
+});
+
+test("reused chunks are charged to the ledger as replays preserving original cost", async () => {
+  // THE PROPERTY: chargeUsage receives `result.accountingCalls`, whose replay entries
+  // carry the ORIGINAL nonzero costUsd so the CAS settlement can write the correct
+  // `originalCostUsd` provenance. Passing `result.calls` (whose replays are pre-zeroed
+  // by `replayUsage`) would produce `originalCostUsd: 0`, losing the paid-cost provenance.
+  //
+  // WHY THE COUNT ASSERTION ABOVE DOES NOT CATCH THIS: pushModelUsageStrict deduplicates
+  // replay events by eventId, so the replay never reaches storage. Clear the events between
+  // waves to bypass dedup; then originalCostUsd on stored replays distinguishes the two paths.
+  const { m, env, runId, fence } = await stageBed({
+    EXTRACT_CHUNK_MAX_BLOCKS: "10", EXTRACT_CHUNK_CHARS: "2000",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999", EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+  });
+  let provider;
+  try {
+    const { readFileSync } = await import("node:fs");
+    const path = await import("node:path");
+    const { REPO_ROOT } = await import("../testkit.mjs");
+    const bytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+    const documentSha256 = await m.hash.sha256Hex(bytes);
+    const documentKey = m.keys.inputDocumentKey(runId);
+    await env.EVIDENCE.put(documentKey, bytes, { httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return Response.json({
+        model: body.model,
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        choices: [{
+          message: { content: JSON.stringify({
+            global_rules: [], cross_references: [], ambiguities: [], unverifiable_from_browser: [],
+          }) },
+          finish_reason: "stop",
+        }],
+      });
+    };
+    let passA;
+    try {
+      passA = await m.extractStage.stagePassASlice(
+        env, runId, documentKey, "questionnaire.docx", fence, async () => {}, {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE, documentSha256,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assertEq(passA.result.state, "evaluated", "durable Pass-A authority (precondition)");
+    const passAHash = passA.result.value.hash;
+    provider = stubProvider();
+    const beat = async () => {};
+
+    // Wave 1: buy at least one chunk.
+    const first = await m.extractStage.stagePassBSlice(env, runId, documentKey, "questionnaire.docx", fence, beat, {
+      budgetMs: 0,
+    }, m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256);
+    assertEq(first.result.state, "not-evaluated", "wave 1 is incomplete (precondition)");
+
+    const cpAfter1 = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint;
+    const wave1Events = cpAfter1.usage.events.filter((e) => e.kind === "model-call");
+    const passBEvents = wave1Events.filter((e) => e.model && !e.model.startsWith("grok"));
+    assert(passBEvents.length >= 1, "wave 1 charged at least one Pass-B event (precondition)");
+    assert(passBEvents[0].costUsd > 0, "the first Pass-B purchase has nonzero cost (precondition)");
+
+    // Defeat deduplication: clear ALL events and counters to zero. Same crash-recovery
+    // scenario as the pass-A equivalent — model call billed and persisted as a chunk
+    // artifact, but the checkpoint event CAS never committed.
+    await m.checkpoint.updateCheckpoint(env, runId, (d) => {
+      d.usage.events = [];
+      d.usage.modelCalls.used = 0;
+      d.usage.cost.usedUsd = 0;
+    }, { progressed: true, fence });
+
+    // Wave 2: wave 1's chunk(s) are reclaimed, and the replay events now bypass dedup.
+    await m.extractStage.stagePassBSlice(env, runId, documentKey, "questionnaire.docx", fence, beat, {
+      budgetMs: 0,
+    }, m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256);
+
+    const cpAfter2 = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint;
+    const allEvents2 = cpAfter2.usage.events.filter((e) => e.kind === "model-call");
+    const replayEvents = allEvents2.filter((e) => e.usageSource === "reused-prior-artifact");
+    assert(replayEvents.length >= 1,
+      "with dedup defeated, at least one replay event is stored (precondition for the cost check)");
+    for (const event of replayEvents) {
+      assert(
+        event.originalCostUsd > 0,
+        `a replay event must carry the original paid cost as provenance (got ${event.originalCostUsd}). ` +
+          "If originalCostUsd is 0, chargeUsage received result.calls (pre-zeroed by replayUsage) " +
+          "instead of result.accountingCalls (which preserves the original cost for the CAS).",
+      );
+    }
   } finally {
     provider?.restore();
   }

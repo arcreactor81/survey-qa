@@ -368,16 +368,13 @@ await runMutantSuite({
         "the zero-purchase helper remains unit-tested but production no longer calls it before sealContract, " +
         "so a same-count merged replacement reaches the immutable contract revision",
       file: WORKFLOW,
-      find:
-        "const sealAuthority = await validateExtractionSealAuthority(\n" +
-        "            this.env,\n" +
-        "            runId,",
-      replace:
-        "const sealAuthority = { kind: \ok\, merged: await loadMerged(this.env, runId) };\n" +
-        "          void validateExtractionSealAuthority;\n" +
-        "          void (\n" +
-        "            this.env,\n" +
-        "            runId,",
+      // re-anchored: original multi-line anchor targeted the validateExtractionSealAuthority call
+      // and used loadMerged (not imported in run-workflow.ts) plus \ok\ (bare identifier, not string).
+      // Fixed: single-line anchor on the invalid-result guard. Skipping it lets a hash-mismatched
+      // merged payload fall through to sealAuthority.merged (undefined for an invalid result),
+      // which crashes on the next access — proving the guard is the one that stops the seal.
+      find: 'if (sealAuthority.kind === "invalid") {',
+      replace: 'if (false && sealAuthority.kind === "invalid") {',
       kills: ["(c) WORKFLOW seal is bound to the source-ledger step's merged artifact hash"],
     },
     {
@@ -425,7 +422,10 @@ await runMutantSuite({
       replace:
         "  // on restart, while accounting-before-step-commit dedupes on restart.\n" +
         "  await chargeUsage(env, runId, result.calls, fence);",
-      kills: ["(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the finished one"],
+      // re-aimed: the original kills target checks modelCalls.used count, but
+      // pushModelUsageStrict deduplicates by eventId so the count is identical regardless.
+      // The new test defeats dedup by clearing checkpoint events, then checks originalCostUsd.
+      kills: ["reused chunks are charged to the ledger as replays preserving original cost"],
     },
     {
       name: "the exhausted-waves stop is skipped entirely",
