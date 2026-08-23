@@ -57,8 +57,9 @@ await runMutantSuite({
         "screen-out label the FIRST pass deliberately steered around: a walk dies on a retry " +
         "that attempt one would have survived, on the exact answer the hints exist to avoid",
       file: DR,
-      find: "          avoid_labels: survivalAvoidLabels(decision, pathHints, after ?? before),",
-      replace: "          // (recovery avoid_labels stamp dropped by mutant)",
+      // re-anchored: indentation 10→12 spaces, `after` renamed to `roundScreen`
+      find: "            avoid_labels: survivalAvoidLabels(decision, pathHints, roundScreen ?? before),",
+      replace: "            // (recovery avoid_labels stamp dropped by mutant)",
       kills: [
         "THE RETRY REPLAY: a blocked screen's recovery re-pick steers off the flagged position-1 label",
         "the recovery consumes PATH-LEVEL hints on an unbound screen — the second avoid-label source",
@@ -72,9 +73,10 @@ await runMutantSuite({
         "family, taken silently — and the recorded fallback detail ('fell back to the row's " +
         "first cell') would no longer describe what was clicked",
       file: DR,
-      find: "      const cell = wantedCell ?? row.cells[0];",
+      // re-anchored: grid refactored from `const cell = wantedCell ?? row.cells[0]` into firstPass map with `at` index
+      find: "        at: wantedCell ? row.cells.indexOf(wantedCell) : row.cells.length > 0 ? 0 : -1,",
       replace:
-        '      const cell = wantedCell ?? row.cells.find((x) => !(x.column && avoid.some((a) => labelMatches(x.column ?? "", a)))) ?? row.cells[0];',
+        '        at: wantedCell ? row.cells.indexOf(wantedCell) : row.cells.length > 0 ? Math.max(0, row.cells.findIndex((c) => !(c.column && avoid.some((a) => labelMatches(c.column ?? "", a))))) : -1,',
       kills: ["the grid default ignores hints: cells[0] is clicked even when its column is a flagged label"],
     },
     {
@@ -85,8 +87,9 @@ await runMutantSuite({
         "PREFER the exact labels the document says end the interview — the walker would be " +
         "steered INTO every documented screen-out instead of around them",
       file: PLAN,
-      find: '    if (facet === "terminate") out.push({ question, label, kind: "terminate" });',
-      replace: '    if (facet === "terminate") out.push({ question, label, kind: "continue" });',
+      // re-anchored: facet arm refactored from single-line `if (facet ===` to else-if block with facetByLineage.get()
+      find: '    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {\n      out.push({ question, label, kind: "terminate" });\n    }',
+      replace: '    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {\n      out.push({ question, label, kind: "continue" });\n    }',
       kills: [
         "typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped",
         "THE MEASURED STARVATION: empty model + sealed routes still stamps avoid AND prefer",
