@@ -724,6 +724,33 @@ export interface SurvivalHintStamp {
   avoid_labels: string[];
   /** Labels the document states CONTINUE the survey — same channel, same evidence boundary. */
   prefer_labels?: string[];
+  /**
+   * OUTCOME 1 (D1): answer CODES paired with their labels. A site rendering codes without
+   * verbatim labels can now be matched by exact code. Each entry is {label, code}; code is
+   * null when the route row had no code. CODES ARE EXACT-MATCH ONLY — they are platform-
+   * assigned identifiers (stated here, enforced in `driver.ts#codeMatches`). An unmatched
+   * code degrades to label-only matching, the pre-existing behavior.
+   */
+  avoid_codes?: Array<{ label: string; code: string | null }>;
+  prefer_codes?: Array<{ label: string; code: string | null }>;
+  /**
+   * OUTCOME 4 (D1): a documented-accepted value for a NUMERIC screener. Read from
+   * `BoundaryInputPayload` rows whose `expectedOutcome` is `"accepted"` — the document
+   * states this value is accepted, so a numeric filler prefers it over the blind midpoint.
+   * Provenance: `navigator-default:documented-accepted-value(...)`.
+   *
+   * Conflicting rows (both accepted and rejected outcomes for the same question's boundary)
+   * are recorded as a named refusal in `unstampable`, never guessed.
+   *
+   * Absent when no boundary rows with accepted outcomes exist for this question.
+   */
+  prefer_value?: {
+    value: string;
+    /** Which boundary row produced this value ("min"/"max"/etc.). */
+    bound: string;
+    /** Why this value was chosen — the derivation, stated in code. */
+    derivation: string;
+  };
 }
 
 const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 ? v : null);
@@ -742,6 +769,9 @@ const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v.trim
 export interface SealedRouteDestination {
   question: string;
   label: string;
+  /** The document's answer CODE, when the route row carried one. Exact-match only (codes are
+   *  platform-assigned identifiers, never prose); null when the route had no code. */
+  code: string | null;
   kind: "terminate" | "continue";
 }
 
@@ -806,6 +836,11 @@ export function sealedRouteDestinations(revision: {
   for (const fi of revision.facetInstances) {
     if (fi.case?.kind !== "route") continue;
     const label = nonEmpty(fi.case.routeAnswer?.label ?? null);
+    // OUTCOME 1 (D1): carry the route answer's CODE alongside the label. A survey whose
+    // site renders codes without verbatim labels now has a second matching key. Codes are
+    // EXACT-MATCH ONLY (they are platform-assigned identifiers, never prose — stated here,
+    // enforced in the driver's `codeMatches`). null when the route row had no code.
+    const code = nonEmpty(fi.case.routeAnswer?.code ?? null);
     let question = nonEmpty(fi.targetQuestionId);
     if (!question && label) {
       const owners = labelOwners.get(label);
@@ -823,10 +858,10 @@ export function sealedRouteDestinations(revision: {
     // worst case of over-avoiding is a filler picked elsewhere.
     const dest = (fi.case as { expectedDestination?: { questionId?: string | null; terminal?: string | null } | null })
       .expectedDestination;
-    if (dest?.terminal) out.push({ question, label, kind: "terminate" });
-    else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, kind: "continue" });
+    if (dest?.terminal) out.push({ question, label, code, kind: "terminate" });
+    else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, code, kind: "continue" });
     else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {
-      out.push({ question, label, kind: "terminate" });
+      out.push({ question, label, code, kind: "terminate" });
     }
   }
   return out;
@@ -849,13 +884,27 @@ export function survivalAvoidIndex(
 ): {
   avoid: Map<string, string[]>;
   prefer: Map<string, string[]>;
+  /** OUTCOME 1 (D1): {label, code} pairs keyed by question, for code-based matching. */
+  avoidCodes: Map<string, Array<{ label: string; code: string | null }>>;
+  preferCodes: Map<string, Array<{ label: string; code: string | null }>>;
   unstampable: Array<{ terminal: string; question: string | null; why: string }>;
 } {
   const avoid = new Map<string, string[]>();
-  const put = (q: string, label: string): void => {
+  // OUTCOME 1 (D1): carry {label, code} pairs so the driver can match by exact code when
+  // the site renders codes without verbatim labels. Only routes carry codes; model-mined
+  // triggers are label-only (code = null).
+  const avoidCodes = new Map<string, Array<{ label: string; code: string | null }>>();
+  const preferCodes = new Map<string, Array<{ label: string; code: string | null }>>();
+  const putCode = (map: typeof avoidCodes, q: string, label: string, code: string | null): void => {
+    const held = map.get(q) ?? [];
+    if (!held.some((e) => e.label === label && e.code === code)) held.push({ label, code });
+    map.set(q, held);
+  };
+  const put = (q: string, label: string, code: string | null = null): void => {
     const held = avoid.get(q) ?? [];
     if (!held.includes(label)) held.push(label);
     avoid.set(q, held);
+    putCode(avoidCodes, q, label, code);
   };
   const m = (model ?? {}) as { questions?: unknown; terminals?: unknown };
   for (const row of Array.isArray(m.questions) ? m.questions : []) {
@@ -896,7 +945,7 @@ export function survivalAvoidIndex(
     }
     for (const a of answers) put(tq, a);
   }
-  for (const r of routes) if (r.kind === "terminate") put(r.question, r.label);
+  for (const r of routes) if (r.kind === "terminate") put(r.question, r.label, r.code);
   const prefer = new Map<string, string[]>();
   for (const r of routes) {
     if (r.kind !== "continue") continue;
@@ -904,8 +953,9 @@ export function survivalAvoidIndex(
     const held = prefer.get(r.question) ?? [];
     if (!held.includes(r.label)) held.push(r.label);
     prefer.set(r.question, held);
+    putCode(preferCodes, r.question, r.label, r.code);
   }
-  return { avoid, prefer, unstampable };
+  return { avoid, prefer, avoidCodes, preferCodes, unstampable };
 }
 
 /**
@@ -927,6 +977,7 @@ export function stampSurvivalHints(
   carriers: Array<{ decisions?: PlannedDecision[]; [k: string]: unknown }>,
   model: unknown,
   routes: readonly SealedRouteDestination[] = [],
+  facetInstances: readonly FacetInstance[] = [],
 ): {
   decisionsStamped: number;
   pathsStamped: number;
@@ -935,11 +986,59 @@ export function stampSurvivalHints(
   /** Documented screen-outs this pass could NOT steer around, each with the reason. */
   unstampable: Array<{ terminal: string; question: string | null; why: string }>;
 } {
-  const { avoid, prefer, unstampable } = survivalAvoidIndex(model, routes);
-  // One row per hinted question, avoid-map order first, prefer-only questions after —
-  // both insertion-ordered from deterministic inputs, so a replan is byte-stable.
+  const { avoid, prefer, avoidCodes, preferCodes, unstampable } = survivalAvoidIndex(model, routes);
+
+  // OUTCOME 4 (D1): mine accepted boundary values per question. BoundaryInputPayload rows
+  // with `expectedOutcome: "accepted"` name a literal value the document states is accepted.
+  // When boundary rows for the SAME question carry conflicting outcomes (both accepted and
+  // rejected), that is a named refusal — the document contradicts itself and no value is
+  // preferred.
+  const preferValue = new Map<string, SurvivalHintStamp["prefer_value"]>();
+  {
+    const boundaryRows = new Map<string, Array<{ bound: string; value: string; outcome: string }>>();
+    for (const fi of facetInstances) {
+      if (fi.case?.kind !== "boundary") continue;
+      const bi = fi.case.boundaryInput;
+      if (!bi || !bi.value || bi.expectedOutcome === "unspecified") continue;
+      const question = nonEmpty(fi.targetQuestionId);
+      if (!question) continue;
+      const held = boundaryRows.get(question) ?? [];
+      held.push({ bound: bi.bound, value: bi.value, outcome: bi.expectedOutcome });
+      boundaryRows.set(question, held);
+    }
+    for (const [question, rows] of boundaryRows) {
+      const accepted = rows.filter((r) => r.outcome === "accepted");
+      const rejected = rows.filter((r) => r.outcome === "rejected");
+      if (accepted.length === 0) continue;
+      // Conflicting bounds: at least one accepted AND at least one rejected for the same
+      // question. This is a named refusal, not a guess.
+      if (rejected.length > 0) {
+        unstampable.push({
+          terminal: `boundary:${question}`,
+          question,
+          why: `boundary rows for this question carry both accepted (${accepted.map((r) => `${r.bound}=${r.value}`).join(",")}) ` +
+            `and rejected (${rejected.map((r) => `${r.bound}=${r.value}`).join(",")}) outcomes — ` +
+            `conflicting documented bounds, named refusal`,
+        });
+        continue;
+      }
+      // Pick the first accepted row. Derivation states which row and why.
+      const pick = accepted[0]!;
+      preferValue.set(question, {
+        value: pick.value,
+        bound: pick.bound,
+        derivation: `BoundaryInputPayload(bound="${pick.bound}", value="${pick.value}", expectedOutcome="accepted") ` +
+          `from the sealed contract's facet instances for question ${question}; ` +
+          `the document states this value is accepted`,
+      });
+    }
+  }
+  // One row per hinted question, avoid-map order first, prefer-only questions after,
+  // then boundary-only questions — all insertion-ordered from deterministic inputs, so a
+  // replan is byte-stable.
   const hintedQuestions: string[] = [...avoid.keys()];
   for (const q of prefer.keys()) if (!hintedQuestions.includes(q)) hintedQuestions.push(q);
+  for (const q of preferValue.keys()) if (!hintedQuestions.includes(q)) hintedQuestions.push(q);
   let decisionsStamped = 0;
   let pathsStamped = 0;
   for (const carrier of hintedQuestions.length > 0 ? carriers : []) {
@@ -960,9 +1059,18 @@ export function stampSurvivalHints(
       const q = String(d.question ?? "");
       const labels = avoid.get(q);
       const liked = prefer.get(q);
-      if ((!labels || labels.length === 0) && (!liked || liked.length === 0)) continue;
+      const pv = preferValue.get(q);
+      if ((!labels || labels.length === 0) && (!liked || liked.length === 0) && !pv) continue;
       if (labels && labels.length > 0) d.avoid_labels = [...labels];
       if (liked && liked.length > 0) d.prefer_labels = [...liked];
+      // OUTCOME 1 (D1): stamp code pairs so the driver can match by exact code.
+      // Only when at least one entry has a non-null code.
+      const ac = avoidCodes.get(q);
+      if (ac && ac.some((e) => e.code !== null)) d.avoid_codes = ac.map((e) => ({ ...e }));
+      const pc = preferCodes.get(q);
+      if (pc && pc.some((e) => e.code !== null)) d.prefer_codes = pc.map((e) => ({ ...e }));
+      // OUTCOME 4 (D1): stamp documented-accepted value for numeric screeners.
+      if (pv) d.prefer_value = { ...pv };
       decisionsStamped += 1;
     }
     // Path-level hints cover the screens NO decision binds; the driver matches them by
@@ -972,6 +1080,13 @@ export function stampSurvivalHints(
       ...(wordingByQuestion.has(question) ? { question_text: wordingByQuestion.get(question)! } : {}),
       avoid_labels: [...(avoid.get(question) ?? [])],
       ...(prefer.has(question) ? { prefer_labels: [...prefer.get(question)!] } : {}),
+      // OUTCOME 1 (D1): carry code pairs into path-level hints. Only emitted when at
+      // least one entry has a non-null code — model-mined triggers have code=null and
+      // emitting them would add noise without matching value.
+      ...((avoidCodes.get(question) ?? []).some((e) => e.code !== null) ? { avoid_codes: avoidCodes.get(question)!.map((e) => ({ ...e })) } : {}),
+      ...((preferCodes.get(question) ?? []).some((e) => e.code !== null) ? { prefer_codes: preferCodes.get(question)!.map((e) => ({ ...e })) } : {}),
+      // OUTCOME 4 (D1): carry documented-accepted value.
+      ...(preferValue.has(question) ? { prefer_value: { ...preferValue.get(question)! } } : {}),
     }));
     if (hints.length > 0) {
       carrier["survival_hints"] = hints;
@@ -1130,6 +1245,7 @@ export async function planStage(
     [...plan.floor.paths, ...plan.exploration.queue],
     plan.model,
     sealedRouteDestinations(revision),
+    revision.facetInstances,
   );
 
   // ---- assignment: mandatory execution case -> the floor path that witnesses it ----

@@ -775,6 +775,19 @@ export interface StepObservation {
    * costing ~19s while the same screens read locally in ~1.5s).
    */
   phaseMs?: { read: number; act: number; advance: number; capture: number };
+  /**
+   * OUTCOME 3 (D1): a mid-walk termination announcement detected on this step's screen.
+   * Present when the screen's text matched a SCREENOUT_MARKERS entry — meaning the survey
+   * is announcing "this respondent will be/has been terminated" while the walk is still
+   * mid-survey. On a live link such a walk is dead at screener end; this field makes that
+   * fact visible in the walk record. Absent (not null) on steps with no announcement, and
+   * on artifacts from before the field existed. LABELING ONLY: does not change navigation.
+   */
+  terminationAnnouncement?: {
+    matchedText: string;
+    lexiconIndex: number;
+    questionToken: string | null;
+  };
 }
 
 export interface PathObservation {
@@ -868,6 +881,14 @@ export interface PathObservation {
   /** Named capture shortfalls lifted to the walk; absent is legacy, `[]` is checked-and-clean. */
   captureFailures?: ScreenCaptureFailure[];
   captureFailureCount?: number;
+  /**
+   * OUTCOME 3 (D1): how many steps on this walk crossed a mid-walk termination announcement.
+   * A non-zero count means the survey announced "this respondent is being terminated" on one
+   * or more screens the walk still navigated through. On a live link those walks are dead at
+   * screener end. Optional: absent on artifacts from before the field existed; 0 means the
+   * walk was checked and no announcements were found.
+   */
+  terminationAnnouncementCount?: number;
   /**
    * Runtime-only identity of this PathObservation's verified catalogue entry. The driver sets
    * it only after serializing/capturing the observation, so it cannot recursively appear in
