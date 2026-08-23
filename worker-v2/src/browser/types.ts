@@ -775,6 +775,38 @@ export interface StepObservation {
    * costing ~19s while the same screens read locally in ~1.5s).
    */
   phaseMs?: { read: number; act: number; advance: number; capture: number };
+  /**
+   * WHAT THIS STEP DID NOT CAPTURE AND WHY — the capture diet policy in effect.
+   *
+   * Present when one or more capture epochs were DELIBERATELY skipped on this step, with
+   * the policy that decided it. An empty array is a claim: "every epoch that could have
+   * been captured was". Absent on artifacts from before the diet existed.
+   *
+   * THIS IS A POLICY, NOT A FAILURE. A skipped epoch has a stated reason and goes into the
+   * counted `skippedEpochs` on the walk. A capture that FAILED has a `captureFailure` entry
+   * instead. The two must never be conflated: a policy is a budget decision, a failure is a
+   * defect.
+   */
+  captureDietApplied?: CaptureDietEntry[];
+}
+
+/**
+ * ONE DELIBERATELY SKIPPED CAPTURE EPOCH, NAMED AND COUNTED.
+ *
+ * THE DEFECT THIS EXISTS TO PREVENT: a silent thinning that removes evidence without saying
+ * so. Every skipped epoch is a named policy entry: what slot, which modalities, and which
+ * rule decided it. A consumer that needs the skipped modality can detect the policy rather
+ * than seeing "nothing was captured" and concluding the browser failed.
+ */
+export interface CaptureDietEntry {
+  /** The slot that was skipped: "after-action", "advanced", etc. */
+  slot: string;
+  /** Which modalities were skipped. */
+  modalities: Array<"screen-json" | "screenshot" | "accessibility" | "rendered-pdf">;
+  /** The policy rule that decided to skip it. Stable across runs. */
+  rule: string;
+  /** Why this rule applies to this step. */
+  reason: string;
 }
 
 export interface PathObservation {
@@ -859,6 +891,13 @@ export interface PathObservation {
    * Optional: absent on artifacts written before it existed.
    */
   navigatorDefaultAnswerCount?: number;
+  /**
+   * CAPTURE DIET IN EFFECT FOR THIS WALK — how many epochs were deliberately skipped and
+   * by which policy. Absent on artifacts from before the diet existed. Present-but-zero is
+   * a claim: "the diet was active and decided to skip nothing". The per-step entries are in
+   * `StepObservation.captureDietApplied`; this is the walk-level summary.
+   */
+  captureDietSkippedEpochs?: number;
   /**
    * Every paired visual/accessibility epoch made on the walk, including a load-failure epoch
    * that could not become a normal step. Optional only for artifacts from the older reader.

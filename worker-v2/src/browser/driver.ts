@@ -72,6 +72,7 @@ import type {
   PerformedAction,
   RenderedScreen,
   ScreenCaptureEpoch,
+  CaptureDietEntry,
   ScreenCaptureFailure,
   ScreenCaptureGeometry,
   StepObservation,
@@ -5592,6 +5593,7 @@ export async function walkPath(
   const steps: StepObservation[] = [];
   const screenCaptures: ScreenCaptureEpoch[] = [];
   const captureFailures: ScreenCaptureFailure[] = [];
+  let captureDietSkippedEpochs = 0;
   const recordEpoch = (epoch: ScreenCaptureEpoch): ScreenCaptureEpoch => {
     screenCaptures.push(epoch);
     captureFailures.push(...epoch.captureFailures);
@@ -5994,29 +5996,40 @@ export async function walkPath(
       }
     }
     const nb = navigation.kind === "unique" ? navigation.control : null;
-    const afterActionCapture = afterAction
-      ? recordEpoch(
-          await timed(
-            () =>
-              captureScreenEpoch(
-                page,
-                cap,
-                afterAction!,
-                navigation.kind === "none" ? "final" : "after-action",
-                stepIndex,
-                opts.viewport,
-              ),
-            (ms) => (phaseCaptureMs += ms),
-          ),
-        )
+    // CAPTURE DIET: the after-action epoch is SKIPPED. It captured the SAME page as the
+    // "before" epoch with only the walker's own input state changed (a dropdown selected, a
+    // text field filled). That costs one full screenshot + PDF + AX tree + screen JSON +
+    // four R2 evidence writes per step — measured at ~20-22s on production runs — and no
+    // verdict consumer reads it:
+    //
+    //   - The judge spine explicitly excludes screenAfterAction (v2-observation.mjs line 365)
+    //   - The verifier reads the INLINE screenAfterAction RenderedScreen for validation
+    //     messages, which is preserved (it comes from the cheap boundedRead(), not the epoch)
+    //   - The vision system loses one screenshot per step but retains the "before" epoch
+    //
+    // The inline `afterAction` RenderedScreen stays in the StepObservation at full fidelity.
+    // Only the heavy-artifact epoch (PNG/PDF/AX/evidence-JSON) is skipped.
+    const afterActionCapture: Awaited<ReturnType<typeof captureScreenEpoch>> | null = null;
+    const afterActionDiet: CaptureDietEntry | null = afterAction
+      ? {
+          slot: navigation.kind === "none" ? "final" : "after-action",
+          modalities: ["screen-json", "screenshot", "accessibility", "rendered-pdf"],
+          rule: "after-action-epoch-skip",
+          reason:
+            "the after-action epoch captures the same page as the before epoch with only " +
+            "the walker's input state changed; no verdict consumer reads it; the inline " +
+            "screenAfterAction RenderedScreen is preserved at full fidelity",
+        }
       : null;
+    if (afterActionDiet) captureDietSkippedEpochs += 1;
     if (navigation.kind === "ambiguous") {
       const detail =
         `screen ${stepIndex} exposes ${navigation.candidates.length} usable forward candidates after answers were applied: ` +
         navigation.candidates.map((row) => `#${row.idx} ${JSON.stringify(row.label)} via ${row.via}`).join("; ");
       recordReaderLimitation(NAVIGATION_FORWARD_AMBIGUOUS, detail, navigation.candidates.length);
-      const afterEv = afterActionCapture?.screenJson.evidenceId ?? null;
-      const stepCaptures = [beforeCapture, ...(afterActionCapture ? [afterActionCapture] : [])];
+      // afterActionCapture is null under the capture diet — no after-action epoch is produced.
+      const afterEv: string | null = null;
+      const stepCaptures = [beforeCapture];
       steps.push({
         stepIndex,
         decisionQuestion: decision ? String(decision.question ?? "") : null,
@@ -6040,6 +6053,7 @@ export async function walkPath(
         evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
         wallMs: Date.now() - stepT0,
         phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
+        captureDietApplied: afterActionDiet ? [afterActionDiet] : [],
       });
       outcome = NAVIGATION_FORWARD_AMBIGUOUS;
       outcomeDetail = detail;
@@ -6048,8 +6062,9 @@ export async function walkPath(
     if (!nb) {
       // No control advances the survey: either the end, or a dead end. Both are recorded
       // as what they are — the absence of an advance control on THIS complete screen.
-      const afterEv = afterActionCapture?.screenJson.evidenceId ?? null;
-      const stepCaptures = [beforeCapture, ...(afterActionCapture ? [afterActionCapture] : [])];
+      // afterActionCapture is null under the capture diet — no after-action epoch is produced.
+      const afterEv: string | null = null;
+      const stepCaptures = [beforeCapture];
       steps.push({
         stepIndex,
         decisionQuestion: decision ? String(decision.question ?? "") : null,
@@ -6078,6 +6093,7 @@ export async function walkPath(
         evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
         wallMs: Date.now() - stepT0,
         phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
+        captureDietApplied: afterActionDiet ? [afterActionDiet] : [],
       });
       outcome = "no-advance-control";
       // NAME THE UNANSWERED CONTROL, OR THIS SENTENCE IS A NORMAL ENDING.
@@ -6350,6 +6366,7 @@ export async function walkPath(
       evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
       wallMs: Date.now() - stepT0,
       phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
+      captureDietApplied: afterActionDiet ? [afterActionDiet] : [],
     });
 
     if (repeatedTransition) {
@@ -6797,6 +6814,7 @@ export async function walkPath(
     unfillableControls,
     unfillableControlCount: unfillableControls.length,
     navigatorDefaultAnswerCount,
+    captureDietSkippedEpochs,
     // New reader: present-but-empty means every attempted visual/AX capture completed. Older
     // artifacts omit all four fields and therefore never masquerade as checked-and-clean.
     screenCaptures,

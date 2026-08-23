@@ -560,7 +560,7 @@ suite("amendment 2e: the post-advance epoch is deduped mid-walk and backfilled a
   // was the post-advance epoch — the SAME screen the next step captures as its before-epoch
   // a second later. Mid-walk it is skipped; a walk that ENDS on an advanced screen gets that
   // final screen backfilled under the "final" slot so no terminal state loses its visual.
-  test("an advanced step mid-walk records before+after-action only, and the walk's last screen arrives as a final-slot epoch", async () => {
+  test("an advanced step mid-walk records before only (capture diet skips after-action), and the diet policy is recorded", async () => {
     const { mod } = await loadWorker();
     const env = testEnv();
     const mkScreen = (sig, q) => ({
@@ -625,16 +625,32 @@ suite("amendment 2e: the post-advance epoch is deduped mid-walk and backfilled a
     assertEq(obs.steps[0].advanced, true, "step 0 must have advanced");
     const step0Slots = (obs.steps[0].evidence?.screenCaptures ?? []).map((e) => e.slot);
     assert(!step0Slots.includes("advanced"), `mid-walk advanced epoch must be deduped, got slots ${JSON.stringify(step0Slots)}`);
+    assert(!step0Slots.includes("after-action"), `capture diet skips the after-action epoch, got slots ${JSON.stringify(step0Slots)}`);
     assert(step0Slots.includes("before"), "step 0 keeps its before epoch");
+    // Step 0's diet policy must be recorded.
+    const step0Diet = obs.steps[0].captureDietApplied ?? [];
+    assert(step0Diet.length > 0, `advancing step records the capture diet policy, got ${JSON.stringify(step0Diet)}`);
+    assertEq(step0Diet[0].rule, "after-action-epoch-skip");
+    assertEq(step0Diet[0].slot, "after-action", "the skipped slot on an advancing step was 'after-action'");
     const step1Slots = (obs.steps[1].evidence?.screenCaptures ?? []).map((e) => e.slot);
-    assert(step1Slots.includes("final"), `the terminal screen keeps its own final epoch, got ${JSON.stringify(step1Slots)}`);
+    assert(step1Slots.includes("before"), `the terminal screen keeps its before epoch, got ${JSON.stringify(step1Slots)}`);
+    // CAPTURE DIET: the after-action epoch (which was slot "final" on a no-advance-control step)
+    // is no longer produced. The diet policy must be recorded on the step.
+    const step1Diet = obs.steps[1].captureDietApplied ?? [];
+    assert(step1Diet.length > 0, `terminal step records the capture diet policy, got ${JSON.stringify(step1Diet)}`);
+    assertEq(step1Diet[0].rule, "after-action-epoch-skip", "the diet rule names the policy");
+    assertEq(step1Diet[0].slot, "final", "the skipped slot on a terminal step was 'final'");
+    // Walk-level diet count: 2 steps, each with its after-action epoch skipped.
+    assertEq(typeof obs.captureDietSkippedEpochs, "number", "walk-level diet count present");
+    assert(obs.captureDietSkippedEpochs >= 2, `diet skipped at least 2 epochs, got ${obs.captureDietSkippedEpochs}`);
     // The dedup bookkeeping must reset per step: no spurious post-loop backfill of screen B
-    // under step 0's index after step 1 already captured it.
+    // under step 0's index after step 1 already captured it. With the diet active, the terminal
+    // step has no "final" epoch, so the backfill is also unnecessary.
     const walkSlots = (obs.screenCaptures ?? []).map((e) => `${e.slot}@${e.stepIndex}`);
     assertEq(
       walkSlots.filter((s) => s.startsWith("final@")).length,
-      1,
-      `exactly one final epoch, got ${JSON.stringify(walkSlots)}`,
+      0,
+      `no final epoch under the capture diet, got ${JSON.stringify(walkSlots)}`,
     );
   });
 

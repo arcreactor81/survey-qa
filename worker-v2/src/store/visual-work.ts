@@ -949,6 +949,7 @@ const PATH_OBSERVATION_KEYS = [
   "unfillableControls",
   "unfillableControlCount",
   "navigatorDefaultAnswerCount",
+  "captureDietSkippedEpochs",
   "screenCaptures",
   "screenCaptureCount",
   "captureFailures",
@@ -1340,6 +1341,7 @@ function validateStepsEnvelope(value: unknown, path: string): void {
       "evidence",
       "wallMs",
       "phaseMs",
+      "captureDietApplied",
     ]);
     for (const key of Object.keys(step)) if (!allowed.has(key)) invalid(`${stepPath}.${key}`, "unknown step field");
     for (const required of [
@@ -1400,6 +1402,7 @@ function validateOptionalPathFields(root: Record<string, unknown>): void {
     "readerLimitationCount",
     "unfillableControlCount",
     "navigatorDefaultAnswerCount",
+    "captureDietSkippedEpochs",
   ]) {
     if (hasOwn(root, field)) nonnegativeInteger(root[field], `$artifact.${field}`, Number.MAX_SAFE_INTEGER);
   }

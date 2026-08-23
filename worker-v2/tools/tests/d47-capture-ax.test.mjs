@@ -328,13 +328,15 @@ suite("D47 — the real walker preserves legacy ids and adds paired epochs", () 
       cap(env, runId),
     );
 
-    assertEq(obs.screenCaptureCount, 2, JSON.stringify(obs.screenCaptures));
-    assertEq(new Set(obs.screenCaptures.map((epoch) => epoch.epochId)).size, 2, "slot must participate in opaque epoch identity");
+    // CAPTURE DIET: the after-action "final" epoch is no longer produced. Only the "before"
+    // epoch survives. The diet policy is recorded on the step.
+    assertEq(obs.screenCaptureCount, 1, JSON.stringify(obs.screenCaptures));
+    assertEq(new Set(obs.screenCaptures.map((epoch) => epoch.epochId)).size, 1, "one epoch, one unique identity");
 
-    // goodPage() has no createCDPSession: each of the 2 epochs ("before" and "final") carries
-    // exactly one pdf-api-unavailable failure. That is 2 total, asserted by kind and count.
-    assertEq(obs.captureFailureCount, 2, JSON.stringify(obs.captureFailures));
-    assertEq(obs.captureFailures.length, 2);
+    // goodPage() has no createCDPSession: the single "before" epoch carries exactly one
+    // pdf-api-unavailable failure.
+    assertEq(obs.captureFailureCount, 1, JSON.stringify(obs.captureFailures));
+    assertEq(obs.captureFailures.length, 1);
     for (const failure of obs.captureFailures) {
       assertEq(failure.kind, "pdf-api-unavailable", `unexpected capture failure kind: ${failure.kind}`);
     }
@@ -347,16 +349,26 @@ suite("D47 — the real walker preserves legacy ids and adds paired epochs", () 
 
     assertEq(obs.steps.length, 1);
     const evidence = obs.steps[0].evidence;
-    assertEq(evidence.screenCaptures.length, 2);
-    assertEq(evidence.screenshots.length, 2, "the legacy list remains and now names both exact screen epochs");
+    assertEq(evidence.screenCaptures.length, 1);
+    assertEq(evidence.screenshots.length, 1, "one screenshot from the single before epoch");
     assertEq(evidence.screenBefore, evidence.screenCaptures[0].screenJson.evidenceId);
-    assertEq(evidence.screenAfterAdvance, evidence.screenCaptures[1].screenJson.evidenceId);
-    // Step-level failure count matches the walk-level total for this single-step walk.
-    assertEq(evidence.captureFailureCount, 2);
-    assertEq(evidence.captureFailures.length, 2, "each slot's pdf-api-unavailable failure is explicit");
+    // With the diet, screenAfterAdvance is null (no after-action epoch produced).
+    assertEq(evidence.screenAfterAdvance, null, "no after-action epoch means no screenAfterAdvance legacy id");
+    // Step-level failure count: 1 epoch, 1 pdf-api-unavailable.
+    assertEq(evidence.captureFailureCount, 1);
+    assertEq(evidence.captureFailures.length, 1, "one slot's pdf-api-unavailable failure");
     for (const failure of evidence.captureFailures) {
       assertEq(failure.kind, "pdf-api-unavailable");
     }
+    // DIET POLICY: the step records what was skipped and why.
+    const diet = obs.steps[0].captureDietApplied;
+    assert(Array.isArray(diet) && diet.length > 0, "capture diet applied is recorded on the step");
+    assertEq(diet[0].rule, "after-action-epoch-skip");
+    assertEq(diet[0].slot, "final", "on a terminal step, the skipped slot was 'final'");
+    assert(diet[0].modalities.includes("screenshot"), "screenshot was among the skipped modalities");
+    assert(diet[0].modalities.includes("accessibility"), "accessibility was among the skipped modalities");
+    // Walk-level diet count.
+    assertEq(obs.captureDietSkippedEpochs, 1, "one epoch skipped by diet on this single-step walk");
   });
 });
 
