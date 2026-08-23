@@ -36,7 +36,7 @@
     "status": {
       "schemaVersion": "run-status/2.0.0",
       "runId": "v2r_01K3QW7M4E8XN2A9YB6TCVDPZR",
-      "phase": "reporting",
+      "phase": "done-failed",
       "phases": [
         {
           "name": "extracting",
