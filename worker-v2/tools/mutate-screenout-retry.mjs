@@ -150,8 +150,9 @@ await runMutantSuite({
         "the same defect one layer up: walkPath can honour variantFromStep perfectly and " +
         "the pivot never sends it — variantFromStep 0 varies from screen 1 exactly as before",
       file: EB,
-      find: "        const pivotFromStep = Math.max(0, lastStepIndex - 1);",
-      replace: "        const pivotFromStep = 0;",
+      // Anchor extended: executeMultiLaneBatch added a second pivotFromStep line (10-space indent substring-matches the 8-space find)
+      find: "        const pivotFromStep = Math.max(0, lastStepIndex - 1);\n        let retryHung = false;",
+      replace: "        const pivotFromStep = 0;\n        let retryHung = false;",
       kills: ["a screen-out at screen 2 pivots screen 2's answer while screen 1's proven answer replays unchanged"],
     },
     {
