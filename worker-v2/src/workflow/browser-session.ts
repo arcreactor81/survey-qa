@@ -1,5 +1,5 @@
 /**
- * BROWSER SESSIONS ACROSS WORKFLOW STEP BOUNDARIES.
+ * BROWSER SESSIONS — ONE FRESH BROWSER PER BATCH.
  *
  * This module encodes the runtime spike result (spikes/runtime-br), which is the finding
  * that removed the container runner from the v2 architecture:
@@ -10,17 +10,18 @@
  *
  * Consequences, and the rules that follow from them:
  *
- *  1. RECONNECT PER CALL, NEVER HOLD. `puppeteer.connect(env.BROWSER, sessionId)` at the
- *     top of a step, `browser.disconnect()` at the bottom. `disconnect()` leaves the
- *     session alive; `close()` destroys it. v2 calls `close()` in exactly one place —
- *     `retireSession` — so a session cannot be killed by accident at a step boundary.
- *  2. THE SESSION ID IS DURABLE STATE. It lives in the checkpoint's `ExecutionCursor`,
- *     so a Workflow step that is retried, or an instance that is restarted by the
- *     sweeper, reattaches to the SAME browser with the survey still on screen instead of
- *     restarting the walk from question 1.
- *  3. IDLE IS THE ENEMY, NOT ELAPSED TIME — but ~11 minutes was the observed wall, so
- *     `SESSION_MAX_AGE_MS` (default 8 min) proactively retires a session while it is
- *     still healthy, rather than discovering the wall mid-attempt.
+ *  1. ONE FRESH BROWSER PER BATCH. Each `execute-batch` step launches a new browser and
+ *     closes it at the end (see execute-batch.ts line ~2472). Reuse across batches ended
+ *     with the long-walk budgets (2026-08-17): a walk may now run ~9 minutes, and the
+ *     platform enforces a measured ~11-minute total-session wall, so a walk starting on a
+ *     session another batch already aged would hit that wall mid-walk. A fresh launch per
+ *     batch costs one session create and buys every batch the full wall.
+ *  2. THE SESSION ID IS DURABLE STATE. It lives in the checkpoint's `ExecutionCursor` for
+ *     use WITHIN a batch (e.g. the acquireWithRetry cold-start retry and the
+ *     sessionExpired guard), but is cleared to null at every batch boundary so the next
+ *     batch always launches fresh.
+ *  3. `SESSION_MAX_AGE_MS` (default 8 min) proactively retires a session while it is
+ *     still healthy, rather than discovering the ~11-minute wall mid-attempt.
  *  4. A LOST SESSION IS NORMAL, NOT AN ERROR. `acquireSession` transparently relaunches
  *     and reports `reconnected: false` so the caller can record that the page state was
  *     lost and re-establish position, instead of silently observing the wrong screen.

@@ -224,8 +224,8 @@ await runMutantSuite({
         "walker reached a terminal page that said NOTHING about which kind of ending it was, and " +
         "the signed record reports that walk as one that went fine",
       file: AR,
-      find: '  if (kind === "stalled" || kind === "unclassified") return false;',
-      replace: '  if (kind === "stalled") return false;\n  if (kind === "unclassified") return true;',
+      find: '  if (kind === "stalled" || kind === "unclassified" || kind === "crashed") return false;',
+      replace: '  if (kind === "stalled" || kind === "crashed") return false;\n  if (kind === "unclassified") return true;',
       kills: ["`unclassified` IS NOT AN ENDING REACHED — the counted residual never becomes a success"],
     },
     {

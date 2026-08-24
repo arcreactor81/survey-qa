@@ -18,11 +18,12 @@
  *    downstream of the seal can write it.
  *
  * 2. EXECUTION IS A CHECKPOINTED BATCH LOOP, NOT ONE LONG STEP.
- *    Each `execute-batch-N` step: reconnect to the browser session → run at most
+ *    Each `execute-batch-N` step: launch a fresh browser → run at most
  *    EXEC_BATCH_MAX_ATTEMPTS attempts or EXEC_BATCH_MAX_MS of wall clock → commit
- *    observations → disconnect (NOT close) → advance the cursor. The spike proved the
- *    session survives the gap between steps with page state intact, so a crash at batch
- *    17 resumes at batch 17 on the same browser rather than restarting the walk.
+ *    observations → close the browser → advance the cursor. Each batch gets a fresh
+ *    browser because the platform's ~11-minute session wall would terminate a walk
+ *    starting on an already-aged session (see execute-batch.ts line ~2472). A crash at
+ *    batch 17 resumes at batch 17 with a new browser, re-walking from the survey start.
  *
  * 3. VERDICTS ARE DERIVED, NOT WRITTEN.
  *    `derive-verdicts` is deterministic and reads only observations + the sealed contract.

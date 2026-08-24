@@ -645,11 +645,19 @@ export function deriveAttempts({ walks, evidence }) {
  * reading — it says "this walk ran out of survey" without claiming WHICH kind of ending it
  * was — and it never invents an ending for a row that did not record one.
  */
-function reachedAnEnding(w) {
+/**
+ * LABEL COHERENCE: this is the .mjs mirror of `execute-batch.ts#walkReachedEnding`.
+ * The two MUST agree — a test in d59-record-honesty.test.mjs pins them to the same
+ * inputs and outputs so a drift between them is a test failure, not a silent divergence.
+ *
+ * Exported so the coherence test can call both functions on the same inputs and assert
+ * they return the same value.
+ */
+export function reachedAnEnding(w) {
   if (w?.loadCrash === true) return false;
   const kind = w?.ending && typeof w.ending === "object" ? w.ending.kind : null;
   if (kind === "completed" || kind === "screened-out") return true;
-  if (kind === "stalled" || kind === "unclassified") return false;
+  if (kind === "stalled" || kind === "unclassified" || kind === "crashed") return false;
   return w?.outcome === "completed" || w?.outcome === "no-advance-control";
 }
 
