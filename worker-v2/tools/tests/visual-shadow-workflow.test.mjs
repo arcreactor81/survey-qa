@@ -674,9 +674,10 @@ test("core finalizes before child launch and never feeds visual output into judg
   assert.match(analyzeRunWorkflow(captured).issues.join("\n"), /ignored expression statement/);
 
   const leaked = runWorkflowSource.replace(
-    "verifyObservations(this.env, runId)",
-    "verifyObservations(this.env, runId, visualShadowLaunchResult)",
+    "verifyObservations(this.env, runId, fence)",
+    "verifyObservations(this.env, runId, fence, visualShadowLaunchResult)",
   );
+  assert.notEqual(leaked, runWorkflowSource, "the visual-leak negative mutation must apply");
   assert.match(analyzeRunWorkflow(leaked).issues.join("\n"), /consumes visual identifier/);
 
   const instrumentedStep = runWorkflowSource.replace("step: rawStep,", "step,");
