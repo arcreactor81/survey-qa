@@ -5671,20 +5671,49 @@ export function classifyEnding(
      * call site produces a false positive.
      */
     crashed?: boolean;
+    /**
+     * MID-WALK TERMINATION ANNOUNCEMENTS DETECTED ON INTERMEDIATE SCREENS.
+     *
+     * When the walker detects a SCREENOUT_MARKERS match on a screen that still has a forward
+     * control (so classifyEnding would not type it from the final screen), the announcement is
+     * recorded per-step. Surfacing it here makes the termination banner visible in the ending
+     * evidence — a consumer reading the ending can see that the survey announced termination
+     * mid-walk without having to re-read every step artifact. On a `crashed` ending the
+     * announcements still surface: they are per-step facts recorded BEFORE the crash, so they
+     * remain trustworthy even when the final screen is not.
+     *
+     * Optional: older callers and walks with no announcements omit it; absence is never "none".
+     */
+    terminationAnnouncements?: Array<{ stepIndex: number; matchedText: string; questionToken: string | null }>;
   },
 ): WalkEnding {
+  // TERMINATION BANNERS DETECTED MID-WALK, rendered once so every ending kind can carry them.
+  // They are per-step facts recorded BEFORE any crash, so they stay trustworthy on a
+  // `crashed` ending even though the final screen does not.
+  const announcementLines = (ctx.terminationAnnouncements ?? []).map(
+    (ann) =>
+      `mid-walk termination announcement on step ${ann.stepIndex}: the screen said ${JSON.stringify(ann.matchedText)}` +
+      (ann.questionToken ? ` (at question ${ann.questionToken})` : ""),
+  );
+
   if (!final) {
     // CRASH WITHOUT A FINAL SCREEN: the walk crashed before capturing anything, or the page
     // was destroyed. When the crash flag is set, this is `crashed`, not `unclassified`.
     if (ctx.crashed) {
       return {
         kind: "crashed",
-        evidence: [`this walk crashed (outcome "${ctx.outcome}") and captured no final screen — the ending is a browser/page failure, not a site decision`],
+        evidence: [
+          `this walk crashed (outcome "${ctx.outcome}") and captured no final screen — the ending is a browser/page failure, not a site decision`,
+          ...announcementLines,
+        ],
       };
     }
     return {
       kind: "unclassified",
-      evidence: [`this walk captured no final screen (outcome "${ctx.outcome}"), so there is nothing to read an ending from`],
+      evidence: [
+        `this walk captured no final screen (outcome "${ctx.outcome}"), so there is nothing to read an ending from`,
+        ...announcementLines,
+      ],
     };
   }
 
@@ -5699,6 +5728,7 @@ export function classifyEnding(
       evidence: [
         `this walk crashed (outcome "${ctx.outcome}") — the final screen's text is not trustworthy evidence for ending classification`,
         `the screen was captured but its content may reflect a browser or page failure, not a survey decision`,
+        ...announcementLines,
       ],
     };
   }
@@ -5724,6 +5754,10 @@ export function classifyEnding(
         named.map((u) => `${u.type}${u.label ? ` "${u.label.slice(0, 40)}"` : ""} (${u.reason})`).join("; "),
     );
   }
+  // TERMINATION BANNERS DETECTED MID-WALK: rendered once at the top of this function so
+  // the crashed/no-final early returns carry them too; here they join every other ending's
+  // provenance.
+  provenance.push(...announcementLines);
   const text = `${final.questionText ?? ""}\n${final.visibleText ?? ""}`;
   const screenout = firstMatch(text, SCREENOUT_MARKERS);
   const completion = firstMatch(text, COMPLETION_MARKERS);
@@ -6028,6 +6062,8 @@ export async function walkPath(
   let navigatorDefaultAnswerCount = 0;
   /** OUTCOME 3 (D1): how many steps crossed a mid-walk termination announcement. */
   let terminationAnnouncementCount = 0;
+  /** Collected termination announcements with step indices, for ending evidence (defect 2). */
+  const terminationAnnouncements: Array<{ stepIndex: number; matchedText: string; questionToken: string | null }> = [];
   const countDefaults = (as: PerformedAction[]): void => {
     for (const a of as) if (a.ok && typeof a.detail === "string" && a.detail.startsWith("navigator-default")) navigatorDefaultAnswerCount += 1;
   };
@@ -6242,7 +6278,14 @@ export async function walkPath(
     // whose text matches a SCREENOUT_MARKERS entry while the walk is still mid-survey is
     // announcing termination. This is LABELING ONLY — does not change navigation.
     const stepAnnouncement = detectTerminationAnnouncement(before, walkQuestionIds);
-    if (stepAnnouncement) terminationAnnouncementCount += 1;
+    if (stepAnnouncement) {
+      terminationAnnouncementCount += 1;
+      terminationAnnouncements.push({
+        stepIndex,
+        matchedText: stepAnnouncement.matchedText,
+        questionToken: stepAnnouncement.questionToken,
+      });
+    }
 
     const stepVariant = stepIndex >= variantFromStep ? fillerVariant : 0;
     const { actions, notOffered, unfillable } = await timed(
@@ -7122,6 +7165,7 @@ export async function walkPath(
     navigatorDefaults: navigatorDefaultAnswerCount,
     unfillable: unfillableControls,
     crashed: crashedOutcome,
+    terminationAnnouncements,
   });
 
   const obs: PathObservation = {

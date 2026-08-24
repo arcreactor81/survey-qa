@@ -631,6 +631,13 @@ const FILES = [
   // prefer_labels, termination announcement detection, documented-accepted numeric values.
   // Evidence they can fail: tools/mutate-survival-hints.mjs (extended).
   "./tests/d1-screener-survival.test.mjs",
+  // D59 — END-PAGE OUTCOME MISLABEL AND TERMINATION BANNERS IN ENDING EVIDENCE. Two
+  // defects from the completed-run audits: (1) the report showed the loop exit reason as
+  // primary instead of the ending kind; (2) mid-walk termination announcements were not
+  // surfaced in the ending evidence. Evidence they can fail: remove the
+  // terminationAnnouncements arg from classifyEnding; revert the render-html.mjs label
+  // ordering.
+  "./tests/d59-ending-outcome-labels.test.mjs",
 ];
 
 export async function runVerification({

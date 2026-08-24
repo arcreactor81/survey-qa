@@ -2298,6 +2298,26 @@ function renderAttempts(view) {
       const evidence = Array.isArray(a.evidenceIds) ? a.evidenceIds : null;
       const screens = typeof a.screensAdvanced === "number" ? a.screensAdvanced : null;
       const endingKind = a.ending && typeof a.ending === "object" ? a.ending.kind : null;
+      const endingEvidence = a.ending && Array.isArray(a.ending.evidence) ? a.ending.evidence : [];
+      // THE ENDING IS THE ANSWER A READER WANTS; THE LOOP OUTCOME IS THE AUDIT TRAIL.
+      //
+      // THE DEFECT THIS CLOSES. `stopReason` was the primary label and `ending` a subordinate
+      // span. But `stopReason` is the step loop's own exit reason — "completed" means the loop
+      // ran out of plan, and a real thank-you page produces "no-advance-control". So the primary
+      // label read as an ending when it was not one, and the actual ending was buried. The ending
+      // kind is now the primary label (what the final screen said), the loop outcome is subordinate
+      // (how the loop exited), and the ending evidence is available as expanded detail.
+      const endingLabel = endingKind
+        ? `<span class="mono">${esc(endingKind)}</span>`
+        : `<span class="sub">ending not recorded</span>`;
+      const loopOutcome = stopOf(a)
+        ? `<span class="sub">loop exit: <span class="mono">${esc(stopOf(a))}</span></span>`
+        : "";
+      const evidenceDetail = endingEvidence.length > 0
+        ? `<details class="inline-details"><summary class="sub">ending evidence (${endingEvidence.length})</summary><ul class="evidence-list">${
+            endingEvidence.map((e) => `<li>${esc(String(e))}</li>`).join("")
+          }</ul></details>`
+        : "";
       return `<tr>
       <th scope="row">${esc(a.attemptId)}</th>
       <td><span class="idref">${esc(a.pathId)}</span><span class="sub">attempt #${esc(a.attemptNumber)}${
@@ -2316,9 +2336,7 @@ function renderAttempts(view) {
               ? `${evidence.length}<span class="sub">evidence items</span>`
               : missing
       }</td>
-      <td>${stopOf(a) ? `<span class="mono">${esc(stopOf(a))}</span>` : missing}${
-        endingKind ? `<span class="sub">ending: ${esc(endingKind)}</span>` : ""
-      }${detailOf(a) ? `<span class="sub">${esc(detailOf(a))}</span>` : ""}</td>
+      <td>${endingLabel}${loopOutcome}${detailOf(a) ? `<span class="sub">${esc(detailOf(a))}</span>` : ""}${evidenceDetail}</td>
       <td>${targetsOf(a)
         .map((id) => `<a class="idref" href="#row-${esc(id)}">${esc(id)}</a>`)
         .join(", ")}</td>
@@ -2344,7 +2362,7 @@ function renderAttempts(view) {
           <caption>${view.attempts.length} attempt(s) recorded.</caption>
           <thead><tr>
             <th scope="col">Attempt</th><th scope="col">Path</th><th scope="col">Window</th>
-            <th scope="col">Screens</th><th scope="col">Recorded steps</th><th scope="col">Stop</th><th scope="col">Requirements aimed at</th>
+            <th scope="col">Screens</th><th scope="col">Recorded steps</th><th scope="col">Ending</th><th scope="col">Requirements aimed at</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
