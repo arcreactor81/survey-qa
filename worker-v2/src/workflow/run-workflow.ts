@@ -21,8 +21,10 @@
  *    Each `execute-batch-N` step: launch a fresh browser → run at most
  *    EXEC_BATCH_MAX_ATTEMPTS attempts or EXEC_BATCH_MAX_MS of wall clock → commit
  *    observations → close the browser → advance the cursor. Each batch gets a fresh
- *    browser because the platform's ~11-minute session wall would terminate a walk
- *    starting on an already-aged session (see execute-batch.ts line ~2472). A crash at
+ *    browser because sessions die at unpredictable ages (platform eviction/rollouts;
+ *    the once-measured "~11-min wall" did not reproduce — see
+ *    spikes/runtime-br/results/FINDINGS-ab-lifetime-20260824.md), so a walk must never
+ *    inherit an already-aged session (see execute-batch.ts line ~2472). A crash at
  *    batch 17 resumes at batch 17 with a new browser, re-walking from the survey start.
  *
  * 3. VERDICTS ARE DERIVED, NOT WRITTEN.

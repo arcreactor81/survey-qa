@@ -1,27 +1,36 @@
 /**
  * BROWSER SESSIONS — ONE FRESH BROWSER PER BATCH.
  *
- * This module encodes the runtime spike result (spikes/runtime-br), which is the finding
- * that removed the container runner from the v2 architecture:
+ * This module encodes the runtime spike results (spikes/runtime-br) that removed the
+ * container runner from the v2 architecture:
  *
  *   `keep_alive` is an IDLE timeout that RESETS ON ACTIVITY. Sessions survived gaps of
- *   30 / 60 / 90 / 150 / 300 seconds with PAGE STATE INTACT across reconnects, and lived
- *   about 11 minutes in total.
+ *   30 / 60 / 90 / 150 / 300 seconds with PAGE STATE INTACT across reconnects (1 Aug).
+ *   The "about 11 minutes total lifetime" also measured that day did NOT reproduce:
+ *   the 24 Aug A/B (results/FINDINGS-ab-lifetime-20260824.md) had 7/10 sessions pass
+ *   45 min at every poke cadence, with 3/10 EVICTED at ~25-27 min (closeReason
+ *   BrowserSessionEvicted). The durable fact is "sessions die at unpredictable ages",
+ *   not a wall.
  *
  * Consequences, and the rules that follow from them:
  *
  *  1. ONE FRESH BROWSER PER BATCH. Each `execute-batch` step launches a new browser and
  *     closes it at the end (see execute-batch.ts line ~2472). Reuse across batches ended
- *     with the long-walk budgets (2026-08-17): a walk may now run ~9 minutes, and the
- *     platform enforces a measured ~11-minute total-session wall, so a walk starting on a
- *     session another batch already aged would hit that wall mid-walk. A fresh launch per
- *     batch costs one session create and buys every batch the full wall.
+ *     with the long-walk budgets (2026-08-17): a walk may now run ~9 minutes, and
+ *     sessions die at unpredictable ages — platform eviction/rollouts; the once-measured
+ *     "~11-minute wall" did NOT reproduce (A/B 24 Aug 2026, 7/10 sessions exceeded
+ *     45 min, 3/10 evicted at ~25-27 min; spikes/runtime-br/results/
+ *     FINDINGS-ab-lifetime-20260824.md) — so a walk must never start on a session
+ *     another batch already aged. A fresh launch per batch costs one session create and
+ *     buys every batch a session at age zero.
  *  2. THE SESSION ID IS DURABLE STATE. It lives in the checkpoint's `ExecutionCursor` for
  *     use WITHIN a batch (e.g. the acquireWithRetry cold-start retry and the
  *     sessionExpired guard), but is cleared to null at every batch boundary so the next
  *     batch always launches fresh.
  *  3. `SESSION_MAX_AGE_MS` (default 8 min) proactively retires a session while it is
- *     still healthy, rather than discovering the ~11-minute wall mid-attempt.
+ *     still healthy, rather than discovering an eviction mid-attempt. (Sized against the
+ *     since-refuted 11-min wall; loosening it is real headroom — its own tuning train,
+ *     with FINDINGS-ab-lifetime-20260824.md as the evidence base.)
  *  4. A LOST SESSION IS NORMAL, NOT AN ERROR. `acquireSession` transparently relaunches
  *     and reports `reconnected: false` so the caller can record that the page state was
  *     lost and re-establish position, instead of silently observing the wrong screen.

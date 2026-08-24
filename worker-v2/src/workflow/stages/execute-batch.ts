@@ -15,10 +15,13 @@
  * WHY THE CHECKPOINT IS WRITTEN AFTER EVERY PATH, NOT AT THE END OF THE BATCH. A crash
  * mid-batch must cost at most one walk. Each batch launches a FRESH browser and closes it
  * at the end (line ~2472) — reuse across batches ended with the long-walk budgets
- * (2026-08-17) because the platform's ~11-minute session wall would terminate a walk
- * starting on an already-aged session. The session id on the cursor is cleared to null at
- * every batch boundary; it exists within a batch only for the cold-start retry
- * (acquireWithRetry) and the sessionExpired guard.
+ * (2026-08-17) because sessions die at unpredictable ages (platform eviction/rollouts;
+ * the once-measured "~11-minute wall" did NOT reproduce — A/B of 24 Aug 2026,
+ * spikes/runtime-br/results/FINDINGS-ab-lifetime-20260824.md: 7/10 sessions exceeded
+ * 45 min, 3/10 evicted at ~25-27 min), so a walk must never inherit an already-aged
+ * session. The session id on the cursor is cleared to null at every batch boundary; it
+ * exists within a batch only for the cold-start retry (acquireWithRetry) and the
+ * sessionExpired guard.
  *
  * THE FIRST COLD REQUEST TO BROWSER RENDERING CAN THROW EDGE ERROR 1042. It is transient
  * and it is retried exactly once. It is not retried in a loop: a retry storm against a
