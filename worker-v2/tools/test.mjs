@@ -638,6 +638,12 @@ const FILES = [
   // terminationAnnouncements arg from classifyEnding; revert the render-html.mjs label
   // ordering.
   "./tests/d59-ending-outcome-labels.test.mjs",
+  // D60 — SCREENER-STEERING DEFECT CHAIN (4A–4D + reporting + outcomeDetail). Four defects
+  // from the 24 Aug run where 73/73 walks screened out. The continue-directive arm (4A),
+  // negation detection (4B), code-uniqueness guard (4C), avoid-label strictness (4D),
+  // the unstampable-directive limitation, and the outcomeDetail honesty fix.
+  // Evidence they can fail: tools/mutate-survival-hints.mjs (extended).
+  "./tests/d60-screener-steering-chain.test.mjs",
 ];
 
 export async function runVerification({

@@ -727,7 +727,7 @@ const emptyModel = () => ({ questions: [], terminals: [] });
 suite("D36 — sealed route destinations feed survival hints without the prose miners", () => {
   test("typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped", async () => {
     const mod = await worker();
-    const routes = mod.plan.sealedRouteDestinations(routeRevision());
+    const { routes } = mod.plan.sealedRouteDestinations(routeRevision());
     // A bound question id types a continue; a facet terminate still types a terminate;
     // an UNBOUND row under a skip-rule requirement (fi_unbound_skiprule) yields NOTHING —
     // "the binder could not read it" is not "the document says go here".
@@ -753,7 +753,7 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
         expectedDestination: { questionId: null, screen: null, terminal: "screenout" },
       },
     });
-    const routes = mod.plan.sealedRouteDestinations(rev);
+    const { routes } = mod.plan.sealedRouteDestinations(rev);
     const fd = routes.find((r) => r.label === "Finance Director");
     assertEq(fd?.kind, "terminate", "a bound terminal under a skip-rule requirement must still avoid");
   });
@@ -787,7 +787,7 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
         },
       },
     );
-    const routes = mod.plan.sealedRouteDestinations(rev);
+    const { routes } = mod.plan.sealedRouteDestinations(rev);
     const fm = routes.find((r) => r.label === "Finance Manager");
     assertEq(fm?.question, "S10", "the sealed option facts name the owning question");
     assertEq(fm?.kind, "terminate", "and the row's own bound terminal still types it");
@@ -811,7 +811,7 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
         expectedDestination: { questionId: null, screen: null, terminal: "screenout" },
       },
     });
-    const routes = mod.plan.sealedRouteDestinations(rev);
+    const { routes } = mod.plan.sealedRouteDestinations(rev);
     const pd = routes.find((r) => r.label === "Procurement Director");
     assertEq(pd?.question, "S10", "the section title's leading id, validated against bound instances, owns the row");
     assertEq(pd?.kind, "terminate");
@@ -838,7 +838,7 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
         case: { kind: "route", routeAnswer: { code: "2", label: "Prose Row" }, expectedDestination: { questionId: null, screen: null, terminal: "screenout" } },
       },
     );
-    const routes = mod.plan.sealedRouteDestinations(rev);
+    const { routes } = mod.plan.sealedRouteDestinations(rev);
     assertEq(routes.some((r) => r.label === "Ghost Row" || r.label === "Prose Row"), false,
       "an unvalidated section token must never mint an owner");
   });
@@ -870,7 +870,7 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
         },
       },
     );
-    const routes = mod.plan.sealedRouteDestinations(rev);
+    const { routes } = mod.plan.sealedRouteDestinations(rev);
     assertEq(routes.some((r) => r.label === "Yes"), false,
       "an ambiguous owner must refuse to steer rather than gamble on a question");
   });
@@ -880,7 +880,7 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
     const p = survivalPath({
       decisions: [{ question: "S10", select: [], source: "default:navigator-discretion" }],
     });
-    const result = mod.plan.stampSurvivalHints([p], emptyModel(), mod.plan.sealedRouteDestinations(routeRevision()));
+    const result = mod.plan.stampSurvivalHints([p], emptyModel(), mod.plan.sealedRouteDestinations(routeRevision()).routes);
 
     assertEq(JSON.stringify(p.decisions[0].avoid_labels), JSON.stringify(["Physician"]));
     assertEq(JSON.stringify(p.decisions[0].prefer_labels), JSON.stringify(["Director of Population Health"]));
@@ -916,7 +916,7 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
       targetQuestionId: "S10",
       case: { kind: "route", routeAnswer: { code: "19", label: "Director of Population Health" } },
     });
-    const { avoid, prefer } = mod.plan.survivalAvoidIndex(emptyModel(), mod.plan.sealedRouteDestinations(conflicted));
+    const { avoid, prefer } = mod.plan.survivalAvoidIndex(emptyModel(), mod.plan.sealedRouteDestinations(conflicted).routes);
     assert(avoid.get("S10").includes("Director of Population Health"), "the terminate reading must win");
     assertEq(prefer.get("S10"), undefined, "a conflicted label must not be preferred");
   });
@@ -925,7 +925,7 @@ suite("D36 — sealed route destinations feed survival hints without the prose m
     const mod = await worker();
     const { avoid, prefer } = mod.plan.survivalAvoidIndex(
       survivalModel(),
-      mod.plan.sealedRouteDestinations(routeRevision()),
+      mod.plan.sealedRouteDestinations(routeRevision()).routes,
     );
     assertEq(JSON.stringify(avoid.get("S3")), JSON.stringify(["Market research"]));
     assertEq(JSON.stringify(avoid.get("S10")), JSON.stringify(["Physician"]));

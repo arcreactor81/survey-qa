@@ -87,9 +87,9 @@ await runMutantSuite({
         "PREFER the exact labels the document says end the interview — the walker would be " +
         "steered INTO every documented screen-out instead of around them",
       file: PLAN,
-      // re-anchored: facet arm refactored from single-line `if (facet ===` to else-if block with facetByLineage.get()
-      find: '    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {\n      out.push({ question, label, code, kind: "terminate" });\n    }',
-      replace: '    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {\n      out.push({ question, label, code, kind: "continue" });\n    }',
+      // re-anchored: facet arm now has negation detection (4B); the non-negated else branch is the target
+      find: '      } else {\n        out.push({ question, label, code, kind: "terminate" });\n      }\n    }',
+      replace: '      } else {\n        out.push({ question, label, code, kind: "continue" });\n      }\n    }',
       kills: [
         "typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped",
         "THE MEASURED STARVATION: empty model + sealed routes still stamps avoid AND prefer",
@@ -125,8 +125,8 @@ await runMutantSuite({
         "driver must not TRUST the stamp: an adversarial or stale plan artifact could carry a " +
         "label in both lists, and honouring prefer over avoid clicks a documented terminator",
       file: DR,
-      find: "          ? g.options.find((o) => answerable(o) && !flagged(o) &&\n              (prefer.some((p) => labelMatches(o.label, p)) ||\n               preferCodeEntries.some((e) => codeMatches(o.code, e.code))))",
-      replace: "          ? g.options.find((o) => answerable(o) &&\n              (prefer.some((p) => labelMatches(o.label, p)) ||\n               preferCodeEntries.some((e) => codeMatches(o.code, e.code))))",
+      find: "          ? g.options.find((o) => answerable(o) && !flagged(o) &&\n              (prefer.some((p) => labelMatches(o.label, p)) ||\n               (screenCodesDistinct && preferCodeEntries.some((e) => codeMatches(o.code, e.code)))))",
+      replace: "          ? g.options.find((o) => answerable(o) &&\n              (prefer.some((p) => labelMatches(o.label, p)) ||\n               (screenCodesDistinct && preferCodeEntries.some((e) => codeMatches(o.code, e.code)))))",
       kills: ["prefer NEVER overrules avoid: a label stamped both ways is not clicked"],
     },
     {
@@ -196,6 +196,50 @@ await runMutantSuite({
       find: "  const numericPreferValue = survivalPreferValue(decision, pathHints);",
       replace: "  const numericPreferValue = null;",
       kills: ["a number control uses the documented-accepted value instead of blind midpoint"],
+    },
+
+    // ---- 4A: continue-directive arm dropped ----
+    {
+      name: "the continue-directive arm (4A) is dropped — unbound skip-rule routes emit nothing",
+      breaks:
+        "the prefer channel for continue-directive routes. Without 4A, a route case with a " +
+        "null destination and a [CONTINUE] directive emits no hint at all, leaving the prefer " +
+        "channel empty for every question whose continue is phrased as a bracketed directive",
+      file: PLAN,
+      find: "        if (phrase) {\n          if (isContinueDirective(phrase)) {\n            out.push({ question, label, code, kind: \"continue\" });",
+      replace: "        if (phrase) {\n          if (false && isContinueDirective(phrase)) {\n            out.push({ question, label, code, kind: \"continue\" });",
+      kills: [
+        "a skip-rule route with [CONTINUE] directive and null destination becomes a prefer hint",
+      ],
+    },
+
+    // ---- 4B: negation guard dropped ----
+    {
+      name: "the negation guard (4B) is dropped — negated terminate rules stamped as avoid",
+      breaks:
+        "the negation detection. Without 4B, a negated terminate rule ('does NOT select X') " +
+        "stamps X as an avoid (terminate), inverting its meaning: the ONLY surviving answer " +
+        "is flagged as a screen-out trigger",
+      file: PLAN,
+      find: "      const negated = detectNegation(statement);\n      if (negated === true) {\n        out.push({ question, label, code, kind: \"continue\" });",
+      replace: "      const negated = detectNegation(statement);\n      if (false && negated === true) {\n        out.push({ question, label, code, kind: \"continue\" });",
+      kills: [
+        "a negated terminate statement stamps the answer as prefer (continue), not avoid (terminate)",
+      ],
+    },
+
+    // ---- 4C: code-uniqueness guard dropped ----
+    {
+      name: "the code-uniqueness guard (4C) is dropped — duplicate codes flag everything",
+      breaks:
+        "the code arm's precision. Without 4C, code '1' matching every option flags " +
+        "everything, disabling the None-of-the-above rescue and degrading to first-option",
+      file: DR,
+      find: "    const screenCodesDistinct = allScreenCodes.length === 0 || new Set(allScreenCodes).size === allScreenCodes.length;",
+      replace: "    const screenCodesDistinct = true;",
+      kills: [
+        "duplicate codes: code arm is inert, label arm still works for avoid",
+      ],
     },
   ],
 });

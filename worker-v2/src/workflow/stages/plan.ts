@@ -145,6 +145,13 @@ export const PLAN_LIMITATION_CODES = {
   seedAuthorityWithheld: "sealed-positive-seed-authority-withheld",
   seedCardinalityWithheld: "seed-combinations-without-sealed-cardinality",
   seedBudgetExhausted: "seed-budget-exhausted",
+  /**
+   * Route rows whose destination directive could not be turned into a prefer hint (4A).
+   * The directive text was present but not recognized as a standard continuation form,
+   * or negation detection was ambiguous (4B). Emitted at zero so "all directives resolved"
+   * stays distinguishable from "no directives were seen".
+   */
+  documentedContinueRoutesUnstampable: "documented-continue-routes-unstampable",
 } as const;
 
 type ProbeCarrier = Partial<PlannedPath> & {
@@ -756,6 +763,84 @@ export interface SurvivalHintStamp {
 const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 ? v : null);
 
 /**
+ * BRACKETED-DIRECTIVE CONVENTION (ASSUMPTION STATED, 4A).
+ *
+ * Many questionnaires use bracketed directives to express routing continuations:
+ * "[CONTINUE]", "[NEXT]", "[SKIP TO Q5]", "[PROCEED]", "[GO TO NEXT SECTION]".
+ * This recognizer handles the STRUCTURE of these directives — a bracketed phrase whose
+ * content is a continuation verb, optionally followed by a destination — without
+ * anchoring on any specific survey's vocabulary.
+ *
+ * Recognized forms (case-insensitive, brackets optional):
+ *   continue, next, proceed, go on, move on, advance,
+ *   skip (to X), go to (X), move to (X), continue to (X)
+ *
+ * Returns true only when the directive is recognizably a continuation.
+ * Returns false (not a crash, not a guess) when the directive is unrecognizable.
+ */
+export function isContinueDirective(text: string): boolean {
+  const s = text.replace(/^\s*\[?\s*|\s*\]?\s*$/g, "").trim().toLowerCase();
+  if (!s) return false;
+  // Simple continuation verbs.
+  if (/^(continue|next|proceed|go\s+on|move\s+on|advance)$/i.test(s)) return true;
+  // "continue to X", "skip to X", "go to X", "move to X", "proceed to X"
+  if (/^(continue|skip|go|move|proceed)\s+(to|on\s+to)\b/i.test(s)) return true;
+  // "next question", "next section", "next screen", "next page"
+  if (/^next\s+(question|section|screen|page)\b/i.test(s)) return true;
+  return false;
+}
+
+/**
+ * NEGATION DETECTION IN NORMATIVE STATEMENTS (ASSUMPTION STATED, 4B).
+ *
+ * A normative statement like "if the respondent does NOT select X, terminates" means X
+ * is the ONLY surviving answer. The common structural negation forms recognized here are:
+ *
+ *   - "does not select" / "do not select" / "did not select"
+ *   - "not selecting" / "not selected"
+ *   - "unless (they) select" / "unless (the respondent) select(s)"
+ *   - "other than" (before the answer reference)
+ *   - "anything but" / "anyone but" / "any ... but"
+ *   - "except" / "excluding"
+ *   - "fails to select" / "fail to select"
+ *
+ * Returns true when negation is structurally detected, false when not detected,
+ * null when the structure is ambiguous and the stamp should be refused.
+ */
+export function detectNegation(normativeStatement: string): boolean | null {
+  const s = normativeStatement.toLowerCase();
+  // Double negation ("does not NOT select") is ambiguous — check first.
+  const notCount = (s.match(/\bnot\b/g) || []).length;
+  if (notCount >= 2) return null;
+  // Clear structural negation patterns.
+  if (/\b(does|do|did)\s+not\s+(select|choose|pick|answer|indicate|check|mark)\b/.test(s)) return true;
+  if (/\bnot\s+(selecting|chosen|selected|checked|marked|picking|answering)\b/.test(s)) return true;
+  if (/\bunless\b.*\b(select|choose|pick|answer|indicate|check|mark)(s|ed|ing)?\b/.test(s)) return true;
+  if (/\bother\s+than\b/.test(s)) return true;
+  if (/\b(anything|anyone|any\b[^.]*)\s+but\b/.test(s)) return true;
+  if (/\bexcept\b/.test(s)) return true;
+  if (/\bexcluding\b/.test(s)) return true;
+  if (/\bfail(s)?\s+to\s+(select|choose|pick|answer)\b/.test(s)) return true;
+  return false;
+}
+
+/**
+ * Extract the raw destination phrase from an expectationGap detail string.
+ *
+ * The expander embeds the destination in a quoted string:
+ *   `the destination "[CONTINUE]" matches no question...`
+ * This extracts that embedded phrase so the plan can parse the directive.
+ */
+function extractDestinationPhrase(detail: string | null | undefined): string | null {
+  if (!detail) return null;
+  const m = /the destination\s+"((?:[^"\\]|\\.)*)"/. exec(detail);
+  if (m) {
+    try { return JSON.parse(`"${m[1]}"`); } catch { return m[1]!; }
+  }
+  return null;
+}
+
+/**
  * A sealed route case's destination, read from TYPED fields only. This exists because the
  * prose miners above it starve together: `buildTerminals` resolves a trigger only against a
  * question's MINED option list, so a question whose options never mined (measured on the
@@ -778,9 +863,20 @@ export interface SealedRouteDestination {
 export function sealedRouteDestinations(revision: {
   requirements: ScopedRequirement[];
   facetInstances: FacetInstance[];
-}): SealedRouteDestination[] {
+}): {
+  routes: SealedRouteDestination[];
+  /** Route rows whose continue-directive could not be parsed into a prefer hint (4A/4B). */
+  continueDirectiveUnstampable: Array<{ label: string; question: string; directive: string; why: string }>;
+} {
   const facetByLineage = new Map<string, string>();
   for (const r of revision.requirements) facetByLineage.set(r.requirementLineageId, r.facet);
+  // 4B: normativeStatement by lineage, so negation detection can read the requirement's statement.
+  const normativeByLineage = new Map<string, string>();
+  for (const r of revision.requirements) {
+    if ((r as { normativeStatement?: string }).normativeStatement) {
+      normativeByLineage.set(r.requirementLineageId, (r as { normativeStatement?: string }).normativeStatement!);
+    }
+  }
   // LABEL -> OWNING QUESTION, joined from the SEALED OPTION FACTS. A routing table's
   // requirement is often scoped to a SECTION, not `question:X`, so its route rows carry
   // no `targetQuestionId` — measured live 19 Aug 2026 (run v2r_01m0cy89mz80nf4g3z32j7f8sx):
@@ -833,6 +929,7 @@ export function sealedRouteDestinations(revision: {
     return token && boundQuestions.has(token) ? token : null;
   };
   const out: SealedRouteDestination[] = [];
+  const continueDirectiveUnstampable: Array<{ label: string; question: string; directive: string; why: string }> = [];
   for (const fi of revision.facetInstances) {
     if (fi.case?.kind !== "route") continue;
     const label = nonEmpty(fi.case.routeAnswer?.label ?? null);
@@ -861,10 +958,58 @@ export function sealedRouteDestinations(revision: {
     if (dest?.terminal) out.push({ question, label, code, kind: "terminate" });
     else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, code, kind: "continue" });
     else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {
-      out.push({ question, label, code, kind: "terminate" });
+      // 4B: NEGATION DETECTION. A terminate-facet requirement with a NEGATED selection
+      // condition ("if the respondent does NOT select X, terminates") inverts the meaning:
+      // X is the SURVIVING answer, so it becomes a PREFER hint, not an avoid.
+      // When negation detection is uncertain (returns null), the stamp is REFUSED into the
+      // limitation count — never stamp the wrong direction.
+      const statement = normativeByLineage.get(fi.requirementLineageId) ?? "";
+      const negated = detectNegation(statement);
+      if (negated === true) {
+        out.push({ question, label, code, kind: "continue" });
+      } else if (negated === null) {
+        // Ambiguous negation — refuse the stamp, count it.
+        continueDirectiveUnstampable.push({
+          label,
+          question,
+          directive: statement.slice(0, 200),
+          why: "ambiguous negation in the requirement's normative statement — refusing to stamp in either direction",
+        });
+      } else {
+        out.push({ question, label, code, kind: "terminate" });
+      }
+    }
+    // 4A: CONTINUE-DIRECTIVE ARM. A route case with NO bound destination (questionId null,
+    // terminal null) AND a facet that is skip-rule (or any non-terminate routing facet)
+    // may still carry a continue directive like "[CONTINUE]" or "[NEXT]". The directive
+    // is read from the expectation gap's detail (where the expander embedded the raw
+    // destination phrase) and parsed structurally. When the directive is recognizable as
+    // a continuation, the answer becomes a PREFER hint. When unrecognizable, NOTHING is
+    // emitted for that row and the limitation is counted.
+    else {
+      const facet = facetByLineage.get(fi.requirementLineageId);
+      // Only process route cases with routing-relevant facets and no bound destination.
+      if (facet && facet !== "terminate") {
+        const gapDetail = fi.expectationGap?.detail ?? null;
+        const phrase = extractDestinationPhrase(gapDetail);
+        if (phrase) {
+          if (isContinueDirective(phrase)) {
+            out.push({ question, label, code, kind: "continue" });
+          } else {
+            // Unrecognizable directive — emit nothing, count the limitation.
+            continueDirectiveUnstampable.push({
+              label,
+              question,
+              directive: phrase,
+              why: `the destination directive ${JSON.stringify(phrase)} is not recognized as a standard continuation form`,
+            });
+          }
+        }
+        // No phrase extractable from the gap detail: nothing to act on.
+      }
     }
   }
-  return out;
+  return { routes: out, continueDirectiveUnstampable };
 }
 
 /**
@@ -1241,10 +1386,11 @@ export async function planStage(
   // (so per-case clones inherit). Hints are INPUT, never EVIDENCE: `avoid_labels` /
   // `survival_hints` are unhashed, gate-invisible fields the driver reads only to pick
   // among its own navigator-default fillers. See `stampSurvivalHints`.
+  const sealedRoutes = sealedRouteDestinations(revision);
   const survival = stampSurvivalHints(
     [...plan.floor.paths, ...plan.exploration.queue],
     plan.model,
-    sealedRouteDestinations(revision),
+    sealedRoutes.routes,
     revision.facetInstances,
   );
 
@@ -1361,6 +1507,20 @@ export async function planStage(
         `zero here means every documented screen-out was stamped, not that nobody looked.`,
       count: survival.unstampable.length,
       questionIds: survival.unstampable.map((u) => `${u.terminal}${u.question ? ` (${u.question})` : ""} — ${u.why}`),
+    },
+    {
+      code: PLAN_LIMITATION_CODES.documentedContinueRoutesUnstampable,
+      what:
+        `${sealedRoutes.continueDirectiveUnstampable.length} route row(s) carry a destination directive that could ` +
+        `not be turned into a prefer hint: the directive text was not recognized as a standard continuation form, ` +
+        `or negation detection was ambiguous. A plan can never again report hint coverage as success while carrying ` +
+        `zero positive steering — this count makes the gap visible. ` +
+        `${survival.questions.filter((q) => (q.prefer_labels ?? []).length > 0).length} question(s) DO carry ` +
+        `prefer hints; zero there means the prefer channel is empty and only avoid-direction steering is active.`,
+      count: sealedRoutes.continueDirectiveUnstampable.length,
+      questionIds: sealedRoutes.continueDirectiveUnstampable.map(
+        (u) => `${u.question}: "${u.label}" — directive ${JSON.stringify(u.directive)} — ${u.why}`,
+      ),
     },
     {
       code: PLAN_LIMITATION_CODES.seedAuthorityWithheld,

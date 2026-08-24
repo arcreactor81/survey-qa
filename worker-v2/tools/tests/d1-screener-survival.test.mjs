@@ -478,7 +478,7 @@ suite("D1-OUTCOME4 — documented-accepted value steers the numeric filler", () 
 suite("D1 — plan-side mining carries codes and boundary values", () => {
   test("sealedRouteDestinations carries route answer codes", async () => {
     const mod = await worker();
-    const routes = mod.plan.sealedRouteDestinations({
+    const { routes } = mod.plan.sealedRouteDestinations({
       requirements: [
         { requirementLineageId: "r1", facet: "terminate" },
       ],
