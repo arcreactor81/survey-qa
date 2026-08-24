@@ -336,7 +336,10 @@ const W4_MUTANTS = [
       file: DR,
       find: "    lastAdvancedEpochSkipped = Boolean(afterWasRead && after && advanced && walkWillContinue);",
       replace: "    lastAdvancedEpochSkipped = false;",
-      kills: ["an advanced step mid-walk records before+after-action only, and the walk's last screen arrives as a final-slot epoch"],
+      // Kill re-aimed: the capture diet removed the mid-walk after-action epoch and renamed
+      // the pinning test accordingly (d56). The dedup property this mutant sabotages is
+      // unchanged; only the test's name moved.
+      kills: ["an advanced step mid-walk records before only (capture diet skips after-action), and the diet policy is recorded"],
     },
     // NOT A MUTANT, STATED: the per-step reset of lastAdvancedEpochSkipped is defence in
     // depth, not load-bearing — the post-loop backfill ALSO requires the last step's

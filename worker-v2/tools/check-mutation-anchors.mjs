@@ -142,10 +142,43 @@ for (const campaign of campaigns) {
   }
 }
 
-console.log(`campaigns: ${campaigns.length}; anchors checked: ${mutantsChecked}; unparseable: ${unparseable}`);
+// ---------------------------------------------------------------------------
+// KILL-NAME CHECK — the second drift dimension. A campaign names its kill tests
+// by EXACT registered test name; a renamed test orphans the kill and the campaign
+// dies with EXACT_TEST_NAME_MISSING (measured: phaseD.2, mutate-w4-select, after
+// the capture diet renamed a d56 test — the anchor still resolved, the NAME did
+// not, and it cost a 2.5-hour inspection restart).
+// ---------------------------------------------------------------------------
+const registeredNames = new Set();
+const testFileDirs = [join(V2, "tools", "tests"), join(V2, "ui")];
+for (const dir of testFileDirs) {
+  let files = [];
+  try { files = readdirSync(dir).filter((f) => f.endsWith(".mjs")); } catch { continue; }
+  for (const f of files) {
+    const src = readFileSync(join(dir, f), "utf8");
+    for (const m of src.matchAll(/(?:^|\W)test\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g)) {
+      registeredNames.add(m[1] !== undefined ? decodeLiteral(m[1], '"') : decodeLiteral(m[2], "'"));
+    }
+  }
+}
+let killsChecked = 0;
+for (const campaign of campaigns) {
+  const source = readFileSync(join(V2, "tools", campaign), "utf8");
+  for (const block of source.matchAll(/kills\s*:\s*\[([\s\S]*?)\]/g)) {
+    for (const lit of block[1].matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g)) {
+      killsChecked++;
+      const name = lit[1] !== undefined ? decodeLiteral(lit[1], '"') : decodeLiteral(lit[2], "'");
+      if (!registeredNames.has(name)) {
+        offenders.push(`${campaign}: kill names an unregistered test: "${name.slice(0, 90)}"`);
+      }
+    }
+  }
+}
+
+console.log(`campaigns: ${campaigns.length}; anchors checked: ${mutantsChecked}; kill-names checked: ${killsChecked}; registered tests: ${registeredNames.size}; unparseable: ${unparseable}`);
 if (offenders.length) {
   console.log(`\nOFFENDERS (${offenders.length}):`);
   for (const o of offenders) console.log("  " + o);
   process.exit(1);
 }
-console.log("ALL ANCHORS RESOLVE EXACTLY ONCE.");
+console.log("ALL ANCHORS RESOLVE EXACTLY ONCE AND ALL KILL NAMES ARE REGISTERED.");
