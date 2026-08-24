@@ -59,7 +59,7 @@ Proposed order (owner may reorder). Each lands separately, bench-gated, one live
 | # | Item | Task | Size |
 |---|---|---|---|
 | D1 | **Screener answers** mined from the questionnaire for every screening question, so walks stop being turned away at the door. Unlocks everything behind the screener (67 directly-gated checks + all deep coverage). | #28 | a day+ |
-| D2 | **Cross-run accumulation**: verified results inherit across runs on the same sealed questionnaire; coverage compounds instead of resetting. Pairs with the site-atlas direction (prior recordings feeding the plan). | new, #31 | structural |
+| D2 | **Cross-run accumulation**: verified results inherit across runs on the same sealed questionnaire; coverage compounds instead of resetting. Pairs with the site-atlas direction (prior recordings feeding the plan). Includes the **depth-first opening run** (owner, 24 Aug): on a new survey+link, run 1's sole objective is reaching the final page — true length, ending location, late-section widgets — then runs 2+ go wide along unmapped branches. One depth run maps one route: it seeds the atlas, never replaces breadth. Planner policy; the map steers walks and budgets, never the contract or the pass/fail bar. | new, #31 | structural |
 | D3 | **The second checking lane** (model verifier) for the 367 checks that have no typed rule today — the hard cap on what can ever settle. Absorbs the prompt-refinement debt. | new, #12 | structural, biggest |
 
 ## PHASE E — throughput and model economics (stage 2)
