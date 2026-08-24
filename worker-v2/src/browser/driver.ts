@@ -3477,9 +3477,14 @@ export function verifyChoiceGroupsAfterInteraction(
 ): PerformedAction[] {
   const observations: PerformedAction[] = [];
 
-  // Find click-option actions that recorded exact-choice-readback with a specific checked idx
+  // Find click-option AND select-grid-cell actions that recorded exact-choice-readback.
+  // SELECT-GRID-CELL READBACK RECEIPT: grid cells are verified through the same post-
+  // interaction check as click-option actions. A grid cell whose choice readback was exact
+  // at click time but overwritten by a later interaction (a linked text input auto-selecting
+  // its parent option, or a distinct-column repick) is the same defect class as a regular
+  // option group, and the receipt must say so.
   const clickActions = actions.filter(
-    (a) => a.ok && a.kind === "click-option" && a.choiceReadback,
+    (a) => a.ok && (a.kind === "click-option" || a.kind === "select-grid-cell") && a.choiceReadback,
   );
   if (clickActions.length === 0) return observations;
 
@@ -3502,7 +3507,7 @@ export function verifyChoiceGroupsAfterInteraction(
         .join(", ");
       const intendedLabel = groupClick.targetLabel ?? `#${intendedIdx}`;
       observations.push({
-        kind: "click-option",
+        kind: groupClick.kind,
         targetIdx: intendedIdx,
         targetLabel: intendedLabel,
         targetCode: groupClick.targetCode,
@@ -5653,12 +5658,48 @@ export function classifyEnding(
      */
     navigatorDefaults?: number;
     unfillable?: UnfillableControl[];
+    /**
+     * CRASH-AS-SCREENOUT GUARD. When true, the walk ended because of a browser or page crash —
+     * an infrastructure event, not a site decision — so the final screen is not trustworthy
+     * evidence. A blank or error page after a crash can match screenout markers or the
+     * structural-rejection arm (arm 2b: only back buttons, no answerable controls), and
+     * classifying that as `screened-out` would publish an accusation against the survey on
+     * the basis of a crashed page. The ending is `crashed` and its evidence names the crash,
+     * never the screen text.
+     *
+     * Optional so older callers are unaffected — absent means "not crashed", and no existing
+     * call site produces a false positive.
+     */
+    crashed?: boolean;
   },
 ): WalkEnding {
   if (!final) {
+    // CRASH WITHOUT A FINAL SCREEN: the walk crashed before capturing anything, or the page
+    // was destroyed. When the crash flag is set, this is `crashed`, not `unclassified`.
+    if (ctx.crashed) {
+      return {
+        kind: "crashed",
+        evidence: [`this walk crashed (outcome "${ctx.outcome}") and captured no final screen — the ending is a browser/page failure, not a site decision`],
+      };
+    }
     return {
       kind: "unclassified",
       evidence: [`this walk captured no final screen (outcome "${ctx.outcome}"), so there is nothing to read an ending from`],
+    };
+  }
+
+  // CRASH GUARD: when the walk crashed, the final screen is unreliable evidence. A crashed
+  // page may show error text that matches screenout markers, or it may show a blank page
+  // whose structural signals (only back buttons, no controls) match the rejection arm.
+  // Neither is evidence about the survey. The ending is `crashed` and the reader can see
+  // the final screen in the artifact if they want to inspect what the crash produced.
+  if (ctx.crashed) {
+    return {
+      kind: "crashed",
+      evidence: [
+        `this walk crashed (outcome "${ctx.outcome}") — the final screen's text is not trustworthy evidence for ending classification`,
+        `the screen was captured but its content may reflect a browser or page failure, not a survey decision`,
+      ],
     };
   }
 
@@ -7066,11 +7107,21 @@ export async function walkPath(
   // the field off those artifacts would make "we did not classify it" and "it did not end"
   // indistinguishable again, one level up from the defect this closes.
   const unbound = remaining.length;
+  // CRASH-AS-SCREENOUT GUARD: outcomes whose final screen is not trustworthy evidence.
+  // `error`: a driver-level error (screen read failed, page operation threw).
+  // `load-crash`: the site's JS threw during load and rendered no interactive control.
+  // `walk-stalled`: the stall watchdog closed the page externally.
+  // In all three cases the final screen may show a blank page, an error page, or the last
+  // screen before the crash — none of which is evidence about the survey's screening logic.
+  // classifyEnding receives `crashed: true` so it returns `crashed` instead of reading the
+  // screen text as a survey decision.
+  const crashedOutcome = outcome === "error" || outcome === "load-crash" || outcome === "walk-stalled";
   const ending = classifyEnding(finalScreenOf(steps), {
     outcome,
     unboundDecisions: unbound,
     navigatorDefaults: navigatorDefaultAnswerCount,
     unfillable: unfillableControls,
+    crashed: crashedOutcome,
   });
 
   const obs: PathObservation = {

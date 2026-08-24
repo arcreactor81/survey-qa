@@ -593,7 +593,7 @@ export type AdvanceSignal =
  * us out". `evidence` carries the quoted markers that decided it, so a reader can disagree with
  * the classification without having to re-open the screen capture.
  */
-export type WalkEndingKind = "completed" | "screened-out" | "stalled" | "unclassified";
+export type WalkEndingKind = "completed" | "screened-out" | "stalled" | "unclassified" | "crashed";
 
 export interface WalkEnding {
   kind: WalkEndingKind;

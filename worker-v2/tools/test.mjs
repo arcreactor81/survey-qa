@@ -587,6 +587,12 @@ const FILES = [
   // The fix strips navigation widget option labels from the text before scanning. Evidence
   // they can fail: tools/mutate-verifier-identity.mjs (nav-widget strip mutant).
   "./tests/d58-nav-widget-text-stripping.test.mjs",
+  // D59 — RECORD HONESTY. Four defects from the harvest-run audit (24 Aug): false zeros
+  // on pivot timeouts, crash-as-screenout, label coherence across three layers, and
+  // select-grid-cell readback receipts. Evidence each can fail: reverting the fix makes
+  // the specific assertion fail (wallMs was 0, ending was screened-out for crashes, grid
+  // mismatches were undetected).
+  "./tests/d59-record-honesty.test.mjs",
   // D101 — SUPERSEDED RECORDINGS OF RETRIED STEPS. The last blocker before the first
   // attested, publishable result: a retried Workflow step re-captures the same screens with
   // different bytes, the collision check fires on what is actually a retried recording, and

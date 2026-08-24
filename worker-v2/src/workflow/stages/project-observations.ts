@@ -210,6 +210,13 @@ const evidenceForAttempt = (catalog: EvidenceCatalogEntry[], attemptId: string):
  * nothing about which kind of ending it was" — stays `partial`: a confident answer to an
  * undecidable question is a fabrication.
  */
+/**
+ * LABEL COHERENCE: uses `walkReachedEnding` from execute-batch.ts so the ending
+ * interpretation is ONE derivation shared by all three layers (walkRecord, this
+ * projection, and assemble-record.mjs). A walk that reached a COMPLETED ending
+ * (not screened-out — a screen-out is an ending reached but not a full traversal)
+ * gets `complete-scoped-inventory`; everything else is `partial`.
+ */
 const completenessFor = (walk: WalkRecord): Observation["completeness"] =>
   walk.ending?.kind === "completed" ? "complete-scoped-inventory" : "partial";
 

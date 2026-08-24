@@ -13,10 +13,12 @@
  *     the seven coverage buckets cannot move when exploration runs.
  *
  * WHY THE CHECKPOINT IS WRITTEN AFTER EVERY PATH, NOT AT THE END OF THE BATCH. A crash
- * mid-batch must cost at most one walk. The session id is durable too, so the replacement
- * instance reconnects to the SAME browser instead of restarting the survey — the spike
- * proved keep_alive is an idle timeout that resets on activity, which is what makes
- * reconnect-per-step across Workflow step boundaries viable without a container runner.
+ * mid-batch must cost at most one walk. Each batch launches a FRESH browser and closes it
+ * at the end (line ~2472) — reuse across batches ended with the long-walk budgets
+ * (2026-08-17) because the platform's ~11-minute session wall would terminate a walk
+ * starting on an already-aged session. The session id on the cursor is cleared to null at
+ * every batch boundary; it exists within a batch only for the cold-start retry
+ * (acquireWithRetry) and the sessionExpired guard.
  *
  * THE FIRST COLD REQUEST TO BROWSER RENDERING CAN THROW EDGE ERROR 1042. It is transient
  * and it is retried exactly once. It is not retried in a loop: a retry storm against a
@@ -223,8 +225,9 @@ export function walkNeverStarted(
  * How many CONSECUTIVE hard batch aborts stop the run. A single abort is recoverable (the
  * next batch gets a fresh browser); three in a row indicates a persistently broken browser
  * environment for this survey URL. The number is small on purpose: each abort burns a full
- * batch step (22 min worst-case with retries), and 3 × 22 = 66 min of wasted platform time
- * is enough to be certain the problem is structural.
+ * batch step (22 min step timeout × 4 attempts = 88 min worst-case per batch, per
+ * run-workflow.ts BATCH_POLICY and wrangler.jsonc EXEC_BATCH_MAX_MS), and 3 × 88 = 264 min
+ * of wasted platform time is enough to be certain the problem is structural.
  */
 export const HARD_ABORT_CONSECUTIVE_CAP = 3;
 
@@ -1664,9 +1667,9 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
   // HARD BATCH ABORT — defense against platform step-timeout failures.
   //
   // Two consecutive runs (v93b batch 1, v94 batch 0) hung for 5+ hours on a single batch
-  // because the CF Workflow step timeout (BATCH_POLICY.timeout = "80 minutes") did not fire
+  // because the CF Workflow step timeout (BATCH_POLICY.timeout = "22 minutes") did not fire
   // while the step held a live WebSocket to Browser Rendering. The per-case withTimeout
-  // (30 min) also failed to fire — the likely cause is that a dead Puppeteer WebSocket
+  // (15 min) also failed to fire — the likely cause is that a dead Puppeteer WebSocket
   // keeps the connection object alive without completing or erroring, starving the event
   // loop and preventing setTimeout callbacks from dispatching.
   //
@@ -2309,6 +2312,12 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
         const pivotFromStep = Math.max(0, lastStepIndex - 1);
         let retryHung = false;
         let retryPerCaseTimedOut = false;
+        // FALSE-ZERO FIX: track the pivot's start time so the synthetic observation carries the
+        // REAL elapsed time, never wallMs=0. The old code used `new Date()` for both startedAt
+        // and endedAt and hardcoded wallMs=0, making a 15-minute hang indistinguishable from a
+        // walk that was never attempted. The timing values on a record are claims; a zero that
+        // means "we do not know" is a false claim when we DO know.
+        const pivotStartMs = Date.now();
         try {
           obs = await withTimeout(
             walkOnce(progress.shimRequired && allowShim, retryAttemptId, retryCap, ordinal, pivotFromStep),
@@ -2316,6 +2325,7 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
             `walk ${item.path.id} pivot ${ordinal}`,
           );
         } catch (err) {
+          const pivotElapsedMs = Date.now() - pivotStartMs;
           retryPerCaseTimedOut = err instanceof BrowserTimeout;
           retryHung = retryPerCaseTimedOut;
           obs = {
@@ -2326,9 +2336,9 @@ export async function executeBatch(env: Env, args: BatchArgs): Promise<BatchOutc
             attemptId: retryAttemptId,
             planRevisionId: args.planRevisionId,
             surveyUrl: program.surveyUrl || args.surveyUrl,
-            startedAt: new Date().toISOString(),
+            startedAt: new Date(pivotStartMs).toISOString(),
             endedAt: new Date().toISOString(),
-            wallMs: 0,
+            wallMs: pivotElapsedMs,
             plannedWitnesses: [],
             steps: [],
             outcome: retryPerCaseTimedOut ? "per-case-timeout" : "error",
@@ -2812,6 +2822,30 @@ export function walkActionsJson(obs: PathObservation): string {
       }),
     ]),
   );
+}
+
+/**
+ * LABEL COHERENCE — ONE DERIVATION, SHARED BY ALL THREE LAYERS.
+ *
+ * THE DEFECT THIS CLOSES. The walk-level outcome, the record row, and the report label each
+ * independently decided what a walk's ending means:
+ *   - `completenessFor` (project-observations.ts) reads `walk.ending.kind`
+ *   - `reachedAnEnding` (assemble-record.mjs) reads `walk.ending.kind` AND `walk.outcome`
+ * When any of these three independently re-derived what an ending means, they could disagree.
+ * Now there is ONE function for each question, and all three layers call it.
+ *
+ * DID THE WALK REACH A REAL ENDING? True when the survey ended naturally (completed or
+ * screened-out). False for stalled, unclassified, crashed, load-crash, or absent endings.
+ * This is the function `reachedAnEnding` (assemble-record.mjs) and `completenessFor`
+ * (project-observations.ts) must both call.
+ */
+export function walkReachedEnding(walk: Pick<WalkRecord, "ending" | "outcome" | "loadCrash">): boolean {
+  if (walk.loadCrash) return false;
+  const kind = walk.ending?.kind ?? null;
+  if (kind === "completed" || kind === "screened-out") return true;
+  if (kind === "stalled" || kind === "unclassified" || kind === "crashed") return false;
+  // Legacy fallback: a row that predates typed endings uses the step-loop outcome.
+  return walk.outcome === "completed" || walk.outcome === "no-advance-control";
 }
 
 /**
