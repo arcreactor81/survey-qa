@@ -2172,7 +2172,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         // `configuration`) stay `insufficient` with NO_TYPED_EXPECTATION until the model
         // verifier is wired. That is a smaller claim than the run would like to make and it
         // is the true one.
-        const verified = await verifyObservations(this.env, runId);
+        const verified = await verifyObservations(this.env, runId, fence);
 
         await updateCheckpoint(
           this.env,

@@ -29,9 +29,13 @@
  * stamp.
  *
  * SPEND. Every model call produces a `ModelCallUsageEvent` routed through the existing
- * `pushModelUsageStrict` path in `store/usage.ts`. A call that fails demotes to a named
- * `insufficient` (`MODEL_CALL_FAILED`) and never populates any payload key that downstream
- * code reads as a verdict signal.
+ * `pushModelUsageStrict` path in `store/usage.ts`, when a checkpoint fence is available.
+ * Workers AI included models report no per-call cost and no token counts, so the event
+ * records the model id with zero tokens and zero cost — the same shape the visual usage
+ * path uses for unknown-cost providers. A call that fails still books its usage event
+ * (a failed call spent compute time) and demotes to a named `insufficient`
+ * (`MODEL_CALL_FAILED`), never populating any payload key that downstream code reads as
+ * a verdict signal.
  *
  * FLAGS. When the model detects a textual discrepancy, it is recorded as a flag in the
  * decision's `detail` field with the prefix `[FLAG:COPY_DISCREPANCY]`. Flags are metadata
@@ -46,6 +50,8 @@ import type {
 import type { PathObservation, RenderedScreen } from "../../browser/types";
 import type { PredicateResult } from "./verify-observations";
 import { VERIFIER_REASON, type VerifierReason } from "./verify-observations";
+import type { Fence } from "../../store/checkpoint";
+import { modelUsage, pushModelUsageStrict } from "../../store/usage";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -57,6 +63,13 @@ export const MODEL_VERIFIER_VERSION = "v2-model-verifier/1.0.0";
 const COPY_MODEL_ID = "@cf/meta/llama-3.1-8b-instruct";
 
 const COPY_PREDICATE_ID = "model-copy/1.0.0";
+
+/**
+ * Maximum number of screens to check in the no-target-question (survey-wide copy)
+ * path. Bounds the model calls so a walk with many screens does not exhaust the
+ * Workers AI quota or the subrequest budget.
+ */
+const MAX_SCREENS_NO_TARGET = 3;
 
 /**
  * MODEL DECISION TYPE — structurally constrained to {satisfied, insufficient}.
@@ -142,15 +155,55 @@ function parseModelResponse(raw: string): ParsedModelResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Usage tracking — Workers AI model calls
+// ---------------------------------------------------------------------------
+
+/**
+ * Push a usage event for a Workers AI model call. Workers AI included models report
+ * no per-call cost and no token counts in their response, so the event records zero
+ * for both — the same pattern the visual usage path follows when cost telemetry is
+ * unavailable. The model id is always recorded so the event is attributable.
+ *
+ * When `fence` is null (dev/replay paths), usage is not pushed — those paths have
+ * no checkpoint ownership and cannot write usage events.
+ */
+async function pushWorkersAIUsage(
+  env: Env,
+  runId: string,
+  fence: Fence | null,
+  hash: string,
+): Promise<void> {
+  if (!fence) return;
+  try {
+    const event = modelUsage(
+      COPY_MODEL_ID,
+      0, // inputTokens — Workers AI does not report token counts
+      0, // outputTokens — Workers AI does not report token counts
+      0, // costUsd — Workers AI included models have no per-call charge
+      `model-verifier/${hash}`, // eventId — deduplicates on Workflow step retry
+    );
+    await pushModelUsageStrict(env, runId, fence, [event]);
+  } catch (err) {
+    // Usage push failure MUST NOT prevent the verifier from returning its decision.
+    // The model call already happened; failing to account it is a named limitation,
+    // not a reason to discard the verdict. Log and continue.
+    console.error(`model-verifier usage push failed for run ${runId}:`, err);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The lane entry point
 // ---------------------------------------------------------------------------
 
 export interface ModelVerifierInput {
   env: Env;
+  runId: string;
   sealedCase: FacetInstance;
   walkArtifact: PathObservation;
   requirementText: string;
   evidenceIds: string[];
+  /** Checkpoint fence for usage tracking. Null on dev/replay paths. */
+  fence: Fence | null;
 }
 
 /**
@@ -159,11 +212,24 @@ export interface ModelVerifierInput {
  * RETURNS null when the model call cannot be attempted (no AI binding, wrong case kind).
  * RETURNS a PredicateResult on success or on a caught model failure. The result's outcome
  * is ALWAYS `satisfied` or `insufficient` — never `violated`.
+ *
+ * SCREEN SELECTION. When the sealed case names a target question:
+ *   - Only screens whose text mentions that question id are candidates.
+ *   - If NO screen matches, the result is a named `insufficient` with
+ *     `MODEL_COPY_TARGET_SCREEN_NOT_FOUND` — the model is never called with an
+ *     unrelated screen (fail-closed).
+ *   - If a screen matches, the model compares its text against the requirement.
+ *
+ * When no target question is known (survey-wide copy):
+ *   - Screens are iterated in walk order, up to MAX_SCREENS_NO_TARGET (3).
+ *   - The first screen that produces VERIFIED wins.
+ *   - If none verified, the last result (insufficient) is returned.
+ *   - The `detail` field records how many screens were checked of how many available.
  */
 export async function runCopyModelVerifier(
   input: ModelVerifierInput,
 ): Promise<PredicateResult | null> {
-  const { env, sealedCase, walkArtifact, requirementText, evidenceIds } = input;
+  const { env, runId, sealedCase, walkArtifact, requirementText, evidenceIds, fence } = input;
 
   // Gate check (redundant with the caller, but defense in depth).
   if (env.WORKERSAI_ENABLED !== "true" || !env.AI) return null;
@@ -171,25 +237,22 @@ export async function runCopyModelVerifier(
   // Case kind check.
   if (sealedCase.case?.kind !== "copy") return null;
 
-  // Collect screen text from the walk artifact's steps. Use the step whose screen
-  // mentions the target question, or fall back to concatenating all screen text.
+  // Collect screen text from the walk artifact's steps.
   const targetQ = sealedCase.targetQuestionId;
-  const screenTexts: string[] = [];
+  const allScreenTexts: string[] = [];
+  const targetMatchScreenTexts: string[] = [];
   for (const step of walkArtifact.steps) {
     const screen = step.screenBefore as RenderedScreen | null;
     if (!screen) continue;
     const text = screen.visibleText ?? screen.questionText ?? "";
     if (!text) continue;
-    // If we know the target question, prefer screens that mention it.
+    allScreenTexts.push(text);
     if (targetQ && text.toLowerCase().includes(targetQ.toLowerCase())) {
-      screenTexts.unshift(text);
-    } else {
-      screenTexts.push(text);
+      targetMatchScreenTexts.push(text);
     }
   }
 
-  const screenText = screenTexts[0] ?? "";
-  if (!screenText) {
+  if (allScreenTexts.length === 0) {
     return modelInsufficient(
       VERIFIER_REASON.MODEL_COPY_NO_SCREEN_TEXT,
       "the walk artifact contains no screen text to compare against the requirement",
@@ -199,6 +262,73 @@ export async function runCopyModelVerifier(
     );
   }
 
+  // TARGET QUESTION KNOWN — use only the matched screen.
+  if (targetQ) {
+    if (targetMatchScreenTexts.length === 0) {
+      // FAIL-CLOSED: no screen mentions the target question. Returning insufficient
+      // rather than comparing against an arbitrary screen that might share common
+      // header/instruction text with the requirement.
+      return modelInsufficient(
+        VERIFIER_REASON.MODEL_COPY_TARGET_SCREEN_NOT_FOUND,
+        `target question ${targetQ} not found in any of ${allScreenTexts.length} screen(s)`,
+        COPY_MODEL_ID,
+        "",
+        evidenceIds,
+      );
+    }
+    return callModelForScreen(env, runId, fence, targetMatchScreenTexts[0]!, requirementText, evidenceIds);
+  }
+
+  // NO TARGET QUESTION — survey-wide copy. Iterate screens, first VERIFIED wins.
+  // Bound the iteration to MAX_SCREENS_NO_TARGET to limit model calls.
+  const screensToCheck = allScreenTexts.slice(0, MAX_SCREENS_NO_TARGET);
+  let lastResult: PredicateResult | null = null;
+  let screensChecked = 0;
+
+  for (const screenText of screensToCheck) {
+    screensChecked++;
+    const result = await callModelForScreen(env, runId, fence, screenText, requirementText, evidenceIds);
+    if (!result) continue;
+    if (result.outcome === "satisfied") {
+      // Append screens-checked provenance to the detail.
+      return {
+        ...result,
+        detail: `${result.detail} screensChecked=${screensChecked}/${allScreenTexts.length}`,
+      };
+    }
+    lastResult = result;
+  }
+
+  // None verified — return the last insufficient with screens-checked provenance.
+  if (lastResult) {
+    return {
+      ...lastResult,
+      detail: `${lastResult.detail} screensChecked=${screensChecked}/${allScreenTexts.length}`,
+    };
+  }
+
+  // Should not reach here (allScreenTexts is non-empty), but fail-closed.
+  return modelInsufficient(
+    VERIFIER_REASON.MODEL_COPY_NO_SCREEN_TEXT,
+    "no screen text could be checked",
+    COPY_MODEL_ID,
+    "",
+    evidenceIds,
+  );
+}
+
+/**
+ * Call the model for a single screen and push a usage event. Returns a PredicateResult
+ * on success or caught failure. The usage event is pushed on BOTH paths.
+ */
+async function callModelForScreen(
+  env: Env,
+  runId: string,
+  fence: Fence | null,
+  screenText: string,
+  requirementText: string,
+  evidenceIds: string[],
+): Promise<PredicateResult | null> {
   const prompt = buildCopyPrompt(requirementText, screenText);
   const hash = await promptHash(prompt);
 
@@ -221,8 +351,9 @@ export async function runCopyModelVerifier(
       rawResponse = String(result);
     }
   } catch (err) {
-    // MODEL CALL FAILED — demote to named insufficient with the reason code.
-    // The error detail is included for diagnostics but carries no verdict weight.
+    // MODEL CALL FAILED — push usage for the failed call (it still consumed compute),
+    // then demote to named insufficient with the reason code.
+    await pushWorkersAIUsage(env, runId, fence, hash);
     const errMsg = err instanceof Error ? err.message : String(err);
     return modelInsufficient(
       VERIFIER_REASON.MODEL_CALL_FAILED,
@@ -232,6 +363,9 @@ export async function runCopyModelVerifier(
       evidenceIds,
     );
   }
+
+  // Success path — push usage for the completed call.
+  await pushWorkersAIUsage(env, runId, fence, hash);
 
   // Parse the model's response.
   const parsed = parseModelResponse(rawResponse);

@@ -335,6 +335,7 @@ import type {
 import type { PathObservation, RenderedScreen, StepObservation, WalkEndingKind } from "../../browser/types";
 import type { WalkProjectionPayload } from "./project-observations";
 import { runCopyModelVerifier, MODEL_VERIFIER_VERSION } from "./model-verifier";
+import type { Fence } from "../../store/checkpoint";
 // THE WORDING IS SHARED CODE, NOT A SECOND IMPLEMENTATION. `questionWordingScore` is the
 // driver's own scorer and `buildQuestionWordingIndex`/`resolveQuestionWording` are the plan's own
 // resolver, imported rather than reproduced: a copy here would be free to drift from the binder
@@ -668,6 +669,14 @@ export const VERIFIER_REASON = Object.freeze({
    * lane has nothing to work with, so it declines rather than guessing.
    */
   MODEL_COPY_NO_SCREEN_TEXT: "MODEL_COPY_NO_SCREEN_TEXT",
+  /**
+   * The sealed case names a target question, but no screen in the walk artifact mentions it.
+   * Rather than comparing the requirement against an arbitrary screen that might share common
+   * header or instruction text (which could produce a wrong VERIFIED), the lane returns
+   * insufficient. This is the fail-closed direction: a confident answer the evidence cannot
+   * support is worse than an honest "we could not check".
+   */
+  MODEL_COPY_TARGET_SCREEN_NOT_FOUND: "MODEL_COPY_TARGET_SCREEN_NOT_FOUND",
 } as const);
 
 export type VerifierReason = (typeof VERIFIER_REASON)[keyof typeof VERIFIER_REASON];
@@ -707,7 +716,7 @@ const OUTCOME_TO_DECISION: Record<PredicateOutcome, VerifierDecision> = {
   error: "insufficient",
 };
 
-export async function verifyObservations(env: Env, runId: string): Promise<StageResult<VerificationSummary>> {
+export async function verifyObservations(env: Env, runId: string, fence?: Fence | null): Promise<StageResult<VerificationSummary>> {
   // THE CATALOGUE IS NOT LISTED HERE, AND THAT IS A SUBREQUEST BUDGET DECISION.
   //
   // `listCatalog` is a fan-out: one R2 LIST plus one R2 GET **per catalogue entry**. Run
@@ -829,10 +838,12 @@ export async function verifyObservations(env: Env, runId: string): Promise<Stage
         if (walkArtifact && requirementText) {
           const modelResult = await runCopyModelVerifier({
             env,
+            runId,
             sealedCase,
             walkArtifact,
             requirementText,
             evidenceIds: o.evidenceIds ?? [],
+            fence: fence ?? null,
           });
           if (modelResult) {
             result = modelResult;
