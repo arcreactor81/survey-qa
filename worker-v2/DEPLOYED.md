@@ -9,8 +9,9 @@ pass-B purchase-ceiling fix in §11.
 |---|---|
 | Live URL | **https://survey-qa-v2.wellshit.co.in** |
 | Worker | `survey-qa-v2` |
-| Version (current) | `de8b83fb-340f-43d3-b4fe-92f311336bb9` — deployed 2026-08-23 by the full runbook, see §13 |
-| Version (rollback to) | `be5d8337-32e9-4de9-b1d3-7cfc09ad2af3` — the previous serving version, see §13 |
+| Version (current) | `8f6a9333-16cd-4411-a49b-d71f609df401` — deployed 2026-08-24 by the full runbook, see §14 |
+| Version (rollback to) | `de8b83fb-340f-43d3-b4fe-92f311336bb9` — the §13 version |
+| Version (23 Aug build) | `be5d8337-32e9-4de9-b1d3-7cfc09ad2af3` — pre-runbook-era, see §13 |
 | Version (2026-08-08 build) | `823be409-42b3-4c68-baf8-f1c8d59e1418` — see §12 |
 | Version (previous rollback point) | `9aec39cd-34d2-4a30-81b1-62681635ec15` — the earlier 2026-08-07 build |
 | Version (2 Aug build) | `3b6bdf57-8d1f-48e8-898b-b817500c9f67` |
@@ -491,3 +492,30 @@ Recording honestly: deploys between 2026-08-08 (§12) and this section (versions
 bench-loop era and have no sections here — that is doc debt (task #8), not a claim they were
 gated. Runbook amendments earned by this release (per-harness timeouts; §5's PowerShell 5.1
 stderr/`$Args` traps) are committed alongside this section.
+
+## 14. Deploy 2026-08-24 — screener steering, capture diet, honest run pages
+
+**Version `8f6a9333-16cd-4411-a49b-d71f609df401` at 100%** (deployment 2026-08-24T13:47:06Z,
+message `promote release-bfe2a8508cc4-2026-08-24-phaseD.4 at 100%`).
+**Exact rollback target: `de8b83fb-340f-43d3-b4fe-92f311336bb9`** (the §13 version).
+
+Frozen identity: head `bfe2a8508cc4190944078f7814e3751e82a02758`; evidence in
+`.local-private/v2-release-2026-08-24-phaseD.4/` (full battery receipts, census, quiescence,
+control-plane snapshots, versions/deployments before+after).
+
+Gates: static mutation-anchor check (new, runs first: 688 anchors + 585 kill names in
+seconds); typecheck; core suite in-battery; both real-Chrome page suites incl. the new
+terminal-phase suite; visual 482; input probe 60; all 50 supervised campaigns exit 0
+(w4-select under its 4h allowance); release-integrity tail (wrangler children at the
+measured 240s ceiling); config gate; dry-run census; quiescence ×3.
+
+What shipped: D1 screener survival (code+label hint matching, recovery keeps documented-
+continue steering, mid-walk termination announcements recorded as typed evidence, numeric
+defaults from sealed accepted bounds); C4 capture diet (the unread after-action capture
+epoch skipped, counted, and guarded — per-step capture halved); terminal run-phase
+projection + failure pages (finished runs say finished; post-execution deaths render a named
+failure); the release-gate repairs this train forced (per-harness supervisor timeouts
+coherent end-to-end, three campaign re-anchors, one kill-name re-aim).
+
+Confirming live run: **https://survey-qa-v2.wellshit.co.in/runs/v2r_01m0t0g1gaw1a86yc7mp7pspg3**
+(audited under the standing post-run audit rule before its results are treated as facts).
