@@ -16,6 +16,12 @@ const CONFIG_FILES = [
 ];
 const FLAG = "VISUAL_SHADOW_ENABLED";
 const SOURCE_MAP_UPLOAD_FLAG = "upload_source_maps";
+const RELEASE_MODEL_WIRE_LIMITS = Object.freeze([
+  ["DEEPSEEK_CONTEXT_WINDOW_TOKENS", "1000000"],
+  ["EXTRACT_MODEL_INPUT_MAX_BYTES", "450000"],
+  ["EXTRACT_MAX_OUTPUT_TOKENS", "32000"],
+  ["EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES", "120000"],
+]);
 
 function stripJsoncComments(source, label) {
   let result = "";
@@ -167,6 +173,21 @@ function auditNoSourceMapCliOverride(source, label) {
     throw new Error(`${label}: --upload-source-maps is forbidden in release commands`);
   }
   return commands;
+}
+
+function auditReleaseModelWireLimits(source, label) {
+  for (const [name, expected] of RELEASE_MODEL_WIRE_LIMITS) {
+    const matches = [...source.matchAll(new RegExp(
+      `eq\\(v\\.${name},"([^"]+)"`,
+      "gu",
+    ))];
+    if (matches.length !== 1) {
+      throw new Error(`${label}: ${name} must be asserted exactly once by the frozen config gate`);
+    }
+    if (matches[0][1] !== expected) {
+      throw new Error(`${label}: ${name} must be frozen at ${expected}`);
+    }
+  }
 }
 
 const RELATIVE_HELPER_BEGIN = "# RELEASE_RELATIVE_PATH_HELPER_BEGIN";
@@ -454,6 +475,32 @@ $Source = [Console]::In.ReadToEnd()
     unsafeRun.status,
     0,
     "a prefix-only helper must fail the sibling-prefix counterexample",
+  );
+});
+
+test("documented frozen config gate pins every reviewed extraction wire limit", () => {
+  auditReleaseModelWireLimits(deployRunbook, "DEPLOY.md");
+
+  for (const [name, expected] of RELEASE_MODEL_WIRE_LIMITS) {
+    const mutantValue = String(Number(expected) + 1);
+    const mutated = deployRunbook.replace(
+      `eq(v.${name},"${expected}"`,
+      `eq(v.${name},"${mutantValue}"`,
+    );
+    assert.notEqual(mutated, deployRunbook, `the ${name} drift mutant must alter DEPLOY.md`);
+    assert.throws(
+      () => auditReleaseModelWireLimits(mutated, `${name} drift mutant`),
+      new RegExp(name, "u"),
+    );
+  }
+
+  const [duplicateName, duplicateValue] = RELEASE_MODEL_WIRE_LIMITS[0];
+  const needle = `eq(v.${duplicateName},"${duplicateValue}"`;
+  const duplicated = deployRunbook.replace(needle, `${needle}\n${needle}`);
+  assert.notEqual(duplicated, deployRunbook, "the duplicate wire-limit mutant must alter DEPLOY.md");
+  assert.throws(
+    () => auditReleaseModelWireLimits(duplicated, "duplicate wire-limit mutant"),
+    /must be asserted exactly once/u,
   );
 });
 

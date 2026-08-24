@@ -162,6 +162,7 @@ export async function loadWorker() {
       `export * as evidenceKeyspace from ${p("src/store/evidence-keyspace.ts")};`,
       `export * as ids from ${p("src/ids.ts")};`,
       `export * as contracts from ${p("src/types/contracts.ts")};`,
+      `export * as documentReading from ${p("src/observability/document-reading.ts")};`,
       `export * as checkpoint from ${p("src/store/checkpoint.ts")};`,
       `export * as usage from ${p("src/store/usage.ts")};`,
       `export * as envelope from ${p("src/store/envelope.ts")};`,
@@ -176,6 +177,7 @@ export async function loadWorker() {
       `export * as apiEvidence from ${p("src/api/evidence.ts")};`,
       `export * as apiReport from ${p("src/api/report.ts")};`,
       `export * as apiRuns from ${p("src/api/runs.ts")};`,
+      `export * as apiScreens from ${p("src/api/screens.ts")};`,
       `export * as router from ${p("src/api/router.ts")};`,
       `export * as expand from ${p("src/extract/expand.ts")};`,
       // THE .DOCX READER ITSELF. It was already inside the bundle's import graph (pass-a and
@@ -184,16 +186,22 @@ export async function loadWorker() {
       // kill. `tests/docx-robustness.test.mjs` scores the 20-file hostile corpus through THIS
       // export, which is why the gate can never read a stale build artifact.
       `export * as docxBlocks from ${p("src/extract/docx-blocks.ts")};`,
+      `export * as prompts from ${p("src/extract/prompts.ts")};`,
+      `export * as coerce from ${p("src/extract/coerce.ts")};`,
+      `export * as anchorCleaner from ${p("src/extract/anchor-cleaner.ts")};`,
+      `export * as types from ${p("src/extract/types.ts")};`,
       // D27 needs the REAL identity mint: the collision it reproduces is minted in the
       // merge and only OBSERVED in the expander, so a fixture requirement row would test
       // the wrong half of the pipeline.
       `export * as merge from ${p("src/extract/merge.ts")};`,
       `export * as passA from ${p("src/extract/pass-a.ts")};`,
       `export * as crossWindowLimitations from ${p("src/extract/cross-window-limitations.ts")};`,
+      `export * as groundingLimitations from ${p("shared/pass-a-grounding-limitations.mjs")};`,
       `export * as passB from ${p("src/extract/pass-b.ts")};`,
       `export * as chat from ${p("src/llm/chat.ts")};`,
       `export * as grok from ${p("src/llm/grok.ts")};`,
       `export * as deepseek from ${p("src/llm/deepseek.ts")};`,
+      `export * as extractionWire from ${p("src/llm/extraction-wire.ts")};`,
       `export * as extractStage from ${p("src/workflow/stages/extract.ts")};`,
       `export * as gates from ${p("src/workflow/gates.ts")};`,
       `export * as plan from ${p("src/workflow/stages/plan.ts")};`,
@@ -209,6 +217,13 @@ export async function loadWorker() {
       // D25 needs the REAL assemble+capture stages, so the v2 evidence the judge reads is
       // written by the code that writes it in production rather than by a fixture.
       `export * as assembleRecord from ${p("src/workflow/stages/assemble-record.ts")};`,
+      // ...AND THE PROJECTIONS THEMSELVES. `assemble-record.ts` imports six names from the
+      // `.mjs` and re-exports two, so the derivations the record is BUILT from — `deriveAttempts`
+      // above all — were reachable only by driving a whole run. That is enough to prove the
+      // chain works and not enough to pin a projection's behaviour case by case: the attempt
+      // row's `ok` flag was inverted for two years' worth of runs underneath a green end-to-end
+      // test, because every fixture that reached it happened to agree with the wrong reading.
+      `export * as assembleRecordProjection from ${p("src/workflow/stages/assemble-record.mjs")};`,
       `export * as capture from ${p("src/browser/capture.ts")};`,
       // D29 needs the REAL walker. `walkPath` decides what "blocked" means for every downstream
       // stage, and until D29 nothing executed a line of it — its `PageLike` is a structural
@@ -223,7 +238,14 @@ export async function loadWorker() {
       // two things that turn a walk into a published coverage number and a published
       // accusation, and until D31 the module was not even importable by a test.
       `export * as executeBatch from ${p("src/workflow/stages/execute-batch.ts")};`,
+      // THE REPLAY FENCE ITSELF. `tests/replay-fence.test.mjs` used to test an inline COPY
+      // of this module's algorithm ("the exact same algorithm" — it was not): the copy read
+      // forward-first while the shipped module read the raw key first, so a replay whose
+      // source run had already completed its tail read PROD's record instead of its own,
+      // and every fence test stayed green while it happened. Tests must import THIS export.
+      `export * as replayBucket from ${p("src/replay/replay-bucket.ts")};`,
       `export * as sweeper from ${p("src/sweeper.ts")};`,
+      `export * as retention from ${p("src/store/retention.ts")};`,
       // D40 needs the WRITE side of the target identity. `report/build.ts` re-exports only the
       // two pure derivations, and the defect this closes is that nothing PERSISTED one — so a
       // test reaching it through the report module could not tell a computed id from a
@@ -233,6 +255,7 @@ export async function loadWorker() {
       // that could change what a re-extraction produces has to be in it — and a test reaching it
       // only through the workflow could not tell "the key is complete" from "the lookup missed".
       `export * as contractReuse from ${p("src/store/contract-reuse.ts")};`,
+      `export * as unitReuse from ${p("src/store/unit-reuse.ts")};`,
       `export * as humanContract from ${p("src/contract/human-authored.ts")};`,
       `export * as structure from ${p("src/structure/index.ts")};`,
       `export * as visionReconcile from ${p("src/vision/reconcile.ts")};`,
@@ -243,7 +266,16 @@ export async function loadWorker() {
       // Operator-source projection is in a standalone CLI module. Export it through this
       // same bundle so privacy mutants are scored against rewritten code, not a disk import.
       `export * as sourceBlockOutput from ${p("tools/source-block-output.mjs")};`,
+      `export * as providerSpendLedger from ${p("src/store/provider-spend-ledger.ts")};`,
       `export * as env from ${p("src/types/env.ts")};`,
+      // The dev-extract route handler — tested by the passOnly:B guard suite.
+      `export * as devExtractRoute from ${p("src/workflow/stages/dev-extract.ts")};`,
+      `export * as devDrive from ${p("src/workflow/stages/dev-drive.ts")};`,
+      `export * as failureReport from ${p("src/report/failure.ts")};`,
+      `export * as multilane from ${p("src/workflow/stages/multilane.ts")};`,
+      // THE COMMITTED-EVIDENCE FILTER. Exported so the test suite and mutation harness can
+      // exercise filterCommittedEvidence and MissingWalkLedgerError against the real code.
+      `export * as committedEvidence from ${p("src/store/committed-evidence.ts")};`,
     ].join("\n"),
     "utf8",
   );

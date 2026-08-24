@@ -549,6 +549,42 @@ const MUTANTS = [
       "A KIND WITH NO PREDICATE IS STILL NEVER TYPED",
     ],
   },
+  // =================================================================== Track 1 — TYPED MINTING
+  // These mutants target the judge compiler's typed minting fallback, which reads
+  // sealed FacetInstance payloads when prose rules fail. Each mutant proves a
+  // specific guard in compile.mjs is reachable.
+  {
+    name: "typed option-set minting is silently dropped",
+    breaks: "an option-set case with a sealed payload falls through to NO_TYPED_EXPECTATION when no prose rule matches",
+    file: "../pipeline/judge/lib/compile.mjs",
+    find: "    case 'option-set':\n      return mintOptionSetFromTyped(obligation, first, c, screen);",
+    replace: "    case 'option-set':\n      return null;",
+    kills: ["Track 1: option-set typed minting produces option-present from asserted rows"],
+  },
+  {
+    name: "typed route minting is silently dropped",
+    breaks: "a route case with routeAnswer + expectedDestination falls through when no prose rule matches",
+    file: "../pipeline/judge/lib/compile.mjs",
+    find: "    case 'route':\n      return mintRouteFromTyped(obligation, first, c, screen);",
+    replace: "    case 'route':\n      return null;",
+    kills: ["Track 1: route typed minting produces route from routeAnswer + expectedDestination"],
+  },
+  {
+    name: "typed boundary minting is silently dropped",
+    breaks: "a boundary case with a typed payload falls through when no prose rule matches",
+    file: "../pipeline/judge/lib/compile.mjs",
+    find: "    case 'boundary':\n      return mintBoundaryFromTyped(obligation, first, c, screen);",
+    replace: "    case 'boundary':\n      return null;",
+    kills: ["Track 1: boundary typed minting produces input-maxlength from max boundary"],
+  },
+  {
+    name: "a self-conflicting option-set payload is minted anyway",
+    breaks: "two option-set cases with different asserted rows produce a guessed expectation instead of a refusal",
+    file: "../pipeline/judge/lib/compile.mjs",
+    find: "      return {\n        expectation: null, ruleId: null,\n        mintRefusal: {\n          family: 'option-set',",
+    replace: "      return mintOptionSetFromTyped(obligation, allSets[0], allSets[0].case, screen);\n      if (false) return {\n        expectation: null, ruleId: null,\n        mintRefusal: {\n          family: 'option-set',",
+    kills: ["Track 1: a self-conflicting option-set payload is a named refusal"],
+  },
 ];
 
 await runMutantSuite({

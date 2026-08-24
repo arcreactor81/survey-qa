@@ -72,6 +72,13 @@ export class ModelCallError extends Error {
         : failureKind === "invalid-content"
           ? "provider-content"
           : "http-status",
+    /**
+     * True when `finish_reason: "length"` was the cause — the provider returned an incomplete
+     * JSON answer because the response hit the model's output-token ceiling. This is the
+     * discriminator that separates "window too large for the model to answer" from "model
+     * returned garbage": the former is fixable by splitting, the latter is not.
+     */
+    readonly truncatedAtOutputCeiling: boolean = false,
   ) {
     super(message);
     this.name = "ModelCallError";
@@ -93,6 +100,12 @@ export interface ChatOptions {
   /** Role recorded on the telemetry row, e.g. `extract-pass-a`. */
   role: string;
   callId: string;
+  /**
+   * Exact canonical request bytes already admitted by a caller's wire-size barrier.
+   * When present, transport sends this string unchanged instead of serializing again.
+   * Callers must derive it with `chatRequestBodyText` for this exact provider spec.
+   */
+  preSerializedBodyText?: string;
   /**
    * The AI Gateway `feature` tag. Defaults to the extraction tag so every existing caller
    * keeps the exact metadata it had; the model verifier passes its own, because a cost
@@ -176,7 +189,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
     if (env.CF_AIG_TOKEN) headers["cf-aig-authorization"] = `Bearer ${env.CF_AIG_TOKEN}`;
   }
 
-  const bodyText = chatRequestBodyText(spec, opts);
+  const bodyText = opts.preSerializedBodyText ?? chatRequestBodyText(spec, opts);
   // A byte cannot encode fewer than zero tokens, and treating every request byte as one
   // token is a conservative ceiling for the provider tokenizers used here. max_tokens is
   // already the provider-enforced completion ceiling.
@@ -196,6 +209,9 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
   let usedUnboundModelRateCeiling = false;
   let unverifiedReportedModel: string | null = null;
   let attemptsMade = 0;
+  let lastTruncatedAtOutputCeiling = false;
+  /** True when every failed attempt was a definitive pre-generation refusal (401/402/403). */
+  let allFailuresRejectedBeforeGeneration = true;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     attemptsMade = attempt;
@@ -248,11 +264,29 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         // non-JSON response separately.
       }
       if (!res.ok) {
-        accountUsage(data?.usage);
+        // DEFINITIVE NON-BILLING STATUSES: 401 (unauthorized), 402 (insufficient balance),
+        // 403 (forbidden). The provider rejected the request BEFORE any generation occurred.
+        // No tokens were consumed, no billing happened. Booking conservative ceiling here
+        // would create phantom dollars for a call the provider provably never started.
+        //
+        // Everything ambiguous — timeouts, 5xx, aborted streams — KEEPS the conservative
+        // ceiling because a timed-out generation may still bill server-side.
+        // Refusal-with-status is evidence of non-billing; silence is not.
+        if (isDefinitiveNonBillingStatus(res.status)) {
+          // Book zero tokens: the provider rejected before generation
+          if (!usageAccounted) {
+            usageAccounted = true;
+            // inputTokens += 0; outputTokens += 0; — deliberately no-op
+          }
+        } else {
+          accountUsage(data?.usage);
+          allFailuresRejectedBeforeGeneration = false;
+        }
         lastDetail = `HTTP ${res.status}: ${rawBody.slice(0, 300)}`;
         lastHttpStatus = res.status;
         lastFailureKind = failureKindForHttpStatus(res.status);
         lastFailureCause = "http-status";
+        lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
         // Auth, balance and invalid requests are properties shared by every retry.
         // Re-sending them cannot succeed and only multiplies a doomed purchase.
@@ -266,7 +300,9 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastDetail = `non-JSON transport body: ${rawBody.slice(0, 200)}`;
         lastFailureKind = "invalid-content";
         lastFailureCause = "provider-content";
+        lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
+        allFailuresRejectedBeforeGeneration = false;
         if (attempt === maxAttempts) break;
         continue;
       }
@@ -288,6 +324,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
           `reported ${JSON.stringify(reportedModel)}`;
         lastFailureKind = "invalid-content";
         lastFailureCause = "provider-content";
+        lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
@@ -300,6 +337,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastDetail = `truncated at max_tokens (${opts.maxTokens}); the JSON is incomplete`;
         lastFailureKind = "invalid-content";
         lastFailureCause = "provider-content";
+        lastTruncatedAtOutputCeiling = true;
         allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
@@ -308,6 +346,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastDetail = "empty content";
         lastFailureKind = "invalid-content";
         lastFailureCause = "provider-content";
+        lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
@@ -318,6 +357,7 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
         lastDetail = `unparseable JSON: ${content.slice(0, 200)}`;
         lastFailureKind = "invalid-content";
         lastFailureCause = "provider-content";
+        lastTruncatedAtOutputCeiling = false;
         allFailuresWereLocalDeadlines = false;
         if (attempt === maxAttempts) break;
         continue;
@@ -354,13 +394,28 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
       accountUsage(undefined);
       lastDetail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
       lastFailureKind = "timeout-or-network";
+      lastTruncatedAtOutputCeiling = false;
       lastFailureCause = isLocalDeadlineExpiry(err, attemptSignal) ? "local-deadline" : "network";
       if (lastFailureCause === "local-deadline") sawLocalDeadline = true;
       if (lastFailureCause !== "local-deadline") allFailuresWereLocalDeadlines = false;
+      allFailuresRejectedBeforeGeneration = false;
       lastHttpStatus = null;
       if (attempt === maxAttempts) break;
     }
   }
+
+  // Determine the usage source for the error receipt.
+  // rejected-before-generation: every attempt was refused with a definitive non-billing
+  // HTTP status (401/402/403). The provider never started generation and provably billed
+  // nothing. Tokens and cost are 0.
+  const errorUsageSource: CallUsage["usageSource"] =
+    allFailuresRejectedBeforeGeneration && inputTokens === 0 && outputTokens === 0
+      ? "rejected-before-generation"
+      : usedUnboundModelRateCeiling
+        ? "unverified-model-rate-ceiling"
+        : usedConservativeCeiling
+          ? "conservative-ceiling"
+          : "provider-reported";
 
   throw new ModelCallError(`${spec.provider}/${spec.model} ${opts.role} failed: ${lastDetail}`, {
     callId: opts.callId,
@@ -375,22 +430,24 @@ export async function chatJson(spec: ProviderSpec, env: Env, opts: ChatOptions):
     costUsd: costOf(spec, inputTokens, outputTokens, usedUnboundModelRateCeiling),
     latencyMs: 0,
     attempts: attemptsMade,
-    usageSource: usedUnboundModelRateCeiling
-      ? "unverified-model-rate-ceiling"
-      : usedConservativeCeiling
-        ? "conservative-ceiling"
-        : "provider-reported",
+    usageSource: errorUsageSource,
+    ...(errorUsageSource === "rejected-before-generation" && lastHttpStatus !== null
+      ? { rejectedHttpStatus: lastHttpStatus }
+      : {}),
     detail: (
-      usedConservativeCeiling
-        ? `usage conservatively ceilinged because at least one attempt returned no valid token receipt; ${lastDetail}`
-        : lastDetail
+      errorUsageSource === "rejected-before-generation"
+        ? `rejected before generation (HTTP ${lastHttpStatus}); no tokens consumed, no billing; ${lastDetail}`
+        : usedConservativeCeiling
+          ? `usage conservatively ceilinged because at least one attempt returned no valid token receipt; ${lastDetail}`
+          : lastDetail
     ).slice(0, 400),
   }, lastFailureKind, lastHttpStatus,
   allFailuresWereLocalDeadlines
     ? "local-deadline"
     : sawLocalDeadline
       ? "mixed"
-      : lastFailureCause);
+      : lastFailureCause,
+  lastTruncatedAtOutputCeiling);
 }
 
 function failureKindForHttpStatus(status: number): ModelFailureKind {
@@ -401,6 +458,17 @@ function failureKindForHttpStatus(status: number): ModelFailureKind {
   if (status === 402) return "insufficient-balance";
   if (status === 400 || status === 404 || status === 409 || status === 422) return "invalid-request";
   return "nonretryable-http";
+}
+
+/**
+ * HTTP statuses where the provider definitively rejected the request BEFORE any generation.
+ * No tokens were consumed, no billing occurred. This is evidence of non-billing.
+ *
+ * Timeouts (408), 5xx, and rate-limits (429) are NOT included: a timed-out or server-errored
+ * generation may still have billed server-side. Silence is not evidence of non-billing.
+ */
+export function isDefinitiveNonBillingStatus(status: number): boolean {
+  return status === 401 || status === 402 || status === 403;
 }
 
 /** A timer being expired is insufficient: the caught rejection must be that timer's reason. */

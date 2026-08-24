@@ -137,8 +137,8 @@ export function parseContainedTapRun(child) {
     && child?.error === null
     && child?.signal === null
     && child?.timedOut === false
-    && Number.isInteger(child?.status)
-    && child?.supervisorStatus === child.status
+    && (child?.status === 0 || child?.status === 1)
+    && child?.supervisorStatus === 0
     && child?.finalActiveProcesses === 0
     && child?.containmentScope === WINDOWS_JOB_CONTAINMENT_SCOPE;
   return {

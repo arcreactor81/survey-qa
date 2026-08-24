@@ -16,6 +16,13 @@
  */
 
 import type { RunPolicy } from "./env";
+import {
+  publicExtractionFailureDetail,
+  projectDocumentReadingProgress,
+  selectExtractionFailureReason,
+  withoutDocumentSourceContext,
+  type DocumentReadingProgress,
+} from "../observability/document-reading";
 
 // ---------------------------------------------------------------------------
 // Phases (ui-report-redesign §3.1)
@@ -41,10 +48,29 @@ export interface Phase {
   observedAt: string | null;
   /** Machine-readable cause for `skipped` / `stopped`. null otherwise. */
   reasonCode: string | null;
+  /**
+   * ADDITIVE (Direction 2 upgrade). When the phase transitioned to `active`.
+   * null while pending or for checkpoints written before this field existed.
+   * Optional because older checkpoints do not carry it.
+   */
+  startedAt?: string | null;
+  /**
+   * ADDITIVE (Direction 2 upgrade). When the phase left `active` (complete/stopped/skipped).
+   * null while pending or active, or for checkpoints written before this field existed.
+   * Optional because older checkpoints do not carry it.
+   */
+  endedAt?: string | null;
 }
 
 export const initialPhases = (): Phase[] =>
-  PHASE_NAMES.map((name) => ({ name, state: "pending" as PhaseState, observedAt: null, reasonCode: null }));
+  PHASE_NAMES.map((name) => ({
+    name,
+    state: "pending" as PhaseState,
+    observedAt: null,
+    reasonCode: null,
+    startedAt: null,
+    endedAt: null,
+  }));
 
 // ---------------------------------------------------------------------------
 // Completion — the second axis (ui-report-redesign §2.3, §7.3)
@@ -111,6 +137,41 @@ export const zeroCounts = (): CoverageCounts => ({
 
 export const sumCounts = (c: CoverageCounts): number =>
   COVERAGE_BUCKETS.reduce((n, b) => n + (c[b] ?? 0), 0);
+
+/**
+ * THE REASON CODES THAT ACCUSE THE SITE. An allowlist, and it is deliberately one entry long.
+ *
+ * `blocked` in a signed record means "the site stopped us here". Every other stop reason this
+ * system can write — `coverage-shortfall-unexercised`, `plan-missing`, `executor-error`,
+ * `browser-unavailable`, `required-probe-capability-unsupported`, every `extraction-*` code,
+ * `workflow-error` — names something that went wrong on OUR side, and none of them is a fact
+ * about the customer's survey.
+ *
+ * A DENYLIST WOULD BE THE WRONG SHAPE. It was one: "any reason that is not a `-cap`" meant a
+ * new reason code, invented anywhere in this system for any purpose, silently defaulted to
+ * accusing the customer. An allowlist defaults the other way, so an unrecognised code degrades
+ * to "we never reached these cases" — which is always true when cases are still pending, and
+ * is the direction CLAUDE.md requires when the alternative is an unfounded accusation.
+ */
+export const SITE_REFUSAL_REASON_CODES = ["walks-blocked-by-site"] as const;
+
+/**
+ * WHICH UNSETTLED BUCKET A STOPPED RUN'S PENDING CASES BELONG IN.
+ *
+ * ONE FUNCTION, TWO READERS. The checkpoint's coverage counts (`run-workflow.ts#stopBucket`)
+ * and the signed record's per-case statuses (`derive-verdicts.ts#unreachedFromCursor`) used to
+ * carry the same mapping written out twice; when they disagree the run's own blocker sentence
+ * contradicts its own record. `not-reached` is the fallback because a case with no verdict was,
+ * at minimum, never settled — a claim that holds whatever stopped the run.
+ */
+export function unsettledBucketFor(
+  reason: string | null | undefined,
+): "blocked" | "budget-exhausted" | "time-exhausted" | "not-reached" {
+  if (typeof reason !== "string" || reason.length === 0) return "not-reached";
+  if (reason === "wall-clock-cap") return "time-exhausted";
+  if (reason.endsWith("-cap")) return "budget-exhausted";
+  return (SITE_REFUSAL_REASON_CODES as readonly string[]).includes(reason) ? "blocked" : "not-reached";
+}
 
 /**
  * §7.4: "After sealing, counts sum to contract.total."
@@ -224,6 +285,18 @@ export interface ModelCallUsageEvent {
   outputTokens: number;
   costUsd: number;
   at: string;
+  /**
+   * ADDITIVE (cost-booking fix). Provenance marker distinguishing live spend from replayed
+   * or rejected-before-generation events. Absent on events written before this field existed;
+   * those are implicitly live spend.
+   */
+  usageSource?: "reused-prior-artifact" | "rejected-before-generation";
+  /**
+   * ADDITIVE (cost-booking fix). For `reused-prior-artifact` events: the cost the original
+   * purchase paid. Moves the information out of this run's spend column into provenance
+   * without deleting it. Absent on non-replay events and on events written before this field.
+   */
+  originalCostUsd?: number;
 }
 
 /** Legacy/best-effort browser usage. */
@@ -552,6 +625,12 @@ export interface RunCheckpoint {
    * objects actually in the bucket.
    */
   failure?: RunFailure | null;
+  /**
+   * Optional because checkpoints written before the visibility upgrade do not carry it.
+   * Every read passes through the closed projector; malformed progress becomes a named
+   * unavailable state, never plausible-looking zero progress.
+   */
+  documentReading?: DocumentReadingProgress | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -560,10 +639,30 @@ export interface RunCheckpoint {
 
 export const RUN_STATUS_SCHEMA = "run-status/2.0.0" as const;
 
+/**
+ * THE RUN-LEVEL PHASE — what a reader can truthfully be told.
+ *
+ * The six `PhaseName` values describe a run that is still working. The three terminal
+ * values describe one whose work is over:
+ *
+ *   `"done"`           — test complete + report complete. The cleanest outcome.
+ *   `"done-at-limit"`  — test stopped at a limit (time, cost, site-blocked) but the
+ *                         report was built from what was recorded. This is a NORMAL,
+ *                         HEALTHY ending today — the time cap is expected to fire on
+ *                         most real runs — and must NOT render as a failure or as
+ *                         still-running.
+ *   `"done-failed"`    — test failed OR report failed. Something went wrong.
+ *
+ * The checkpoint's `phase` field is always a `PhaseName` (set on transition to active),
+ * so the terminal state is derived HERE in the projection, from the completion facts the
+ * checkpoint already records. It is never written back.
+ */
+export type RunPhase = PhaseName | "done" | "done-at-limit" | "done-failed";
+
 export interface RunStatusV2 {
   schemaVersion: typeof RUN_STATUS_SCHEMA;
   runId: string;
-  phase: PhaseName;
+  phase: RunPhase;
   phases: Phase[];
   completion: Completion;
   /** Proof the process checked in. A heartbeat is not progress. */
@@ -604,6 +703,35 @@ export interface RunStatusV2 {
    * are fine.
    */
   failure?: RunFailure;
+  /** Durable questionnaire-reading facts. Omitted before extraction has durable facts. */
+  documentReading?: DocumentReadingProgress;
+}
+
+/**
+ * DERIVE THE TERMINAL RUN-LEVEL PHASE from the completion facts.
+ *
+ * Returns null when the run is still working — the checkpoint's own `phase` is the
+ * honest answer in that case. Returns a terminal `RunPhase` when all work is over.
+ *
+ * THE RULE: every per-phase state must be terminal (complete, stopped, skipped) AND the
+ * completion pair must be terminal. When both hold, the flavor is read from `completion`:
+ *
+ *   - test complete + report complete → `"done"`
+ *   - test partial-* + report complete → `"done-at-limit"` (normal, healthy)
+ *   - anything else terminal → `"done-failed"` (something went wrong)
+ */
+export function deriveTerminalPhase(completion: Completion, phases: Phase[]): RunPhase | null {
+  const terminalPhaseStates: PhaseState[] = ["complete", "stopped", "skipped"];
+  const allPhasesTerminal = phases.every((p) => terminalPhaseStates.includes(p.state));
+  if (!allPhasesTerminal) return null;
+  if (!isTerminalTest(completion.test)) return null;
+  // Both axes must have stopped — a terminal test with a running report is not done.
+  if (completion.report !== "complete" && completion.report !== "failed") return null;
+
+  if (completion.test === "complete" && completion.report === "complete") return "done";
+  if (isPartialTestCompletion(completion.test) && completion.report === "complete") return "done-at-limit";
+  // test failed, report failed, or both — something went wrong.
+  return "done-failed";
 }
 
 /**
@@ -625,22 +753,53 @@ export function projectStatus(
   const note = typeof heartbeatNote === "string" ? heartbeatNote.trim().slice(0, 200) : "";
   // The cause travels beside the prose, never instead of it. `error` is what a person
   // reads; `failure` is what a client switches on.
-  const failure = projectFailure(cp.failure);
-  const error = cp.error === null || cp.error === undefined ? null : sanitiseErrorText(cp.error, ERROR_TEXT_MAX);
+  const projectedFailure = projectFailure(cp.failure);
+  const internalDocumentReading = projectDocumentReadingProgress(cp.documentReading);
+  const documentReading = internalDocumentReading
+    ? withoutDocumentSourceContext(internalDocumentReading)
+    : null;
+  const readingFailure = documentReading?.failure ?? null;
+  const stoppedExtraction = cp.phases.find(
+    (phase) => phase.name === "extracting" && phase.state === "stopped",
+  );
+  const extractionReason = selectExtractionFailureReason(
+    readingFailure?.reasonCode,
+    cp.completion.reasonCode,
+    cp.failure?.reasonCode,
+    stoppedExtraction?.reasonCode,
+  ) ?? (stoppedExtraction?.reasonCode === "workflow-error" ? "workflow-error" : null);
+  const publicExtractionDetail = extractionReason
+    ? publicExtractionFailureDetail(extractionReason)
+    : null;
+  const failure = projectedFailure && publicExtractionDetail
+    ? { ...projectedFailure, message: publicExtractionDetail }
+    : projectedFailure;
+  const error = publicExtractionDetail
+    ? publicExtractionDetail
+    : cp.error === null || cp.error === undefined ? null : sanitiseErrorText(cp.error, ERROR_TEXT_MAX);
+  const publicNote = publicExtractionDetail && note ? publicExtractionDetail : note;
+  // THE TOP-LEVEL PHASE IS DERIVED, NOT COPIED.
+  //
+  // The checkpoint's `phase` is the name of the last stage that became active. When the
+  // run finishes it stays stuck at the last active stage — typically "reporting" — and
+  // nothing ever writes a terminal value there. The projection derives one from the
+  // completion facts so the page can tell the reader the run is over.
+  const terminalPhase = deriveTerminalPhase(cp.completion, cp.phases);
   return {
     schemaVersion: RUN_STATUS_SCHEMA,
     runId: cp.runId,
-    phase: cp.phase,
+    phase: terminalPhase ?? cp.phase,
     phases: cp.phases,
     completion: cp.completion,
     heartbeatAt,
-    ...(note ? { heartbeatNote: note } : {}),
+    ...(publicNote ? { heartbeatNote: publicNote } : {}),
     lastProgressAt: cp.lastProgressAt,
     progressRevision: cp.revision,
     reportAvailable: cp.reportAvailable,
     recoveryMode: cp.recovery?.active ?? false,
     error,
     ...(failure ? { failure } : {}),
+    ...(documentReading ? { documentReading } : {}),
   };
 }
 

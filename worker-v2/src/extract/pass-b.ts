@@ -62,30 +62,92 @@ import {
   deepseekPassBAttemptCeiling,
   deepseekPassBIdentity,
   deepseekPassBJson,
+  deepseekPassBRequestShape,
 } from "../llm/deepseek";
-import { ModelCallError } from "../llm/chat";
+import { chatRequestBodyText, keyFor, MissingCredential, ModelCallError } from "../llm/chat";
+import {
+  EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+  extractionWireFailureDetail,
+  extractionWirePolicy,
+  extractionWirePreSerializationFailureDetail,
+  preflightExtractionRequestBodies,
+} from "../llm/extraction-wire";
 import { PROMPT_VERSION_B, SYSTEM_B, userMessageB, userMessageSweep } from "./prompts";
-import { annotate, DOCX_BLOCKS_VERSION } from "./docx-blocks";
+import { DOCX_BLOCKS_VERSION } from "./docx-blocks";
+import { buildBoundedSourceBlocksJsonl } from "./bounded-source-block-jsonl";
 import type { CallUsage, ParsedDocument, PassResult, RawRequirement, SourceBlock } from "./types";
 import { sha256Hex } from "../store/hash";
 import {
   decodePassBOutput,
   PASS_B_DECODER_VERSION,
   PassBOutputInvalid,
+  salvagePassBOutput,
 } from "./pass-b-decode";
 import { k } from "../keys";
+import {
+  lookupReusableUnit,
+  storeCompletedUnit,
+  type UnitIdentityFields,
+} from "../store/unit-reuse";
+import {
+  publicExtractionFailureDetail,
+  sourceContextForUnit,
+  type DocumentReadingUnitStartObserver,
+} from "../observability/document-reading";
 
-export { decodePassBOutput, PASS_B_DECODER_VERSION, PassBOutputInvalid };
+export { decodePassBOutput, PASS_B_DECODER_VERSION, PassBOutputInvalid, salvagePassBOutput };
 
 export const PASS_B_VERSION = PROMPT_VERSION_B;
+
+/** Tag a usage row as a replay: zero cost for this run, original cost preserved. */
+function replayUsage(usage: CallUsage, detail: string): CallUsage {
+  return {
+    ...usage,
+    costUsd: 0,
+    usageSource: "reused-prior-artifact",
+    originalCostUsd: usage.costUsd,
+    detail,
+  };
+}
+
+/** Tag usages in accountingCalls so chargeUsage knows they are replays. */
+function replayAccountingUsages(usages: CallUsage[]): CallUsage[] {
+  return usages.map((u) => ({ ...u, usageSource: "reused-prior-artifact" as const }));
+}
+
+/**
+ * When the fraction of terminally-failed chunks exceeds this threshold the pass
+ * stops issuing new chunks and seals with PASS_B_FAILURE_RATE_EXCEEDED.
+ *
+ * Rationale (from the production incident analysis): the run that prompted this
+ * fix measured 3/67 = 4.5% terminal failures from prompt/validator mismatch.
+ * That was systematic but low enough that salvage or a retry with echo would
+ * recover most of them. Past 20% the read is suspect — the model is consistently
+ * producing output the decoder cannot use, and each additional purchase is more
+ * likely to waste money than to land usable obligations.
+ */
+export const PASS_B_TERMINAL_FAILURE_RATE_THRESHOLD = 0.2;
 
 /** Where each chunk lands the instant it returns. */
 const chunkKey = (runId: string, n: number) =>
   k("runs", runId, "extraction", "pass-b", `chunk-${String(n).padStart(2, "0")}.json`);
+const chunkWireCeilingKey = (runId: string, n: number) =>
+  k("runs", runId, "extraction", "pass-b", `chunk-${String(n).padStart(2, "0")}-wire-ceiling.json`);
 
 /** Where each sweep call lands. Read back on resume — it used to be write-only. */
 const sweepKey = (runId: string, i: number) =>
   k("runs", runId, "extraction", "pass-b", `sweep${String(i + 1).padStart(2, "0")}.json`);
+const sweepWireCeilingKey = (runId: string, i: number) =>
+  k("runs", runId, "extraction", "pass-b", `sweep${String(i + 1).padStart(2, "0")}-wire-ceiling.json`);
+
+const chunkHistoryKey = (runId: string, n: number, digest: string) =>
+  k("runs", runId, "extraction", "pass-b", `chunk-${String(n).padStart(2, "0")}-history-${digest}.json`);
+const chunkCasConflictKey = (runId: string, n: number, digest: string) =>
+  k("runs", runId, "extraction", "pass-b", `chunk-${String(n).padStart(2, "0")}-cas-conflict-${digest}.json`);
+const sweepHistoryKey = (runId: string, i: number, digest: string) =>
+  k("runs", runId, "extraction", "pass-b", `sweep${String(i + 1).padStart(2, "0")}-history-${digest}.json`);
+const sweepCasConflictKey = (runId: string, i: number, digest: string) =>
+  k("runs", runId, "extraction", "pass-b", `sweep${String(i + 1).padStart(2, "0")}-cas-conflict-${digest}.json`);
 
 export interface Chunk {
   id: string;
@@ -144,6 +206,14 @@ async function reportProgress(
   }
 }
 
+/** A per-obligation limitation from salvage: closed machine reason, never model text. */
+export interface PassBLimitation {
+  unit: string;
+  rowIndex: number;
+  rowKind: "obligation" | "ambiguity" | "unverifiable";
+  reason: "obligation-malformed" | "root-malformed";
+}
+
 export type PassBResult = PassResult & {
   /** Exact same-provider model plan that every persisted unit must match. */
   providerPlanIdentity: string;
@@ -157,6 +227,10 @@ export type PassBResult = PassResult & {
   issuedCalls: CallUsage[];
   /** All persisted receipts offered to the idempotent core settlement CAS. */
   accountingCalls: CallUsage[];
+  /** Obligations/items dropped as named limitations during per-item salvage. */
+  limitations: PassBLimitation[];
+  terminalReasonCode?: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED | string;
+  credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "deepseek" };
 };
 
 export type PassBCompletedAuthority = Omit<
@@ -178,12 +252,19 @@ export type PassBAuthorityReconstruction =
       /** SHA-256 of body, bound into continuation/consolidation state. */
       hash: string;
     }
-  | { kind: "invalid"; detail: string; accountingCalls: CallUsage[]; slice: PassBSlice };
+  | {
+      kind: "invalid";
+      detail: string;
+      accountingCalls: CallUsage[];
+      slice: PassBSlice;
+      /** Exact durable unit when reconstruction can identify one. */
+      failedUnit: PassResult["failedUnits"][number] | null;
+    };
 
 export const PASS_B_COMPLETION_KEYS = [
   "parserVersion", "promptVersion", "pass", "provider", "model", "providerPlanIdentity",
   "requirements", "ambiguities", "unverifiable", "dispositions", "constructs", "failedUnits",
-  "calls", "slice", "issuedCalls", "accountingCalls",
+  "limitations", "calls", "slice", "issuedCalls", "accountingCalls",
 ] as const;
 
 /** One shared closed projection for stage reads and exact reconstruction comparison. */
@@ -199,7 +280,7 @@ export function passBCompletionShapeClosed(value: Record<string, unknown>): bool
   return JSON.stringify(actualKeys) === JSON.stringify(expectedKeys) &&
     [
       "requirements", "ambiguities", "unverifiable", "dispositions", "constructs",
-      "failedUnits", "calls", "issuedCalls", "accountingCalls",
+      "failedUnits", "limitations", "calls", "issuedCalls", "accountingCalls",
     ].every((key) => Array.isArray(value[key]));
 }
 
@@ -236,6 +317,211 @@ export function passBStepTimeoutMs(env: Env): number {
   return passBWaveBudgetMs(env) + passBCallCeilingMs(env) + PASS_B_STEP_SLACK_MS;
 }
 
+/** Bounded storage-only attempts. No branch below is allowed to repeat a model purchase. */
+export const PASS_B_PAID_ARTIFACT_PERSIST_ATTEMPTS = 2;
+
+interface PassBUnitStorageAuthority {
+  /** Exact R2 version decoded by the strict canonical reader before a replacement purchase. */
+  etag: string;
+  /** Exact predecessor bytes; semantic equality is not append-only retention. */
+  bodyText: string;
+}
+
+interface PassBPaidArtifactAddress {
+  canonicalKey: string;
+  historyKey: (digest: string) => string;
+  conflictKey: (digest: string) => string;
+}
+
+type PassBPaidArtifactPersistence =
+  | { ok: true }
+  | { ok: false; detail: string; conflictKey: string };
+
+const storageDetail = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+/**
+ * Create one content-addressed append-only object and prove its exact bytes after every
+ * ambiguous/null result. Equal bytes are idempotent success; different bytes at the same
+ * digest key are corruption (or a SHA-256 collision), never overwrite authority.
+ */
+async function persistPassBAppendOnlyExact(
+  env: Env,
+  key: string,
+  bodyText: string,
+  unitId: string,
+  purpose: "history" | "cas-conflict",
+): Promise<void> {
+  let lastProblem = "storage did not return a result";
+  for (
+    let attempt = 1;
+    attempt <= PASS_B_PAID_ARTIFACT_PERSIST_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      const written = await env.EVIDENCE.put(key, bodyText, {
+        httpMetadata: { contentType: "application/json" },
+        onlyIf: { etagDoesNotMatch: "*" },
+      });
+      if (written !== null) return;
+      lastProblem = "conditional create found an occupied append-only key";
+    } catch (error) {
+      lastProblem = `conditional create failed with ${storageDetail(error)}`;
+    }
+
+    let retained: R2ObjectBody | null;
+    try {
+      retained = await env.EVIDENCE.get(key);
+    } catch (error) {
+      lastProblem += `; exact reread failed with ${storageDetail(error)}`;
+      continue;
+    }
+    if (retained === null) {
+      lastProblem += "; exact reread found no object";
+      continue;
+    }
+    let retainedText: string;
+    try {
+      retainedText = await retained.text();
+    } catch (error) {
+      lastProblem += `; retained bytes could not be read: ${storageDetail(error)}`;
+      continue;
+    }
+    if (retainedText === bodyText) return;
+    throw new Error(
+      `PASS_B_${purpose === "history" ? "HISTORY" : "CAS_CONFLICT"}_ARTIFACT_IMMUTABLE: ` +
+        `${unitId} append-only key ${key} contains different bytes`,
+    );
+  }
+  throw new Error(
+    `PASS_B_${purpose === "history" ? "HISTORY" : "CAS_CONFLICT"}_ARTIFACT_PERSISTENCE_FAILED: ` +
+      `${unitId}: ${lastProblem}`,
+  );
+}
+
+/**
+ * Persist one already-paid Pass-B unit without overwriting canonical bytes.
+ *
+ * A strict-read predecessor is archived verbatim before its exact etag can be replaced.
+ * Absence permits only conditional creation. Every null/throw is resolved by an exact
+ * canonical reread. If another writer won, the losing paid bytes move to their immutable
+ * content-addressed conflict key and this unit terminalizes with no semantic/coverage credit.
+ */
+async function persistPassBPaidUnitArtifact(
+  env: Env,
+  unitId: string,
+  address: PassBPaidArtifactAddress,
+  predecessor: PassBUnitStorageAuthority | null,
+  bodyText: string,
+): Promise<PassBPaidArtifactPersistence> {
+  const targetDigest = await sha256Hex(bodyText);
+  const conflictKey = address.conflictKey(targetDigest);
+  const preserveConflict = async (): Promise<void> =>
+    persistPassBAppendOnlyExact(env, conflictKey, bodyText, unitId, "cas-conflict");
+
+  if (predecessor !== null) {
+    const predecessorDigest = await sha256Hex(predecessor.bodyText);
+    try {
+      await persistPassBAppendOnlyExact(
+        env,
+        address.historyKey(predecessorDigest),
+        predecessor.bodyText,
+        unitId,
+        "history",
+      );
+    } catch (error) {
+      await preserveConflict();
+      return {
+        ok: false,
+        conflictKey,
+        detail:
+          `PASS_B_UNIT_HISTORY_PERSISTENCE_FAILED: ${unitId}: ${storageDetail(error)}. ` +
+          `The paid target is retained at ${conflictKey}; canonical authority was not changed.`,
+      };
+    }
+  }
+
+  let expected = predecessor;
+  let lastProblem = "canonical storage did not return a result";
+  for (
+    let attempt = 1;
+    attempt <= PASS_B_PAID_ARTIFACT_PERSIST_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      const written = await env.EVIDENCE.put(address.canonicalKey, bodyText, {
+        httpMetadata: { contentType: "application/json" },
+        onlyIf: expected === null
+          ? { etagDoesNotMatch: "*" }
+          : { etagMatches: expected.etag },
+      });
+      if (written !== null) return { ok: true };
+      lastProblem = expected === null
+        ? "conditional create found an occupied canonical key"
+        : "conditional replacement no longer matched the strict-read predecessor";
+    } catch (error) {
+      lastProblem = `conditional canonical write failed with ${storageDetail(error)}`;
+    }
+
+    let retained: R2ObjectBody | null;
+    try {
+      retained = await env.EVIDENCE.get(address.canonicalKey);
+    } catch (error) {
+      lastProblem += `; exact canonical reread failed with ${storageDetail(error)}`;
+      continue;
+    }
+    if (retained === null) {
+      if (expected !== null) {
+        await preserveConflict();
+        return {
+          ok: false,
+          conflictKey,
+          detail:
+            `PASS_B_UNIT_CANONICAL_AUTHORITY_LOST: ${unitId}: the strict-read predecessor ` +
+            `disappeared before replacement. The paid target is retained at ${conflictKey}; ` +
+            `the canonical key was not recreated.`,
+        };
+      }
+      lastProblem += "; exact canonical reread found no object";
+      continue;
+    }
+
+    let retainedText: string;
+    try {
+      retainedText = await retained.text();
+    } catch (error) {
+      lastProblem += `; canonical bytes could not be read: ${storageDetail(error)}`;
+      continue;
+    }
+    if (retainedText === bodyText) return { ok: true };
+    if (expected !== null && retainedText === expected.bodyText) {
+      // A before-commit transport failure left the exact predecessor in place. The next
+      // bounded retry is tied to the exact version just reread, never to a stale etag.
+      expected = { etag: retained.etag, bodyText: retainedText };
+      lastProblem += "; exact predecessor remains current";
+      continue;
+    }
+
+    await preserveConflict();
+    return {
+      ok: false,
+      conflictKey,
+      detail:
+        `PASS_B_UNIT_CANONICAL_CAS_CONFLICT: ${unitId}: another exact canonical artifact won. ` +
+        `The winner was not overwritten; the losing paid target is retained at ${conflictKey}.`,
+    };
+  }
+
+  await preserveConflict();
+  return {
+    ok: false,
+    conflictKey,
+    detail:
+      `PASS_B_UNIT_CANONICAL_PERSISTENCE_UNRESOLVED: ${unitId}: ${lastProblem}. ` +
+      `The losing paid target is retained at ${conflictKey}; canonical authority was not overwritten.`,
+  };
+}
+
 export async function runPassB(
   env: Env,
   runId: string,
@@ -243,6 +529,7 @@ export async function runPassB(
   documentName: string,
   onProgress?: (msg: string) => Promise<void>,
   options?: PassBSliceOptions,
+  onUnitStart?: DocumentReadingUnitStartObserver,
 ): Promise<PassBResult> {
   const parserVersion = doc.parserVersion ?? DOCX_BLOCKS_VERSION;
   // Compute once before reading or buying anything. Stored units from another model
@@ -251,22 +538,175 @@ export async function runPassB(
   const chunks = chunkBlocks(doc.blocks, num(env.EXTRACT_CHUNK_CHARS, 5_000), num(env.EXTRACT_CHUNK_MAX_BLOCKS, 45));
   const contextBlocks = globalContextBlocks(doc.blocks, num(env.EXTRACT_CONTEXT_CHARS, 4_000));
   const contextIds = new Set(contextBlocks.map((b) => b.blockId));
+  const wireMaxBytes = extractionWirePolicy(env).maxInputBytes;
+  const boundedContextJsonl = buildBoundedSourceBlocksJsonl(contextBlocks, wireMaxBytes);
   const evidenceBlocksFor = (owned: readonly SourceBlock[], contextIncluded: boolean): SourceBlock[] => {
     if (!contextIncluded) return [...owned];
     const byId = new Map<string, SourceBlock>();
     for (const block of [...owned, ...contextBlocks]) byId.set(block.blockId, block);
     return [...byId.values()];
   };
-
+  const chunkRequestFor = (chunk: Chunk, priorFailureDetail?: string) => {
+    const blockIds = chunk.blocks.map((block) => block.blockId);
+    const overlapsContext = blockIds.some((id) => contextIds.has(id));
+    const includesContext = !overlapsContext && contextBlocks.length > 0;
+    const evidenceBlocks = evidenceBlocksFor(chunk.blocks, includesContext);
+    const ownedJsonl = buildBoundedSourceBlocksJsonl(chunk.blocks, wireMaxBytes);
+    if (!ownedJsonl.ok) {
+      return {
+        ok: false as const,
+        blockIds,
+        evidenceBlocks,
+        detail: extractionWirePreSerializationFailureDetail(
+          chunk.id, blockIds.length, ownedJsonl, "EXTRACT_MODEL_INPUT_MAX_BYTES",
+        ),
+      };
+    }
+    if (includesContext && !boundedContextJsonl.ok) {
+      return {
+        ok: false as const,
+        blockIds,
+        evidenceBlocks,
+        detail: extractionWirePreSerializationFailureDetail(
+          chunk.id, blockIds.length, boundedContextJsonl, "EXTRACT_MODEL_INPUT_MAX_BYTES",
+        ),
+      };
+    }
+    const context = includesContext && boundedContextJsonl.ok ? boundedContextJsonl.text : null;
+    let userText = userMessageB(
+      documentName,
+      chunk.id,
+      ownedJsonl.text,
+      context,
+      blockIds,
+    );
+    // B2: echo the validator error on retry so the model can correct its output.
+    if (priorFailureDetail) {
+      const bounded = priorFailureDetail.slice(0, 400);
+      userText += `\n\nPREVIOUS ATTEMPT REJECTED\nYour previous answer for this chunk was rejected by the output validator with: ${bounded}\nEmit the corrected JSON object; change nothing that was not named.`;
+    }
+    const optionsForCall = {
+      system: SYSTEM_B,
+      user: userText,
+      maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
+      role: `extract-pass-b-${chunk.id}`,
+      callId: `call_b_${chunk.n}`,
+      maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
+    };
+    return { ok: true as const, blockIds, evidenceBlocks, optionsForCall };
+  };
   const requirements: RawRequirement[] = [];
   const ambiguities: PassResult["ambiguities"] = [];
   const unverifiable: PassResult["unverifiable"] = [];
   const dispositions: PassResult["dispositions"] = [];
   const constructs: PassResult["constructs"] = [];
   const failedUnits: PassResult["failedUnits"] = [];
+  const limitations: PassBLimitation[] = [];
   const calls: CallUsage[] = [];
   const issuedCalls: CallUsage[] = [];
   const accountingCalls: CallUsage[] = [];
+  let terminalSemanticFailures = 0;
+  let terminalProviderFailures = 0;
+  let terminalReasonCode: typeof EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED | string | undefined;
+  let credentialRefusal: PassBResult["credentialRefusal"];
+  let deepseekPurchaseEnv: Env | null = null;
+  const resolveDeepseekPurchaseEnv = async (): Promise<Env> => {
+    if (deepseekPurchaseEnv !== null) return deepseekPurchaseEnv;
+    const deepseekKey = await keyFor(env, "deepseek");
+    deepseekPurchaseEnv = { ...env, DEEPSEEK_API_KEY: deepseekKey };
+    return deepseekPurchaseEnv;
+  };
+  const persistZeroReceiptWireFailure = async (input: {
+    key: string;
+    idField: "chunkId" | "sweepId";
+    unitId: string;
+    blockIds: string[];
+    evidenceBlockIds: string[];
+    detail: string;
+  }): Promise<void> => {
+    const bodyText = JSON.stringify(
+      {
+        [input.idField]: input.unitId,
+        blockIds: input.blockIds,
+        evidenceBlockIds: input.evidenceBlockIds,
+        parserVersion,
+        promptVersion: PROMPT_VERSION_B,
+        providerPlanIdentity,
+        decoderIdentity: PASS_B_DECODER_VERSION,
+        status: "failed",
+        attempts: 0,
+        usages: [],
+        failureStage: "wire-ceiling",
+        terminal: true,
+        detail: input.detail,
+      },
+      null,
+      2,
+    );
+    const written = await env.EVIDENCE.put(input.key, bodyText, {
+      httpMetadata: { contentType: "application/json" },
+      onlyIf: { etagDoesNotMatch: "*" },
+    });
+    if (written !== null) return;
+    const retained = await env.EVIDENCE.get(input.key);
+    if (!retained || await retained.text() !== bodyText) {
+      throw new Error(
+        `PASS_B_WIRE_CEILING_ARTIFACT_IMMUTABLE: ${input.unitId} exact key is already occupied ` +
+          `by different bytes; it was not overwritten and no provider request was issued`,
+      );
+    }
+  };
+
+  // B2: PRE-SCAN for prior semantic failures so the preflight includes the echo.
+  // This is a lightweight R2 read pass that gathers only the failure details needed to
+  // build the retry request bodies with the echoed validator error.
+  const maxIssuesForPrescan = Math.max(1, num(env.EXTRACT_CHUNK_MAX_ISSUES, 2));
+  const priorFailureDetailByChunk = new Map<number, string>();
+  for (const chunk of chunks) {
+    const includesContext = !chunk.blocks.some((b) => contextIds.has(b.blockId)) && contextBlocks.length > 0;
+    const read = await readChunkWithAuthority(
+      env, runId, chunk.n, chunk.blocks, evidenceBlocksFor(chunk.blocks, includesContext), parserVersion,
+    );
+    if (
+      read.artifact?.kind === "failed" &&
+      !read.artifact.terminal &&
+      read.artifact.attempts < maxIssuesForPrescan &&
+      read.artifact.detail
+    ) {
+      priorFailureDetailByChunk.set(chunk.n, read.artifact.detail);
+    }
+  }
+
+  // EXTRACTION_WIRE_PREFLIGHT_BEFORE_CHUNK_FANOUT: every canonical chunk body is measured
+  // before the concurrent queue exists. One later oversized/escaped row therefore prevents
+  // all new chunk purchases in this wave instead of being found after earlier workers spend.
+  // The pre-scan above populated priorFailureDetailByChunk so retried chunks include
+  // the echoed validator error in their preflighted bytes — the same bytes the hash pins.
+  const chunkWireChecks = new Map<number,
+    | { ok: true; requestHash: string }
+    | { ok: false; detail: string }
+  >();
+  for (const chunk of chunks) {
+    const request = chunkRequestFor(chunk, priorFailureDetailByChunk.get(chunk.n));
+    if (!request.ok) {
+      chunkWireChecks.set(chunk.n, { ok: false, detail: request.detail });
+      continue;
+    }
+    const bodyText = chatRequestBodyText(deepseekPassBRequestShape(env), request.optionsForCall);
+    const check = preflightExtractionRequestBodies(env, [{
+      route: "deepseek-v4-pro",
+      bodyText,
+    }]);
+    chunkWireChecks.set(
+      chunk.n,
+      check.ok
+        ? { ok: true, requestHash: `sha256:${await sha256Hex(bodyText)}` }
+        : {
+            ok: false,
+            detail: extractionWireFailureDetail(chunk.id, request.blockIds.length, check),
+          },
+    );
+  }
 
   // THE DEADLINE, AND THE ONE EXCEPTION TO IT. `issued === 0` keeps the first call of every
   // slice unconditional: a slice that issues nothing makes no progress, and a wave loop over
@@ -279,8 +719,23 @@ export async function runPassB(
   let issued = 0;
   let deadlineHit = false;
   let terminalFailure = false;
+  let failureRateExceeded = false;
+  /** Paid targets preserved only as conflict evidence receive no landed/coverage credit. */
+  let persistenceConflictFailures = 0;
   const mayIssue = (): boolean => {
-    if (terminalFailure) return false;
+    // Infrastructure failures (persistence conflict, wire ceiling) stop immediately.
+    if (persistenceConflictFailures > 0) return false;
+    if (terminalReasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) return false;
+    if (failureRateExceeded) return false;
+    // All terminal failures (semantic + provider) use the 20% guardrail: stop only when
+    // terminal failures exceed 20% of the total chunk count. Below that, continue — each purchase
+    // is persisted and reusable on resume, and the existing ledger sweep may claim the
+    // dead chunks' blocks. // mutation-anchor: failure-rate-guardrail
+    if ((terminalSemanticFailures + terminalProviderFailures) > Math.ceil(chunks.length * PASS_B_TERMINAL_FAILURE_RATE_THRESHOLD)) {
+      failureRateExceeded = true;
+      terminalReasonCode = "PASS_B_FAILURE_RATE_EXCEEDED";
+      return false;
+    }
     if (issued === 0) return true;
     if (now() < deadlineAt) return true;
     deadlineHit = true;
@@ -304,23 +759,45 @@ export async function runPassB(
   const todo: Chunk[] = [];
   const priorAttemptsByChunk = new Map<number, number>();
   const priorUsagesByChunk = new Map<number, CallUsage[]>();
+  const priorAuthorityByChunk = new Map<number, PassBUnitStorageAuthority | null>();
   let landed = 0;
   for (const chunk of chunks) {
     const blockIds = chunk.blocks.map((b) => b.blockId);
+    if (onUnitStart) {
+      await onUnitStart({
+        stage: "secondary-chunks",
+        unit: {
+          kind: "chunk",
+          name: chunk.id,
+          ordinal: chunk.n,
+          total: chunks.length,
+          sourceContext: sourceContextForUnit(doc.blocks, blockIds),
+        },
+        primary: null,
+        secondary: {
+          total: chunks.length,
+          landed,
+          remaining: chunks.length - landed,
+          sweepRemaining: null,
+        },
+      });
+    }
     const includesContext = !blockIds.some((id) => contextIds.has(id)) && contextBlocks.length > 0;
-    const existing = await readChunk(
+    const read = await readChunkWithAuthority(
       env, runId, chunk.n, chunk.blocks, evidenceBlocksFor(chunk.blocks, includesContext), parserVersion,
     );
+    const existing = read.artifact;
 
     if (existing === null) {
+      priorAuthorityByChunk.set(chunk.n, read.predecessor);
       todo.push(chunk);
       continue;
     }
 
     if (existing.kind === "failed") {
-      accountingCalls.push(...existing.usages);
+      accountingCalls.push(...replayAccountingUsages(existing.usages));
       for (const usage of existing.usages) {
-        calls.push({ ...usage, detail: "reused: prior failed chunk purchase", costUsd: 0 });
+        calls.push(replayUsage(usage, "reused: prior failed chunk purchase"));
       }
       // A FAILED CHUNK IS RE-ISSUED A BOUNDED NUMBER OF TIMES, ACROSS THE WHOLE RUN — the
       // artifact carries the count, so waves and recovery instances share one budget rather
@@ -329,29 +806,29 @@ export async function runPassB(
       if (!existing.terminal && existing.attempts < maxIssues) {
         priorAttemptsByChunk.set(chunk.n, existing.attempts);
         priorUsagesByChunk.set(chunk.n, existing.usages);
+        priorAuthorityByChunk.set(chunk.n, read.predecessor);
         todo.push(chunk);
         continue;
       }
       landed += 1;
       terminalFailure = true;
+      if (existing.wireCeiling) {
+        terminalReasonCode = EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+      }
       failedUnits.push({ unit: chunk.id, blockIds, detail: existing.detail });
       unresolvedFor(blockIds, `chunk ${chunk.id} failed after ${existing.attempts} attempt(s): ${existing.detail}`);
       continue;
     }
 
     landed += 1;
-    accountingCalls.push(...existing.usages);
+    accountingCalls.push(...replayAccountingUsages(existing.usages));
     requirements.push(...existing.obligations);
     dispositions.push(...existing.dispositions);
     constructs.push(...existing.constructs);
     ambiguities.push(...existing.ambiguities);
     unverifiable.push(...existing.unverifiable);
     for (const usage of existing.usages) {
-      calls.push({
-        ...usage,
-        detail: "reused: this chunk was already persisted by an earlier attempt",
-        costUsd: 0,
-      });
+      calls.push(replayUsage(usage, "reused: this chunk was already persisted by an earlier attempt"));
     }
     for (const id of blockIds) {
       if (!existing.dispositions.some((d) => d.blockId === id)) {
@@ -365,15 +842,227 @@ export async function runPassB(
   }
 
   // -------------------------------------------------------------------------
+  // PHASE 1.5 — CROSS-RUN UNIT REUSE (chunks).
+  //
+  // For each chunk still needing purchase, check the content-addressed cross-run unit
+  // index. A hit means another run already bought this exact extraction with the
+  // IDENTICAL identity and it decoded successfully. Adopt it: re-validate the model
+  // output through the SAME decoder the live path uses, write a per-run artifact, and
+  // accumulate results. The chunk is then removed from the purchase queue.
+  //
+  // A miss, a validation refusal, or any index error falls through to a live purchase
+  // with a console line naming why. Reuse is an optimization; correctness never depends
+  // on it.
+  // -------------------------------------------------------------------------
+  {
+    const adoptable = [...todo];
+    todo.length = 0;
+    for (const chunk of adoptable) {
+      const wireCheck = chunkWireChecks.get(chunk.n);
+      if (!wireCheck?.ok) {
+        todo.push(chunk);
+        continue;
+      }
+      // A chunk with a prior failure detail has an echoed validator error in its request,
+      // so its requestHash differs from any stored first-attempt unit. That is correct:
+      // the retry may produce a different (corrected) output.
+      if (priorFailureDetailByChunk.has(chunk.n)) {
+        todo.push(chunk);
+        continue;
+      }
+      const identityFields: UnitIdentityFields = {
+        unitKind: "pass-b-chunk",
+        requestHash: wireCheck.requestHash,
+        decoderIdentity: PASS_B_DECODER_VERSION,
+        providerPlanIdentity,
+        promptVersion: PROMPT_VERSION_B,
+        parserVersion,
+      };
+      try {
+        const stored = await lookupReusableUnit(env, identityFields);
+        if (stored === null) {
+          todo.push(chunk);
+          continue;
+        }
+        // Re-validate the stored model output through the SAME decoder the live path uses.
+        // An adopted unit that fails today's decoder is refused and bought fresh.
+        const blockIds = chunk.blocks.map((b) => b.blockId);
+        const includesContext = !blockIds.some((id) => contextIds.has(id)) && contextBlocks.length > 0;
+        const evidenceBlocks = evidenceBlocksFor(chunk.blocks, includesContext);
+        let decoded;
+        try {
+          decoded = decodePassBOutput(stored.modelOutput, chunk.id, chunk.blocks, evidenceBlocks); // mutation-anchor: unit-reuse-revalidation
+        } catch (err) {
+          console.log(
+            `unit-reuse: adopted payload revalidation failed for ${chunk.id}: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+          todo.push(chunk);
+          continue;
+        }
+        // Build a synthetic receipt for the per-run artifact. The receipt uses THIS run's
+        // identifiers so the strict per-run reader validates it, and the ORIGINAL cost so the
+        // artifact records what the model actually charged. The zero-cost accounting happens
+        // at the accumulator level (calls, accountingCalls), not at the artifact level.
+        const unitId = chunk.id;
+        const syntheticReceipt: CallUsage = {
+          eventId: `core-model-call/pass-b/${runId}/${unitId}/issue-1/receipt-1`,
+          callId: `call_b_${chunk.n}`,
+          role: `extract-pass-b-${unitId}`,
+          provider: stored.originalUsage.provider,
+          model: stored.originalUsage.model,
+          status: "ok",
+          inputTokens: stored.originalUsage.inputTokens,
+          outputTokens: stored.originalUsage.outputTokens,
+          costUsd: stored.originalUsage.costUsd,
+          latencyMs: stored.originalUsage.latencyMs,
+          attempts: 1,
+          usageSource: stored.originalUsage.usageSource as CallUsage["usageSource"],
+        };
+        const adoptedBody = JSON.stringify(
+          {
+            chunkId: unitId,
+            blockIds,
+            evidenceBlockIds: evidenceBlocks.map((block) => block.blockId),
+            parserVersion,
+            promptVersion: PROMPT_VERSION_B,
+            providerPlanIdentity,
+            decoderIdentity: PASS_B_DECODER_VERSION,
+            status: "ok",
+            attempts: 1,
+            usages: [syntheticReceipt],
+            modelOutput: stored.modelOutput,
+            obligations: decoded.obligations,
+            dispositions: decoded.dispositions,
+            constructs: decoded.constructs,
+            ambiguities: decoded.ambiguities,
+            unverifiable: decoded.unverifiable,
+            reusedFromRunId: stored.sourceRunId,
+          },
+          null,
+          2,
+        );
+        // Write to per-run storage so reconstruction and future waves find it.
+        const predecessor = priorAuthorityByChunk.get(chunk.n) ?? null;
+        const persistence = await persistPassBPaidUnitArtifact(
+          env,
+          unitId,
+          {
+            canonicalKey: chunkKey(runId, chunk.n),
+            historyKey: (digest) => chunkHistoryKey(runId, chunk.n, digest),
+            conflictKey: (digest) => chunkCasConflictKey(runId, chunk.n, digest),
+          },
+          predecessor,
+          adoptedBody,
+        );
+        if (!persistence.ok) {
+          // Another writer won the canonical key. That writer's artifact is authority;
+          // Phase 1 of the next wave will reclaim it.
+          todo.push(chunk);
+          continue;
+        }
+        // Accumulate results. The usage events book costUsd 0 with "reused-prior-artifact".
+        const replayedUsage = replayUsage(syntheticReceipt, `reused: adopted from prior run ${stored.sourceRunId}`);
+        calls.push(replayedUsage);
+        accountingCalls.push({ ...syntheticReceipt, usageSource: "reused-prior-artifact" as const });
+        requirements.push(...decoded.obligations);
+        dispositions.push(...decoded.dispositions);
+        constructs.push(...decoded.constructs);
+        ambiguities.push(...decoded.ambiguities);
+        unverifiable.push(...decoded.unverifiable);
+        for (const id of blockIds) {
+          if (!decoded.dispositions.some((d) => d.blockId === id)) {
+            dispositions.push({
+              blockId: id,
+              disposition: "unresolved",
+              reason: `chunk ${unitId} adopted from prior run returned no disposition for this block`,
+            });
+          }
+        }
+        landed += 1;
+        await reportProgress(
+          onProgress,
+          `pass B ${unitId}: ADOPTED from prior run ${stored.sourceRunId} (saved $${syntheticReceipt.costUsd.toFixed(4)})`,
+        );
+      } catch (err) {
+        console.log(
+          `unit-reuse: cross-run adoption failed for ${chunk.id}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+        todo.push(chunk);
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // PHASE 2 — ISSUE, under bounded concurrency AND the slice deadline.
   //
   // Chunks are independent — each one is told exactly which blocks it owns — so running them
   // strictly one at a time turns a 9-call extraction into ten minutes of mostly-waiting.
   // Results are still persisted per chunk the moment each returns.
   // -------------------------------------------------------------------------
+  let pendingChunkWireFailure: {
+    chunk: Chunk;
+    detail: string;
+  } | null = null;
+  for (const chunk of todo) {
+    const check = chunkWireChecks.get(chunk.n);
+    if (check && !check.ok) {
+      pendingChunkWireFailure = { chunk, detail: check.detail };
+      break;
+    }
+  }
+  // A retained terminal unit is earlier durable authority than any new cap-drift refusal.
+  // Do not persist/relabel another chunk or exclude it from the explicit remaining count.
+  if (terminalFailure) pendingChunkWireFailure = null;
+  if (pendingChunkWireFailure !== null) {
+    const chunk = pendingChunkWireFailure.chunk;
+    const request = chunkRequestFor(chunk);
+    const detail = pendingChunkWireFailure.detail;
+    const hasPriorPaidArtifact = (priorAttemptsByChunk.get(chunk.n) ?? 0) > 0;
+    await persistZeroReceiptWireFailure({
+      key: hasPriorPaidArtifact ? chunkWireCeilingKey(runId, chunk.n) : chunkKey(runId, chunk.n),
+      idField: "chunkId",
+      unitId: chunk.id,
+      blockIds: request.blockIds,
+      evidenceBlockIds: request.evidenceBlocks.map((block) => block.blockId),
+      detail,
+    });
+    terminalFailure = true;
+    terminalReasonCode = EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+    failedUnits.push({ unit: chunk.id, blockIds: request.blockIds, detail });
+    unresolvedFor(request.blockIds, detail);
+    await reportProgress(
+      onProgress,
+      `pass B ${chunk.id}: FAILED — ${publicExtractionFailureDetail(detail)}`,
+    );
+  }
+  if (pendingChunkWireFailure === null && !failureRateExceeded && persistenceConflictFailures === 0 && terminalReasonCode !== EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED && todo.length > 0) {
+    try {
+      await resolveDeepseekPurchaseEnv();
+    } catch (error) {
+      if (!(error instanceof MissingCredential)) throw error;
+      credentialRefusal = { reason: "NO_CREDENTIAL", binding: error.binding, provider: "deepseek" };
+      terminalFailure = true;
+      const first = todo[0]!;
+      failedUnits.push({
+        unit: first.id,
+        blockIds: first.blocks.map((block) => block.blockId),
+        detail: `${error.binding} is unavailable after all-chunk request-size preflight; ` +
+          `no new Pass-B provider request was issued.`,
+      });
+    }
+  }
   const concurrency = Math.max(1, num(env.EXTRACT_CHUNK_CONCURRENCY, 3));
-  const queue = [...todo];
-  const deferred: Chunk[] = [];
+  // Infrastructure failures (wire ceiling, persistence conflict, credential) block issuing;
+  // semantic terminal failures are handled by mayIssue's 20% guardrail at dequeue time.
+  const infrastructureBlock = pendingChunkWireFailure !== null || persistenceConflictFailures > 0 || credentialRefusal !== undefined;
+  const queue = !infrastructureBlock ? [...todo] : [];
+  const deferred: Chunk[] = !infrastructureBlock
+    ? []
+    : pendingChunkWireFailure === null
+      ? [...todo]
+      : todo.filter((chunk) => chunk.n !== pendingChunkWireFailure.chunk.n);
   /**
    * Chunks that FAILED in this slice and still hold re-issue budget. They are work
    * REMAINING, not work done: `done` must stay false so the next wave spends the budget the
@@ -381,32 +1070,61 @@ export async function runPassB(
    * can never become a loop.
    */
   let retriableFailures = 0;
+  // Per invocation/wave only. `finally` empties the set after every unit, so a failed
+  // callback or provider call cannot leak concurrency into a later or resumed wave.
+  const activeChunkReads = new Set<number>();
 
   const runChunk = async (chunk: Chunk): Promise<void> => {
-    const blockIds = chunk.blocks.map((b) => b.blockId);
-    // The context block is omitted for the chunk that CONTAINS the global instructions:
-    // showing a chunk to itself as "do not extract from this" would suppress the very
-    // requirements that chunk exists to produce.
-    const overlapsContext = blockIds.some((id) => contextIds.has(id));
-    const context = overlapsContext || contextBlocks.length === 0 ? null : annotate(contextBlocks);
-    const evidenceBlocks = evidenceBlocksFor(chunk.blocks, context !== null);
+    const request = chunkRequestFor(chunk, priorFailureDetailByChunk.get(chunk.n));
+    if (!request.ok) {
+      throw new Error(`PASS_B_WIRE_PREFLIGHT_DRIFT: ${chunk.id} became oversized after all-chunk preflight`);
+    }
+    const admitted = chunkWireChecks.get(chunk.n);
+    if (!admitted?.ok) {
+      throw new Error(`PASS_B_WIRE_PREFLIGHT_DRIFT: ${chunk.id} lost its admitted request authority`);
+    }
+    const exactBodyText = chatRequestBodyText(deepseekPassBRequestShape(env), request.optionsForCall);
+    if (`sha256:${await sha256Hex(exactBodyText)}` !== admitted.requestHash) {
+      throw new Error(`PASS_B_WIRE_PREFLIGHT_DRIFT: ${chunk.id} request bytes changed after the all-chunk barrier`);
+    }
+    const { blockIds, evidenceBlocks } = request;
+    const optionsForCall = { ...request.optionsForCall, preSerializedBodyText: exactBodyText };
+    activeChunkReads.add(chunk.n);
+    try {
     // This count came from the same strict decoder that admitted the failed artifact in
     // phase 1. A second, weaker read used to let a stale parser/prompt failure consume the
     // current retry budget even after `readChunk` had rejected it.
     const priorAttempts = priorAttemptsByChunk.get(chunk.n) ?? 0;
     const priorUsages = priorUsagesByChunk.get(chunk.n) ?? [];
+    const predecessor = priorAuthorityByChunk.get(chunk.n) ?? null;
 
     let purchasedUsages: CallUsage[] = [];
     let rawModelOutput: Record<string, unknown> | null = null;
     try {
-      const outcome = await deepseekPassBJson(env, {
-        system: SYSTEM_B,
-        user: userMessageB(documentName, chunk.id, annotate(chunk.blocks), context, blockIds),
-        maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
-        role: `extract-pass-b-${chunk.id}`,
-        callId: `call_b_${chunk.n}`,
-        maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
-      });
+      if (onUnitStart) {
+        await onUnitStart({
+          stage: "secondary-chunks",
+          unit: {
+            kind: "chunk",
+            name: chunk.id,
+            ordinal: chunk.n,
+            total: chunks.length,
+            sourceContext: sourceContextForUnit(doc.blocks, blockIds),
+          },
+          primary: null,
+          secondary: {
+            total: chunks.length,
+            landed,
+            remaining: chunks.length - landed,
+            sweepRemaining: null,
+          },
+          concurrentUnitsInFlight: activeChunkReads.size,
+        });
+      }
+      if (deepseekPurchaseEnv === null) {
+        throw new Error("PASS_B_CREDENTIAL_PREFLIGHT_MISSING: chunk worker started without resolved DeepSeek authority");
+      }
+      const outcome = await deepseekPassBJson(deepseekPurchaseEnv, optionsForCall);
       const { value } = outcome;
       rawModelOutput = value;
       purchasedUsages = settlementUsages(runId, chunk.id, priorAttempts + 1, [outcome.usage]);
@@ -416,32 +1134,50 @@ export async function runPassB(
       accountingCalls.push(...purchasedUsages);
 
       // PERSIST FIRST, ACCUMULATE SECOND.
-      await env.EVIDENCE.put(
-        chunkKey(runId, chunk.n),
-        JSON.stringify(
-          {
-            chunkId: chunk.id,
-            blockIds,
-            evidenceBlockIds: evidenceBlocks.map((block) => block.blockId),
-            parserVersion,
-            promptVersion: PROMPT_VERSION_B,
-            providerPlanIdentity,
-            decoderIdentity: PASS_B_DECODER_VERSION,
-            status: "ok",
-            attempts: priorAttempts + 1,
-            usages: [...priorUsages, ...purchasedUsages],
-            modelOutput: value,
-            obligations: decoded.obligations,
-            dispositions: decoded.dispositions,
-            constructs: decoded.constructs,
-            ambiguities: decoded.ambiguities,
-            unverifiable: decoded.unverifiable,
-          },
-          null,
-          2,
-        ),
-        { httpMetadata: { contentType: "application/json" } },
+      const successBody = JSON.stringify(
+        {
+          chunkId: chunk.id,
+          blockIds,
+          evidenceBlockIds: evidenceBlocks.map((block) => block.blockId),
+          parserVersion,
+          promptVersion: PROMPT_VERSION_B,
+          providerPlanIdentity,
+          decoderIdentity: PASS_B_DECODER_VERSION,
+          status: "ok",
+          attempts: priorAttempts + 1,
+          usages: [...priorUsages, ...purchasedUsages],
+          modelOutput: value,
+          obligations: decoded.obligations,
+          dispositions: decoded.dispositions,
+          constructs: decoded.constructs,
+          ambiguities: decoded.ambiguities,
+          unverifiable: decoded.unverifiable,
+        },
+        null,
+        2,
       );
+      const persistence = await persistPassBPaidUnitArtifact(
+        env,
+        chunk.id,
+        {
+          canonicalKey: chunkKey(runId, chunk.n),
+          historyKey: (digest) => chunkHistoryKey(runId, chunk.n, digest),
+          conflictKey: (digest) => chunkCasConflictKey(runId, chunk.n, digest),
+        },
+        predecessor,
+        successBody,
+      );
+      if (!persistence.ok) {
+        terminalFailure = true;
+        persistenceConflictFailures += 1;
+        failedUnits.push({ unit: chunk.id, blockIds, detail: persistence.detail });
+        unresolvedFor(blockIds, persistence.detail);
+        await reportProgress(
+          onProgress,
+          `pass B ${chunk.id}: FAILED â€" paid artifact retained without canonical or coverage authority`,
+        );
+        return;
+      }
 
       requirements.push(...decoded.obligations);
       dispositions.push(...decoded.dispositions);
@@ -453,26 +1189,147 @@ export async function runPassB(
         `pass B ${chunk.id}: ${decoded.obligations.length} obligations, ` +
           `${decoded.dispositions.length}/${blockIds.length} blocks dispositioned`,
       );
+
+      // Store in the cross-run unit index so the next run can adopt instead of re-buying.
+      // This is best-effort: a store failure does not affect this run's correctness.
+      const admitted = chunkWireChecks.get(chunk.n); // mutation-anchor: unit-reuse-store-guard
+      if (admitted?.ok) {
+        const okUsage = purchasedUsages.find((u) => u.status === "ok");
+        if (okUsage) {
+          await storeCompletedUnit(
+            env,
+            {
+              unitKind: "pass-b-chunk",
+              requestHash: admitted.requestHash,
+              decoderIdentity: PASS_B_DECODER_VERSION,
+              providerPlanIdentity,
+              promptVersion: PROMPT_VERSION_B,
+              parserVersion,
+            },
+            value,
+            {
+              inputTokens: okUsage.inputTokens,
+              outputTokens: okUsage.outputTokens,
+              costUsd: okUsage.costUsd,
+              latencyMs: okUsage.latencyMs,
+              model: okUsage.model,
+              provider: okUsage.provider,
+              usageSource: okUsage.usageSource ?? "provider-reported",
+              attempts: okUsage.attempts,
+            },
+            runId,
+          ); // mutation-anchor: unit-reuse-store-on-success
+        }
+      }
     } catch (err) {
+      // Exact Pro bytes were preflighted before the fan-out existed. Credential lookup is
+      // deliberately inside the provider client after that proof; missing configuration is
+      // reported by the stage and must not become a paid/semantic unit artifact.
+      if (err instanceof MissingCredential) throw err;
       if (!(err instanceof PassBOutputInvalid) && !(err instanceof ModelCallError)) throw err;
       const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
       const semanticFailure = err instanceof PassBOutputInvalid;
+      const publicFailureDetail = publicExtractionFailureDetail(
+        semanticFailure
+          ? "extraction-pass-b-semantic-output-invalid"
+          : `extraction-provider-${err instanceof ModelCallError ? err.failureKind : "request-failed"}`,
+      );
       const failureUsages: CallUsage[] = semanticFailure
         ? purchasedUsages.map((usage) => ({ ...usage, status: "parse-failed", detail }))
         : err instanceof ModelCallError
           ? settlementUsages(runId, chunk.id, priorAttempts + 1, [err.usage])
           : [];
-      calls.push(...failureUsages);
-      issuedCalls.push(...failureUsages);
-      accountingCalls.push(...failureUsages);
       const attempts = priorAttempts + 1;
-      const terminal = semanticFailure || attempts >= maxIssues;
-      if (terminal) terminalFailure = true;
-      failedUnits.push({ unit: chunk.id, blockIds, detail });
-      unresolvedFor(blockIds, `chunk ${chunk.id} failed: ${detail}`);
-      await env.EVIDENCE.put(
-        chunkKey(runId, chunk.n),
-        JSON.stringify(
+      const terminal = attempts >= maxIssues; // mutation-anchor: semantic-failure-not-instantly-terminal
+      if (terminal) {
+        terminalSemanticFailures += semanticFailure ? 1 : 0;
+        terminalProviderFailures += semanticFailure ? 0 : 1;
+        terminalFailure = true;
+      }
+      // B3: per-obligation salvage at retry exhaustion for semantic failures.
+      let salvaged = false;
+      if (terminal && semanticFailure && rawModelOutput !== null) {
+        try {
+          const salvageResult = salvagePassBOutput(
+            rawModelOutput, chunk.id, chunk.blocks, evidenceBlocks,
+          );
+          if (salvageResult !== null) {
+            // Salvage succeeded: replace parse-failed usages with ok (degraded).
+            // Push only the degraded usages — not the original failureUsages —
+            // so a single purchase is never double-counted. Matches pass A's
+            // usage-status restoration pattern (spec B3).
+            const degradedUsages = failureUsages.map((usage) => ({
+              ...usage,
+              status: "ok" as const,
+              detail: `degraded: ${salvageResult.limitations.length} obligation(s) dropped`,
+            }));
+            calls.push(...degradedUsages);
+            issuedCalls.push(...degradedUsages);
+            accountingCalls.push(...degradedUsages);
+            const degradedBody = JSON.stringify(
+              {
+                chunkId: chunk.id,
+                blockIds,
+                evidenceBlockIds: evidenceBlocks.map((block) => block.blockId),
+                parserVersion,
+                promptVersion: PROMPT_VERSION_B,
+                providerPlanIdentity,
+                decoderIdentity: PASS_B_DECODER_VERSION,
+                status: "ok",
+                attempts,
+                usages: [...priorUsages, ...degradedUsages],
+                modelOutput: salvageResult.modelOutput,
+                rawModelOutputPreDegradation: rawModelOutput,
+                obligations: salvageResult.decoded.obligations,
+                dispositions: salvageResult.decoded.dispositions,
+                constructs: salvageResult.decoded.constructs,
+                ambiguities: salvageResult.decoded.ambiguities,
+                unverifiable: salvageResult.decoded.unverifiable,
+                limitations: salvageResult.limitations,
+              },
+              null,
+              2,
+            );
+            const persistence = await persistPassBPaidUnitArtifact(
+              env,
+              chunk.id,
+              {
+                canonicalKey: chunkKey(runId, chunk.n),
+                historyKey: (digest) => chunkHistoryKey(runId, chunk.n, digest),
+                conflictKey: (digest) => chunkCasConflictKey(runId, chunk.n, digest),
+              },
+              predecessor,
+              degradedBody,
+            );
+            if (persistence.ok) {
+              salvaged = true;
+              requirements.push(...salvageResult.decoded.obligations);
+              dispositions.push(...salvageResult.decoded.dispositions);
+              constructs.push(...salvageResult.decoded.constructs);
+              ambiguities.push(...salvageResult.decoded.ambiguities);
+              unverifiable.push(...salvageResult.decoded.unverifiable);
+              limitations.push(...salvageResult.limitations);
+              // Remove from failed units tracking since salvage landed.
+              terminalSemanticFailures -= 1;
+              terminalFailure = terminalSemanticFailures > 0 || terminalProviderFailures > 0 || persistenceConflictFailures > 0;
+              await reportProgress(onProgress,
+                `pass B ${chunk.id}: SALVAGED ${salvageResult.decoded.obligations.length} obligations, ` +
+                  `${salvageResult.limitations.length} limitation(s) — ${publicFailureDetail}`,
+              );
+            }
+          }
+        } catch {
+          // Salvage errors fall through to the normal terminal path.
+        }
+      }
+      if (!salvaged) {
+        // Salvage did not run or did not succeed — record the original failure usages.
+        // This is the only path that pushes failureUsages; the salvage-success path
+        // pushes degradedUsages instead. Neither path pushes both.
+        calls.push(...failureUsages);
+        issuedCalls.push(...failureUsages);
+        accountingCalls.push(...failureUsages);
+        const failureBody = JSON.stringify(
           {
             chunkId: chunk.id,
             blockIds,
@@ -491,14 +1348,43 @@ export async function runPassB(
           },
           null,
           2,
-        ),
-        { httpMetadata: { contentType: "application/json" } },
-      );
-      if (!terminal) retriableFailures += 1;
-      await reportProgress(
-        onProgress,
-        `pass B ${chunk.id}: FAILED (attempt ${attempts} of ${maxIssues}) — ${detail.slice(0, 120)}`,
-      );
+        );
+        const persistence = await persistPassBPaidUnitArtifact(
+          env,
+          chunk.id,
+          {
+            canonicalKey: chunkKey(runId, chunk.n),
+            historyKey: (digest) => chunkHistoryKey(runId, chunk.n, digest),
+            conflictKey: (digest) => chunkCasConflictKey(runId, chunk.n, digest),
+          },
+          predecessor,
+          failureBody,
+        );
+        if (!persistence.ok) {
+          terminalFailure = true;
+          persistenceConflictFailures += 1;
+          failedUnits.push({ unit: chunk.id, blockIds, detail: persistence.detail });
+          unresolvedFor(blockIds, persistence.detail);
+          await reportProgress(
+            onProgress,
+            `pass B ${chunk.id}: FAILED — paid artifact retained without canonical or coverage authority`,
+          );
+          return;
+        }
+        failedUnits.push({ unit: chunk.id, blockIds, detail });
+        unresolvedFor(blockIds, `chunk ${chunk.id} failed: ${detail}`);
+        if (!terminal) retriableFailures += 1;
+        const willRetry = !terminal;
+        await reportProgress(
+          onProgress,
+          willRetry
+            ? `pass B ${chunk.id}: FAILED (attempt ${attempts} of ${maxIssues}) — will retry — ${publicFailureDetail}`
+            : `pass B ${chunk.id}: FAILED (attempt ${attempts} of ${maxIssues}) — TERMINAL — ${publicFailureDetail}`,
+        );
+      }
+    }
+    } finally {
+      activeChunkReads.delete(chunk.n);
     }
   };
 
@@ -518,8 +1404,8 @@ export async function runPassB(
   });
   await Promise.all(workers);
 
-  landed += todo.length - deferred.length - retriableFailures;
-  const chunksRemaining = deferred.length + retriableFailures;
+  landed += todo.length - deferred.length - retriableFailures - persistenceConflictFailures;
+  const chunksRemaining = deferred.length + retriableFailures + persistenceConflictFailures;
 
   // ---------------------------------------------------------------------------
   // PHASE 3 — THE LEDGER SWEEP. Only once EVERY chunk has landed.
@@ -542,14 +1428,177 @@ export async function runPassB(
   let sweepCallsIssued = 0;
   let sweepRemaining = 0;
 
-  if (chunksRemaining === 0 && !terminalFailure && failedUnits.length === 0) {
+  // Run the sweep when all chunks are accounted for (ok, degraded, or terminal), even
+  // with terminal failed units. The dead chunks' blocks are unaccounted and the sweep is
+  // their built-in second read. Only infrastructure failures block the sweep.
+  if (chunksRemaining === 0 && persistenceConflictFailures === 0 && !failureRateExceeded && terminalReasonCode !== EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED) {
     const unaccounted = unaccountedBlocks(doc.blocks, requirements, dispositions);
-
-    for (let i = 0; i < sweepMax && i * sweepBlocksPerCall < unaccounted.length; i++) {
-      const slice = unaccounted.slice(i * sweepBlocksPerCall, (i + 1) * sweepBlocksPerCall);
+    const sweepCount = Math.min(
+      Math.max(0, Math.floor(sweepMax)),
+      sweepBlocksPerCall > 0 ? Math.ceil(unaccounted.length / sweepBlocksPerCall) : 0,
+    );
+    const sweepRequestFor = (i: number, sourceBlocks: SourceBlock[]) => {
       const sweepId = `SWEEP${String(i + 1).padStart(2, "0")}`;
-      const allowed = new Set(slice.map((b) => b.blockId));
-      const sweepEvidenceBlocks = evidenceBlocksFor(slice, contextBlocks.length > 0);
+      const blockIds = sourceBlocks.map((block) => block.blockId);
+      const evidenceBlocks = evidenceBlocksFor(sourceBlocks, contextBlocks.length > 0);
+      const sourceJsonl = buildBoundedSourceBlocksJsonl(sourceBlocks, wireMaxBytes);
+      const preSerializationFailure = !sourceJsonl.ok
+        ? extractionWirePreSerializationFailureDetail(
+            sweepId, blockIds.length, sourceJsonl, "EXTRACT_MODEL_INPUT_MAX_BYTES",
+          )
+        : contextBlocks.length > 0 && !boundedContextJsonl.ok
+          ? extractionWirePreSerializationFailureDetail(
+              sweepId, blockIds.length, boundedContextJsonl, "EXTRACT_MODEL_INPUT_MAX_BYTES",
+            )
+          : null;
+      if (preSerializationFailure !== null || !sourceJsonl.ok) {
+        return {
+          ok: false as const,
+          sweepId,
+          blockIds,
+          evidenceBlocks,
+          detail: preSerializationFailure!,
+        };
+      }
+      const sweepContext = contextBlocks.length > 0 && boundedContextJsonl.ok
+        ? boundedContextJsonl.text
+        : null;
+      const optionsForCall = {
+        system: SYSTEM_B,
+        user: userMessageSweep(
+          documentName,
+          sweepId,
+          sourceJsonl.text,
+          sweepContext,
+          blockIds,
+        ),
+        maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
+        role: `extract-pass-b-${sweepId}`,
+        callId: `call_b_sweep_${i + 1}`,
+        maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
+      };
+      return { ok: true as const, sweepId, blockIds, evidenceBlocks, optionsForCall };
+    };
+    const sweepPlans: Array<{
+      i: number;
+      sourceBlocks: SourceBlock[];
+      sweepId: string;
+      blockIds: string[];
+      evidenceBlocks: SourceBlock[];
+      wireCheck: { ok: true } | { ok: false; detail: string };
+      requestHash?: string;
+    }> = [];
+    for (let i = 0; i < sweepCount; i += 1) {
+      const sourceBlocks = unaccounted.slice(
+        i * sweepBlocksPerCall,
+        (i + 1) * sweepBlocksPerCall,
+      );
+      const request = sweepRequestFor(i, sourceBlocks);
+      if (!request.ok) {
+        sweepPlans.push({
+          i,
+          sourceBlocks,
+          sweepId: request.sweepId,
+          blockIds: request.blockIds,
+          evidenceBlocks: request.evidenceBlocks,
+          wireCheck: { ok: false, detail: request.detail },
+        });
+        continue;
+      }
+      const bodyText = chatRequestBodyText(deepseekPassBRequestShape(env), request.optionsForCall);
+      const exactCheck = preflightExtractionRequestBodies(env, [{
+        route: "deepseek-v4-pro",
+        bodyText,
+      }]);
+      const wireCheck = exactCheck.ok
+        ? { ok: true as const }
+        : {
+            ok: false as const,
+            detail: extractionWireFailureDetail(request.sweepId, request.blockIds.length, exactCheck),
+          };
+      sweepPlans.push({
+        i,
+        sourceBlocks,
+        sweepId: request.sweepId,
+        blockIds: request.blockIds,
+        evidenceBlocks: request.evidenceBlocks,
+        wireCheck,
+        ...(exactCheck.ok ? { requestHash: `sha256:${await sha256Hex(bodyText)}` } : {}),
+      });
+    }
+
+    // EXTRACTION_WIRE_PREFLIGHT_BEFORE_FIRST_SWEEP_PURCHASE: the complete, deterministic
+    // sweep plan is serialized and all current artifacts are reclaimed before any sweep can
+    // touch a credential. A later oversized slice therefore blocks every new sweep purchase.
+    const existingSweeps = new Map<number, PersistedChunk | FailedUnitArtifact | null>();
+    const sweepPredecessors = new Map<number, PassBUnitStorageAuthority | null>();
+    let pendingSweepWireFailure: {
+      i: number;
+      detail: string;
+    } | null = null;
+    let retainedSweepTerminal: number | null = null;
+    for (const plan of sweepPlans) {
+      const read = await readSweepWithAuthority(
+        env, runId, plan.i, plan.sourceBlocks, plan.evidenceBlocks, parserVersion,
+      );
+      const existing = read.artifact;
+      existingSweeps.set(plan.i, existing);
+      sweepPredecessors.set(plan.i, read.predecessor);
+      if (retainedSweepTerminal === null && existing?.kind === "failed" && existing.terminal) {
+        retainedSweepTerminal = plan.i;
+      }
+      if (
+        pendingSweepWireFailure === null && !plan.wireCheck.ok &&
+        (existing === null || (existing.kind === "failed" && !existing.terminal))
+      ) {
+        pendingSweepWireFailure = { i: plan.i, detail: plan.wireCheck.detail };
+      }
+    }
+
+    const firstSweepNeedingPurchase = pendingSweepWireFailure === null && retainedSweepTerminal === null
+      ? sweepPlans.find((plan) => {
+          const existing = existingSweeps.get(plan.i) ?? null;
+          return existing === null || (existing.kind === "failed" && !existing.terminal);
+        }) ?? null
+      : null;
+    if (firstSweepNeedingPurchase !== null && deepseekPurchaseEnv === null) {
+      try {
+        await resolveDeepseekPurchaseEnv();
+      } catch (error) {
+        if (!(error instanceof MissingCredential)) throw error;
+        credentialRefusal = { reason: "NO_CREDENTIAL", binding: error.binding, provider: "deepseek" };
+        terminalFailure = true;
+        failedUnits.push({
+          unit: firstSweepNeedingPurchase.sweepId,
+          blockIds: firstSweepNeedingPurchase.blockIds,
+          detail: `${error.binding} is unavailable after all-sweep request-size preflight; ` +
+            `no new Pass-B provider request was issued.`,
+        });
+      }
+    }
+
+    for (const plan of sweepPlans) {
+      const { i, sourceBlocks: slice, sweepId, blockIds, evidenceBlocks: sweepEvidenceBlocks } = plan;
+      const allowed = new Set(blockIds);
+      if (onUnitStart) {
+        await onUnitStart({
+          stage: "secondary-sweep",
+          unit: {
+            kind: "sweep",
+            name: sweepId,
+            ordinal: i + 1,
+            total: null,
+            sourceContext: sourceContextForUnit(doc.blocks, [...allowed]),
+          },
+          primary: null,
+          secondary: {
+            total: chunks.length,
+            landed: chunks.length,
+            remaining: 0,
+            sweepRemaining: null,
+          },
+        });
+      }
 
       const absorb = (
         sweptReqs: RawRequirement[],
@@ -570,27 +1619,179 @@ export async function runPassB(
 
       // RESUME, symmetric with the chunks. These artifacts were written and never read, so
       // every step retry re-bought all three sweep calls at full price.
-      const existing = await readSweep(env, runId, i, slice, sweepEvidenceBlocks, parserVersion);
+      const existing = existingSweeps.get(i) ?? null;
       if (existing && existing.kind === "ok") {
-        accountingCalls.push(...existing.usages);
+        accountingCalls.push(...replayAccountingUsages(existing.usages));
         for (const usage of existing.usages) {
-          calls.push({ ...usage, detail: "reused: this sweep call was already persisted", costUsd: 0 });
+          calls.push(replayUsage(usage, "reused: this sweep call was already persisted"));
         }
         absorb(existing.obligations, existing.dispositions, existing.ambiguities, existing.unverifiable);
         await reportProgress(onProgress, `pass B ${sweepId}: reused a previously persisted sweep call`);
         continue;
       }
+
+      // -------------------------------------------------------------------
+      // CROSS-RUN UNIT REUSE (sweeps). Same pattern as chunks (phase 1.5).
+      //
+      // A sweep still needing purchase is checked against the content-addressed
+      // cross-run unit index. On a hit the stored model output is re-validated
+      // through the SAME decoder the live path uses, a per-run artifact is
+      // written, and results are accumulated. The sweep is then treated as done
+      // WITHOUT consuming a sweep-call budget slot — it made no provider call.
+      // -------------------------------------------------------------------
+      if (
+        (existing === null || (existing?.kind === "failed" && !existing.terminal && existing.attempts < maxIssues)) &&
+        plan.wireCheck.ok && plan.requestHash !== undefined &&
+        retainedSweepTerminal === null && pendingSweepWireFailure === null
+      ) {
+        try {
+          const sweepIdentity: UnitIdentityFields = {
+            unitKind: "pass-b-sweep",
+            requestHash: plan.requestHash,
+            decoderIdentity: PASS_B_DECODER_VERSION,
+            providerPlanIdentity,
+            promptVersion: PROMPT_VERSION_B,
+            parserVersion,
+          };
+          const stored = await lookupReusableUnit(env, sweepIdentity);
+          if (stored !== null) {
+            let decoded;
+            try {
+              decoded = decodePassBOutput(stored.modelOutput, sweepId, slice, sweepEvidenceBlocks); // mutation-anchor: unit-reuse-sweep-revalidation
+            } catch (err) {
+              console.log(
+                `unit-reuse: adopted sweep payload revalidation failed for ${sweepId}: ` +
+                  `${err instanceof Error ? err.message : String(err)}`,
+              );
+              decoded = null;
+            }
+            if (decoded !== null) {
+              // Build synthetic receipt mirroring the chunk adoption pattern.
+              const syntheticReceipt: CallUsage = {
+                eventId: `core-model-call/pass-b/${runId}/${sweepId}/issue-1/receipt-1`,
+                callId: `call_b_sweep_${i + 1}`,
+                role: `extract-pass-b-${sweepId}`,
+                provider: stored.originalUsage.provider,
+                model: stored.originalUsage.model,
+                status: "ok",
+                inputTokens: stored.originalUsage.inputTokens,
+                outputTokens: stored.originalUsage.outputTokens,
+                costUsd: stored.originalUsage.costUsd,
+                latencyMs: stored.originalUsage.latencyMs,
+                attempts: 1,
+                usageSource: stored.originalUsage.usageSource as CallUsage["usageSource"],
+              };
+              const adoptedBody = JSON.stringify(
+                {
+                  sweepId,
+                  blockIds: [...allowed],
+                  evidenceBlockIds: sweepEvidenceBlocks.map((block) => block.blockId),
+                  parserVersion,
+                  promptVersion: PROMPT_VERSION_B,
+                  providerPlanIdentity,
+                  decoderIdentity: PASS_B_DECODER_VERSION,
+                  status: "ok",
+                  attempts: 1,
+                  usages: [syntheticReceipt],
+                  modelOutput: stored.modelOutput,
+                  obligations: decoded.obligations,
+                  dispositions: decoded.dispositions,
+                  constructs: decoded.constructs,
+                  ambiguities: decoded.ambiguities,
+                  unverifiable: decoded.unverifiable,
+                  reusedFromRunId: stored.sourceRunId,
+                },
+                null,
+                2,
+              );
+              const predecessor = sweepPredecessors.get(i) ?? null;
+              const persistence = await persistPassBPaidUnitArtifact(
+                env,
+                sweepId,
+                {
+                  canonicalKey: sweepKey(runId, i),
+                  historyKey: (digest) => sweepHistoryKey(runId, i, digest),
+                  conflictKey: (digest) => sweepCasConflictKey(runId, i, digest),
+                },
+                predecessor,
+                adoptedBody,
+              );
+              if (persistence.ok) {
+                // Accumulate results. Zero-cost accounting — adopted, not purchased.
+                const replayedUsage = replayUsage(syntheticReceipt, `reused: adopted sweep from prior run ${stored.sourceRunId}`);
+                calls.push(replayedUsage);
+                accountingCalls.push({ ...syntheticReceipt, usageSource: "reused-prior-artifact" as const });
+                absorb(decoded.obligations, decoded.dispositions, decoded.ambiguities, decoded.unverifiable);
+                // An adopted sweep must NOT consume a sweep-call budget slot. // mutation-anchor: unit-reuse-sweep-no-budget-slot
+                await reportProgress(
+                  onProgress,
+                  `pass B ${sweepId}: ADOPTED from prior run ${stored.sourceRunId} (saved $${syntheticReceipt.costUsd.toFixed(4)})`,
+                );
+                continue;
+              }
+              // Persistence conflict — fall through to normal purchase path.
+            }
+          }
+        } catch (err) {
+          console.log(
+            `unit-reuse: cross-run sweep adoption failed for ${sweepId}: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
       if (existing && existing.kind === "failed") {
-        accountingCalls.push(...existing.usages);
+        accountingCalls.push(...replayAccountingUsages(existing.usages));
         for (const usage of existing.usages) {
-          calls.push({ ...usage, detail: "reused: prior failed sweep purchase", costUsd: 0 });
+          calls.push(replayUsage(usage, "reused: prior failed sweep purchase"));
         }
       }
       if (existing && existing.kind === "failed" &&
           (existing.terminal || existing.attempts >= maxIssues)) {
         terminalFailure = true;
+        if (existing.wireCeiling) {
+          terminalReasonCode = EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+        }
         failedUnits.push({ unit: sweepId, blockIds: [...allowed], detail: existing.detail });
         break;
+      }
+      if (retainedSweepTerminal !== null) {
+        // A later retained terminal sweep makes this wave non-purchasing. Earlier successes
+        // were reclaimed above; missing/retryable units remain explicitly outstanding.
+        sweepRemaining += 1;
+        continue;
+      }
+      if (pendingSweepWireFailure !== null) {
+        if (pendingSweepWireFailure.i !== i) {
+          // Reclaim succeeded units above, but never buy an earlier missing/retryable sweep
+          // when a later canonical slice is already known to be unsafe on the wire.
+          sweepRemaining += 1;
+          continue;
+        }
+        const detail = pendingSweepWireFailure.detail;
+        const hasPriorPaidArtifact = existing?.kind === "failed" && existing.attempts > 0;
+        await persistZeroReceiptWireFailure({
+          key: hasPriorPaidArtifact ? sweepWireCeilingKey(runId, i) : sweepKey(runId, i),
+          idField: "sweepId",
+          unitId: sweepId,
+          blockIds,
+          evidenceBlockIds: sweepEvidenceBlocks.map((block) => block.blockId),
+          detail,
+        });
+        terminalFailure = true;
+        terminalReasonCode = EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+        failedUnits.push({ unit: sweepId, blockIds, detail });
+        unresolvedFor(blockIds, detail);
+        sweepRemaining += Math.max(0, sweepPlans.length - (i + 1));
+        await reportProgress(
+          onProgress,
+          `pass B ${sweepId}: FAILED — ${publicExtractionFailureDetail(detail)}`,
+        );
+        break;
+      }
+      if (credentialRefusal !== undefined) {
+        sweepRemaining += 1;
+        continue;
       }
       if (!mayIssue()) {
         sweepRemaining += 1;
@@ -600,23 +1801,28 @@ export async function runPassB(
       sweepCallsIssued += 1;
       const priorAttempts = existing && existing.kind === "failed" ? existing.attempts : 0;
       const priorUsages = existing && existing.kind === "failed" ? existing.usages : [];
+      const predecessor = sweepPredecessors.get(i) ?? null;
 
       let purchasedUsages: CallUsage[] = [];
       let rawModelOutput: Record<string, unknown> | null = null;
       try {
-        const outcome = await deepseekPassBJson(env, {
-          system: SYSTEM_B,
-          user: userMessageSweep(
-            documentName,
-            sweepId,
-            annotate(slice),
-            contextBlocks.length > 0 ? annotate(contextBlocks) : null,
-            [...allowed],
-          ),
-          maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
-          role: `extract-pass-b-${sweepId}`,
-          callId: `call_b_sweep_${i + 1}`,
-          maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
+        if (deepseekPurchaseEnv === null) {
+          throw new Error("PASS_B_CREDENTIAL_PREFLIGHT_MISSING: sweep started without resolved DeepSeek authority");
+        }
+        const purchaseRequest = sweepRequestFor(i, slice);
+        if (!purchaseRequest.ok || !plan.wireCheck.ok || plan.requestHash === undefined) {
+          throw new Error(`PASS_B_WIRE_PREFLIGHT_DRIFT: ${sweepId} has no safe purchase authority`);
+        }
+        const exactBodyText = chatRequestBodyText(
+          deepseekPassBRequestShape(env),
+          purchaseRequest.optionsForCall,
+        );
+        if (`sha256:${await sha256Hex(exactBodyText)}` !== plan.requestHash) {
+          throw new Error(`PASS_B_WIRE_PREFLIGHT_DRIFT: ${sweepId} request bytes changed after the all-sweep barrier`);
+        }
+        const outcome = await deepseekPassBJson(deepseekPurchaseEnv, {
+          ...purchaseRequest.optionsForCall,
+          preSerializedBodyText: exactBodyText,
         });
         const { value } = outcome;
         rawModelOutput = value;
@@ -625,41 +1831,95 @@ export async function runPassB(
         calls.push(...purchasedUsages);
         issuedCalls.push(...purchasedUsages);
         accountingCalls.push(...purchasedUsages);
-        await env.EVIDENCE.put(
-          sweepKey(runId, i),
-          JSON.stringify(
-            {
-              sweepId,
-              blockIds: [...allowed],
-              evidenceBlockIds: sweepEvidenceBlocks.map((block) => block.blockId),
-              parserVersion,
-              promptVersion: PROMPT_VERSION_B,
-              providerPlanIdentity,
-              decoderIdentity: PASS_B_DECODER_VERSION,
-              status: "ok",
-              attempts: priorAttempts + 1,
-              usages: [...priorUsages, ...purchasedUsages],
-              modelOutput: value,
-              obligations: decoded.obligations,
-              dispositions: decoded.dispositions,
-              constructs: decoded.constructs,
-              ambiguities: decoded.ambiguities,
-              unverifiable: decoded.unverifiable,
-            },
-            null,
-            2,
-          ),
-          { httpMetadata: { contentType: "application/json" } },
+        const successBody = JSON.stringify(
+          {
+            sweepId,
+            blockIds: [...allowed],
+            evidenceBlockIds: sweepEvidenceBlocks.map((block) => block.blockId),
+            parserVersion,
+            promptVersion: PROMPT_VERSION_B,
+            providerPlanIdentity,
+            decoderIdentity: PASS_B_DECODER_VERSION,
+            status: "ok",
+            attempts: priorAttempts + 1,
+            usages: [...priorUsages, ...purchasedUsages],
+            modelOutput: value,
+            obligations: decoded.obligations,
+            dispositions: decoded.dispositions,
+            constructs: decoded.constructs,
+            ambiguities: decoded.ambiguities,
+            unverifiable: decoded.unverifiable,
+          },
+          null,
+          2,
         );
+        const persistence = await persistPassBPaidUnitArtifact(
+          env,
+          sweepId,
+          {
+            canonicalKey: sweepKey(runId, i),
+            historyKey: (digest) => sweepHistoryKey(runId, i, digest),
+            conflictKey: (digest) => sweepCasConflictKey(runId, i, digest),
+          },
+          predecessor,
+          successBody,
+        );
+        if (!persistence.ok) {
+          terminalFailure = true;
+          failedUnits.push({ unit: sweepId, blockIds: [...allowed], detail: persistence.detail });
+          unresolvedFor(blockIds, persistence.detail);
+          sweepRemaining += Math.max(0, sweepPlans.length - i);
+          await reportProgress(
+            onProgress,
+            `pass B ${sweepId}: FAILED â€" paid artifact retained without canonical or coverage authority`,
+          );
+          break;
+        }
         absorb(decoded.obligations, decoded.dispositions, decoded.ambiguities, decoded.unverifiable);
         await reportProgress(onProgress,
           `pass B ${sweepId}: accounted for ${decoded.dispositions.length}/${allowed.size} ` +
             `previously unaccounted blocks (+${decoded.obligations.length} obligations)`,
         );
+
+        // Store sweep in the cross-run unit index (best-effort).
+        if (plan.requestHash !== undefined) {
+          const okUsage = purchasedUsages.find((u) => u.status === "ok");
+          if (okUsage) {
+            await storeCompletedUnit(
+              env,
+              {
+                unitKind: "pass-b-sweep",
+                requestHash: plan.requestHash,
+                decoderIdentity: PASS_B_DECODER_VERSION,
+                providerPlanIdentity,
+                promptVersion: PROMPT_VERSION_B,
+                parserVersion,
+              },
+              value,
+              {
+                inputTokens: okUsage.inputTokens,
+                outputTokens: okUsage.outputTokens,
+                costUsd: okUsage.costUsd,
+                latencyMs: okUsage.latencyMs,
+                model: okUsage.model,
+                provider: okUsage.provider,
+                usageSource: okUsage.usageSource ?? "provider-reported",
+                attempts: okUsage.attempts,
+              },
+              runId,
+            );
+          }
+        }
       } catch (err) {
+        if (err instanceof MissingCredential) throw err;
         if (!(err instanceof PassBOutputInvalid) && !(err instanceof ModelCallError)) throw err;
         const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
         const semanticFailure = err instanceof PassBOutputInvalid;
+        const publicFailureDetail = publicExtractionFailureDetail(
+          semanticFailure
+            ? "extraction-pass-b-semantic-output-invalid"
+            : `extraction-provider-${err instanceof ModelCallError ? err.failureKind : "request-failed"}`,
+        );
         const failureUsages: CallUsage[] = semanticFailure
           ? purchasedUsages.map((usage) => ({ ...usage, status: "parse-failed", detail }))
           : err instanceof ModelCallError
@@ -669,39 +1929,60 @@ export async function runPassB(
         issuedCalls.push(...failureUsages);
         accountingCalls.push(...failureUsages);
         const attempts = priorAttempts + 1;
-        const terminal = semanticFailure || attempts >= maxIssues;
+        const terminal = attempts >= maxIssues; // sweep mirrors chunk: semantic failure is not instantly terminal
         if (terminal) terminalFailure = true;
-        failedUnits.push({ unit: sweepId, blockIds: [...allowed], detail });
         // A failed sweep call is an artifact too, so its retries are bounded the same way a
         // chunk's are rather than being re-bought once per wave.
-        await env.EVIDENCE.put(
-          sweepKey(runId, i),
-          JSON.stringify(
-            {
-              sweepId,
-              blockIds: [...allowed],
-              evidenceBlockIds: sweepEvidenceBlocks.map((block) => block.blockId),
-              parserVersion,
-              promptVersion: PROMPT_VERSION_B,
-              providerPlanIdentity,
-              decoderIdentity: PASS_B_DECODER_VERSION,
-              status: "failed",
-              attempts,
-              usages: [...priorUsages, ...failureUsages],
-              failureStage: semanticFailure ? "semantic-output" : "provider",
-              terminal,
-              modelOutput: semanticFailure ? rawModelOutput : null,
-              detail,
-            },
-            null,
-            2,
-          ),
-          { httpMetadata: { contentType: "application/json" } },
+        const failureBody = JSON.stringify(
+          {
+            sweepId,
+            blockIds: [...allowed],
+            evidenceBlockIds: sweepEvidenceBlocks.map((block) => block.blockId),
+            parserVersion,
+            promptVersion: PROMPT_VERSION_B,
+            providerPlanIdentity,
+            decoderIdentity: PASS_B_DECODER_VERSION,
+            status: "failed",
+            attempts,
+            usages: [...priorUsages, ...failureUsages],
+            failureStage: semanticFailure ? "semantic-output" : "provider",
+            terminal,
+            modelOutput: semanticFailure ? rawModelOutput : null,
+            detail,
+          },
+          null,
+          2,
         );
+        const persistence = await persistPassBPaidUnitArtifact(
+          env,
+          sweepId,
+          {
+            canonicalKey: sweepKey(runId, i),
+            historyKey: (digest) => sweepHistoryKey(runId, i, digest),
+            conflictKey: (digest) => sweepCasConflictKey(runId, i, digest),
+          },
+          predecessor,
+          failureBody,
+        );
+        if (!persistence.ok) {
+          terminalFailure = true;
+          failedUnits.push({ unit: sweepId, blockIds: [...allowed], detail: persistence.detail });
+          unresolvedFor(blockIds, persistence.detail);
+          sweepRemaining += Math.max(0, sweepPlans.length - i);
+          await reportProgress(
+            onProgress,
+            `pass B ${sweepId}: FAILED â€" paid artifact retained without canonical or coverage authority`,
+          );
+          break;
+        }
+        failedUnits.push({ unit: sweepId, blockIds: [...allowed], detail });
         if (!terminal) sweepRemaining += 1;
+        const sweepWillRetry = !terminal;
         await reportProgress(
           onProgress,
-          `pass B ${sweepId}: FAILED (attempt ${attempts} of ${maxIssues}) — ${detail.slice(0, 120)}`,
+          sweepWillRetry
+            ? `pass B ${sweepId}: FAILED (attempt ${attempts} of ${maxIssues}) — will retry — ${publicFailureDetail}`
+            : `pass B ${sweepId}: FAILED (attempt ${attempts} of ${maxIssues}) — TERMINAL — ${publicFailureDetail}`,
         );
         if (terminal) break;
       }
@@ -717,7 +1998,7 @@ export async function runPassB(
   calls.sort((a, b) => a.callId.localeCompare(b.callId));
 
   const slice: PassBSlice = {
-    done: chunksRemaining === 0 && sweepRemaining === 0 && !terminalFailure && failedUnits.length === 0,
+    done: chunksRemaining === 0 && sweepRemaining === 0 && persistenceConflictFailures === 0 && !failureRateExceeded && terminalReasonCode !== EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED, // mutation-anchor: done-does-not-require-zero-failed-units
     chunksTotal: chunks.length,
     chunksLanded: landed,
     chunksIssued: issued - sweepCallsIssued,
@@ -739,10 +2020,13 @@ export async function runPassB(
     dispositions,
     constructs,
     failedUnits,
+    limitations,
     calls,
     slice,
     issuedCalls,
     accountingCalls,
+    ...(terminalReasonCode ? { terminalReasonCode } : {}),
+    ...(credentialRefusal ? { credentialRefusal } : {}),
   };
 }
 
@@ -781,15 +2065,21 @@ export async function reconstructPassBCompletedAuthority(
   const constructs: PassResult["constructs"] = [];
   const ambiguities: PassResult["ambiguities"] = [];
   const unverifiable: PassResult["unverifiable"] = [];
+  const reconstructedLimitations: PassBLimitation[] = [];
   const accountingCalls: CallUsage[] = [];
+  const reconstructionFailedUnits: PassResult["failedUnits"] = [];
   let chunksLanded = 0;
   let expectedSweepCalls = 0;
   let sweepsLanded = 0;
 
-  const invalid = (detail: string): PassBAuthorityReconstruction => ({
+  const invalid = (
+    detail: string,
+    failedUnit: PassResult["failedUnits"][number] | null = null,
+  ): PassBAuthorityReconstruction => ({
     kind: "invalid",
     detail: `PASS_B_COMPLETED_ARTIFACT_INVALID: ${detail}. No unit was re-bought and no completed Pass-B payload is authorized.`,
     accountingCalls,
+    failedUnit,
     slice: {
       done: false,
       chunksTotal: chunks.length,
@@ -809,15 +2099,29 @@ export async function reconstructPassBCompletedAuthority(
     const unit = await readChunk(
       env, runId, chunk.n, chunk.blocks, evidenceBlocksFor(chunk.blocks, includesContext), parserVersion,
     );
-    if (unit === null) return invalid(`${chunk.id} is missing or belongs to a stale cache partition`);
-    accountingCalls.push(...unit.usages);
+    if (unit === null) {
+      const detail = `${chunk.id} is missing or belongs to a stale cache partition`;
+      return invalid(detail, { unit: chunk.id, blockIds: chunk.blocks.map((block) => block.blockId), detail });
+    }
+    accountingCalls.push(...replayAccountingUsages(unit.usages));
     chunksLanded += 1;
-    if (unit.kind === "failed") return invalid(`${chunk.id} retains failed authority: ${unit.detail}`);
+    if (unit.kind === "failed") {
+      // Terminal-failed chunks are accepted as part of a completed pass. Their blocks are
+      // left unaccounted and will be picked up by the sweep or the final residual check.
+      const blockIds = chunk.blocks.map((block) => block.blockId);
+      reconstructionFailedUnits.push({ unit: chunk.id, blockIds, detail: unit.detail });
+      // Mark blocks as unresolved so they appear in the unaccounted set for the sweep.
+      for (const id of blockIds) {
+        dispositions.push({ blockId: id, disposition: "unresolved", reason: `chunk ${chunk.id} failed: ${unit.detail}` });
+      }
+      continue;
+    }
     requirements.push(...unit.obligations);
     dispositions.push(...unit.dispositions);
     constructs.push(...unit.constructs);
     ambiguities.push(...unit.ambiguities);
     unverifiable.push(...unit.unverifiable);
+    reconstructedLimitations.push(...unit.limitations);
   }
 
   const unaccounted = unaccountedBlocks(doc.blocks, requirements, dispositions);
@@ -846,10 +2150,18 @@ export async function reconstructPassBCompletedAuthority(
       env, runId, index, sourceBlocks, evidenceBlocksFor(sourceBlocks, contextBlocks.length > 0),
       parserVersion,
     );
-    if (unit === null) return invalid(`${sweepId} is missing or belongs to a stale cache partition`);
-    accountingCalls.push(...unit.usages);
+    if (unit === null) {
+      const detail = `${sweepId} is missing or belongs to a stale cache partition`;
+      return invalid(detail, { unit: sweepId, blockIds: sourceBlocks.map((block) => block.blockId), detail });
+    }
+    accountingCalls.push(...replayAccountingUsages(unit.usages));
     sweepsLanded += 1;
-    if (unit.kind === "failed") return invalid(`${sweepId} retains failed authority: ${unit.detail}`);
+    if (unit.kind === "failed") {
+      return invalid(
+        `${sweepId} retains failed authority: ${unit.detail}`,
+        { unit: sweepId, blockIds: sourceBlocks.map((block) => block.blockId), detail: unit.detail },
+      );
+    }
     requirements.push(...unit.obligations);
     const owned = new Set(sourceBlocks.map((block) => block.blockId));
     for (let i = dispositions.length - 1; i >= 0; i -= 1) {
@@ -858,6 +2170,7 @@ export async function reconstructPassBCompletedAuthority(
     dispositions.push(...unit.dispositions);
     ambiguities.push(...unit.ambiguities);
     unverifiable.push(...unit.unverifiable);
+    reconstructedLimitations.push(...unit.limitations);
   }
 
   const residual = unaccountedBlocks(doc.blocks, requirements, dispositions);
@@ -886,7 +2199,7 @@ export async function reconstructPassBCompletedAuthority(
     chunksRemaining: 0,
     sweepCallsIssued: 0,
     sweepRemaining: 0,
-    terminalFailure: false,
+    terminalFailure: reconstructionFailedUnits.length > 0,
     deadlineHit: false,
   };
   const value: PassBCompletedAuthority = {
@@ -899,7 +2212,8 @@ export async function reconstructPassBCompletedAuthority(
     unverifiable,
     dispositions,
     constructs,
-    failedUnits: [],
+    failedUnits: reconstructionFailedUnits,
+    limitations: reconstructedLimitations,
     calls: accountingCalls,
     slice,
     issuedCalls: [],
@@ -963,6 +2277,7 @@ interface PersistedChunk {
   constructs: PassResult["constructs"];
   ambiguities: PassResult["ambiguities"];
   unverifiable: PassResult["unverifiable"];
+  limitations: PassBLimitation[];
   usages: CallUsage[];
 }
 
@@ -972,6 +2287,53 @@ interface FailedUnitArtifact {
   detail: string;
   usages: CallUsage[];
   terminal: boolean;
+  /** True only for a strictly decoded attempts=0/usages=[] wire-ceiling artifact. */
+  wireCeiling: boolean;
+}
+
+interface PassBUnitReadResult {
+  artifact: PersistedChunk | FailedUnitArtifact | null;
+  /** Present whenever the canonical exact key was readable, including stale identities. */
+  predecessor: PassBUnitStorageAuthority | null;
+}
+
+function combinePassBWireSidecar(
+  unitId: string,
+  sidecar: FailedUnitArtifact | null,
+  main: PersistedChunk | FailedUnitArtifact | null,
+): PersistedChunk | FailedUnitArtifact | null {
+  if (sidecar === null) return main;
+  if (!sidecar.wireCeiling) {
+    return {
+      kind: "failed",
+      attempts: main?.kind === "failed" ? main.attempts : 0,
+      usages: main?.usages ?? sidecar.usages,
+      terminal: true,
+      wireCeiling: false,
+      detail: `PASS_B_WIRE_CEILING_SIDECAR_INVALID: ${unitId}: ${sidecar.detail}`,
+    };
+  }
+  if (
+    main?.kind !== "failed" || main.wireCeiling || main.attempts < 1 || main.terminal
+  ) {
+    return {
+      kind: "failed",
+      attempts: main?.kind === "failed" ? main.attempts : 0,
+      usages: main?.usages ?? [],
+      terminal: true,
+      wireCeiling: false,
+      detail: `PASS_B_WIRE_CEILING_SIDECAR_CONFLICT: ${unitId} has no valid retryable paid ` +
+        `main artifact beneath its sidecar; neither retained artifact was overwritten or re-bought.`,
+    };
+  }
+  return {
+    kind: "failed",
+    attempts: main.attempts,
+    usages: main.usages,
+    terminal: true,
+    wireCeiling: true,
+    detail: sidecar.detail,
+  };
 }
 
 /**
@@ -983,6 +2345,35 @@ interface FailedUnitArtifact {
  * A block-set mismatch reads as NOTHING, deliberately: the chunking changed under this run,
  * so the artifact answers a question nobody is asking any more.
  */
+async function readChunkWithAuthority(
+  env: Env,
+  runId: string,
+  n: number,
+  blocks: readonly SourceBlock[],
+  evidenceBlocks: readonly SourceBlock[],
+  parserVersion: string,
+): Promise<PassBUnitReadResult> {
+  const unitId = `C${String(n).padStart(2, "0")}-${blocks[0]?.blockId ?? "missing"}`;
+  const sidecar = await readUnit(
+    env, runId, chunkWireCeilingKey(runId, n), "chunkId", unitId, `call_b_${n}`,
+    blocks, evidenceBlocks, parserVersion, true,
+  );
+  let predecessor: PassBUnitStorageAuthority | null = null;
+  const main = await readUnit(
+    env, runId, chunkKey(runId, n), "chunkId", unitId, `call_b_${n}`,
+    blocks, evidenceBlocks, parserVersion, false,
+    (authority) => { predecessor = authority; },
+  );
+  return {
+    artifact: combinePassBWireSidecar(
+      unitId,
+      sidecar?.kind === "failed" ? sidecar : null,
+      main,
+    ),
+    predecessor,
+  };
+}
+
 async function readChunk(
   env: Env,
   runId: string,
@@ -991,11 +2382,38 @@ async function readChunk(
   evidenceBlocks: readonly SourceBlock[],
   parserVersion: string,
 ): Promise<PersistedChunk | FailedUnitArtifact | null> {
-  const unitId = `C${String(n).padStart(2, "0")}-${blocks[0]?.blockId ?? "missing"}`;
-  return readUnit(
-    env, runId, chunkKey(runId, n), "chunkId", unitId, `call_b_${n}`,
-    blocks, evidenceBlocks, parserVersion,
+  return (await readChunkWithAuthority(
+    env, runId, n, blocks, evidenceBlocks, parserVersion,
+  )).artifact;
+}
+
+async function readSweepWithAuthority(
+  env: Env,
+  runId: string,
+  i: number,
+  blocks: readonly SourceBlock[],
+  evidenceBlocks: readonly SourceBlock[],
+  parserVersion: string,
+): Promise<PassBUnitReadResult> {
+  const unitId = `SWEEP${String(i + 1).padStart(2, "0")}`;
+  const sidecar = await readUnit(
+    env, runId, sweepWireCeilingKey(runId, i), "sweepId", unitId, `call_b_sweep_${i + 1}`,
+    blocks, evidenceBlocks, parserVersion, true,
   );
+  let predecessor: PassBUnitStorageAuthority | null = null;
+  const main = await readUnit(
+    env, runId, sweepKey(runId, i), "sweepId", unitId, `call_b_sweep_${i + 1}`,
+    blocks, evidenceBlocks, parserVersion, false,
+    (authority) => { predecessor = authority; },
+  );
+  return {
+    artifact: combinePassBWireSidecar(
+      unitId,
+      sidecar?.kind === "failed" ? sidecar : null,
+      main,
+    ),
+    predecessor,
+  };
 }
 
 async function readSweep(
@@ -1006,11 +2424,9 @@ async function readSweep(
   evidenceBlocks: readonly SourceBlock[],
   parserVersion: string,
 ): Promise<PersistedChunk | FailedUnitArtifact | null> {
-  const unitId = `SWEEP${String(i + 1).padStart(2, "0")}`;
-  return readUnit(
-    env, runId, sweepKey(runId, i), "sweepId", unitId, `call_b_sweep_${i + 1}`,
-    blocks, evidenceBlocks, parserVersion,
-  );
+  return (await readSweepWithAuthority(
+    env, runId, i, blocks, evidenceBlocks, parserVersion,
+  )).artifact;
 }
 
 async function readUnit(
@@ -1023,6 +2439,8 @@ async function readUnit(
   sourceBlocks: readonly SourceBlock[],
   evidenceSourceBlocks: readonly SourceBlock[],
   parserVersion: string,
+  wireSidecarOnly = false,
+  onStorageAuthority?: (authority: PassBUnitStorageAuthority) => void,
 ): Promise<PersistedChunk | FailedUnitArtifact | null> {
   const obj = await env.EVIDENCE.get(key);
   if (!obj) return null;
@@ -1041,12 +2459,15 @@ async function readUnit(
       attempts,
       usages,
       terminal: true,
+      wireCeiling: false,
       detail: `PASS_B_UNIT_ARTIFACT_INVALID: ${unitId}: ${detail}. ` +
         `The retained exact-key artifact is terminal authority and will not be overwritten or re-bought.`,
     };
   };
   try {
-    const decoded = JSON.parse(await obj.text()) as unknown;
+    const bodyText = await obj.text();
+    onStorageAuthority?.({ etag: obj.etag, bodyText });
+    const decoded = JSON.parse(bodyText) as unknown;
     if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
       return invalid("artifact root is not an object");
     }
@@ -1075,38 +2496,59 @@ async function readUnit(
     const attempts = parsed["attempts"];
     if (
       usages === null || !usages.every(isCallUsage) ||
-      !Number.isSafeInteger(attempts) || (attempts as number) < 1
+      !Number.isSafeInteger(attempts) || (attempts as number) < 0
     ) return invalid("attempts/usages are malformed");
-    const coherence = validatePassBUsageCoherence(
-      usages as CallUsage[], runId, unitId, expectedCallId, attempts as number,
-    );
+    const zeroReceiptWireFailure =
+      parsed["status"] === "failed" && parsed["failureStage"] === "wire-ceiling" &&
+      attempts === 0 && usages.length === 0;
+    const coherence = zeroReceiptWireFailure
+      ? null
+      : validatePassBUsageCoherence(
+          usages as CallUsage[], runId, unitId, expectedCallId, attempts as number,
+        );
     if (coherence !== null) return invalid(coherence);
     if (parsed["status"] === "failed") {
       if (
         typeof parsed["detail"] !== "string" || parsed["detail"].length === 0 ||
         typeof parsed["terminal"] !== "boolean" ||
-        (parsed["failureStage"] !== "semantic-output" && parsed["failureStage"] !== "provider") ||
+        (parsed["failureStage"] !== "semantic-output" && parsed["failureStage"] !== "provider" &&
+          parsed["failureStage"] !== "wire-ceiling") ||
         parsed["obligations"] !== undefined || parsed["dispositions"] !== undefined ||
         parsed["constructs"] !== undefined || parsed["ambiguities"] !== undefined ||
         parsed["unverifiable"] !== undefined
       ) return invalid("failed artifact shape is malformed or retains successful fields");
+      const wireCeiling = parsed["failureStage"] === "wire-ceiling";
+      if (
+        wireCeiling &&
+        ((attempts as number) !== 0 || usages.length !== 0 || parsed["terminal"] !== true ||
+          !parsed["detail"].startsWith(`${EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED}:`) ||
+          Object.hasOwn(parsed, "modelOutput"))
+      ) return invalid("wire-ceiling failure is not an exact zero-receipt terminal refusal");
+      if (!wireCeiling && (attempts as number) < 1) {
+        return invalid("paid/semantic failure has no attempt");
+      }
+      if (wireSidecarOnly && !wireCeiling) {
+        return invalid("wire-ceiling sidecar contains a non-wire failure stage");
+      }
       if ((usages as CallUsage[]).some((usage) => usage.status === "ok")) {
         return invalid("failed artifact retains a successful provider receipt");
       }
       if (parsed["failureStage"] === "semantic-output") {
-        if (parsed["terminal"] !== true ||
-            typeof parsed["modelOutput"] !== "object" || parsed["modelOutput"] === null ||
+        if (typeof parsed["modelOutput"] !== "object" || parsed["modelOutput"] === null ||
             Array.isArray(parsed["modelOutput"]) ||
             !(usages as CallUsage[]).some((usage) => usage.status === "parse-failed")) {
-          return invalid("semantic failure lacks terminal raw-output/parse-failed authority");
+          return invalid("semantic failure lacks raw-output/parse-failed authority");
         }
-        try {
-          decodePassBOutput(parsed["modelOutput"], unitId, sourceBlocks, evidenceSourceBlocks);
-          return invalid("semantic-failure raw output now decodes successfully");
-        } catch (error) {
-          if (!(error instanceof PassBOutputInvalid)) throw error;
+        // A non-terminal semantic failure is retryable; only terminal ones must still fail decode.
+        if (parsed["terminal"] === true) {
+          try {
+            decodePassBOutput(parsed["modelOutput"], unitId, sourceBlocks, evidenceSourceBlocks);
+            return invalid("semantic-failure raw output now decodes successfully");
+          } catch (error) {
+            if (!(error instanceof PassBOutputInvalid)) throw error;
+          }
         }
-      } else if (parsed["modelOutput"] !== null) {
+      } else if (!wireCeiling && parsed["modelOutput"] !== null) {
         return invalid("provider failure must not claim a decoded model output");
       }
       return {
@@ -1115,8 +2557,10 @@ async function readUnit(
         detail: parsed["detail"],
         usages: usages as CallUsage[],
         terminal: parsed["terminal"],
+        wireCeiling,
       };
     }
+    if (wireSidecarOnly) return invalid("wire-ceiling sidecar contains a successful artifact");
     if (parsed["status"] !== "ok") return invalid("status is neither ok nor failed");
     if (typeof parsed["modelOutput"] !== "object" || parsed["modelOutput"] === null ||
         Array.isArray(parsed["modelOutput"])) {
@@ -1135,6 +2579,21 @@ async function readUnit(
       JSON.stringify(parsed["ambiguities"]) !== JSON.stringify(output.ambiguities) ||
       JSON.stringify(parsed["unverifiable"]) !== JSON.stringify(output.unverifiable)
     ) return invalid("persisted typed arrays do not exactly reconstruct from raw model output");
+    // Limitations are written by salvage (per-item degradation). Absent means none.
+    const storedLimitations: PassBLimitation[] = [];
+    if (Array.isArray(parsed["limitations"])) {
+      for (const raw of parsed["limitations"]) {
+        if (
+          typeof raw === "object" && raw !== null && !Array.isArray(raw) &&
+          typeof (raw as Record<string, unknown>)["unit"] === "string" &&
+          Number.isSafeInteger((raw as Record<string, unknown>)["rowIndex"]) &&
+          typeof (raw as Record<string, unknown>)["rowKind"] === "string" &&
+          typeof (raw as Record<string, unknown>)["reason"] === "string"
+        ) {
+          storedLimitations.push(raw as PassBLimitation);
+        }
+      }
+    }
     return {
       kind: "ok",
       obligations: output.obligations,
@@ -1142,6 +2601,7 @@ async function readUnit(
       constructs: output.constructs,
       ambiguities: output.ambiguities,
       unverifiable: output.unverifiable,
+      limitations: storedLimitations,
       usages: usages as CallUsage[],
     };
   } catch (error) {
@@ -1218,7 +2678,8 @@ function isCallUsage(value: unknown): value is CallUsage {
     (
       row.usageSource === "provider-reported" ||
       row.usageSource === "conservative-ceiling" ||
-      row.usageSource === "unverified-model-rate-ceiling"
+      row.usageSource === "unverified-model-rate-ceiling" ||
+      row.usageSource === "rejected-before-generation"
     )
   );
 }

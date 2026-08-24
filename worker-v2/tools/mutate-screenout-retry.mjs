@@ -21,6 +21,7 @@ import { runMutantSuite } from "./mutate-runner.mjs";
 
 const EB = "src/workflow/stages/execute-batch.ts";
 const CAP = "src/browser/capture.ts";
+const DR = "src/browser/driver.ts";
 
 await runMutantSuite({
   title: "Bounded screen-out retry — can the D55 guards fail?",
@@ -99,5 +100,112 @@ await runMutantSuite({
         "THE LANDING GATE, LIVE: the two attempts' artifact basenames are disjoint sets, and the retry's are non-empty",
       ],
     },
+    {
+      name: "the walk deadline reverts to batch-only (the axe destroys long walks again)",
+      breaks:
+        "evidence preservation under the per-case budget. With the walk deadline no tighter " +
+        "than the batch budget, a walk that merely runs long is killed by withTimeout, which " +
+        "throws the whole observation away — the 2026-08-16/17 pattern of 0-screen " +
+        "'per-case-timeout' rows with wallMs=0 and no evidence of where the walk hung",
+      file: EB,
+      find: "  return Math.min(batchDeadline, now + batchMaxMs, now + walkBudgetMs);",
+      replace: "  return Math.min(batchDeadline, now + batchMaxMs);",
+      kills: ["for every shipped config, the walk deadline beats the per-case axe by a positive margin"],
+    },
+    {
+      name: "the wrap-up grace collapses to zero (partials lose their time to be assembled)",
+      breaks:
+        "the margin between walkPath's own exit and the axe. With no grace, the step loop " +
+        "runs until the exact axe instant and the wrap-up (ending classification, observation " +
+        "assembly) races a timeout it can only lose",
+      file: EB,
+      find: "  const walkBudgetMs = Math.max(perCaseTimeoutMs - graceMs, Math.floor(perCaseTimeoutMs / 2));",
+      replace: "  const walkBudgetMs = perCaseTimeoutMs;",
+      kills: ["for every shipped config, the walk deadline beats the per-case axe by a positive margin"],
+    },
+    {
+      name: "the half-budget floor is dropped (a big grace zeroes the walk)",
+      breaks:
+        "the floor that keeps a pathological grace config from handing walkPath a deadline " +
+        "in the past — zero screens forever, config-dependent and silent",
+      file: EB,
+      find: "  const walkBudgetMs = Math.max(perCaseTimeoutMs - graceMs, Math.floor(perCaseTimeoutMs / 2));",
+      replace: "  const walkBudgetMs = perCaseTimeoutMs - graceMs;",
+      kills: ["a pathological grace can never zero the walk's own time"],
+    },
+    {
+      name: "the pivot varies every screen again (the v47 pivot-suicide reopened, driver half)",
+      breaks:
+        "pivot reach. On the live run the trunk walk crossed seven screeners on steered " +
+        "defaults and screened out at screen ~12; pivots that vary EVERY default change the " +
+        "screener-#1 answer too, disqualify on screen 1, and never reach the failing screen",
+      file: DR,
+      find: "    const stepVariant = stepIndex >= variantFromStep ? fillerVariant : 0;",
+      replace: "    const stepVariant = fillerVariant;",
+      kills: ["a screen-out at screen 2 pivots screen 2's answer while screen 1's proven answer replays unchanged"],
+    },
+    {
+      name: "the pivot stops anchoring to the failing step (batch half)",
+      breaks:
+        "the same defect one layer up: walkPath can honour variantFromStep perfectly and " +
+        "the pivot never sends it — variantFromStep 0 varies from screen 1 exactly as before",
+      file: EB,
+      // Anchor extended: executeMultiLaneBatch added a second pivotFromStep line (10-space indent substring-matches the 8-space find)
+      find: "        const pivotFromStep = Math.max(0, lastStepIndex - 1);\n        let retryHung = false;",
+      replace: "        const pivotFromStep = 0;\n        let retryHung = false;",
+      kills: ["a screen-out at screen 2 pivots screen 2's answer while screen 1's proven answer replays unchanged"],
+    },
+    {
+      name: "a plain re-attempt loses its naming ordinal (the v41 EVIDENCE_NAME_COLLISION reopened)",
+      breaks:
+        "artifact identity under re-walks. The judge's signed manifest keys by basename; a " +
+        "re-attempt writing attempt 0's names raises MANIFEST_DUPLICATE_ARTIFACT and the run " +
+        "mints NO judgement — run v2r_01m067zf40z4788yb60c380vgp lost its certification to " +
+        "482 such names",
+      file: EB,
+      find: "        ...(priorAttemptsOfPath > 0 ? { attemptOrdinal: priorAttemptsOfPath } : {}),",
+      replace: "        // (attemptOrdinal threading dropped by mutant)",
+      kills: ["a SECOND walk of a path carries retry-1- on every observation basename; attempt 0 refs stay bare"],
+    },
+    {
+      name: "the identical-actions stop is disabled (the v62 four-replay burn reopened)",
+      breaks:
+        "spend on proven-futile pivots. When the fatal answer is plan-pinned by exact label, " +
+        "the varied-filler lever cannot change the walk — run v2r_01m08ce0s86w97rvvcn08h0n59 " +
+        "spent four 14-minute pivots replaying the identical 'None of the above' click. With " +
+        "the stop disabled the chain runs to the cap on every plan-bound death",
+      file: EB,
+      find: "        const pivotActions = walkActionsJson(obs);\n        if (pivotActions === pivotParentActions) {",
+      replace: "        const pivotActions = walkActionsJson(obs);\n        if (false && pivotActions === pivotParentActions) {",
+      kills: ["a pivot that reproduces its parent's actions verbatim ends the retries — plan-pinned deaths are not re-bought"],
+    },
+    {
+      name: "the identical-actions stop fires on EVERY pivot",
+      breaks:
+        "the retry feature itself. A stop that ignores its comparison ends every chain after " +
+        "one pivot, so a differing variant that would have cleared the screener on pivot 2 is " +
+        "never bought — the reach feature quietly becomes a single-retry feature",
+      file: EB,
+      find: "        const pivotActions = walkActionsJson(obs);\n        if (pivotActions === pivotParentActions) {",
+      replace: "        const pivotActions = walkActionsJson(obs);\n        if (true || pivotActions === pivotParentActions) {",
+      kills: ["a pivot that ACTS differently keeps the retry chain alive to the cap"],
+    },
+    {
+      name: "the action fingerprint goes value-blind",
+      breaks:
+        "the stop's discrimination. Two pivots typing DIFFERENT values fingerprint " +
+        "identically, so a genuinely varying chain is stopped as if it were replaying — " +
+        "the same premature end as the fires-on-every-pivot mutant, reached through the " +
+        "fingerprint instead of the comparison",
+      file: EB,
+      find: "        return [row.kind ?? null, row.targetIdx ?? null, row.value ?? null, row.ok !== false];",
+      replace: "        return [row.kind ?? null, row.targetIdx ?? null, null, row.ok !== false];",
+      kills: ["walkActionsJson: identical actions fingerprint identically; timing and screens are excluded; any acted difference splits"],
+    },
+    // NOT A MUTANT, STATED: the walkOnce CALL SITE (deadline: walkDeadlineFor(...)) is
+    // pinned by a d56 test that reads execute-batch.ts from DISK — this harness rewrites
+    // sources in esbuild's load step, in memory, so no mutant here can make that test fail.
+    // The call site's regression net is the disk-read pin plus review; the function's
+    // arithmetic is covered by the three mutants above.
   ],
 });

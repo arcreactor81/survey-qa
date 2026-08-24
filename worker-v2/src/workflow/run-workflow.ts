@@ -18,11 +18,14 @@
  *    downstream of the seal can write it.
  *
  * 2. EXECUTION IS A CHECKPOINTED BATCH LOOP, NOT ONE LONG STEP.
- *    Each `execute-batch-N` step: reconnect to the browser session → run at most
+ *    Each `execute-batch-N` step: launch a fresh browser → run at most
  *    EXEC_BATCH_MAX_ATTEMPTS attempts or EXEC_BATCH_MAX_MS of wall clock → commit
- *    observations → disconnect (NOT close) → advance the cursor. The spike proved the
- *    session survives the gap between steps with page state intact, so a crash at batch
- *    17 resumes at batch 17 on the same browser rather than restarting the walk.
+ *    observations → close the browser → advance the cursor. Each batch gets a fresh
+ *    browser because sessions die at unpredictable ages (platform eviction/rollouts;
+ *    the once-measured "~11-min wall" did not reproduce — see
+ *    spikes/runtime-br/results/FINDINGS-ab-lifetime-20260824.md), so a walk must never
+ *    inherit an already-aged session (see execute-batch.ts line ~2472). A crash at
+ *    batch 17 resumes at batch 17 with a new browser, re-walking from the survey start.
  *
  * 3. VERDICTS ARE DERIVED, NOT WRITTEN.
  *    `derive-verdicts` is deterministic and reads only observations + the sealed contract.
@@ -81,7 +84,13 @@ import { edgeCoverageKey, structureModelKey } from "../keys";
 // component (arms/registry.ts). Reverting the seam means restoring this import and calling
 // planStage directly at the one site below — two lines, both marked.
 import { resolveArm } from "../arms/resolve";
-import { executeBatch, loadProgress } from "./stages/execute-batch";
+import {
+  executeBatch,
+  loadProgress,
+  EXEC_STOP_BROWSER_ABORT_CAP,
+  HARD_ABORT_CONSECUTIVE_CAP,
+  saveProgress,
+} from "./stages/execute-batch";
 import {
   loadProgram,
   probeCapabilityLimitations,
@@ -98,6 +107,9 @@ import {
   type RunCheckpoint,
   type RunFailure,
   type TestCompletion,
+  unavailableContract,
+  unsettledBucketFor,
+  zeroCounts,
 } from "../types/contracts";
 import { mintPlanRevisionId, recoveryInstanceId } from "../ids";
 import type { ContractRevision, ContractSourceInput, RunClosure } from "../types/record";
@@ -131,13 +143,14 @@ import {
   PassACrossWindowLimitationRefusal,
   passACrossWindowSupplementsForSeal,
 } from "../extract/cross-window-limitations";
+import { PASS_A_PRIMARY_GROUNDING_SUPPLEMENT_KIND } from "../../shared/pass-a-grounding-limitations.mjs";
 import { passBStepTimeoutMs, passBWaveBudgetMs, type PassBSlice } from "../extract/pass-b";
 import { deepseekPassBIdentity } from "../llm/deepseek";
 import { grokFlashRouteIdentity } from "../llm/grok";
 import { projectObservations } from "./stages/project-observations";
 import { launchVisualShadowWorkflow } from "./visual-shadow-workflow";
 import { verifyObservations } from "./stages/verify-observations";
-import { deriveItemResults, mintJudgement } from "./stages/derive-verdicts";
+import { deriveItemResults, loadDerivedItemResults, mintJudgement, summarizeDerivedVerdicts } from "./stages/derive-verdicts";
 import { assembleRecord, supersedeRecord } from "./stages/assemble-record";
 import { computeEdgeCoverage } from "../structure/index";
 import type { StructureModel } from "../structure/index";
@@ -149,7 +162,22 @@ import {
   type ExtractionInputs,
 } from "../store/contract-reuse";
 import { PROMPT_VERSION_A, PROMPT_VERSION_B } from "../extract/prompts";
+import {
+  EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+  EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED,
+} from "../llm/extraction-wire";
 import { docxBlocksVersion } from "../extract/docx-blocks";
+import {
+  publicExtractionFailureDetail,
+  projectDocumentReadingProgress,
+  readingAtUnitStart,
+  preserveDurableReadingBase,
+  readingFromPrimary,
+  readingFromSecondary,
+  stopDocumentReading,
+  withCheckpointUsage,
+  type DocumentReadingUnitStartObserver,
+} from "../observability/document-reading";
 import {
   normalizeDocumentSemanticsProfile,
   type DocumentSemanticsProfile,
@@ -301,7 +329,19 @@ export async function launchVisualShadowAfterCoreFinalization(
  *  This policy still covers the steps that really are one bounded unit of work — the
  *  deterministic merge/diff/plan steps. */
 const EXTRACT_POLICY = { retries: { limit: 2, delay: "15 seconds", backoff: "linear" }, timeout: "8 minutes" } as const;
-const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "5 minutes" } as const;
+// The step axe must clear the batch's own work budget PLUS session-acquisition and commit
+// slack. The d56 config-arithmetic test pins step-timeout >= EXEC_BATCH_MAX_MS + 120s slack.
+//
+// ZOMBIE BROWSER LESSON (v93b, v94, v95 — 21 Aug): When the Puppeteer WebSocket to Browser
+// Rendering is in a half-alive state, ALL timer callbacks (setTimeout, step timeout) fail to
+// dispatch. Three consecutive runs hung 5+ hours each. The framework DID enforce the step
+// timeout at shorter durations (v53-v63 died at exactly ~67:01). The fix is:
+//   1. Reduce the step timeout to 22 min (inside the range where enforcement was measured).
+//   2. Increase retries to 3 (4 total attempts) so a killed batch gets another chance.
+//   3. Reduce EXEC_BATCH_MAX_MS to 18 min and per-case to 15 min — the deep walk measures
+//      ~9 min, so 15 min is generous. Each batch does 1 walk (residual guard = per-case).
+// Worst-case stuck time: 22 min × 4 attempts = 88 min per batch, not 5+ hours.
+const BATCH_POLICY = { retries: { limit: 3, delay: "30 seconds" }, timeout: "22 minutes" } as const;
 /**
  * THE JUDGING STAGES. `delay` is 30 seconds and NOT 5 for a reason that is not politeness.
  *
@@ -320,6 +360,25 @@ const BATCH_POLICY = { retries: { limit: 1, delay: "10 seconds" }, timeout: "5 m
  * certainty of being the dead one.
  */
 const DERIVE_POLICY = { retries: { limit: 3, delay: "30 seconds", backoff: "exponential" }, timeout: "3 minutes" } as const;
+/**
+ * FIVE steps pay the full evidence-catalogue fan-out — one R2 LIST + one R2 GET per
+ * catalogue entry: `project-observations` and `record-target-identity` call `listCatalog`
+ * directly, and `derive-verdicts`, `assemble-record` and `mint-judgement` reach it through
+ * `loadRunInputs`' default (`run-inputs.ts` — "the two callers that do read `evidence` use
+ * the default"; the judge additionally re-reads and re-hashes the artifact bytes). With 28
+ * walks averaging ~35 screens each the catalogue can exceed 2,000 entries and the fan-out
+ * needs well past the 3-minute DERIVE_POLICY ceiling. Two measured deaths, one per organ:
+ * v96 `v2r_01m0gntj754aszafnjy1xfr1nq` lost `project-observations` at 3 minutes on all 4
+ * attempts (and burned a 10-min CPU-limit attempt on `record-target-identity`, which then
+ * had no step policy at all); v97 `v2r_01m0h811506rysmn1hzgd886fn` got PAST projection with
+ * this policy and then lost `derive-verdicts` at the same 3-minute limit one step later.
+ * Each of the five steps therefore carries THIS policy, not DERIVE_POLICY.
+ *
+ * 10 minutes is sized to ~4,000 catalogue entries (double current peak). The retry delay is
+ * long enough that the retry resumes in a FRESH invocation with a full subrequest budget
+ * (the same lesson DERIVE_POLICY's own comment documents).
+ */
+const PROJECTION_POLICY = { retries: { limit: 3, delay: "60 seconds", backoff: "exponential" }, timeout: "10 minutes" } as const;
 const REPORT_POLICY = { retries: { limit: 5, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" } as const;
 
 /** Reason codes a run terminates with. Named so the report can say which. */
@@ -378,8 +437,14 @@ export function extractionPassRefusal(
   if (result.reason === DOCUMENT_SOURCE_AUTHORITY_INVALID) {
     return {
       reasonCode: DOCUMENT_SOURCE_AUTHORITY_INVALID,
-      detail:
-        `extraction pass ${pass.toUpperCase()} refused changed or unbound document bytes: ${result.detail}`,
+      detail: publicExtractionFailureDetail(DOCUMENT_SOURCE_AUTHORITY_INVALID),
+    };
+  }
+  if (result.reason === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED ||
+      result.reason === EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED) {
+    return {
+      reasonCode: result.reason,
+      detail: publicExtractionFailureDetail(result.reason),
     };
   }
   const normalized = result.reason
@@ -387,10 +452,8 @@ export function extractionPassRefusal(
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "not-evaluated";
-  return {
-    reasonCode: `extraction-pass-${pass}-${normalized}`,
-    detail: `extraction pass ${pass.toUpperCase()} did not authorize continuation (${result.reason}): ${result.detail}`,
-  };
+  const reasonCode = `extraction-pass-${pass}-${normalized}`;
+  return { reasonCode, detail: publicExtractionFailureDetail(reasonCode) };
 }
 const NOT_IMPLEMENTED_VERIFICATION = "verification-not-implemented";
 const NOT_IMPLEMENTED_ADJUDICATION = "adjudication-not-implemented";
@@ -453,6 +516,19 @@ const PLANNING_REFUSAL_PHRASES = [
 const SUBREQUEST_LIMIT_EXCEEDED = "subrequest-limit-exceeded";
 
 /**
+ * THE PLATFORM KILLED THE STEP, NOT THE RUN'S OWN LOGIC.
+ *
+ * Five real runs (v53, v56, v61, v62 v2r_01m08ce0…, v63 v2r_01m08r1r…) ended with
+ * Cloudflare's opaque "WorkflowInternalError: Attempt failed due to internal workflows
+ * error", which the old code classified as `workflow-error`. A reader could not tell "the
+ * platform killed us mid-walk because the step exceeded its timeout" from "we chose to
+ * stop" or "there is a bug in the system". The cause is recognisable from its own sentence,
+ * and its meaning is distinct: the fix is a longer step timeout or less work per step, not
+ * a bug fix in the application logic.
+ */
+const STEP_TIMEOUT = "step-timeout";
+
+/**
  * The two sentences the platform actually produces for the ceiling. Same discipline as
  * `PLANNING_REFUSAL_PHRASES`: LITERAL, short, and a recogniser for text we have seen rather
  * than a taxonomy of text we imagine. Matched case-insensitively because these arrive from
@@ -468,6 +544,19 @@ const SUBREQUEST_LIMIT_EXCEEDED = "subrequest-limit-exceeded";
 const SUBREQUEST_LIMIT_PHRASES = [
   "too many api requests by single worker invocation",
   "too many subrequests",
+] as const;
+
+/**
+ * The sentence Cloudflare's Workflow engine produces when a step exceeds its configured
+ * timeout. Matched case-insensitively for the same reason as `SUBREQUEST_LIMIT_PHRASES`:
+ * the words come from the runtime, not from this codebase.
+ *
+ *   "Attempt failed due to internal workflows error"  — seen on every real step-timeout
+ *                                                        death; the engine wraps it in a
+ *                                                        `WorkflowInternalError` name.
+ */
+const STEP_TIMEOUT_PHRASES = [
+  "attempt failed due to internal workflows error",
 ] as const;
 
 /**
@@ -500,6 +589,7 @@ export function classifyFailure(err: unknown): string | null {
   if (PLANNING_REFUSAL_PHRASES.some((phrase) => message.includes(phrase))) return PLANNING_REFUSED;
   const lowered = message.toLowerCase();
   if (SUBREQUEST_LIMIT_PHRASES.some((phrase) => lowered.includes(phrase))) return SUBREQUEST_LIMIT_EXCEEDED;
+  if (STEP_TIMEOUT_PHRASES.some((phrase) => lowered.includes(phrase))) return STEP_TIMEOUT;
   return null;
 }
 
@@ -599,6 +689,23 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         return f;
       });
       reportingFence = fence;
+
+      // Awaited by the extractors before a unit read/reclaim and again before a provider
+      // purchase. A failed checkpoint write prevents that purchase; paid authority is never
+      // hidden behind heartbeat prose or re-bought because observability failed.
+      const recordDocumentReadingUnitStart: DocumentReadingUnitStartObserver = async (unit) => {
+        const saved = await updateCheckpoint(
+          this.env,
+          runId,
+          (d) => {
+            d.documentReading = readingAtUnitStart(
+              d.documentReading, unit, d.usage, d.observedAt,
+            );
+          },
+          { progressed: true, fence },
+        );
+        if (!saved) throw new Error(`DOCUMENT_READING_CURRENT_UNIT_WRITE_FAILED: no checkpoint for ${runId}`);
+      };
 
       // The Workflow event is transport, never source authority. Bind both the object key and
       // SHA to the durable envelope before reuse, extraction, or a resumed model wave can read
@@ -1131,11 +1238,34 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               { budgetMs: passAWaveBudget },
               documentSemanticsProfile,
               documentInput.documentSha256,
+              recordDocumentReadingUnitStart,
             );
           });
           passA = outcome.result;
           passAUnfinished = outcome.slice.done ? null : outcome.slice;
           passATerminal = outcome.terminal;
+          await step.do(`record-pass-a-wave-${wave}-reading-progress`, async () => {
+            const stopped = outcome.terminal && outcome.result.state === "not-evaluated";
+            const saved = await updateCheckpoint(
+              this.env,
+              runId,
+              (d) => {
+                d.documentReading = withCheckpointUsage(preserveDurableReadingBase(
+                  d.documentReading,
+                  readingFromPrimary(outcome.slice, {
+                    state: stopped ? "stopped" : "reading",
+                    failedUnit: outcome.failedUnit ?? null,
+                    sourceContext: outcome.failedUnitSourceContext ?? null,
+                    reasonCode:
+                      outcome.terminal && outcome.result.state === "not-evaluated" ? outcome.result.reason : null,
+                    updatedAt: d.observedAt,
+                  }),
+                ), d.usage);
+              },
+              { progressed: true, fence },
+            );
+            if (!saved) throw new Error(`DOCUMENT_READING_PROGRESS_WRITE_FAILED: no checkpoint for ${runId}`);
+          });
           if (outcome.terminal || outcome.slice.done) break;
         }
 
@@ -1160,6 +1290,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 d.completion.test = "failed";
                 d.completion.reasonCode = EXTRACTION_PASS_A_WAVES_EXHAUSTED;
                 d.error = passAWavesExhaustedDetail(u, maxPassAWaves);
+                const reading = stopDocumentReading(
+                  d.documentReading, EXTRACTION_PASS_A_WAVES_EXHAUSTED, d.error, d.observedAt,
+                );
+                if (reading) d.documentReading = reading;
               },
               { progressed: true, fence },
             );
@@ -1211,6 +1345,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 d.completion.test = "failed";
                 d.completion.reasonCode = passALimitationCheck.reasonCode;
                 d.error = passALimitationCheck.detail;
+                const reading = stopDocumentReading(
+                  d.documentReading, passALimitationCheck.reasonCode, d.error, d.observedAt,
+                );
+                if (reading) d.documentReading = reading;
               },
               { progressed: true, fence },
             );
@@ -1273,10 +1411,39 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               documentSemanticsProfile,
               evaluatedPassAHash,
               documentInput.documentSha256,
+              recordDocumentReadingUnitStart,
             );
           });
           passB = outcome.result;
           passBUnfinished = outcome.slice.done || outcome.slice.terminalFailure ? null : outcome.slice;
+          await step.do(`record-pass-b-wave-${wave}-reading-progress`, async () => {
+            const stopped = outcome.slice.terminalFailure && outcome.result.state === "not-evaluated";
+            const saved = await updateCheckpoint(
+              this.env,
+              runId,
+              (d) => {
+                const primary = projectDocumentReadingProgress(d.documentReading);
+                if (!primary) {
+                  throw new Error("DOCUMENT_READING_PROGRESS_BASE_MISSING: Pass B has no durable Pass-A progress");
+                }
+                d.documentReading = withCheckpointUsage(preserveDurableReadingBase(
+                  d.documentReading,
+                  readingFromSecondary(primary, outcome.slice, {
+                    state: stopped ? "stopped" : outcome.slice.done ? "complete" : "reading",
+                    failedUnit: outcome.failedUnit ?? null,
+                    sourceContext: outcome.failedUnitSourceContext ?? null,
+                    reasonCode:
+                      outcome.slice.terminalFailure && outcome.result.state === "not-evaluated"
+                        ? outcome.result.reason
+                        : null,
+                    updatedAt: d.observedAt,
+                  }),
+                ), d.usage);
+              },
+              { progressed: true, fence },
+            );
+            if (!saved) throw new Error(`DOCUMENT_READING_PROGRESS_WRITE_FAILED: no checkpoint for ${runId}`);
+          });
           if (outcome.slice.done || outcome.slice.terminalFailure) break;
         }
 
@@ -1304,6 +1471,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                   `call(s). ${u.chunksLanded} chunk(s) landed. Nothing was sealed, because a contract over a ` +
                   `half-read document would claim a denominator the document never approved. Raise ` +
                   `EXTRACT_PASS_B_MAX_WAVES or EXTRACT_WAVE_BUDGET_MS for a document this size.`;
+                const reading = stopDocumentReading(
+                  d.documentReading, EXTRACTION_WAVES_EXHAUSTED, d.error, d.observedAt,
+                );
+                if (reading) d.documentReading = reading;
               },
               { progressed: true, fence },
             );
@@ -1530,6 +1701,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             contractSupplements: sealedCrossWindowSupplements,
             extraction: {
               reuseInputsHash: `sha256:${reuseDigest!}`,
+              primaryGroundingLimitationsVersion: PASS_A_PRIMARY_GROUNDING_SUPPLEMENT_KIND,
               passAHash: passA.state === "evaluated" ? passA.value.hash : "",
               passBHash: evaluatedPassBHash,
               sourceLedgerHash: ledger.state === "evaluated" ? ledger.value.hash : "",
@@ -1736,6 +1908,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
 
       const maxBatches = num(this.env.EXEC_MAX_BATCHES, 200);
       let stopReason: string | null = null;
+      // Whether the batch loop ended because the EXECUTOR said done (true) or because the
+      // loop ran out of batches (false) — the two leftover>0 endings mean different things
+      // and must not share a label. See phase-executing-close.
+      let executorSaidDone = false;
 
       // RESUME AT THE DURABLE CURSOR, not at zero. Restarting the loop index would replay
       // batches whose observations are already committed and re-drive the browser for them.
@@ -1800,9 +1976,34 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           await beat(
             this.env,
             runId,
-            `batch ${batch}: ${exec.pathsWalked} path(s), ${exec.steps} screen(s), ${exec.casesClosed} case(s) closed`,
+            `batch ${batch}: ${exec.pathsWalked} path(s), ${exec.steps} screen(s), ${exec.casesClosed} case(s) closed` +
+              (exec.hardAbortFired ? " [hard-abort-fired]" : ""),
             `${batch}:done`,
           );
+
+          // CONSECUTIVE HARD ABORT TRACKING. A single hard abort is recoverable: the next
+          // batch launches a fresh browser. Consecutive aborts are tracked durably in the
+          // progress ledger. After HARD_ABORT_CONSECUTIVE_CAP consecutive aborts the run
+          // stops with `browser-abort-cap` — an internal-budget reason that does not accuse
+          // the site. Any batch that completes WITHOUT a hard abort resets the counter.
+          if (exec.hardAbortFired || exec.pathsWalked > 0) {
+            const planRevId = cursor.planRevisionId ?? plan.planRevisionId;
+            const progress = await loadProgress(this.env, runId, planRevId);
+            const prev = progress.consecutiveHardAborts ?? 0;
+            if (exec.hardAbortFired) {
+              progress.consecutiveHardAborts = prev + 1;
+              if (progress.consecutiveHardAborts >= HARD_ABORT_CONSECUTIVE_CAP) {
+                await saveProgress(this.env, progress);
+                return { done: true, stopReason: EXEC_STOP_BROWSER_ABORT_CAP };
+              }
+            } else {
+              // A batch that walked paths without a hard abort proves the browser
+              // environment is not persistently broken. Reset the counter.
+              progress.consecutiveHardAborts = 0;
+            }
+            await saveProgress(this.env, progress);
+          }
+
           return { done: exec.done, stopReason: exec.stopReason };
         });
 
@@ -1810,7 +2011,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           stopReason = outcome.stopReason;
           break;
         }
-        if (outcome.done) break;
+        if (outcome.done) {
+          executorSaidDone = true;
+          break;
+        }
       }
 
       await step.do("phase-executing-close", async () => {
@@ -1830,11 +2034,17 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
               d.completion.test = stopCompletion(stopReason);
               d.completion.reasonCode = stopReason;
             } else if (leftover > 0) {
+              // TWO DIFFERENT ENDINGS, TWO NAMES (the 2026-08-17 drive runs wore the wrong
+              // one): the executor finishing with cases still pending means those cases
+              // have NO executable work — the shortfall is in the plan or the stimulus,
+              // and more batches would not have helped. Only a loop that genuinely ran out
+              // of batches may say "batch-budget-exhausted".
+              const leftoverReason = executorSaidDone ? "no-executable-work" : "batch-budget-exhausted";
               d.counts["not-reached"] += d.counts.pending;
               d.counts.pending = 0;
-              setPhase(d, "executing", "stopped", "batch-budget-exhausted");
+              setPhase(d, "executing", "stopped", leftoverReason);
               d.completion.test = "partial-blocked";
-              d.completion.reasonCode = "batch-budget-exhausted";
+              d.completion.reasonCode = leftoverReason;
             } else {
               setPhase(d, "executing", "complete");
             }
@@ -1865,7 +2075,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // captured no screen keeps `null` and stays unbindable with the reason it already has;
       // a failure to record is reported as a note and never fails the run.
       // ---------------------------------------------------------------------
-      await step.do("record-target-identity", async () => {
+      await step.do("record-target-identity", PROJECTION_POLICY, async () => {
         const identity = await ensureRecordedTargetIdentity(this.env, runId);
         await beat(
           this.env,
@@ -1924,7 +2134,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // and separate from it: the stage that records what happened may not be the stage
       // that decides whether it was right.
       // ---------------------------------------------------------------------
-      await step.do("project-observations", DERIVE_POLICY, async () => {
+      await step.do("project-observations", PROJECTION_POLICY, async () => {
         await beat(this.env, runId, "committing the observation ledger", "project");
         const projected = await projectObservations(this.env, runId);
         if (projected.state === "evaluated") {
@@ -1965,7 +2175,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
         // `configuration`) stay `insufficient` with NO_TYPED_EXPECTATION until the model
         // verifier is wired. That is a smaller claim than the run would like to make and it
         // is the true one.
-        const verified = await verifyObservations(this.env, runId);
+        const verified = await verifyObservations(this.env, runId, fence);
 
         await updateCheckpoint(
           this.env,
@@ -1996,7 +2206,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // ---------------------------------------------------------------------
       // PHASE: adjudicating — DERIVE verdicts. NO MODEL CALL IS PERMITTED HERE.
       // ---------------------------------------------------------------------
-      const adjudication = await step.do("derive-verdicts", DERIVE_POLICY, async () => {
+      const adjudication = await step.do("derive-verdicts", PROJECTION_POLICY, async () => {
         await updateCheckpoint(this.env, runId, (d) => setPhase(d, "adjudicating", "active"), {
           progressed: true,
           fence,
@@ -2044,14 +2254,23 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             "derive-done",
           );
         }
-        return result;
+        // RETURN ONLY THE SUMMARY THROUGH THE WORKFLOW STEP BOUNDARY.
+        //
+        // `deriveItemResults` persists the full ItemResult[] to R2 at
+        // `itemResultsKey(runId)`. The Workflow step state carries only the summary
+        // (counts + content hash) to stay within the platform's 1 MiB per-step state
+        // cap. The assembler step loads the full array from R2 via
+        // `loadDerivedItemResults`. The `itemResults` field in the in-memory result
+        // is only useful for direct callers (tests, dev endpoints) that do not cross
+        // a step boundary.
+        return summarizeDerivedVerdicts(result);
       });
 
       // THE RECORD IS ASSEMBLED FROM THE AGGREGATOR'S OUTPUT, and the judge is run against
       // the RECORD — so the order is aggregate → assemble → judge and cannot be otherwise:
       // the JudgementRecord's binding names the record's payload hash, its sealed revision
       // and its evidence-manifest root, none of which exist before the record does.
-      const assembled = await step.do("assemble-record", DERIVE_POLICY, async () => {
+      const assembled = await step.do("assemble-record", PROJECTION_POLICY, async () => {
         await beat(this.env, runId, "assembling run record", "record");
         if (adjudication.state !== "evaluated") {
           return stageNotEvaluated<{ recordHash: string }>(
@@ -2059,7 +2278,21 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             "the aggregator produced no ItemResults, so there is nothing for a record to record",
           );
         }
-        const out = await assembleRecord(this.env, runId, adjudication.value.itemResults);
+        // THE ITEM RESULTS ARE LOADED FROM R2, NOT FROM THE STEP BOUNDARY.
+        //
+        // `deriveItemResults` persists the full ItemResult[] to R2 at `itemResultsKey(runId)`
+        // and returns only a summary through the Workflow step boundary. This avoids the
+        // platform's 1 MiB per-step state cap on large runs (588 requirements = several
+        // hundred KB of ItemResult JSON). The step result still carries the content hash
+        // for verification.
+        const itemResults = await loadDerivedItemResults(this.env, runId);
+        if (!itemResults) {
+          return stageNotEvaluated<{ recordHash: string }>(
+            "NO_VERDICTS",
+            "the aggregator's persisted ItemResults could not be loaded from R2",
+          );
+        }
+        const out = await assembleRecord(this.env, runId, itemResults);
         if (out.state === "evaluated") {
           await beat(
             this.env,
@@ -2080,7 +2313,7 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
       // ITS FAILURE IS NOT THE RUN'S FAILURE. A run with no judgement still reports; it
       // reports ONE column and says the second is unavailable, which is strictly more
       // honest than a run that refuses to publish what it did observe.
-      const judgement = await step.do("mint-judgement", DERIVE_POLICY, async () => {
+      const judgement = await step.do("mint-judgement", PROJECTION_POLICY, async () => {
         if (assembled.state !== "evaluated") {
           return stageNotEvaluated<{ status: string }>(
             "NO_RUN_RECORD",
@@ -2447,11 +2680,12 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
    * index can point at a revision but can never BE one — a poisoned entry costs a wasted lookup,
    * never a denominator nobody sealed.
    *
-   * WHAT IT DELIBERATELY DOES NOT COPY: the extraction's ambiguity readings. Production
-   * extraction writes no run checklist today (`writeRunChecklist` has one caller, and it is dev
-   * seeding), so there is nothing to carry across — and a reused revision keeps its ambiguities
-   * as sealed tokens exactly as a freshly-extracted one does. The record says
-   * `readingsAvailable: false` in both cases, which is the same true sentence.
+   * WHAT IT DELIBERATELY DOES NOT COPY: the extraction's ambiguity readings. Since the
+   * ambiguity-funnel fix (16 Aug 2026), production extraction DOES write the run checklist
+   * during consolidation (`writeRunChecklist` now has two callers: dev seeding and
+   * stageConsolidate) — but a REUSED revision still keeps its ambiguities as sealed tokens
+   * exactly as a freshly-extracted one does; the adopting run does not re-derive readings it
+   * never performed. `readingsAvailable` reports what is actually on file either way.
    */
   private async adoptReusableContract(
     step: WorkflowStep,
@@ -2594,8 +2828,9 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
     step: WorkflowStep,
     runId: string,
     fence: Fence,
-    detail: string,
+    _detail: string,
   ): Promise<void> {
+    const publicDetail = publicExtractionFailureDetail(DOCUMENT_SOURCE_AUTHORITY_INVALID);
     await step.do("stop-document-source-authority-invalid", async () => {
       await updateCheckpoint(
         this.env,
@@ -2605,11 +2840,11 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           d.contract.state = "unavailable";
           d.completion.test = "failed";
           d.completion.reasonCode = DOCUMENT_SOURCE_AUTHORITY_INVALID;
-          d.error = detail;
+          d.error = publicDetail;
         },
         { progressed: true, fence },
       );
-      await beat(this.env, runId, detail, "document-source-authority-refused");
+      await beat(this.env, runId, publicDetail, "document-source-authority-refused");
     });
     await this.reportAndFinalize(step, runId, fence);
   }
@@ -2639,6 +2874,10 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
           d.completion.test = "failed";
           d.completion.reasonCode = refusal.reasonCode;
           d.error = refusal.detail;
+          const reading = stopDocumentReading(
+            d.documentReading, refusal.reasonCode, refusal.detail, d.observedAt,
+          );
+          if (reading) d.documentReading = reading;
         },
         { progressed: true, fence },
       );
@@ -2750,7 +2989,18 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
             // The in-closure record names the step and carries the untruncated cause; the
             // in-memory `cause` is the same object when the closure ran at all. Never
             // overwrite the better of the two.
-            const failure = d.failure ?? cause;
+            const observedFailure = d.failure ?? cause;
+            const activeReading = projectDocumentReadingProgress(d.documentReading);
+            const extracting = d.phases.find((phase) => phase.name === "extracting");
+            const extractionUnitCrash = activeReading?.state === "reading" &&
+              activeReading.currentUnit !== null && extracting?.state === "active";
+            const failure = extractionUnitCrash
+              ? {
+                  ...observedFailure,
+                  reasonCode: "extraction-unit-crashed",
+                  message: publicExtractionFailureDetail("extraction-unit-crashed"),
+                }
+              : observedFailure;
             d.failure = failure;
             // ONE TRUTH, TWO SPELLINGS. `error` is the sentence a person reads and
             // `failure.message` is the same sentence a client renders; deriving one from
@@ -2802,6 +3052,25 @@ export class SurveyRunWorkflowV2 extends WorkflowEntrypoint<Env, RunParamsV2> {
                 ph.reasonCode = ph.reasonCode ?? failure.reasonCode;
               }
             }
+
+            // EXTRACTION-UNIT CRASH: the crash happened mid-extraction. The failure-report
+            // authorizer requires contract.state "unavailable" with zeroed counts, and
+            // completion.report "building" to authorize a durable failure report. Without
+            // this, the crash leaves the run in "extracting" and the report is refused with
+            // "failure-report-not-authorized", producing a dead run with no explanation.
+            if (extractionUnitCrash) {
+              d.contract = unavailableContract();
+              d.counts = zeroCounts();
+              d.completion.report = "building";
+            }
+
+            // `onUnitStart` is durable before a provider purchase. If any uncaught failure
+            // happens after that write and before the artifact lands, the status page must
+            // stop the exact in-flight unit instead of claiming it is still being read.
+            const reading = stopDocumentReading(
+              d.documentReading, failure.reasonCode, failure.message, d.observedAt,
+            );
+            if (reading) d.documentReading = withCheckpointUsage(reading, d.usage);
           },
           { progressed: true },
         );
@@ -3175,7 +3444,7 @@ export function testAxisBlockers(
     } else if (Number(coverageBlockers) > 0) {
       blockers.push(
         `${Number(coverageBlockers)} sealed document coverage limitation(s) prevent whole-document/full-coverage credit ` +
-          `(DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE)`,
+          `(see the RunRecord blocker list for each exact machine code and counted boundary)`,
       );
     }
   }
@@ -3231,8 +3500,18 @@ export function capExceeded(usage: {
   return null;
 }
 
-const stopBucket = (reason: string): "budget-exhausted" | "time-exhausted" | "blocked" =>
-  reason === "wall-clock-cap" ? "time-exhausted" : reason.endsWith("-cap") ? "budget-exhausted" : "blocked";
+/**
+ * WHICH BUCKET THE PENDING CASES MOVE INTO when a stop reason ends the execution phase.
+ *
+ * Delegated to `unsettledBucketFor` (types/contracts.ts) so this and the signed record's own
+ * per-case statuses (`derive-verdicts.ts#unreachedFromCursor`) read one mapping instead of two
+ * copies of it. It used to say "any non-`-cap` reason is `blocked`", which put every case a
+ * `coverage-shortfall-unexercised` run never drove into `counts.blocked` — and `counts.blocked`
+ * is what `testAxisBlockers` prints, so the run's own blocker sentence accused the customer's
+ * survey of stopping walks that were never attempted.
+ */
+const stopBucket = (reason: string): "budget-exhausted" | "time-exhausted" | "blocked" | "not-reached" =>
+  unsettledBucketFor(reason);
 
 const stopCompletion = (reason: string): TestCompletion =>
   reason === "wall-clock-cap" ? "partial-time" : reason.endsWith("-cap") ? "partial-budget" : "partial-blocked";

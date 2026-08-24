@@ -57,6 +57,8 @@ export async function devJudge(req: Request, env: Env): Promise<Response> {
     return json({ runId, ok: false, stoppedAt: "derive-verdicts", stages, ms: Date.now() - started }, { status: 200 });
   }
 
+  // Direct call — the full in-memory `itemResults` is available without crossing a
+  // Workflow step boundary (the R2 persistence is for the step boundary path only).
   const assembled = await assembleRecord(env, runId, derived.value.itemResults);
   stages.assemble = summarize(assembled);
   if (assembled.state !== "evaluated") {

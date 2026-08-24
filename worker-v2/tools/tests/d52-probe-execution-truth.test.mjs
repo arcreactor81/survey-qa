@@ -80,6 +80,7 @@ const healthyCheckpoint = () => ({
 
 const evaluated = { state: "evaluated", value: { coverageBlockers: 0 }, proof: {} };
 const healthyRevision = {
+  schemaVersion: "v2-contract-revision/1.0.0",
   contractSupplements: [],
   extraction: { passAHash: `sha256:${"0".repeat(64)}` },
 };

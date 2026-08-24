@@ -833,3 +833,216 @@ suite("D55 — BLOCKER 4, the attempt budget: EXEC_BATCH_MAX_ATTEMPTS caps pivot
     assertEq(progress.walks[1].ending?.kind, "completed");
   });
 });
+
+/* ============================================================ 7. re-attempt artifact identity
+ *
+ * THE v41 EVIDENCE_NAME_COLLISION CLASS (run v2r_01m067zf40z4788yb60c380vgp): a plain
+ * re-walk of a path — after a per-case timeout, not a pivot — wrote its screenshots and
+ * observation under the SAME basenames as attempt 0, the judge's signed manifest keys by
+ * basename, 482 names went ambiguous and the run minted NO judgement. The capture layer
+ * already made pivot names disjoint via attemptOrdinal; this pins that the BASE capture
+ * context now counts prior walk rows, so every re-attempt is disjoint by construction.
+ */
+
+suite("D55 — re-attempt artifact names are disjoint from attempt 0's", () => {
+  test("a SECOND walk of a path carries retry-1- on every observation basename; attempt 0 refs stay bare", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const bed = await liveBed(mod, env);
+
+    // The durable ledger already holds a prior attempt of this path — the timeout shape:
+    // no evidence, no floorDone, path still owed a walk.
+    const progress0 = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    progress0.walks.push({
+      exercised: false,
+      plannedDecisions: 0,
+      matchedDecisions: 0,
+      constrainingDecisions: 0,
+      matchedConstraining: 0,
+      screensAdvanced: 0,
+      blockedSteps: 0,
+      pathId: "FLOOR-01",
+      tier: 1,
+      attemptId: "att_priorattempt1",
+      outcome: "per-case-timeout",
+      outcomeDetail: "walk exceeded its per-case budget",
+      steps: 0,
+      wallMs: 0,
+      shimmed: false,
+      loadCrash: false,
+      evidenceCount: 0,
+      caseIds: [],
+      at: "2026-08-17T00:00:00.000Z",
+    });
+    await mod.executeBatch.saveProgress(env, progress0);
+
+    await withBrowser([completionScript()], () => runBatch(mod, env, bed));
+
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(progress.walks.length, 2, "the re-attempt must have walked");
+
+    const listed = await env.EVIDENCE.list({ prefix: `v2/runs/${bed.runId}/evidence/` });
+    let observed = 0;
+    let prefixed = 0;
+    for (const o of listed.objects) {
+      const stored = await env.EVIDENCE.get(o.key);
+      const body = await stored.json();
+      const ref = String(body.artifactRef ?? "");
+      if (!ref.startsWith("observations/")) continue;
+      observed += 1;
+      if (ref.includes("retry-1-")) prefixed += 1;
+    }
+    assert(observed > 0, "the re-attempt must have catalogued observation artifacts");
+    assertEq(
+      prefixed,
+      observed,
+      `every re-attempt basename must carry the attempt-disjoint prefix (${prefixed}/${observed} did) — bare refs collide with attempt 0 in the judge's signed manifest`,
+    );
+  });
+});
+
+/* ============================================================ 8. the pivot re-tries the FAILING screen
+ *
+ * MEASURED ON RUN v2r_01m0787n7t1c220esa0r8pbf6s (v47): the trunk walk crossed seven
+ * screeners on steered defaults and screened out at screen ~12 on an unlabelled later
+ * screener — and its pivots, varying EVERY navigator default, changed the steered answer
+ * at screener #1 too, disqualified on screen 1, and never reached the screen they existed
+ * to re-try. The pivot now replays proven variant-0 answers below the failing step
+ * (walkOnce passes variantFromStep = the screened-out attempt's final answered step).
+ */
+
+/** Screen 2 of the two-screen bed: an unbound radio the navigator answers by default. */
+const roleScreen = () =>
+  screen("R1. Which of these best describes your role?", {
+    optionGroups: [
+      {
+        name: "R1",
+        kind: "radio",
+        options: [option(10, "Role A"), option(11, "Role B")],
+      },
+    ],
+  });
+
+const twoScreenScreenout = () => [s4Screen(), s4Screen(), roleScreen(), roleScreen(), roleScreen(), screenedOutTerminal(), screenedOutTerminal()];
+const twoScreenCompletion = () => [s4Screen(), s4Screen(), roleScreen(), roleScreen(), roleScreen(), completedTerminal(), completedTerminal()];
+
+suite("D55 — the pivot varies the failing screen and replays the survived ones verbatim", () => {
+  test("a screen-out at screen 2 pivots screen 2's answer while screen 1's proven answer replays unchanged", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const bed = await liveBed(mod, env);
+
+    const { pages } = await withBrowser([twoScreenScreenout(), twoScreenCompletion()], () => runBatch(mod, env, bed));
+
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(progress.walks.length, 2, "the screened-out attempt AND its pivot");
+    assertEq(progress.walks[1].pivot?.ordinal, 1);
+    assertEq(progress.walks[1].ending?.kind, "completed");
+
+    // Screen 1 (the number question the first walk SURVIVED): the pivot must replay the
+    // proven variant-0 midpoint, not the variant-1 quantile. Pre-fix this typed "8".
+    assertEq(pages[0].typed[0].text, "16", "attempt 0 types the midpoint");
+    assertEq(
+      pages[1].typed[0].text,
+      "16",
+      "the pivot must REPLAY the survived screen's answer — a varied early answer is how pivots died at screener #1 on the live run",
+    );
+
+    // Screen 2 (where the screen-out happened): the variant must apply — a different option.
+    const roleClicks = (p) => p.clicks.filter((c) => c.index === 10 || c.index === 11).map((c) => c.index);
+    assert(roleClicks(pages[0]).includes(10), `attempt 0 picks option 1, got ${JSON.stringify(roleClicks(pages[0]))}`);
+    assert(
+      roleClicks(pages[1]).includes(11),
+      `the pivot must vary THE FAILING screen's answer to option 2, got ${JSON.stringify(roleClicks(pages[1]))}`,
+    );
+  });
+});
+
+/* ============================================================ 7. THE IDENTICAL-ACTIONS STOP */
+
+suite("D55 — a pivot that reproduces its parent's actions ends the retries", () => {
+  // Measured live (run v2r_01m08ce0s86w97rvvcn08h0n59): the plan pinned "None of the
+  // above" at the fatal screen by exact label, so all four pivots replayed the identical
+  // click and died identically — four 14-minute walks buying zero new information. The
+  // varied-filler lever only moves navigator defaults; an exact plan label is outside its
+  // reach. One byte-for-byte reproduction is the proof that further pivots cannot differ.
+  test("a pivot that reproduces its parent's actions verbatim ends the retries — plan-pinned deaths are not re-bought", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const bed = await liveBed(mod, env, {
+      decisions: [
+        { question: "R1", question_wording: "Which of these best describes your role?", select: ["Role A"] },
+      ],
+    });
+
+    // Three identical scripts on offer; the stop must leave the third UNUSED.
+    const { pages } = await withBrowser(
+      [twoScreenScreenout(), twoScreenScreenout(), twoScreenScreenout()],
+      () => runBatch(mod, env, bed),
+    );
+
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(
+      progress.walks.length,
+      2,
+      `one attempt + one reproducing pivot must END the chain below the cap, got ${progress.walks.length} walks`,
+    );
+    assertEq(pages.length, 2, "the third script must never be walked — the stop preempts the pivot cap");
+    assertEq(progress.screenoutPivots?.["FLOOR-01"], 1, "exactly one pivot was bought");
+
+    // Both walks clicked the SAME plan-pinned option — the invariance the stop detected.
+    const roleClicks = (p) => p.clicks.filter((c) => c.index === 10 || c.index === 11).map((c) => c.index);
+    assertEq(JSON.stringify(roleClicks(pages[0])), JSON.stringify(roleClicks(pages[1])));
+    assertEq(
+      mod.executeBatch.walkActionsJson !== undefined,
+      true,
+      "the fingerprint is exported for direct pinning",
+    );
+  });
+
+  test("a pivot that ACTS differently keeps the retry chain alive to the cap", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const bed = await liveBed(mod, env);
+
+    // No plan pin: attempt 0 defaults Role A; pivot 1 varies to Role B (different actions,
+    // chain continues); pivot 2 clamps to Role B again and lands on a completion.
+    const { pages } = await withBrowser(
+      [twoScreenScreenout(), twoScreenScreenout(), twoScreenCompletion()],
+      () => runBatch(mod, env, bed),
+    );
+
+    const progress = await mod.executeBatch.loadProgress(env, bed.runId, bed.planRevisionId);
+    assertEq(
+      progress.walks.length,
+      3,
+      `a DIFFERING pivot must not be stopped — expected attempt + 2 pivots, got ${progress.walks.length}`,
+    );
+    assertEq(pages.length, 3, "all three scripts walked");
+    assertEq(progress.walks[2].ending?.kind, "completed", "the second pivot reached the completion");
+  });
+
+  test("walkActionsJson: identical actions fingerprint identically; timing and screens are excluded; any acted difference splits", async () => {
+    const mod = await worker();
+    const steps = (value, ok = true) => [
+      {
+        stepIndex: 0,
+        actions: [{ kind: "type-text", targetIdx: 3, value, ok }],
+      },
+      { stepIndex: 1.5, actions: [] },
+    ];
+    const base = { steps: steps("16") };
+    const sameActionsOtherNoise = {
+      steps: steps("16").map((s) => ({ ...s, wallMs: 9999, screenBefore: { questionText: "different render" } })),
+    };
+    assertEq(mod.executeBatch.walkActionsJson(base), mod.executeBatch.walkActionsJson(sameActionsOtherNoise));
+    assert(
+      mod.executeBatch.walkActionsJson(base) !== mod.executeBatch.walkActionsJson({ steps: steps("8") }),
+      "a different typed value must split the fingerprint",
+    );
+    assert(
+      mod.executeBatch.walkActionsJson(base) !== mod.executeBatch.walkActionsJson({ steps: steps("16", false) }),
+      "a failed action must split the fingerprint from a successful one",
+    );
+  });
+});

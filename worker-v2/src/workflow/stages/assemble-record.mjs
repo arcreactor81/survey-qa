@@ -40,7 +40,13 @@ import {
   CROSS_WINDOW_DISCOVERY_BLOCKER_KIND,
   contractCrossWindowLimitations,
   crossWindowLimitationDetail,
+  crossWindowLimitationPlainDetail,
 } from "../../../shared/cross-window-limitations.mjs";
+import {
+  SOURCE_GROUNDING_BLOCKER_KIND,
+  contractPrimaryGroundingLimitations,
+  primaryGroundingLimitationDetail,
+} from "../../../shared/pass-a-grounding-limitations.mjs";
 
 export const AGGREGATOR_ID = "v2-aggregator/1.0.0";
 export const RESULT_POLICY_ID = "v2-result-policy/1.0.0";
@@ -320,7 +326,32 @@ export function deriveBlockers({ revision, walks, itemResults, observations, evi
         blockerId: "blk_document-cross-window-discovery-incomplete",
         kind: CROSS_WINDOW_DISCOVERY_BLOCKER_KIND,
         detail: crossWindowLimitationDetail(limitation),
+        // BESIDE the machine sentence, never instead of it: the audit trail keeps the counted
+        // provenance line verbatim, and the customer surfaces get prose written where the
+        // numbers are understood. See docs/REPORT-PRESENTATION-REVIEW.md B1.
+        plainDetail: crossWindowLimitationPlainDetail(limitation),
         count: limitation.candidatesSynthesized,
+      }),
+    );
+  }
+
+  // Primary candidates that failed exact source grounding are omitted from semantic
+  // authority, never from the record of what was not covered. The one sealed marker carries
+  // an exact Pass-A hash and a closed metadata-only row array for single- and multi-window
+  // documents alike. Historical revisions with no marker remain readable; any named marker
+  // that is duplicate, malformed, or foreign to this revision throws above the signing seam.
+  const primaryGrounding = contractPrimaryGroundingLimitations(
+    revision?.contractSupplements,
+    revision?.extraction?.passAHash ?? null,
+    revision,
+  );
+  if (primaryGrounding !== null && primaryGrounding.rows.length > 0) {
+    blockers.push(
+      blocker({
+        blockerId: "blk_document-source-grounding-incomplete",
+        kind: SOURCE_GROUNDING_BLOCKER_KIND,
+        detail: primaryGroundingLimitationDetail(primaryGrounding),
+        count: primaryGrounding.rows.length,
       }),
     );
   }
@@ -432,6 +463,8 @@ const blocker = ({
   blockerId,
   kind,
   detail,
+  /** Customer prose for the same fact. Absent on blockers that have no reader-facing twin. */
+  plainDetail = undefined,
   pathId = null,
   attemptId = null,
   outcome = null,
@@ -451,6 +484,7 @@ const blocker = ({
   shimmed,
   at,
   detail,
+  ...(plainDetail !== undefined ? { plainDetail } : {}),
   evidenceIds,
   observationRefs,
   ...(count !== undefined ? { count } : {}),
@@ -500,7 +534,19 @@ function loadFailureEvidence(evidence, walk) {
 // reason claims are not.
 // ---------------------------------------------------------------------------
 
-export const ATTEMPT_PROJECTION_ID = "v2-attempt-projection/1.0.0";
+/**
+ * 1.1.0 — the projection now CARRIES the walk's typed ending and judges `ok` from it. Bumped
+ * rather than left at 1.0.0 because `derivedBy` is how a reader of a signed record knows which
+ * projection produced a row, and `ok` changed MEANING here: 1.0.0 rows read it as
+ * `outcome === "completed"`, 1.1.0 rows read it as "this walk reached an ending". Two records
+ * disagreeing about the same walk under one version id is the drift this field exists to
+ * prevent. (Precedent: `BLOCKER_PROJECTION_ID` is at 1.1.0 for the same reason.)
+ *
+ * 1.2.0 — the projection also carries `screensAdvanced` and `outcomeDetail`. Additive, and
+ * bumped for the same reason as 1.1.0: a reader comparing two records must be able to tell a
+ * row whose walk went nowhere from a row produced before the projection carried the number.
+ */
+export const ATTEMPT_PROJECTION_ID = "v2-attempt-projection/1.2.0";
 
 /**
  * `attempts: []` WAS THE SAME DEFECT AS `claims: []`, ONE FIELD OVER — and it was
@@ -552,16 +598,67 @@ export function deriveAttempts({ walks, evidence }) {
       targetCaseIds: arr(w?.caseIds),
       startedAt: startOfWalk(endedAt, w?.wallMs),
       endedAt,
-      // `ok` IS THE LEDGER'S OWN WORDS, NOT AN OPINION: the driver wrote `outcome` and
-      // `loadCrash`, and a walk that crashed on load is not ok however it finished.
-      ok: w?.outcome === "completed" && w?.loadCrash !== true,
+      // `ok` IS THE LEDGER'S OWN WORDS, NOT AN OPINION: the driver wrote `outcome`, `ending`
+      // and `loadCrash`, and a walk that crashed on load is not ok however it finished.
+      ok: reachedAnEnding(w),
       stopReason: typeof w?.outcome === "string" ? w.outcome : null,
+      // CARRIED ONLY WHEN THE LEDGER HAS IT, and then byte-for-byte — the same conditional
+      // spread `walkRecord()` uses one hop upstream, for the same reason: `ending: w.ending`
+      // would put the KEY on every row with the value `undefined`, and a reader testing
+      // `"ending" in attempt` would read a row that predates the field as one that HAS an
+      // ending. There is no `??` here deliberately; a default is the whole defect.
+      ...(w && typeof w === "object" && w.ending !== undefined ? { ending: w.ending } : {}),
+      // HOW FAR IT GOT, AND WHAT THE SURVEY SAID WHEN IT STOPPED. Same opt-in spread and the
+      // same reason: `screensAdvanced: 0` is a measurement and an absent key is not, so a row
+      // that predates the carry must not acquire a confident zero. Without these two the
+      // report had no field that could answer "how far did we get?" — the number 43 existed
+      // in the walk ledger and appeared nowhere a reader could reach it.
+      ...(typeof w?.screensAdvanced === "number" ? { screensAdvanced: w.screensAdvanced } : {}),
+      ...(w && typeof w === "object" && w.outcomeDetail !== undefined ? { outcomeDetail: w.outcomeDetail } : {}),
       evidenceIds: walkEvidenceIds(evidence, w),
       evidenceSharedWithSiblingWalks: (rowsPerKey.get(walkKey(w)) ?? 0) > 1,
       derivedBy: ATTEMPT_PROJECTION_ID,
     });
   }
   return attempts;
+}
+
+/**
+ * DID THIS WALK REACH AN ENDING? — and NOT `outcome === "completed"`, which is the step loop's
+ * own budget bookkeeping.
+ *
+ * THE DEFECT THIS CLOSES. `browser/types.ts` states it outright: `outcome`'s `"completed"`
+ * means "the step loop exited under budget", and A REAL THANK-YOU PAGE LANDS ON
+ * `"no-advance-control"`. So the old reading marked `ok: true` for walks that ran out of PLAN
+ * mid-survey and `ok: false` for the walk that ran out of SURVEY — inverted for precisely the
+ * case the deliverable is about. The comment above the old line ("the ledger's own words, not
+ * an opinion") was true and is why it survived: it faithfully copied a field whose name is a
+ * false friend, which is the same two-meanings-in-one-value defect that made `WalkEnding`
+ * necessary.
+ *
+ * THE TYPED ENDING WINS WHEN THE ROW HAS ONE, because that is the field built to answer this
+ * question from the final screen's own evidence. `stalled` and `unclassified` are NOT endings
+ * reached — `unclassified` especially: it is the walker's counted "I could not tell", and
+ * reading it as ok would rebuild the confident-wrong-answer defect one layer down.
+ *
+ * A ROW WITHOUT AN ENDING falls back to the two terminal outcomes. That is the honest older
+ * reading — it says "this walk ran out of survey" without claiming WHICH kind of ending it
+ * was — and it never invents an ending for a row that did not record one.
+ */
+/**
+ * LABEL COHERENCE: this is the .mjs mirror of `execute-batch.ts#walkReachedEnding`.
+ * The two MUST agree — a test in d59-record-honesty.test.mjs pins them to the same
+ * inputs and outputs so a drift between them is a test failure, not a silent divergence.
+ *
+ * Exported so the coherence test can call both functions on the same inputs and assert
+ * they return the same value.
+ */
+export function reachedAnEnding(w) {
+  if (w?.loadCrash === true) return false;
+  const kind = w?.ending && typeof w.ending === "object" ? w.ending.kind : null;
+  if (kind === "completed" || kind === "screened-out") return true;
+  if (kind === "stalled" || kind === "unclassified" || kind === "crashed") return false;
+  return w?.outcome === "completed" || w?.outcome === "no-advance-control";
 }
 
 /**

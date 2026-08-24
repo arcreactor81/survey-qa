@@ -69,7 +69,14 @@ import {
 // extraction passes, and unresolved theme/nil shading fails closed instead of inheriting grey.
 // 1.7.0: relationship-discovered auxiliary parts, structural subroles, and fail-closed
 // formatting specificity. This changes durable parser/cache identity.
-export const DOCX_BLOCKS_BASE_VERSION = "v2-docx-blocks/1.7.0" as const;
+// 1.8.0: vertically merged continuation cells inherit their anchor cell's content. Each
+// covered row gets its own block with the anchor text, marked as vmerge-inherited, so both
+// extraction passes see routing rules that span multiple option rows. Assumption: Word
+// vertical merge means the anchor cell's content APPLIES to every row it spans — when this
+// does not hold, the inherited text degrades to a named limitation, never a wrong answer.
+// Horizontal merges (gridSpan) do NOT inherit: each cell in a horizontal span is a single
+// physical cell with its own content, not a continuation of another cell's content.
+export const DOCX_BLOCKS_BASE_VERSION = "v2-docx-blocks/1.8.0" as const;
 export const docxBlocksVersion = (profile: DocumentSemanticsProfile): string =>
   `${DOCX_BLOCKS_BASE_VERSION}+profile=${profile}`;
 /** Backwards-compatible constant for neutral/legacy callers. */
@@ -1041,7 +1048,39 @@ const partSyntax = (partXml: string, fallback: Syntax): Syntax => {
   return detected === null || detected === fallback.prefix ? fallback : buildSyntax(detected);
 };
 
-/** The whole-document rendering a pass reads: every line carries its id and its origin. */
+/**
+ * Lossless model-input rendering: one compact JSON object per physical line.
+ *
+ * `text` is deliberately assigned directly from `SourceBlock.text`. JSON escaping is the
+ * transport envelope, not a display normalization: after `JSON.parse`, every code unit —
+ * including CR/LF, quotes and backslashes — is the exact parser-owned source string that
+ * evidence grounding validates. Keep the metadata structural rather than re-rendering it
+ * into prose; a model must never have to infer provenance from a display convention.
+ */
+export function encodeSourceBlocksJsonl(blocks: SourceBlock[]): string {
+  return blocks.map((block) => JSON.stringify(sourceBlockModelProjection(block))).join("\n");
+}
+
+/**
+ * The single canonical object schema placed on the model-input wire for one source block.
+ * The bounded JSONL guard walks this same projection before serialization, so adding a field
+ * here cannot silently bypass its raw-value memory tripwire.
+ */
+export function sourceBlockModelProjection(block: SourceBlock) {
+  return {
+    block_id: block.blockId,
+    text: block.text,
+    kind: block.kind,
+    origin: block.origin,
+    section: block.section,
+    table_id: block.tableId,
+    coords: block.coords,
+    source_subrole: block.sourceSubrole ?? null,
+    semantic_spans: block.semanticSpans ?? [],
+  };
+}
+
+/** The legacy human-readable rendering: every line carries its id and its origin. */
 export function annotate(blocks: SourceBlock[]): string {
   const out: string[] = [];
   let lastTable: string | null = null;
@@ -1070,6 +1109,8 @@ export function annotate(blocks: SourceBlock[]): string {
       out.push(`[${b.blockId}] [combo-box suggestion — OPEN, NOT EXHAUSTIVE: ${inlineText}]`);
     } else if (b.sourceSubrole === "ruby-reading") {
       out.push(`[${b.blockId}] [${b.origin}: ${inlineText}]`);
+    } else if (b.sourceSubrole === "vmerge-inherited") {
+      out.push(`[${b.blockId}] ${describe(b)}[vmerge-inherited: ${inlineText}]`);
     } else {
       out.push(`[${b.blockId}] ${describe(b)}${inlineText}`);
     }
@@ -1713,10 +1754,78 @@ function scanTable(
     (count, row) => count + row.cells.filter((cell) => cell.vMerge !== null).length,
     0,
   );
+
+  // =========================================================================
+  // VERTICAL MERGE INHERITANCE — the fix for merged action cells.
+  //
+  // ASSUMPTION (stated, not silent): Word vertical merge means the anchor
+  // cell's content APPLIES to every row the merge spans. This is the common
+  // pattern in routing tables: one [TERMINATE] cell merged across option rows
+  // means every covered option terminates. When the assumption does not hold
+  // (a merge used only for visual layout grouping), the inherited text is
+  // visibly marked as inherited and degrades to a named limitation rather
+  // than a wrong answer.
+  //
+  // MECHANISM: for each grid-column position, walk top to bottom. A cell
+  // with vMerge="restart" is the anchor. Subsequent cells with
+  // vMerge="continue" at the same column range inherit the anchor's content
+  // when their own text is empty. The inherited content becomes a separate
+  // block at each continuation row, with sourceSubrole="vmerge-inherited"
+  // and the anchor's coordinates in the origin string.
+  //
+  // HORIZONTAL MERGES (gridSpan) do NOT inherit: each cell in a horizontal
+  // span is a single physical cell with its own content.
+  // =========================================================================
+  let inheritedCount = 0;
   if (verticalMergeCount > 0) {
+    // Build a map: gridCol -> ordered list of { rowIndex, cell } for cells
+    // that participate in vertical merge groups.
+    const mergeColumns = new Map<number, Array<{ rowIndex: number; cell: TableCell }>>();
+    for (let r = 0; r < rows.length; r++) {
+      for (const c of rows[r]!.cells) {
+        if (c.vMerge === null) continue;
+        const list = mergeColumns.get(c.gridCol) ?? [];
+        list.push({ rowIndex: r, cell: c });
+        mergeColumns.set(c.gridCol, list);
+      }
+    }
+
+    for (const [, entries] of mergeColumns) {
+      let anchor: TableCell | null = null;
+      let anchorRow = -1;
+      for (const { rowIndex, cell } of entries) {
+        if (cell.vMerge === "restart") {
+          anchor = cell;
+          anchorRow = rowIndex;
+        } else if (cell.vMerge === "continue" && anchor !== null) {
+          // Inherit the anchor's content when this continuation cell is empty.
+          if (clean(cell.text).length === 0 && clean(anchor.text).length > 0) {
+            cell.text = anchor.text;
+            cell.formatting = { ...anchor.formatting };
+            cell.drafts = [
+              ...cell.drafts,
+              ...anchor.drafts.map((d): Draft => ({ ...d })),
+            ];
+            // Mark for the output loop: this cell carries inherited content.
+            (cell as TableCell & { _inheritedFrom?: { row: number; col: number } })._inheritedFrom = {
+              row: anchorRow + 1,
+              col: anchor.gridCol,
+            };
+            inheritedCount += 1;
+          }
+        }
+      }
+    }
+
     coverage.problems.push(
-      `TABLE_VERTICAL_MERGE_PRESENT: ${tableId} contains ${verticalMergeCount} vertical-merge marker(s). ` +
-        `Cell text and structural coordinates are retained, but no row-header relationship is inferred from adjacency.`,
+      `TABLE_VERTICAL_MERGE_PRESENT: ${tableId} contains ${verticalMergeCount} vertical-merge marker(s)` +
+        (inheritedCount > 0
+          ? `; ${inheritedCount} continuation cell(s) inherited their anchor cell's content ` +
+            `(assumption: vertical merge means content applicability across covered rows). ` +
+            `Inherited blocks are marked vmerge-inherited so extraction passes see routing ` +
+            `rules at every row they apply to.`
+          : `. Cell text and structural coordinates are retained, but no row-header ` +
+            `relationship is inferred from adjacency.`),
     );
   }
 
@@ -1725,6 +1834,7 @@ function scanTable(
     const row = rows[r]!;
     for (const c of row.cells) {
       const text = c.text;
+      const inherited = (c as TableCell & { _inheritedFrom?: { row: number; col: number } })._inheritedFrom;
       if (clean(text).length === 0) {
         // A cell whose only content is a content control still owes its origin-bearing
         // drafts: skipping the empty cell must not silently drop the open suggestions.
@@ -1736,7 +1846,10 @@ function scanTable(
         text,
         section: null,
         tableId,
-        origin,
+        origin: inherited
+          ? `${origin}; vmerge-inherited from r${inherited.row}c${inherited.col}`
+          : origin,
+        sourceSubrole: inherited ? "vmerge-inherited" : undefined,
         formatting: c.formatting,
         semanticSpans: [],
         coords: {

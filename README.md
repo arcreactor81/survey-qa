@@ -36,7 +36,7 @@ is surfaced, never guessed.
 |---|---|
 | v2 service | Deployed at `https://survey-qa-v2.wellshit.co.in`, behind its own Cloudflare Access application. Per-run status is authoritative; a deployed route is not proof that a particular run completed. |
 | Core workflow | Implemented as durable Cloudflare Workflow stages: parse/extract, seal, plan, Browser Rendering execution, observation projection, deterministic tri-state verification, deterministic aggregation, signed record, independent judgement, and report. |
-| Document extraction | The intended normal route is exact `grok-4.6` for the whole-document pass and DeepSeek Pro for the independent block pass. An eligible, retained typed Grok failure alone may substitute DeepSeek Flash for Pass A; Flash+Pro is reduced same-provider independence and cannot seal as normal corroboration. Paid Grok calls require the exact 16-field owner-dashboard-copy rate binding described below. Units are persisted and resumed rather than silently truncated or repeatedly purchased. |
+| Document extraction | The intended normal route is exact `grok-4.5` for the whole-document pass and DeepSeek Pro for the independent block pass. An eligible, retained typed Grok failure alone may substitute DeepSeek Flash for Pass A; Flash+Pro is reduced same-provider independence and cannot seal as normal corroboration. Paid Grok calls require the exact 16-field owner-console-confirmation rate binding described below. Units are persisted and resumed rather than silently truncated or repeatedly purchased. |
 | Browser evidence | Real screen JSON, viewport screenshots, Chrome accessibility snapshots, action receipts, and before/action/after state are captured. Missing modalities and controls the walker cannot answer are counted. |
 | Deterministic verifier | Route, boundary-validation, and option-membership predicates are registered. Unrecognised or incompletely evidenced cases become `insufficient`, never a guessed pass. |
 | Visual perception | Capture/reconciliation infrastructure exists, but paid visual inference is shadow-only and disabled in deployable configuration. The prior Gemma/Gemini/Mistral comparison did not establish a production winner. |
@@ -45,11 +45,11 @@ is surfaced, never guessed.
 | v1 | Historical production system. **Do not deploy, edit, probe, or reuse its URL/subsystems during v2 work.** v2 has a different Worker, host, Access app, Workflow, run-id shape, binding name, and R2 prefix. |
 
 The reviewed Grok prerequisite is the exact 16-field
-`survey-qa-grok-rate-binding/1.0.0` binding for `grok-4.6`: source
-`owner-dashboard-copy`, policy `max-known-text-tier/1.0.0`, observed 13 August 2026,
-canonical SHA-256 `be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5`,
+`survey-qa-grok-rate-binding/1.0.0` binding for `grok-4.5`: source
+`owner-console-confirmation`, policy `max-known-text-tier/1.0.0`, observed 15 August 2026,
+canonical SHA-256 `9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e`,
 500K context, and a 200K long-context threshold. Input/cached-input/output rates are
-$2/$0.50/$6 per Mtok at or below 200K and $4/$1/$12 above 200K; the max-known
+$2/$0.30/$6 per Mtok at or below 200K and $4/$0.60/$12 above 200K; the max-known
 reservation is $4/$12 per Mtok. A future authenticated exact-model catalogue receipt is an
 independent cross-check only, not the provenance of this binding or a release prerequisite.
 

@@ -181,12 +181,12 @@ export interface CollectedError {
  * the storage-facing identity. Neither one is inferred from the other.
  */
 export interface ScreenArtifactRef {
-  kind: "screen-json" | "screenshot" | "accessibility";
+  kind: "screen-json" | "screenshot" | "accessibility" | "rendered-pdf";
   evidenceId: string;
   artifactRef: string;
   sourceEvidenceId: string;
   contentHash: string;
-  mediaType: "application/json" | "image/png";
+  mediaType: "application/json" | "image/png" | "application/pdf";
   size: number;
 }
 
@@ -235,6 +235,13 @@ export interface ScreenCaptureFailure {
     | "screenshot-capture-failed"
     | "screenshot-capture-empty"
     | "screenshot-evidence-write-failed"
+    | "pdf-api-unavailable"
+    | "pdf-capture-timeout"
+    | "pdf-capture-failed"
+    | "pdf-capture-empty"
+    | "pdf-capture-size-limit"
+    | "pdf-capture-dimension-limit"
+    | "pdf-evidence-write-failed"
     | "accessibility-api-unavailable"
     | "accessibility-snapshot-failed"
     | "accessibility-snapshot-empty"
@@ -250,6 +257,24 @@ export interface ScreenCaptureFailure {
   stepIndex: number;
   slot: string;
 }
+
+/** PDF is a visibility/download rendition. It never participates in QA or visual eligibility. */
+export const PDF_CAPTURE_FAILURE_KINDS = [
+  "pdf-api-unavailable",
+  "pdf-capture-timeout",
+  "pdf-capture-failed",
+  "pdf-capture-empty",
+  "pdf-capture-size-limit",
+  "pdf-capture-dimension-limit",
+  "pdf-evidence-write-failed",
+] as const;
+
+export type PdfCaptureFailureKind = (typeof PDF_CAPTURE_FAILURE_KINDS)[number];
+
+export const isPdfCaptureFailureKind = (
+  kind: ScreenCaptureFailure["kind"],
+): kind is PdfCaptureFailureKind =>
+  (PDF_CAPTURE_FAILURE_KINDS as readonly ScreenCaptureFailure["kind"][]).includes(kind);
 
 /**
  * Closed, JSON-only projection of Puppeteer's `SerializedAXNode`.
@@ -320,6 +345,10 @@ export type ScreenshotCapture =
   | { status: "captured"; ref: ScreenArtifactRef & { kind: "screenshot" } }
   | { status: "failed"; failure: ScreenCaptureFailure };
 
+export type PdfCapture =
+  | { status: "captured"; ref: ScreenArtifactRef & { kind: "rendered-pdf" } }
+  | { status: "failed"; failure: ScreenCaptureFailure & { kind: PdfCaptureFailureKind } };
+
 export type AccessibilityCapture =
   | {
       status: "captured";
@@ -331,7 +360,7 @@ export type AccessibilityCapture =
   | { status: "failed"; failure: ScreenCaptureFailure };
 
 /**
- * THE THREE REPRESENTATIONS OF ONE RENDERED SCREEN, PAIRED WITHOUT A DOM CONVENTION.
+ * THE CAPTURED REPRESENTATIONS OF ONE RENDERED SCREEN, PAIRED WITHOUT A DOM CONVENTION.
  *
  * A capture is necessarily sequential over Puppeteer's protocol: screen JSON, PNG and Chrome's
  * accessibility snapshot cannot be obtained in one atomic CDP command. `startedAt` / `endedAt`
@@ -339,8 +368,7 @@ export type AccessibilityCapture =
  * exact content hashes bind what was collected together. This is an observation bundle, not a
  * claim that two separately-timed browser commands were simultaneous.
  */
-export interface ScreenCaptureEpoch {
-  kind: "v2-screen-capture-epoch/1.0.0";
+interface ScreenCaptureEpochBase {
   epochId: string;
   stepIndex: number;
   slot: string;
@@ -358,6 +386,19 @@ export interface ScreenCaptureEpoch {
   captureFailures: ScreenCaptureFailure[];
   captureFailureCount: number;
 }
+
+/** Historical capture shape. A PDF field on this kind is invalid, never an implicit upgrade. */
+export interface ScreenCaptureEpochV1 extends ScreenCaptureEpochBase {
+  kind: "v2-screen-capture-epoch/1.0.0";
+}
+
+/** Current capture shape. Every new epoch states whether its bounded PDF rendition landed. */
+export interface ScreenCaptureEpochV1_1 extends ScreenCaptureEpochBase {
+  kind: "v2-screen-capture-epoch/1.1.0";
+  pdf: PdfCapture;
+}
+
+export type ScreenCaptureEpoch = ScreenCaptureEpochV1 | ScreenCaptureEpochV1_1;
 
 export interface RenderedScreen {
   at: string;
@@ -492,9 +533,13 @@ export type BlockedReason =
 /** Which post-click observation proved that the survey moved. Answer state is excluded. */
 export type AdvanceSignal =
   | "screen-signature-changed"
+  | "question-identity-changed"
   | "url-changed"
   | "history-length-changed"
-  | "progress-value-increased";
+  | "progress-value-increased"
+  /** The site's own position counter, read from its TEXT, moved forward. See advanceSignals. */
+  | "progress-text-increased"
+  | "info-screen-text-changed";
 
 /**
  * A DECISION THE DRIVER DECLINED TO BIND TO THE SCREEN IN FRONT OF IT.
@@ -548,7 +593,7 @@ export type AdvanceSignal =
  * us out". `evidence` carries the quoted markers that decided it, so a reader can disagree with
  * the classification without having to re-open the screen capture.
  */
-export type WalkEndingKind = "completed" | "screened-out" | "stalled" | "unclassified";
+export type WalkEndingKind = "completed" | "screened-out" | "stalled" | "unclassified" | "crashed";
 
 export interface WalkEnding {
   kind: WalkEndingKind;
@@ -721,6 +766,60 @@ export interface StepObservation {
     captureFailureCount?: number;
   };
   wallMs: number;
+  /**
+   * WHERE THE STEP'S TIME WENT, measured, not inferred. `read` covers the screen-JSON
+   * reads (before + after-action), `act` the interaction pass, `advance` the Next press
+   * through the movement poll, `capture` the screenshot/AX epoch captures. The remainder
+   * of `wallMs` is binding/verification/bookkeeping. Absent on artifacts from before the
+   * field existed; added 2026-08-17 to aim the pace work at measured waste (steps were
+   * costing ~19s while the same screens read locally in ~1.5s).
+   */
+  phaseMs?: { read: number; act: number; advance: number; capture: number };
+  /**
+   * OUTCOME 3 (D1): a mid-walk termination announcement detected on this step's screen.
+   * Present when the screen's text matched a SCREENOUT_MARKERS entry — meaning the survey
+   * is announcing "this respondent will be/has been terminated" while the walk is still
+   * mid-survey. On a live link such a walk is dead at screener end; this field makes that
+   * fact visible in the walk record. Absent (not null) on steps with no announcement, and
+   * on artifacts from before the field existed. LABELING ONLY: does not change navigation.
+   */
+  terminationAnnouncement?: {
+    matchedText: string;
+    lexiconIndex: number;
+    questionToken: string | null;
+  };
+  /**
+   * WHAT THIS STEP DID NOT CAPTURE AND WHY — the capture diet policy in effect.
+   *
+   * Present when one or more capture epochs were DELIBERATELY skipped on this step, with
+   * the policy that decided it. An empty array is a claim: "every epoch that could have
+   * been captured was". Absent on artifacts from before the diet existed.
+   *
+   * THIS IS A POLICY, NOT A FAILURE. A skipped epoch has a stated reason and goes into the
+   * counted `skippedEpochs` on the walk. A capture that FAILED has a `captureFailure` entry
+   * instead. The two must never be conflated: a policy is a budget decision, a failure is a
+   * defect.
+   */
+  captureDietApplied?: CaptureDietEntry[];
+}
+
+/**
+ * ONE DELIBERATELY SKIPPED CAPTURE EPOCH, NAMED AND COUNTED.
+ *
+ * THE DEFECT THIS EXISTS TO PREVENT: a silent thinning that removes evidence without saying
+ * so. Every skipped epoch is a named policy entry: what slot, which modalities, and which
+ * rule decided it. A consumer that needs the skipped modality can detect the policy rather
+ * than seeing "nothing was captured" and concluding the browser failed.
+ */
+export interface CaptureDietEntry {
+  /** The slot that was skipped: "after-action", "advanced", etc. */
+  slot: string;
+  /** Which modalities were skipped. */
+  modalities: Array<"screen-json" | "screenshot" | "accessibility" | "rendered-pdf">;
+  /** The policy rule that decided to skip it. Stable across runs. */
+  rule: string;
+  /** Why this rule applies to this step. */
+  reason: string;
 }
 
 export interface PathObservation {
@@ -806,6 +905,13 @@ export interface PathObservation {
    */
   navigatorDefaultAnswerCount?: number;
   /**
+   * CAPTURE DIET IN EFFECT FOR THIS WALK — how many epochs were deliberately skipped and
+   * by which policy. Absent on artifacts from before the diet existed. Present-but-zero is
+   * a claim: "the diet was active and decided to skip nothing". The per-step entries are in
+   * `StepObservation.captureDietApplied`; this is the walk-level summary.
+   */
+  captureDietSkippedEpochs?: number;
+  /**
    * Every paired visual/accessibility epoch made on the walk, including a load-failure epoch
    * that could not become a normal step. Optional only for artifacts from the older reader.
    */
@@ -814,6 +920,14 @@ export interface PathObservation {
   /** Named capture shortfalls lifted to the walk; absent is legacy, `[]` is checked-and-clean. */
   captureFailures?: ScreenCaptureFailure[];
   captureFailureCount?: number;
+  /**
+   * OUTCOME 3 (D1): how many steps on this walk crossed a mid-walk termination announcement.
+   * A non-zero count means the survey announced "this respondent is being terminated" on one
+   * or more screens the walk still navigated through. On a live link those walks are dead at
+   * screener end. Optional: absent on artifacts from before the field existed; 0 means the
+   * walk was checked and no announcements were found.
+   */
+  terminationAnnouncementCount?: number;
   /**
    * Runtime-only identity of this PathObservation's verified catalogue entry. The driver sets
    * it only after serializing/capturing the observation, so it cannot recursively appear in

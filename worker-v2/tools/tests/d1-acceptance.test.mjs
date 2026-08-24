@@ -106,7 +106,7 @@ export function v1Baseline() {
     const authority = loadEvidenceAuthority({ runDir: T1_DIR, checklist, keyRegistryPath: HARNESS_REGISTRY });
     // Unsigned: the baseline is a CONTROL, not a publishable artifact. It needs verdicts,
     // not an attestation.
-    const judged = judgeRun({ runDir: T1_DIR, checklist, authority });
+    const judged = await judgeRun({ runDir: T1_DIR, checklist, authority });
     return { checklist, authority, judged, byId: new Map(judged.results.map((r) => [r.obligationId, r])) };
   })();
   return baselinePromise;
@@ -233,7 +233,7 @@ async function assembleOnce() {
     keyRegistryPath: HARNESS_REGISTRY,
     contractRevisionPath: revisionPath,
   });
-  const judged = judgeRun({
+  const judged = await judgeRun({
     runDir: T1_DIR,
     checklist: source.checklist,
     authority,
@@ -740,7 +740,7 @@ async function assembleOverHttpOnce() {
     keyRegistryPath: HARNESS_REGISTRY,
     contractRevisionPath: revisionPath,
   });
-  const judged = judgeRun({
+  const judged = await judgeRun({
     runDir: T1_DIR,
     checklist: source.checklist,
     authority,

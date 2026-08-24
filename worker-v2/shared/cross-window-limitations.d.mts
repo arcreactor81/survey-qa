@@ -26,3 +26,5 @@ export function contractCrossWindowLimitations(
   expectedPassAHash: string | null,
 ): SealedPassACrossWindowLimitation[];
 export function crossWindowLimitationDetail(value: unknown): string;
+/** The same limitation in the reader's words, for customer copy. Never replaces the above. */
+export function crossWindowLimitationPlainDetail(value: unknown): string;

@@ -121,20 +121,20 @@ function envFor(overrides = {}) {
     CF_AIG_ACCOUNT_ID: "fixture-account",
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -394,6 +394,8 @@ suite("Pass B malformed provider units are durable terminal authority", () => {
 
 test("a malformed second row terminalizes the whole chunk, keeps its paid receipt, and never sweeps or shortens", async () => {
   const m = await mod();
+  // B1: semantic failures consume the retry budget. With maxIssues=2, the first attempt
+  // is non-terminal (retryable); the second attempt exhausts the budget and becomes terminal.
   const env = envFor({ EXTRACT_SWEEP_MAX_CALLS: "3" });
   const runId = "run_passb_malformed_second";
   const provider = stubProvider((unit) => {
@@ -407,29 +409,36 @@ test("a malformed second row terminalizes the whole chunk, keeps its paid receip
     return out;
   });
   try {
-    const result = await m.passB.runPassB(env, runId, documentFor(m, ["b0001", "b0002"]), "ignored.docx");
-    assertEq(result.slice.done, false, "terminal semantic failure cannot be called complete");
-    assertEq(result.slice.terminalFailure, true);
-    assertEq(result.requirements.length, 1, "the valid neighbour in a malformed unit is not retained");
-    assert(result.failedUnits.some((row) => row.unit === "C02-b0002"), "the failed chunk is named");
-    assertEq(provider.requests.length, 2, "only the two bounded chunk purchases occur");
-    assert(!provider.requests.some((unit) => unit.startsWith("SWEEP")), "a sweep cannot launder a failed chunk");
-    assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(runId, "b")), null, "no whole-pass key exists");
+    // First wave: C01 succeeds, C02 fails (attempt 1, non-terminal under B1).
+    const first = await m.passB.runPassB(env, runId, documentFor(m, ["b0001", "b0002"]), "ignored.docx");
+    assertEq(first.slice.done, false, "a retriable semantic failure leaves the chunk outstanding");
+    assertEq(first.slice.terminalFailure, false, "B1: first semantic failure is non-terminal");
+    assertEq(first.requirements.length, 1, "the valid neighbour in a malformed unit is not retained");
+    assertEq(provider.requests.length, 2, "both chunks are issued");
 
-    const artifact = await (await env.EVIDENCE.get(chunkKey(m, runId, 2))).json();
-    assertEq(artifact.status, "failed");
-    assertEq(artifact.failureStage, "semantic-output");
-    assertEq(artifact.terminal, true);
-    assertEq(artifact.modelOutput.obligations.length, 2, "raw provider output is retained");
-    assertEq(artifact.usages.at(-1).status, "parse-failed", "the paid receipt is truthfully reclassified");
-    assertEq(artifact.obligations, undefined, "no partial typed artifact is persisted");
+    const firstArtifact = await (await env.EVIDENCE.get(chunkKey(m, runId, 2))).json();
+    assertEq(firstArtifact.status, "failed");
+    assertEq(firstArtifact.failureStage, "semantic-output");
+    assertEq(firstArtifact.terminal, false, "B1: first-attempt semantic failure is non-terminal");
+    assertEq(firstArtifact.modelOutput.obligations.length, 2, "raw provider output is retained");
+    assertEq(firstArtifact.usages.at(-1).status, "parse-failed", "the paid receipt is truthfully reclassified");
+
+    // Second wave: C02 is retried (attempt 2, still malformed). B3 salvage keeps the valid
+    // first obligation and drops the malformed second as a limitation.
+    provider.reset();
+    const result = await m.passB.runPassB(env, runId, documentFor(m, ["b0001", "b0002"]), "ignored.docx");
+    assertEq(provider.requests.length, 1, "only the retried failing chunk is re-bought");
+    // B3: salvage converts the chunk from a terminal failure to a degraded success.
+    assertEq(result.slice.done, true, "salvage lets the pass complete");
+    assertEq(result.limitations.length, 1, "the malformed obligation is a counted limitation");
+    // Both C01 and C02 contribute one valid obligation each.
+    assertEq(result.requirements.length, 2, "salvage preserved the valid obligation from the malformed chunk");
 
     provider.reset();
     const resumed = await m.passB.runPassB(
       env, runId, documentFor(m, ["b0001", "b0002"]), "different-name.docx",
     );
-    assertEq(provider.requests.length, 0, "terminal exact-key authority is never re-bought");
-    assertEq(resumed.slice.terminalFailure, true);
+    assertEq(provider.requests.length, 0, "salvaged chunk is never re-bought");
   } finally {
     provider.restore();
   }
@@ -437,6 +446,8 @@ test("a malformed second row terminalizes the whole chunk, keeps its paid receip
 
 test("a terminal malformed sweep cannot repair itself or authorize a final Pass-B payload", async () => {
   const m = await mod();
+  // B1: semantic failures are retryable. With maxIssues=2 (default), the sweep needs
+  // two attempts to become terminal.
   const env = envFor({ EXTRACT_SWEEP_MAX_CALLS: "1" });
   const runId = "run_passb_terminal_sweep";
   const provider = stubProvider((unit) => {
@@ -450,10 +461,18 @@ test("a terminal malformed sweep cannot repair itself or authorize a final Pass-
     return out;
   });
   try {
-    const result = await m.passB.runPassB(env, runId, documentFor(m, ["b0001"]), "ignored.docx");
-    assertEq(result.slice.terminalFailure, true);
-    assert(result.failedUnits.some((row) => row.unit === "SWEEP01"), "the failed sweep is named");
+    // First call: chunk succeeds, sweep fails (non-terminal).
+    const first = await m.passB.runPassB(env, runId, documentFor(m, ["b0001"]), "ignored.docx");
+    assertEq(first.slice.terminalFailure, false, "B1: first semantic sweep failure is non-terminal");
+    assertEq(first.slice.done, false, "a non-terminal sweep failure leaves work outstanding");
+    assert(first.failedUnits.some((row) => row.unit === "SWEEP01"), "the failed sweep is named");
     assertEq(provider.requests.join(","), "C01-b0001,SWEEP01");
+
+    // Second call: sweep retries (attempt 2, terminal).
+    provider.reset();
+    const result = await m.passB.runPassB(env, runId, documentFor(m, ["b0001"]), "ignored.docx");
+    assertEq(result.slice.terminalFailure, true, "budget exhaustion makes the sweep terminal");
+    assertEq(provider.requests.join(","), "SWEEP01", "only the retried sweep is re-bought");
     assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(runId, "b")), null);
     const artifact = await (await env.EVIDENCE.get(sweepKey(m, runId))).json();
     assertEq(artifact.usages.at(-1).status, "parse-failed");
@@ -509,7 +528,12 @@ test("corrupt current-key success is terminal on resume and causes zero provider
 
     provider.reset();
     const resumed = await m.passB.runPassB(env, runId, doc, "ignored.docx");
-    assertEq(provider.requests.length, 0, "current-key corruption is not treated as a cache miss");
+    // B4: the sweep runs over the corrupted chunk's unaccounted blocks; any non-sweep
+    // purchase would mean the corrupted artifact was treated as a cache miss.
+    assertEq(
+      provider.requests.filter((r) => !r.startsWith("SWEEP")).length, 0,
+      "current-key corruption is not treated as a cache miss",
+    );
     assertEq(resumed.slice.terminalFailure, true);
     assert(
       resumed.failedUnits.some((row) => row.detail.includes("PASS_B_UNIT_ARTIFACT_INVALID")),
@@ -535,7 +559,8 @@ test("a current-key receipt with the wrong role is terminal and never authorizes
 
     provider.reset();
     const resumed = await m.passB.runPassB(env, runId, doc, "ignored.docx");
-    assertEq(provider.requests.length, 0);
+    // B4: sweep runs over corrupted chunk's blocks; no chunk re-buy.
+    assertEq(provider.requests.filter((r) => !r.startsWith("SWEEP")).length, 0);
     assertEq(resumed.slice.terminalFailure, true);
     assert(resumed.failedUnits[0].detail.includes("role/call/provider/model"));
   } finally {
@@ -726,12 +751,31 @@ test("mutating a retained successful unit invalidates reconstruction with zero f
     artifact.obligations = [];
     await env.EVIDENCE.put(key, JSON.stringify(artifact));
 
+    // A: reconstruction must detect the typed-array mismatch without any provider call.
     provider.reset();
     const authority = await m.passB.reconstructPassBCompletedAuthority(env, runId, doc);
-    assertEq(provider.requests.length, 0);
+    assertEq(provider.requests.length, 0, "reconstruction never crosses the provider boundary");
     assertEq(authority.kind, "invalid");
-    assert(authority.detail.includes("persisted typed arrays do not exactly reconstruct"));
+    assert(
+      authority.detail.includes("PASS_B_COMPLETED_ARTIFACT_INVALID"),
+      "the invalid completion authority is named",
+    );
     assertEq(authority.slice.terminalFailure, true);
+
+    // B: a resumed run must treat the corruption as terminal, NOT as a cache miss
+    // that authorizes a second provider purchase. If readUnit returns null instead
+    // of invalid, runPassB puts the chunk into the todo queue and re-buys it.
+    provider.reset();
+    const resumed = await m.passB.runPassB(env, runId, doc, "ignored.docx");
+    assertEq(
+      provider.requests.filter((r) => !r.startsWith("SWEEP")).length, 0,
+      "typed-array corruption must not become a cache miss that re-buys the chunk",
+    );
+    assertEq(resumed.slice.terminalFailure, true);
+    assert(
+      resumed.failedUnits.some((row) => row.detail.includes("PASS_B_UNIT_ARTIFACT_INVALID")),
+      "the corruption is a named terminal failure, not a silent cache eviction",
+    );
   } finally {
     provider.restore();
   }
@@ -749,8 +793,15 @@ test("a retained Pass-B unit mutation blocks integrated consolidation with zero 
 
     const outcome = await consolidate(m, bed);
     assertEq(outcome.state, "not-evaluated");
-    assertEq(outcome.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
-    assert(outcome.detail.includes("persisted typed arrays do not exactly reconstruct"));
+    assertEq(outcome.reason, "COMPLETION_ARTIFACT_INVALID");
+    assertEq(
+      outcome.detail,
+      "Document reading stopped under the named safeguard COMPLETION_ARTIFACT_INVALID.",
+    );
+    assert(
+      !outcome.detail.includes("persisted typed arrays do not exactly reconstruct"),
+      "the integrated stage result must not expose the retained internal corruption diagnostic",
+    );
     assertEq(bed.provider.requests.length, 0, "authority revalidation never purchases a replacement unit");
     await assertNoConsolidationArtifacts(m, bed);
   } finally {
@@ -770,7 +821,7 @@ test("a changed whole Pass-B completion body is hash-refused before integrated c
 
     const outcome = await consolidate(m, bed);
     assertEq(outcome.state, "not-evaluated");
-    assertEq(outcome.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+    assertEq(outcome.reason, "COMPLETION_ARTIFACT_INVALID");
     assert(outcome.detail.includes("no longer binds current bytes"));
     assertEq(bed.provider.requests.length, 0);
     await assertNoConsolidationArtifacts(m, bed);
@@ -793,7 +844,7 @@ test("integrated consolidation requires the exact durable A and B completion has
       };
       const outcome = await consolidate(m, altered);
       assertEq(outcome.state, "not-evaluated");
-      assertEq(outcome.reason, `PASS_${pass}_COMPLETION_ARTIFACT_INVALID`);
+      assertEq(outcome.reason, "COMPLETION_ARTIFACT_INVALID");
       assert(outcome.detail.includes("no longer binds current bytes"));
       assertEq(bed.provider.requests.length, 0, `${pass} hash validation never reaches a provider`);
       await assertNoConsolidationArtifacts(m, bed);
@@ -823,7 +874,7 @@ test("cached source-ledger state cannot authorize seal after a retained Pass-B u
       bed.passAHash, bed.passBHash, consolidated.value.mergedHash,
     );
     assertEq(authority.kind, "invalid");
-    assert(authority.detail.includes("PASS_B_COMPLETION_ARTIFACT_INVALID"));
+    assert(authority.detail.includes("COMPLETION_ARTIFACT_INVALID"));
     assert(authority.detail.includes("No contract was sealed"));
     assertEq(bed.provider.requests.length, 0, "seal revalidation is a zero-purchase authority check");
   } finally {
@@ -850,7 +901,7 @@ test("cached source-ledger state cannot authorize seal after a retained Pass-A w
       bed.passAHash, bed.passBHash, consolidated.value.mergedHash,
     );
     assertEq(authority.kind, "invalid");
-    assert(authority.detail.includes("PASS_A_COMPLETION_ARTIFACT_INVALID"));
+    assert(authority.detail.includes("COMPLETION_ARTIFACT_INVALID"));
     assert(authority.detail.includes("No contract was sealed"));
     assertEq(bed.provider.requests.length, 0, "seal-time Pass-A reconstruction never buys replacement work");
   } finally {

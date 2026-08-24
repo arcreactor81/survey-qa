@@ -61,6 +61,9 @@ import { assert, assertEq, suite, test } from "../testkit.mjs";
 import { testEnv, worker } from "./_helpers.mjs";
 import { FIXTURE_KEY, TARGET_BUILD_ID, passingGates } from "../fixtures/v2-fixture.mjs";
 import { projectPathObservation, isV2PathObservation, screenIdOf } from "../../../pipeline/judge/lib/v2-observation.mjs";
+// buildTrustStatements is imported through the esbuild bundle (mod.reportRender) so that
+// the mutation harness can apply rewrites to publication.mjs via esbuild's load step.
+// A direct import from the pipeline file would bypass the mutant plugin.
 
 const enc = new TextEncoder();
 const sha256 = (s) => `sha256:${createHash("sha256").update(s, "utf8").digest("hex")}`;
@@ -311,7 +314,7 @@ suite("D25 — colliding artifact names are refused, never silently overwritten"
     assertEq(basenames.size, 2, `both walks must mount under distinct names, got ${[...basenames].join(", ")}`);
 
     // And the whole set survives the flattening the judge mount uses.
-    const artifacts = await mod.runInputs.loadArtifactBytes(env, catalog);
+    const { artifacts } = await mod.runInputs.loadArtifactBytes(env, catalog);
     assertEq(artifacts.length, 2);
     assertEq(new Set(artifacts.map((a) => a.name)).size, 2, "no walk may overwrite another on the mount");
   });
@@ -339,6 +342,9 @@ suite("D25 — colliding artifact names are refused, never silently overwritten"
       );
     }
 
+    // Two DIFFERENT walks sharing a basename is a TRUE collision — different artifactRefs,
+    // same basename. The refusal must fire even after the deduplicate pass, because these
+    // entries differ in content (different pathId -> different walk bytes -> different hash).
     let threw = null;
     try {
       await mod.runInputs.loadArtifactBytes(env, entries);
@@ -364,6 +370,87 @@ suite("D25 — colliding artifact names are refused, never silently overwritten"
       String(minted.detail).includes("observation.json"),
       "the non-evaluation must name the artifact, so the report says WHICH evidence was ambiguous",
     );
+  });
+});
+
+// ===========================================================================
+suite("D25 — identical duplicate catalogue entries are collapsed, not refused", () => {
+  test("identical duplicates (same ref + same hash) are collapsed and the judgement proceeds", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const runId = mod.ids.mintRunId();
+
+    const walkBytes = enc.encode(JSON.stringify(straightWalk(runId, "FLOOR-01")));
+    // Write the entry once via the real store (write-once, so the second putEvidence with
+    // identical content returns the existing entry rather than writing a new R2 key).
+    const entry = await mod.evidence.putEvidence(env, {
+      runId,
+      bytes: walkBytes,
+      mediaType: "application/json",
+      type: "state",
+      attemptId: "att_d25dedup",
+      routeId: "FLOOR-01",
+      witnesses: [],
+      sourceEvidenceId: "EV-FLOOR-01-observation",
+      artifactRef: "observations/FLOOR-01/FLOOR-01-step-035-recovery.pdf",
+    });
+
+    // Simulate the retried-step duplicate: the catalogue array carries the SAME entry twice.
+    const catalogWithDupes = [entry, entry, entry];
+
+    const { artifacts, duplicatesCollapsed } = await mod.runInputs.loadArtifactBytes(env, catalogWithDupes);
+    assertEq(artifacts.length, 1, "three identical entries must collapse to one artifact");
+    assertEq(duplicatesCollapsed, 2, "two of the three entries were duplicates");
+  });
+
+  test("a TRUE collision (same basename, different hash) is still refused after the dedupe pass", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const runId = mod.ids.mintRunId();
+
+    // Two entries that share a basename but have DIFFERENT content hashes — this is the
+    // ambiguity the refusal exists to catch. Neither the ref nor the hash matches, so the
+    // dedupe pass keeps both, and the collision check fires.
+    const entry1 = await mod.evidence.putEvidence(env, {
+      runId,
+      bytes: enc.encode("version-A"),
+      mediaType: "application/json",
+      type: "state",
+      attemptId: "att_d25col",
+      routeId: "FLOOR-01",
+      witnesses: [],
+      sourceEvidenceId: "EV-FLOOR-01-A",
+      artifactRef: "observations/FLOOR-01/artifact.json",
+    });
+    const entry2 = await mod.evidence.putEvidence(env, {
+      runId,
+      bytes: enc.encode("version-B"),
+      mediaType: "application/json",
+      type: "state",
+      attemptId: "att_d25col",
+      routeId: "FLOOR-02",
+      witnesses: [],
+      sourceEvidenceId: "EV-FLOOR-02-B",
+      artifactRef: "observations/FLOOR-02/artifact.json",
+    });
+
+    let threw = null;
+    try {
+      await mod.runInputs.loadArtifactBytes(env, [entry1, entry2]);
+    } catch (err) {
+      threw = err;
+    }
+    assert(threw !== null, "different-hash entries sharing a basename must still be refused");
+    assertEq(threw.name, "ArtifactNameCollision");
+  });
+
+  test("mintJudgement proceeds and counts the collapse when duplicates are identical", async () => {
+    const mod = await worker();
+    const { minted } = await runThroughJudge(mod, signingEnv());
+    // The real capture path does not produce duplicates (putEvidence is write-once), so the
+    // end-to-end run proceeds normally. This confirms that the dedupe change did not break
+    // the happy path; the direct-fixture test above confirms the collapse counting.
+    assertEq(minted.state, "evaluated", "the judge must still reach a judgement on a clean catalogue");
   });
 });
 
@@ -633,5 +720,73 @@ suite("D25 — a real v2 run produces real results", () => {
     // passed can still publish as INCOMPLETE when its case was never exercised by the
     // in-workflow verifier. The exact pass/fail split is asserted where it is exact, on
     // `counts.byVerdict` above; here the claim is only that the reader sees a decided row.
+  });
+});
+
+// ===========================================================================
+// Trust card: unaudited artifacts are not absent.
+//
+// The build.ts audit writes state "unaudited" for budget-exhausted entries, and
+// buildTrustStatements in publication.mjs must count them separately from "missing".
+// These tests exercise buildTrustStatements directly with hand-built audit maps.
+// ===========================================================================
+suite("D100 — the trust card does not accuse storage of losing files the render never opened", () => {
+  test("the trust card words verified + unaudited + missing honestly, never folding unaudited into absent", async () => {
+    const mod = await worker();
+    const audit = new Map();
+    audit.set("ev1", { state: "verified" });
+    audit.set("ev2", { state: "verified" });
+    audit.set("ev3", { state: "verified" });
+    audit.set("ev4", { state: "unaudited", note: "not audited at render time: byte budget exhausted" });
+    audit.set("ev5", { state: "unaudited", note: "not audited at render time: byte budget exhausted" });
+    audit.set("ev6", { state: "missing", note: "GET failed" });
+    const statements = mod.reportRender.buildTrustStatements({
+      attestation: { state: "verified", reason: "ok" },
+      evidenceAudit: audit,
+      evidenceCount: 6,
+      revision: { sealed: true, humanReviewed: true, revisionId: "cr_tc" },
+      resultReview: { state: "complete", headline: "complete", policyVersion: null },
+    });
+    const ev = statements.find((s) => s.id === "evidence-files");
+    assert(/3 of 6 hash-verified/.test(ev.value), `verified count must appear: ${ev.value}`);
+    assert(/2 not audited at render time/.test(ev.value), `unaudited count must appear as 'not audited': ${ev.value}`);
+    assert(/1 absent/.test(ev.value), `truly missing count must appear as 'absent': ${ev.value}`);
+    assert(!/2 absent/.test(ev.value), `unaudited must never read as absent: ${ev.value}`);
+    assertEq(ev.state, "partial", "anything unaudited or missing keeps state partial");
+  });
+
+  test("a trust card with zero unaudited and zero missing omits both groups", async () => {
+    const mod = await worker();
+    const audit = new Map();
+    audit.set("ev1", { state: "verified" });
+    audit.set("ev2", { state: "verified" });
+    const statements = mod.reportRender.buildTrustStatements({
+      attestation: { state: "verified", reason: "ok" },
+      evidenceAudit: audit,
+      evidenceCount: 2,
+      revision: { sealed: true, humanReviewed: true, revisionId: "cr_tc" },
+      resultReview: { state: "complete", headline: "complete", policyVersion: null },
+    });
+    const ev = statements.find((s) => s.id === "evidence-files");
+    assertEq(ev.value, "2 of 2 hash-verified");
+    assertEq(ev.state, "verified");
+  });
+
+  test("a real GET failure still reads as absent, not as unaudited", async () => {
+    const mod = await worker();
+    const audit = new Map();
+    audit.set("ev1", { state: "verified" });
+    audit.set("ev2", { state: "missing", note: "GET returned 404" });
+    const statements = mod.reportRender.buildTrustStatements({
+      attestation: { state: "verified", reason: "ok" },
+      evidenceAudit: audit,
+      evidenceCount: 2,
+      revision: { sealed: true, humanReviewed: true, revisionId: "cr_tc" },
+      resultReview: { state: "complete", headline: "complete", policyVersion: null },
+    });
+    const ev = statements.find((s) => s.id === "evidence-files");
+    assert(/1 absent/.test(ev.value), `a real GET failure must still read as absent: ${ev.value}`);
+    assert(!/not audited/.test(ev.value), `a real GET failure must not read as unaudited: ${ev.value}`);
+    assertEq(ev.state, "partial");
   });
 });

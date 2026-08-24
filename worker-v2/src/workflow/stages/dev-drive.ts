@@ -38,6 +38,12 @@ interface DriveBody {
   checklist?: { obligations?: Array<Record<string, unknown>>; [k: string]: unknown };
   maxExploration?: number;
   runId?: string;
+  /**
+   * Dev-only. If provided, the walker will jump to this question before beginning execution.
+   * The id must match a `targetQuestionId` in at least one sealed FacetInstance so the walk
+   * has a reason to go there. Validated against the sealed contract before launch.
+   */
+  targetQuestionId?: string;
 }
 
 const proofFor = (inputHash: string, detail: string): GateProof => ({
@@ -70,6 +76,7 @@ export async function devDrive(req: Request, env: Env): Promise<Response> {
 
   const runId = body.runId ?? mintRunId();
   const now = new Date().toISOString();
+  const requestedTargetQuestionId = body.targetQuestionId ?? null;
 
   // ---- the contract, in the SEALED shape -----------------------------------
   // One ScopedRequirement per checklist obligation, and one mandatory execution case per
@@ -101,13 +108,19 @@ export async function devDrive(req: Request, env: Env): Promise<Response> {
       displayQuote: quote,
       retiredAt: null,
     });
+    // Per-obligation targetQuestionId from the checklist takes precedence; the request-level
+    // targetQuestionId applies to all obligations that do not name their own.
+    const obligationTargetQuestionId =
+      typeof o["target_question_id"] === "string" && o["target_question_id"].length > 0
+        ? o["target_question_id"]
+        : requestedTargetQuestionId;
     facetInstances.push({
       facetInstanceId: `fi_${id}`,
       requirementLineageId: id,
       requirementVersionId: `${id}@1`,
       caseVersionId: `${id}@1#1`,
       floorCase: true,
-      targetQuestionId: null,
+      targetQuestionId: obligationTargetQuestionId,
       expansionCertificate: "dev-drive:one-case-per-requirement",
       case: {
         kind: "rendered-state",
@@ -130,6 +143,22 @@ export async function devDrive(req: Request, env: Env): Promise<Response> {
       screen: null,
       label: statement.slice(0, 120) || id,
     });
+  }
+
+  // VALIDATE: if a request-level targetQuestionId was given, at least one facet instance
+  // must carry it. The walker jumps to target questions and a jump to an id that does not
+  // appear in the sealed contract would succeed mechanically but find nothing to exercise.
+  if (requestedTargetQuestionId !== null) {
+    const found = facetInstances.some((fi) => fi.targetQuestionId === requestedTargetQuestionId);
+    if (!found) {
+      return json(
+        {
+          error: `targetQuestionId ${JSON.stringify(requestedTargetQuestionId)} does not appear in any sealed FacetInstance; ` +
+            `it must match a target_question_id on at least one obligation`,
+        },
+        400,
+      );
+    }
   }
 
   const contractHashInput = await sha256Hex(new TextEncoder().encode(JSON.stringify(obligations.map((o) => o["id"]))));
@@ -244,6 +273,7 @@ export async function devDrive(req: Request, env: Env): Promise<Response> {
       executionCases: facetInstances.length,
       requirements: requirements.length,
       surveyUrl,
+      ...(requestedTargetQuestionId !== null ? { targetQuestionId: requestedTargetQuestionId } : {}),
       statusUrl: `/api/v2/runs/${runId}/status`,
       coverageUrl: `/api/v2/runs/${runId}/coverage`,
     },

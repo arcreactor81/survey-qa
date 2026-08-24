@@ -31,18 +31,27 @@ import { extractionDiffKey, extractionPassKey, k, sourceLedgerKey } from "../../
 import { canonicalJson, sha256Hex } from "../../store/hash";
 import { type Fence } from "../../store/checkpoint";
 import { pushModelUsageStrict, modelUsage } from "../../store/usage";
+import {
+  recordProviderSpend,
+  type ProviderName,
+} from "../../store/provider-spend-ledger";
 import { docxBlocksVersion, parseDocxBlocks } from "../../extract/docx-blocks";
 import {
   DOCUMENT_SEMANTICS_NONE,
   type DocumentSemanticsProfile,
 } from "../../extract/document-semantics";
-import { keyFor, MissingCredential } from "../../llm/chat";
+import { MissingCredential } from "../../llm/chat";
 import { deepseekPassBIdentity } from "../../llm/deepseek";
-import { grokFlashRouteIdentity, grokRateAttestation } from "../../llm/grok";
+import { grokRateAttestation } from "../../llm/grok";
+import {
+  EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+  EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED,
+} from "../../llm/extraction-wire";
 import {
   runPassA,
   PASS_A_VERSION,
   reconstructPassACompletedAuthority,
+  passAPrimaryRouteIdentity,
   type CrossRef,
   type PassAProviderIndependence,
   type PassASlice,
@@ -61,8 +70,16 @@ import { mergePasses, MERGE_VERSION, type ExtractionDiff, type SourceLedger } fr
 import { expandFloor, EXPANDER_VERSION, type ExpansionCoverage, type ExpansionPreviewEntry } from "../../extract/expand";
 import { CONSTRUCT_CLASSES, type CallUsage, type ParsedDocument, type PassResult } from "../../extract/types";
 import { limitationsFromPassAPayload } from "../../../shared/cross-window-limitations.mjs";
+import { primaryGroundingLimitationsFromPassAPayload } from "../../../shared/pass-a-grounding-limitations.mjs";
 import type { FacetInstance, ScopedRequirement } from "../../types/record";
 import { stageEvaluated, stageNotEvaluated, type GateProof, type StageResult } from "../gates";
+import { writeRunChecklist } from "./checklist-store";
+import {
+  publicExtractionFailureDetail,
+  sourceContextForUnit,
+  type DocumentReadingSourceContext,
+  type DocumentReadingUnitStartObserver,
+} from "../../observability/document-reading";
 
 export const mergedKey = (runId: string) => k("runs", runId, "extraction", "merged.json");
 export const previewKey = (runId: string) => k("runs", runId, "extraction", "expansion-preview.json");
@@ -239,8 +256,48 @@ async function chargeUsage(env: Env, runId: string, calls: CallUsage[], fence: F
     env,
     runId,
     fence,
-    calls.map((c) => modelUsage(c.model, c.inputTokens, c.outputTokens, c.costUsd, c.eventId)),
+    calls.map((c) => {
+      const isReplay = c.usageSource === "reused-prior-artifact";
+      return modelUsage(
+        c.model,
+        c.inputTokens,
+        c.outputTokens,
+        // Replay events book zero against this run's budget. The original cost lives in
+        // originalCostUsd so the information is never deleted.
+        isReplay ? 0 : c.costUsd,
+        c.eventId,
+        isReplay ? "reused-prior-artifact" : undefined,
+        isReplay ? c.costUsd : undefined,
+      );
+    }),
   );
+  // RECORD each provider's spend into the cumulative cross-run ledger. This is
+  // AFTER the per-run settlement above, using the SAME USD figure the run ledger
+  // records. A ledger write failure becomes a named, counted limitation — loud,
+  // never silent, never fatal to the run.
+  // Replay events are NOT recorded to the cross-run ledger — they were recorded
+  // by the run that originally bought them.
+  const KNOWN: Set<string> = new Set(["grok", "deepseek", "gemini"]);
+  for (const c of calls) {
+    if (!KNOWN.has(c.provider)) continue;
+    if (c.usageSource === "reused-prior-artifact") continue;
+    const result = await recordProviderSpend(env.EVIDENCE, {
+      provider: c.provider as ProviderName,
+      costUsd: c.costUsd,
+      model: c.model,
+      runId,
+      eventId: c.eventId ?? c.callId,
+    });
+    if (result === null) {
+      // Recording failed. This is a named limitation, not a fatal error.
+      // The run continues with its per-run ledger intact. Log the failure
+      // so it is visible in operational monitoring.
+      console.error(
+        `provider-spend-ledger: failed to record ${c.provider} spend ` +
+          `$${c.costUsd} for run ${runId} event ${c.eventId ?? c.callId}`,
+      );
+    }
+  }
 }
 
 const summarize = (result: PassResult, hash: string): PassSummary => ({
@@ -295,13 +352,17 @@ export interface PassASliceOutcome {
   slice: PassASlice;
   /** Stop making waves even when unread windows remain; terminal is not the same as complete. */
   terminal: boolean;
+  /** Exact durable failed unit when the slice retained one; never parsed from prose. */
+  failedUnit?: PassResult["failedUnits"][number] | null;
+  failedUnitSourceContext?: DocumentReadingSourceContext | null;
 }
 
 const PASS_A_COMPLETION_KEYS = [
   "parserVersion", "promptVersion", "pass", "provider", "model", "providerRouteIdentity",
   "providerIndependence", "routeReceipts", "fallbackTriggers", "requirements", "ambiguities",
   "unverifiable", "dispositions", "constructs", "failedUnits", "calls", "crossRefs",
-  "crossWindowLimitations", "slice", "issuedCalls", "accountingCalls",
+  "crossWindowLimitations", "primaryGroundingLimitations", "slice", "issuedCalls", "accountingCalls",
+  "splitEvents", "splitExhaustionRefusals",
 ] as const;
 
 const passACompletionProjection = (value: Record<string, unknown>): Record<string, unknown> => {
@@ -311,11 +372,14 @@ const passACompletionProjection = (value: Record<string, unknown>): Record<strin
 };
 
 const passACompletionShapeClosed = (value: Record<string, unknown>): boolean =>
+  Object.keys(value).length === PASS_A_COMPLETION_KEYS.length &&
   PASS_A_COMPLETION_KEYS.every((key) => Object.hasOwn(value, key)) &&
   [
     "routeReceipts", "fallbackTriggers", "requirements", "ambiguities", "unverifiable",
     "dispositions", "constructs", "failedUnits", "calls", "crossRefs", "crossWindowLimitations",
+    "primaryGroundingLimitations",
     "issuedCalls", "accountingCalls",
+    "splitEvents", "splitExhaustionRefusals",
   ].every((key) => Array.isArray(value[key]));
 
 export async function validatePassAContinuationAuthority(
@@ -327,21 +391,21 @@ export async function validatePassAContinuationAuthority(
 ): Promise<StageResult<PassSummary>> {
   if (!/^sha256:[0-9a-f]{64}$/.test(expectedPassAHash)) {
     return stageNotEvaluated<PassSummary>(
-      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_A_COMPLETED_ARTIFACT_INVALID: a durable evaluated Pass-A hash is required before any continuation.",
     );
   }
   const obj = await env.EVIDENCE.get(extractionPassKey(runId, "a"));
   if (!obj) {
     return stageNotEvaluated<PassSummary>(
-      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_A_COMPLETED_ARTIFACT_INVALID: durable Pass-A completion bytes are missing.",
     );
   }
   const actual = `sha256:${await sha256Hex(await obj.arrayBuffer())}`;
   if (actual !== expectedPassAHash) {
     return stageNotEvaluated<PassSummary>(
-      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       `PASS_A_COMPLETED_ARTIFACT_INVALID: durable Pass-A hash ${expectedPassAHash} no longer binds ` +
         `current bytes ${actual}. No Pass-B purchase is authorized.`,
     );
@@ -350,7 +414,7 @@ export async function validatePassAContinuationAuthority(
     env, runId, "a", doc.parserVersion ?? docxBlocksVersion(DOCUMENT_SEMANTICS_NONE), documentName, doc,
   ) ??
     stageNotEvaluated<PassSummary>(
-      "PASS_A_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_A_COMPLETED_ARTIFACT_INVALID: the retained completion bytes do not exactly match " +
         "current window/synthesis authority. No Pass-B purchase is authorized.",
     );
@@ -365,14 +429,14 @@ async function validatePassBCompletionAuthority(
 ): Promise<StageResult<PassSummary>> {
   if (!/^sha256:[0-9a-f]{64}$/.test(expectedPassBHash)) {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_B_COMPLETED_ARTIFACT_INVALID: a durable evaluated Pass-B hash is required before consolidation.",
     );
   }
   const obj = await env.EVIDENCE.get(extractionPassKey(runId, "b"));
   if (!obj) {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_B_COMPLETED_ARTIFACT_INVALID: durable Pass-B completion bytes are missing.",
     );
   }
@@ -380,14 +444,17 @@ async function validatePassBCompletionAuthority(
   const actualHash = `sha256:${await sha256Hex(bytes)}`;
   if (actualHash !== expectedPassBHash) {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       `PASS_B_COMPLETED_ARTIFACT_INVALID: durable Pass-B hash ${expectedPassBHash} no longer binds ` +
         `current bytes ${actualHash}. Consolidation is not authorized.`,
     );
   }
   const authority = await reconstructPassBCompletedAuthority(env, runId, doc, documentName);
   if (authority.kind !== "ok") {
-    return stageNotEvaluated("PASS_B_COMPLETION_ARTIFACT_INVALID", authority.detail);
+    return stageNotEvaluated(
+      "COMPLETION_ARTIFACT_INVALID",
+      publicExtractionFailureDetail("COMPLETION_ARTIFACT_INVALID"),
+    );
   }
   let parsed: Record<string, unknown>;
   try {
@@ -396,7 +463,7 @@ async function validatePassBCompletionAuthority(
     parsed = value as Record<string, unknown>;
   } catch {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_B_COMPLETED_ARTIFACT_INVALID: durable completion JSON is malformed.",
     );
   }
@@ -406,7 +473,7 @@ async function validatePassBCompletionAuthority(
     canonicalJson(passBCompletionProjection(parsed)) !== canonicalJson(passBCompletionProjection(expected))
   ) {
     return stageNotEvaluated(
-      "PASS_B_COMPLETION_ARTIFACT_INVALID",
+      "COMPLETION_ARTIFACT_INVALID",
       "PASS_B_COMPLETED_ARTIFACT_INVALID: completion projection differs from strict unit reconstruction.",
     );
   }
@@ -448,6 +515,7 @@ export async function stagePassASlice(
   options: PassASliceOptions,
   documentSemanticsProfile: DocumentSemanticsProfile,
   expectedDocumentSha256: string,
+  onUnitStart?: DocumentReadingUnitStartObserver,
 ): Promise<PassASliceOutcome> {
   const settled = (result: StageResult<PassSummary>): PassASliceOutcome => ({
     result,
@@ -515,10 +583,8 @@ export async function stagePassASlice(
     const slice = authority.kind === "invalid" ? authority.slice : authority.value.slice;
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_A_COMPLETION_ARTIFACT_INVALID",
-        authority.kind === "invalid" ? authority.detail :
-          "PASS_A_COMPLETED_ARTIFACT_INVALID: an immutable completion key is present but its bytes do not " +
-            "match current unit authority. No unit was re-bought and no Pass-B purchase was authorized.",
+        "COMPLETION_ARTIFACT_INVALID",
+        publicExtractionFailureDetail("COMPLETION_ARTIFACT_INVALID"),
       ),
       slice,
       terminal: true,
@@ -533,17 +599,38 @@ export async function stagePassASlice(
       `${err instanceof Error ? err.message : String(err)}. No Grok request was issued.`,
     ));
   }
-  // Validate the closed cost policy before Secrets Store get(). A missing or malformed
-  // price binding is a zero-I/O configuration refusal, not permission to touch a credential.
-  const credential = await credentialCheck(env, "grok");
-  if (credential) return settled(credential as StageResult<PassSummary>);
-
-  const result = await runPassA(env, runId, doc, documentName, beat, options);
+  // `runPassA` serializes and checks every possible primary body before its provider client
+  // resolves a secret; synthesis does the same once its retained candidate context exists.
+  // A missing binding therefore surfaces only after the no-purchase wire boundary has run.
+  let result: Awaited<ReturnType<typeof runPassA>>;
+  try {
+    result = await runPassA(env, runId, doc, documentName, beat, options, onUnitStart);
+  } catch (error) {
+    if (error instanceof MissingCredential) {
+      return settled(missingCredentialResult("grok", error) as StageResult<PassSummary>);
+    }
+    throw error;
+  }
   // THE LEDGER IS CHARGED FOR WHAT THIS WAVE BOUGHT, never for the windows it reclaimed —
   // those carry a telemetry row with cost zeroed so the payload keeps its provenance, and
   // charging them once per wave would walk a large document into CAP_MODEL_CALLS on calls
   // nobody ever made.
   await chargeUsage(env, runId, result.accountingCalls, fence);
+
+  if (result.credentialRefusal !== undefined) {
+    const first = result.failedUnits[0] ?? null;
+    return {
+      result: stageNotEvaluated<PassSummary>(
+        result.credentialRefusal.reason,
+        `${result.credentialRefusal.binding} is not available to this Worker after all eligible ` +
+          `request bodies passed preflight. No new provider request was issued.`,
+      ),
+      slice: result.slice,
+      terminal: true,
+      failedUnit: first,
+      failedUnitSourceContext: sourceContextForUnit(doc.blocks, first?.blockIds ?? []),
+    };
+  }
 
   if (result.providerIndependence === "reduced-same-provider-fallback") {
     // This authority is terminal even when later windows were intentionally left unread:
@@ -569,31 +656,40 @@ export async function stagePassASlice(
       blockIds: [],
       detail: "the terminal Pass-A unit did not retain a detailed failure row",
     };
-    if (result.slice.synthesisState === "failed" || first.unit === "A-synthesis") {
+    if (result.terminalReasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED ||
+        result.terminalReasonCode === EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED) {
       return {
         result: stageNotEvaluated<PassSummary>(
-          "PASS_A_SYNTHESIS_FAILURE",
-          `Pass A read all ${result.slice.windowsLanded} of ${result.slice.windowsTotal} primary window(s), ` +
-            `but the separately bounded cross-window reconciliation failed: ${first.detail.slice(0, 600)} ` +
-            `Concatenating window-local outputs cannot prove relationships across their boundaries. ` +
-            `No final Pass-A payload was persisted and no Pass-B purchase was authorized.`,
+          result.terminalReasonCode,
+          publicExtractionFailureDetail(result.terminalReasonCode),
         ),
         slice: result.slice,
         terminal: true,
+        failedUnit: first,
+        failedUnitSourceContext: sourceContextForUnit(doc.blocks, first.blockIds),
       };
     }
-    const failedBlockIds = [...new Set(result.failedUnits.flatMap((unit) => unit.blockIds))];
-    const blockSample = failedBlockIds.slice(0, 5);
+    if (result.slice.synthesisState === "failed" || first.unit === "A-synthesis") {
+      return {
+        result: stageNotEvaluated<PassSummary>(
+          "SYNTHESIS_FAILURE",
+          publicExtractionFailureDetail("SYNTHESIS_FAILURE"),
+        ),
+        slice: result.slice,
+        terminal: true,
+        failedUnit: first,
+        failedUnitSourceContext: sourceContextForUnit(doc.blocks, first.blockIds),
+      };
+    }
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_A_WINDOW_FAILURES",
-        `Pass A stopped after a terminal provider/window failure rather than repeating it across later windows. ` +
-          `${result.slice.windowsLanded} of ${result.slice.windowsTotal} window(s) were accounted for and ` +
-          `${result.slice.windowsRemaining} remain unread. Failed block sample: ${blockSample.join(", ") || "none"}. ` +
-          `First failure: ${first.unit} — ${first.detail.slice(0, 400)}. No final Pass-A payload was persisted.`,
+        "WINDOW_FAILURES",
+        publicExtractionFailureDetail("WINDOW_FAILURES"),
       ),
       slice: result.slice,
       terminal: true,
+      failedUnit: first,
+      failedUnitSourceContext: sourceContextForUnit(doc.blocks, first.blockIds),
     };
   }
 
@@ -613,7 +709,7 @@ export async function stagePassASlice(
         `an unread window states.`;
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_A_INCOMPLETE",
+        "INCOMPLETE",
         detail,
       ),
       slice: result.slice,
@@ -622,23 +718,16 @@ export async function stagePassASlice(
   }
 
   if (result.failedUnits.length > 0) {
-    const first = result.failedUnits[0]!;
-    const failedBlockIds = [...new Set(result.failedUnits.flatMap((unit) => unit.blockIds))];
-    const blockSample = failedBlockIds.slice(0, 5);
-    throw new Error(
-      `PASS_A_WINDOW_FAILURES: extraction pass A could not complete a trustworthy whole-document reading because ` +
-        `${result.failedUnits.length} of ${result.slice.windowsTotal} window(s) failed, covering ` +
-        `${failedBlockIds.length} source block(s). Failed block sample: ${blockSample.join(', ') || 'none'}. ` +
-        `First failure: ${first.unit} — ${first.detail.slice(0, 400)}. The ${result.requirements.length} ` +
-        `requirement(s) returned by successful windows cannot substitute for source blocks that were not read. ` +
-        `No final pass-A payload was persisted or evaluated.`,
-    );
+    throw new Error(publicExtractionFailureDetail("WINDOW_FAILURES"));
   }
 
   const authority = await reconstructPassACompletedAuthority(env, runId, doc, documentName);
   if (authority.kind === "invalid") {
     return {
-      result: stageNotEvaluated<PassSummary>("PASS_A_COMPLETION_ARTIFACT_INVALID", authority.detail),
+      result: stageNotEvaluated<PassSummary>(
+        "COMPLETION_ARTIFACT_INVALID",
+        publicExtractionFailureDetail("COMPLETION_ARTIFACT_INVALID"),
+      ),
       slice: authority.slice,
       terminal: true,
     };
@@ -659,7 +748,7 @@ export async function stagePassASlice(
     if (existing === null || await existing.text() !== body) {
       return {
         result: stageNotEvaluated<PassSummary>(
-          "PASS_A_COMPLETION_ARTIFACT_INVALID",
+          "COMPLETION_ARTIFACT_INVALID",
           "PASS_A_COMPLETED_ARTIFACT_IMMUTABLE: the completion key already exists with different bytes. " +
             "The existing authority was not overwritten and no Pass-B purchase was authorized.",
         ),
@@ -714,6 +803,9 @@ export async function stagePassB(
 export interface PassBSliceOutcome {
   result: StageResult<PassSummary>;
   slice: PassBSlice;
+  /** Exact durable failed unit when the slice retained one; never parsed from prose. */
+  failedUnit?: PassResult["failedUnits"][number] | null;
+  failedUnitSourceContext?: DocumentReadingSourceContext | null;
 }
 
 /**
@@ -745,6 +837,7 @@ export async function stagePassBSlice(
   documentSemanticsProfile: DocumentSemanticsProfile,
   expectedPassAHash: string,
   expectedDocumentSha256: string,
+  onUnitStart?: DocumentReadingUnitStartObserver,
 ): Promise<PassBSliceOutcome> {
   const settled = (result: StageResult<PassSummary>): PassBSliceOutcome => ({
     result,
@@ -802,39 +895,67 @@ export async function stagePassBSlice(
     const authority = await reconstructPassBCompletedAuthority(env, runId, doc, documentName);
     return {
       result: stageNotEvaluated(
-        "PASS_B_COMPLETION_ARTIFACT_INVALID",
-        authority.kind === "invalid" ? authority.detail :
-          "PASS_B_COMPLETED_ARTIFACT_INVALID: an immutable completion key is present but its bytes do not " +
-            "match current unit authority. No Pass-B unit was re-bought.",
+        "COMPLETION_ARTIFACT_INVALID",
+        publicExtractionFailureDetail("COMPLETION_ARTIFACT_INVALID"),
       ),
       slice: authority.kind === "invalid" ? authority.slice : authority.value.slice,
     };
   }
 
-  const credential = await credentialCheck(env, "deepseek");
-  if (credential) return settled(credential as StageResult<PassSummary>);
-
-  const result = await runPassB(env, runId, doc, documentName, beat, options);
+  let result: Awaited<ReturnType<typeof runPassB>>;
+  try {
+    result = await runPassB(env, runId, doc, documentName, beat, options, onUnitStart);
+  } catch (error) {
+    if (error instanceof MissingCredential) {
+      return settled(missingCredentialResult("deepseek", error) as StageResult<PassSummary>);
+    }
+    throw error;
+  }
   // Offer every persisted pass-B receipt to the checkpoint CAS. Stable event ids
   // make this exact across both crash windows: artifact-before-accounting settles
   // on restart, while accounting-before-step-commit dedupes on restart.
   await chargeUsage(env, runId, result.accountingCalls, fence);
 
-  if (result.slice.terminalFailure || result.failedUnits.length > 0) {
+  if (result.credentialRefusal !== undefined) {
+    const first = result.failedUnits[0] ?? null;
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_B_UNIT_FAILURES",
-        `Pass B retained ${result.failedUnits.length} terminally failed unit(s); no completed pass payload was ` +
-          `written and consolidation is not authorized. ${result.failedUnits[0]?.detail ?? "A required unit failed."}`,
+        result.credentialRefusal.reason,
+        `${result.credentialRefusal.binding} is not available to this Worker after every ` +
+          `canonical Pass-B request body passed preflight. No new provider request was issued.`,
       ),
       slice: result.slice,
+      failedUnit: first,
+      failedUnitSourceContext: sourceContextForUnit(doc.blocks, first?.blockIds ?? []),
+    };
+  }
+
+  // Infrastructure-terminal: wire ceiling, credential, persistence conflict, or failure rate exceeded.
+  // A walk that completed (done=true) with terminal units but whose ledger closes continues
+  // to reconstruction below — the failed units and limitation rows ride in the payload.
+  if (!result.slice.done && (result.slice.terminalFailure || result.failedUnits.length > 0)) {
+    const reason = result.terminalReasonCode === EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED
+      ? EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED
+      : result.terminalReasonCode === EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED
+      ? EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED
+      : result.terminalReasonCode === "PASS_B_FAILURE_RATE_EXCEEDED"
+        ? "FAILURE_RATE_EXCEEDED"
+        : "UNIT_FAILURES"; // mutation-anchor: reason-code-no-double-prefix
+    return {
+      result: stageNotEvaluated<PassSummary>(
+        reason,
+        publicExtractionFailureDetail(reason),
+      ),
+      slice: result.slice,
+      failedUnit: result.failedUnits[0] ?? null,
+      failedUnitSourceContext: sourceContextForUnit(doc.blocks, result.failedUnits[0]?.blockIds ?? []),
     };
   }
 
   if (!result.slice.done) {
     return {
       result: stageNotEvaluated<PassSummary>(
-        "PASS_B_INCOMPLETE",
+        "INCOMPLETE",
         `pass B has ${result.slice.chunksRemaining} of ${result.slice.chunksTotal} chunk(s) and ` +
           `${result.slice.sweepRemaining} ledger-sweep call(s) still owed after this wave. Nothing is persisted ` +
           `under the pass key until the walk is whole: a partial pass merged as if it were complete would seal a ` +
@@ -847,7 +968,10 @@ export async function stagePassBSlice(
   const authority = await reconstructPassBCompletedAuthority(env, runId, doc, documentName);
   if (authority.kind === "invalid") {
     return {
-      result: stageNotEvaluated("PASS_B_COMPLETION_ARTIFACT_INVALID", authority.detail),
+      result: stageNotEvaluated(
+        "COMPLETION_ARTIFACT_INVALID",
+        publicExtractionFailureDetail("COMPLETION_ARTIFACT_INVALID"),
+      ),
       slice: authority.slice,
     };
   }
@@ -861,7 +985,7 @@ export async function stagePassBSlice(
     if (existing === null || await existing.text() !== authority.body) {
       return {
         result: stageNotEvaluated(
-          "PASS_B_COMPLETION_ARTIFACT_INVALID",
+          "COMPLETION_ARTIFACT_INVALID",
           "PASS_B_COMPLETED_ARTIFACT_IMMUTABLE: the completion key already exists with different bytes. " +
             "The existing authority was not overwritten.",
         ),
@@ -986,6 +1110,48 @@ export async function stageConsolidate(
   await env.EVIDENCE.put(extractionDiffKey(runId), diffBody, { httpMetadata: { contentType: "application/json" } });
   await env.EVIDENCE.put(sourceLedgerKey(runId), ledgerBody, { httpMetadata: { contentType: "application/json" } });
   await env.EVIDENCE.put(previewKey(runId), previewBody, { httpMetadata: { contentType: "application/json" } });
+
+  // AMBIGUITY FUNNEL FIX: write the extraction's own checklist with all diff ambiguities so
+  // the assembler can derive AmbiguityRecords from them. Without this, diff ambiguities live
+  // only in the unsealed diff artifact and the assembler's deriveAmbiguities sees zero
+  // readings. The audit measured 90 diff ambiguities reaching neither the sealed record nor
+  // the report — this is the structural fix.
+  const checklist = {
+    schema_version: "v2-extraction-checklist/1.0.0",
+    provenance: {
+      projectedFrom: "extraction-consolidation",
+      diffHash: `sha256:${await sha256Hex(diffBody)}`,
+      note: "written by stageConsolidate so diff ambiguities reach the sealed record",
+    },
+    obligations: requirements.map((r) => ({
+      id: r.requirementLineageId,
+      category: r.facet,
+      doc_quote: r.displayQuote ?? "",
+      statement: r.normativeStatement ?? "",
+      browser_observable: r.testability === "browser-observable" ? "full" : "none",
+    })),
+    ambiguities: diff.ambiguities.map((a) => ({
+      id: a.id,
+      doc_quote: a.quote,
+      reading_a: a.readingA,
+      reading_b: a.readingB,
+      why_ambiguous: `competing readings: ${a.readingA.slice(0, 80)} vs ${a.readingB.slice(0, 80)}`,
+      affects: a.affects,
+    })),
+    unverifiable_from_browser: diff.notBrowserVerifiable.map((u) => ({
+      id: u.id,
+      doc_quote: "",
+      mandate: u.mandate,
+      why_not_observable: u.why,
+      browser_proxy_evidence: u.proxy,
+    })),
+    counts: {
+      obligations: requirements.length,
+      ambiguities: diff.ambiguities.length,
+      unverifiable: diff.notBrowserVerifiable.length,
+    },
+  };
+  await writeRunChecklist(env, runId, checklist);
 
   const summary: ConsolidationSummary = {
     mergedHash: `sha256:${await sha256Hex(mergedBody)}`,
@@ -1152,7 +1318,7 @@ async function readPassPayload(
     if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;
     if (pass === "a") {
       if (
-        parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
+        parsed.providerRouteIdentity !== passAPrimaryRouteIdentity(env) ||
         !passACompletionShapeClosed(parsed as unknown as Record<string, unknown>) ||
         !Array.isArray(parsed.failedUnits) || parsed.failedUnits.length > 0
       ) return null;
@@ -1170,6 +1336,7 @@ async function readPassPayload(
         canonicalJson(passACompletionProjection(expected))
       ) return null;
       limitationsFromPassAPayload(parsed);
+      primaryGroundingLimitationsFromPassAPayload(parsed);
     }
     if (pass === "b") {
       if (parsed.providerPlanIdentity !== deepseekPassBIdentity(env) || !parsedDocument) return null;
@@ -1222,7 +1389,7 @@ async function readPass(
     if (parsed.parserVersion !== expectedParserVersion || parsed.promptVersion !== expectedPrompt) return null;
     if (pass === "a") {
       if (
-        parsed.providerRouteIdentity !== grokFlashRouteIdentity(env) ||
+        parsed.providerRouteIdentity !== passAPrimaryRouteIdentity(env) ||
         !passACompletionShapeClosed(parsed as unknown as Record<string, unknown>) ||
         !Array.isArray(parsed.failedUnits) || parsed.failedUnits.length > 0
       ) return null;
@@ -1240,6 +1407,7 @@ async function readPass(
         canonicalJson(passACompletionProjection(expected))
       ) return null;
       limitationsFromPassAPayload(parsed);
+      primaryGroundingLimitationsFromPassAPayload(parsed);
     }
     if (pass === "b") {
       if (parsed.providerPlanIdentity !== deepseekPassBIdentity(env) || !parsedDocument) return null;
@@ -1271,20 +1439,15 @@ async function readPass(
  * domain, so it cannot be misread as "this pass found nothing", and it falls through to the
  * seal gate — which refuses, names the gate, and lets the run report why.
  */
-async function credentialCheck(env: Env, which: "grok" | "deepseek"): Promise<StageResult<never> | null> {
-  try {
-    await keyFor(env, which);
-    return null;
-  } catch (err) {
-    if (err instanceof MissingCredential) {
-      return stageNotEvaluated<never>(
-        "NO_CREDENTIAL",
-        `${err.binding} is not available to this Worker, so the ${which} extraction pass never ran. ` +
-          `Extraction requires BOTH passes; one leg wearing a two-pass label is the failure the diff exists to expose.`,
-      );
-    }
-    throw err;
-  }
+function missingCredentialResult(
+  which: "grok" | "deepseek",
+  error: MissingCredential,
+): StageResult<never> {
+  return stageNotEvaluated<never>(
+    "NO_CREDENTIAL",
+    `${error.binding} is not available to this Worker, so the ${which} extraction pass never ran. ` +
+      `Extraction requires BOTH passes; one leg wearing a two-pass label is the failure the diff exists to expose.`,
+  );
 }
 
 /** Budget guard: extraction must not spend the reserve set aside for verification/report. */

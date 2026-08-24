@@ -158,7 +158,9 @@ export function buildTrustStatements({ attestation, evidenceAudit, evidenceCount
   const verified = audits.filter((a) => a.state === "verified").length;
   const mismatched = audits.filter((a) => a.state === "mismatch").length;
   const missing = audits.filter((a) => a.state === "missing").length;
+  const unaudited = audits.filter((a) => a.state === "unaudited").length;
 
+  // "partial" when anything is unaudited or missing — neither is "verified".
   const evidenceState = !audits.length
     ? "not-checked"
     : mismatched > 0
@@ -192,7 +194,9 @@ export function buildTrustStatements({ attestation, evidenceAudit, evidenceCount
           ? "not re-hashed in this render"
           : evidenceState === "invalid"
             ? `${mismatched} artifact(s) do not match the signed hash`
-            : `${verified} of ${evidenceCount} hash-verified${missing ? `, ${missing} absent` : ""}`,
+            : `${verified} of ${evidenceCount} hash-verified`
+              + (unaudited ? `, ${unaudited} not audited at render time (render budget)` : "")
+              + (missing ? `, ${missing} absent` : ""),
       scope: "Whether the stored bytes still hash to the value the signed catalogue records. It is not a statement about what the bytes mean.",
       detail: null,
     },

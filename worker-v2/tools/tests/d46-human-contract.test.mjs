@@ -991,7 +991,12 @@ suite("D46 — production submission/workflow seam", () => {
     assert(!step.calls.includes("seal-contract-revision"));
     const checkpoint = (await mod.checkpoint.loadCheckpoint(env, created.params.runId)).checkpoint;
     assertEq(checkpoint.completion.reasonCode, "extraction-document-source-authority-invalid");
-    assert(String(checkpoint.error).includes("DOCUMENT_UNREADABLE"));
+    assertEq(
+      checkpoint.error,
+      "The submitted document bytes could not be bound to their declared source authority.",
+      "the public refusal names the source-authority class without copying parser detail",
+    );
+    assert(!String(checkpoint.error).includes("DOCUMENT_UNREADABLE"), "raw parser detail is not public status text");
     assertEq(checkpoint.contract.state, "unavailable");
     assertEq(checkpoint.completion.report, "complete");
     assertEq(checkpoint.reportAvailable, true);

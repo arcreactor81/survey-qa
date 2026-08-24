@@ -32,12 +32,16 @@ import { COVERAGE_ORDER, COVERAGE_LABEL } from "./view-model.mjs";
  */
 const COVERAGE_PLAIN = {
   exercised: "were tried on the live survey",
-  "not-reached": "were never reached",
+  // POLISH-2: "were never reached" and "were never started" sat side by side in one sentence
+  // ("416 were never reached and 36 were never started") and a reader had no way to tell them
+  // apart — both just mean "not done". They are different facts and now they say which:
+  // not-reached is the run stopping before it arrived, pending is work never queued at all.
+  "not-reached": "were never reached before the run stopped",
   "proven-unreachable": "were shown to be impossible to reach",
   blocked: "were stopped before we could check them",
   "budget-exhausted": "were still waiting when the run hit its spending limit",
   "time-exhausted": "were still waiting when the run ran out of time",
-  pending: "were never started",
+  pending: "were never queued up to try",
 };
 
 /* ------------------------------------------------------------------ *
@@ -491,6 +495,74 @@ export function buildDecisionSummary(view) {
     ? "After recording the launch failure, the remaining checks continued in the controlled test environment. Rerun the complete test after fixing the blocker."
     : null;
 
+  /* ---- how far the run actually got through the survey ----
+   *
+   * THE FACT A TEST RUN EXISTS TO ESTABLISH, and the page could not state it. Every other
+   * number here counts REQUIREMENTS; this one counts times we took the survey and says where
+   * each one stopped. A reader could previously see "227 requirements, 2 tried" and still not
+   * learn whether anyone ever reached the last page.
+   *
+   * IT REPORTS, IT DOES NOT INFER. The counts come from `completion.testing.endings`, which
+   * counts an attempt that recorded no ending as `unstated` rather than reading it as anything;
+   * this sentence says that number out loud for the same reason. A run whose attempts all
+   * predate the ending field says so plainly instead of going quiet.
+   */
+  const endings = view.completion?.testing?.endings ?? null;
+  let endingsNote = null;
+  if (endings && endings.attempts > 0) {
+    const took = `We took this survey ${endings.attempts === 1 ? "once" : `${endings.attempts} times`}.`;
+    if (endings.stated === 0) {
+      endingsNote = `${took} This report cannot say how far ${endings.attempts === 1 ? "it" : "any of them"} got: the run did not record where ${endings.attempts === 1 ? "it" : "they"} ended.`;
+    } else {
+      const reached = endings.counts.completed;
+      const lead =
+        reached > 0
+          ? `${took} ${reached === endings.attempts ? (endings.attempts === 1 ? "It" : "Every one") : `${reached} of ${endings.attempts}`} reached the survey's own final page.`
+          : `${took} None of ${endings.attempts === 1 ? "them" : "those"} reached the survey's own final page.`;
+      const screenedOut = endings.counts["screened-out"];
+      const rest = [];
+      if (screenedOut > 0) rest.push(`${screenedOut} ${screenedOut === 1 ? "was" : "were"} screened out`);
+      if (endings.counts.stalled > 0) rest.push(`${endings.counts.stalled} stopped before reaching any ending`);
+      if (endings.counts.unclassified > 0) {
+        rest.push(`${endings.counts.unclassified} ended on a page that did not say which kind of ending it was`);
+      }
+      for (const u of endings.unrecognised ?? []) rest.push(`${u.count} recorded an ending this report does not recognise`);
+      if (endings.unstated > 0) rest.push(`${endings.unstated} recorded no ending at all`);
+      // THE SCREEN-OUT GLOSS IS ITS OWN SENTENCE, not a clause inside the list. Being turned
+      // away by a screener is the survey doing its job, and a reader who meets that number
+      // without being told so reads a working screener as a count of failures.
+      const screenOutGloss =
+        screenedOut > 0
+          ? ` Being screened out means the survey deliberately ended ${screenedOut === 1 ? "that attempt" : "those attempts"} early, which is the survey working.`
+          : "";
+      // POLISH-1: "Of the rest" presumes something came before it. When NONE reached the end
+      // there is no rest — the sentence is about all of them — so it says "Instead".
+      const restLead = reached > 0 ? "Of the rest," : "Instead,";
+      endingsNote = rest.length ? `${lead} ${restLead} ${joinList(rest)}.${screenOutGloss}` : lead;
+    }
+
+    // HOW FAR THE FURTHEST ONE GOT (review B4) — appended to EITHER branch, because depth and
+    // ending are separate facts: a run can record how far it drove without recording where it
+    // stopped, and that combination is exactly the one a reader most needs.
+    //
+    // SAID ONLY WHEN THE RECORD STATES IT. Rows predating the carry produce no sentence rather
+    // than a confident zero, and when only some rows carry a depth the sentence says so instead
+    // of implying the deepest one is the deepest of all.
+    const deepest = endings.deepest;
+    if (deepest && deepest.screens > 0) {
+      const partial =
+        endings.depthUnstated > 0
+          ? ` (${endings.depthUnstated} of the ${endings.attempts} did not record how far ${endings.depthUnstated === 1 ? "it" : "they"} got, so this may not be the deepest)`
+          : "";
+      endingsNote += ` Our deepest attempt got ${deepest.screens} screen${deepest.screens === 1 ? "" : "s"} into the survey before it stopped${partial}.`;
+      // The survey's own wording, quoted when the record carries it — a reader can act on "it
+      // would not accept this answer" and can do nothing with "the walk stopped".
+      if (deepest.siteMessage) {
+        endingsNote += ` The survey would not accept an answer we gave, saying: “${deepest.siteMessage}”`;
+      }
+    }
+  }
+
   /* ---- what was checked and what remains unresolved (GPT's pushback) ----
    * Same six buckets, same derivation, spelled out rather than summed into two
    * opaque totals. `settled` here is the SAME number the evidence sentence
@@ -595,6 +667,7 @@ export function buildDecisionSummary(view) {
     accountingSentence,
     notPassed,
     shapeNote,
+    endingsNote,
     evidenceLine,
     coverageLine,
     // Trust-independent. Present on every run, whether or not a column is current.
@@ -614,7 +687,11 @@ export function buildDecisionSummary(view) {
     decisionLaneLede,
     surveyReady,
     reportReady,
-    readinessLine: `${reportReady ? "Report ready" : "Report incomplete"} · ${surveyReady ? "Survey ready" : "Survey not ready"}`,
+    // POLISH-4: "Report ready · Survey not ready" put two different meanings of "ready" in one
+    // line — the report being finished, and the survey being fit to field — so the eyebrow read
+    // as a contradiction. The report says whether it is COMPLETE; the survey says whether it has
+    // been CHECKED, which is the honest claim when nothing settled.
+    readinessLine: `${reportReady ? "Report complete" : "Report incomplete"} · ${surveyReady ? "Survey ready" : "Survey not yet checked"}`,
     launchBlockers: withConfirmation(launchBlockers),
     problems: withConfirmation(problems),
     cannotTest: withConfirmation(cannotTest),

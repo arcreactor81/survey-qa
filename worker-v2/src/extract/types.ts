@@ -58,6 +58,16 @@ export type SourceSubrole =
   | "image-alt"
   /** A relationship-backed Word review comment: visible evidence, never source authority. */
   | "comment-proposal"
+  /**
+   * A vertically merged continuation cell whose anchor carries content. The text is the
+   * anchor cell's text, REPRESENTED at this row so both extraction passes see the
+   * applicability. The assumption: Word vertical merge means the anchor cell's content
+   * applies to every row the merge spans. When this assumption does not hold (a merge used
+   * only for visual grouping, not content sharing) the inherited block degrades to a NAMED
+   * limitation: the text is visibly marked as inherited rather than silently absent or
+   * silently attributed.
+   */
+  | "vmerge-inherited"
   | null;
 
 /** One addressable unit of the source document. Every one of these must be dispositioned. */
@@ -226,9 +236,34 @@ export interface CallUsage {
   costUsd: number;
   latencyMs: number;
   attempts: number;
-  /** Provider receipt, or a conservative token ceiling when no receipt was available. */
-  usageSource?: "provider-reported" | "conservative-ceiling" | "unverified-model-rate-ceiling";
+  /**
+   * Provider receipt, a conservative token ceiling when no receipt was available,
+   * or a provenance marker for replayed/rejected events.
+   *
+   * - `provider-reported`: token counts came from the provider's response.
+   * - `conservative-ceiling`: no valid receipt; tokens estimated at the request/output ceiling.
+   * - `unverified-model-rate-ceiling`: response model identity mismatch; rates ceilinged.
+   * - `reused-prior-artifact`: this unit was reclaimed from a persisted artifact; costUsd is 0
+   *   for THIS run and originalCostUsd carries the cost the original purchase paid.
+   * - `rejected-before-generation`: the provider returned a definitive non-billing HTTP status
+   *   (401/402/403) before any generation occurred; costUsd is provably 0.
+   */
+  usageSource?:
+    | "provider-reported"
+    | "conservative-ceiling"
+    | "unverified-model-rate-ceiling"
+    | "reused-prior-artifact"
+    | "rejected-before-generation";
   detail?: string;
+  /**
+   * For `reused-prior-artifact` events: the cost the original purchase paid. The report can
+   * show what money was once spent without re-counting it against this run's budget.
+   */
+  originalCostUsd?: number;
+  /**
+   * For `rejected-before-generation` events: the HTTP status that proves no billing occurred.
+   */
+  rejectedHttpStatus?: number;
 }
 
 export interface PassResult {

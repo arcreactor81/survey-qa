@@ -680,10 +680,13 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
   margin-top: 12px; word-break: break-all;
 }
 
-/* ---- local-development honesty banner ----
-   The landing page describes six steps; four of them are placeholders. This banner is
-   what stops the description from reading as a claim. It is not decorative and must not
-   be quietened without the missing steps actually existing. */
+/* ---- honesty banner ----
+   Originally: four of the six steps were placeholders and this banner stopped the page's
+   description from reading as a claim. Those steps are built now and submission is on, so the
+   banner carries the caveat that IS still true: finality and publication are computed from the
+   sealed run and must not be promised by the landing page. It is not decorative, and it must not
+   be quietened ahead of the facts it describes. The class name is kept as `dev-banner` only
+   because renaming it buys nothing; it is not a dev-only element. */
 .dev-banner {
   max-width: 760px; margin: 26px 0 0; padding: 16px 18px;
   background: var(--wait-bg); border: 1px solid var(--lane-amb-border);
@@ -752,6 +755,86 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .run-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
 .run-card__headtext { min-width: 0; }
 .run-card .kicker { margin-bottom: 4px; }
+
+/* ---- committed browser activity: deliberately separate from QA coverage ----
+   Attempts, stable-screen changes, unique stable screens and checked cases have different
+   denominators. This card gives each its own label and explanation; there is no combined
+   progress bar that could turn movement into apparent coverage. */
+.activity-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 24px 30px 26px; margin: 0 0 18px; box-shadow: var(--shadow);
+}
+.activity-card__head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px 20px; flex-wrap: wrap;
+}
+.activity-card__head h2 { margin: 0; font-size: 24px; }
+.activity-card .kicker { margin-bottom: 4px; }
+.activity-card__lead { margin: 10px 0 0; max-width: 70ch; font-size: 13.5px; line-height: 1.58; color: var(--text); }
+.activity-inspection {
+  display: inline-flex; align-items: center; padding: 4px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--slate);
+  font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums;
+}
+.activity-metrics {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px; margin-top: 18px;
+}
+.activity-metric {
+  min-width: 0; padding: 13px 14px 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.activity-metric__label {
+  min-height: 2.5em; font-family: var(--mono); font-size: 10.5px; line-height: 1.25;
+  text-transform: uppercase; letter-spacing: 0.07em; color: var(--slate);
+}
+.activity-metric__value {
+  margin-top: 5px; color: var(--ink); font-family: var(--serif); font-size: 27px;
+  line-height: 1.05; font-variant-numeric: tabular-nums;
+}
+.activity-metric__explain { margin-top: 6px; color: var(--muted); font-size: 11.5px; line-height: 1.48; }
+.activity-support {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px; margin-top: 18px;
+}
+.activity-origins, .activity-limitations {
+  min-width: 0; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.activity-origins h3, .activity-limitations h3 {
+  margin: 0 0 8px; font-family: var(--mono); font-size: 10.5px; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);
+}
+.activity-origins p, .activity-limitations p { margin: 0; font-size: 12px; line-height: 1.52; }
+.origin-list, .activity-limitations ul { margin: 0; padding-left: 19px; font-size: 12px; line-height: 1.65; }
+.origin-list .machine-code { overflow-wrap: anywhere; }
+.activity-walks {
+  margin-top: 18px; border-top: 1px solid var(--border); padding-top: 13px;
+}
+.activity-walks > summary {
+  cursor: pointer; color: var(--ink); font-size: 13px; font-weight: 600;
+}
+.activity-table-wrap { margin-top: 12px; overflow-x: auto; }
+.activity-table {
+  width: 100%; min-width: 720px; border-collapse: collapse;
+  color: var(--text); font-size: 11.5px; line-height: 1.45;
+}
+.activity-table th {
+  padding: 7px 9px; border-bottom: 2px solid var(--border); text-align: left;
+  color: var(--slate); font-family: var(--mono); font-size: 9.5px; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.activity-table td { padding: 8px 9px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+.activity-table td:first-child, .activity-table td:nth-child(3), .activity-table td:nth-child(4) {
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 820px) { .activity-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) {
+  .activity-card { padding: 22px 20px 24px; }
+  .activity-metrics, .activity-support { grid-template-columns: 1fr; }
+  .activity-metric__label { min-height: 0; }
+}
 .run-title {
   margin: 0; font-family: var(--serif); font-weight: 400; font-size: 32px;
   line-height: 1.12; letter-spacing: -0.01em; color: var(--ink);
@@ -797,6 +880,10 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .phase-step.is-stopped { background: var(--phase-stopped-bg); border-color: var(--phase-stopped-border); color: var(--phase-stopped-text); }
 .phase-step.is-unknown { background: var(--phase-unknown-bg); border-color: var(--phase-unknown-border); color: var(--phase-unknown-text); }
 .phase-rail-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+/* The "why the long step is quiet" line. Larger and in body colour than the tick note
+   above it: it is the answer to "is this stuck", which is the question a reader has ten
+   minutes into a run, and a 12px muted footnote is not where an answer belongs. */
+.phase-rail-note--quiet { font-size: 13px; color: var(--text); line-height: 1.55; max-width: 62ch; }
 @media (max-width: 820px) { .phase-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .phase-rail { grid-template-columns: 1fr; } }
 
@@ -827,6 +914,80 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
   background: var(--err-bg); border: 1px solid var(--err-border);
   border-radius: var(--radius-sm); padding: 10px 12px; word-break: break-word;
 }
+/* ---- the recorded cause, and where it came from ----------------------------
+ *
+ * THE PROVENANCE IS CARRIED BY STATIC STYLING ONLY. This machine reports reduced motion, so
+ * anything that distinguished a recovered cause from a first-hand one by animating would be
+ * invisible exactly where it is being checked. The difference is therefore carried three
+ * ways that survive with motion off and in both themes: the flag WORD (real DOM text, so a
+ * screen reader gets it too), the border STYLE (dashed for a reconstruction, solid for
+ * testimony), and the tint. */
+.cause {
+  margin: 16px 0 0; padding: 14px 16px; border-radius: var(--radius-sm);
+  border: 1px solid var(--site-border); border-left: 3px solid var(--bad);
+  background: var(--bad-bg);
+}
+.cause__head { margin: 0; font-size: 15px; font-weight: 700; color: var(--red-text); line-height: 1.35; }
+.cause__body { margin: 6px 0 0; font-size: 13px; color: var(--text); line-height: 1.55; max-width: 68ch; }
+.cause__said { margin: 10px 0 0; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.cause__said-label {
+  font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--slate);
+}
+.cause__refs { margin: 10px 0 0; font-size: 11.5px; color: var(--muted); }
+
+.provenance {
+  margin: 12px 0 0; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+}
+.provenance__flag {
+  margin: 0; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--slate);
+}
+.provenance__text { margin: 4px 0 0; font-size: 12.5px; color: var(--text); line-height: 1.55; max-width: 68ch; }
+/* SECOND-HAND. Dashed, because the block is a reconstruction and the border says so before
+   the words do. */
+.provenance--recovered {
+  border: 1px dashed var(--amber); background: var(--wait-bg);
+}
+.provenance--recovered .provenance__flag { color: var(--wait-text); font-weight: 700; }
+.provenance--recovered .provenance__text { color: var(--wait-text); }
+/* FIRST-HAND. Solid and quiet: the ordinary case needs no emphasis. */
+.provenance--firsthand { border-style: solid; }
+
+/* ---- what the checks could not cover ----------------------------------------
+ * Three states, three appearances, and none of them share one: a number found, an explicit
+ * none that was looked for, and a "never counted" whose zero means nothing at all. */
+.shortfall-list { display: grid; gap: 10px; }
+.shortfall-row {
+  border: 1px solid var(--border); border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm); background: var(--surface-2); padding: 12px 14px;
+}
+.shortfall-row__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.shortfall-row__name { font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.35; }
+.shortfall-row__count {
+  flex: none; font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em;
+  color: var(--slate); white-space: nowrap;
+}
+.shortfall-row__what { margin: 6px 0 0; font-size: 12.5px; color: var(--text); line-height: 1.55; }
+.shortfall-row__sub { margin: 5px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.shortfall-row .detail-meta { margin: 8px 0 0; }
+/* Found: it bit, so it is tinted like the other things that changed an outcome. */
+.shortfall-row[data-limitation-state="found"] {
+  border-left-color: var(--amber); background: var(--wait-bg);
+}
+.shortfall-row[data-limitation-state="found"] .shortfall-row__count { color: var(--wait-text); font-weight: 700; }
+/* Looked for, none found: a real, earned zero. Quiet, and NOT styled as a problem. */
+.shortfall-row[data-limitation-state="none-found"] { border-left-color: var(--border-strong); }
+/* Never counted: a zero that means nothing. Dashed, like every other "we were not told"
+   state on this page, so it can never be mistaken for the earned zero above. */
+.shortfall-row[data-limitation-state="never-counted"],
+.shortfall-row[data-limitation-state="not-reported"] {
+  border: 1px dashed var(--border-strong); background: transparent;
+}
+.shortfall-row[data-limitation-state="never-counted"] .shortfall-row__count,
+.shortfall-row[data-limitation-state="not-reported"] .shortfall-row__count { color: var(--muted); }
+
 .run-actions { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 
 /* ---- run details: nothing is deleted, it is one click down ---- */
@@ -897,6 +1058,32 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .completion-axis .axis-state { font-size: 15px; font-weight: 600; color: var(--ink); margin-top: 3px; }
 .completion-axis .axis-why { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
+/* THE ONE THAT IS HAPPENING NOW. Tinted, with the same thick left edge the banners use,
+   so "which of these two is running" is answerable without reading. Keyed off the state
+   the server recorded (data-outcome-state, set in tracker.js) and matched here by an
+   explicit two-word list: an unrecognised value can never light up by accident.
+   Testing and Report are independent — both may be lit at once, or neither.
+
+   DELIBERATELY STILL. No pulse, no glow-and-fade: the motion budget at the top of this
+   file allows exactly one moving thing on this page, the poll dot, and this machine
+   reports reduced motion anyway, so an animated cue would be invisible to the person who
+   asked for it. The tint, the edge and the colour carry the meaning on their own.
+   The left border thickens by 2px and the left padding gives back the same 2px, so
+   nothing beside it shifts when a run changes state. */
+.completion-axis[data-outcome-state="running"],
+.completion-axis[data-outcome-state="building"] {
+  background: var(--phase-active-bg);
+  border-color: var(--phase-active-border);
+  border-left-width: 3px;
+  padding-left: 13px;
+}
+.completion-axis[data-outcome-state="running"] .axis-name,
+.completion-axis[data-outcome-state="building"] .axis-name,
+.completion-axis[data-outcome-state="running"] .axis-state,
+.completion-axis[data-outcome-state="building"] .axis-state {
+  color: var(--phase-active-text);
+}
+
 /* banners */
 .banner {
   display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 12px;
@@ -940,6 +1127,10 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .integrity-suspect .denominator .d-value,
 .integrity-suspect .limit-value { color: var(--slate) !important; }
 .integrity-suspect .meter__fill { background: var(--slate) !important; }
+/* Same rule for the check-state bar: on a record that did not verify, a coloured picture
+   of the counts is a confident-looking claim about numbers nobody should act on. The bar
+   still shows the shape of the ledger; it stops speaking in states. */
+.integrity-suspect .propbar__seg { background: var(--slate) !important; }
 
 /* ---- phase chips ---- */
 .phases { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; list-style: none; }
@@ -1009,6 +1200,43 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .bucket-count { font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums; color: var(--ink); }
 .bucket-row.is-exercised { background: transparent; }
 .bucket-row.is-exercised .bucket-glyph { color: var(--neutral-strong-text); }
+
+/* Each state's glyph takes the colour its segment takes in the bar below, so the bar can
+   be read against these rows without a separate legend. Every value is an existing token
+   and every one of them is a *-text token, measured against the card at 5.5:1 or better —
+   the glyph is text and is held to the text threshold. The colour is still only
+   decoration: the glyph shape and the full word are what carry the state. */
+.bucket-row[data-check-state="not-reached"] .bucket-glyph { color: var(--phase-pending-text); }
+.bucket-row[data-check-state="proven-unreachable"] .bucket-glyph { color: var(--nbo-text); }
+.bucket-row[data-check-state="blocked"] .bucket-glyph { color: var(--negative-text); }
+.bucket-row[data-check-state="budget-exhausted"] .bucket-glyph,
+.bucket-row[data-check-state="time-exhausted"] .bucket-glyph { color: var(--phase-stopped-text); }
+.bucket-row[data-check-state="pending"] .bucket-glyph { color: var(--silent-text); }
+
+/* ---- the seven states, drawn to scale ----
+   A stacked share of the SAME fixed total the sum line underneath reports. It is about the
+   individual checks and nothing else; the requirement total in this block is a different
+   number and the two are never added together.
+   No transition and no animation, for the reason .meter has none: a bar that eases between
+   snapshots draws values the server never reported. Widths change by replacement. */
+.propbar {
+  display: flex; height: 10px; margin-top: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
+  background: var(--meter-track); overflow: hidden;
+}
+/* Exact shares, never stretched to fill: flex-shrink is off so a ledger that falls short
+   of its total leaves a visible gap instead of being quietly normalized. min-width keeps a
+   single check from rounding away to nothing on a narrow screen. */
+.propbar__seg { flex: 0 0 auto; min-width: 2px; height: 100%; }
+.propbar__seg + .propbar__seg { box-shadow: inset 1px 0 0 var(--card); }
+.propbar__seg[data-check-state="exercised"] { background: var(--neutral-strong-text); }
+.propbar__seg[data-check-state="not-reached"] { background: var(--phase-pending-text); }
+.propbar__seg[data-check-state="proven-unreachable"] { background: var(--nbo-text); }
+.propbar__seg[data-check-state="blocked"] { background: var(--negative-text); }
+.propbar__seg[data-check-state="budget-exhausted"] { background: var(--phase-stopped-text); }
+.propbar__seg[data-check-state="time-exhausted"] { background: var(--phase-stopped-border); }
+.propbar__seg[data-check-state="pending"] { background: var(--silent-text); }
+
 .bucket-total {
   display: flex; justify-content: space-between; gap: 12px;
   margin-top: 10px; padding-top: 10px; border-top: 2px solid var(--border);
@@ -1155,6 +1383,109 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
   font-family: var(--mono); font-size: 10.5px;
 }
 .motion-toggle:hover { border-color: var(--accent); }
+
+/* =====================================================================
+ * REGION 5b — phase timing strip, depth indicators, walk timeline.
+ * ===================================================================== */
+
+/* --- section labels --- */
+.section-label {
+  font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--slate); margin-bottom: 8px;
+}
+
+/* --- phase timing strip --- */
+.phase-timing-section { margin: 18px 0; }
+.phase-timing-bar {
+  display: flex; height: 26px;
+  border-radius: var(--radius-sm); overflow: hidden;
+  margin-bottom: 8px; border: 1px solid var(--border);
+}
+.phase-timing-seg {
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 8px; letter-spacing: .04em;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 5px;
+  color: var(--ink);
+}
+.phase-timing-seg--done { background: var(--ok-bg); }
+.phase-timing-seg--active { background: var(--accent); color: var(--paper); }
+.phase-timing-seg--pending { background: var(--surface-2); color: var(--muted); }
+.phase-timing-legend {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.phase-timing-item { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.phase-glyph { font-size: 12px; width: 14px; text-align: center; }
+.phase-glyph--done { color: var(--ok); }
+.phase-glyph--active { color: var(--accent); }
+.phase-glyph--pending { color: var(--muted); }
+.phase-timing-name { color: var(--text); }
+.phase-timing-time { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
+/* --- depth indicators --- */
+.depth-section { margin: 18px 0; }
+.depth-tiles {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;
+}
+.depth-tile {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px; box-shadow: var(--shadow-sm);
+}
+.depth-tile__label {
+  font-family: var(--mono); font-size: 9px; text-transform: uppercase;
+  letter-spacing: .1em; color: var(--muted); margin-bottom: 3px;
+}
+.depth-tile__value {
+  font-family: "Instrument Serif", var(--serif); font-size: 28px;
+  color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.depth-tile__sub { font-size: 10px; color: var(--muted); margin-top: 3px; }
+
+/* --- walk timeline --- */
+.walk-timeline-section { margin: 22px 0; }
+.walk-timeline-list { list-style: none; padding: 0; }
+.walk-entry {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 16px; margin-bottom: 10px; box-shadow: var(--shadow-sm);
+}
+.walk-entry__header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.walk-entry__ordinal {
+  font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--ink);
+}
+.walk-entry__outcome {
+  font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
+  padding: 2px 7px; border-radius: var(--radius-pill);
+}
+.walk-outcome--completed { background: var(--ok-bg); border: 1px solid var(--done-border); color: var(--ok); }
+.walk-outcome--blocked { background: var(--wait-bg); border: 1px solid var(--amber); color: var(--amber); }
+.walk-outcome--step-cap { background: var(--primary-soft); border: 1px solid var(--accent); color: var(--accent); }
+.walk-entry__stats {
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  display: flex; gap: 10px;
+}
+.walk-entry__cases {
+  margin-top: 5px; display: flex; gap: 3px; flex-wrap: wrap;
+}
+.walk-entry__case-chip {
+  font-family: var(--mono); font-size: 8px; padding: 1px 5px;
+  background: var(--ok-bg); border: 1px solid var(--done-border); border-radius: 3px; color: var(--ok);
+}
+.walk-entry__case-chip--more {
+  background: var(--surface-2); border-color: var(--border); color: var(--muted);
+}
+.walk-entry__filmstrip {
+  display: flex; gap: 5px; margin-top: 8px; overflow-x: auto; padding-bottom: 3px;
+}
+.walk-entry__thumb {
+  width: 90px; min-width: 90px; aspect-ratio: 16/10;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 8px; color: var(--muted); text-align: center; padding: 3px;
+}
+.walk-entry__filmstrip-note {
+  font-size: 10px; color: var(--muted); font-style: italic; margin-top: 5px;
+}
 
 /* =====================================================================
  * REGION 6 — print. Warnings and denominators must survive export.
@@ -1640,6 +1971,104 @@ html.pv-grey body { filter: grayscale(1); }
   function transportState(view) { return (view.transport && view.transport.state) || "ok"; }
   function integrityState(view) { return (view.integrity && view.integrity.state) || "unknown"; }
 
+  // ---------------------------------------------------------------- the recorded cause
+  //
+  // `status.failure` is `{ step, reasonCode, kind, message, at }` — four separate facts,
+  // not one blob. It is the field this page BRANCHES ON. `status.error` is the long prose
+  // sentence for a person to read; it is rendered verbatim and NEVER parsed, because a page
+  // that reads meaning out of an error string starts making decisions on wording the server
+  // is free to change.
+  //
+  // Absent field = no recorded cause. It is never inferred from `completion.reasonCode`,
+  // which answers a different question: `completion.reasonCode` is the run's own verdict on
+  // itself, and `failure` is the thing that stopped it. They frequently agree; when they do
+  // not, both are shown rather than one being chosen.
+  function failureOf(view) {
+    var f = view.status && view.status.failure;
+    if (!f || typeof f !== "object") return null;
+    var code = typeof f.reasonCode === "string" && f.reasonCode ? f.reasonCode : null;
+    var message = typeof f.message === "string" && f.message ? f.message : null;
+    if (!code && !message) return null; // an empty object is not a cause
+    return {
+      step: typeof f.step === "string" ? f.step : "",
+      reasonCode: code,
+      kind: typeof f.kind === "string" && f.kind ? f.kind : null,
+      message: message,
+      at: typeof f.at === "string" && f.at ? f.at : null
+    };
+  }
+
+  // WHERE THE CAUSE CAME FROM — and the difference is not cosmetic.
+  //
+  // A `step` the run wrote itself is the name of the exact piece of work that threw. A step
+  // beginning `phase:` is NOT a step name at all: it means the run died without managing to
+  // record anything, and the reason was recovered afterwards from the engine that was
+  // running it. That reconstruction can only name the STAGE that was underway, and it was
+  // written minutes later by a different process.
+  //
+  // Rendering the two identically would present a second-hand answer as first-hand
+  // testimony. So the origin is read here and labelled on the page. The `phase:` prefix is
+  // the server's own marker for this — the only place it is produced is the engine-recovery
+  // path — so it is a fact being read, not a heuristic.
+  function causeOrigin(f) {
+    var step = f && f.step ? String(f.step) : "";
+    if (step.indexOf("phase:") !== 0) return { recovered: false, phaseLabel: null };
+    var name = step.slice(6);
+    var label = null;
+    // Rule 10: the internal stage name is never printed. It is translated, or it is dropped.
+    PHASES.forEach(function (d) { if (d.name === name) label = d.label; });
+    return { recovered: true, phaseLabel: label };
+  }
+
+  // PLAIN WORDS FOR A REASON CODE. Keyed by the machine code exactly, so a code this page
+  // has never seen falls through to a branch that says so instead of inventing a diagnosis.
+  // The raw code is shown either way, so nothing is lost by not recognising it.
+  var CAUSE_WORDS = {
+    // ACTIONABLE, NOT A MYSTERY. This one has a specific, ordinary meaning and a specific
+    // remedy, and a reader who is told "an error occurred" would go looking for a fault in
+    // their survey that is not there.
+    "subrequest-limit-exceeded": {
+      head: "This run used up the number of requests it is allowed to make.",
+      body: "A single run may only make so many requests out to other services, and this one reached " +
+        "that ceiling partway through. That is a ceiling being hit, not a fault found in your survey — " +
+        "and it is not a verdict on anything that had already been checked. The same questionnaire can " +
+        "be run again, and the ceiling can be raised for it."
+    },
+    "workflow-create-failed": {
+      head: "The run was accepted but never actually started.",
+      body: "Everything needed to start it was saved, and then the request to begin the work did not " +
+        "go through. Nothing about your survey was looked at, so nothing here is a result. Starting a " +
+        "new run is the whole fix."
+    },
+    "walks-blocked-by-site": {
+      head: "The survey site stopped the run from going any further.",
+      body: "Something on the site prevented the paths from being walked. What was recorded before that " +
+        "point is real; everything past it is unknown, and unknown is not a pass."
+    },
+    "workflow-error": {
+      head: "The run stopped on an error and did not finish.",
+      body: "The sentence below is the error itself, as the run or the engine recorded it. It has not " +
+        "been rewritten. What was saved before the run stopped is still real; nothing after it was checked."
+    }
+  };
+
+  // hasOwnProperty, not a bare lookup: the key is a SERVER-SUPPLIED string, and a bare
+  // lookup of `constructor` or `toString` would hand back something off Object.prototype and
+  // render it as if it were copy this product had written.
+  function has(map, key) {
+    return typeof key === "string" && Object.prototype.hasOwnProperty.call(map, key);
+  }
+
+  function causeWords(code) {
+    if (has(CAUSE_WORDS, code)) return CAUSE_WORDS[code];
+    return {
+      head: "The run stopped for a reason this page has no plain words for.",
+      body: "The reason is shown below exactly as it was recorded, rather than translated into a guess. " +
+        "It is a code support can look up. What was saved before the run stopped is still real; " +
+        "everything after it is unknown, and unknown is not a pass."
+    };
+  }
+
   // Human review is a TERMINAL WAITING state: nothing is running and nothing will run
   // until a person answers. Absent field = no review pending; we never infer one.
   function humanReview(view) {
@@ -1909,12 +2338,31 @@ html.pv-grey body { filter: grayscale(1); }
         srOnly(def.label + ": " + s.sr)
       ]);
     }));
+    // WHY THE LONG STAGE DOES NOT LOOK HUNG.
+    //
+    // Reading the questionnaire is the longest step and it is the one with nothing to
+    // count: the number of requirements does not exist until it finishes, so a counter
+    // here would either be invented or would move against a total that is still changing.
+    // Both are refused elsewhere in this file and are refused here too. What a reader
+    // needs instead is to be told that the silence is the design and where the liveness
+    // signal is — otherwise a legitimate ten-minute step reads as a stuck page, and the
+    // honest answer to "is it stuck" is a sentence, not a spinner.
+    //
+    // No duration is stated. The server promises none, and a number this page invented
+    // would be the same class of guess as an invented progress figure.
+    var quiet = reported.extracting && reported.extracting.state === "active"
+      ? "Reading your questionnaire is the longest step, and it is the one step with nothing to " +
+        "count — the number of requirements does not exist until it finishes. No figure is shown " +
+        "here rather than a made-up one. The check-in line below is how you can tell it is still working."
+      : null;
+
     return frag([
       list,
       el("p", {
         cls: "phase-rail-note",
         text: "A tick means that step finished. It does not mean your survey passed."
-      })
+      }),
+      quiet ? el("p", { cls: "phase-rail-note phase-rail-note--quiet", text: quiet }) : null
     ]);
   }
 
@@ -1960,26 +2408,126 @@ html.pv-grey body { filter: grayscale(1); }
     return el("p", { cls: "run-meta" }, items);
   }
 
+  // WHAT THE RUN SAYS IT IS DOING.
+  //
+  // The check-in above proves the process is alive but says nothing about what it is busy
+  // with, which is why a legitimate ten-minute extraction reads as a hung page. The server
+  // now sends the heartbeat's own note beside the timestamp, and this line is it.
+  //
+  // It is MACHINE TEXT, not prose. The run wrote it for itself ("extract pass A wave 3
+  // (whole-document / global rules)") and it contains the internal stage names rule 10
+  // forbids printing as product language, so it goes through machine() into <code> exactly
+  // like every other server-authored identifier here — visibly not a sentence this product
+  // authored, and skipped by the vocabulary gate for that reason. Translating ~20 engine
+  // strings into plain English would be a different and much larger change.
+  //
+  // NO DURATION IS DERIVED FROM IT. It says what is happening, never how long is left.
+  // Absent note → nothing is rendered at all, so a run that sends none looks exactly as it
+  // did before this line existed rather than flashing an empty row.
+  function renderBeatNote(status) {
+    var n = status.heartbeatNote;
+    if (typeof n !== "string" || !n) return null;
+    return el("p", { cls: "run-beat run-beat--note" }, [
+      el("span", { text: "Right now: " }),
+      machine(n)
+    ]);
+  }
+
   // The heartbeat is its OWN line, never merged into activity: a check-in is not progress.
   function renderHeartbeat(view) {
     var status = view.status;
     if (!status || humanReview(view) || isTerminal(view)) return null;
+    // Shown in every branch, including the stale one: if the run has gone quiet, the last
+    // thing it said it was doing is the most useful fact on the page.
+    var what = renderBeatNote(status);
     var hb = ms(status.heartbeatAt);
     if (hb == null) {
-      return el("p", { cls: "run-beat", text: "The run has not checked in yet." });
+      return frag([el("p", { cls: "run-beat", text: "The run has not checked in yet." }), what]);
     }
     var now = ms(view.now) || Date.now();
     var age = now - hb;
     if (age >= STALE_MS) {
-      return note("warn",
+      return frag([note("warn",
         "The run has not checked in for " + ageWords(age).replace(" ago", "") + ".",
-        "Automatic recovery is watching this run. Nothing has failed, and no countdown is running.");
+        "Automatic recovery is watching this run. Nothing has failed, and no countdown is running."), what]);
     }
-    return el("p", { cls: "run-beat" }, [
+    return frag([el("p", { cls: "run-beat" }, [
       el("span", { text: "The run last checked in " }),
       el("span", { cls: "num", text: ageWords(age), attrs: { "data-age-of": "heartbeat" } }),
       el("span", { text: ". A check-in means the process is alive; it is not the same as progress." })
+    ]), what]);
+  }
+
+  // ---------------------------------------------------------------- the cause, rendered
+  //
+  // WHO IS SPEAKING. Two lines, one flag word, and the flag is the point: a reader has to be
+  // able to tell "the run told us" from "we had to go and ask" at a glance, because the
+  // second one is a reconstruction and carries less. Both branches are STATIC — no motion
+  // distinguishes them, deliberately: this machine reports reduced motion, and a difference
+  // that only exists in an animation does not exist.
+  function renderProvenance(origin) {
+    if (origin.recovered) {
+      return el("div", { cls: "provenance provenance--recovered", attrs: { "data-cause-origin": "recovered" } }, [
+        el("p", { cls: "provenance__flag", text: "We had to go and ask" }),
+        el("p", {
+          cls: "provenance__text",
+          text: "The run stopped without leaving a reason of its own, so this one was fetched afterwards " +
+            "from the service that was running it. It is second-hand: it was written after the fact by " +
+            "something watching from outside, and it can only name the step that was underway" +
+            (origin.phaseLabel ? " — " + origin.phaseLabel + " — " : " ") +
+            "rather than the exact piece of work that failed."
+        })
+      ]);
+    }
+    return el("div", { cls: "provenance provenance--firsthand", attrs: { "data-cause-origin": "first-hand" } }, [
+      el("p", { cls: "provenance__flag", text: "The run recorded this itself" }),
+      el("p", {
+        cls: "provenance__text",
+        text: "The run wrote this reason down as it stopped, so it is first-hand and it names the exact " +
+          "piece of work that failed."
+      })
     ]);
+  }
+
+  // The cause block that sits in the card. `failure.message` is the headline sentence
+  // because it is the bounded one the server guarantees is short; `error` is the long field
+  // and stays where long things go, under Run details.
+  //
+  // `message` is MACHINE TEXT — the engine's own sentence, sanitised, not language this
+  // product authored — so it goes through machine() into <code> like every other
+  // server-produced string on this page.
+  function renderCause(view) {
+    var f = failureOf(view);
+    if (!f) return null;
+    var w = causeWords(f.reasonCode);
+    var origin = causeOrigin(f);
+
+    var kids = [
+      el("p", { cls: "cause__head", text: w.head }),
+      el("p", { cls: "cause__body", text: w.body })
+    ];
+    if (f.message) {
+      kids.push(el("p", { cls: "cause__said" }, [
+        el("span", { cls: "cause__said-label", text: "Recorded word for word: " }),
+        machine(f.message)
+      ]));
+    }
+    kids.push(renderProvenance(origin));
+    var refs = el("p", { cls: "cause__refs" }, [
+      el("span", { text: "Reason code " }),
+      machine(f.reasonCode || "(none recorded)"),
+      el("span", { text: " · step " }),
+      machine(f.step || "(none recorded)")
+    ]);
+    kids.push(refs);
+
+    return el("div", {
+      cls: "cause cause--" + (origin.recovered ? "recovered" : "firsthand"),
+      attrs: {
+        "data-cause-origin": origin.recovered ? "recovered" : "first-hand",
+        "data-reason-code": f.reasonCode || null
+      }
+    }, kids);
   }
 
   // ---------------------------------------------------------------- outcome lines
@@ -1992,6 +2540,11 @@ html.pv-grey body { filter: grayscale(1); }
     var test = testState(view);
     var report = reportState(view);
     var tot = checkedTotals(view);
+    // Built once and placed once. Where there IS a structured cause it replaces the bare
+    // error line, because the bare line was the same sentence with none of the four facts
+    // around it; where there is not, the old line is exactly what still renders.
+    var cause = renderCause(view);
+    var causeShown = false;
 
     if (STOP_REASON[test]) {
       var tail = tot
@@ -2016,7 +2569,8 @@ html.pv-grey body { filter: grayscale(1); }
           "What was recorded is real and saved, but the run did not finish. Everything not checked is " +
           "unknown — unknown is not a pass, and this page is not a report."));
       }
-      if (status.error) out.push(el("p", { cls: "run-error" }, [machine(status.error)]));
+      if (cause) { out.push(cause); causeShown = true; }
+      else if (status.error) out.push(el("p", { cls: "run-error" }, [machine(status.error)]));
     }
 
     if (report === "failed" && test !== "failed") {
@@ -2025,8 +2579,15 @@ html.pv-grey body { filter: grayscale(1); }
           : "The report could not be built.",
         "This page is the last confirmed status for the run, not a report. Nothing has been scored, " +
         "and nothing will be scored in your browser. The saved records are still available."));
-      if (status.error) out.push(el("p", { cls: "run-error" }, [machine(status.error)]));
+      if (cause) { out.push(cause); causeShown = true; }
+      else if (status.error) out.push(el("p", { cls: "run-error" }, [machine(status.error)]));
     }
+
+    // A CAUSE IS NEVER SWALLOWED BY THE HEADLINE NOT MATCHING IT. A run can carry a recorded
+    // failure while its two outcome words say something less final — a stop at a limit, or a
+    // report that was built anyway. The two branches above are about the OUTCOME; this is
+    // about the CAUSE, and a cause that exists is shown whatever the outcome says.
+    if (cause && !causeShown) { out.push(cause); causeShown = true; }
 
     if (status.recoveryMode) {
       out.push(note("info",
@@ -2067,6 +2628,45 @@ html.pv-grey body { filter: grayscale(1); }
 
   function detailBlock(title, kids) {
     return el("section", { cls: "detail-block" }, [el("h3", { text: title })].concat(kids));
+  }
+
+  // THE SEVEN STATES, AS ONE BAR. Drawn from the SAME counts as the rows above it and the
+  // SAME fixed total as the sum line below it, in the same order, so it cannot disagree
+  // with either. Three rules it keeps:
+  //
+  //  - It describes the INDIVIDUAL CHECKS only. The other total on this panel counts
+  //    requirements from the questionnaire; the two are never added, and this bar never
+  //    mixes them.
+  //  - A state with a count of zero draws NOTHING. A hairline for "none of these" is a
+  //    mark where there is no data, and a reader would read it as a small amount.
+  //  - Widths are exact shares of the fixed total, never normalized to fill the bar. If
+  //    the counts do not add up, the bar visibly falls short — and the warning that
+  //    already sits under it says so in words.
+  function proportionBar(counts, total) {
+    if (typeof total !== "number" || !isFinite(total) || total <= 0) return null;
+    var segs = [];
+    var spoken = [];
+    CHECK_STATES.forEach(function (b) {
+      var n = counts[b[0]] || 0;
+      if (n <= 0) return;
+      var seg = el("span", {
+        cls: "propbar__seg",
+        attrs: { "data-check-state": b[0], title: b[2] + " — " + n + " of " + total }
+      });
+      seg.style.width = ((n / total) * 100).toFixed(4) + "%";
+      segs.push(seg);
+      spoken.push(n + " " + b[2].toLowerCase());
+    });
+    if (!segs.length) return null;
+    // One image with one name, rather than seven unexplained blocks to a screen reader.
+    return el("div", {
+      cls: "propbar",
+      attrs: {
+        role: "img",
+        "aria-label": "The " + total + " individual checks, as recorded at this update: " +
+          spoken.join(", ") + "."
+      }
+    }, segs);
   }
 
   function detailChecks(view) {
@@ -2127,7 +2727,12 @@ html.pv-grey body { filter: grayscale(1); }
 
     var counts = cov.counts || {};
     kids.push(el("div", { cls: "buckets" }, CHECK_STATES.map(function (b) {
-      return el("div", { cls: "bucket-row" + (b[0] === "exercised" ? " is-exercised" : "") }, [
+      return el("div", {
+        cls: "bucket-row" + (b[0] === "exercised" ? " is-exercised" : ""),
+        // The state's own name, so the row's glyph and the bar below can be coloured from
+        // one source. It is the server's word, not a rank or a judgement.
+        attrs: { "data-check-state": b[0] }
+      }, [
         el("span", { cls: "bucket-glyph", text: b[1], attrs: { "aria-hidden": "true" } }),
         el("span", { cls: "bucket-name" }, [
           document.createTextNode(b[2]),
@@ -2136,6 +2741,7 @@ html.pv-grey body { filter: grayscale(1); }
         el("span", { cls: "bucket-count num", text: String(counts[b[0]] || 0) })
       ]);
     })));
+    kids.push(proportionBar(counts, tot.total));
     kids.push(el("div", { cls: "bucket-total" }, [
       el("span", { text: "These seven add up to" }),
       el("strong", { cls: "num", text: tot.sum + " / " + tot.total })
@@ -2150,6 +2756,115 @@ html.pv-grey body { filter: grayscale(1); }
       text: "Update number " + intOr(cov.revision) + " · taken at " + (clockTime(cov.observedAt) || "—")
     }));
     return detailBlock("What was checked", kids);
+  }
+
+  // ---------------------------------------------------------------- what the plan could not do
+  //
+  // WHAT THIS BLOCK IS FOR. When the checks are being worked out, the planner counts the
+  // things it could NOT do — questionnaire cases no walk was assigned to, decisions the
+  // document never gave wording for, route answers that are really routing conditions — and
+  // it counts EVERY one of them on EVERY run, including when the count is zero. That is the
+  // whole point of the count existing: "we looked and found none" has to be distinguishable
+  // from "nobody looked", and a list that only shows non-zero rows cannot express it.
+  //
+  // WHAT IS ACTUALLY ON THE WIRE TODAY: nothing. Verified 8 August against both terminal
+  // runs and against the two feeds this page reads — the named limitations are written onto
+  // the plan artifact and are not carried onto the checkpoint, so neither the status feed
+  // nor the progress feed contains them. THAT ABSENCE IS ITSELF THE THIRD STATE, and it is
+  // the one this page is in: not "none", not a number, but never told. Rendering nothing at
+  // all would have read as "no shortfalls", which is precisely the confusion the zero counts
+  // exist to prevent — so the absence is named instead, and nothing is invented to fill it.
+  //
+  // The row renderer below is real and is exercised by the same code path the moment the
+  // field appears, under either `status.planLimitations` or `status.limitations`. It does
+  // not fabricate a value in the meantime — and if the server wires the field under some
+  // third name, this block keeps saying it was not told, which remains true of this page.
+  //
+  // THE ONE THING THIS BLOCK ADDS TO A HEALTHY RUN. Every other change here is invisible on
+  // a run that is fine. This one is not, and deliberately: a page that renders nothing at
+  // all here is a page that reads as "nothing was missed", on every run, forever.
+  var LIMITATION_WORDS = {
+    "cases-not-assigned-to-any-walk":
+      "Questionnaire cases that no planned path was set to go through",
+    "decisions-without-document-wording":
+      "Decision points your document never gave wording for, so they cannot be recognised on screen",
+    "route-labels-that-are-routing-conditions":
+      "Route answers that are really routing rules, so no option on screen can ever match them",
+    "plan-predates-limitation-reporting":
+      "This plan was made before these shortfalls were counted at all"
+  };
+  // The one code that means "never counted" rather than "counted, and it was zero". Its own
+  // count is zero, and reading that zero as "none found" would be exactly the false reading
+  // this whole block exists to prevent.
+  var LIMITATION_NEVER_COUNTED = "plan-predates-limitation-reporting";
+
+  function planLimitations(view) {
+    var s = view.status;
+    if (!s) return null;
+    var list = Array.isArray(s.planLimitations) ? s.planLimitations
+      : Array.isArray(s.limitations) ? s.limitations : null;
+    return list;
+  }
+
+  function detailLimitations(view) {
+    var list = planLimitations(view);
+    if (!list) {
+      return detailBlock("What the checks could not cover", [el("div", { cls: "empty-state" }, [
+        el("strong", { text: "This page has not been told what the checks could not cover." }),
+        el("p", {
+          text: "When the checks are worked out, anything that could not be covered is named and counted — " +
+            "and counted even when the answer is none, so that “we looked and found none” can be told apart " +
+            "from “nobody looked”. Those counts are not sent to this page, so it cannot tell you which of " +
+            "the two you are looking at. It is not reporting none, because it has not been told none."
+        })
+      ])]);
+    }
+    if (!list.length) {
+      return detailBlock("What the checks could not cover", [el("div", { cls: "empty-state" }, [
+        el("strong", { text: "An empty list arrived, which is not the same as a clean run." }),
+        el("p", {
+          text: "Every shortfall is meant to be listed on every run, including with a count of none. An " +
+            "empty list means none of them were listed at all, so nothing here can be read as “nothing " +
+            "was missed”."
+        })
+      ])]);
+    }
+
+    var rows = el("div", { cls: "shortfall-list" }, list.map(function (l) {
+      var code = l && typeof l.code === "string" ? l.code : "";
+      var count = l && typeof l.count === "number" && isFinite(l.count) ? l.count : null;
+      var neverCounted = code === LIMITATION_NEVER_COUNTED;
+      // THREE DIFFERENT ANSWERS, THREE DIFFERENT WORDS. A number, an explicit none that was
+      // looked for, and a "this was never counted" — never the same styling for two of them.
+      var state = neverCounted ? "never-counted" : count === 0 ? "none-found" : count == null ? "not-reported" : "found";
+      var value = neverCounted ? "Never counted"
+        : count === 0 ? "None found"
+        : count == null ? "No count given"
+        : String(count);
+      return el("div", { cls: "shortfall-row", attrs: { "data-limitation-state": state } }, [
+        el("div", { cls: "shortfall-row__head" }, [
+          el("span", { cls: "shortfall-row__name", text: has(LIMITATION_WORDS, code) ? LIMITATION_WORDS[code] : "A shortfall this page has no plain name for" }),
+          el("span", { cls: "shortfall-row__count num", text: value })
+        ]),
+        // The plan's own sentence about it, when it sent one.
+        l && typeof l.what === "string" && l.what
+          ? el("p", { cls: "shortfall-row__what", text: l.what })
+          : null,
+        el("p", { cls: "shortfall-row__sub", text: neverCounted
+          ? "A count of zero here does not mean zero. It means this was never looked for on this run."
+          : count === 0 ? "This was looked for on this run and none were found."
+          : count == null ? "The shortfall was named but no number came with it, so how much is unknown."
+          : "These were found and named. They are not failures of your survey; they are parts of it the " +
+            "checks did not manage to cover." }),
+        code ? machineRow("Reference:", code) : null
+      ]);
+    }));
+
+    return detailBlock("What the checks could not cover", [rows, el("p", {
+      cls: "detail-note",
+      text: "Every one of these is listed on every run, including when the answer is none, so that a run " +
+        "where nothing was missed reads differently from a run where nobody looked."
+    })]);
   }
 
   function meter(name, valueNode, used, max, sub) {
@@ -2212,6 +2927,246 @@ html.pv-grey body { filter: grayscale(1); }
         "single figure" + (view.policy ? ", and the limits shown are the ones the server enforces for the " +
         view.policy.profile + " profile." : ".")
     })]);
+  }
+
+  // ---------------------------------------------------------------- browser activity
+  // This panel uses a separate server projection because attempts, screen changes, stable
+  // screens and sealed-case credit have different grains. None is derived from another.
+  function activityMetric(label, value, explanation) {
+    return el("div", { cls: "activity-metric" }, [
+      el("div", { cls: "activity-metric__label", text: label }),
+      el("div", { cls: "activity-metric__value num", text: value }),
+      el("div", { cls: "activity-metric__explain", text: explanation })
+    ]);
+  }
+
+  function activityOutcome(value) {
+    var words = {
+      completed: "Step loop finished",
+      "no-advance-control": "No forward control found",
+      blocked: "Survey did not advance",
+      "blocked-after-probe": "Probe did not advance",
+      "step-cap": "Stopped at the step limit",
+      "time-cap": "Stopped at the walk time limit",
+      "load-crash": "Page crashed while loading",
+      "browser-hung": "Browser stopped responding",
+      "cycle-detected": "Repeated transition cycle detected",
+      error: "Walker error",
+      unrecognized: "Unrecognised recorded outcome"
+    };
+    return words[value] || words.unrecognized;
+  }
+
+  function artifactStateWords(state) {
+    var words = {
+      inspected: "artifact checked",
+      "not-yet-indexed": "artifact not indexed yet",
+      unresolved: "artifact binding unresolved",
+      "not-inspected-limit": "outside this view's inspection limit",
+      "catalog-missing": "catalogue row missing",
+      "binding-mismatch": "artifact binding did not match",
+      "artifact-unreadable": "artifact could not be read",
+      "artifact-corrupt": "artifact failed validation",
+      "artifact-identity-mismatch": "artifact identity did not match"
+    };
+    return words[state] || "artifact state not recognised";
+  }
+
+  function renderActivityWalks(execution) {
+    var rows = Array.isArray(execution.walks) ? execution.walks : [];
+    var d = el("details", { cls: "activity-walks" });
+    d.appendChild(el("summary", { text: "Show each recorded walk attempt (" + rows.length + ")" }));
+    if (!rows.length) {
+      d.appendChild(el("p", { cls: "detail-note", text: "No walk rows were returned in this snapshot." }));
+      return d;
+    }
+    var table = el("table", { cls: "activity-table" });
+    var head = el("tr");
+    ["Walk", "Recorded outcome", "Screen changes", "Unique screens seen", "QA credit", "Known shortfalls"].forEach(function (label) {
+      head.appendChild(el("th", { text: label, attrs: { scope: "col" } }));
+    });
+    table.appendChild(el("thead", {}, [head]));
+    var body = el("tbody");
+    rows.forEach(function (walk) {
+      var artifact = walk.artifact || {};
+      var unique = artifact.uniqueStableScreensObserved;
+      var shortfalls = [];
+      if (typeof walk.unboundPlannedDecisions === "number" && walk.unboundPlannedDecisions > 0) {
+        shortfalls.push(walk.unboundPlannedDecisions + " planned decisions unbound");
+      }
+      if (typeof walk.bindingRefusals === "number" && walk.bindingRefusals > 0) {
+        shortfalls.push(walk.bindingRefusals + " binding refusals");
+      }
+      if (artifact.state !== "inspected") shortfalls.push(artifactStateWords(artifact.state));
+      if (!shortfalls.length) shortfalls.push("none recorded in this projection");
+      var tr = el("tr");
+      [
+        String(walk.ordinal),
+        activityOutcome(walk.outcome),
+        intOr(walk.screenChanges, "not recorded"),
+        typeof unique === "number" ? String(unique) : "not available",
+        walk.creditedToCoverage ? intOr(walk.executionCasesCredited, "0") + " case(s)" : "activity only",
+        shortfalls.join(" · ")
+      ].forEach(function (textValue) { tr.appendChild(el("td", { text: textValue })); });
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+    d.appendChild(el("div", { cls: "activity-table-wrap" }, [table]));
+    if (execution.walkRowsOmitted > 0) {
+      d.appendChild(el("p", {
+        cls: "detail-note",
+        text: execution.walkRowsOmitted + " older walk row(s) are counted above but omitted from this bounded table."
+      }));
+    }
+    return d;
+  }
+
+  function renderActivityOrigins(execution) {
+    var totals = execution.totals || {};
+    var origins = Array.isArray(totals.visitedOrigins) ? totals.visitedOrigins : [];
+    var kids = [el("h3", { text: "Websites visited" })];
+    if (origins.length) {
+      kids.push(el("ul", { cls: "origin-list" }, origins.map(function (origin) {
+        return el("li", {}, [machine(origin)]);
+      })));
+    } else {
+      kids.push(el("p", { text: "No website origin could be read from the inspected walk artifacts." }));
+    }
+    kids.push(el("p", {
+      cls: "detail-note",
+      text: (totals.visitedOriginsExact ? "All recorded walk artifacts were inspected. " : "This list may be partial. ") +
+        "Only the website origin is shown; paths, query tokens, fragments and page text are excluded."
+    }));
+    return el("div", { cls: "activity-origins" }, kids);
+  }
+
+  function renderActivityLimitations(execution) {
+    var l = execution.limitations || {};
+    var items = [];
+    function add(value, label) {
+      if (typeof value === "number" && value > 0) items.push(value + " " + label);
+    }
+    add(l.unboundPlannedDecisions, "planned decisions never bound to a screen");
+    add(l.bindingRefusals, "screen-to-plan bindings refused");
+    add(l.readerLimitationOccurrences, "reader limitation occurrences");
+    add(l.captureFailureOccurrencesObserved, "capture failure occurrences observed");
+    add(l.unfillableControlsObserved, "controls the walker could not fill");
+    add(l.pageErrorOccurrencesObserved, "page error occurrences observed");
+    add(l.consoleErrorOccurrencesObserved, "console error occurrences observed");
+    add(l.walksWithoutUnboundDecisionCount, "walks without an unbound-decision count");
+    add(l.walksWithoutBindingRefusalCount, "walks without a binding-refusal count");
+    add(l.walksWithoutReaderLimitationCount, "walks without a reader-limitation count");
+    add(l.walksWithoutBlockedStepCount, "walks without a blocked-step count");
+    if (!items.length) items.push("No named shortfall was recorded in the fields this projection can safely show.");
+    return el("div", { cls: "activity-limitations" }, [
+      el("h3", { text: "Recorded limitations" }),
+      el("ul", {}, items.map(function (itemText) { return el("li", { text: itemText }); })),
+      el("p", {
+        cls: "detail-note",
+        text: l.artifactDerivedCountsExact
+          ? "Artifact-derived counts cover every recorded walk."
+          : "Artifact-derived counts are a lower bound; the inspection denominator is shown below."
+      })
+    ]);
+  }
+
+  function renderBrowserActivity(view) {
+    var execution = view.execution;
+    var feed = view.executionFeed || { state: "unknown" };
+    var coverageAttempts = view.coverage && view.coverage.attempts;
+    var shouldExist = coverageAttempts && coverageAttempts.started > 0;
+
+    if (!execution) {
+      if (!shouldExist && feed.state !== "invalid" && feed.state !== "unavailable") return null;
+      var unavailableTitle = feed.state === "invalid"
+        ? "The browser activity ledger did not reconcile."
+        : "Browser activity details are not available at this update.";
+      var unavailableBody = feed.state === "invalid"
+        ? "The service refused to turn inconsistent saved data into a plausible-looking page count."
+        : "This is a failed activity-feed read, not evidence that the browser did no work.";
+      var emptyCard = el("section", { cls: "activity-card" }, [
+        el("p", { cls: "kicker", text: "Browser activity · not QA coverage" }),
+        el("h2", { text: unavailableTitle }),
+        el("p", { text: unavailableBody })
+      ]);
+      if (feed.code) emptyCard.appendChild(machineRow("Reference code:", feed.code));
+      return emptyCard;
+    }
+
+    var totals = execution.totals || {};
+    var inspection = execution.artifactInspection || {};
+    var card = el("section", { cls: "activity-card", attrs: { "data-activity-state": execution.ledger && execution.ledger.state } });
+    card.appendChild(el("div", { cls: "activity-card__head" }, [
+      el("div", {}, [
+        el("p", { cls: "kicker", text: "Browser activity · not QA coverage" }),
+        el("h2", { text: "What the browser recorded so far" })
+      ]),
+      el("span", {
+        cls: "activity-inspection",
+        text: intOr(inspection.walksInspected, "0") + " / " + intOr(totals.walkAttemptsRecorded, "0") + " walk artifacts inspected"
+      })
+    ]));
+    card.appendChild(el("p", {
+      cls: "activity-card__lead",
+      text: "These numbers describe browser movement. They do not say a questionnaire check passed, failed, or was even exercised. " +
+        "Only completed, durably saved walk attempts appear here; an in-flight attempt remains in the run card until it is committed."
+    }));
+
+    if (execution.ledger && execution.ledger.state === "absent") {
+      card.appendChild(el("div", { cls: "empty-state" }, [
+        el("strong", { text: "No browser walk ledger has been committed yet." }),
+        el("p", { text: "A zero is not shown as progress: this surface is waiting for the first durable walk attempt." })
+      ]));
+      return card;
+    }
+
+    var unique = totals.uniqueStableScreensObserved;
+    var uniqueValue = typeof unique === "number"
+      ? (totals.uniqueStableScreensExact ? String(unique) : "at least " + unique)
+      : "not available";
+    card.appendChild(el("div", { cls: "activity-metrics" }, [
+      activityMetric("Recorded walk attempts", intOr(totals.walkAttemptsRecorded, "0"),
+        "One durable row per browser drive or retry."),
+      activityMetric("Screen changes", intOr(totals.screenChanges, "0"),
+        "A stable screen identity changed after advancing. This is not a unique-page count."),
+      activityMetric("Unique stable screens observed", uniqueValue,
+        totals.uniqueStableScreensExact
+          ? "Deduplicated across every indexed walk artifact."
+          : "Deduplicated only across the inspected artifacts; the true number may be higher."),
+      activityMetric("Walks credited to QA coverage",
+        intOr(totals.walksCreditedToCoverage, "0") + " / " + intOr(totals.walkAttemptsRecorded, "0"),
+        "A walk gets credit only when it closes at least one sealed execution case.")
+    ]));
+
+    if (typeof totals.returnScreenChangesObserved === "number" && totals.returnScreenChangesObserved > 0) {
+      card.appendChild(note("warn",
+        totals.returnScreenChangesObserved + " screen change(s) returned to a stable screen already seen earlier in the same walk.",
+        "Repeated movement can be a navigation loop. It is activity, not extra page or QA coverage."));
+    }
+    if (totals.activityOnlyWalks > 0) {
+      card.appendChild(note("info",
+        totals.activityOnlyWalks + " walk attempt(s) recorded activity but closed no sealed execution case.",
+        "Their captures remain available for diagnosis; they do not move the checked-case count."));
+    }
+    if (feed.state === "unavailable") {
+      card.appendChild(note("warn", "The latest activity-feed refresh failed.",
+        "The figures below are the last confirmed snapshot, not a claim that nothing changed."));
+    }
+
+    card.appendChild(el("div", { cls: "activity-support" }, [
+      renderActivityOrigins(execution),
+      renderActivityLimitations(execution)
+    ]));
+    card.appendChild(renderActivityWalks(execution));
+    card.appendChild(el("p", {
+      cls: "detail-meta",
+      text: "Activity update " + intOr(execution.revision) + " · " +
+        intOr(inspection.walksInspected, "0") + " inspected, " +
+        intOr(inspection.unresolvedWalks, "0") + " unresolved, " +
+        intOr(inspection.unreadableOrMismatchedWalks, "0") + " unreadable or mismatched, " +
+        intOr(inspection.walksNotInspectedBecauseOfLimit, "0") + " outside the inspection limit."
+    }));
+    return card;
   }
 
   function detailWork(view) {
@@ -2292,17 +3247,24 @@ html.pv-grey body { filter: grayscale(1); }
     var c = status.completion;
     var t = TEST_WORDS[c.test] || ["Testing state: " + c.test, "Unrecognised value — shown exactly as sent, not normalized."];
     var r = REPORT_WORDS[c.report] || ["Report state: " + c.report, "Unrecognised value — shown exactly as sent, not normalized."];
+    // WHICH OF THE TWO IS HAPPENING RIGHT NOW. The attribute carries the state exactly as
+    // the server recorded it — no derived "active" flag, no inference from the other
+    // outcome, no guess when the value is missing or unrecognised. The stylesheet lights
+    // up the two words that genuinely mean work in progress ("running", "building") and
+    // leaves every other value, known or not, looking as it always has.
+    function axis(name, state, words) {
+      return el("div", {
+        cls: "completion-axis",
+        attrs: { "data-outcome-state": typeof state === "string" && state ? state : null }
+      }, [
+        el("div", { cls: "axis-name", text: name }),
+        el("div", { cls: "axis-state", text: words[0] }),
+        el("div", { cls: "axis-why", text: words[1] })
+      ]);
+    }
     var kids = [el("div", { cls: "completion" }, [
-      el("div", { cls: "completion-axis" }, [
-        el("div", { cls: "axis-name", text: "Testing" }),
-        el("div", { cls: "axis-state", text: t[0] }),
-        el("div", { cls: "axis-why", text: t[1] })
-      ]),
-      el("div", { cls: "completion-axis" }, [
-        el("div", { cls: "axis-name", text: "Report" }),
-        el("div", { cls: "axis-state", text: r[0] }),
-        el("div", { cls: "axis-why", text: r[1] })
-      ])
+      axis("Testing", c.test, t),
+      axis("Report", c.report, r)
     ])];
     kids.push(el("p", {
       cls: "detail-note",
@@ -2310,12 +3272,72 @@ html.pv-grey body { filter: grayscale(1); }
         "outcomes. A finished report is allowed to describe testing that stopped early."
     }));
     if (c.reasonCode) kids.push(machineRow("Reason recorded:", c.reasonCode));
+
+    // THE CAUSE, BESIDE THE VERDICT, IN ITS FOUR PARTS.
+    //
+    // "Reason recorded" above is the run's verdict on itself. This is what stopped it, and
+    // the two are kept apart on purpose: they can disagree, and when they do the reader
+    // should see both rather than a page that quietly picked one. The per-step reason codes
+    // in the block BELOW this one are a third thing again — facts belonging to a single
+    // step, such as the site blocking the walks — and they stay there.
+    var f = failureOf(view);
+    if (f) {
+      var origin = causeOrigin(f);
+      kids.push(el("p", {
+        cls: "detail-note",
+        text: origin.recovered
+          ? "The run did not record why it stopped. What follows was recovered afterwards from the " +
+            "service that was running it, and names the step that was underway" +
+            (origin.phaseLabel ? " (" + origin.phaseLabel + ")" : "") + " rather than the exact piece of work."
+          : "The run recorded this itself as it stopped, so the step below is the exact piece of work that failed."
+      }));
+      var dl = el("dl", { cls: "detail-grid" });
+      dl.appendChild(el("dt", { text: "Where it stopped" }));
+      dl.appendChild(el("dd", {}, [machine(f.step || "(none recorded)")]));
+      dl.appendChild(el("dt", { text: "Cause code" }));
+      dl.appendChild(el("dd", {}, [machine(f.reasonCode || "(none recorded)")]));
+      if (f.kind) {
+        dl.appendChild(el("dt", { text: "Kind of failure" }));
+        dl.appendChild(el("dd", {}, [machine(f.kind)]));
+      }
+      if (f.message) {
+        dl.appendChild(el("dt", { text: "What it said" }));
+        dl.appendChild(el("dd", {}, [machine(f.message)]));
+      }
+      dl.appendChild(el("dt", { text: "Written down at" }));
+      dl.appendChild(el("dd", { text: f.at ? (clockTime(f.at) || f.at) : "not recorded" }));
+      kids.push(dl);
+      kids.push(el("p", {
+        cls: "detail-note",
+        text: "The reason code is the field to quote. It means the same thing whether the run named it " +
+          "or the service that was running it did."
+      }));
+    }
+    // NOTHING IS ADDED WHEN THERE IS NO CAUSE. A run that is fine renders this block exactly
+    // as it did before any of this existed — not even a line saying no cause was recorded,
+    // because a healthy run should not gain a sentence about failure.
     return detailBlock("Outcome, in full", kids);
   }
 
   function detailStages(view) {
     var status = view.status;
-    if (!status || !Array.isArray(status.phases)) return null;
+    // Returning null here left a titled section's worth of nothing: the block simply did
+    // not appear, and a reader who had seen it on another run could only conclude the page
+    // was broken. Every other block on this panel answers "why is this empty"; this one
+    // now does too.
+    if (!status || !Array.isArray(status.phases)) {
+      return detailBlock("The six steps, as the server recorded them", [el("div", { cls: "empty-state" }, [
+        el("strong", {
+          text: status
+            ? "The server did not report the six steps for this run."
+            : "No status update has been received, so the six steps cannot be shown."
+        }),
+        el("p", {
+          text: "These states are written by the server from saved checkpoints. None have arrived, and " +
+            "a step this page filled in for itself would not be a record of anything."
+        })
+      ])]);
+    }
     var dl = el("dl", { cls: "detail-grid" });
     PHASES.forEach(function (def) {
       var p = null;
@@ -2355,13 +3377,60 @@ html.pv-grey body { filter: grayscale(1); }
     if (c && c.contractRevisionId) dlRow(dl, "Requirement list version", c.contractRevisionId);
     if (c && c.contractHash) dlRow(dl, "Requirement list fingerprint", c.contractHash);
 
-    var links = el("div", { cls: "run-actions" }, [
-      el("a", {
-        cls: "btn btn-ghost", text: "Technical record (JSON)",
-        attrs: { href: "/api/v2/runs/" + encodeURIComponent(view.runId || "") + "/record" }
-      })
-    ]);
-    return detailBlock("This run", [dl, links]);
+    return detailBlock("This run", [dl, recordAffordance(view)]);
+  }
+
+  // THE TECHNICAL RECORD: A LINK, OR THE REASON THERE ISN'T ONE.
+  //
+  // This used to be an unconditional link. On a run that stopped before writing a record
+  // it opened a bare 404 body — a page with nothing on it and no explanation, which is
+  // indistinguishable from the product being broken. A missing record is a legitimate
+  // outcome and it has a knowable cause, so the cause is what goes here.
+  //
+  // `view.record.state` is the SERVER'S answer to "is there one" (watch.js asks the
+  // record endpoint once the run is terminal), never an inference from completion state.
+  // Completion state is used only to word WHY an absent record is absent.
+  function recordAffordance(view) {
+    var rec = (view && view.record) || { state: "unknown" };
+    if (rec.state === "available") {
+      return el("div", { cls: "run-actions", attrs: { "data-record-state": "available" } }, [
+        el("a", {
+          cls: "btn btn-ghost", text: "Technical record (JSON)",
+          attrs: { href: "/api/v2/runs/" + encodeURIComponent(view.runId || "") + "/record" }
+        })
+      ]);
+    }
+
+    var test = testState(view), report = reportState(view);
+    var head, body;
+    if (rec.state === "invalid") {
+      head = "This run's technical record did not verify, so it is not served.";
+      body = "A record exists but it does not match its own fingerprint. Serving it would be " +
+        "presenting a document as authoritative when it cannot be shown to be.";
+    } else if (rec.state === "unreachable") {
+      head = "We could not check whether a technical record exists.";
+      body = "The request for it did not complete. That is a failed check, not a statement that " +
+        "no record exists — it may well be there.";
+    } else if (rec.state === "absent" && (test === "failed" || report === "failed")) {
+      head = "This run failed before it produced a technical record.";
+      body = "The record is written from a finished run. This one stopped first, so there is " +
+        "nothing to open. What the run did record before it stopped is above, and the reason it " +
+        "stopped is under “Outcome, in full”.";
+    } else if (rec.state === "absent") {
+      head = "No technical record is stored for this run.";
+      body = "The server was asked for it and answered that it has none.";
+    } else {
+      head = "The technical record is written when the run finishes.";
+      body = "This run has not reached that stage yet, so there is nothing to open. This line will " +
+        "become a link if a record is written.";
+    }
+
+    var kids = [el("strong", { text: head }), el("p", { text: body })];
+    if (rec.code) kids.push(machineRow("Reference code for support:", rec.code));
+    return el("div", {
+      cls: "empty-state",
+      attrs: { "data-record-state": rec.state }
+    }, kids);
   }
 
   function renderDetails(view) {
@@ -2372,6 +3441,7 @@ html.pv-grey body { filter: grayscale(1); }
     ]));
     var body = el("div", { cls: "run-details__body" }, [
       detailChecks(view),
+      detailLimitations(view),
       detailOutcome(view),
       detailStages(view),
       detailLimits(view),
@@ -2492,6 +3562,24 @@ html.pv-grey body { filter: grayscale(1); }
 
     root.appendChild(card);
 
+    // Phase timing strip — between the card and the activity feed.
+    var phaseStrip = renderPhaseTimingStrip(view);
+    if (phaseStrip) root.appendChild(phaseStrip);
+
+    // Depth indicators — unique screens and return visits.
+    var depth = renderDepthIndicators(view);
+    if (depth) root.appendChild(depth);
+
+    // Browser movement is a first-class, default-visible surface. It stays OUTSIDE the run
+    // card and OUTSIDE the coverage details because a transition is neither a unique page nor
+    // a checked case; placing these numbers in one progress meter would erase that distinction.
+    var activity = renderBrowserActivity(view);
+    if (activity) root.appendChild(activity);
+
+    // Walk timeline with per-walk detail and mini filmstrips.
+    var walkTl = renderWalkTimeline(view);
+    if (walkTl) root.appendChild(walkTl);
+
     if (view.status || view.coverage) root.appendChild(renderDetails(view));
 
     // No permalink promise for a run that cannot be found — the address is exactly what
@@ -2503,6 +3591,235 @@ html.pv-grey body { filter: grayscale(1); }
       }));
     }
     return root;
+  }
+
+  // ---------------------------------------------------------------- phase timing strip
+  //
+  // A horizontal stacked bar showing the six phases' wall-clock proportions.
+  // Completed phases show duration; the active phase is shown distinctly.
+  // Derived from status.phases[].startedAt / endedAt.
+  // Falls back to null render when no timing data exists (backward compat).
+
+  function renderPhaseTimingStrip(view) {
+    var status = view.status;
+    if (!status || !Array.isArray(status.phases)) return null;
+
+    var reported = {};
+    status.phases.forEach(function (p) { if (p && p.name) reported[p.name] = p; });
+
+    // Check if any phase has timing data (startedAt/endedAt)
+    var hasTimingData = false;
+    status.phases.forEach(function (p) {
+      if (p && (p.startedAt || p.endedAt)) hasTimingData = true;
+    });
+    if (!hasTimingData) return null;
+
+    var segments = [];
+    var legendItems = [];
+    var nowMs = ms(view.now) || Date.now();
+
+    PHASES.forEach(function (def) {
+      var p = reported[def.name];
+      if (!p) return;
+      var key = p.state && PHASE_STATE[p.state] ? p.state : "unknown";
+      var startMs = p.startedAt ? ms(p.startedAt) : null;
+      var endMs = p.endedAt ? ms(p.endedAt) : null;
+      var durationMs = null;
+
+      if (startMs != null && endMs != null) {
+        durationMs = endMs - startMs;
+      } else if (startMs != null && p.state === "active") {
+        durationMs = nowMs - startMs;
+      }
+
+      var durationText = durationMs != null ? clockMs(durationMs) : null;
+      var flexValue = durationMs != null ? Math.max(1, Math.round(durationMs / 1000)) : 1;
+
+      var segClass = "phase-timing-seg";
+      if (key === "complete") segClass += " phase-timing-seg--done";
+      else if (key === "active") segClass += " phase-timing-seg--active";
+      else if (key === "pending" || key === "unknown") segClass += " phase-timing-seg--pending";
+      else segClass += " phase-timing-seg--done";
+
+      segments.push({
+        label: def.label,
+        cls: segClass,
+        flex: flexValue,
+        duration: durationText,
+        state: key,
+        phaseDef: def
+      });
+
+      var glyphCls = key === "complete" || key === "stopped" || key === "skipped"
+        ? "phase-glyph--done"
+        : key === "active" ? "phase-glyph--active" : "phase-glyph--pending";
+      var glyph = key === "complete" || key === "stopped" || key === "skipped"
+        ? "✓"
+        : key === "active" ? "●" : "○";
+
+      legendItems.push(el("div", { cls: "phase-timing-item" }, [
+        el("span", { cls: "phase-glyph " + glyphCls, text: glyph }),
+        el("span", { cls: "phase-timing-name", text: def.label }),
+        durationText ? el("span", { cls: "phase-timing-time num", text: durationText }) : null
+      ]));
+    });
+
+    if (!segments.length) return null;
+
+    var bar = el("div", { cls: "phase-timing-bar" });
+    segments.forEach(function (seg) {
+      var s = el("div", {
+        cls: seg.cls,
+        attrs: { title: seg.label + (seg.duration ? ": " + seg.duration : ": pending") }
+      });
+      s.style.flex = String(seg.flex);
+      if (seg.duration && seg.flex > 5) {
+        s.textContent = seg.label.substring(0, 6);
+      }
+      bar.appendChild(s);
+    });
+
+    var section = el("section", { cls: "phase-timing-section" });
+    section.appendChild(el("div", { cls: "section-label", text: "Phase timeline" }));
+    section.appendChild(bar);
+    section.appendChild(el("div", { cls: "phase-timing-legend" }, legendItems));
+    return section;
+  }
+
+  // ---------------------------------------------------------------- depth indicators
+  //
+  // Compact stat tiles: unique screens observed, return visits, and visited origins.
+  // These values already exist in the execution-activity response totals.
+
+  function renderDepthIndicators(view) {
+    var execution = view.execution;
+    if (!execution) return null;
+    var totals = execution.totals || {};
+
+    var unique = totals.uniqueStableScreensObserved;
+    var returns = totals.returnScreenChangesObserved;
+    var origins = Array.isArray(totals.visitedOrigins) ? totals.visitedOrigins : [];
+
+    if (typeof unique !== "number" && typeof returns !== "number" && !origins.length) return null;
+
+    var tiles = [];
+    if (typeof unique === "number") {
+      tiles.push(el("div", { cls: "depth-tile" }, [
+        el("div", { cls: "depth-tile__label", text: "Unique screens" }),
+        el("div", { cls: "depth-tile__value num", text: String(unique) }),
+        el("div", { cls: "depth-tile__sub", text: totals.uniqueStableScreensExact
+          ? "All walk artifacts inspected"
+          : "Lower bound — not all artifacts inspected" })
+      ]));
+    }
+    if (typeof returns === "number") {
+      tiles.push(el("div", { cls: "depth-tile" }, [
+        el("div", { cls: "depth-tile__label", text: "Return visits" }),
+        el("div", { cls: "depth-tile__value num", text: String(returns) }),
+        el("div", { cls: "depth-tile__sub", text: "Screen changes returning to a screen already seen" })
+      ]));
+    }
+    if (origins.length) {
+      tiles.push(el("div", { cls: "depth-tile" }, [
+        el("div", { cls: "depth-tile__label", text: "Visited origins" }),
+        el("div", { cls: "depth-tile__value num", text: String(origins.length) }),
+        el("div", { cls: "depth-tile__sub", text: origins.slice(0, 3).join(", ") +
+          (origins.length > 3 ? " and " + (origins.length - 3) + " more" : "") })
+      ]));
+    }
+
+    var section = el("section", { cls: "depth-section" });
+    section.appendChild(el("div", { cls: "section-label", text: "Depth indicators" }));
+    section.appendChild(el("div", { cls: "depth-tiles" }, tiles));
+    return section;
+  }
+
+  // ---------------------------------------------------------------- walk timeline
+  //
+  // A vertical feed of completed walks, each showing ordinal, outcome badge, step
+  // count, screen-change count, wall time, credited execution cases, and a mini
+  // filmstrip placeholder. Mid-run, when the walk-artifact-index is missing, the
+  // filmstrip degrades to a text note — the normal mid-run condition, not an error.
+
+  var OUTCOME_WORDS = {
+    completed: { label: "Completed", cls: "walk-outcome--completed" },
+    "no-advance-control": { label: "No advance control", cls: "walk-outcome--blocked" },
+    blocked: { label: "Blocked", cls: "walk-outcome--blocked" },
+    "blocked-after-probe": { label: "Blocked after probe", cls: "walk-outcome--blocked" },
+    "step-cap": { label: "Step cap", cls: "walk-outcome--step-cap" },
+    "time-cap": { label: "Time cap", cls: "walk-outcome--step-cap" },
+    "load-crash": { label: "Load crash", cls: "walk-outcome--blocked" },
+    "browser-hung": { label: "Browser hung", cls: "walk-outcome--blocked" },
+    "per-case-timeout": { label: "Timeout", cls: "walk-outcome--step-cap" },
+    "cycle-detected": { label: "Cycle detected", cls: "walk-outcome--blocked" },
+    error: { label: "Error", cls: "walk-outcome--blocked" }
+  };
+
+  function renderWalkTimeline(view) {
+    var execution = view.execution;
+    if (!execution) return null;
+    var walks = execution.walks;
+    if (!Array.isArray(walks) || walks.length === 0) return null;
+
+    var section = el("section", { cls: "walk-timeline-section" });
+    section.appendChild(el("div", { cls: "section-label", text: "Walk timeline · most recent first" }));
+
+    var list = el("ul", { cls: "walk-timeline-list" });
+    // Render most-recent first.
+    var reversed = walks.slice().reverse();
+    for (var i = 0; i < reversed.length; i++) {
+      var w = reversed[i];
+      var ow = OUTCOME_WORDS[w.outcome] || { label: w.outcome || "unknown", cls: "walk-outcome--blocked" };
+
+      var header = el("div", { cls: "walk-entry__header" }, [
+        el("span", { cls: "walk-entry__ordinal", text: "Walk " + (w.ordinal || (reversed.length - i)) }),
+        el("span", { cls: "walk-entry__outcome " + ow.cls, text: ow.label }),
+        el("span", { cls: "walk-entry__stats" }, [
+          el("span", { text: intOr(w.steps, "?") + " steps" }),
+          el("span", { text: intOr(w.screenChanges, "?") + " screen changes" }),
+          el("span", { text: clockMs(w.wallMs || 0) })
+        ])
+      ]);
+
+      var entry = el("li", { cls: "walk-entry" }, [header]);
+
+      // Credited execution cases
+      var cases = Array.isArray(w.caseIds) ? w.caseIds : [];
+      if (cases.length > 0) {
+        var caseRow = el("div", { cls: "walk-entry__cases" });
+        for (var c = 0; c < Math.min(cases.length, 8); c++) {
+          caseRow.appendChild(el("span", { cls: "walk-entry__case-chip", text: cases[c] }));
+        }
+        if (cases.length > 8) {
+          caseRow.appendChild(el("span", { cls: "walk-entry__case-chip walk-entry__case-chip--more", text: "+" + (cases.length - 8) + " more" }));
+        }
+        entry.appendChild(caseRow);
+      }
+
+      // Mini filmstrip placeholder
+      var artifact = w.artifact;
+      if (artifact && artifact.state === "inspected" && typeof artifact.screenCaptureEpochs === "number" && artifact.screenCaptureEpochs > 0) {
+        var strip = el("div", { cls: "walk-entry__filmstrip" });
+        var count = Math.min(artifact.screenCaptureEpochs, 5);
+        for (var s = 0; s < count; s++) {
+          strip.appendChild(el("div", { cls: "walk-entry__thumb" }, [
+            el("span", { text: "Step " + (s + 1) })
+          ]));
+        }
+        entry.appendChild(strip);
+      } else if (artifact && (artifact.state === "not-yet-indexed" || artifact.state === "unresolved")) {
+        entry.appendChild(el("p", { cls: "walk-entry__filmstrip-note", text: "Screenshots available after run completes." }));
+      } else if (w.outcome === "blocked" || w.outcome === "load-crash" || w.outcome === "error") {
+        entry.appendChild(el("p", {
+          cls: "walk-entry__filmstrip-note",
+          text: "Walk stopped — " + (ow.label.toLowerCase()) + "."
+        }));
+      }
+
+      list.appendChild(entry);
+    }
+    section.appendChild(list);
+    return section;
   }
 
   // Age-only local update: the ONE class of value the client may recompute between

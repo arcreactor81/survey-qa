@@ -171,7 +171,7 @@ const expansionOf = (row: ExpansionInputRow): RawExpansion | null =>
  * exact option-label exclusion by case, source atom, and direct run span. Programming source
  * atoms never corroborate a sibling option inventory.
  */
-export const EXPANDER_VERSION = "v2-floor-expander/1.10.0";
+export const EXPANDER_VERSION = "v2-floor-expander/1.11.0";
 
 /**
  * The producer's own classification of a requirement facet. It decides which requirements
@@ -249,6 +249,12 @@ function mentions(phrase: string, token: string): boolean {
  * binds, and the case is `ROUTE_DESTINATION_TERMINAL` either way.
  */
 function terminalOf(dest: string): ExpectedDestinationPayload["terminal"] {
+  // TERMINATE is the word questionnaires actually use. The live S10 routing table binds
+  // "[TERMINATE IMMEDIATELY]" to seven roles; without this arm every one of them fell to
+  // ROUTE_DESTINATION_NOT_BOUND, the planner treated "unparsed" as "documented continue",
+  // and run v2r_01m0cjew… steered a walk INTO a documented termination (19 Aug 2026).
+  // Brackets and adverbs are wrapping, not meaning — the keyword decides.
+  if (/terminat|disqualif|not\s+eligible|unable\s+to\s+accept/i.test(dest)) return "screenout";
   if (/screen-?out/i.test(dest)) return "screenout";
   if (/quota/i.test(dest)) return "quota";
   if (/complete|end of|finish|thank/i.test(dest)) return "complete";

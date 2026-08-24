@@ -51,6 +51,7 @@ import {
   isDocumentSemanticsProfile,
   type DocumentSemanticsProfile,
 } from "../extract/document-semantics";
+import { resolveDocumentReading } from "../observability/reconstruct-document-reading";
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
@@ -702,13 +703,14 @@ export function checkOutboundUrl(url: URL, policy: string): { code: string; mess
  * That is the whole reason gate (3) is not tight. A watching page polls every couple of
  * seconds, so a threshold shorter than a legitimate quiet stage would bill every one of
  * those polls an engine round trip to be told "running" — and quiet stages are real here:
- * `project-observations` and `verify-observations` beat once on entry and then work for up
- * to a step attempt's timeout (3 minutes under `DERIVE_POLICY`) before saying anything else.
- * Five minutes is past that bound, so a run this quiet has already missed a step boundary,
- * and it is still an order of magnitude inside the sweeper's own silence threshold (45
- * minutes) — the reader learns the truth long before any recovery machinery would act on it.
+ * `project-observations` beats once on entry and then works for up to its step timeout
+ * (10 minutes under `PROJECTION_POLICY`; `verify-observations` is 3 minutes under
+ * `DERIVE_POLICY`). Twelve minutes is past the longest quiet bound, so a run this quiet
+ * has already missed a step boundary, and it is still well inside the sweeper's own
+ * silence threshold (45 minutes) — the reader learns the truth long before any recovery
+ * machinery would act on it.
  */
-const ENGINE_CAUSE_AFTER_MS = 5 * 60 * 1000;
+const ENGINE_CAUSE_AFTER_MS = 12 * 60 * 1000;
 
 /** The subset of `InstanceStatus` this file relies on, narrowed at the boundary. */
 interface EngineStatus {
@@ -804,6 +806,13 @@ async function reconcileWithEngine(
     copy.completion.test = "failed";
     copy.completion.reasonCode = found.failure.reasonCode;
   }
+  // A dead instance cannot build a report either. If the report was still provisional
+  // (not-started/building), it is now failed — otherwise the run-level phase stays in
+  // limbo with a failed test beside a non-terminal report, and the page renders as if
+  // work is still happening.
+  if (copy.completion.report !== "complete" && copy.completion.report !== "failed") {
+    copy.completion.report = "failed";
+  }
   for (const ph of copy.phases) {
     if (ph.state === "active") {
       ph.state = "stopped";
@@ -820,15 +829,24 @@ export async function getStatus(req: Request, env: Env, runId: string): Promise<
   if (!loaded) return fail(404, "RUN_NOT_FOUND", `no v2 run ${runId}`);
   const hb = await readHeartbeat(env, runId);
   const { checkpoint, corrected } = await reconcileWithEngine(env, runId, loaded.checkpoint, hb?.at ?? null);
+  const reading = await resolveDocumentReading(env, runId, checkpoint);
+  const visibleCheckpoint = reading.progress
+    ? { ...checkpoint, documentReading: reading.progress }
+    : checkpoint;
   // The note travels with the timestamp. Without it the long quiet stages have a liveness
   // signal but nothing to say, and a legitimate ten-minute step reads as a hung page.
-  const status = projectStatus(checkpoint, hb?.at ?? null, hb?.note ?? null);
+  // projectStatus strips internal source text/block context. Public status carries only
+  // reconciled counts, unit names, safe usage, retention, and structured stop facts.
+  const status = projectStatus(visibleCheckpoint, hb?.at ?? null, hb?.note ?? null);
   // ETag keys on the revision: the client's only question is "is there a newer snapshot".
   //
   // AND ON WHETHER THE ENGINE ANSWERED. The correction above changes the body WITHOUT
   // changing the revision — the run is dead and can never advance it again — so an ETag of
   // the revision alone would 304 the poller that is waiting for exactly this news, forever.
-  return snapshot(req, status, `s${loaded.checkpoint.revision}${corrected ? "e" : ""}`);
+  return snapshot(
+    req, status,
+    `s${loaded.checkpoint.revision}${corrected ? "e" : ""}${reading.reconstructed ? "r" : ""}`,
+  );
 }
 
 /** GET /api/v2/runs/:id/coverage — coverage-snapshot/1.0.0 */

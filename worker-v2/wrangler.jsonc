@@ -102,7 +102,7 @@
   // Requires the Standard Usage Model — `workers/scripts/survey-qa-v2/settings` reports
   // `usage_model: "standard"`, so `limits` is honoured. It is enforced only when deployed;
   // `wrangler dev` ignores it, which is why no local test can exercise this.
-  "limits": { "subrequests": 100000 },
+  "limits": { "subrequests": 100000, "cpu_ms": 300000 },
 
   // Distinct Workflow NAME, BINDING and CLASS. A v1 sweeper holding RUN_WORKFLOW can
   // never probe, restart or recreate a v2 instance, and vice versa.
@@ -164,21 +164,19 @@
     "CF_AIG_ACCOUNT_ID": "f0cbb2076e484454e6567789b9be85d8",
     "CF_AIG_GATEWAY_ID": "firstgateway",
 
-    // ---- retention posture: CONFIGURATION, not hardcoded ----
-    // Proposal decision 7: 30d raw evidence / 90d final reports, configurable later.
-    // R2 lifecycle rules are BUCKET-wide and the bucket is shared with prod, so a
-    // lifecycle rule would delete v1 data too. Retention is therefore enforced by
-    // v2's own prefix-scoped cron sweep, and it DEFAULTS TO DRY RUN.
-    "RETENTION_RAW_EVIDENCE_DAYS": "30",
-    "RETENTION_REPORT_DAYS": "90",
-    "RETENTION_CONTRACT_DAYS": "0", // 0 = never expire (contract revisions are lineage)
-    "RETENTION_MODE": "report-only", // "report-only" | "delete"
+    // ---- permanent capture retention (owner policy, 14 Aug 2026) ----
+    // Failed, partial and successful runs are permanent. Storage pressure permits
+    // compression, never deletion or pruning. Runtime rejects drift from this policy.
+    "RETENTION_RAW_EVIDENCE_DAYS": "0",
+    "RETENTION_REPORT_DAYS": "0",
+    "RETENTION_CONTRACT_DAYS": "0",
+    "RETENTION_MODE": "permanent",
     "RETENTION_SCAN_BUDGET": "500", // objects examined per cron tick
 
     // ---- browser session policy (spike-derived) ----
     "BROWSER_KEEP_ALIVE_MS": "600000", // idle timeout, refreshed by every batch
     "SESSION_MAX_AGE_MS": "480000", // proactively recycle before the observed ~11min wall
-    "EXEC_BATCH_MAX_MS": "120000", // wall-clock budget for ONE execute-batch step
+    "EXEC_BATCH_MAX_MS": "1080000", // 18 min — wall-clock budget for ONE execute-batch step. MUST exceed EXEC_PER_CASE_TIMEOUT_MS plus the batch-residual minimum. Reduced from 3900000 (65 min) to bound zombie-browser hangs: the framework step timeout DOES fire at shorter durations (v53-v63 measured ~67:01 kill), and 3 retries (4 attempts) give 88 min worst case per batch, not 5+ hours. Config-arithmetic test pins this relationship.
     "EXEC_BATCH_MAX_ATTEMPTS": "4", // attempts committed per durable checkpoint
     "EXEC_MAX_BATCHES": "200", // hard stop on the batch loop
 
@@ -189,16 +187,33 @@
     // The t1-easy plan queues 76 entries (~13 screens each); 24 is a few minutes of
     // walking. Set it to 0 to run the contractual floor and nothing else.
     "EXEC_MAX_EXPLORATION": "24",
-    "EXEC_MAX_STEPS_PER_PATH": "40", // a survey that never terminates must not hang a batch
-    "EXEC_ADVANCE_TIMEOUT_MS": "3500", // how long a screen may take to change after Next
+    "EXEC_MAX_STEPS_PER_PATH": "120", // a survey that never terminates must not hang a batch; 120 clears the measured ~85-100-screen full traversal (59-screen screener + ~15 body questions at the measured 2-3 screens/question)
+    "EXEC_ADVANCE_TIMEOUT_MS": "12000", // how long a screen may take to change after Next
     "EXEC_ACQUIRE_TIMEOUT_MS": "45000", // a reconnect to a wedged session never returns
-    "EXEC_WALK_TIMEOUT_MS": "150000", // one walk, bounded; a hang is a named outcome
+    "EXEC_WALK_TIMEOUT_MS": "900000", // 15 min — one walk, bounded; a hang is a named outcome. Reduced from 1800000 (30 min) to match per-case timeout; deep walk measured at ~9 min, 67% headroom.
+    // PER-CASE TIME BUDGET. 15 minutes: at the measured post-v90 pace (~7s/screen) a walk
+    // covers ~128 screens, well above the ~85-100 full traversal. The 28s/screen pace from
+    // v44 is stale; a regression to that speed would show as time-caps worth investigating,
+    // not a timeout to extend. Every batch starts a FRESH session. The per-case timeout is
+    // the TIGHTER of this value and EXEC_WALK_TIMEOUT_MS; the walk exits ~20s earlier via
+    // wrap-up grace and returns a "time-cap" PARTIAL, so the outer axe fires only on a
+    // genuine hang. The batch-residual guard means one walk owns a batch.
+    "EXEC_PER_CASE_TIMEOUT_MS": "900000",
+    // STARTUP BUDGET: wall-clock cap on the pre-first-step stretch (page creation, survey goto,
+    // first screen read). A healthy startup finishes in <15s; 120s allows for cold-start headroom
+    // without letting a dead browser eat 15 silent minutes. When exceeded, the walk is recorded
+    // as "walk-never-started" with the sub-phase that hung, retried once, then moved past.
+    "EXEC_WALK_STARTUP_BUDGET_MS": "120000",
+    // PER-WALK PROGRESS WATCHDOG: fires when no step has completed for this many ms. The walk
+    // returns its partial observation with outcome "walk-stalled" — steps, captures, and the
+    // PathObservation up to the stall are committed, never discarded. See DEFAULT_WALK_STALL_MS.
+    "EXEC_WALK_STALL_MS": "240000",
     "BROWSER_COMPAT_SHIMS": "auto", // "auto" | "off" — see browser/page-script.ts HISTORY_SHIM
 
     // ---- run caps (proposal §5; each keeps its own name and denominator) ----
     // Owner-authorized production ceiling for this live iteration. Keep this in the
     // reviewed config; an unrecorded CLI --var override is not release evidence.
-    "CAP_STANDARD_MAX_USD": "5",
+    "CAP_STANDARD_MAX_USD": "15",
     "CAP_STANDARD_MIN_USD": "5",
     "CAP_DEEP_MAX_USD": "75",
     "CAP_VERIFICATION_RESERVE_FRACTION": "0.15",
@@ -241,7 +256,7 @@
     // service that is ceremony rather than security, but it IS a real separation to restore
     // if this ever serves anyone else — the registry is the place that decides who may
     // certify, and it should not be edited by whoever holds the key.
-    "JUDGEMENT_KEY_REGISTRY": "{\"keys\":{\"judgement-ed25519-c66c5185cc1a\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEA3MhosLSUGY4GocN6qXlY0bT6x1bkJ7nBCWhzUo2qako=\",\"trust\":\"production\",\"note\":\"production judgement signer, generated 2 Aug 2026\"},\"fixture-judge-ed25519-1\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEAnLc2qf/YrOD6qP1zAsHHQBIzea2kYaeJ/fFH/9QAQdM=\",\"trust\":\"fixture\",\"note\":\"local smoke suite only; rejected unless DEV_SEED=enabled\"}}}",
+    "JUDGEMENT_KEY_REGISTRY": "{\"keys\":{\"judgement-ed25519-c66c5185cc1a\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEA3MhosLSUGY4GocN6qXlY0bT6x1bkJ7nBCWhzUo2qako=\",\"trust\":\"production\",\"note\":\"production judgement signer, generated 2 Aug 2026\"},\"fixture-judge-ed25519-1\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEAnLc2qf/YrOD6qP1zAsHHQBIzea2kYaeJ/fFH/9QAQdM=\",\"trust\":\"fixture\",\"note\":\"local smoke suite only; rejected unless DEV_SEED=enabled\"},\"judgement-ed25519-fd11213761e7\":{\"publicKeySpki\":\"MCowBQYDK2VwAyEAZl9EY/sscbE+VuxFt+haQfYa0yu4iSO6fkF1HbXpmes=\",\"trust\":\"production\",\"note\":\"shared production+bench judgement signer, minted 22 Aug 2026 with owner approval; private half in prod secrets, bench secrets, and git-ignored .local-private/keys\"}}}",
 
     // ---- submission limits (each keeps its own name and denominator) ----
     "MAX_DOCUMENT_BYTES": "26214400", // 25 MiB of .docx
@@ -262,46 +277,48 @@
     // "Q8 is the only question a respondent may leave blank"). Pass A exists to find exactly
     // the class of rule a block-by-block read cannot produce, so a miss here is not recovered
     // downstream — the extra cent is the cheapest part of this pipeline.
-    "GROK_MODEL": "grok-4.6",
+    // PREMIUM SLOT (owner-approved 15 Aug 2026): grok-4.5 at reasoning HIGH.
+    "GROK_MODEL": "grok-4.5",
     "GROK_REASONING_EFFORT": "high",
-    // Owner-dashboard copy observed 13 Aug 2026 for exact grok-4.6:
-    //   context 500000 tokens; <=200000 input $2/Mtok, cached $0.5, output $6;
-    //   >200000 input $4/Mtok, cached $1, output $12.
+    // Owner-console-confirmation observed 15 Aug 2026 for exact grok-4.5:
+    //   context 500000 tokens; <=200000 input $2/Mtok, cached $0.30, output $6;
+    //   >200000 input $4/Mtok, cached $0.60, output $12.
     // The current flat ledger therefore MUST use max-known-text-tier/1.0.0 at $4/$12.
-    // This is explicitly an owner-dashboard-copy, not an authenticated catalogue receipt.
+    // This is explicitly an owner-console-confirmation, not an authenticated catalogue receipt.
     //
     // Activated atomically from the reviewed canonical receipt bytes below. Every field is
     // one binding: missing/malformed/zero/mixed fields return
-    // GROK_RATE_UNATTESTED before Secrets Store or network I/O. grok-4.5 rates are forbidden.
+    // GROK_RATE_UNATTESTED before Secrets Store or network I/O. grok-4.6 rates are forbidden.
     "GROK_RATE_BINDING_SCHEMA": "survey-qa-grok-rate-binding/1.0.0",
     "GROK_RATE_POLICY": "max-known-text-tier/1.0.0",
-    "GROK_RATE_SOURCE": "owner-dashboard-copy",
-    "GROK_RATE_ATTESTED_MODEL": "grok-4.6",
-    "GROK_RATE_ATTESTED_AT": "2026-08-13",
-    "GROK_RATE_RECEIPT_SHA256": "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    "GROK_RATE_SOURCE": "owner-console-confirmation",
+    "GROK_RATE_ATTESTED_MODEL": "grok-4.5",
+    "GROK_RATE_ATTESTED_AT": "2026-08-15",
+    "GROK_RATE_RECEIPT_SHA256": "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     "GROK_CONTEXT_WINDOW_TOKENS": "500000",
     "GROK_INPUT_USD_PER_MTOK": "2",
-    "GROK_CACHED_INPUT_USD_PER_MTOK": "0.5",
+    "GROK_CACHED_INPUT_USD_PER_MTOK": "0.3",
     "GROK_OUTPUT_USD_PER_MTOK": "6",
     "GROK_LONG_CONTEXT_THRESHOLD_TOKENS": "200000",
     "GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK": "4",
-    "GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK": "1",
+    "GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK": "0.6",
     "GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK": "12",
     "GROK_MAX_INPUT_USD_PER_MTOK": "4",
     "GROK_MAX_OUTPUT_USD_PER_MTOK": "12",
-    // Flash is the dormant Grok substitute; Pro is the ordinary independent pass B.
+    // Flash is the ONLY Grok substitute; Pro is the ordinary independent pass B.
     "DEEPSEEK_MODEL": "deepseek-v4-flash",
+    "DEEPSEEK_CONTEXT_WINDOW_TOKENS": "1000000",
     "DEEPSEEK_REASONING_EFFORT": "medium",
     // Official api.deepseek.com rates checked 13 Aug 2026. Primary and fallback
     // keep separate rates because the ledger records each actual model purchase.
-    "DEEPSEEK_INPUT_USD_PER_MTOK": "0.14",
-    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "0.28",
+    "DEEPSEEK_INPUT_USD_PER_MTOK": "0.44",
+    "DEEPSEEK_OUTPUT_USD_PER_MTOK": "1.32",
     "DEEPSEEK_FALLBACK_MODE": "on-error",
     "DEEPSEEK_FALLBACK_MODEL": "deepseek-v4-pro",
     "DEEPSEEK_FALLBACK_REASONING_EFFORT": "medium",
     "DEEPSEEK_FALLBACK_MAX_ATTEMPTS": "1",
-    "DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK": "0.435",
-    "DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK": "0.87",
+    "DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK": "1.32",
+    "DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK": "3.96",
 
     // ---- extraction shape (a document that needs smaller chunks must not need code) ----
     // MEASURED, not guessed. A 45-block chunk of the t1 questionnaire cost 150 s and 13.6 k
@@ -317,6 +334,8 @@
     "EXTRACT_CHUNK_CHARS": "3000",
     "EXTRACT_CHUNK_MAX_BLOCKS": "15",
     "EXTRACT_CHUNK_CONCURRENCY": "5",
+    // Exact serialized provider-request bytes; runtime refuses oversize input without buying it.
+    "EXTRACT_MODEL_INPUT_MAX_BYTES": "450000",
     "EXTRACT_MAX_OUTPUT_TOKENS": "32000",
     "LLM_TIMEOUT_MS": "300000",
     "EXTRACT_BUDGET_FRACTION": "0.5",
@@ -358,7 +377,7 @@
     // One durable Grok reconciliation reads ALL primary candidate rows plus only their exact
     // nominated quote spans. This is explicitly candidate-dependent, not whole-source
     // discovery. It never truncates a candidate/span; oversize wire input is a named failure.
-    "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES": "45000",
+    "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES": "120000",
     // The synthesis artifact carries this whole-run purchase count across waves/recovery.
     "EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES": "2",
 

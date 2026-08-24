@@ -565,8 +565,9 @@ async function seedTheIncident(mod, env, runId) {
   });
 }
 
-/** Silence the run: the reader's staleness gate is what licenses asking the engine. */
-async function goQuiet(mod, env, runId, agoMs = 10 * 60 * 1000) {
+/** Silence the run: the reader's staleness gate is what licenses asking the engine.
+ *  `agoMs` must exceed `ENGINE_CAUSE_AFTER_MS` (12 min) for the staleness gate to fire. */
+async function goQuiet(mod, env, runId, agoMs = 15 * 60 * 1000) {
   await env.EVIDENCE.put(
     mod.keys.heartbeatKey(runId),
     JSON.stringify({

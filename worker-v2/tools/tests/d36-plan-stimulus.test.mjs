@@ -647,6 +647,293 @@ suite("D36 — survival hints: stamped from the model's own terminate data, addi
 });
 
 // ===========================================================================
+// 6b. SEALED ROUTE DESTINATIONS — the TYPED trigger source the prose miners starve without
+// ===========================================================================
+//
+// Measured on the 2026-08-16 live run: the sealed contract stated 9 terminating S10 role
+// labels and 2 continue labels as ROUTE cases (`case.kind: "route"`, requirement facet
+// `terminate` / `skip-rule`, `routeAnswer.label` verbatim), but S10 mined ZERO options, so
+// `buildTerminals` resolved nothing, zero hints were stamped, and every navigator-default
+// walk answered the screener position-1 and screened out. These tests pin the typed path:
+// route cases feed the hint index DIRECTLY, with no option list and no prose in between.
+
+const routeRevision = (over = {}) => ({
+  requirements: [
+    { requirementLineageId: "REQ-T", facet: "terminate" },
+    { requirementLineageId: "REQ-C", facet: "skip-rule" },
+    { requirementLineageId: "REQ-X", facet: "piping" },
+  ],
+  facetInstances: [
+    {
+      facetInstanceId: "fi_term",
+      requirementLineageId: "REQ-T",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "17", label: "Physician" } },
+    },
+    {
+      facetInstanceId: "fi_cont",
+      requirementLineageId: "REQ-C",
+      targetQuestionId: "S10",
+      // A continue now requires the row's OWN bound destination: the live S10 table's
+      // unbound "[TERMINATE IMMEDIATELY]" rows inherited skip-rule from their shared
+      // obligation and were PREFERRED into a documented termination (run v2r_01m0cjew…).
+      case: {
+        kind: "route",
+        routeAnswer: { code: "19", label: "Director of Population Health" },
+        expectedDestination: { questionId: "S20", screen: null, terminal: null },
+      },
+    },
+    // An UNBOUND row under a skip-rule requirement must never steer positively — this is
+    // the exact shape that walked into the terminate.
+    {
+      facetInstanceId: "fi_unbound_skiprule",
+      requirementLineageId: "REQ-C",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "21", label: "Pharmacist" } },
+    },
+    // A route under any OTHER facet states a destination this pass must not guess about.
+    {
+      facetInstanceId: "fi_pipe",
+      requirementLineageId: "REQ-X",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "20", label: "Piped Role" } },
+    },
+    // Typed-field hygiene: no question, no label, or not a route => never a destination.
+    {
+      facetInstanceId: "fi_noq",
+      requirementLineageId: "REQ-T",
+      targetQuestionId: null,
+      case: { kind: "route", routeAnswer: { code: "1", label: "Orphan" } },
+    },
+    {
+      facetInstanceId: "fi_nolabel",
+      requirementLineageId: "REQ-T",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "2", label: "  " } },
+    },
+    {
+      facetInstanceId: "fi_notroute",
+      requirementLineageId: "REQ-T",
+      targetQuestionId: "S10",
+      case: { kind: "rendered-state", routeAnswer: { code: "3", label: "Rendered" } },
+    },
+  ],
+  ...over,
+});
+
+/** A model that mined NOTHING — the exact starvation measured on the live run. */
+const emptyModel = () => ({ questions: [], terminals: [] });
+
+suite("D36 — sealed route destinations feed survival hints without the prose miners", () => {
+  test("typed mining: facet terminate => terminate, skip-rule => continue, anything else skipped", async () => {
+    const mod = await worker();
+    const { routes } = mod.plan.sealedRouteDestinations(routeRevision());
+    // A bound question id types a continue; a facet terminate still types a terminate;
+    // an UNBOUND row under a skip-rule requirement (fi_unbound_skiprule) yields NOTHING —
+    // "the binder could not read it" is not "the document says go here".
+    assertEq(
+      JSON.stringify(routes),
+      JSON.stringify([
+        { question: "S10", label: "Physician", code: "17", kind: "terminate" },
+        { question: "S10", label: "Director of Population Health", code: "19", kind: "continue" },
+      ]),
+    );
+  });
+
+  test("a route with its OWN bound terminal is a terminate whatever its requirement facet says", async () => {
+    const mod = await worker();
+    const rev = routeRevision();
+    rev.facetInstances.push({
+      facetInstanceId: "fi_term_by_dest",
+      requirementLineageId: "REQ-C", // skip-rule facet — the destination must outrank it
+      targetQuestionId: "S10",
+      case: {
+        kind: "route",
+        routeAnswer: { code: "22", label: "Finance Director" },
+        expectedDestination: { questionId: null, screen: null, terminal: "screenout" },
+      },
+    });
+    const { routes } = mod.plan.sealedRouteDestinations(rev);
+    const fd = routes.find((r) => r.label === "Finance Director");
+    assertEq(fd?.kind, "terminate", "a bound terminal under a skip-rule requirement must still avoid");
+  });
+
+  test("THE MEASURED ORPHANED TABLE: a section-scoped route row joins its question through the sealed option facts", async () => {
+    // Run v2r_01m0cy89mz80nf4g3z32j7f8sx: the S10 routing table's requirement was scoped
+    // `section:S10. Which of the following…`, so every typed route row carried
+    // targetQuestionId null and was dropped here — the walker then picked among documented
+    // terminations by lottery. The option-set facets DO bind their question; an answer
+    // label asserted by exactly one question's option table names its owner.
+    const mod = await worker();
+    const rev = routeRevision();
+    rev.facetInstances.push(
+      {
+        facetInstanceId: "fi_optset_s10",
+        requirementLineageId: "REQ-X",
+        targetQuestionId: "S10",
+        case: {
+          kind: "option-set",
+          optionSet: { exhaustive: true, asserted: [{ code: "23", label: "Finance Manager" }, { code: "24", label: "Procurement Director" }] },
+        },
+      },
+      {
+        facetInstanceId: "fi_route_orphaned",
+        requirementLineageId: "REQ-C", // section-scoped obligation: facet says skip-rule
+        targetQuestionId: null,
+        case: {
+          kind: "route",
+          routeAnswer: { code: "23", label: "Finance Manager" },
+          expectedDestination: { questionId: null, screen: null, terminal: "screenout" },
+        },
+      },
+    );
+    const { routes } = mod.plan.sealedRouteDestinations(rev);
+    const fm = routes.find((r) => r.label === "Finance Manager");
+    assertEq(fm?.question, "S10", "the sealed option facts name the owning question");
+    assertEq(fm?.kind, "terminate", "and the row's own bound terminal still types it");
+  });
+
+  test("THE SECOND ORPHANING: a section title leading with a KNOWN question id owns its rows", async () => {
+    // Run v2r_01m0d1qf7baq2g9evn8mkje28n: the option-set chunk asserting S10's rows 10-13
+    // was itself section-scoped, so the label join had nothing to join through and
+    // "Finance Director → screenout" still walked. The section-title convention is
+    // accepted only when the leading token names a question some BOUND instance targets.
+    const mod = await worker();
+    const rev = routeRevision();
+    rev.requirements.push({ requirementLineageId: "REQ-SECT", facet: "terminate", scope: "section:S10. Which of the following best describes your current role?" });
+    rev.facetInstances.push({
+      facetInstanceId: "fi_route_section_scoped",
+      requirementLineageId: "REQ-SECT",
+      targetQuestionId: null,
+      case: {
+        kind: "route",
+        routeAnswer: { code: "24", label: "Procurement Director" },
+        expectedDestination: { questionId: null, screen: null, terminal: "screenout" },
+      },
+    });
+    const { routes } = mod.plan.sealedRouteDestinations(rev);
+    const pd = routes.find((r) => r.label === "Procurement Director");
+    assertEq(pd?.question, "S10", "the section title's leading id, validated against bound instances, owns the row");
+    assertEq(pd?.kind, "terminate");
+  });
+
+  test("counterproof: a section token NO bound instance targets is refused, and prose titles never match", async () => {
+    const mod = await worker();
+    const rev = routeRevision();
+    rev.requirements.push(
+      { requirementLineageId: "REQ-GHOST", facet: "terminate", scope: "section:Z99. A table of a question nobody bound" },
+      { requirementLineageId: "REQ-PROSE", facet: "terminate", scope: "section:Overview of the vaccination program" },
+    );
+    rev.facetInstances.push(
+      {
+        facetInstanceId: "fi_route_ghost",
+        requirementLineageId: "REQ-GHOST",
+        targetQuestionId: null,
+        case: { kind: "route", routeAnswer: { code: "1", label: "Ghost Row" }, expectedDestination: { questionId: null, screen: null, terminal: "screenout" } },
+      },
+      {
+        facetInstanceId: "fi_route_prose",
+        requirementLineageId: "REQ-PROSE",
+        targetQuestionId: null,
+        case: { kind: "route", routeAnswer: { code: "2", label: "Prose Row" }, expectedDestination: { questionId: null, screen: null, terminal: "screenout" } },
+      },
+    );
+    const { routes } = mod.plan.sealedRouteDestinations(rev);
+    assertEq(routes.some((r) => r.label === "Ghost Row" || r.label === "Prose Row"), false,
+      "an unvalidated section token must never mint an owner");
+  });
+
+  test("counterproof: a label two questions both assert is REFUSED an owner, never guessed", async () => {
+    const mod = await worker();
+    const rev = routeRevision();
+    rev.facetInstances.push(
+      {
+        facetInstanceId: "fi_optset_a",
+        requirementLineageId: "REQ-X",
+        targetQuestionId: "S10",
+        case: { kind: "option-set", optionSet: { exhaustive: true, asserted: [{ code: "1", label: "Yes" }] } },
+      },
+      {
+        facetInstanceId: "fi_optset_b",
+        requirementLineageId: "REQ-X",
+        targetQuestionId: "D20",
+        case: { kind: "option-set", optionSet: { exhaustive: true, asserted: [{ code: "1", label: "Yes" }] } },
+      },
+      {
+        facetInstanceId: "fi_route_ambiguous",
+        requirementLineageId: "REQ-T",
+        targetQuestionId: null,
+        case: {
+          kind: "route",
+          routeAnswer: { code: "1", label: "Yes" },
+          expectedDestination: { questionId: null, screen: null, terminal: "screenout" },
+        },
+      },
+    );
+    const { routes } = mod.plan.sealedRouteDestinations(rev);
+    assertEq(routes.some((r) => r.label === "Yes"), false,
+      "an ambiguous owner must refuse to steer rather than gamble on a question");
+  });
+
+  test("THE MEASURED STARVATION: empty model + sealed routes still stamps avoid AND prefer", async () => {
+    const mod = await worker();
+    const p = survivalPath({
+      decisions: [{ question: "S10", select: [], source: "default:navigator-discretion" }],
+    });
+    const result = mod.plan.stampSurvivalHints([p], emptyModel(), mod.plan.sealedRouteDestinations(routeRevision()).routes);
+
+    assertEq(JSON.stringify(p.decisions[0].avoid_labels), JSON.stringify(["Physician"]));
+    assertEq(JSON.stringify(p.decisions[0].prefer_labels), JSON.stringify(["Director of Population Health"]));
+    // OUTCOME 1 (D1): codes are now stamped alongside labels.
+    assertEq(
+      JSON.stringify(p.survival_hints),
+      JSON.stringify([
+        {
+          question: "S10",
+          avoid_labels: ["Physician"],
+          prefer_labels: ["Director of Population Health"],
+          avoid_codes: [{ label: "Physician", code: "17" }],
+          prefer_codes: [{ label: "Director of Population Health", code: "19" }],
+        },
+      ]),
+    );
+    assertEq(result.decisionsStamped, 1);
+    assertEq(result.pathsStamped, 1);
+    assertEq(
+      JSON.stringify(result.questions),
+      JSON.stringify([
+        { question: "S10", avoid_labels: ["Physician"], prefer_labels: ["Director of Population Health"] },
+      ]),
+    );
+  });
+
+  test("a label the contract states BOTH ways lands in avoid, never in prefer", async () => {
+    const mod = await worker();
+    const conflicted = routeRevision();
+    conflicted.facetInstances.push({
+      facetInstanceId: "fi_conflict",
+      requirementLineageId: "REQ-T",
+      targetQuestionId: "S10",
+      case: { kind: "route", routeAnswer: { code: "19", label: "Director of Population Health" } },
+    });
+    const { avoid, prefer } = mod.plan.survivalAvoidIndex(emptyModel(), mod.plan.sealedRouteDestinations(conflicted).routes);
+    assert(avoid.get("S10").includes("Director of Population Health"), "the terminate reading must win");
+    assertEq(prefer.get("S10"), undefined, "a conflicted label must not be preferred");
+  });
+
+  test("routes compose with the model's own triggers instead of replacing them", async () => {
+    const mod = await worker();
+    const { avoid, prefer } = mod.plan.survivalAvoidIndex(
+      survivalModel(),
+      mod.plan.sealedRouteDestinations(routeRevision()).routes,
+    );
+    assertEq(JSON.stringify(avoid.get("S3")), JSON.stringify(["Market research"]));
+    assertEq(JSON.stringify(avoid.get("S10")), JSON.stringify(["Physician"]));
+    assertEq(JSON.stringify(prefer.get("S10")), JSON.stringify(["Director of Population Health"]));
+  });
+});
+
+// ===========================================================================
 // 7. CONTRACT IDENTITY INCLUDES THE SEMANTICS, NOT JUST THE ROW IDS
 // ===========================================================================
 
@@ -734,5 +1021,96 @@ suite("Planner contract identity: semantic rows, not ids alone", () => {
 
     contract.obligations[0].expected_observable = "Q1 advances without a validation message.";
     assertEq(mod.plan.hashContract(contract), pipelineHashContract(contract));
+  });
+});
+
+// ===========================================================================
+// 8. THE PLANNER'S INVENTED MULTI-SELECT DEFAULT PREFERS THE EXCLUSIVE NONE-OPTION
+// ===========================================================================
+
+const exclusionContract = (multi) => ({
+  obligations: [
+    {
+      id: "OBL-X-01",
+      category: "question",
+      statement: 'The survey contains question S9: "Do any of the following apply to you?"',
+      doc_quote: "S9",
+      stimulus: [],
+      expected_observable: "S9 is shown.",
+      browser_observable: "full",
+    },
+    ...(multi
+      ? [
+          {
+            id: "OBL-X-02",
+            category: "instruction",
+            statement: "S9 permits multiple selections; a respondent may select more than one option.",
+            doc_quote: "Select all that apply.",
+            stimulus: [],
+            expected_observable: "",
+            browser_observable: "full",
+          },
+        ]
+      : []),
+    {
+      id: "OBL-X-03",
+      category: "option-set",
+      statement: 'S9 has an option with code 1 and label "An advertising agency".',
+      doc_quote: "1 An advertising agency",
+      stimulus: [],
+      expected_observable: "",
+      browser_observable: "full",
+    },
+    {
+      id: "OBL-X-04",
+      category: "option-set",
+      statement: 'S9 has an option with code 2 and label "A pharmaceutical company".',
+      doc_quote: "2 A pharmaceutical company",
+      stimulus: [],
+      expected_observable: "",
+      browser_observable: "full",
+    },
+    {
+      id: "OBL-X-05",
+      category: "option-set",
+      statement: 'S9 has an option with code 3 and label "None of the above".',
+      doc_quote: "3 None of the above",
+      stimulus: [],
+      expected_observable: "",
+      browser_observable: "full",
+    },
+  ],
+});
+
+const s9DecisionFor = async (multi) => {
+  const mod = await worker();
+  const plan = mod.plan.planFromContract(exclusionContract(multi), {
+    run: "d36x",
+    source: "d36x",
+    contractStatus: "authoritative",
+    generatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  for (const entry of plan.floor.paths) {
+    for (const d of entry.decisions ?? []) if (d.question === "S9") return d;
+  }
+  return null;
+};
+
+suite("D36 — an invented multi-select default is the exclusive none-option (the planner half)", () => {
+  test("THE MEASURED SHAPE: a multi-select exclusion question defaults to None of the above, named as such", async () => {
+    // Live 2026-08-17: the planner's first-usable default put a disqualifying affiliation
+    // into `select` for the S50 exclusion screener; plan answers replay identically on
+    // every attempt, so every walk and every pivot died there.
+    const d = await s9DecisionFor(true);
+    assert(d, "the trunk path must carry an S9 decision");
+    assertEq(JSON.stringify(d.select), JSON.stringify(["None of the above"]));
+    assertEq(d.source, "default:exclusive-none-option");
+  });
+
+  test("INERT ON SINGLE-SELECT: without the multi flag the default stays first-non-terminating", async () => {
+    const d = await s9DecisionFor(false);
+    assert(d, "the trunk path must carry an S9 decision");
+    assertEq(d.source, "default:first-non-terminating");
+    assertEq(JSON.stringify(d.select), JSON.stringify(["An advertising agency"]));
   });
 });

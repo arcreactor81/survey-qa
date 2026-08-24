@@ -29,6 +29,7 @@ import { runMutantSuite } from "./mutate-runner.mjs";
 const VERIFY = "src/workflow/stages/verify-observations.ts";
 const PROJECT = "src/workflow/stages/project-observations.ts";
 const INPUTS = "src/workflow/stages/run-inputs.ts";
+const EVIDENCE = "src/store/evidence.ts";
 
 const MUTANTS = [
   // ---------------------------------------------------------------- projection
@@ -234,6 +235,68 @@ const MUTANTS = [
       '      detail: "fabricated: the expected token was simply absent",\n' +
       "    };",
     kills: ["NEGATIVE: the destination cannot be identified — `insufficient`, and NOT a fabricated fail"],
+  },
+
+  // ------------------------------------------------------- catalogue deduplication
+  {
+    name: "the dedupe collapses DIFFERENT-hash entries too — the dangerous weakening",
+    breaks:
+      "two artifacts that share a basename but differ in content are collapsed into one, " +
+      "so the mount loses evidence and the judgement proceeds over a smaller set in silence",
+    file: INPUTS,
+    find: "    const dedupeKey = `${name}\\0${ref}\\0${entry.contentHash}`;",
+    replace: "    const dedupeKey = `${name}`;",
+    kills: ["a TRUE collision (same basename, different hash) is still refused after the dedupe pass"],
+  },
+
+  // ------------------------------------------------ superseded recording resolution
+  {
+    name: "superseded resolution skips the blob existence check — a deleted blob is treated as live",
+    breaks:
+      "the resolution skips checking whether the blob actually exists in R2, so a " +
+      "deleted blob's catalogue entry is treated as live and the mount fails later",
+    file: INPUTS,
+    find: "      const obj = await env.EVIDENCE.get(evidenceBlobKey(hash));\n      if (!obj) continue;",
+    replace: "      const obj = await env.EVIDENCE.get(evidenceBlobKey(hash));",
+    kills: ["stored bytes match the OLDER row: the older row is live (no recency assumption — the BYTES decide)"],
+  },
+  {
+    name: "match-none refusal removed — integrity failure is swallowed in silence",
+    breaks:
+      "a catalogue where BOTH blobs are missing proceeds to judging with zero artifacts " +
+      "for that ref, instead of refusing loudly",
+    file: INPUTS,
+    find: "    if (!liveEntry) {\n      // No blob matched any entry. Genuine integrity failure.\n      integrityFailures.push({ name: group.name, ref: group.ref, triedHashes: uniqueHashes });",
+    replace: "    if (false) {\n      // No blob matched any entry. Genuine integrity failure.\n      integrityFailures.push({ name: group.name, ref: group.ref, triedHashes: uniqueHashes });",
+    kills: ["stored bytes match neither: refusal, loud, names the ref"],
+  },
+  {
+    name: "superseded count dropped — the note always says null",
+    breaks:
+      "a run with superseded recordings reports null instead of the count, so the report " +
+      "cannot say retried steps were resolved and 'no retries' is indistinguishable from " +
+      "'retried and resolved'",
+    file: INPUTS,
+    // RE-ANCHORED: the old single-line anchor matched both loadArtifactBytes (line 711)
+    // and loadArtifactBytesStreaming (line 878). Extended to include the preceding
+    // `artifacts,` line which is unique to loadArtifactBytes (the streaming variant
+    // has `peakResident,` at that position).
+    find: "    artifacts,\n    duplicatesCollapsed: collapsed,\n    supersededRecordings: superseded > 0 ? superseded : null,",
+    replace: "    artifacts,\n    duplicatesCollapsed: collapsed,\n    supersededRecordings: null,",
+    kills: ["same-ref different-hash where stored bytes match the newer row: judgement proceeds, superseded count = 1"],
+  },
+
+  // ------------------------------------------------- capture-side ref guard
+  {
+    name: "the capture ref guard is disabled — re-executions write duplicate catalogue entries again",
+    breaks:
+      "the ref guard that makes captures idempotent is gone, so a retried Workflow step " +
+      "writes a second catalogue entry for the same ref with different bytes — the exact " +
+      "defect that produced EVIDENCE_NAME_COLLISION on the two measured runs",
+    file: EVIDENCE,
+    find: "        if (guard.contentHash !== contentHash) {",
+    replace: "        if (false) {",
+    kills: ["a simulated re-execution writes without clobbering: same ref, different bytes returns the original entry"],
   },
 
   // ------------------------------------------------------------- signing posture

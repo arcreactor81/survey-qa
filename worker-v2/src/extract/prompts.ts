@@ -25,7 +25,26 @@ import { CONSTRUCT_CLASSES } from "./types";
 // synthesis provenance/required-field contract around exact nominated quote spans.
 // 1.6.0 makes all primary arrays/rows closed and fail-loud; no malformed candidate can be
 // silently filtered/defaulted into a shorter completed denominator.
-export const PROMPT_VERSION_A = "v2-extract-pass-a/1.6.0";
+// 1.7.0 requires exact target-side evidence for a claimed local cross-reference resolution;
+// without it, the reader must leave the reference unresolved rather than guess.
+// 1.8.0 replaces the lossy one-line display surface with lossless source-block JSONL. The
+// decoded `text` field is now code-unit-for-code-unit the string exact-evidence validation receives.
+// 1.9.0 makes the closed construct vocabulary explicit and imperative in the prompt text.
+// Gemini systematically invented plausible construct names outside the closed set ("ordering",
+// "presentation"), causing semantic-output failures. The eleven allowed values are now
+// enumerated with a statement that any other value invalidates the item.
+// 1.10.0 adds an explicit imperative scope constraint: scope must be "survey" or
+// "section:<name>"; question-level rules belong to pass B; any other scope value invalidates
+// the item. The 4.5 A/B's one failure was question:* scope leaking into pass A output.
+// 1.11.0 adds routing table decomposition instructions: multi-row per-answer routing tables
+// must be decomposed into individual route_answers entries with verbatim label text. The
+// prompt now explicitly instructs against flattening routing tables into single statements.
+// 1.12.0 pins the synthesis evidence contract: evidence_quotes IS the cited set, and a
+// cross-reference resolution carries exactly two quotes (source + resolved target). Run
+// v2r_01m0a5mtezsggnp4gjncm6h0y9 failed synthesis twice because the model attached extra
+// corroborating quotes to a resolution — the validator rightly rejects them, but the prompt
+// never said so.
+export const PROMPT_VERSION_A = "v2-extract-pass-a/1.12.0";
 // v2-extract-pass-b/1.2.0 — This constant is also the version gate
 // on every persisted pass-B artifact (chunks, sweeps, the whole-pass payload), so it covers
 // what pass B COMPUTES from a parse, not just the words it sends: 1.2.0 restricts the
@@ -34,7 +53,12 @@ export const PROMPT_VERSION_A = "v2-extract-pass-a/1.6.0";
 // artifact may have skipped exactly those blocks and must not be reused.
 // 1.3.0 — the explicit programming-source ground rule keeps those addressable blocks as
 // routing/termination authority while withholding them from respondent option labels.
-export const PROMPT_VERSION_B = "v2-extract-pass-b/1.4.0";
+// 1.5.0 moves chunks, context and ledger sweeps to the same lossless source-block JSONL seam;
+// no model-visible newline marker can differ from the exact source string the ledger checks.
+// 1.7.0 adds routing table decomposition instructions: per-answer routing rules must carry
+// verbatim option labels, one route_answers entry per table row. Unresolvable label matches
+// surface as ambiguities rather than being guessed or dropped.
+export const PROMPT_VERSION_B = "v2-extract-pass-b/1.7.0";
 
 const SHARED_GROUND_RULES = `BINDING GROUND RULE
 The questionnaire document is the SOLE source of truth. You have never seen the implemented
@@ -43,36 +67,41 @@ implementation to do. Never import requirements from industry convention, best p
 what a survey "usually" does. If the document does not say it, it is not an obligation.
 
 VERBATIM QUOTES
-Every "doc_quote" must be copied character-for-character from the supplied block text. Do
-not paraphrase, normalize whitespace inside a line, or fix typos. If you cannot quote it
-exactly, do not emit the item at all.
+Every non-empty source line below is one JSON object. JSON escaping is only the transport
+envelope: after decoding a row, its "text" value is the exact source string. Every
+"doc_quote" and evidence quote must be copied character-for-character from a cited row's
+decoded "text". Do not quote JSON syntax or metadata, paraphrase, normalize whitespace, or
+fix typos. When a quote contains a source line break, encode that line break normally in your
+JSON output so decoding restores the original character. If you cannot quote an exact source
+span, do not emit the item at all.
 
 BLOCK IDS AND ORIGINS
-Every block you are shown is prefixed with its id in square brackets, e.g. "[b0042]", and
-non-body blocks also carry their ORIGIN in parentheses: "(footnote 3)", "(header)",
-"(footer)", "(image-alt)", "(comment by …)", "(cell r3c2 row=… col=…)". Every item you emit
-must cite the block ids it came from in "block_ids". An item with no block id is unusable
-and will be discarded.
+Each source JSON object has exactly these fields: "block_id", "text", "kind", "origin",
+"section", "table_id", "coords", "source_subrole", and "semantic_spans". Every item you
+emit must cite the applicable "block_id" values in "block_ids". An item with no block id is
+unusable and will be discarded. Metadata describes provenance; it is never part of a source
+quote unless the same characters also occur inside decoded "text".
 
 Origins change what a block can oblige:
 - FOOTNOTES AND ENDNOTES are normative. Questionnaires park conditional exceptions,
   soft-launch rules and quota caveats there. Read them as carefully as body copy.
 - HEADERS AND FOOTERS may carry document status ("DRAFT — NOT FOR FIELD") that qualifies
   the whole specification. Record such a statement as a survey-scoped item.
-- A WORD COMMENT IS A PROPOSAL, NOT THE SPECIFICATION. Never turn a comment into an
-  obligation on its own. If a comment contradicts the body, that is an ambiguity.
-- "[#]" at the start of a line means Word generated that item's number automatically and the
+- A row whose "source_subrole" is "comment-proposal" is a WORD COMMENT: a proposal, not the
+  specification. Never turn it into an obligation on its own. If it contradicts the body,
+  that is an ambiguity.
+- "[#]" at the start of decoded "text" means Word generated that item's number automatically and the
   parser could not recover it. Do NOT invent the number; refer to the item by its text.
-- "[image: …]" is alt text; "[image with no alt text]" means the content is unreadable and
+- "[image: …]" in decoded "text" is alt text; "[image with no alt text]" means the content is unreadable and
   anything it mandates is unknown — say so rather than guessing.
-- "[combo-box suggestion — OPEN, NOT EXHAUSTIVE: …]" preserves a suggestion from a Word
+- A row whose "source_subrole" is "combo-box-suggestion" preserves a suggestion from a Word
   combo box, whose accepted value may also be free text. It is visible source material but
   never evidence that the answer vocabulary is closed.
-- "[ruby-reading; …]" preserves a visible phonetic guide separately from its base text. It
-  may support a copy/rendering observation, but is not another answer option.
-- "[programming logic; profile=shop-direct-grey-programming/1.0.0; direct-grey-runs=N: ...]"
-  is an addressable source block whose direct run formatting matched the currently selected
-  shop profile. This profile is an explicit temporary assumption, not a universal Word rule.
+- A row whose "source_subrole" is "ruby-reading" preserves a visible phonetic guide separately
+  from its base text. It may support a copy/rendering observation, but is not another answer option.
+- A row with a "semantic_spans" member whose "role" is "programming-logic" is an addressable
+  source block whose direct run formatting matched that member's declared "profile". The
+  profile is an explicit temporary assumption, not a universal Word rule.
   Keep its text as normative source for routing, termination, validation, display suppression,
   and other programming behavior. It is NOT respondent-visible answer-label text. When an
   option-list obligation cites both ordinary option text and such a programming block, cite
@@ -80,7 +109,7 @@ Origins change what a block can oblige:
   merge removes only programming spans it can match exactly and counts that exclusion. Never
   remove bracket-shaped non-grey text by resemblance: without formatting evidence it remains
   ordinary document text and may be a real answer label.
-- Table-cell annotations carry structural row/column coordinates only. WordprocessingML does
+- A table row's "table_id" and "coords" carry structural row/column coordinates only. WordprocessingML does
   not declare semantic row/column header scope, so never infer it from the first row, first
   column, a repeat-on-page flag, or visual convention. Surface the ambiguity when meaning
   depends on a header relationship the document does not state independently.
@@ -139,12 +168,32 @@ list, its own skip). That is the other pass's job and duplicating it wastes the 
 If a global rule has explicit exceptions, the exceptions belong in "exceptions", not in a
 separate item.
 
+ROUTING TABLES AND PER-ANSWER RULES
+When the document contains a routing summary table that maps answer options to destinations
+across multiple questions (e.g., a table listing which answers terminate, skip to another
+question, or continue), do NOT flatten it into a single global statement. Each row is a
+per-question, per-answer rule. Record the table's EXISTENCE as a cross-reference, and note
+which questions it covers, so the block-by-block pass can decompose each row into typed
+route_answers with verbatim labels. If the table carries survey-scoped rules (e.g., "all
+'None of the above' answers terminate"), those ARE global rules and belong here.
+
+CLOSED CONSTRUCT VOCABULARY
+The "construct" field must be exactly one of these values — no others are valid:
+${CONSTRUCT_CLASSES.map((c) => `  - "${c}"`).join("\n")}
+Any item whose "construct" value is not in this list is invalid and will be discarded.
+Do not invent construct names. If a rule does not fit any listed construct, use "instruction".
+
+IMPERATIVE SCOPE CONSTRAINT
+The "scope" field must be exactly "survey" or "section:<name>". Question-level rules
+(scope "question:<id>") belong to pass B, not this pass. Any item whose scope is not
+"survey" or "section:<name>" is invalid and will be discarded.
+
 SCHEMA
 {
   "global_rules": [
     {
       "id": "GLOB-01",
-      "construct": "instruction|validation|skip-rule|terminate|randomization|piping|carry-forward|calculation|loop|option-list|question",
+      "construct": "${CONSTRUCT_CLASSES.join("|")}",
       "scope": "survey" | "section:<name>",
       "quantifier": "every|each|only|any|none|specific",
       "selector": "<population the rule ranges over>" | null,
@@ -175,7 +224,9 @@ For every global rule, ambiguity, and unverifiable row, evidence_quotes must con
 one exact source span for every block_id (same set, no duplicates), and doc_quote must equal
 one of those spans. If browser_observable is "none", emit a matching unverifiable row with
 the same doc_quote and at least one shared block_id. A resolved cross-reference must provide
-target_doc_quote from resolved_to_block; both fields must be null when unresolved.`;
+target_doc_quote copied character-for-character from resolved_to_block. Never guess or
+paraphrase that target quote: if you cannot copy an exact target span, set BOTH
+resolved_to_block and target_doc_quote to null so the reference is reported unresolved.`;
 
 /**
  * Reconcile independently read windows without pretending their concatenation was already
@@ -221,11 +272,23 @@ be copied character-for-character from that block's source text. For a global ru
 must equal one of those exact evidence quotes. Runtime rejects the row if any id is absent,
 any quote is inexact, or all ids belong to one window.
 
+evidence_quotes is EXACTLY the cited set — never a corroboration list. A cross-reference
+resolution carries EXACTLY TWO evidence_quotes rows: one for the reference's source block and
+one for resolved_to_block. Do not add supporting quotes from other blocks, however relevant;
+a third quote invalidates the entire row and discards the resolution. For every other row
+kind, every evidence_quotes block_id must appear in block_ids and vice versa — quotes for
+uncited blocks are rejected, not ignored.
+
+The "construct" field must be exactly one of: ${CONSTRUCT_CLASSES.join(", ")}. No other value is valid.
+
+The "scope" field must be exactly "survey" or "section:<name>". Question-level scope
+("question:<id>") belongs to pass B; any other scope value invalidates the item.
+
 Return one JSON object:
 {
   "global_rules": [{
     "id": "SYN-GLOB-01",
-    "construct": "instruction|validation|skip-rule|terminate|randomization|piping|carry-forward|calculation|loop|option-list|question",
+    "construct": "${CONSTRUCT_CLASSES.join("|")}",
     "scope": "survey|section:<name>",
     "quantifier": "every|each|only|any|none|specific",
     "selector": "<population>" | null,
@@ -295,15 +358,39 @@ Then produce THREE things, all mandatory:
 1. "obligations" — one atomic, independently testable statement per fact. Split rather than
    bundle: "Q1 offers exactly these 8 options" is one obligation; "Q1 accepts more than one
    answer" is another; "Q1 requires at least one answer" is a third.
-   TABLE CELLS: a cell arrives with its row and column headers attached, e.g.
-   "(cell r3c2 row=\\"Q7\\" col=\\"Instruction\\")". Read the cell WITH its headers — the
-   headers are what say which question the cell is about.
+   TABLE CELLS: "table_id" and "coords" identify a cell's structural position only; they do
+   not establish a semantic row/column-header relationship. Use such a relationship only when
+   the document states it independently. Otherwise surface the ambiguity instead of guessing
+   the cell's scope or ownership.
    When the document ENUMERATES something an implementation must be driven through, fill in
-   "expansion" so the case can be materialized without guessing:
-     - a routing rule: every answer code/label that triggers it and where each one lands;
-     - a stated input bound: "max_length";
-     - a selection rule: "min_selections" / "max_selections".
+   "expansion" with an object containing EXACTLY these five keys, always all present:
+     "kind" — one of: route, boundary, option-set, rendered-state, copy, configuration;
+     "route_answers" — an array of answer objects; use [] when the obligation has no routing;
+     "max_length" — a positive integer, or null when the document states no such bound;
+     "min_selections" — a positive integer, or null when not stated;
+     "max_selections" — a positive integer, or null when not stated.
+   No other keys. Never invent values: a field the document does not state stays null or [].
    Leave "expansion" null when the document enumerates nothing. NEVER invent codes.
+
+   ROUTING TABLE DECOMPOSITION (critical for per-answer steering)
+   When the document contains a routing table — rows mapping answer options to destinations
+   (question ids, TERMINATE, SKIP TO, GO TO, CONTINUE, etc.) — you MUST decompose it into
+   one "route_answers" entry per row:
+     - "label": the answer option's VERBATIM text as it appears in the document. Copy it
+       character-for-character. Do not paraphrase, shorten, or normalize.
+     - "code": the numeric or alphanumeric code, if the document states one alongside the
+       label. null when not stated.
+     - "destination": the target question id, "TERMINATE", or other routing destination as
+       the document states it.
+   Multi-row tables MUST produce multiple entries. Never collapse several rows into one
+   paragraph or one statement. Never drop rows. A routing table with 5 rows produces 5
+   entries in "route_answers".
+   When a routing row names only a code with no label (e.g., "code 3 -> TERMINATE"), put
+   the code in "code" and leave "label" null. Do not invent a label.
+   When a routing row's text cannot be matched to any option the question defines, record
+   that row in "ambiguities" as a genuine ambiguity rather than guessing the match. The
+   route_answers entry STILL gets the verbatim text as "label" — the ambiguity documents
+   the uncertainty, it does not delete the row.
 
 2. "block_dispositions" — EXACTLY ONE ENTRY FOR EVERY BLOCK ID IN YOUR CHUNK, including the
    ones you extracted nothing from. This is what makes an omission visible.
@@ -340,11 +427,11 @@ SCHEMA
       "browser_observable": "full|partial|none",
       "confidence": 0.0,
       "expansion": {
-        "kind": "route|boundary|option-set|rendered-state|copy|configuration",
+        "kind": "route",
         "route_answers": [{ "code": "3", "label": "Every day", "destination": "Q4" }],
-        "max_length": 250,
-        "min_selections": 1,
-        "max_selections": 3
+        "max_length": null,
+        "min_selections": null,
+        "max_selections": null
       }
     }
   ],
@@ -358,7 +445,7 @@ For every obligation, ambiguity, and unverifiable row, evidence_quotes must cont
 one non-empty exact source span for every block_id (the sets must be equal, with no duplicate
 ids), and doc_quote must equal one of those spans. Do not cite context-only or foreign blocks.`;
 
-export function userMessageA(documentName: string, annotated: string, windowLabel: string | null): string {
+export function userMessageA(documentName: string, sourceBlocksJsonl: string, windowLabel: string | null): string {
   void documentName; // Display filenames are not semantic model input or reuse identity.
   return [
     `DOCUMENT: submitted questionnaire`,
@@ -366,9 +453,9 @@ export function userMessageA(documentName: string, annotated: string, windowLabe
       ? `You are reading a WINDOW of a document too large for one call: ${windowLabel}. Emit only rules you can support with the text below; another window covers the rest.`
       : `You are reading the ENTIRE document. Nothing is withheld from you.`,
     ``,
-    `===== DOCUMENT (every line prefixed with its block id) =====`,
-    annotated,
-    `===== END DOCUMENT =====`,
+    `===== SOURCE BLOCKS JSONL (one object per physical line) =====`,
+    sourceBlocksJsonl,
+    `===== END SOURCE BLOCKS JSONL =====`,
     ``,
     `Emit the JSON object now. Cross-cutting rules ONLY. One requirement per rule, not one`,
     `per question the rule happens to touch.`,
@@ -387,7 +474,13 @@ export function userMessageASynthesis(documentName: string, synthesisInputJson: 
  * about exactly the unaccounted blocks is cheaper and more honest than either re-running
  * the whole pass or quietly reclassifying them in code.
  */
-export function userMessageSweep(documentName: string, sweepId: string, chunkText: string, contextText: string | null, blockIds: string[]): string {
+export function userMessageSweep(
+  documentName: string,
+  sweepId: string,
+  chunkSourceBlocksJsonl: string,
+  contextSourceBlocksJsonl: string | null,
+  blockIds: string[],
+): string {
   void documentName;
   return [
     `DOCUMENT: submitted questionnaire`,
@@ -409,14 +502,14 @@ export function userMessageSweep(documentName: string, sweepId: string, chunkTex
     ``,
     `Do NOT invent an obligation to make a block go away. "non-normative, because it is the`,
     `document's version history" is a correct and useful answer.`,
-    contextText ? `
-===== CONTEXT ONLY — DO NOT DISPOSITION THESE =====
-${contextText}
-===== END CONTEXT =====` : ``,
+    contextSourceBlocksJsonl ? `
+===== CONTEXT SOURCE BLOCKS JSONL — DO NOT DISPOSITION THESE =====
+${contextSourceBlocksJsonl}
+===== END CONTEXT SOURCE BLOCKS JSONL =====` : ``,
     ``,
-    `===== UNACCOUNTED BLOCKS =====`,
-    chunkText,
-    `===== END =====`,
+    `===== UNACCOUNTED SOURCE BLOCKS JSONL =====`,
+    chunkSourceBlocksJsonl,
+    `===== END UNACCOUNTED SOURCE BLOCKS JSONL =====`,
     ``,
     `Emit the JSON object now, in the same schema. Every one of the ${blockIds.length} block ids above`,
     `must appear exactly once in "block_dispositions".`,
@@ -426,8 +519,8 @@ ${contextText}
 export function userMessageB(
   documentName: string,
   chunkId: string,
-  chunkText: string,
-  contextText: string | null,
+  chunkSourceBlocksJsonl: string,
+  contextSourceBlocksJsonl: string | null,
   blockIds: string[],
 ): string {
   void documentName;
@@ -436,18 +529,18 @@ export function userMessageB(
     `Your chunk id for this call is: ${chunkId}`,
     `Your chunk contains exactly ${blockIds.length} blocks: ${blockIds.join(", ")}`,
     ``,
-    contextText
-      ? `===== CONTEXT ONLY — DO NOT EMIT OBLIGATIONS OR DISPOSITIONS FOR THIS BLOCK =====\n` +
-        `These are the document's global instructions, repeated so you can interpret your chunk\n` +
+    contextSourceBlocksJsonl
+      ? `These are the document's global instructions, repeated so you can interpret your chunk\n` +
         `correctly (what "SINGLE CODE", "RANDOMIZE", "[SPECIFY]" and compulsoriness mean).\n` +
         `Another call covers them. Use them to interpret; you MAY cite them inside an ambiguity.\n\n` +
-        contextText +
-        `\n===== END CONTEXT =====`
+        `===== CONTEXT SOURCE BLOCKS JSONL — DO NOT EMIT OBLIGATIONS OR DISPOSITIONS FOR THESE BLOCKS =====\n` +
+        contextSourceBlocksJsonl +
+        `\n===== END CONTEXT SOURCE BLOCKS JSONL =====`
       : `(No separate context block: this chunk covers the document's own global instructions.)`,
     ``,
-    `===== YOUR CHUNK — EXTRACT AND DISPOSITION THESE BLOCKS =====`,
-    chunkText,
-    `===== END CHUNK =====`,
+    `===== YOUR SOURCE BLOCKS JSONL — EXTRACT AND DISPOSITION THESE BLOCKS =====`,
+    chunkSourceBlocksJsonl,
+    `===== END YOUR SOURCE BLOCKS JSONL =====`,
     ``,
     `Emit the JSON object now. Every one of the ${blockIds.length} block ids above must appear`,
     `exactly once in "block_dispositions", and every construct class must appear once in`,

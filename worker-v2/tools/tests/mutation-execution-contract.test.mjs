@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -232,6 +233,15 @@ function deployJsonValidationFunctions(source) {
   return source.slice(start, end);
 }
 
+function deployOfflineTempFunction(source) {
+  const start = source.indexOf("function Resolve-ExactRealDirectory(");
+  const end = source.indexOf("\n$Dirty =", start);
+  if (start < 0 || end <= start) {
+    throw new Error("DEPLOY canonical offline temp function is missing");
+  }
+  return source.slice(start, end);
+}
+
 function assertSameSet(actual, expected, label) {
   const left = [...actual].sort();
   const right = [...expected].sort();
@@ -241,6 +251,9 @@ function assertSameSet(actual, expected, label) {
 }
 
 const RUNBOOK_EXECUTION_TOKENS = Object.freeze([
+  // The fast pre-battery anchor check (24 Aug): drift fails in seconds, not deep in the
+  // supervised battery. Its removal from the runbook must fail this audit.
+  "tools\\check-mutation-anchors.mjs",
   "$MutationTimeoutMs = 7200000",
   "$MutationChildTimeoutMs = 120000",
   "$MutationDrainGraceMs = 30000",
@@ -259,7 +272,15 @@ const RUNBOOK_EXECUTION_TOKENS = Object.freeze([
   "$SupervisorKillSucceeded = $SupervisorExitedAfterKill -eq $true",
   "$SupervisorStartInfo.CreateNoWindow = $true",
   "$SupervisorStartInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden",
-  "$SupervisorProcess.WaitForExit([int] $MutationSupervisorWatchdogMs)",
+  // PER-HARNESS OUTER TIMEOUT (23 Aug 2026): mutate-w4-select outgrew the generic
+  // two-hour supervisor ceiling (phaseB.6 receipt: exitCode 124, timedOut true, after
+  // the other 49 campaigns passed). The runbook now derives the outer timeout and its
+  // watchdog per harness, the same precedent as the per-harness child timeout — and
+  // this audit requires the per-harness form so a revert to the generic ceiling (or a
+  // silent removal of the wait bound) fails here.
+  "$HarnessTimeoutMs = if ($Harness -ceq \"mutate-w4-select.mjs\") { 14400000 } else { $MutationTimeoutMs }",
+  "$HarnessWatchdogMs = [int64] $HarnessTimeoutMs +",
+  "$SupervisorProcess.WaitForExit([int] $HarnessWatchdogMs)",
   "$SupervisorProcess.Kill()",
   "$SupervisorProcess.WaitForExit($MutationDrainGraceMs)",
   "$SupervisorKillAttempted -and $SupervisorExitedAfterKill -ne $true",
@@ -412,6 +433,58 @@ const SEVERANCE_CALL =
   ["persistSeveranceProof(severedPath, intermediatePid, ", "grandchildIdentity);"].join("");
 const SEVERANCE_CLOSE = ['once("cl', 'ose"'].join("");
 const SEVERANCE_WRITE = ["writeFileSync(", "\n    severedPath,"].join("");
+
+const OFFLINE_TEMP_RUNBOOK_TOKENS = Object.freeze([
+  "function Resolve-ExactRealDirectory([string] $Directory, [string] $Label)",
+  "Get-Item -LiteralPath $Directory -Force -ErrorAction Stop",
+  "($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0",
+  "realpathSync.native(process.argv[1])",
+  "[string]::Equals($Real, $Lexical, [System.StringComparison]::OrdinalIgnoreCase)",
+  '$OfflineTempCandidate = Join-Path $Evidence "offline-temp"',
+  'if (Test-Path -LiteralPath $OfflineTempCandidate) { throw "Offline temp directory already exists" }',
+  "New-Item -ItemType Directory -Path $OfflineTempCandidate -ErrorAction Stop",
+  '$OfflineTemp = Resolve-ExactRealDirectory $OfflineTempCandidate "offline gate temp"',
+  "$env:TEMP = $OfflineTemp",
+  "$env:TMP = $OfflineTemp",
+  'if ($env:TEMP -cne $OfflineTemp -or $env:TMP -cne $OfflineTemp) { throw "Offline temp environment changed" }',
+  "offlineTemp=$OfflineTemp;",
+  'Resolve-ExactRealDirectory $OfflineTemp "offline gate temp"',
+]);
+
+function auditOfflineTempRunbook(source) {
+  for (const token of OFFLINE_TEMP_RUNBOOK_TOKENS) {
+    if (!source.includes(token)) throw new Error(`offline temp runbook is missing ${token}`);
+  }
+
+  const orderedTokens = [
+    "New-Item -ItemType Directory -Path $Evidence -ErrorAction Stop",
+    "New-Item -ItemType Directory -Path $OfflineTempCandidate -ErrorAction Stop",
+    '$OfflineTemp = Resolve-ExactRealDirectory $OfflineTempCandidate "offline gate temp"',
+    "$env:TEMP = $OfflineTemp",
+    "$env:TMP = $OfflineTemp",
+    "offlineTemp=$OfflineTemp;",
+    "## 2. Offline gates",
+  ];
+  const positions = orderedTokens.map((token) => source.indexOf(token));
+  if (positions.some((position) => position < 0) || positions.some((position, index) => index > 0 && position <= positions[index - 1])) {
+    throw new Error("offline temp runbook ordering is invalid");
+  }
+
+  if ((source.match(/^\$env:TEMP = \$OfflineTemp$/gmu) ?? []).length !== 1 ||
+      (source.match(/^\$env:TMP = \$OfflineTemp$/gmu) ?? []).length !== 1) {
+    throw new Error("offline temp runbook must assign TEMP and TMP exactly once");
+  }
+
+  const assertStart = source.indexOf("function Assert-Frozen {");
+  const assertEnd = source.indexOf("\n}", assertStart);
+  const assertFrozen = assertStart >= 0 && assertEnd > assertStart
+    ? source.slice(assertStart, assertEnd)
+    : "";
+  if (!assertFrozen.includes('Resolve-ExactRealDirectory $OfflineTemp "offline gate temp"') ||
+      !assertFrozen.includes('$env:TEMP -cne $OfflineTemp -or $env:TMP -cne $OfflineTemp')) {
+    throw new Error("offline temp runbook is missing Assert-Frozen revalidation");
+  }
+}
 
 function auditRunbookExecution(source) {
   for (const token of RUNBOOK_EXECUTION_TOKENS) {
@@ -1189,7 +1262,7 @@ suite("MUTATION EXECUTION CONTRACT — exact guards and closed release census", 
     );
   });
 
-  test("release manifests account set-equal for all 42 mutation-pattern files", () => {
+  test("release manifests account set-equal for all 51 mutation-pattern files", () => {
     const deploy = readFileSync(DEPLOY_PATH, "utf8");
     const harnesses = parsePowerShellArray(deploy, "MutationHarnesses");
     const libraries = parsePowerShellArray(deploy, "MutationLibraries");
@@ -1197,7 +1270,7 @@ suite("MUTATION EXECUTION CONTRACT — exact guards and closed release census", 
       .filter((name) => /^mutate-[A-Za-z0-9._-]+\.mjs$/u.test(name))
       .sort();
 
-    assertEq(harnesses.length, 41, "all actual harnesses remain mandatory");
+    assertEq(harnesses.length, 51, "all actual harnesses remain mandatory");
     assertEq(libraries.length, 1, "only the shared runner is library-only");
     assertEq(libraries[0], "mutate-runner.mjs");
     assert(!harnesses.includes("mutate-runner.mjs"), "library cannot pass as a harness");
@@ -1235,6 +1308,43 @@ suite("MUTATION EXECUTION CONTRACT — exact guards and closed release census", 
       ),
       /direct unwrapped/u,
     );
+  });
+
+  test("release runbook owns one fresh canonical offline TEMP and TMP directory", () => {
+    const deploy = readFileSync(DEPLOY_PATH, "utf8");
+    auditOfflineTempRunbook(deploy);
+    for (const token of OFFLINE_TEMP_RUNBOOK_TOKENS) {
+      const mutant = deploy.replaceAll(token, "");
+      assert(mutant !== deploy, `runbook fixture is missing offline temp token ${token}`);
+      expectThrow(() => auditOfflineTempRunbook(mutant), /offline temp|missing/u);
+    }
+
+    if (process.platform === "win32") {
+      const root = realpathSync.native(mkdtempSync(path.join(realpathSync.native(os.tmpdir()), "deploy-offline-temp-")));
+      try {
+        const script = `$ErrorActionPreference = "Stop"\n` +
+          `$Node = ${powerShellSingleQuotedLiteral(process.execPath)}\n` +
+          `${deployOfflineTempFunction(deploy)}\n` +
+          `$Expected = ${powerShellSingleQuotedLiteral(root)}\n` +
+          `$Actual = Resolve-ExactRealDirectory $Expected "test offline temp"\n` +
+          `if ($Actual -cne $Expected) { throw "offline temp helper changed the canonical path" }\n` +
+          `Write-Output "OFFLINE_TEMP_HELPER_OK"\n`;
+        const run = spawnSync(
+          powershellPath(),
+          ["-NoProfile", "-NonInteractive", "-Command", script],
+          { cwd: WORKER_ROOT, encoding: "utf8", timeout: 20000, windowsHide: true },
+        );
+        assertEq(
+          run.status,
+          0,
+          `DEPLOY offline temp helper failed: stderr=${JSON.stringify(run.stderr)}; ` +
+            `stdout=${JSON.stringify(run.stdout)}; error=${String(run.error ?? "none")}`,
+        );
+        assert(run.stdout.includes("OFFLINE_TEMP_HELPER_OK"), "the executable offline temp helper did not reach success");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
   });
 
   test("DEPLOY canonical watchdog types reject string booleans and decimal numbers", () => {

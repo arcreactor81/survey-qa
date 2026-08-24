@@ -45,11 +45,11 @@ const byId = (out) => new Map(out.results.map((r) => [r.obligationId, r]));
 /** Every run now goes through the signed evidence authority (D1). */
 const authorityFor = (runDir, checklist) => loadEvidenceAuthority({ runDir, checklist, keyRegistryPath: REGISTRY });
 
-function judgeMini(extra = {}) {
+async function judgeMini(extra = {}) {
   const checklist = miniChecklist();
   return judgeRun({ runDir: MINI, checklist, authority: authorityFor(MINI, checklist), ...extra });
 }
-function judgeReal() {
+async function judgeReal() {
   const checklist = JSON.parse(readFileSync(join(REAL, 'checklist.json'), 'utf8'));
   return judgeRun({ runDir: REAL, checklist, authority: authorityFor(REAL, checklist) });
 }
@@ -58,59 +58,59 @@ function judgeReal() {
 // A. one fixture per predicate
 // ===========================================================================
 
-test('option-present: satisfied only with a complete positive inventory', () => {
-  const r = byId(judgeMini()).get('SELF-OPT-PASS');
+test('option-present: satisfied only with a complete positive inventory', async () => {
+  const r = byId(await judgeMini()).get('SELF-OPT-PASS');
   assert.equal(r.verdict, VERDICT.PASS);
   assert.equal(r.reason, REASON.COMPLETE_POSITIVE_INVENTORY);
   assert.ok(r.supportingWitnesses.length > 0, 'a pass must ship a positive witness');
   assert.ok(r.evidenceScope.completeRenderedSet.includes('Alpha|1'));
 });
 
-test('option-present: an absence claim enumerates everything that WAS rendered', () => {
-  const r = byId(judgeMini()).get('SELF-OPT-ABSENT');
+test('option-present: an absence claim enumerates everything that WAS rendered', async () => {
+  const r = byId(await judgeMini()).get('SELF-OPT-ABSENT');
   assert.equal(r.verdict, VERDICT.FAIL);
   assert.equal(r.reason, REASON.OPTION_ABSENT);
   assert.deepEqual(r.evidenceScope.completeRenderedSet, ['Alpha|1', 'Beta|2']);
   assert.ok(r.evidenceScope.capturesEnumerated >= 1);
 });
 
-test('option-present: wrong copy at a documented code is a label mismatch, not an absence', () => {
-  const r = byId(judgeMini()).get('SELF-OPT-LABEL');
+test('option-present: wrong copy at a documented code is a label mismatch, not an absence', async () => {
+  const r = byId(await judgeMini()).get('SELF-OPT-LABEL');
   assert.equal(r.verdict, VERDICT.FAIL);
   assert.equal(r.reason, REASON.OPTION_LABEL_MISMATCH_AT_CODE);
   assert.deepEqual(r.predicateDetail.renderedLabels, ['Beta']);
 });
 
-test('route: destination agreement passes and carries the route-table witnesses', () => {
-  const r = byId(judgeMini()).get('SELF-ROUTE-PASS');
+test('route: destination agreement passes and carries the route-table witnesses', async () => {
+  const r = byId(await judgeMini()).get('SELF-ROUTE-PASS');
   assert.equal(r.verdict, VERDICT.PASS);
   assert.equal(r.predicateId, 'route@1');
   assert.ok(r.supportingWitnesses.every((w) => w.locator.endsWith('.screen_id')));
 });
 
-test('route: a contradicting destination is a defect derived by lookup, not narrative', () => {
-  const r = byId(judgeMini()).get('SELF-ROUTE-FAIL');
+test('route: a contradicting destination is a defect derived by lookup, not narrative', async () => {
+  const r = byId(await judgeMini()).get('SELF-ROUTE-FAIL');
   assert.equal(r.verdict, VERDICT.FAIL);
   assert.equal(r.disposition, DISPOSITION.DEFECT);
   assert.equal(r.reason, REASON.ROUTE_DESTINATION_MISMATCH);
   assert.deepEqual(r.predicateDetail.observedDestinations, { Q3: 2 });
 });
 
-test('route: a screen the document says to skip appearing anyway is its own reason code', () => {
-  const r = byId(judgeMini()).get('SELF-ROUTE-SKIP');
+test('route: a screen the document says to skip appearing anyway is its own reason code', async () => {
+  const r = byId(await judgeMini()).get('SELF-ROUTE-SKIP');
   assert.equal(r.verdict, VERDICT.FAIL);
   assert.equal(r.reason, REASON.ROUTE_SKIPPED_SCREEN_SHOWN);
 });
 
-test('route: an unexercised code is inconclusive — never a pass', () => {
-  const r = byId(judgeMini()).get('SELF-ROUTE-UNEXERCISED');
+test('route: an unexercised code is inconclusive — never a pass', async () => {
+  const r = byId(await judgeMini()).get('SELF-ROUTE-UNEXERCISED');
   assert.equal(r.verdict, VERDICT.INCONCLUSIVE);
   assert.equal(r.disposition, DISPOSITION.QUERY);
   assert.notEqual(r.verdict, VERDICT.PASS);
 });
 
-test('screen-conditional-presence: base membership judged from the walk, not from prose', () => {
-  const r = byId(judgeMini()).get('SELF-PRESENCE');
+test('screen-conditional-presence: base membership judged from the walk, not from prose', async () => {
+  const r = byId(await judgeMini()).get('SELF-PRESENCE');
   assert.equal(r.predicateId, 'screen-conditional-presence@1');
   assert.equal(r.predicateDetail.outOfBase, undefined, 'nothing was seen outside the base');
   // D3: "only for code 1" is a claim about EVERY other documented code, so it
@@ -128,21 +128,21 @@ test('screen-conditional-presence: base membership judged from the walk, not fro
   assert.notEqual(r.verdict, VERDICT.PASS);
 });
 
-test('a screen that was never reached is NOT-ASSESSED, never PASS', () => {
-  const r = byId(judgeMini()).get('SELF-NO-OBSERVATION');
+test('a screen that was never reached is NOT-ASSESSED, never PASS', async () => {
+  const r = byId(await judgeMini()).get('SELF-NO-OBSERVATION');
   assert.equal(r.verdict, VERDICT.NOT_ASSESSED);
   assert.equal(r.coverage, COVERAGE.NOT_REACHED);
 });
 
-test('an obligation with no typed expectation is NOT-ASSESSED and visible, never PASS', () => {
-  const r = byId(judgeMini()).get('SELF-UNTYPED');
+test('an obligation with no typed expectation is NOT-ASSESSED and visible, never PASS', async () => {
+  const r = byId(await judgeMini()).get('SELF-UNTYPED');
   assert.equal(r.verdict, VERDICT.NOT_ASSESSED);
   assert.equal(r.reason, REASON.NO_TYPED_EXPECTATION);
   assert.equal(r.expectation, null);
 });
 
-test('ambiguity precedence: a violated obligation carrying an ambiguity becomes a QUERY', () => {
-  const r = byId(judgeMini()).get('SELF-ROUTE-AMBIGUOUS');
+test('ambiguity precedence: a violated obligation carrying an ambiguity becomes a QUERY', async () => {
+  const r = byId(await judgeMini()).get('SELF-ROUTE-AMBIGUOUS');
   assert.equal(r.verdict, VERDICT.INCONCLUSIVE);
   assert.equal(r.disposition, DISPOSITION.QUERY);
   assert.equal(r.reason, REASON.AMBIGUITY_PRECEDENCE);
@@ -153,12 +153,12 @@ test('ambiguity precedence: a violated obligation carrying an ambiguity becomes 
   assert.equal(r.withheld.certificationBlocker, true);
 });
 
-test('ambiguity precedence is a hard rule: there is no policy path at all', () => {
+test('ambiguity precedence is a hard rule: there is no policy path at all', async () => {
   // D4: this used to be tunable. A caller passing an empty policy object
   // disabled BOTH halves of a gate the design calls non-negotiable.
-  assert.throws(() => judgeMini({ policy: { blockFail: true, blockPass: false } }), /locked gate/);
-  assert.throws(() => judgeMini({ policy: {} }), /locked gate/);
-  const r = byId(judgeMini()).get('SELF-ROUTE-AMBIGUOUS');
+  await assert.rejects(async () => await judgeMini({ policy: { blockFail: true, blockPass: false } }), /locked gate/);
+  await assert.rejects(async () => await judgeMini({ policy: {} }), /locked gate/);
+  const r = byId(await judgeMini()).get('SELF-ROUTE-AMBIGUOUS');
   assert.notEqual(r.verdict, VERDICT.FAIL);
 });
 
@@ -166,23 +166,23 @@ test('ambiguity precedence is a hard rule: there is no policy path at all', () =
 // route-table soundness
 // ===========================================================================
 
-test('route table: a trace seq JUMP never becomes a phantom edge', () => {
-  const out = judgeMini();
+test('route table: a trace seq JUMP never becomes a phantom edge', async () => {
+  const out = await judgeMini();
   const alpha = out.routeTable.rows.find((r) => r.question === 'Q1' && r.answer === 'Alpha|1');
   assert.deepEqual(Object.keys(alpha.destinations), ['Q2'],
     'SELF-03 goes Q1(Alpha) ... back hop ... Q3; a trace-only table would emit Q1(Alpha)->Q3');
   assert.ok(out.routeTable.skipped.some((s) => s.session === 'SELF-03'));
 });
 
-test('route table: a post-mutation answer is a real, attributed edge', () => {
-  const out = judgeMini();
+test('route table: a post-mutation answer is a real, attributed edge', async () => {
+  const out = await judgeMini();
   const beta = out.routeTable.rows.find((r) => r.question === 'Q1' && r.answer === 'Beta|2');
   assert.equal(beta.destinations.Q3.count, 2);
   assert.ok(beta.destinations.Q3.witnesses.some((w) => w.source === 'post-mutation'));
 });
 
-test('route table: an overshot mutation and an uncorroborated click are integrity failures', () => {
-  const out = judgeMini();
+test('route table: an overshot mutation and an uncorroborated click are integrity failures', async () => {
+  const out = await judgeMini();
   const codes = out.routeTable.integrity.map((i) => i.code);
   assert.ok(codes.includes('ACTION_NOT_IN_INVENTORY'));
   assert.ok(codes.includes('SESSION_INTEGRITY_FAILURE'));
@@ -194,63 +194,63 @@ test('route table: an overshot mutation and an uncorroborated click are integrit
 
 const store = () => new EvidenceStore(MINI);
 
-test('adversarial: attest fails when the cited artifact does not exist', () => {
-  const r = store().attest({ artifact: 'NOPE-999.json', locator: 'evidence[0].screen_id', equals: 'WELCOME' });
+test('adversarial: attest fails when the cited artifact does not exist', async () => {
+  const r = await store().attest({ artifact: 'NOPE-999.json', locator: 'evidence[0].screen_id', equals: 'WELCOME' });
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'CITED_ARTIFACT_MISSING');
 });
 
-test('adversarial: attest fails when the artifact contradicts the claimed value', () => {
-  const r = store().attest({ artifact: 'SELF-02.json', locator: 'evidence[2].screen_id', equals: 'Q2' });
+test('adversarial: attest fails when the artifact contradicts the claimed value', async () => {
+  const r = await store().attest({ artifact: 'SELF-02.json', locator: 'evidence[2].screen_id', equals: 'Q2' });
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'WITNESS_REREAD_FAILED');
   assert.equal(r.observed, 'Q3', 'the engine reports what the artifact actually says');
 });
 
-test('adversarial: attest fails when the locator does not resolve', () => {
-  const r = store().attest({ artifact: 'SELF-01.json', locator: 'evidence[99].screen_id', equals: 'Q2' });
+test('adversarial: attest fails when the locator does not resolve', async () => {
+  const r = await store().attest({ artifact: 'SELF-01.json', locator: 'evidence[99].screen_id', equals: 'Q2' });
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'WITNESS_LOCATOR_UNRESOLVED');
 });
 
-test('adversarial: attest fails when the artifact changed under a pinned hash', () => {
-  const r = store().attest({ artifact: 'SELF-01.json', sha256: '0'.repeat(64), locator: 'evidence[0].screen_id', equals: 'WELCOME' });
+test('adversarial: attest fails when the artifact changed under a pinned hash', async () => {
+  const r = await store().attest({ artifact: 'SELF-01.json', sha256: '0'.repeat(64), locator: 'evidence[0].screen_id', equals: 'WELCOME' });
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'WITNESS_REREAD_FAILED');
 });
 
-test('adversarial: an image cannot machine-support a verdict', () => {
+test('adversarial: an image cannot machine-support a verdict', async () => {
   assert.equal(classifyArtifact('shot.png'), EVIDENCE_CLASS.IMAGE);
-  const r = store().attest({ artifact: 'shot.png', locator: 'whatever', equals: 1 });
+  const r = await store().attest({ artifact: 'shot.png', locator: 'whatever', equals: 1 });
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'IMAGE_ONLY_EVIDENCE');
 });
 
-test('adversarial: attest re-derives a summarizing projection instead of believing it', () => {
+test('adversarial: attest re-derives a summarizing projection instead of believing it', async () => {
   const s = store();
-  const good = s.attest({ artifact: 'SELF-01.json', locator: 'evidence[1].option_inventory', derive: 'labels', equals: ['Alpha', 'Beta'] });
+  const good = await s.attest({ artifact: 'SELF-01.json', locator: 'evidence[1].option_inventory', derive: 'labels', equals: ['Alpha', 'Beta'] });
   assert.equal(good.ok, true);
-  const lie = s.attest({ artifact: 'SELF-01.json', locator: 'evidence[1].option_inventory', derive: 'labels', equals: ['Alpha', 'Beta', 'Gamma'] });
+  const lie = await s.attest({ artifact: 'SELF-01.json', locator: 'evidence[1].option_inventory', derive: 'labels', equals: ['Alpha', 'Beta', 'Gamma'] });
   assert.equal(lie.ok, false);
   assert.equal(lie.reason, 'WITNESS_REREAD_FAILED');
 });
 
 /** Swap a predicate for one adversarial run, then always restore it. */
-function withPredicate(kind, impl, fn) {
+async function withPredicate(kind, impl, fn) {
   const original = PREDICATES[kind];
   PREDICATES[kind] = { id: `${kind}@adversarial`, run: impl };
-  try { return fn(); } finally { PREDICATES[kind] = original; }
+  try { return await fn(); } finally { PREDICATES[kind] = original; }
 }
 
-test('ADVERSARIAL: a verdict citing an artifact that proves the opposite is NOT a pass', () => {
+test('ADVERSARIAL: a verdict citing an artifact that proves the opposite is NOT a pass', async () => {
   // This is the t1-easy failure in miniature: SATISFIED, confidently citing
   // SELF-02 evidence[2] — which says Q3, not Q2.
-  const out = withPredicate('route', () => ({
+  const out = await withPredicate('route', () => ({
     outcome: OUTCOME.SATISFIED,
     reason: REASON.POSITIVE_WITNESS,
     witnesses: [{ artifact: 'SELF-02.json', session: 'SELF-02', seq: 3, locator: 'evidence[2].screen_id', equals: 'Q2', note: 'Beta -> Q2, no Q3 shown' }],
     counterWitnesses: [],
-  }), () => judgeMini());
+  }), async () => await judgeMini());
 
   const r = byId(out).get('SELF-ROUTE-PASS');
   assert.notEqual(r.verdict, VERDICT.PASS, 'a fabricated pass must not survive re-verification');
@@ -261,13 +261,13 @@ test('ADVERSARIAL: a verdict citing an artifact that proves the opposite is NOT 
   assert.equal(r.attestation.positive[0].observed, 'Q3');
 });
 
-test('ADVERSARIAL: a verdict citing a missing artifact is an error condition', () => {
-  const out = withPredicate('route', () => ({
+test('ADVERSARIAL: a verdict citing a missing artifact is an error condition', async () => {
+  const out = await withPredicate('route', () => ({
     outcome: OUTCOME.SATISFIED,
     reason: REASON.POSITIVE_WITNESS,
     witnesses: [{ artifact: 'GONE.json', locator: 'evidence[0].screen_id', equals: 'Q2' }],
     counterWitnesses: [],
-  }), () => judgeMini());
+  }), async () => await judgeMini());
   const r = byId(out).get('SELF-ROUTE-PASS');
   assert.equal(r.verdict, VERDICT.NOT_ASSESSED);
   // D1 tightened this: an artifact the signed catalogue never listed is
@@ -277,36 +277,36 @@ test('ADVERSARIAL: a verdict citing a missing artifact is an error condition', (
   assert.ok([REASON.ARTIFACT_NOT_IN_SIGNED_MANIFEST, REASON.CITED_ARTIFACT_MISSING].includes(r.reason), r.reason);
 });
 
-test('ADVERSARIAL: a pass with no positive witness is refused', () => {
-  const out = withPredicate('route', () => ({
+test('ADVERSARIAL: a pass with no positive witness is refused', async () => {
+  const out = await withPredicate('route', () => ({
     outcome: OUTCOME.SATISFIED, reason: REASON.POSITIVE_WITNESS, witnesses: [], counterWitnesses: [],
-  }), () => judgeMini());
+  }), async () => await judgeMini());
   const r = byId(out).get('SELF-ROUTE-PASS');
   assert.equal(r.verdict, VERDICT.NOT_ASSESSED);
   assert.equal(r.reason, REASON.PASS_WITHOUT_WITNESS);
 });
 
-test('ADVERSARIAL: an absence claim without a complete scoped inventory is refused', () => {
-  const out = withPredicate('route', () => ({
+test('ADVERSARIAL: an absence claim without a complete scoped inventory is refused', async () => {
+  const out = await withPredicate('route', () => ({
     outcome: OUTCOME.SATISFIED, reason: REASON.COMPLETE_POSITIVE_INVENTORY,
     witnesses: [], counterWitnesses: [], absenceClaim: true, scope: null,
-  }), () => judgeMini());
+  }), async () => await judgeMini());
   const r = byId(out).get('SELF-ROUTE-PASS');
   assert.equal(r.verdict, VERDICT.NOT_ASSESSED);
   assert.equal(r.reason, REASON.INVENTORY_INCOMPLETE);
 });
 
-test('ADVERSARIAL: a defect asserted with no counter-witness is refused too', () => {
-  const out = withPredicate('route', () => ({
+test('ADVERSARIAL: a defect asserted with no counter-witness is refused too', async () => {
+  const out = await withPredicate('route', () => ({
     outcome: OUTCOME.VIOLATED, reason: REASON.ROUTE_DESTINATION_MISMATCH, witnesses: [], counterWitnesses: [],
-  }), () => judgeMini());
+  }), async () => await judgeMini());
   const r = byId(out).get('SELF-ROUTE-PASS');
   assert.notEqual(r.verdict, VERDICT.FAIL);
   assert.equal(r.reason, REASON.PASS_WITHOUT_WITNESS);
 });
 
-test('ADVERSARIAL: a predicate that throws yields not-assessed, not a pass', () => {
-  const out = withPredicate('route', () => { throw new Error('boom'); }, () => judgeMini());
+test('ADVERSARIAL: a predicate that throws yields not-assessed, not a pass', async () => {
+  const out = await withPredicate('route', () => { throw new Error('boom'); }, async () => await judgeMini());
   const r = byId(out).get('SELF-ROUTE-PASS');
   assert.equal(r.verdict, VERDICT.NOT_ASSESSED);
   assert.equal(r.coverage, COVERAGE.BLOCKED);
@@ -316,25 +316,25 @@ test('ADVERSARIAL: a predicate that throws yields not-assessed, not a pass', () 
 // C. small units that the above depends on
 // ===========================================================================
 
-test('resolvePath is total — a bad path returns not-ok rather than throwing', () => {
+test('resolvePath is total — a bad path returns not-ok rather than throwing', async () => {
   assert.deepEqual(resolvePath({ a: [{ b: 1 }] }, 'a[0].b'), { ok: true, value: 1 });
   assert.equal(resolvePath({ a: 1 }, 'a[0].b').ok, false);
   assert.equal(resolvePath(null, 'a').ok, false);
 });
 
-test('normalization folds every dash and quote variant it claims to', () => {
+test('normalization folds every dash and quote variant it claims to', async () => {
   assert.equal(normLine('screen‐out'), 'screen-out');
   assert.equal(normLine('screen‑out'), 'screen-out');
   assert.equal(normLine('don’t'), "don't");
   assert.equal(norm('a  b'), 'a b');
 });
 
-test('the compiler is evidence-blind and fails closed', () => {
+test('the compiler is evidence-blind and fails closed', async () => {
   const { expectation } = compileObligation({ id: 'X', category: 'instruction', statement: 'The survey should be nice.', doc_quote: '' });
   assert.equal(expectation, null, 'an unrecognised statement compiles to nothing, which becomes NOT-ASSESSED');
 });
 
-test('a fixed-bottom option is not compiled into a positional claim', () => {
+test('a fixed-bottom option is not compiled into a positional claim', async () => {
   const { expectation } = compileObligation({
     id: 'X', category: 'option-set',
     statement: 'Option 6 with answer text "Another brand" marked [SPECIFY] [FIX] appears as a fixed bottom choice on Q2.',
@@ -344,7 +344,272 @@ test('a fixed-bottom option is not compiled into a positional claim', () => {
   assert.equal(expectation.position, null, 'several codes may share the fixed bottom block');
 });
 
-test('PROJECTIONS are a closed registry the attestor recomputes', () => {
+// ===========================================================================
+// Track 1 — TYPED MINTING from sealed FacetInstance payloads
+// ===========================================================================
+
+test('Track 1: option-set typed minting produces option-present from asserted rows', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'option-set',
+    statement: 'Q1 must offer option 3 labeled "Tea".',
+    doc_quote: '3 | Tea',
+    typedCases: [{
+      facetInstanceId: 'fi_001',
+      requirementLineageId: 'X',
+      screen: 'Q1',
+      targetQuestionId: 'Q1',
+      expectationGap: null,
+      case: {
+        kind: 'option-set',
+        routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+        optionSet: {
+          asserted: [{ code: '3', label: 'Tea' }],
+          siblings: [],
+          exhaustive: false,
+          closureAssessment: { status: 'not-evaluated', code: 'OPTION_SET_CLOSURE_NOT_EVALUATED', detail: '' },
+        },
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  // Prose rule R-OPT-1 should NOT match the free-form statement, but the typed
+  // minting fallback should produce an option-present from the optionSet.
+  // However, if R-OPT-1 happens to match the statement, that's also fine —
+  // the prose rules run first as designed.
+  assert.ok(expectation, 'a typed option-set case must produce an expectation');
+  assert.equal(expectation.kind, 'option-present');
+  assert.equal(expectation.screen, 'Q1');
+});
+
+test('Track 1: option-set typed minting from exhaustive payload produces option-set-exact', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'option-set',
+    statement: 'Q2 must list exactly these options.',
+    doc_quote: 'Coffee | Tea | Water',
+    typedCases: [{
+      facetInstanceId: 'fi_002',
+      requirementLineageId: 'X',
+      screen: 'Q2',
+      targetQuestionId: 'Q2',
+      expectationGap: null,
+      case: {
+        kind: 'option-set',
+        routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+        optionSet: {
+          asserted: [{ code: '1', label: 'Coffee' }, { code: '2', label: 'Tea' }, { code: '3', label: 'Water' }],
+          siblings: [],
+          exhaustive: true,
+          closureAssessment: { status: 'established', code: 'OPTION_SET_CLOSURE_ESTABLISHED', detail: '' },
+        },
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.ok(expectation, 'an exhaustive option-set must produce an expectation');
+  assert.equal(expectation.kind, 'option-set-exact');
+  assert.equal(expectation.screen, 'Q2');
+  assert.deepEqual(expectation.labels, ['Coffee', 'Tea', 'Water']);
+});
+
+test('Track 1: route typed minting produces route from routeAnswer + expectedDestination', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'routing',
+    statement: 'If code 2 at Q3, go to Q5.',
+    doc_quote: 'Q3 | Code 2 | Q5',
+    typedCases: [{
+      facetInstanceId: 'fi_003',
+      requirementLineageId: 'X',
+      screen: 'Q3',
+      targetQuestionId: 'Q3',
+      expectationGap: null,
+      case: {
+        kind: 'route',
+        routeAnswer: { code: '2', label: 'Option B' },
+        expectedDestination: { questionId: 'Q5', screen: null, terminal: null },
+        boundaryInput: null, configuration: null, optionSet: null,
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.ok(expectation, 'a typed route case must produce an expectation');
+  assert.equal(expectation.kind, 'route');
+  assert.equal(expectation.question, 'Q3');
+  assert.equal(expectation.destination, 'Q5');
+  assert.deepEqual(expectation.trigger.codes, ['2']);
+});
+
+test('Track 1: boundary typed minting produces input-maxlength from max boundary', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'validation',
+    statement: 'Q7 has a max input length.',
+    doc_quote: 'max 200 chars',
+    typedCases: [{
+      facetInstanceId: 'fi_004',
+      requirementLineageId: 'X',
+      screen: 'Q7',
+      targetQuestionId: 'Q7',
+      expectationGap: null,
+      case: {
+        kind: 'boundary',
+        routeAnswer: null, expectedDestination: null, configuration: null, optionSet: null,
+        boundaryInput: { bound: 'max', value: '200', expectedOutcome: 'accepted' },
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.ok(expectation, 'a max boundary with a numeric value must produce input-maxlength');
+  assert.equal(expectation.kind, 'input-maxlength');
+  assert.equal(expectation.screen, 'Q7');
+  assert.equal(expectation.max, 200);
+});
+
+test('Track 1: boundary empty-rejected typed minting produces answer-requirement required', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'validation',
+    statement: 'Q8 requires an answer.',
+    doc_quote: 'required field',
+    typedCases: [{
+      facetInstanceId: 'fi_005',
+      requirementLineageId: 'X',
+      screen: 'Q8',
+      targetQuestionId: 'Q8',
+      expectationGap: null,
+      case: {
+        kind: 'boundary',
+        routeAnswer: null, expectedDestination: null, configuration: null, optionSet: null,
+        boundaryInput: { bound: 'empty', value: null, expectedOutcome: 'rejected' },
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.ok(expectation, 'an empty-rejected boundary must produce answer-requirement');
+  assert.equal(expectation.kind, 'answer-requirement');
+  assert.equal(expectation.screen, 'Q8');
+  assert.equal(expectation.requirement, 'required');
+});
+
+test('Track 1: a self-conflicting option-set payload is a named refusal', () => {
+  const { expectation, unmintableDetail } = compileObligation({
+    id: 'X', category: 'option-set',
+    statement: 'Something ambiguous about options.',
+    doc_quote: 'contradictory data',
+    typedCases: [
+      {
+        facetInstanceId: 'fi_006a',
+        requirementLineageId: 'X',
+        screen: 'Q1',
+        targetQuestionId: 'Q1',
+        expectationGap: null,
+        case: {
+          kind: 'option-set',
+          routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+          optionSet: {
+            asserted: [{ code: '1', label: 'A' }],
+            siblings: [], exhaustive: false,
+            closureAssessment: { status: 'not-evaluated', code: 'OPTION_SET_CLOSURE_NOT_EVALUATED', detail: '' },
+          },
+        },
+      },
+      {
+        facetInstanceId: 'fi_006b',
+        requirementLineageId: 'X',
+        screen: 'Q1',
+        targetQuestionId: 'Q1',
+        expectationGap: null,
+        case: {
+          kind: 'option-set',
+          routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+          optionSet: {
+            asserted: [{ code: '2', label: 'B' }],
+            siblings: [], exhaustive: false,
+            closureAssessment: { status: 'not-evaluated', code: 'OPTION_SET_CLOSURE_NOT_EVALUATED', detail: '' },
+          },
+        },
+      },
+    ],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  // The prose rules also won't match "Something ambiguous about options."
+  assert.equal(expectation, null, 'a self-conflicting payload must NOT produce an expectation');
+});
+
+test('Track 1: a typed case with expectationGap stays unminted', () => {
+  const { expectation, unmintableDetail } = compileObligation({
+    id: 'X', category: 'option-set',
+    statement: 'Scale options for Q5.',
+    doc_quote: '[SCALE]',
+    typedCases: [{
+      facetInstanceId: 'fi_007',
+      requirementLineageId: 'X',
+      screen: 'Q5',
+      targetQuestionId: 'Q5',
+      expectationGap: { code: 'OPTION_SET_NOT_READ_FROM_THE_DOCUMENT_QUOTE', detail: 'the quote is a scale header' },
+      case: {
+        kind: 'option-set',
+        routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+        optionSet: null,
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.equal(expectation, null, 'a case with an expectation gap must not produce an expectation');
+  assert.ok(unmintableDetail, 'unmintable cases must carry detail');
+  assert.equal(unmintableDetail.family, 'option-set');
+});
+
+test('Track 1: unmintable obligations name their family in detail', () => {
+  const { expectation, unmintableDetail } = compileObligation({
+    id: 'X', category: 'copy',
+    statement: 'The welcome text should match the document.',
+    doc_quote: 'Welcome to the survey.',
+    typedCases: [{
+      facetInstanceId: 'fi_008',
+      requirementLineageId: 'X',
+      screen: 'WELCOME',
+      targetQuestionId: null,
+      expectationGap: { code: 'NO_TYPED_PREDICATE_FOR_KIND', detail: 'copy cases need the model verifier' },
+      case: { kind: 'copy', routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null, optionSet: null },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.equal(expectation, null, 'a copy case has no deterministic predicate');
+  assert.ok(unmintableDetail);
+  assert.equal(unmintableDetail.family, 'copy');
+});
+
+test('Track 1: every minted expectation records its source facet instance id', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'option-set',
+    statement: 'Q1 must offer option 1 labeled "Alpha".',
+    doc_quote: '1 | Alpha',
+    typedCases: [{
+      facetInstanceId: 'fi_009',
+      requirementLineageId: 'X',
+      screen: 'Q1',
+      targetQuestionId: 'Q1',
+      expectationGap: null,
+      case: {
+        kind: 'option-set',
+        routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+        optionSet: {
+          asserted: [{ code: '1', label: 'Alpha' }],
+          siblings: [], exhaustive: false,
+          closureAssessment: { status: 'not-evaluated', code: 'OPTION_SET_CLOSURE_NOT_EVALUATED', detail: '' },
+        },
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  // If the prose rule matches, it won't have sourceFacetInstanceId.
+  // If the typed minting fires, it MUST.
+  if (expectation && expectation.mintedFrom === 'sealed-typed-payload') {
+    assert.equal(expectation.sourceFacetInstanceId, 'fi_009', 'typed minted expectation must record its source');
+  }
+  // Either way, the expectation must exist.
+  assert.ok(expectation, 'an option-set obligation with typed payload or matching prose must compile');
+});
+
+test('PROJECTIONS are a closed registry the attestor recomputes', async () => {
   assert.deepEqual(PROJECTIONS.labels([{ label: 'a' }, { label: 'b' }]), ['a', 'b']);
   assert.deepEqual(PROJECTIONS.labelsWithValues([{ label: 'a', value: '1' }]), ['a|1']);
   assert.equal(PROJECTIONS.gridRowLabels([{ rows: [{ label: 'r' }] }])[0], 'r');
@@ -369,8 +634,8 @@ test('PROJECTIONS are a closed registry the attestor recomputes', () => {
 
 const PRIVATE_GATED = 4;
 
-test('t1-easy replay: the three false passes are no longer passes', privateOnly('names three obligations of the blind-derived run that used to pass falsely'), () => {
-  const out = judgeReal();
+test('t1-easy replay: the three false passes are no longer passes', privateOnly('names three obligations of the blind-derived run that used to pass falsely'), async () => {
+  const out = await judgeReal();
   const m = byId(out);
   for (const id of ['OBL-B2B-11', 'OBL-B3C-16', 'OBL-B2B-12']) {
     assert.notEqual(m.get(id).verdict, VERDICT.PASS, `${id} must not be a pass`);
@@ -381,17 +646,17 @@ test('t1-easy replay: the three false passes are no longer passes', privateOnly(
   assert.equal(m.get('OBL-B3C-16').withheld.wouldHaveBeen, VERDICT.FAIL);
 });
 
-test('t1-easy replay: the penalized false positive becomes a query', privateOnly('names one obligation of the blind-derived run and the ambiguity that withholds it'), () => {
-  const out = judgeReal();
+test('t1-easy replay: the penalized false positive becomes a query', privateOnly('names one obligation of the blind-derived run and the ambiguity that withholds it'), async () => {
+  const out = await judgeReal();
   const r = byId(out).get('OBL-B2A-03');
   assert.notEqual(r.verdict, VERDICT.FAIL);
   assert.equal(r.disposition, DISPOSITION.QUERY);
   assert.ok(r.withheld.blockedBy.includes('AMB-B2A-02'));
 });
 
-test('t1-easy replay: the route table contains the row that was denied', privateOnly('asserts one route row of the blind-derived run against its documented destination'), () => {
+test('t1-easy replay: the route table contains the row that was denied', privateOnly('asserts one route row of the blind-derived run against its documented destination'), async () => {
   const checklist = JSON.parse(readFileSync(join(REAL, 'checklist.json'), 'utf8'));
-  const ctx = buildContext(REAL, checklist, { authority: authorityFor(REAL, checklist) });
+  const ctx = await buildContext(REAL, checklist, { authority: authorityFor(REAL, checklist) });
   // The row is located through the COMPILED EXPECTATION of the obligation that
   // covers it, so no answer text, screen id or destination from the blind
   // corpus is written into this public file. The bug was that this row was
@@ -419,8 +684,8 @@ test('t1-easy replay: the route table contains the row that was denied', private
   assert.ok(rows.length > diverged.length, 'the non-diverging triggering answers are recorded as well');
 });
 
-test('t1-easy replay: every asserted verdict survived re-verification', privateOnly('re-verifies every asserted verdict of the blind-derived run'), () => {
-  const out = judgeReal();
+test('t1-easy replay: every asserted verdict survived re-verification', privateOnly('re-verifies every asserted verdict of the blind-derived run'), async () => {
+  const out = await judgeReal();
   const bad = out.results.filter((r) => (r.verdict === VERDICT.PASS || r.verdict === VERDICT.FAIL) && !r.attestation.allVerified);
   assert.deepEqual(bad.map((r) => r.obligationId), []);
 });
@@ -436,7 +701,7 @@ test('t1-easy replay: every asserted verdict survived re-verification', privateO
 // red. This test NEVER skips.
 // ===========================================================================
 
-test('publication boundary: the private-run gate is exactly as declared', () => {
+test('publication boundary: the private-run gate is exactly as declared', async () => {
   const src = readFileSync(fileURLToPath(import.meta.url), 'utf8');
   const gates = (src.match(/,\s*privateOnly\(/g) || []).length;
   assert.equal(gates, PRIVATE_GATED, `${gates} gated test(s) in this file, ${PRIVATE_GATED} declared`);

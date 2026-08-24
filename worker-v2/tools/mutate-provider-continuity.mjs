@@ -19,7 +19,7 @@ const TAXONOMY = "auth, balance and invalid-request failures never buy a doomed 
 const AVAILABILITY = "rate limiting and provider 5xx explicitly remain fallback-eligible";
 const BOUNDS = "dormant continuity remains bounded while ordinary pass B budgets only its Pro leg";
 const ARTIFACT = "pass-B reuses only artifacts from the exact same continuity plan";
-const TELEMETRY = "a missing usage array is a cache miss, never a silently trusted artifact";
+const TELEMETRY = "a missing usage array is terminal current-key corruption, never a silently trusted or re-bought artifact";
 const RETAINED = "failed Pro receipts survive a later bounded retry instead of disappearing on reclaim";
 const CRASH = "artifact-before-accounting and accounting-before-step-commit both settle exactly once";
 const STAGE_SETTLEMENT = "the pass-B stage settles a pre-existing unaccounted artifact before evaluating it";
@@ -43,8 +43,8 @@ await runMutantSuite({
       name: "Pro output billed at Flash rate",
       breaks: "the fallback cost ledger under-reports the actual model purchase",
       file: CLIENT,
-      find: '"deepseek-v4-pro": { inputUsdPerMTok: 0.435, outputUsdPerMTok: 0.87 },',
-      replace: '"deepseek-v4-pro": { inputUsdPerMTok: 0.435, outputUsdPerMTok: 0.28 },',
+      find: '"deepseek-v4-pro": { inputUsdPerMTok: 1.32, outputUsdPerMTok: 3.96 },',
+      replace: '"deepseek-v4-pro": { inputUsdPerMTok: 1.32, outputUsdPerMTok: 1.32 },',
       kills: [RECEIPTS],
     },
     {
@@ -166,19 +166,35 @@ await runMutantSuite({
       kills: [ARTIFACT],
     },
     {
-      name: "artifact usage receipt becomes optional",
-      breaks: "persisted extraction work can be trusted without model/cost provenance",
+      name: "a missing artifact usage receipt becomes a cache miss",
+      breaks: "malformed exact-key paid authority can be overwritten and re-bought",
       file: PASS_B,
-      find: "if (usages === null || !usages.every(isCallUsage)) return null;",
-      replace: "if (false) return null;",
+      find:
+        "    if (\n" +
+        "      usages === null || !usages.every(isCallUsage) ||\n" +
+        "      !Number.isSafeInteger(attempts) || (attempts as number) < 0\n" +
+        '    ) return invalid("attempts/usages are malformed");',
+      replace:
+        "    if (usages === null) return null;\n" +
+        "    if (\n" +
+        "      !usages.every(isCallUsage) ||\n" +
+        "      !Number.isSafeInteger(attempts) || (attempts as number) < 0\n" +
+        '    ) return invalid("attempts/usages are malformed");',
       kills: [TELEMETRY],
     },
     {
+      // Re-anchored 16 Aug 2026: the pass-B failure ladder rewrote the failure-write's
+      // surrounding lines; the carried-forward property itself is unchanged. Single-line
+      // anchor per this file's doctrine (the old three-line anchor went BROKEN-ANCHOR in
+      // the v36/v37 trailing fences).
       name: "prior failed receipts are not carried forward",
       breaks: "a later retry overwrites the earlier paid receipt chain",
       file: PASS_B,
-      find: "            attempts,\n            usages: [...priorUsages, ...failureUsages],\n            detail,",
-      replace: "            attempts,\n            usages: failureUsages,\n            detail,",
+      // The failure-write line now appears twice (chunk + sweep paths share the shape), so
+      // the mutation empties the chunk path's prior-usage FETCH instead — same property
+      // (prior paid receipts survive into every later write), unique single-line anchor.
+      find: "  const priorUsages = priorUsagesByChunk.get(chunk.n) ?? [];",
+      replace: "  const priorUsages = [];",
       kills: [RETAINED],
     },
     {
@@ -212,17 +228,11 @@ await runMutantSuite({
       kills: [COLLISION],
     },
     {
-      name: "completed pass ignores provider plan",
-      breaks: "a whole pass-B payload from another continuity plan is silently adopted",
-      file: STAGE,
-      find:
-        '    if (pass === "b" && parsed.providerPlanIdentity !== deepseekPassBIdentity(env)) return null;\n' +
-        "    if (!Array.isArray(parsed.requirements)) return null;\n" +
-        "    const hash = ",
-      replace:
-        "    if (false) return null;\n" +
-        "    if (!Array.isArray(parsed.requirements)) return null;\n" +
-        "    const hash = ",
+      name: "completed pass identity omits output-affecting reasoning policy",
+      breaks: "a completed payload and its units can be reused under a different pass-B request shape",
+      file: CLIENT,
+      find: '    `reasoning:${leg.reasoningEffort}`,',
+      replace: "    // MUTANT: output-affecting reasoning policy omitted from provider-plan identity",
       kills: [COMPLETE],
     },
     {

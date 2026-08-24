@@ -2,6 +2,10 @@
 import { assert, assertEq, suite, test } from "../testkit.mjs";
 import { testEnv, worker } from "./_helpers.mjs";
 import { contractBody } from "../fixtures/v2-fixture.mjs";
+import {
+  PASS_A_PRIMARY_GROUNDING_SUPPLEMENT_KIND,
+  primaryGroundingLimitationsSupplement,
+} from "../../shared/pass-a-grounding-limitations.mjs";
 
 const option = (label, code = null) => ({ code, label });
 const requirement = (status = "entailed") => ({
@@ -677,6 +681,20 @@ suite("W5 — occurrence/history receipts and runtime work", () => {
 
   test("signed RunRecord projection preserves exact W5 program, attempt, certificate, receipt, and refusal authority", async () => {
     const mod = await worker();
+    const passAHash = `sha256:${"a".repeat(64)}`;
+    const revisionBase = contractBody();
+    const currentRevision = {
+      ...revisionBase,
+      contractRevisionId: "cr",
+      requirements: [],
+      facetInstances: [],
+      contractSupplements: [primaryGroundingLimitationsSupplement([], passAHash)],
+      extraction: {
+        ...revisionBase.extraction,
+        passAHash,
+        primaryGroundingLimitationsVersion: PASS_A_PRIMARY_GROUNDING_SUPPLEMENT_KIND,
+      },
+    };
     const seedExecution = {
       programHash: "sha256:program", doneAlternativeIds: ["SEED"], committedAttemptIds: ["att"], reservation: null,
       attempts: [{ alternativeId: "SEED", attemptId: "att", artifactHash: "sha256:artifact", artifactKey: "seed-attempt.json" }],
@@ -688,7 +706,7 @@ suite("W5 — occurrence/history receipts and runtime work", () => {
     };
     const record = mod.assembleRecord.assembleRunRecordV2({
       runId: "v2r_w5", envelope: { input: {} },
-      revision: { contractRevisionId: "cr", requirements: [], facetInstances: [], contractSupplements: [] },
+      revision: currentRevision,
       contractHash: "sha256:contract", observations: [], evidence: [], itemResults: [], walks: [],
       probeCapabilityLimitations: [], targetIdentity: { source: "fixture", targetBuildId: null, note: "" },
       checkpoint: { execution: { seedExecution }, usage: null }, planHash: "plan", startedAt: "start", endedAt: "end",

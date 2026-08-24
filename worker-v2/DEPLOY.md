@@ -17,12 +17,12 @@ newer promotions and must not be edited until a real promotion completes.
 | Worker and origin | **survey-qa-v2** / **https://survey-qa-v2.wellshit.co.in** behind Access |
 | Workflows | **survey-qa-v2-run** / **SurveyRunWorkflowV2**; **survey-qa-v2-visual-shadow** / **SurveyVisualShadowWorkflowV1** |
 | Storage boundary | **EVIDENCE**, bucket **survey-qa-artifacts**, keys under **v2/**; runs use **v2r_** |
-| Standard source cap | exactly **$5** in the frozen config and authenticated policy |
+| Standard source cap | exactly **$15** in the frozen config and authenticated policy |
 | Wall cap | exactly **14,400,000 ms** (4 hours) |
 | Source-map boundary | top-level `upload_source_maps` is exactly boolean `false`; fresh pinned-Wrangler outdirs contain zero maps and supersede prior map-bearing evidence |
-| Normal extraction topology | exact `grok-4.6` Pass A + `deepseek-v4-pro` Pass B |
+| Normal extraction topology | exact `grok-4.5` Pass A + `deepseek-v4-pro` Pass B |
 | Eligible Pass-A fallback | retained eligible typed Grok failure only -> `deepseek-v4-flash`; Flash+Pro is reduced same-provider independence and must not seal as normal corroboration |
-| Grok rate prerequisite | exact 16-field `survey-qa-grok-rate-binding/1.0.0` binding for `grok-4.6`: source `owner-dashboard-copy`; policy `max-known-text-tier/1.0.0`; observed **2026-08-13**; canonical SHA-256 `be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5`; 500K context; 200K long-context threshold; <=200K input/cached/output **$2/$0.50/$6 per Mtok**; >200K **$4/$1/$12 per Mtok**; max-known reservation **$4/$12 per Mtok** |
+| Grok rate prerequisite | exact 16-field `survey-qa-grok-rate-binding/1.0.0` binding for `grok-4.5`: source `owner-console-confirmation`; policy `max-known-text-tier/1.0.0`; observed **2026-08-15**; canonical SHA-256 `9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e`; 500K context; 200K long-context threshold; <=200K input/cached/output **$2/$0.30/$6 per Mtok**; >200K **$4/$0.60/$12 per Mtok**; max-known reservation **$4/$12 per Mtok** |
 | Secrets Store bindings | ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, XAI_API_KEY |
 | Direct secret names | RECORD_SIGNING_KEY, RECORD_SIGNING_KEY_ID, JUDGEMENT_SIGNING_KEY, JUDGEMENT_SIGNING_KEY_ID |
 
@@ -43,10 +43,10 @@ reviewed config is now the only variable source.
 
 ## Known baseline and rollback target
 
-The last audited control-plane state served
-**bfb69e09-726b-46a3-b1e7-5e0d34b91e23** alone at 100%. The prior known Version was
-**58412f12-235d-47b7-8d45-bd5d0f52d0a7**. Therefore the exact rollback target for the next
-promotion is **bfb69e09-726b-46a3-b1e7-5e0d34b91e23**.
+The last audited control-plane state (release 2026-08-23-phaseB.8, DEPLOYED.md §13) serves
+**de8b83fb-340f-43d3-b4fe-92f311336bb9** alone at 100%. The prior serving Version was
+**be5d8337-32e9-4de9-b1d3-7cfc09ad2af3**. Therefore the exact rollback target for the next
+promotion is **de8b83fb-340f-43d3-b4fe-92f311336bb9**.
 
 If the fresh pre-upload snapshot differs, stop and record a new baseline. DEPLOYED.md is
 history, not current rollback authority.
@@ -69,6 +69,29 @@ $Origin = "https://survey-qa-v2.wellshit.co.in"
 if (-not (Test-Path -LiteralPath $Node -PathType Leaf)) { throw "Pinned Node missing" }
 if ((& $Node --version).Trim() -ne "v24.18.0") { throw "Unexpected Node version" }
 if ((& $Node $Wrangler --version).Trim() -ne "4.106.0") { throw "Unexpected Wrangler version" }
+
+function Resolve-ExactRealDirectory([string] $Directory, [string] $Label) {
+  if ([string]::IsNullOrWhiteSpace($Directory)) { throw "$Label directory is required" }
+  $Item = Get-Item -LiteralPath $Directory -Force -ErrorAction Stop
+  if (-not $Item.PSIsContainer -or
+      ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw "$Label directory is not a real non-reparse directory"
+  }
+  $Lexical = [IO.Path]::GetFullPath($Item.FullName)
+  $RealScript = "const fs = require('node:fs'); process.stdout.write(fs.realpathSync.native(process.argv[1]));"
+  $RealOutput = @(& $Node -e $RealScript $Lexical)
+  $NativeExit = $LASTEXITCODE
+  if ($NativeExit -ne 0 -or $RealOutput.Count -ne 1 -or
+      [string]::IsNullOrWhiteSpace([string] $RealOutput[0])) {
+    throw "$Label directory has no canonical real path"
+  }
+  $Real = [string] $RealOutput[0]
+  if (-not [string]::Equals($Real, $Lexical, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "$Label directory path is not canonical or traverses a link"
+  }
+  return $Real
+}
+
 $Dirty = @(& git -C $Repo status --porcelain=v1 --untracked-files=all)
 if ($LASTEXITCODE -ne 0 -or $Dirty.Count -ne 0) { throw "Release worktree is not clean" }
 
@@ -84,8 +107,15 @@ if ($ReleaseId -notmatch "^[A-Za-z0-9.-]{6,80}$") { throw "Invalid release id" }
 $Evidence = Join-Path $Repo (".local-private\v2-release-" + $ReleaseId)
 if (Test-Path -LiteralPath $Evidence) { throw "Choose a fresh evidence directory" }
 New-Item -ItemType Directory -Path $Evidence -ErrorAction Stop | Out-Null
+$OfflineTempCandidate = Join-Path $Evidence "offline-temp"
+if (Test-Path -LiteralPath $OfflineTempCandidate) { throw "Offline temp directory already exists" }
+New-Item -ItemType Directory -Path $OfflineTempCandidate -ErrorAction Stop | Out-Null
+$OfflineTemp = Resolve-ExactRealDirectory $OfflineTempCandidate "offline gate temp"
+$env:TEMP = $OfflineTemp
+$env:TMP = $OfflineTemp
+if ($env:TEMP -cne $OfflineTemp -or $env:TMP -cne $OfflineTemp) { throw "Offline temp environment changed" }
 [ordered]@{ releaseId=$ReleaseId; head=$Head; v2Tree=$V2Tree; configSha256=$ConfigHash;
-  lockSha256=$LockHash; node="v24.18.0"; wrangler="4.106.0" } |
+  lockSha256=$LockHash; offlineTemp=$OfflineTemp; node="v24.18.0"; wrangler="4.106.0" } |
   ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Evidence "frozen-identity.json") -Encoding utf8
 
 function Assert-Frozen {
@@ -94,6 +124,8 @@ function Assert-Frozen {
   if ((& git -C $Repo rev-parse HEAD).Trim() -ne $Head) { throw "HEAD changed after freeze" }
   if ((Get-FileHash -LiteralPath $Config -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ConfigHash) { throw "Config changed" }
   if ((Get-FileHash -LiteralPath $Lock -Algorithm SHA256).Hash.ToLowerInvariant() -ne $LockHash) { throw "Lockfile changed" }
+  if ((Resolve-ExactRealDirectory $OfflineTemp "offline gate temp") -cne $OfflineTemp) { throw "Offline temp identity changed" }
+  if ($env:TEMP -cne $OfflineTemp -or $env:TMP -cne $OfflineTemp) { throw "Offline temp environment changed" }
 }
 ~~~
 
@@ -106,12 +138,20 @@ fresh evidence directory.
 
 ~~~powershell
 Set-Location $V2
+# STATIC ANCHOR CHECK FIRST — seconds, not hours. Five drifted mutation anchors were each
+# discovered by a multi-hour battery run during the 23-24 Aug release trains; this check
+# resolves every campaign's find-anchors against current source up front, so drift fails
+# here in seconds instead of deep inside the supervised battery.
+& $Node tools\check-mutation-anchors.mjs
+if ($LASTEXITCODE -ne 0) { throw "mutation anchor check failed" }
 & $Node "..\node_modules\typescript\bin\tsc" --noEmit -p tsconfig.json
 if ($LASTEXITCODE -ne 0) { throw "typecheck failed" }
 & $Node tools\test.mjs
 if ($LASTEXITCODE -ne 0) { throw "core suite failed" }
 & $Node ui\test-activity-view.mjs
 if ($LASTEXITCODE -ne 0) { throw "activity UI suite failed" }
+& $Node ui\test-document-reading-view.mjs
+if ($LASTEXITCODE -ne 0) { throw "document-reading UI suite failed" }
 & $Node tools\test-visual.mjs
 if ($LASTEXITCODE -ne 0) { throw "visual suite failed" }
 & $Node tools\probe-input-types.mjs
@@ -121,12 +161,14 @@ $MutationHarnesses = @(
   "mutate-allocation.mjs",
   "mutate-api-authority.mjs",
   "mutate-axis-closure.mjs",
+  "mutate-a3-memory.mjs",
   "mutate-binding.mjs",
   "mutate-claims.mjs",
   "mutate-closure.mjs",
   "mutate-docx-blocks.mjs",
   "mutate-endings.mjs",
   "mutate-exercised-gate.mjs",
+  "mutate-extraction-wire.mjs",
   "mutate-expander.mjs",
   "mutate-fabrication-paths.mjs",
   "mutate-grey-programming-logic.mjs",
@@ -134,6 +176,7 @@ $MutationHarnesses = @(
   "mutate-grok-rate-attestation.mjs",
   "mutate-input-coverage.mjs",
   "mutate-keyspace.mjs",
+  "mutate-model-verifier.mjs",
   "mutate-openai-computer-use.mjs",
   "mutate-option-set.mjs",
   "mutate-p0-honesty-blockers.mjs",
@@ -145,25 +188,32 @@ $MutationHarnesses = @(
   "mutate-projection-carry.mjs",
   "mutate-provider-activation.mjs",
   "mutate-provider-continuity.mjs",
+  "mutate-reading-base.mjs",
   "mutate-report-case-identity.mjs",
   "mutate-report-defects.mjs",
   "mutate-report-fanout.mjs",
+  "mutate-route-labels.mjs",
   "mutate-screenout-retry.mjs",
   "mutate-source-block-output-privacy.mjs",
   "mutate-source-roles.mjs",
   "mutate-stale-extraction-artifacts.mjs",
+  "mutate-committed-evidence.mjs",
+  "mutate-startup-budget.mjs",
   "mutate-survival-hints.mjs",
+  "mutate-walker-economy.mjs",
   "mutate-sweeper-identity.mjs",
   "mutate-verifier.mjs",
   "mutate-verifier-destination.mjs",
   "mutate-verifier-identity.mjs",
+  "mutate-multilane.mjs",
   "mutate-w4-select.mjs",
-  "mutate-w5-seeded-traversal.mjs"
+  "mutate-w5-seeded-traversal.mjs",
+  "mutate-unit-reuse.mjs"
 )
 $MutationLibraries = @(
   "mutate-runner.mjs"
 )
-if ($MutationHarnesses.Count -ne 41 -or $MutationLibraries.Count -ne 1) {
+if ($MutationHarnesses.Count -ne 51 -or $MutationLibraries.Count -ne 1) {
   throw "Mutation manifest cardinality changed"
 }
 $MutationDeclared = @($MutationHarnesses + $MutationLibraries)
@@ -503,6 +553,26 @@ foreach ($Harness in $MutationHarnesses) {
   $WatchdogPath = Join-Path $MutationEvidence ($Stem + ".watchdog.json")
   $HarnessSha256 =
     (Get-FileHash -LiteralPath $HarnessPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  # PER-HARNESS CHILD TIMEOUT: mutate-w4-select.mjs deliberately removes a WAIT bound in the
+  # walker (the forward-release early return and the silent-refusal press bound), so two of its
+  # mutated children are genuinely slower than the unmutated tree. Under the default 120 000 ms
+  # those children are killed mid-run and score NO-RUN — fail-closed but untested, which is
+  # the same as zero coverage for those guards. The documented requirement is 600 000 ms
+  # (see the mutate-w4-select.mjs header, commit 8235e36).
+  $HarnessChildTimeoutMs = if ($Harness -ceq "mutate-w4-select.mjs") { 600000 } else { $MutationChildTimeoutMs }
+  # PER-HARNESS OUTER TIMEOUT: the same campaign has 89 mutants, each cycle rebuilding the
+  # bundle and running its kill selection, and two mutants legitimately run children up to
+  # the 600 000 ms child bound above. At release 2026-08-23-phaseB.6 the whole campaign hit
+  # the generic 7 200 000 ms ceiling and the supervisor killed it (receipt exitCode 124,
+  # timedOut true) after every one of the other 49 campaigns had passed. The campaign is
+  # healthy — chunked execution (W4_CHUNK_FROM/TO) scores 89/89 — it has simply outgrown
+  # the generic two-hour budget. Three times the child bound's headroom: 14 400 000 ms.
+  $HarnessTimeoutMs = if ($Harness -ceq "mutate-w4-select.mjs") { 14400000 } else { $MutationTimeoutMs }
+  $HarnessWatchdogMs = [int64] $HarnessTimeoutMs +
+    [int64] $MutationDrainGraceMs + [int64] $MutationSupervisorStartupGraceMs
+  if ($HarnessWatchdogMs -gt [int]::MaxValue) {
+    throw "Per-harness supervisor watchdog exceeds Process.WaitForExit capacity"
+  }
   $MutationRequest = [ordered]@{
     schema = "survey-qa-windows-job-supervisor-request/2.0.0"
     supervisorScriptPath = $MutationSupervisor
@@ -520,14 +590,14 @@ foreach ($Harness in $MutationHarnesses) {
     stdoutPath = $StdoutLog
     stderrPath = $StderrLog
     receiptPath = $ReceiptPath
-    timeoutMs = $MutationTimeoutMs
-    innerTimeoutMs = $MutationChildTimeoutMs
+    timeoutMs = $HarnessTimeoutMs
+    innerTimeoutMs = $HarnessChildTimeoutMs
     drainGraceMs = $MutationDrainGraceMs
     transcriptLimitBytes = $MutationTranscriptLimitBytes
     environment = [ordered]@{
       mode = "replace"
       entries = [ordered]@{
-        MUTATION_CHILD_TIMEOUT_MS = [string] $MutationChildTimeoutMs
+        MUTATION_CHILD_TIMEOUT_MS = [string] $HarnessChildTimeoutMs
         OS = "Windows_NT"
         PATH = ""
         PSMODULEPATH = ""
@@ -656,7 +726,7 @@ foreach ($Harness in $MutationHarnesses) {
     $SupervisorPid = $SupervisorProcess.Id
     $SupervisorStartTimeUtc = $SupervisorProcess.StartTime.ToUniversalTime().ToString("o")
     $SupervisorExitedWithinBound =
-      $SupervisorProcess.WaitForExit([int] $MutationSupervisorWatchdogMs)
+      $SupervisorProcess.WaitForExit([int] $HarnessWatchdogMs)
     if (-not $SupervisorExitedWithinBound) {
       $SupervisorWatchdogFired = $true
       $SupervisorKillReason = "outer-watchdog"
@@ -716,9 +786,9 @@ foreach ($Harness in $MutationHarnesses) {
       processStarted = $SupervisorStarted
       processId = $SupervisorPid
       processStartTimeUtc = $SupervisorStartTimeUtc
-      waitTimeoutMs = $MutationSupervisorWatchdogMs
-      outerTimeoutMs = $MutationTimeoutMs
-      innerTimeoutMs = $MutationChildTimeoutMs
+      waitTimeoutMs = $HarnessWatchdogMs
+      outerTimeoutMs = $HarnessTimeoutMs
+      innerTimeoutMs = $HarnessChildTimeoutMs
       drainGraceMs = $MutationDrainGraceMs
       startupGraceMs = $MutationSupervisorStartupGraceMs
       transcriptLimitBytes = $MutationTranscriptLimitBytes
@@ -771,9 +841,9 @@ foreach ($Harness in $MutationHarnesses) {
       $PersistedWatchdog.processId -ne $SupervisorPid -or
       $PersistedWatchdog.processId -le 0 -or
       $PersistedWatchdog.processStartTimeUtc -cne $SupervisorStartTimeUtc -or
-      $PersistedWatchdog.waitTimeoutMs -ne $MutationSupervisorWatchdogMs -or
-      $PersistedWatchdog.outerTimeoutMs -ne $MutationTimeoutMs -or
-      $PersistedWatchdog.innerTimeoutMs -ne $MutationChildTimeoutMs -or
+      $PersistedWatchdog.waitTimeoutMs -ne $HarnessWatchdogMs -or
+      $PersistedWatchdog.outerTimeoutMs -ne $HarnessTimeoutMs -or
+      $PersistedWatchdog.innerTimeoutMs -ne $HarnessChildTimeoutMs -or
       $PersistedWatchdog.drainGraceMs -ne $MutationDrainGraceMs -or
       $PersistedWatchdog.startupGraceMs -ne $MutationSupervisorStartupGraceMs -or
       $PersistedWatchdog.transcriptLimitBytes -ne $MutationTranscriptLimitBytes -or
@@ -828,7 +898,7 @@ foreach ($Harness in $MutationHarnesses) {
       $ReceiptStartedUtc.UtcDateTime.ToString("o") -cne $Receipt.startedUtc -or
       $ReceiptEndedUtc.UtcDateTime.ToString("o") -cne $Receipt.endedUtc -or
       $ReceiptEndedUtc -lt $ReceiptStartedUtc -or
-      $Receipt.durationMs -gt $MutationSupervisorWatchdogMs) {
+      $Receipt.durationMs -gt $HarnessWatchdogMs) {
     throw ("Mutation supervisor receipt timestamps are incoherent: " + $Harness)
   }
   foreach ($HashValue in @(
@@ -900,8 +970,8 @@ foreach ($Harness in $MutationHarnesses) {
       $Receipt.initialActiveProcesses -ne 1 -or
       -not $Receipt.handlesClosed -or
       -not $Receipt.outputHashesCapturedBeforeClose -or
-      $Receipt.timeoutMs -ne $MutationTimeoutMs -or
-      $Receipt.innerTimeoutMs -ne $MutationChildTimeoutMs -or
+      $Receipt.timeoutMs -ne $HarnessTimeoutMs -or
+      $Receipt.innerTimeoutMs -ne $HarnessChildTimeoutMs -or
       $Receipt.drainGraceMs -ne $MutationDrainGraceMs -or
       $Receipt.transcriptLimitBytes -ne $MutationTranscriptLimitBytes -or
       $Receipt.transcriptLimitExceeded -ne $false -or
@@ -1014,34 +1084,39 @@ setEq((c.workflows||[]).map(w=>[w.name,w.binding,w.class_name].join("|")),[
 setEq((c.secrets_store_secrets||[]).map(s=>s.binding),[
  "ANTHROPIC_API_KEY","DEEPSEEK_API_KEY","GEMINI_API_KEY","MISTRAL_API_KEY","XAI_API_KEY"],"wrong secret bindings");
 const v=c.vars||{}; eq(v.V2_PREFIX,"v2/","wrong prefix");
-eq(v.CAP_STANDARD_MAX_USD,"5","source cap not $5");
+eq(v.CAP_STANDARD_MAX_USD,"15","source cap not $15");
 eq(v.CAP_WALL_CLOCK_MS,"14400000","wall cap not 4h"); eq(v.VISUAL_SHADOW_ENABLED,"false","visual enabled");
 if(Object.hasOwn(v,"DEV_SEED")) fail("DEV_SEED present");
-eq(v.GROK_MODEL,"grok-4.6","wrong normal Pass-A model");
+eq(v.GROK_MODEL,"grok-4.5","wrong normal Pass-A model");
 const grokRateBinding={
  GROK_RATE_BINDING_SCHEMA:"survey-qa-grok-rate-binding/1.0.0",
  GROK_RATE_POLICY:"max-known-text-tier/1.0.0",
- GROK_RATE_SOURCE:"owner-dashboard-copy",
- GROK_RATE_ATTESTED_MODEL:"grok-4.6",
- GROK_RATE_ATTESTED_AT:"2026-08-13",
- GROK_RATE_RECEIPT_SHA256:"be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+ GROK_RATE_SOURCE:"owner-console-confirmation",
+ GROK_RATE_ATTESTED_MODEL:"grok-4.5",
+ GROK_RATE_ATTESTED_AT:"2026-08-15",
+ GROK_RATE_RECEIPT_SHA256:"9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
  GROK_CONTEXT_WINDOW_TOKENS:"500000",
  GROK_INPUT_USD_PER_MTOK:"2",
- GROK_CACHED_INPUT_USD_PER_MTOK:"0.5",
+ GROK_CACHED_INPUT_USD_PER_MTOK:"0.3",
  GROK_OUTPUT_USD_PER_MTOK:"6",
  GROK_LONG_CONTEXT_THRESHOLD_TOKENS:"200000",
  GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK:"4",
- GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK:"1",
+ GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK:"0.6",
  GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK:"12",
  GROK_MAX_INPUT_USD_PER_MTOK:"4",
  GROK_MAX_OUTPUT_USD_PER_MTOK:"12"
 };
 eq(Object.keys(grokRateBinding).length,16,"wrong canonical Grok rate-binding field count");
 for(const [key,expected] of Object.entries(grokRateBinding)) eq(v[key],expected,"wrong canonical Grok rate binding: "+key);
-eq(v.DEEPSEEK_MODEL,"deepseek-v4-flash","wrong eligible Grok-fallback model"); eq(v.DEEPSEEK_INPUT_USD_PER_MTOK,"0.14","wrong Flash input rate");
-eq(v.DEEPSEEK_OUTPUT_USD_PER_MTOK,"0.28","wrong Flash output rate"); eq(v.DEEPSEEK_FALLBACK_MODE,"on-error","wrong DeepSeek route mode");
+eq(v.DEEPSEEK_CONTEXT_WINDOW_TOKENS,"1000000","wrong DeepSeek V4 context-window attestation");
+eq(v.EXTRACT_MODEL_INPUT_MAX_BYTES,"450000","wrong extraction request-body ceiling");
+eq(v.EXTRACT_MAX_OUTPUT_TOKENS,"32000","wrong extraction output-token ceiling");
+eq(v.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES,"120000","wrong Pass-A synthesis catalogue ceiling");
+eq(v.DEEPSEEK_MODEL,"deepseek-v4-flash","wrong eligible Grok-fallback model"); eq(v.DEEPSEEK_INPUT_USD_PER_MTOK,"0.44","wrong Flash input rate");
+eq(v.DEEPSEEK_OUTPUT_USD_PER_MTOK,"1.32","wrong Flash output rate"); eq(v.DEEPSEEK_FALLBACK_MODE,"on-error","wrong DeepSeek route mode");
 eq(v.DEEPSEEK_FALLBACK_MODEL,"deepseek-v4-pro","wrong normal Pass-B model"); eq(v.DEEPSEEK_FALLBACK_MAX_ATTEMPTS,"1","unbounded Pass-B attempts");
-eq(v.DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK,"0.435","wrong Pro input rate"); eq(v.DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK,"0.87","wrong Pro output rate");
+eq(v.DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK,"1.32","wrong Pro input rate"); eq(v.DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK,"3.96","wrong Pro output rate");
+eq(v.EXEC_PER_CASE_TIMEOUT_MS,"900000","wrong per-case execution timeout"); // v96: reduced from 1800000 to bound zombie-browser hangs (deep walk ~9 min, 15 min is 67% headroom)
 if(c.durable_objects||c.d1_databases||c.migrations) fail("unexpected state or migration binding");
 console.log("v2 release config gate: PASS");
 '@
@@ -1151,8 +1226,19 @@ or unknown-state instance in either production Workflow.
 
 ~~~powershell
 $WorkflowNames = @("survey-qa-v2-run","survey-qa-v2-visual-shadow")
-function Invoke-WorkflowPage([string]$Name,[string]$Suffix,[string[]]$Args) {
-  $text = (& $Node $Wrangler workflows instances list $Name --config $Config @Args 2>&1 | Out-String)
+# TWO POWERSHELL 5.1 TRAPS, both measured at release 2026-08-23-phaseB.8 §5:
+# (1) under $ErrorActionPreference=Stop, PowerShell's own 2>&1 wraps each native stderr
+#     line as an ErrorRecord — wrangler prints the empty-proof sentence as a WARNING on
+#     stderr, and the record formatting prefixes and line-wraps it, breaking the exact
+#     match even when production is genuinely quiet. The OS-level merge (cmd /c ... 2>&1)
+#     returns plain text with the same evidence and exit code.
+# (2) a parameter named $Args collides with the automatic variable; the body can read the
+#     (empty) automatic instead of the bound list, silently dropping --status/--per-page
+#     and turning a filtered emptiness proof into an unfiltered history listing.
+function Invoke-WorkflowPage([string]$Name,[string]$Suffix,[string[]]$ListArgs) {
+  $CmdLine = '"' + $Node + '" "' + $Wrangler + '" workflows instances list ' + $Name +
+    ' --config "' + $Config + '" ' + ($ListArgs -join ' ') + ' 2>&1'
+  $text = (& $env:ComSpec /d /c $CmdLine | Out-String)
   if ($LASTEXITCODE -ne 0) { throw ("Workflow query failed: "+$Name+" "+$Suffix) }
   if ([string]::IsNullOrWhiteSpace($text)) { throw ("Empty Workflow response: "+$Name) }
   $text | Set-Content -LiteralPath (Join-Path $Evidence ($Name+"-"+$Suffix+".txt")) -Encoding utf8
@@ -1279,7 +1365,7 @@ Repeat anonymous Access and workers.dev checks. Then authenticate through Access
 operator browser or service-token environment without writing credentials to disk:
 
 - GET **/api/v2/health** must be 200 and identify v2;
-- GET **/api/v2/policy** must report the exposed standard maximum **$5** and wall
+- GET **/api/v2/policy** must report the exposed standard maximum **$15** and wall
   **14,400,000 ms**;
 - dev-only routes stay 404 because DEV_SEED is absent;
 - submit a reviewed .docx and survey URL only after the Workflow interlock remains clear.

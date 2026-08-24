@@ -79,12 +79,28 @@ const FILES = [
   // window. It does not bite the small fixture, which is why it needed closing before a real
   // client questionnaire arrived. Evidence they can fail: `tools/mutate-passa.mjs`.
   "./tests/d22-passa-waves.test.mjs",
+  "./tests/d22-passa-split-oversized.test.mjs",
   "./tests/passa-cross-window-synthesis.test.mjs",
+  "./tests/passa-primary-persistence.test.mjs",
   "./tests/cross-window-coverage-wire.test.mjs",
+  "./tests/primary-grounding-coverage-wire.test.mjs",
+  "./tests/passa-completion-shape.test.mjs",
   "./tests/passa-final-validity.test.mjs",
+  // Item-level grounding degradation and Gemini budget mode.
+  "./tests/grounding-degradation.test.mjs",
+  // Slice-level terminality derives from durable window terminality.
+  // v30 regression: terminal:false on the artifact must produce terminalFailure:false on the slice.
+  "./tests/slice-terminality.test.mjs",
+  // Reader-writer round-trip: every writer-producible artifact variant (ok, failed-retryable,
+  // failed-terminal, degraded, wire-ceiling) must read back without becoming kind:"invalid".
+  // v31 regression: Gemini-primary receipt-1 was rejected by the Grok-only coherence validator.
+  // Pinned fixture: the real v31 artifact bytes from production R2.
+  "./tests/reader-writer-roundtrip.test.mjs",
   // Terminal extraction refusals report durable operational evidence without inventing QA claims.
   // Malformed or missing receipts must leave no report pointer.
   "./tests/terminal-failure-report.test.mjs",
+  // Real-link artifacts are permanent even under the former delete/age variables.
+  "./tests/permanent-run-retention.test.mjs",
   // D23 — the verifier's structural floor may DEMOTE, but it may not author a VERDICT out of
   // the producer's own `error`/`contradiction` payload keys. Dormant until model-observations
   // land, at which point every failed model call would have become a defect claim about the
@@ -135,6 +151,9 @@ const FILES = [
   // The second test is the guard in the other direction: absent → the field is OMITTED, so a
   // run without a note is byte-identical to the shape that shipped before it existed.
   "./tests/heartbeat-note.test.mjs",
+  // Durable, closed, privacy-safe questionnaire-reading visibility. Counterexamples
+  // deliberately corrupt reconciled counts and add an undeclared field.
+  "./tests/document-reading-visibility.test.mjs",
   // D29 — the last two ways a confident defect could be reported about a HEALTHY survey: a
   // lost advance-timeout race read as a rejection (four states, delta witness, control
   // attribution, keyed on `advanced` and not on `blocked`), and a prose back-reference read as
@@ -417,11 +436,11 @@ const FILES = [
   // The signed cross-surface ordering gate is mutation-proved by
   // `tools/mutate-axis-closure.mjs`.
   "./tests/axis-closure.test.mjs",
-  // D47 — every screen epoch is captured as three explicitly paired modalities: the legacy
-  // screen JSON, a viewport PNG and Chrome's full accessibility tree. Exact hashes/media and
+  // D47 — every current screen epoch is captured as four explicitly paired modalities: the legacy
+  // screen JSON, a viewport PNG, a bounded PDF and Chrome's full accessibility tree. Exact hashes/media and
   // viewport/scroll/DPR metadata bind them; browser handles are stripped through a closed
   // projection; unavailable APIs and every node/depth/value/byte cap are named and counted.
-  // The negative fixture fails all three capture surfaces independently so a silent catch makes
+  // The negative fixture fails all four capture surfaces independently so a silent catch makes
   // the suite red instead of turning absence into an empty tree.
   "./tests/d47-capture-ax.test.mjs",
   // D49 — screenshot pixels own visible option grouping, AX is the independent semantic
@@ -444,11 +463,15 @@ const FILES = [
   // Neither leg can impersonate the independent Grok method.
   // Evidence these can fail: tools/mutate-provider-continuity.mjs.
   "./tests/provider-continuity.test.mjs",
-  // Exact grok-4.6 owner-dashboard tier binding. Production has a flat ledger, so it
+  // Provider cumulative spend ledger: cross-run accounting and spend enforcement.
+  // Evidence these can fail: each test documents what mutation makes it fail; the negative
+  // fixture proves the enforcement check is structurally capable of failing.
+  "./tests/provider-spend-ledger.test.mjs",
+  // Exact grok-4.5 owner-console-confirmed tier binding. Production has a flat ledger, so it
   // conservatively charges max(base,long), and every malformed/zero/mixed binding refuses
   // before Secrets Store or network I/O. Evidence: tools/mutate-grok-cost-policy.mjs.
   "./tests/grok-cost-policy.test.mjs",
-  // The only authority allowed to attach a price to exact grok-4.6: a fixed, authenticated,
+  // The only authority allowed to attach a price to exact grok-4.5: a fixed, authenticated,
   // no-inference catalogue GET with a closed sanitised receipt.  It is deliberately not a
   // production config writer; operator review is a separate step.
   "./tests/grok-rate-attestation.test.mjs",
@@ -463,6 +486,11 @@ const FILES = [
   // correct when the SEAL still reads it, not when the parser test passes.
   // Evidence they can fail: `tools/mutate-docx-blocks.mjs`.
   "./tests/docx-robustness.test.mjs",
+  // D56 — merged-cell inheritance, gate strengthening, ambiguity funnel, entailed over-claims.
+  // The four fixes the anti-gaslight audit demands, proved on synthetic fixtures.
+  "./tests/d56-merged-cell-inheritance.test.mjs",
+  "./tests/bounded-source-block-jsonl.test.mjs",
+  "./tests/model-input-wire-ceiling.test.mjs",
   // COMMENT REVIEWER IDENTITY IS NOT SOURCE AUTHORITY. The parser currently carries it in
   // `SourceBlock.origin`; this executable fixture proves the operator catalogue keeps the
   // comment block while withholding author/initials and counting that omission. Removing
@@ -473,6 +501,10 @@ const FILES = [
   // zero credited walks; privacy sentinels cover URL userinfo/path/query/fragment, raw screen
   // and action text, errors, and W5 receipt content. A corrupt total is the negative fixture.
   "./tests/execution-activity-api.test.mjs",
+  // API AUTHORITY: screen discovery comes only from the immutable walk index; every typed
+  // modality is exact-bound to its catalog row, raw failure/content text cannot serialize,
+  // pagination advances over walk+epoch positions, and the renderer remains network-free.
+  "./tests/screens-api.test.mjs",
   // P0 fail-closed browser/progress honesty blockers: disjoint multi-question ownership,
   // occurrence-aware advancement, structural native-choice groups, ambiguous forward controls,
   // and corrupt durable progress that must never reset to empty.
@@ -480,6 +512,142 @@ const FILES = [
   // Mutation execution is closed over exact declared guard names, and the release runbook
   // accounts for every harness separately from the shared library.
   "./tests/mutation-execution-contract.test.mjs",
+  // Pass-B failure ladder: expansion envelope normalization, semantic retry with echo,
+  // per-obligation salvage, continuation past terminal chunks (including the 20% rate
+  // guardrail), and reason-code deduplication. Each test has a mutation anchor that
+  // identifies the line whose removal turns the test red.
+  "./tests/pass-b-expansion-envelope.test.mjs",
+  "./tests/pass-b-semantic-retry.test.mjs",
+  "./tests/pass-b-obligation-salvage.test.mjs",
+  "./tests/pass-b-continuation.test.mjs",
+  "./tests/pass-b-reason-codes.test.mjs",
+  "./tests/pass-b-real-replay.test.mjs",
+  // The bounded pool behind the derive-fanout-scale fix, tested against the REAL module.
+  "./tests/concurrent-pool.test.mjs",
+  // passOnly:"B" guard: refuse when no persisted evaluated pass-A authority exists,
+  // proceed (zero Grok calls) when it does. The refusal test FAILS on the code before
+  // the guard because stagePassA was called unconditionally and bought Grok.
+  "./tests/dev-extract-passb-guard.test.mjs",
+  // D56 — THE FIRST REAL BROWSER WALK'S THREE AMENDMENTS. Option-linked specify fill (the
+  // 433-case killer), timeout+batch-residual guard, and structural terminal-page arm. Each
+  // test is written to FAIL on the pre-fix behaviour. Evidence they can fail: the fixtures
+  // replicate the captured shapes generically, and the isPlatformNavigationWidget and
+  // detectOptionLinkedSpecifyInputs tests cover both the positive and negative directions.
+  "./tests/d56-walker-first-real-walk-fixes.test.mjs",
+  // ALLOCATION UNDER A CARRY-FORWARD CEILING — a sum-to-100 grid whose rows display a
+  // per-row cap piped from an earlier answer. The split reads the cap off the row it is
+  // filling (read-only cell, or the site's own words) and places the mass where every
+  // displayed bound holds; a screen showing no bound keeps amendment 7's split byte for
+  // byte. Evidence these can fail: tools/mutate-w4-select.mjs.
+  "./tests/d57-ceiling-allocation.test.mjs",
+  // MULTI-LANE EXECUTION — flag-gated concurrent browser walks behind EXEC_LANES.
+  // When EXEC_LANES=1 (default), behavior is byte-identical to today's sequential path.
+  // Evidence these can fail: tools/mutate-multilane.mjs.
+  "./tests/multilane.test.mjs",
+  // Per-answer routing rules with verbatim labels, anchor-artifact cleaning, and the full
+  // path from route_answers through sealedRouteDestinations to stampSurvivalHints. The
+  // anchor cleaner strips rendering-artifact markers with a named, counted transformation.
+  // Evidence they can fail: tools/mutate-route-labels.mjs.
+  "./tests/route-label-extraction.test.mjs",
+  // COST BOOKING — replayed units book zero with provenance, rejected-before-generation
+  // books zero, timeouts keep the conservative ceiling. The measured defect: a fully-cached
+  // run re-booked persisted artifacts and tripped the extraction budget gate over money
+  // nobody spent. Evidence they can fail: tools/mutate-grok-cost-policy.mjs (cost-booking mutants).
+  "./tests/cost-booking.test.mjs",
+  // CROSS-RUN EXTRACTION UNIT REUSE — content-addressed reuse of completed extraction units
+  // across runs. An adopted unit is indistinguishable from a fresh one except for its zero-cost
+  // provenance-marked usage. Identity-miss tests prove each field in the digest is load-bearing.
+  // Evidence they can fail: the mutation anchors in unit-reuse.ts and pass-b.ts.
+  "./tests/unit-reuse.test.mjs",
+  // CROSS-RUN PASS-A SYNTHESIS ADOPTION — the multi-window fixture that proves the
+  // synthesis unit-reuse path is correct and justifies PASS_A_SYNTHESIS_ADOPTION_ENABLED.
+  // (a) identity-hit adoption, (b) identity-miss on different window candidates,
+  // (c) revalidation refusal fallback, (d) failed synthesis never indexed.
+  // Evidence they can fail: tools/mutate-unit-reuse.mjs (synthesis mutants).
+  "./tests/synthesis-adoption.test.mjs",
+  // COMPLETION LABELS — step-timeout classification, failure-report-with-disagreement, and
+  // dev-drive targeting. Each relabeled path is tested from a fixture checkpoint to the
+  // expected label. Evidence they can fail: mutation anchors in classifyFailure, failure.ts
+  // usageDisagreement path, and dev-drive targetQuestionId validation.
+  "./tests/completion-labels.test.mjs",
+  // D58 — STARTUP BUDGET: a walk that hangs before its first step is recorded as
+  // "walk-never-started" with the sub-phase that hung, the real wallMs, and ONE retry.
+  // Consumers bucket it as infrastructure ("not-reached"), never as a site accusation.
+  // Evidence they can fail: tools/mutate-startup-budget.mjs.
+  "./tests/d58-startup-budget.test.mjs",
+  // C1+C2 — WALKER ECONOMY. Per-walk progress watchdog: fires when no step completes for
+  // EXEC_WALK_STALL_MS and commits the partial observation. Browser-death batch abandonment:
+  // stops feeding paths to a dead browser session. Evidence: tools/mutate-walker-economy.mjs.
+  "./tests/d58-walker-economy.test.mjs",
+  // D59 — PLATFORM NAVIGATION WIDGET TEXT STRIPPING. (Built as "d58" in a parallel worktree
+  // the same hour as the startup-budget suite; renumbered here at integration — the file name
+  // keeps its birth name, the suite ordinal is what this list orders by.) The skip menu select
+  // renders question ids into visibleText; tokenOnScreen found 23+ sealed ids on every screen
+  // and screenIsQuestion returned false for every target on the v98 run (12/12 STEP_NOT_BOUND).
+  // The fix strips navigation widget option labels from the text before scanning. Evidence
+  // they can fail: tools/mutate-verifier-identity.mjs (nav-widget strip mutant).
+  "./tests/d58-nav-widget-text-stripping.test.mjs",
+  // D59 — RECORD HONESTY. Four defects from the harvest-run audit (24 Aug): false zeros
+  // on pivot timeouts, crash-as-screenout, label coherence across three layers, and
+  // select-grid-cell readback receipts. Evidence each can fail: reverting the fix makes
+  // the specific assertion fail (wallMs was 0, ending was screened-out for crashes, grid
+  // mismatches were undetected).
+  "./tests/d59-record-honesty.test.mjs",
+  // D101 — SUPERSEDED RECORDINGS OF RETRIED STEPS. The last blocker before the first
+  // attested, publishable result: a retried Workflow step re-captures the same screens with
+  // different bytes, the collision check fires on what is actually a retried recording, and
+  // the run mints no judgement. FIX 1 resolves at the judge side; FIX 2 guards the capture
+  // path. Evidence they can fail: tools/mutate-verifier.mjs (superseded mutants).
+  "./tests/d101-superseded-recordings.test.mjs",
+  // REPLAY FENCE — the write fence that keeps a replay from mutating the source run's
+  // data. The mutant proof: removing the rewrite lets a write hit the source key, and
+  // the guard test goes red before anything touches a real key.
+  "./tests/replay-fence.test.mjs",
+  // A1 — THE COMMITTED-ATTEMPT EVIDENCE FILTER. Keeps only evidence rows whose attemptId
+  // appears in the committed walk ledger (progress.walks), plus document-side rows with no
+  // attemptId. Kills the duplicate-evidence refusal at its source by removing orphan rows
+  // from killed attempts before they reach the signed record, the judge's manifest, or any
+  // downstream consumer. The same-ref different-hash shape from v99/v100 is covered
+  // deterministically without byte-fetching. Missing ledger = loud refusal.
+  // Evidence they can fail: tools/mutate-committed-evidence.mjs.
+  "./tests/committed-evidence-filter.test.mjs",
+  // A2+A4+A5 — THE LOAD PATH: economics, resilience, bounded refusals. Receipts: the
+  // v100 judging tail paid ~5 minutes per stage fetching a 9,340-entry catalogue serially;
+  // derive-verdicts fetched it three times for 19 minutes of pure waste; one corrupt blob
+  // among 9,340 killed the whole run; the collision message at 588 pairs was ~120KB.
+  // Four properties: catalog:false (aggregator never lists), shared listing (list once,
+  // read many), bounded concurrency (R2 GETs overlap at 24-wide), demotion (one bad
+  // entry = limitation, not a death), truncation (collision message < 10KB, count kept).
+  // Evidence they can fail: each test documents its mutant anchor.
+  "./tests/a2-loadpath.test.mjs",
+  // A3 — MEMORY-SAFE JUDGING. The last Phase A blocker: `mintJudgement` died at 185s on the
+  // v100 bench replay because the isolate ran out of memory loading ~530MB of artifact bytes.
+  // The streaming loader splits artifacts into engine-read (JSON, written to tmpdir) and
+  // hash-verify-only (PNGs, hashed and released in batches). The authority accepts pre-verified
+  // hashes so `manifestComplete` covers the full set without requiring every blob on disk.
+  // Evidence they can fail: tools/mutate-a3-memory.mjs.
+  "./tests/a3-memory-safe-judge.test.mjs",
+  // D1 — SCREENER-SURVIVAL IMPROVEMENTS. Four outcomes: code-based matching, recovery
+  // prefer_labels, termination announcement detection, documented-accepted numeric values.
+  // Evidence they can fail: tools/mutate-survival-hints.mjs (extended).
+  "./tests/d1-screener-survival.test.mjs",
+  // D59 — END-PAGE OUTCOME MISLABEL AND TERMINATION BANNERS IN ENDING EVIDENCE. Two
+  // defects from the completed-run audits: (1) the report showed the loop exit reason as
+  // primary instead of the ending kind; (2) mid-walk termination announcements were not
+  // surfaced in the ending evidence. Evidence they can fail: remove the
+  // terminationAnnouncements arg from classifyEnding; revert the render-html.mjs label
+  // ordering.
+  "./tests/d59-ending-outcome-labels.test.mjs",
+  // D59 — MODEL VERIFIER LANE v1. The copy family, flags only. Four properties: disabled gate
+  // = byte-identical, lane can never emit fail, model-call failure demotes to named insufficient,
+  // flags never change verdict counts. Evidence they can fail: tools/mutate-model-verifier.mjs.
+  "./tests/d59-model-verifier-lane.test.mjs",
+  // D60 — SCREENER-STEERING DEFECT CHAIN (4A–4D + reporting + outcomeDetail). Four defects
+  // from the 24 Aug run where 73/73 walks screened out. The continue-directive arm (4A),
+  // negation detection (4B), code-uniqueness guard (4C), avoid-label strictness (4D),
+  // the unstampable-directive limitation, and the outcomeDetail honesty fix.
+  // Evidence they can fail: tools/mutate-survival-hints.mjs (extended).
+  "./tests/d60-screener-steering-chain.test.mjs",
 ];
 
 export async function runVerification({

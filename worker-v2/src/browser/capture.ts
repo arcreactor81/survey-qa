@@ -167,6 +167,35 @@ export async function captureScreenshot(
 }
 
 /**
+ * Store the browser's bounded print rendition for this exact step/slot.
+ *
+ * `rendered-pdf` is explicit in the epoch; no reader is allowed to recover this association
+ * from the `.pdf` suffix or catalogue order. The generic catalogue retains type `other` for
+ * schema compatibility, while the typed ref and declared media type carry the modality.
+ */
+export async function captureRenderedPdfRef(
+  ctx: CaptureContext,
+  pdf: Uint8Array,
+  slot: string,
+  stepIndex: number,
+): Promise<ScreenArtifactRef & { kind: "rendered-pdf" }> {
+  const ref = observationRef(ctx, `step-${String(stepIndex).padStart(3, "0")}-${slot}.pdf`);
+  const sourceEvidenceId = `EV-${ctx.pathId}-${stepIndex}-${slot}-pdf`;
+  const entry = await putEvidence(ctx.env, {
+    runId: ctx.runId,
+    bytes: pdf,
+    mediaType: "application/pdf",
+    type: "other",
+    attemptId: ctx.attemptId,
+    routeId: ctx.pathId,
+    witnesses: ctx.witnesses,
+    sourceEvidenceId,
+    artifactRef: ref,
+  });
+  return typedRef(entry, "rendered-pdf", ref, sourceEvidenceId, "application/pdf");
+}
+
+/**
  * Chrome's sanitised accessibility tree plus the pairing metadata for its exact screen epoch.
  * The payload is already a closed plain-data shape; no ElementHandle can cross this boundary.
  */

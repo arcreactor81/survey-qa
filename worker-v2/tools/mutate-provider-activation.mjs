@@ -4,18 +4,19 @@
 import { runMutantSuite } from "./mutate-runner.mjs";
 
 const GROK = "src/llm/grok.ts";
+const CHAT = "src/llm/chat.ts";
 const DEEPSEEK = "src/llm/deepseek.ts";
 const PASS_A = "src/extract/pass-a.ts";
 const STAGE = "src/workflow/stages/extract.ts";
 
-const NORMAL = "normal extraction buys exact Grok 4.6 plus Pro and zero Flash requests";
+const NORMAL = "normal extraction buys exact Grok 4.5 plus Pro and zero Flash requests";
 const ELIGIBLE = "eligible quota/non-response/invalid-content failures activate exactly Flash";
 const INELIGIBLE = "authentication and bad requests fail honestly and make zero Flash requests";
 const UNBOUND_MODEL = "a missing or mismatched Grok response model cannot authorize Flash";
 const RESTART = "restart after trigger persistence resumes Flash without retrying Grok";
-const RATES = "Grok 4.6 rate/model attestation fails before any request";
+const RATES = "Grok 4.5 rate/model attestation fails before any request";
 const RATE_STAGE = "an unattested Grok rate is a named stage refusal with zero requests";
-const INDEPENDENCE = "Flash plus Pro is retained but explicitly refused as independent corroboration";
+const INDEPENDENCE = "a receipted Flash substitute stops before later windows or a final Pass-A payload can authorize Pass B";
 
 await runMutantSuite({
   title: "PROVIDER ACTIVATION MUTANTS",
@@ -46,11 +47,19 @@ await runMutantSuite({
       kills: [ELIGIBLE],
     },
     {
-      name: "unbound Grok model identity authorizes Flash",
-      breaks: "an alias, redirect, or missing model echo can authorize another provider purchase",
+      name: "unbound Grok model identity mints fallback authority",
+      breaks: "an alias, redirect, or missing model echo can poison the canonical window with a pending trigger",
       file: GROK,
       find: '    return error.usage.usageSource !== "unverified-model-rate-ceiling";',
       replace: "    return true;",
+      kills: [UNBOUND_MODEL],
+    },
+    {
+      name: "unbound Grok model identity is laundered as a bound receipt",
+      breaks: "an alias, redirect, or missing model echo can satisfy both authorization and replay guards",
+      file: CHAT,
+      find: "        usedUnboundModelRateCeiling = true;",
+      replace: "        usedUnboundModelRateCeiling = false;",
       kills: [UNBOUND_MODEL],
     },
     {
@@ -58,27 +67,46 @@ await runMutantSuite({
       breaks: "a crash between the two purchases can rebuy Grok and erase fallback authority",
       file: PASS_A,
       find:
-        "          await env.EVIDENCE.put(\n" +
-        "            windowKey(runId, n),\n" +
-        "            JSON.stringify({\n" +
-        "              windowId: origin,\n" +
-        "              windowNumber: n,\n" +
-        "              blockIds,\n" +
-        "              parserVersion,\n" +
-        "              promptVersion: PROMPT_VERSION_A,\n" +
-        "              providerRouteIdentity,\n" +
-        '              status: "failed",',
+        `          const retainedFallbackCheckpoint = await persistPrimaryWindowArtifact(
+            env,
+            runId,
+            n,
+            w,
+            parserVersion,
+            origin,
+            predecessorAuthority,
+            fallbackArtifact,
+            (artifact) =>
+              artifact.kind === "failed" &&
+              artifact.terminal === false &&
+              artifact.fallbackTrigger?.grokUsageEventId === authorizedTrigger.grokUsageEventId,
+          );
+          if (retainedFallbackCheckpoint !== null) {
+            // The checkpoint committed despite its transport error. Preserve the existing
+            // commit-before-effect boundary: end this wave pending and let the next wave buy
+            // Flash from retained authority rather than adding another provider effect to
+            // the invocation that observed an uncertain write response.
+            throw new Error("pass-A fallback checkpoint was recovered after its transport failed");
+          }
+          const committedFallbackCheckpoint = await readWindow(
+            env, runId, n, w, parserVersion, origin,
+          );
+          const committedFallbackAuthority = storageAuthorityOf(committedFallbackCheckpoint);
+          if (
+            committedFallbackCheckpoint?.kind !== "failed" ||
+            committedFallbackCheckpoint.terminal ||
+            committedFallbackCheckpoint.fallbackTrigger?.grokUsageEventId !==
+              authorizedTrigger.grokUsageEventId ||
+            committedFallbackAuthority === null ||
+            committedFallbackAuthority.bodyText !== fallbackArtifact
+          ) {
+            throw new Error(
+              "pass-A fallback checkpoint committed but its exact strict predecessor authority could not be reread",
+            );
+          }
+          predecessorAuthority = committedFallbackAuthority;`,
       replace:
-        "          if (false) await env.EVIDENCE.put(\n" +
-        "            windowKey(runId, n),\n" +
-        "            JSON.stringify({\n" +
-        "              windowId: origin,\n" +
-        "              windowNumber: n,\n" +
-        "              blockIds,\n" +
-        "              parserVersion,\n" +
-        "              promptVersion: PROMPT_VERSION_A,\n" +
-        "              providerRouteIdentity,\n" +
-        '              status: "failed",',
+        "          // MUTANT: buy Flash without persisting or rereading fallback authority.",
       kills: [RESTART],
     },
     {
@@ -108,10 +136,10 @@ await runMutantSuite({
     },
     {
       name: "Grok accepts an alias or redirect-prone model id",
-      breaks: "response identity and configured price identity are no longer exact grok-4.6",
+      breaks: "response identity and configured price identity are no longer exact grok-4.5",
       file: GROK,
-      find: "  if (model !== DEFAULT_GROK_MODEL) {",
-      replace: "  if (false) {",
+      find: 'export const DEFAULT_GROK_MODEL = "grok-4.5";',
+      replace: 'export const DEFAULT_GROK_MODEL = "grok-4.5-latest";',
       kills: [RATES],
     },
     {
@@ -134,10 +162,10 @@ await runMutantSuite({
       kills: [NORMAL],
     },
     {
-      name: "same-provider fallback can consolidate as independent",
-      breaks: "Flash plus Pro can seal under the ordinary two-provider claim",
+      name: "receipted Flash substitute bypasses the terminal Pass-A refusal",
+      breaks: "same-family Pass A can continue toward a final payload and authorize Pass B",
       file: STAGE,
-      find: '  if (passA.providerIndependence === "reduced-same-provider-fallback") {',
+      find: '  if (result.providerIndependence === "reduced-same-provider-fallback") {',
       replace: "  if (false) {",
       kills: [INDEPENDENCE],
     },

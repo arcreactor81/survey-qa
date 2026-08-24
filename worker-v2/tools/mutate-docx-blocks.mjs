@@ -51,7 +51,7 @@ const DOCX = "src/extract/docx-blocks.ts";
 
 const SCORE_GATE = "the frozen 20-file corpus scores 89/99 and the FAILING SET is exactly the known ten";
 const EXTRA_GATE =
-  "the fixtures the frozen corpus lacks — gridSpan header, gridBefore, ruby, dropdown values, declared header row — score 31/31";
+  "the fixtures the frozen corpus lacks — gridSpan header, gridBefore, ruby, dropdown values, declared header row — score 38/38";
 const SEAL = "THE SEAL: parseDocumentedOptions recovers all four dropdown options, every code null, no invented label";
 const SEAL_VALUES = "THE SEAL, on Word's DEFAULT dropdown: no code is minted from w:value, and no label is doubled";
 
@@ -277,12 +277,12 @@ const MUTANTS = [
     kills: ["NO Word table row or first column becomes semantic scope; repeat metadata is separately validated"],
   },
   {
-    name: "vertical merges are not reported as a structural limitation",
-    breaks: "an empty continuation cell disappears without saying why no semantic row relation was inferred",
+    name: "vertical merge inheritance is disabled — continuation cells stay empty",
+    breaks: "a merged action cell spanning N option rows binds to only the anchor row; continuation rows produce no block and their routing rules are silently lost",
     file: DOCX,
-    find: "  if (verticalMergeCount > 0) {",
-    replace: "  if (false) {",
-    kills: ["vMerge is retained as a counted structural limitation, never promoted to semantic rowHeader"],
+    find: "          if (clean(cell.text).length === 0 && clean(anchor.text).length > 0) {",
+    replace: "          if (false && clean(cell.text).length === 0 && clean(anchor.text).length > 0) {",
+    kills: ["shape 1: a 2-row merge (S30 TERMINATE spanning options 2-3) inherits to the continuation row"],
   },
   {
     name: "w:gridBefore is ignored",

@@ -7,6 +7,10 @@ import {
   crossWindowLimitationSupplement,
   limitationsFromPassAPayload,
 } from "../../shared/cross-window-limitations.mjs";
+import {
+  primaryGroundingLimitationsFromPassAPayload,
+  primaryGroundingLimitationsSupplement,
+} from "../../shared/pass-a-grounding-limitations.mjs";
 
 export const PASS_A_CROSS_WINDOW_LIMITATION_REFUSAL =
   "extraction-pass-a-cross-window-limitation-invalid";
@@ -17,13 +21,19 @@ export class PassACrossWindowLimitationRefusal extends Error {
   constructor(detail: string) {
     super(
       `PASS_A_CROSS_WINDOW_LIMITATION_INVALID: ${detail}. Refusing to seal because candidate-only ` +
-        `reconciliation cannot silently receive whole-document discovery credit.`,
+        `reconciliation or ungrounded primary candidates cannot silently receive document coverage credit.`,
     );
     this.name = "PassACrossWindowLimitationRefusal";
   }
 }
 
-/** One keyed R2 read, no listing, alternate artifact, or trust in caller-supplied rows. */
+/**
+ * One keyed R2 read, no listing, alternate artifact, or trust in caller-supplied rows.
+ *
+ * The historical name is retained for callers, but this now seals both independent Pass-A
+ * document-coverage ceilings. The grounding marker is always present, including an evaluated
+ * empty array, while the existing cross-window supplement remains unchanged.
+ */
 export async function passACrossWindowSupplementsForSeal(
   env: Env,
   runId: string,
@@ -51,9 +61,14 @@ export async function passACrossWindowSupplementsForSeal(
     throw new PassACrossWindowLimitationRefusal(`Pass-A artifact is not JSON (${String(error)})`);
   }
   try {
-    return limitationsFromPassAPayload(payload).map((row) =>
-      crossWindowLimitationSupplement(row, expectedPassAHash),
+    const crossWindow = limitationsFromPassAPayload(payload).map((row) =>
+      crossWindowLimitationSupplement(row, expectedPassAHash)
     );
+    const primaryGrounding = primaryGroundingLimitationsFromPassAPayload(payload);
+    return [
+      ...crossWindow,
+      primaryGroundingLimitationsSupplement(primaryGrounding, expectedPassAHash),
+    ];
   } catch (error) {
     throw new PassACrossWindowLimitationRefusal(error instanceof Error ? error.message : String(error));
   }

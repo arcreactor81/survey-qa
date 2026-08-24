@@ -253,6 +253,17 @@ test("an explicit failed AX capture stays named unavailable without inventing em
   });
 });
 
+test("a PDF-only visibility limitation does not invalidate verified pixel and AX input", async () => {
+  const fx = await fixture();
+  fx.row.limitationKinds = ["capture-failure:pdf-capture-timeout"];
+  fx.row.cacheInputIdentity = await mod.visualWork.computeCaptureInputIdentity(fx.row);
+
+  const result = await mod.loader.loadVisualEpochInput(fx.env, fx.runId, fx.row);
+  assert.equal(result.state, "loaded");
+  assert.equal(result.input.screenshot.mediaType, "image/png");
+  assert.equal(result.input.accessibility.state, "captured");
+});
+
 test("a self-consistent swapped screen ref is rejected by the AX epoch pairing", async () => {
   const fx = await fixture();
   const alternate = await put(fx, {

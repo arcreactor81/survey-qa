@@ -604,6 +604,11 @@ export async function buildAndStoreReport(env: Env, runId: string): Promise<Buil
           href: `/api/v2/runs/${runId}/evidence`,
           note: "bytes are re-hashed on every fetch and fail closed on mismatch",
         },
+        {
+          label: "View captured screens",
+          href: `/runs/${runId}#captured-screens`,
+          note: "opens recorded capture epochs with screenshot, extracted JSON, and PDF where recorded",
+        },
       ],
     });
   } catch (err) {
@@ -1147,7 +1152,9 @@ async function auditEvidence(
     const href = `/api/v2/runs/${runId}/evidence/${e.evidenceId}/content`;
     if (entryBudget <= 0 || e.size > byteBudget) {
       // Say "not audited", never "verified". An unchecked artifact is not a checked one.
-      put({ state: "missing", note: "not audited at render time: byte budget exhausted" });
+      // And never "missing" — that means a GET that actually failed. An artifact the render
+      // did not open is not an artifact storage lost.
+      put({ state: "unaudited", note: "not audited at render time: byte budget exhausted" });
       continue;
     }
     entryBudget -= 1;

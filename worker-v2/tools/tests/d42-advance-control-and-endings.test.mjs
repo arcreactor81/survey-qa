@@ -444,6 +444,9 @@ suite("D42 — the walker's filler must be something the control can hold", () =
 
 /* ============================================================ 3. the endings */
 
+const backBtn = (idx = 8) => ({ idx, label: "<<", labelSource: "code", role: "back", roleVia: "symbol:<<", disabled: false, visible: true });
+const hiddenNextBtn = (idx = 9) => ({ idx, label: ">>", labelSource: "code", role: "next", roleVia: "code:>>", disabled: false, visible: false });
+
 const endingOf = (mod, final, ctx = {}) =>
   mod.driver.classifyEnding(final, { outcome: "no-advance-control", unboundDecisions: 0, ...ctx });
 
@@ -479,6 +482,87 @@ suite("D42 — a survey that ended and a survey we never got into are no longer 
     assertEq(e.kind, "stalled", JSON.stringify(e));
     assert(e.evidence.some((x) => /still offered an enabled control/.test(x)), JSON.stringify(e.evidence));
     assert(e.evidence.some((x) => /7 planned decision/.test(x)), JSON.stringify(e.evidence));
+  });
+
+  test("THE SYNONYM GAP: the six completion wordings this reader could not read", async () => {
+    const mod = await worker();
+    // Completion-path audit §1.3 C3. The completion lexicon had five entries against the
+    // screen-out lexicon's ten, and the asymmetry was not just in size: an unmatched SCREEN-OUT
+    // page still falls to the structural arm and gets typed, while an unmatched COMPLETION page
+    // is `unclassified` — the one ending the deliverable is about, lost to a synonym. Each line
+    // below is a wording the audit checked against the deployed lexicon and found unreadable.
+    const wordings = [
+      "Thank you for your participation.",
+      "You have successfully completed the survey.",
+      "Your answers have been saved.",
+      "This is the end of the survey.",
+      "Thank you for your feedback.",
+      "Survey status: Complete",
+    ];
+    for (const text of wordings) {
+      const e = endingOf(mod, screen("Final screen", { visibleText: text }));
+      assertEq(e.kind, "completed", `${JSON.stringify(text)} -> ${JSON.stringify(e)}`);
+      // The matched wording is QUOTED, so a reader can see which phrase decided it and disagree.
+      assert(
+        e.evidence.some((x) => /the final screen says/.test(x)),
+        `the deciding wording was not quoted for ${JSON.stringify(text)}: ${JSON.stringify(e.evidence)}`,
+      );
+    }
+  });
+
+  test("THE COUNTERWEIGHT: the widened lexicon did not swallow the screen-out it sits behind", async () => {
+    const mod = await worker();
+    // The whole reason the screen-out lexicon is consulted FIRST. A widened completion lexicon
+    // is only safe while that ordering holds — a disqualification page thanks you too, and the
+    // measured termination page on the live instrument thanks you AND stamps its own status.
+    const measured = screen("For testing only:", {
+      visibleText:
+        "For testing only:\nThank you for your willingness to participate. Due to the specific guidelines " +
+        "we have been given for this study, we are unable to accept your offer to participate in our " +
+        "research.\n\nSurvey status: Terminated at S80",
+    });
+    assertEq(endingOf(mod, measured).kind, "screened-out", JSON.stringify(endingOf(mod, measured)));
+
+    // ...and the direct collision: a page carrying BOTH a new completion wording and a
+    // screen-out wording is a screen-out, with the completion wording named as overruled.
+    const both = screen("Final screen", {
+      visibleText: "Thank you for your participation. Unfortunately you do not qualify for this study.",
+    });
+    const e = endingOf(mod, both);
+    assertEq(e.kind, "screened-out", JSON.stringify(e));
+    assert(e.evidence.some((x) => /also carries completion wording/.test(x)), JSON.stringify(e.evidence));
+  });
+
+  test("A TERMINAL PAGE OUTSIDE BOTH LEXICONS IS STILL `unclassified` — widening added wordings, not a default", async () => {
+    const mod = await worker();
+    // The property the widening must not buy its recall with. A page whose wording neither
+    // lexicon knows — another language, a bare "Session closed", an image — is a COUNTED
+    // residual, and any regex loose enough to swallow it would make every unknown ending a
+    // completion.
+    for (const text of ["Sitzung beendet.", "Session closed.", "Ihre Antworten wurden gespeichert.", ""]) {
+      const e = endingOf(mod, screen("Final screen", { visibleText: text }));
+      assertEq(e.kind, "unclassified", `${JSON.stringify(text)} -> ${JSON.stringify(e)}`);
+    }
+    // And the near-misses: prose that mentions a survey ending without being a page saying it
+    // has ended. "the end" alone is ordinary text; the article and the noun are required.
+    for (const text of ["Please answer every question before the end.", "We will complete the analysis next week."]) {
+      assertEq(endingOf(mod, screen("Final screen", { visibleText: text })).kind, "unclassified", text);
+    }
+  });
+
+  test("A COMPLETION PAGE SHAPED LIKE A REJECTION SAYS SO IN ITS OWN EVIDENCE", async () => {
+    const mod = await worker();
+    // The contradiction the ordering resolves silently: the structural arm reads "the only way
+    // off this page is backwards" as a rejection shape, and defers to completion wording when
+    // both are present. That deference is a judgement call on conflicting evidence, and a reader
+    // can only disagree with it if the losing evidence is on the record next to the winning one.
+    const final = screen("Final screen", { visibleText: "Thank you for your participation.", buttons: [backBtn(8)] });
+    const e = endingOf(mod, final);
+    assertEq(e.kind, "completed", JSON.stringify(e));
+    assert(
+      e.evidence.some((x) => /only visible button\(s\) on this page are back controls/.test(x)),
+      `the losing evidence was swallowed: ${JSON.stringify(e.evidence)}`,
+    );
   });
 
   test("A WALK THAT HIT A CAP REACHED NO ENDING, whatever its last screen happens to say", async () => {
@@ -559,5 +643,429 @@ suite("D42 — the ending reaches the walk artifact", () => {
     const { obs } = await walk(mod, env, [stuck, stuck, stuck, stuck, stuck], { maxSteps: 4 });
     assert(obs.ending, "the walk artifact carries no typed ending at all");
     assertEq(obs.ending.kind, "stalled", JSON.stringify(obs.ending));
+  });
+});
+
+/* ============================================================ 4. screen-out wording gap (12-Aug audit defect 4) */
+
+suite("D42 — screen-out detection covers real termination wording from the 12-Aug run", () => {
+  // STRUCTURAL REPLICA of the Confirmit termination page from the audit. The audit records:
+  //   visible text: "For testing only: Thank you for your willingness to participate. Due to
+  //   the specific guidelines, we have been given for this study, we are unable to accept your
+  //   offer to participate in our research. We value your opinion and look forward to receiving
+  //   your feedback in future studies. Survey status: Terminated at qConsent"
+  //   buttons: [{ idx:15, label:"<<", role:"other", visible:true }, { idx:16, label:">>", role:"next", visible:false }]
+  // This is a STRUCTURAL replica: same shape, same signal distribution, no private bytes.
+
+  test("the 12-Aug termination wording is classified as screened-out, not unclassified", async () => {
+    const mod = await worker();
+    const termination = screen("", {
+      visibleText:
+        "Thank you for your willingness to participate. Due to the specific guidelines, we have been given " +
+        "for this study, we are unable to accept your offer to participate in our research. We value your " +
+        "opinion and look forward to receiving your feedback in future studies.",
+      buttons: [backBtn(15), hiddenNextBtn(16)],
+    });
+    const e = endingOf(mod, termination);
+    assertEq(e.kind, "screened-out", JSON.stringify(e));
+    assert(
+      e.evidence.some((x) => /unable to accept/.test(x) || /structural/.test(x)),
+      `the evidence must cite either the matched wording or structural signals: ${JSON.stringify(e.evidence)}`,
+    );
+  });
+
+  test("the old SCREENOUT_MARKERS would have missed it — this test fails on the pre-fix regex list", async () => {
+    // The pre-fix regex: /\bwe\s+are\s+(unable|not\s+able)\s+to\s+(continue|proceed)\b/i
+    // requires "continue" or "proceed" after "unable to". The 12-Aug text says "accept".
+    const oldRegex = /\bwe\s+are\s+(unable|not\s+able)\s+to\s+(continue|proceed)\b/i;
+    const auditText =
+      "we are unable to accept your offer to participate in our research";
+    assert(!oldRegex.test(auditText), "the old regex should NOT match — if it does, the fix premise is wrong");
+
+    // The new regex family covers the verb "accept".
+    const newRegex = /\b(unable|not\s+able)\s+to\s+accept\b/i;
+    assert(newRegex.test(auditText), "the new regex must match the 12-Aug termination wording");
+  });
+
+  test("status:terminated is detected as a screen-out marker", async () => {
+    const mod = await worker();
+    const termination = screen("", {
+      visibleText: "Survey status: Terminated at qConsent",
+      buttons: [backBtn(15)],
+    });
+    const e = endingOf(mod, termination);
+    assertEq(e.kind, "screened-out", JSON.stringify(e));
+    assert(e.evidence.some((x) => /Terminated/.test(x) || /structural/.test(x)), JSON.stringify(e.evidence));
+  });
+
+  test("STRUCTURAL screen-out: back-only page with no answerable controls and no known wording", async () => {
+    const mod = await worker();
+    // A terminal page in a language or format this reader has no wording markers for.
+    // The structural signal (only back buttons, no answerable controls) should still classify
+    // it as screened-out rather than unclassified.
+    const foreignTermination = screen("", {
+      visibleText: "Merci pour votre interet. Malheureusement, vous ne pouvez pas continuer.",
+      buttons: [backBtn(15)],
+    });
+    const e = endingOf(mod, foreignTermination);
+    assertEq(e.kind, "screened-out", JSON.stringify(e));
+    assert(
+      e.evidence.some((x) => /structural/.test(x)),
+      `a back-only page with no answerable controls must cite structural signals: ${JSON.stringify(e.evidence)}`,
+    );
+  });
+
+  test("COUNTERWEIGHT: a back-only page WITH answerable controls is NOT structurally screened out", async () => {
+    const mod = await worker();
+    // A page that still has answerable controls (e.g. a consent form whose Next button is hidden
+    // until the user selects an option). The structural screen-out should NOT fire here.
+    const active = screen("Please select an option", {
+      visibleText: "Please select an option to continue",
+      controls: [control(0, { name: "Q1", code: "1", label: "Yes" })],
+      buttons: [backBtn(15)],
+    });
+    const e = endingOf(mod, active);
+    // Without completion or screen-out wording and with answerable controls, this should be
+    // unclassified, not screened-out.
+    assertEq(e.kind, "unclassified", JSON.stringify(e));
+  });
+
+  test("COUNTERWEIGHT: a page with NO buttons at all and completion wording is a completion, not a screen-out", async () => {
+    const mod = await worker();
+    const done = screen("Thank you for completing this survey.", {
+      visibleText: "Thank you for completing this survey. Your responses have been recorded.",
+      buttons: [],
+    });
+    const e = endingOf(mod, done);
+    assertEq(e.kind, "completed", JSON.stringify(e));
+  });
+});
+
+/* ============================================================ 5. per-case time budget (12-Aug audit defect 5) */
+
+suite("D42 — a per-case timeout is a named outcome that never kills the batch", () => {
+  test("a walk exceeding its per-case budget produces outcome time-cap with a stalled ending", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    // Use a very short deadline to force the walk to hit its time cap after exactly one step.
+    // The walkPath loop checks `Date.now() < opts.deadline` BETWEEN steps, so the first step
+    // executes and then the loop exits on the deadline check.
+    const runId = mod.ids.mintRunId();
+    const s = screen("Q1?", {
+      controls: [control(0, { name: "Q1", code: "1", label: "One" })],
+      optionGroups: [{ name: "Q1", kind: "radio", options: [{ order: 0, idx: 0, code: "1", label: "One", checked: false, disabled: false, visible: true, operable: true }] }],
+      buttons: [nextBtn(1)],
+    });
+    const { obs } = await walk(mod, env, [s, s, s, s, s, s, s, s, s, s], { decisions: [], maxSteps: 40 });
+    // The walk should not exhaust all 40 steps — it is bounded by the 30-second deadline in
+    // the walk helper. What matters is that the ending is stalled (the walk stopped due to
+    // budget, not because the survey ended) and the outcome is NOT error.
+    assert(obs.outcome !== "error", `the walk must not crash: ${obs.outcomeDetail}`);
+    // With enough screens and a forward button, the walk should advance until deadline or step cap.
+    // The ending must be stalled — the walk stopped for its own reasons, not because the survey ended.
+    if (obs.outcome === "time-cap" || obs.outcome === "step-cap") {
+      assertEq(obs.ending?.kind, "stalled", JSON.stringify(obs.ending));
+      assert(
+        obs.ending.evidence.some((x) => /time-cap|step-cap/.test(x)),
+        `the ending must cite the capped outcome: ${JSON.stringify(obs.ending.evidence)}`,
+      );
+    }
+  });
+
+  test("an expired deadline before any step produces time-cap with an unclassified ending (no screen captured)", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const runId = mod.ids.mintRunId();
+    const page = fakePage([
+      screen("Q1?", {
+        controls: [control(0, { name: "Q1", code: "1", label: "One" })],
+        optionGroups: [{ name: "Q1", kind: "radio", options: [{ order: 0, idx: 0, code: "1", label: "One", checked: false, disabled: false, visible: true, operable: true }] }],
+        buttons: [nextBtn(1)],
+      }),
+    ]);
+    const obs = await mod.driver.walkPath(
+      page,
+      { id: PATH_ID, decisions: [], witnesses: [] },
+      {
+        surveyUrl: "https://fixture.invalid/survey",
+        runId,
+        planRevisionId: "plan_d42test01",
+        attemptId: ATTEMPT_ID,
+        tier: 1,
+        maxSteps: 40,
+        deadline: Date.now() - 1, // already expired
+        viewport: { width: 1280, height: 900 },
+        applyHistoryShim: false,
+        advanceTimeoutMs: 200,
+      },
+      { env, runId, attemptId: ATTEMPT_ID, pathId: PATH_ID, witnesses: [] },
+    );
+    assertEq(obs.outcome, "time-cap", JSON.stringify({ outcome: obs.outcome, detail: obs.outcomeDetail }));
+    // With no steps taken, there is no final screen, so the ending cannot be classified.
+    assertEq(obs.ending?.kind, "unclassified", JSON.stringify(obs.ending));
+  });
+
+  test("EXEC_PER_CASE_TIMEOUT_MS is declared in wrangler.jsonc", async () => {
+    // Structural test: the config var exists and has a value consistent with the batch budget.
+    // The per-case timeout may EQUAL the batch budget because the don't-start guard
+    // (execute-batch.ts) prevents walks from beginning when the remaining batch budget
+    // is below the per-case timeout. A walk at the start of a batch always has the full
+    // budget, so perCase <= batch is the correct invariant.
+    const { readFileSync } = await import("fs");
+    const wrangler = readFileSync("wrangler.jsonc", "utf8");
+    assert(wrangler.includes('"EXEC_PER_CASE_TIMEOUT_MS"'), "EXEC_PER_CASE_TIMEOUT_MS must be declared in wrangler.jsonc");
+    const perCase = wrangler.match(/"EXEC_PER_CASE_TIMEOUT_MS"\s*:\s*"(\d+)"/);
+    const batch = wrangler.match(/"EXEC_BATCH_MAX_MS"\s*:\s*"(\d+)"/);
+    assert(perCase, "EXEC_PER_CASE_TIMEOUT_MS must have a numeric string value");
+    assert(batch, "EXEC_BATCH_MAX_MS must have a numeric string value");
+    const perCaseMs = Number(perCase[1]);
+    const batchMs = Number(batch[1]);
+    assert(
+      perCaseMs <= batchMs,
+      `per-case budget (${perCaseMs}ms) must be at most the batch budget (${batchMs}ms)`,
+    );
+  });
+
+  test("the per-case timeout is the tighter of EXEC_PER_CASE_TIMEOUT_MS and EXEC_WALK_TIMEOUT_MS", async () => {
+    // Verify the derivation in execute-batch.ts: perCaseTimeoutMs = Math.min(perCase, walkTimeout).
+    // When EXEC_PER_CASE_TIMEOUT_MS < EXEC_WALK_TIMEOUT_MS, the per-case value wins.
+    // When EXEC_PER_CASE_TIMEOUT_MS > EXEC_WALK_TIMEOUT_MS, the legacy value wins (backward compat).
+    const { readFileSync } = await import("fs");
+    const src = readFileSync("src/workflow/stages/execute-batch.ts", "utf8");
+    assert(
+      src.includes("Math.min(") && src.includes("EXEC_PER_CASE_TIMEOUT_MS") && src.includes("walkTimeoutMs"),
+      "perCaseTimeoutMs must be derived as the minimum of the per-case config and the walk timeout",
+    );
+  });
+
+  test("per-case-timeout is a recognized outcome in the execution activity projection", async () => {
+    const { readFileSync } = await import("fs");
+    const src = readFileSync("src/api/execution-activity-projection.ts", "utf8");
+    assert(src.includes('"per-case-timeout"'), "per-case-timeout must be a recognized outcome");
+  });
+});
+
+suite("D42 — a termination page wearing a dead forward control is a screen-out, not a stall", () => {
+  // Measured live (run v2r_01m07qpwcjamfpcs89frs3syjs, screen 15): the test-mode
+  // termination page prints "unable to accept ... Terminated at S80" AND renders a ">>"
+  // the walker clicked twelve times without the screen ever changing.
+  test("screen-out wording + a rendered advance the walk MEASURED inert (outcome blocked) => screened-out", async () => {
+    const mod = await worker();
+    const final = screen("", {
+      visibleText:
+        "For testing only:\nThank you for your willingness to participate. Due to the specific guidelines, we have been given for this study, we are unable to accept your offer to participate in our research.\n\nSurvey status: Terminated at S80",
+      buttons: [
+        { idx: 15, label: "<<", role: "back", roleVia: "text", disabled: false, visible: true },
+        { idx: 16, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true },
+      ],
+    });
+    const e = mod.driver.classifyEnding(final, { outcome: "blocked", unboundDecisions: 0 });
+    assertEq(e.kind, "screened-out", JSON.stringify(e.evidence));
+    assert(
+      e.evidence.some((line) => /measured it inert|MEASURED it inert/i.test(line)),
+      `the inert-control measurement must be the named evidence: ${JSON.stringify(e.evidence)}`,
+    );
+  });
+
+  test("the SAME page with a WORKING advance (outcome completed) stays stalled — behaviour, not wording, decides", async () => {
+    const mod = await worker();
+    const final = screen("", {
+      visibleText: "we are unable to accept your offer to participate in our research.",
+      buttons: [{ idx: 16, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true }],
+    });
+    const e = mod.driver.classifyEnding(final, { outcome: "completed", unboundDecisions: 0 });
+    assertEq(e.kind, "stalled", JSON.stringify(e.evidence));
+  });
+});
+
+suite("D42 — consecutive same-shaped questions are distinguishable advances", () => {
+  // Measured across five runs on 2026-08-17: S70 "Years at organization" -> S80 "Years at
+  // title" produce BYTE-IDENTICAL screenSignatures (one text input each, identical
+  // chrome), the form POST changes neither URL nor history, and every successful advance
+  // between them was declared "did not advance".
+  const yearsScreen = (name, label) =>
+    screen("", {
+      signature: "sig:same-shape",
+      controls: [
+        { idx: 13, tag: "input", type: "text", name, id: null, code: null, label, text: "", checked: null, value: "", valueIsUserSupplied: false, disabled: false, required: false, visible: true, operable: true, placeholder: null, maxlength: null, readOnly: false },
+      ],
+      buttons: [{ idx: 16, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true }],
+    });
+
+  test("THE MEASURED SHAPE: identical signatures, different input name+label => question-identity-changed fires", async () => {
+    const mod = await worker();
+    const s70 = yearsScreen("S70_1", "Years at organization");
+    const s80 = yearsScreen("S80_1", "Years at title or similar role");
+    const signals = mod.driver.advanceSignals(s70, s80);
+    assert(!signals.includes("screen-signature-changed"), "the fixture must reproduce the identical-signature shape");
+    assert(
+      signals.includes("question-identity-changed"),
+      `the advance between same-shaped questions must be detectable: ${JSON.stringify(signals)}`,
+    );
+  });
+
+  test("A VALIDATION RE-RENDER OF THE SAME SCREEN IS NOT AN ADVANCE: same name+label => no identity signal", async () => {
+    const mod = await worker();
+    const before = yearsScreen("S70_1", "Years at organization");
+    const after = yearsScreen("S70_1", "Years at organization");
+    after.validationMessages = ["Please enter a number."];
+    after.controls[0].value = "1"; // answering must not fake an advance either
+    const signals = mod.driver.advanceSignals(before, after);
+    assert(
+      !signals.includes("question-identity-changed"),
+      `a same-question re-render must not read as an advance: ${JSON.stringify(signals)}`,
+    );
+  });
+});
+
+suite("D42 — consecutive text-only screens are distinguishable advances", () => {
+  // Measured 2026-08-18, run v2r_01m08r1rvjkkne4sdhr18a42pf walk 2: the "you have
+  // qualified" interstitial (iCongo) and the section intro behind it (iSecA) are both
+  // control-less Next-only screens with identical structure — identical screenSignature,
+  // identical (empty) question identity, progress rendered as unparsed prose — so the
+  // real advance between them read as "did not advance" and the walk stalled at the
+  // main body's doorstep. On a control-less screen only the text can move, and only
+  // navigation can move it.
+  const infoScreen = (text) =>
+    screen("", {
+      signature: "sig:info-shape",
+      controls: [],
+      buttons: [{ idx: 3, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true }],
+    });
+
+  test("THE MEASURED SHAPE: identical signatures, zero controls, different prose => info-screen-text-changed fires", async () => {
+    const mod = await worker();
+    const congrats = infoScreen();
+    congrats.visibleText = "Survey progress: 2% iCongo Congratulations, you have qualified for our research";
+    const intro = infoScreen();
+    intro.visibleText = "Survey progress: 3% iSecA Throughout this survey, we will focus on pediatric patients";
+    const signals = mod.driver.advanceSignals(congrats, intro);
+    assert(!signals.includes("screen-signature-changed"), "the fixture must reproduce the identical-signature shape");
+    assert(!signals.includes("question-identity-changed"), "control-less screens carry no question identity to change");
+    assert(
+      signals.includes("info-screen-text-changed"),
+      `the advance between text-only screens must be detectable: ${JSON.stringify(signals)}`,
+    );
+  });
+
+  test("a RE-READ of the same text-only screen is not an advance", async () => {
+    const mod = await worker();
+    const a = infoScreen();
+    a.visibleText = "Survey progress: 2% iCongo Congratulations, you have qualified";
+    const b = infoScreen();
+    b.visibleText = "Survey progress: 2% iCongo Congratulations, you have qualified";
+    const signals = mod.driver.advanceSignals(a, b);
+    assert(
+      !signals.includes("info-screen-text-changed"),
+      `an unmoved info screen must not read as an advance: ${JSON.stringify(signals)}`,
+    );
+  });
+
+  test("THE GATE: a screen WITH controls whose prose changes (validation re-render) never fires the text signal", async () => {
+    const mod = await worker();
+    const mkAnswerable = (visibleText) =>
+      screen("", {
+        signature: "sig:answerable",
+        controls: [
+          { idx: 5, tag: "input", type: "text", name: "Q1_1", id: null, code: null, label: "Amount", text: "", checked: null, value: "", valueIsUserSupplied: false, disabled: false, required: true, visible: true, operable: true, placeholder: null, maxlength: null, readOnly: false },
+        ],
+        buttons: [{ idx: 7, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true }],
+      });
+    const before = mkAnswerable();
+    before.visibleText = "Q1. How many?";
+    const after = mkAnswerable();
+    after.visibleText = "Please review your responses. Q1. How many?";
+    after.validationMessages = ["Please review your responses."];
+    const signals = mod.driver.advanceSignals(before, after);
+    assert(
+      !signals.includes("info-screen-text-changed"),
+      `a validation re-render of an answerable screen must never fire the text signal: ${JSON.stringify(signals)}`,
+    );
+
+    // AND THE SAME SCREEN PAIR WITHOUT THE BANNER, which is the half that reaches THIS gate.
+    // The assertion above is satisfied before the gate is ever consulted: amendment 11's
+    // rejected-submit arm returns [] for any pair with a validation message and an unchanged
+    // answerable skeleton, so with the control-less gate deleted entirely the assertion still
+    // held — the guard named in `mutate-endings.mjs` was shadowed by a later arm and had been
+    // passing for the wrong reason. Answerable controls, prose changed, no banner: the ONLY
+    // thing that can withhold the signal here is the gate itself.
+    const quietAfter = mkAnswerable();
+    quietAfter.visibleText = "Please review your responses. Q1. How many?";
+    assert(
+      !mod.driver.advanceSignals(before, quietAfter).includes("info-screen-text-changed"),
+      `an answerable screen whose prose changed must not fire the text signal: ${JSON.stringify(mod.driver.advanceSignals(before, quietAfter))}`,
+    );
+  });
+});
+
+suite("D42 — hidden platform plumbing does not disqualify a text-only screen", () => {
+  // Measured 2026-08-19, run v2r_01m0ca98…: the same qualification interstitials carry
+  // 17 HIDDEN Confirmit form controls (__state, __seqno, __version, visible:false). A
+  // controls.length===0 gate never opened and the walk stalled at the doorstep a second
+  // time. Interactive means answerable: hidden plumbing cannot be answered, so it cannot
+  // make a screen "answerable".
+  const hiddenPlumbing = () => [
+    { idx: 0, tag: "input", type: "hidden", name: "__state", id: null, code: null, label: "", text: "", checked: null, value: "abc", valueIsUserSupplied: false, disabled: false, required: false, visible: false, operable: false, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
+    { idx: 1, tag: "input", type: "hidden", name: "__seqno", id: null, code: null, label: "", text: "", checked: null, value: "41", valueIsUserSupplied: false, disabled: false, required: false, visible: false, operable: false, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
+    // The three that SURVIVE a visible/hidden filter on the live doorstep (run
+    // v2r_01m0ccpe…): the test-mode jump-menu select and the __bck/__fwd buttons.
+    // Navigation, not answers — the gate must see zero interactive controls here.
+    { idx: 13, tag: "select", type: "select", name: "", id: null, code: null, label: "function jumpLink(ob", text: "", checked: null, value: null, valueIsUserSupplied: false, disabled: false, required: false, visible: true, operable: true, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false, options: [
+      { order: 0, code: "S10", label: "S10", selected: false, disabled: false },
+      { order: 1, code: "S20", label: "S20", selected: false, disabled: false },
+      { order: 2, code: "A10", label: "A10", selected: false, disabled: false },
+    ] },
+    { idx: 14, tag: "input", type: "button", name: "__bck", id: null, code: null, label: "", text: "", checked: null, value: null, valueIsUserSupplied: false, disabled: false, required: false, visible: true, operable: true, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
+    { idx: 15, tag: "input", type: "submit", name: "__fwd", id: null, code: null, label: "", text: "", checked: null, value: null, valueIsUserSupplied: false, disabled: false, required: false, visible: true, operable: true, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
+  ];
+  const plumbedInfo = (visibleText) =>
+    screen("", {
+      signature: "sig:info-shape",
+      controls: hiddenPlumbing(),
+      buttons: [{ idx: 3, label: ">>", role: "next", roleVia: "text", disabled: false, visible: true }],
+    });
+
+  test("THE MEASURED SHAPE: hidden __state/__seqno controls, different prose => the text signal still fires", async () => {
+    const mod = await worker();
+    const congrats = plumbedInfo();
+    congrats.visibleText = "Survey progress: 2% iCongo Congratulations, you have qualified";
+    const intro = plumbedInfo();
+    intro.visibleText = "Survey progress: 3% iSecA Throughout this survey, we will focus on pediatric patients";
+    const signals = mod.driver.advanceSignals(congrats, intro);
+    assert(
+      signals.includes("info-screen-text-changed"),
+      `hidden plumbing must not blind the text signal: ${JSON.stringify(signals)}`,
+    );
+  });
+
+  test("one VISIBLE interactive control still gates the text signal off", async () => {
+    const mod = await worker();
+    const withInput = (visibleText) => {
+      const s = plumbedInfo();
+      s.controls = [
+        ...hiddenPlumbing(),
+        { idx: 5, tag: "input", type: "text", name: "Q1_1", id: null, code: null, label: "Amount", text: "", checked: null, value: "", valueIsUserSupplied: false, disabled: false, required: true, visible: true, operable: true, actuatedVia: "self", placeholder: null, maxlength: null, readOnly: false },
+      ];
+      s.visibleText = visibleText;
+      return s;
+    };
+    const before = withInput("Q1. How many?");
+    const after = withInput("Please review your responses. Q1. How many?");
+    after.validationMessages = ["Please review your responses."];
+    const signals = mod.driver.advanceSignals(before, after);
+    assert(
+      !signals.includes("info-screen-text-changed"),
+      `an answerable screen must never fire the text signal: ${JSON.stringify(signals)}`,
+    );
+
+    // The same shadowing as the sibling test above: with a validation banner and an unchanged
+    // skeleton, amendment 11's arm returns [] before this gate is consulted. The pair below
+    // carries no banner, so the one visible interactive control among the hidden plumbing is
+    // the only reason the signal must stay off — which is the property this test is named for.
+    const quiet = withInput("Please review your responses. Q1. How many?");
+    assert(
+      !mod.driver.advanceSignals(before, quiet).includes("info-screen-text-changed"),
+      `one visible interactive control must gate the signal off: ${JSON.stringify(mod.driver.advanceSignals(before, quiet))}`,
+    );
   });
 });

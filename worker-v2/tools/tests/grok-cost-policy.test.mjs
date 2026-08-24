@@ -28,20 +28,20 @@ function ownerRateEnv(overrides = {}, reads = { secretGets: 0 }) {
         return "fixture-xai-key";
       },
     },
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -51,21 +51,21 @@ function ownerRateEnv(overrides = {}, reads = { secretGets: 0 }) {
 }
 
 const EXACT_RELEASE_GROK_CONFIG = Object.freeze({
-  GROK_MODEL: "grok-4.6",
+  GROK_MODEL: "grok-4.5",
   GROK_REASONING_EFFORT: "high",
   GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
   GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-  GROK_RATE_SOURCE: "owner-dashboard-copy",
-  GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-  GROK_RATE_ATTESTED_AT: "2026-08-13",
-  GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+  GROK_RATE_SOURCE: "owner-console-confirmation",
+  GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+  GROK_RATE_ATTESTED_AT: "2026-08-15",
+  GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
   GROK_CONTEXT_WINDOW_TOKENS: "500000",
   GROK_INPUT_USD_PER_MTOK: "2",
-  GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+  GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
   GROK_OUTPUT_USD_PER_MTOK: "6",
   GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
   GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-  GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+  GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
   GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
   GROK_MAX_INPUT_USD_PER_MTOK: "4",
   GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -104,7 +104,7 @@ suite("GROK COST POLICY - reviewed tiers and conservative flat ledger", () => {
     assertEq(Object.keys(active).length, Object.keys(EXACT_RELEASE_GROK_CONFIG).length);
 
     const missing = source.replace(
-      '    "GROK_RATE_SOURCE": "owner-dashboard-copy",' + String.fromCharCode(10),
+      '    "GROK_RATE_SOURCE": "owner-console-confirmation",' + String.fromCharCode(10),
       "",
     );
     await assertThrows(
@@ -130,15 +130,15 @@ suite("GROK COST POLICY - reviewed tiers and conservative flat ledger", () => {
     const value = ownerRateEnv({}, reads);
     const rate = await m.grok.grokRateAttestation(value);
     assertEq(rate.schema, "survey-qa-grok-rate-binding/1.0.0");
-    assertEq(rate.source, "owner-dashboard-copy");
-    assertEq(rate.observedAt, "2026-08-13");
+    assertEq(rate.source, "owner-console-confirmation");
+    assertEq(rate.observedAt, "2026-08-15");
     assertEq(rate.contextWindowTokens, 500000);
     assertEq(rate.base.inputUsdPerMTok, 2);
-    assertEq(rate.base.cachedInputUsdPerMTok, 0.5);
+    assertEq(rate.base.cachedInputUsdPerMTok, 0.3);
     assertEq(rate.base.outputUsdPerMTok, 6);
     assertEq(rate.longContext.thresholdTokens, 200000);
     assertEq(rate.longContext.inputUsdPerMTok, 4);
-    assertEq(rate.longContext.cachedInputUsdPerMTok, 1);
+    assertEq(rate.longContext.cachedInputUsdPerMTok, 0.6);
     assertEq(rate.longContext.outputUsdPerMTok, 12);
     assertEq(rate.inputUsdPerMTok, 4);
     assertEq(rate.outputUsdPerMTok, 12);
@@ -158,7 +158,7 @@ suite("GROK COST POLICY - reviewed tiers and conservative flat ledger", () => {
     globalThis.fetch = async () => {
       requests += 1;
       return new Response(JSON.stringify({
-        model: "grok-4.6",
+        model: "grok-4.5",
         usage: { prompt_tokens: 1000, completion_tokens: 500 },
         choices: [{ message: { content: "{}" }, finish_reason: "stop" }],
       }), { status: 200, headers: { "content-type": "application/json" } });
@@ -184,7 +184,7 @@ suite("GROK COST POLICY - reviewed tiers and conservative flat ledger", () => {
   test("missing malformed zero and under-ceiling bindings refuse before key or fetch", async () => {
     const m = await mod();
     const hostile = [
-      { GROK_MODEL: "grok-4.5", GROK_RATE_ATTESTED_MODEL: "grok-4.5" },
+      { GROK_MODEL: "grok-4.6", GROK_RATE_ATTESTED_MODEL: "grok-4.6" },
       { GROK_RATE_BINDING_SCHEMA: undefined },
       { GROK_RATE_POLICY: undefined },
       { GROK_RATE_SOURCE: "dashboard-probably" },

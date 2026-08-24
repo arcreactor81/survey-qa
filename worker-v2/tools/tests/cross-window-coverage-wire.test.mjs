@@ -53,6 +53,7 @@ const completedSlice = (windowsTotal, synthesisState) => ({
 const multiwindowPayload = (overrides = {}) => ({
   slice: completedSlice(3, "ok"),
   crossWindowLimitations: [limitation],
+  primaryGroundingLimitations: [],
   ...overrides,
 });
 
@@ -114,6 +115,7 @@ suite("Pass-A cross-window discovery ceiling is durable", () => {
       limitationsFromPassAPayload({
         slice: completedSlice(1, "not-required"),
         crossWindowLimitations: [],
+        primaryGroundingLimitations: [],
       }).length,
       0,
       "a completed single-window pass is the explicit zero-limitation control",
@@ -211,7 +213,7 @@ suite("Pass-A cross-window discovery ceiling is durable", () => {
   test("the supplement binds exact Pass-A bytes and malformed or replaced bytes refuse", async () => {
     const mod = await worker();
     const stored = await storedSupplements(mod, multiwindowPayload(), "run_bound");
-    assertEq(stored.supplements.length, 1);
+    assertEq(stored.supplements.length, 2);
     const sealed = contractCrossWindowLimitations(stored.supplements, stored.hash)[0];
     assertEq(sealed.passAHash, stored.hash);
     assertEq(sealed.sourceEvidenceSpans, 3);
@@ -232,10 +234,14 @@ suite("Pass-A cross-window discovery ceiling is durable", () => {
 
     const healthy = await storedSupplements(
       mod,
-      { slice: completedSlice(1, "not-required"), crossWindowLimitations: [] },
+      {
+        slice: completedSlice(1, "not-required"),
+        crossWindowLimitations: [],
+        primaryGroundingLimitations: [],
+      },
       "run_single",
     );
-    assertEq(healthy.supplements.length, 0);
+    assertEq(healthy.supplements.length, 1);
   });
 
   test("sealed limitation becomes a counted blocker, blocks the test axis, and renders uncertifiable", async () => {
@@ -301,7 +307,12 @@ suite("Pass-A cross-window discovery ceiling is durable", () => {
       evaluated,
       { state: "evaluated", value: { coverageBlockers: 1 }, proof: {} },
     );
-    assert(axis.some((row) => row.includes(CROSS_WINDOW_DISCOVERY_BLOCKER_KIND)), JSON.stringify(axis));
+    assert(
+      axis.some((row) =>
+        row.includes("1 sealed document coverage limitation(s)") &&
+        row.includes("RunRecord blocker list")),
+      JSON.stringify(axis),
+    );
     const missingCount = mod.workflow.testAxisBlockers(
       checkpoint,
       evaluated,

@@ -334,12 +334,14 @@ import type {
 } from "../../types/record";
 import type { PathObservation, RenderedScreen, StepObservation, WalkEndingKind } from "../../browser/types";
 import type { WalkProjectionPayload } from "./project-observations";
+import { runCopyModelVerifier, MODEL_VERIFIER_VERSION } from "./model-verifier";
+import type { Fence } from "../../store/checkpoint";
 // THE WORDING IS SHARED CODE, NOT A SECOND IMPLEMENTATION. `questionWordingScore` is the
 // driver's own scorer and `buildQuestionWordingIndex`/`resolveQuestionWording` are the plan's own
 // resolver, imported rather than reproduced: a copy here would be free to drift from the binder
 // it is supposed to agree with, which is the defect 1.4.0 exists to close. Neither import
 // carries a walk fact — the index is built from the SEALED revision this stage already loads.
-import { questionWordingScore } from "../../browser/driver";
+import { questionWordingScore, stripNavigationWidgetText } from "../../browser/driver";
 import { buildQuestionWordingIndex, resolveQuestionWording } from "./plan";
 import type { QuestionWordingIndex } from "./plan";
 
@@ -641,6 +643,40 @@ export const VERIFIER_REASON = Object.freeze({
   // PRODUCER'S word about itself, so it is a reason to withhold a pass and never a reason to
   // claim a defect. See `structuralDecision`.
   PRODUCER_FLAGGED_PAYLOAD_UNVERIFIED: "PRODUCER_FLAGGED_PAYLOAD_UNVERIFIED",
+  // D3 TRACK 2 — MODEL VERIFIER LANE v1 (copy family). Each reason names a DIFFERENT thing
+  // the model lane concluded, so the histogram separates them cleanly.
+  /**
+   * The model confirmed that the screen text faithfully reflects the requirement's text.
+   * This is a model-derived `verified` — provenance-distinguishable from a structural one
+   * because the `predicate` is `model-copy/1.0.0`, not one of the closed structural set.
+   */
+  MODEL_COPY_VERIFIED: "MODEL_COPY_VERIFIED",
+  /**
+   * The model could not confirm the match: the text was absent, too different, or the model
+   * was unable to judge. A discrepancy flag may accompany this reason in the `detail` field
+   * but it does not change the decision to `contradicted` — flags are metadata for the
+   * report renderer, never a verdict.
+   */
+  MODEL_COPY_INSUFFICIENT: "MODEL_COPY_INSUFFICIENT",
+  /**
+   * The model call failed (transport, timeout, quota). The failure is a named demotion to
+   * `insufficient` — it MUST NEVER populate any payload key that downstream code reads as a
+   * verdict signal (fabrication path #5, d3-lane-design.md).
+   */
+  MODEL_CALL_FAILED: "MODEL_CALL_FAILED",
+  /**
+   * The walk artifact carried no screen text to compare against the requirement. The model
+   * lane has nothing to work with, so it declines rather than guessing.
+   */
+  MODEL_COPY_NO_SCREEN_TEXT: "MODEL_COPY_NO_SCREEN_TEXT",
+  /**
+   * The sealed case names a target question, but no screen in the walk artifact mentions it.
+   * Rather than comparing the requirement against an arbitrary screen that might share common
+   * header or instruction text (which could produce a wrong VERIFIED), the lane returns
+   * insufficient. This is the fail-closed direction: a confident answer the evidence cannot
+   * support is worse than an honest "we could not check".
+   */
+  MODEL_COPY_TARGET_SCREEN_NOT_FOUND: "MODEL_COPY_TARGET_SCREEN_NOT_FOUND",
 } as const);
 
 export type VerifierReason = (typeof VERIFIER_REASON)[keyof typeof VERIFIER_REASON];
@@ -680,7 +716,7 @@ const OUTCOME_TO_DECISION: Record<PredicateOutcome, VerifierDecision> = {
   error: "insufficient",
 };
 
-export async function verifyObservations(env: Env, runId: string): Promise<StageResult<VerificationSummary>> {
+export async function verifyObservations(env: Env, runId: string, fence?: Fence | null): Promise<StageResult<VerificationSummary>> {
   // THE CATALOGUE IS NOT LISTED HERE, AND THAT IS A SUBREQUEST BUDGET DECISION.
   //
   // `listCatalog` is a fan-out: one R2 LIST plus one R2 GET **per catalogue entry**. Run
@@ -749,23 +785,93 @@ export async function verifyObservations(env: Env, runId: string): Promise<Stage
     return parsed;
   };
 
+  // Build a requirement-text index from the sealed revision for the model verifier lane.
+  // This is read from the SAME sealed revision the structural verifier already loaded, so
+  // it carries no new fact and costs no subrequest.
+  const requirementTextById = new Map<string, string>();
+  for (const fi of inputs.revision?.facetInstances ?? []) {
+    if (fi.case?.kind === "copy") {
+      const req = (inputs.revision?.requirements ?? []).find(
+        (r) => r.requirementLineageId === fi.requirementLineageId,
+      );
+      if (req) {
+        requirementTextById.set(fi.facetInstanceId, req.displayQuote || req.normativeStatement);
+      }
+    }
+  }
+
   const verified: Observation[] = [];
   for (const o of inputs.observations) {
-    const result = await decideObservation(
+    let result = await decideObservation(
       o,
       casesById.get(o.facetInstanceId) ?? null,
       sealedQuestionIds,
       readArtifact,
       questionWording,
     );
+
+    // MODEL VERIFIER LANE v1 — runs AFTER the deterministic predicate, and ONLY when:
+    //   1. the deterministic verifier returned insufficient / NO_TYPED_EXPECTATION;
+    //   2. the sealed case kind is `copy` (the v1 family);
+    //   3. the model gate is on.
+    //
+    // When the gate is OFF, this block is never entered and the output is byte-identical to
+    // the base — that is the design, not a stopgap (see the header at line 315-319).
+    //
+    // The model lane's output space is {verified, insufficient} + FLAGS. It can NEVER emit
+    // `violated`, so `OUTCOME_TO_DECISION` can never map it to `contradicted`, and the
+    // aggregator can never derive a `fail` from it. That is the owner ruling enforced
+    // structurally: the `ModelDecisionOutcome` type in `model-verifier.ts` excludes
+    // `violated`, and the mutation campaign proves the guard is load-bearing.
+    if (
+      modelVerifierAvailable &&
+      result.outcome === "insufficient" &&
+      result.reason === VERIFIER_REASON.NO_TYPED_EXPECTATION
+    ) {
+      const sealedCase = casesById.get(o.facetInstanceId) ?? null;
+      if (sealedCase?.case?.kind === "copy") {
+        const payload = o.payload as WalkProjectionPayload | null;
+        const artifactId = payload?.observationEvidenceId ?? null;
+        const walkArtifact = artifactId ? await readArtifact(artifactId) : null;
+        const requirementText = requirementTextById.get(o.facetInstanceId) ?? "";
+
+        if (walkArtifact && requirementText) {
+          const modelResult = await runCopyModelVerifier({
+            env,
+            runId,
+            sealedCase,
+            walkArtifact,
+            requirementText,
+            evidenceIds: o.evidenceIds ?? [],
+            fence: fence ?? null,
+          });
+          if (modelResult) {
+            result = modelResult;
+          }
+        }
+      }
+    }
+
+    // THE VERIFIER VERSION STAMP carries the model lane's state.
+    //
+    // When the model lane decided this observation, the version names both the structural
+    // verifier and the model verifier (provenance-split). When the model lane was available
+    // but not invoked for this observation, the stamp is `+model-unwired` (the lane exists
+    // but this case kind did not use it). When the model is unavailable, `+no-model`.
+    const modelDecided =
+      result.predicate === "model-copy/1.0.0";
+    const versionSuffix = modelDecided
+      ? `+${MODEL_VERIFIER_VERSION}`
+      : modelVerifierAvailable
+        ? "+model-unwired"
+        : "+no-model";
+
     verified.push({
       ...o,
       verifier: {
         decision: OUTCOME_TO_DECISION[result.outcome],
         evidenceIds: o.evidenceIds ?? [],
-        verifierVersion: modelVerifierAvailable
-          ? `${VERIFIER_VERSION}+model-unwired`
-          : `${VERIFIER_VERSION}+no-model`,
+        verifierVersion: `${VERIFIER_VERSION}${versionSuffix}`,
         predicate: result.predicate,
         reason: result.reason,
         detail: result.detail,
@@ -1041,7 +1147,15 @@ const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
  */
 function tokenOnScreen(screen: RenderedScreen | null, token: string): boolean {
   if (!screen || !token) return false;
-  return wholeWordIn(`${screen.questionText ?? ""} ${screen.title ?? ""} ${screen.visibleText ?? ""}`, token);
+  // USE STRIPPED TEXT: the platform's question-skip-menu select renders question ids into
+  // `visibleText` via `document.body.innerText`. MEASURED on v98: EVERY screen carried 23+
+  // sealed ids from the skip menu in its text, making `screenIdentity` non-singleton on
+  // every screen and causing all 12 cases to return STEP_NOT_BOUND_TO_TARGET_QUESTION.
+  // `stripNavigationWidgetText` removes the contiguous block of menu-option labels, leaving
+  // the question's own heading token and any legitimate references. This and the driver's
+  // `questionWordingScore` now apply the same strip, so they agree on what text a screen has.
+  const strippedVisible = screen ? stripNavigationWidgetText(screen) : "";
+  return wholeWordIn(`${screen.questionText ?? ""} ${screen.title ?? ""} ${strippedVisible}`, token);
 }
 
 const wholeWordIn = (haystack: string, token: string): boolean => {

@@ -169,6 +169,18 @@ const MUTANTS = [
     replace: '  terminate: "terminal",\n  "skip-rule": "branch-outcome",\n});',
     kills: ["`skip-rule` is NOT translated — the measurement that says why is the point"],
   },
+  {
+    name: "the planner's multi-select default stops preferring the exclusive none-option",
+    breaks:
+      "reach on the universal exclusion-screener shape, one layer above the driver: the " +
+      "planner puts a disqualifying affiliation into `select`, plan answers replay " +
+      "identically on every attempt, and every walk and every pivot dies at that screen — " +
+      "measured live on 2026-08-17 at the S50 exclusion screener",
+    file: PLAN_CORE,
+    find: "    if (Q.multi) {\n      const none = usable.find((o) => NONE_STYLE.test(o.text));\n      if (none) return { select: [none.text], source: 'default:exclusive-none-option' };\n    }",
+    replace: "    // (exclusive-none preference dropped by mutant)",
+    kills: ["THE MEASURED SHAPE: a multi-select exclusion question defaults to None of the above, named as such"],
+  },
 ];
 
 await runMutantSuite({

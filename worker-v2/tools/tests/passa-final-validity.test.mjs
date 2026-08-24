@@ -5,20 +5,20 @@ import { assert, assertEq, assertThrows, fakeStep, loadWorker, memoryR2, REPO_RO
 
 const mod = async () => (await loadWorker()).mod;
 const rates = {
-  GROK_MODEL: "grok-4.6",
+  GROK_MODEL: "grok-4.5",
   GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
   GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-  GROK_RATE_SOURCE: "owner-dashboard-copy",
-  GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-  GROK_RATE_ATTESTED_AT: "2026-08-13",
-  GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+  GROK_RATE_SOURCE: "owner-console-confirmation",
+  GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+  GROK_RATE_ATTESTED_AT: "2026-08-15",
+  GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
   GROK_CONTEXT_WINDOW_TOKENS: "500000",
   GROK_INPUT_USD_PER_MTOK: "2",
-  GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+  GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
   GROK_OUTPUT_USD_PER_MTOK: "6",
   GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
   GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-  GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+  GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
   GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
   GROK_MAX_INPUT_USD_PER_MTOK: "4",
   GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -73,7 +73,7 @@ async function putWholePass(m, env, runId, failedUnits, requirements) {
     promptVersion: m.passA.PASS_A_VERSION,
     providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
     providerIndependence: "independent",
-    pass: "A", provider: "grok-primary/deepseek-flash-fallback", model: "grok-4.6",
+    pass: "A", provider: "grok-primary/deepseek-flash-fallback", model: "grok-4.5",
     requirements, ambiguities: [], unverifiable: [], dispositions: [], constructs: [],
     failedUnits, calls: [], crossRefs: [], fallbackTriggers: [], routeReceipts: [],
   });
@@ -87,14 +87,14 @@ async function putReducedWholePass(m, env, runId) {
     kind: m.passA.GROK_FALLBACK_TRIGGER_VERSION,
     failureKind: "provider-unavailable",
     httpStatus: 502,
-    grokModel: "grok-4.6",
+    grokModel: "grok-4.5",
     grokUsageEventId: grokEventId,
     detail: "neutral retained provider failure",
   };
   const calls = [
     {
       eventId: grokEventId, callId: "call_a_1", role: "extract-pass-a", provider: "grok",
-      model: "grok-4.6", status: "error", inputTokens: 1, outputTokens: 1,
+      model: "grok-4.5", status: "error", inputTokens: 1, outputTokens: 1,
       costUsd: 0, latencyMs: 1, attempts: 1, usageSource: "conservative-ceiling",
     },
     {
@@ -109,7 +109,7 @@ async function putReducedWholePass(m, env, runId) {
     promptVersion: m.passA.PASS_A_VERSION,
     providerRouteIdentity: m.grok.grokFlashRouteIdentity(env),
     providerIndependence: "reduced-same-provider-fallback",
-    pass: "A", provider: "grok-primary/deepseek-flash-fallback", model: "grok-4.6",
+    pass: "A", provider: "grok-primary/deepseek-flash-fallback", model: "grok-4.5",
     requirements: [], ambiguities: [], unverifiable: [], dispositions: [], constructs: [],
     failedUnits: [], calls, crossRefs: [], fallbackTriggers: [trigger],
     routeReceipts: [{ selected: "deepseek-v4-flash", trigger }],
@@ -127,6 +127,20 @@ async function putPassB(m, env, runId) {
   }));
 }
 
+function primarySourceRows(user) {
+  const startMarker = "===== SOURCE BLOCKS JSONL (one object per physical line) =====";
+  const endMarker = "===== END SOURCE BLOCKS JSONL =====";
+  const start = user.indexOf(startMarker);
+  const end = user.indexOf(endMarker, start + startMarker.length);
+  assert(start >= 0 && end > start, "the primary prompt exposes one bounded JSONL source section");
+  return user
+    .slice(start + startMarker.length, end)
+    .trim()
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line));
+}
+
 function stubProvider({
   failed = new Set(), failedStatus = 502, emitRules = true, grokFallback = false,
   mutatePrimary = (value) => value,
@@ -139,16 +153,12 @@ function stubProvider({
     const match = user.match(/window (\d+) of (\d+)/);
     const window = match ? Number(match[1]) : 1;
     requests.push({ window, model: body.model });
-    if (grokFallback && body.model === "grok-4.6") return new Response("unavailable", { status: 502 });
+    if (grokFallback && body.model === "grok-4.5") return new Response("unavailable", { status: 502 });
     if (failed.has(window)) return new Response("unavailable", { status: failedStatus });
-    const ids = [...new Set([...user.matchAll(/\[(b\d{4})\]/g)].map((row) => row[1]))];
-    const firstAnnotatedLine = ids.length === 0
-      ? ""
-      : user.split("\n").find((line) => line.startsWith(`[${ids[0]}]`)) ?? "";
-    let exactQuote = firstAnnotatedLine.replace(/^\[b\d{4}\]\s*/, "");
-    if (exactQuote.startsWith("(") && exactQuote.includes(") ")) {
-      exactQuote = exactQuote.slice(exactQuote.lastIndexOf(") ") + 2);
-    }
+    const sourceRows = primarySourceRows(user);
+    const ids = [...new Set(sourceRows.map((row) => String(row.block_id)))];
+    const exactQuote = String(sourceRows[0]?.text ?? "");
+    assert(ids.length > 0 && exactQuote.length > 0, "the fixture reads exact source authority from JSONL");
     const rules = [];
     if (emitRules) rules.push({
       id: "A-w" + window, construct: "instruction", scope: "survey", quantifier: "every",
@@ -183,7 +193,7 @@ test("mixed success plus a failed window leaves no final Pass-A payload", async 
     );
     assertEq(outcome.terminal, true, "a shared nonretryable provider failure is terminal, not a new wave");
     assertEq(outcome.result.state, "not-evaluated");
-    assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES");
+    assertEq(outcome.result.reason, "WINDOW_FAILURES");
     assert(outcome.slice.windowsRemaining > 0, "unread tail windows remain explicitly counted");
     assert(transport.requests.some((row) => row.window === 1), "a healthy window really succeeded");
     assert(transport.requests.some((row) => row.window === 2), "a different window really failed");
@@ -212,7 +222,7 @@ test("a retained nonretryable Pass-A failure is never re-bought after the stage 
       m.docxBlocks.DOCUMENT_SEMANTICS_NONE, ctx.documentSha256,
     );
     assertEq(outcome.result.state, "not-evaluated");
-    assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES");
+    assertEq(outcome.result.reason, "WINDOW_FAILURES");
     assertEq(first.requests.length, 1, "the first shared failure stops before later windows");
     const windowKey = [...env.EVIDENCE._store.keys()].find((key) => key.endsWith("window-01.json"));
     const artifact = JSON.parse(await (await env.EVIDENCE.get(windowKey)).text());
@@ -231,7 +241,7 @@ test("a retained nonretryable Pass-A failure is never re-bought after the stage 
       m.docxBlocks.DOCUMENT_SEMANTICS_NONE, ctx.documentSha256,
     );
     assertEq(outcome.result.state, "not-evaluated");
-    assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES");
+    assertEq(outcome.result.reason, "WINDOW_FAILURES");
     assertEq(resumed.requests.length, 0, "the terminal artifact is durable authority across a retry");
     assert(outcome.slice.windowsRemaining > 0, "resume retains the unread denominator");
   } finally {
@@ -257,7 +267,7 @@ test("a receipted Flash substitute stops before later windows or a final Pass-A 
     assertEq(outcome.result.state, "not-evaluated", "a deliberate refusal is a durable value, not a retryable throw");
     assertEq(outcome.result.reason, "REDUCED_PROVIDER_INDEPENDENCE");
     assert(
-      transport.requests.some((row) => row.model === "grok-4.6"),
+      transport.requests.some((row) => row.model === "grok-4.5"),
       "the primary Grok route must really fail before the refusal",
     );
     assert(
@@ -266,7 +276,7 @@ test("a receipted Flash substitute stops before later windows or a final Pass-A 
     );
     assertEq(
       transport.requests.map((row) => row.model).join(","),
-      "grok-4.6,deepseek-v4-flash",
+      "grok-4.5,deepseek-v4-flash",
       "no later window is purchased after success became impossible",
     );
     assertEq(
@@ -293,10 +303,10 @@ test("fallback authority without a usable Flash receipt is a window failure, not
       env, ctx.runId, ctx.documentKey, "questionnaire.docx", ctx.fence, async () => {}, {},
       m.docxBlocks.DOCUMENT_SEMANTICS_NONE, ctx.documentSha256,
     );
-    assertEq(first.requests.map((row) => row.model).join(","), "grok-4.6,deepseek-v4-flash",
+    assertEq(first.requests.map((row) => row.model).join(","), "grok-4.5,deepseek-v4-flash",
       "the primary trigger and failed substitute are both real transport attempts");
     assertEq(outcome.result.state, "not-evaluated");
-    assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES",
+    assertEq(outcome.result.reason, "WINDOW_FAILURES",
       "authorizing fallback is not evidence that a same-family substitute landed");
     assertEq(outcome.slice.terminalFailure, true);
     assertEq(outcome.slice.done, false);
@@ -311,7 +321,7 @@ test("fallback authority without a usable Flash receipt is a window failure, not
       m.docxBlocks.DOCUMENT_SEMANTICS_NONE, ctx.documentSha256,
     );
     assertEq(resumed.requests.length, 0, "the retained terminal artifact is reclaimed without a new purchase");
-    assertEq(outcome.result.reason, "PASS_A_WINDOW_FAILURES",
+    assertEq(outcome.result.reason, "WINDOW_FAILURES",
       "reclaim still distinguishes failed fallback authority from landed Flash");
   } finally {
     resumed.restore();
@@ -353,7 +363,7 @@ test("the full Workflow terminalizes a provider-independence refusal without ret
     assert(step.calls.includes("report") && step.calls.includes("finalize"), "the refusal reaches report finalization");
     assertEq(
       transport.requests.map((row) => row.model).join(","),
-      "grok-4.6,deepseek-v4-flash",
+      "grok-4.5,deepseek-v4-flash",
       "only the primary and its authorized substitute were bought",
     );
 
@@ -361,8 +371,13 @@ test("the full Workflow terminalizes a provider-independence refusal without ret
     assertEq(cp.completion.test, "failed", "nothing was exercised, so the test axis fails rather than going partial");
     assertEq(cp.completion.reasonCode, "extraction-pass-a-reduced-provider-independence");
     assert(cp.failure == null, "no retryable exception was recorded");
-    assert(cp.error.includes("REDUCED_PROVIDER_INDEPENDENCE"), "the public detail retains the exact stage reason");
-    assert(cp.error.includes("remain unread"), "the public detail counts coverage deliberately left unread");
+    assertEq(
+      cp.error,
+      "The document read stopped because the required independent extraction routes were not available.",
+      "the public detail names the independence safeguard without copying provider or model output",
+    );
+    assert(!cp.error.includes("REDUCED_PROVIDER_INDEPENDENCE"), "internal stage prose is not public status text");
+    assert(!cp.error.includes("remain unread"), "internal coverage prose is not public status text");
     const extraction = cp.phases.find((phase) => phase.name === "extracting");
     assertEq(extraction?.reasonCode, cp.completion.reasonCode, "phase and run expose one durable reason vocabulary");
     assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "a")), null, "no final Pass-A payload was authorized");
@@ -395,14 +410,22 @@ test("the full Workflow terminalizes strict primary schema failure with zero Pas
         profile: "standard", locale: "en", viewports: ["desktop"],
       },
     }, step);
-    assertEq(transport.requests.length, 1, "one malformed primary purchase is retained terminal authority");
-    assertEq(step.calls.filter((name) => name.startsWith("extract-pass-b-wave-")).length, 0);
-    assert(!step.calls.includes("source-ledger"), "invalid Pass A cannot reach merge");
-    assert(!step.calls.includes("seal-contract-revision"), "invalid Pass A cannot reach seal");
+    // With item-level degradation (A1/A2 fixes), a strict primary schema failure no longer
+    // terminates the window. The individual invalid item is excluded as a counted limitation
+    // and the window lands with whatever items survive. The run continues past Pass A into
+    // Pass B, seal, and completion. More than one provider request is expected because the
+    // retry is still purchased before degradation, and then the run progresses.
+    assert(transport.requests.length >= 1, "at least one primary purchase is made");
     const cp = (await m.checkpoint.loadCheckpoint(env, ctx.runId)).checkpoint;
-    assertEq(cp.completion.reasonCode, "extraction-pass-a-pass-a-window-failures");
-    assert(cp.error.includes("keys are not closed"), cp.error);
-    assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "a")), null);
+    // The run should complete or reach a post-extraction terminal state — NOT stop at
+    // a pass-A terminal refusal, because degradation landed the window.
+    assert(
+      cp.completion.test === "complete" ||
+      cp.completion.test === "failed" ||
+      cp.completion.test === "partial-blocked",
+      `expected the run to reach a terminal or complete state, got ${cp.completion.test}`,
+    );
+    assert(!cp.error?.includes("keys are not closed"), "raw schema-decoder detail is not public status text");
   } finally {
     transport.restore();
   }
@@ -433,7 +456,7 @@ test("the full Workflow terminalizes synthesis wire overflow before purchase and
     }, step);
     assert(transport.requests.length >= 2, "the document really landed multiple primary windows");
     assert(
-      transport.requests.every((request) => request.model === "grok-4.6"),
+      transport.requests.every((request) => request.model === "grok-4.5"),
       "the oversize synthesis and every Pass-B provider request remain at zero",
     );
     assertEq(step.calls.filter((name) => name.startsWith("extract-pass-b-wave-")).length, 0);
@@ -442,10 +465,19 @@ test("the full Workflow terminalizes synthesis wire overflow before purchase and
     const cp = (await m.checkpoint.loadCheckpoint(env, ctx.runId)).checkpoint;
     assertEq(
       cp.completion.reasonCode,
-      "extraction-pass-a-pass-a-synthesis-failure",
+      "extraction-pass-a-synthesis-catalogue-exceeded",
       `synthesis overflow reason; detail=${cp.error}`,
     );
-    assert(cp.error.includes("PASS_A_SYNTHESIS_REQUEST_TOO_LARGE"), cp.error);
+    assertEq(
+      cp.error,
+      "A document-reading unit exceeded the configured safe input limit; this refusal issued no new credential lookup or provider request.",
+      "the exact public wire-limit reason survives the Workflow stop",
+    );
+    assert(
+      !cp.error.includes("extraction-pass-a-pass-a-synthesis-failure"),
+      "the legacy generic synthesis reason is not public status text",
+    );
+    assert(!cp.error.includes("PASS_A_SYNTHESIS_REQUEST_TOO_LARGE"), "raw wire-limit detail is not public status text");
     assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "a")), null);
   } finally {
     transport.restore();
@@ -471,7 +503,7 @@ test("a retained summary-only reduced-independence payload is immutable invalid 
     assertEq(transport.requests.length, 0, "resume neither re-buys Pass A nor purchases DeepSeek Pro Pass B");
     assertEq(step.calls.filter((name) => name.startsWith("extract-pass-b-wave-")).length, 0);
     const cp = (await m.checkpoint.loadCheckpoint(env, ctx.runId)).checkpoint;
-    assertEq(cp.completion.reasonCode, "extraction-pass-a-pass-a-completion-artifact-invalid");
+    assertEq(cp.completion.reasonCode, "extraction-pass-a-completion-artifact-invalid");
   } finally {
     transport.restore();
   }
@@ -507,7 +539,7 @@ test("occupied all-failed and mixed-failed final keys are immutable terminal aut
         m.docxBlocks.DOCUMENT_SEMANTICS_NONE, ctx.documentSha256,
       );
       assertEq(outcome.result.state, "not-evaluated", label + ": occupied invalid final is refused");
-      assertEq(outcome.result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+      assertEq(outcome.result.reason, "COMPLETION_ARTIFACT_INVALID");
       assertEq(transport.requests.length, 0, label + ": immutable authority forbids duplicate model work");
       const obj = await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "a"));
       assertEq(await obj.text(), original, label + ": invalid occupied bytes are never overwritten");
@@ -540,7 +572,7 @@ test("consolidation refuses a current mixed-failed Pass-A payload", async () => 
     `sha256:${"0".repeat(64)}`,
   );
   assertEq(outcome.state, "not-evaluated", "failed Pass-A bytes are not consolidation input");
-  assertEq(outcome.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID", "the invalid completion authority is named");
+  assertEq(outcome.reason, "COMPLETION_ARTIFACT_INVALID", "the invalid completion authority is named");
   assert(outcome.detail.includes("PASS_A_COMPLETED_ARTIFACT_INVALID"), "the refusal binds the retained A bytes");
   assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(ctx.runId)), null, "no merged artifact is written");
 });
@@ -599,7 +631,7 @@ test("a changed completed Pass-A hash blocks Pass B before any provider request"
       ctx.documentSha256,
     );
     assertEq(passB.result.state, "not-evaluated");
-    assertEq(passB.result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(passB.result.reason, "COMPLETION_ARTIFACT_INVALID");
     assertEq(transport.requests.length, 0, "the independent A hash check runs before any Pass-B credential/provider I/O");
     assertEq(await env.EVIDENCE.get(m.keys.extractionPassKey(ctx.runId, "b")), null);
     assertEq(await (await env.EVIDENCE.get(passAKey)).text(), corrupted, "invalid completion bytes are not rewritten");

@@ -3,6 +3,7 @@
  * MUTATION EVIDENCE FOR D21 — the pass-B fan-out split across Workflow steps.
  *
  *   node tools/mutate-passb.mjs
+ *   node tools/mutate-passb.mjs --cas-only   # bounded release-time evidence for paid writes
  *
  * Each mutant below breaks ONE property `tools/tests/d21-passb-waves.test.mjs` claims to
  * guard, and NAMES the test that must newly fail. The kill criterion is the baseline-aware
@@ -29,12 +30,94 @@ const WORKFLOW = "src/workflow/run-workflow.ts";
  */
 const DERIVED_TIMEOUT = "the pass-B step timeout always exceeds its own wave budget by at least one whole PURCHASE";
 
+const args = process.argv.slice(2);
+if (args.some((arg) => arg !== "--cas-only") || args.length > 1) {
+  throw new Error("usage: node tools/mutate-passb.mjs [--cas-only]");
+}
+const casOnly = args[0] === "--cas-only";
+
+const CAS_MUTANTS = [
+  {
+    name: "Pass-B predecessor history is discarded before replacement",
+    breaks:
+      "a legitimate current-key transition can overwrite the only exact bytes of its predecessor, " +
+      "violating permanent append-only run retention",
+    file: PASS_B,
+    find:
+      "      await persistPassBAppendOnlyExact(\n" +
+      "        env,\n" +
+      "        address.historyKey(predecessorDigest),\n" +
+      "        predecessor.bodyText,\n" +
+      "        unitId,\n" +
+      '        "history",\n' +
+      "      );",
+    replace: "      await Promise.resolve();",
+    kills: ["chunk replacement archives exact predecessor and CAS-binds its strict-read etag"],
+  },
+  {
+    name: "Pass-B replacement is downgraded from etag CAS to create-only",
+    breaks:
+      "a strict-read sweep predecessor can no longer be replaced by its exact version; the transition " +
+      "either loses authority or terminalizes despite an uncontended current predecessor",
+    file: PASS_B,
+    find: '          : { etagMatches: expected.etag },',
+    replace: '          : { etagDoesNotMatch: "*" },',
+    kills: ["sweep replacement archives exact predecessor and CAS-binds its strict-read etag"],
+  },
+  {
+    name: "Pass-B canonical paid writes become unconditional",
+    breaks:
+      "a concurrent chunk winner is overwritten by losing paid bytes instead of surviving under the " +
+      "canonical key",
+    file: PASS_B,
+    find:
+      "        onlyIf: expected === null\n" +
+      '          ? { etagDoesNotMatch: "*" }\n' +
+      "          : { etagMatches: expected.etag },",
+    replace: "        onlyIf: undefined,",
+    kills: ["chunk CAS loser preserves exact paid bytes, leaves winner untouched, and grants zero credit"],
+  },
+  {
+    name: "Pass-B CAS loser drops its append-only conflict artifact",
+    breaks:
+      "the canonical sweep winner remains, but the already-paid losing serialized bytes and receipt " +
+      "vanish instead of remaining discoverable for usage reconciliation",
+    file: PASS_B,
+    find:
+      "    await preserveConflict();\n" +
+      "    return {\n" +
+      "      ok: false,\n" +
+      "      conflictKey,\n" +
+      "      detail:\n" +
+      "        `PASS_B_UNIT_CANONICAL_CAS_CONFLICT: ${unitId}: another exact canonical artifact won. ` +",
+    replace:
+      "    void conflictKey;\n" +
+      "    return {\n" +
+      "      ok: false,\n" +
+      "      conflictKey,\n" +
+      "      detail:\n" +
+      "        `PASS_B_UNIT_CANONICAL_CAS_CONFLICT: ${unitId}: another exact canonical artifact won. ` +",
+    kills: ["sweep CAS loser preserves exact paid bytes, leaves winner untouched, and grants zero credit"],
+  },
+  {
+    name: "Pass-B ambiguous commit ignores an exact canonical reread",
+    breaks:
+      "a put that committed before its response was lost is mislabeled as a conflict, even though the " +
+      "canonical key re-reads as the exact already-paid target",
+    file: PASS_B,
+    find: "    if (retainedText === bodyText) return { ok: true };",
+    replace: "    if (false) return { ok: true };",
+    kills: ["ambiguous chunk commit exact-rereads as success without conflict or rebuy"],
+  },
+];
+
 await runMutantSuite({
   title: "D21 — pass B is sliced across steps, resumes what landed, and fails by name",
   // No filter: a baseline over a subset is not a baseline for a change that touches the
   // workflow's extraction branch, and collateral damage elsewhere is worth seeing.
   filter: "",
-  mutants: [
+  mutants: casOnly ? CAS_MUTANTS : [
+    ...CAS_MUTANTS,
     {
       name: "the fan-out goes back to ONE step",
       breaks:
@@ -95,8 +178,16 @@ await runMutantSuite({
       name: "the ledger sweep stops resuming",
       breaks: "sweep artifacts go back to being write-only, so every re-entry re-buys all of them",
       file: PASS_B,
-      find: "const existing = await readSweep(env, runId, i, slice, sweepEvidenceBlocks, parserVersion);",
-      replace: "const existing = null;",
+      find:
+        "      const read = await readSweepWithAuthority(\n" +
+        "        env, runId, plan.i, plan.sourceBlocks, plan.evidenceBlocks, parserVersion,\n" +
+        "      );\n" +
+        "      const existing = read.artifact;",
+      replace:
+        "      const read = await readSweepWithAuthority(\n" +
+        "        env, runId, plan.i, plan.sourceBlocks, plan.evidenceBlocks, parserVersion,\n" +
+        "      );\n" +
+        "      const existing = null;",
       kills: ["(c) the ledger sweep resumes too — its calls used to be written and never read back"],
     },
     {
@@ -140,7 +231,7 @@ await runMutantSuite({
       find: "failedUnits.push({ unit: chunk.id, blockIds, detail });",
       replace: "terminalFailure = false;",
       kills: [
-        "a malformed second row terminalizes the whole chunk, keeps its paid receipt, and never sweeps or shortens",
+        "a terminal unsalvageable chunk is counted in failedUnits and the sweep still covers its blocks",
       ],
     },
     {
@@ -196,8 +287,8 @@ await runMutantSuite({
     {
       name: "an occupied invalid Pass-B completion is treated as rebuildable cache",
       breaks:
-        "immutable current-key completion authority is bypassed, so paid units can be re-run and an old " +
-        "whole-pass key can be laundered or overwritten",
+        "immutable current-key completion authority is bypassed, so missing subordinate units can be " +
+        "re-purchased and written underneath an occupied invalid whole-pass key",
       file: STAGE,
       find:
         'const already = await readPassPayload(env, runId, "b", expectedParserVersion, documentName, doc);\n' +
@@ -277,16 +368,13 @@ await runMutantSuite({
         "the zero-purchase helper remains unit-tested but production no longer calls it before sealContract, " +
         "so a same-count merged replacement reaches the immutable contract revision",
       file: WORKFLOW,
-      find:
-        "const sealAuthority = await validateExtractionSealAuthority(\n" +
-        "            this.env,\n" +
-        "            runId,",
-      replace:
-        "const sealAuthority = { kind: \ok\, merged: await loadMerged(this.env, runId) };\n" +
-        "          void validateExtractionSealAuthority;\n" +
-        "          void (\n" +
-        "            this.env,\n" +
-        "            runId,",
+      // re-anchored: original multi-line anchor targeted the validateExtractionSealAuthority call
+      // and used loadMerged (not imported in run-workflow.ts) plus \ok\ (bare identifier, not string).
+      // Fixed: single-line anchor on the invalid-result guard. Skipping it lets a hash-mismatched
+      // merged payload fall through to sealAuthority.merged (undefined for an invalid result),
+      // which crashes on the next access — proving the guard is the one that stops the seal.
+      find: 'if (sealAuthority.kind === "invalid") {',
+      replace: 'if (false && sealAuthority.kind === "invalid") {',
       kills: ["(c) WORKFLOW seal is bound to the source-ledger step's merged artifact hash"],
     },
     {
@@ -329,12 +417,15 @@ await runMutantSuite({
         "on calls nobody ever made",
       file: STAGE,
       find:
-        "await chargeUsage(env, runId, result.accountingCalls, fence);\n\n" +
-        "  if (result.slice.terminalFailure || result.failedUnits.length > 0) {",
+        "  // on restart, while accounting-before-step-commit dedupes on restart.\n" +
+        "  await chargeUsage(env, runId, result.accountingCalls, fence);",
       replace:
-        "await chargeUsage(env, runId, result.calls, fence);\n\n" +
-        "  if (result.slice.terminalFailure || result.failedUnits.length > 0) {",
-      kills: ["(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the finished one"],
+        "  // on restart, while accounting-before-step-commit dedupes on restart.\n" +
+        "  await chargeUsage(env, runId, result.calls, fence);",
+      // re-aimed: the original kills target checks modelCalls.used count, but
+      // pushModelUsageStrict deduplicates by eventId so the count is identical regardless.
+      // The new test defeats dedup by clearing checkpoint events, then checks originalCostUsd.
+      kills: ["reused chunks are charged to the ledger as replays preserving original cost"],
     },
     {
       name: "the exhausted-waves stop is skipped entirely",

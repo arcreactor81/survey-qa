@@ -37,9 +37,11 @@ import { runMutantSuite } from "./mutate-runner.mjs";
 const EB = "src/workflow/stages/execute-batch.ts";
 const PO = "src/workflow/stages/project-observations.ts";
 const VO = "src/workflow/stages/verify-observations.ts";
+const AR = "src/workflow/stages/assemble-record.mjs";
 
 const CARRY_EB = "    ...(obs.ending !== undefined ? { ending: obs.ending } : {}),";
 const CARRY_PO = "        ...(walk.ending !== undefined ? { ending: walk.ending } : {}),";
+const CARRY_AR = '      ...(w && typeof w === "object" && w.ending !== undefined ? { ending: w.ending } : {}),';
 
 await runMutantSuite({
   title: "D43 — can the walk-facts carry guards fail?",
@@ -160,6 +162,20 @@ await runMutantSuite({
       kills: ["...and none of THOSE is defaulted either when the walk never reported them"],
     },
 
+    // --------------------------------------------------------- COMPLETENESS
+    {
+      name: "completenessFor reverts to the false-friend outcome read",
+      breaks:
+        "THE FALSE-FRIEND BUG (commit 38af67b): `outcome: \"completed\"` means the step loop " +
+        "exited under budget, not that the survey finished. Reading it here marks walks that " +
+        "ran out of PLAN as complete and walks that ran out of SURVEY as partial — exactly " +
+        "backwards. The fix reads `ending.kind`, and this mutant restores the old line.",
+      file: PO,
+      find: '  walk.ending?.kind === "completed" ? "complete-scoped-inventory" : "partial";',
+      replace: '  walk.outcome === "completed" ? "complete-scoped-inventory" : "partial";',
+      kills: ["completeness is `complete-scoped-inventory` for a walk whose ending.kind is `completed`"],
+    },
+
     // ------------------------------------------------------------- TRUSTED
     {
       name: "THE COUNTERWEIGHT: the verifier prefers the payload's ending over the artifact's",
@@ -173,6 +189,56 @@ await runMutantSuite({
       replace:
         "  const result = predicate.run(expectation, { ...walk, ending: (payload as unknown as { ending?: PathObservation[\"ending\"] })?.ending ?? walk.ending }, {",
       kills: ["A PAYLOAD WHOSE ENDING CONTRADICTS ITS ARTIFACT MOVES NO VERDICT"],
+    },
+
+    // ------------------------------------------------------- THE THIRD HOP
+    // The two hops above carry the ending to the record's OBSERVATION payloads. The record's
+    // ATTEMPT ledger — the rows a report renders "how the walks went" from — was a third drop,
+    // and the flag beside it was INVERTED (completion-path audit G1/G2).
+    {
+      name: "the ending never reaches the record's attempt ledger (THE THIRD HOP, dropped)",
+      breaks:
+        "the deployed state before the completion-path audit: `deriveAttempts` copies outcome, " +
+        "timings and evidence ids and drops the one field that says whether the walk reached an " +
+        "ending — so the SIGNED document has no field that can hold 'this walk finished the survey'",
+      file: AR,
+      find: `${CARRY_AR}\n`,
+      replace: "",
+      kills: ["THE THIRD HOP: the attempt row carries the ending, evidence and all"],
+    },
+    {
+      name: "`ok` goes back to reading `outcome === \"completed\"`",
+      breaks:
+        "THE INVERTED FLAG. `browser/types.ts` says a real thank-you page lands on " +
+        "`no-advance-control`, so this marks the walk that ran out of SURVEY not-ok and the walks " +
+        "that ran out of PLAN ok — precisely backwards for the one case the deliverable is about",
+      file: AR,
+      find: "      ok: reachedAnEnding(w),",
+      replace: '      ok: w?.outcome === "completed" && w?.loadCrash !== true,',
+      kills: ["THE INVERTED FLAG: the walk that finished the survey is `ok`, and `outcome` alone never decides it"],
+    },
+    {
+      name: "`unclassified` is promoted to an ending reached at the third hop",
+      breaks:
+        "THE CARDINAL FAILURE at the record boundary, and invisible to any presence test: the " +
+        "walker reached a terminal page that said NOTHING about which kind of ending it was, and " +
+        "the signed record reports that walk as one that went fine",
+      file: AR,
+      find: '  if (kind === "stalled" || kind === "unclassified" || kind === "crashed") return false;',
+      replace: '  if (kind === "stalled" || kind === "crashed") return false;\n  if (kind === "unclassified") return true;',
+      kills: ["`unclassified` IS NOT AN ENDING REACHED — the counted residual never becomes a success"],
+    },
+    {
+      name: "a row with no ending is DEFAULTED to a completion on the attempt",
+      breaks:
+        "absence rebuilt as a value one hop further down: a ledger row written before endings " +
+        "were typed acquires a confident `completed`, and `\"ending\" in attempt` can no longer " +
+        "tell 'this walk said nothing' from 'nobody looked'",
+      file: AR,
+      find: CARRY_AR,
+      replace:
+        '      ending: (w && typeof w === "object" ? w.ending : undefined) ?? { kind: "completed", evidence: [] },',
+      kills: ["ABSENCE IS PRESERVED AS ABSENCE at the third hop, and `ok` degrades to the honest older reading"],
     },
   ],
 });

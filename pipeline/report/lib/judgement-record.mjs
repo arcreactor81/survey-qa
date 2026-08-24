@@ -53,7 +53,7 @@ export const SUPPORTED_JUDGEMENT_RECORD_SCHEMAS = Object.freeze(["survey-qa-judg
 export const SUPPORTED_BINDING_VERSIONS = Object.freeze({
   engineVersion: Object.freeze(["1.0.0", "2.0.0"]),
   predicateVersion: Object.freeze(["1.0.0", "2.0.0"]),
-  compilerVersion: Object.freeze(["1.0.0", "2.0.0"]),
+  compilerVersion: Object.freeze(["1.0.0", "2.0.0", "3.0.0"]),
   ambiguityPolicyVersion: Object.freeze(["1.0.0", "2.0.0"]),
   resultPolicyVersion: Object.freeze(["1.0.0", "2.0.0"]),
 });

@@ -192,20 +192,20 @@ const observeGreyScale = (mod, rowCount) => {
   };
 };
 const GROK_OWNER_RATE_FIXTURE = {
-  GROK_MODEL: "grok-4.6",
+  GROK_MODEL: "grok-4.5",
   GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
   GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-  GROK_RATE_SOURCE: "owner-dashboard-copy",
-  GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-  GROK_RATE_ATTESTED_AT: "2026-08-13",
-  GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+  GROK_RATE_SOURCE: "owner-console-confirmation",
+  GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+  GROK_RATE_ATTESTED_AT: "2026-08-15",
+  GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
   GROK_CONTEXT_WINDOW_TOKENS: "500000",
   GROK_INPUT_USD_PER_MTOK: "2",
-  GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+  GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
   GROK_OUTPUT_USD_PER_MTOK: "6",
   GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
   GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-  GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+  GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
   GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
   GROK_MAX_INPUT_USD_PER_MTOK: "4",
   GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -436,7 +436,11 @@ suite("W6 — grey programming logic is provenance, not an option label", () => 
 
   test("whole-pass cache cannot cross document-semantics profiles", async () => {
     const mod = await worker();
-    const env = testEnv({ ...GROK_OWNER_RATE_FIXTURE, XAI_API_KEY: "fixture-xai-key" });
+    const env = testEnv({
+      ...GROK_OWNER_RATE_FIXTURE,
+      XAI_API_KEY: "fixture-xai-key",
+      DEEPSEEK_API_KEY: "fixture-deepseek-key",
+    });
     const runId = mod.ids.mintRunId();
     const documentKey = mod.keys.inputDocumentKey(runId);
     const documentBytes = docx(`<w:p>${run("Grey", `<w:highlight w:val="lightGray"/>`)}</w:p>`);
@@ -485,7 +489,7 @@ suite("W6 — grey programming logic is provenance, not an option label", () => 
       assertEq(shop.result.state, "not-evaluated", "cross-profile payload is not reused");
       assertEq(
         shop.result.reason,
-        "PASS_A_COMPLETION_ARTIFACT_INVALID",
+        "COMPLETION_ARTIFACT_INVALID",
         "an occupied final key is immutable terminal authority under the wrong semantics profile",
       );
       assertEq(calls.length, 0, "profile mismatch cannot buy or overwrite same-run authority");

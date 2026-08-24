@@ -178,12 +178,24 @@ test("CUA TAP scoring is inseparable from a completed zero-process Job receipt",
     containmentScope: WINDOWS_JOB_CONTAINMENT_SCOPE,
   };
   assert.equal(parseContainedTapRun(contained).completed, true);
+
+  const coherentRed = {
+    ...contained,
+    stdout: tap({ failed: ["exact guard"] }),
+    status: 1,
+    supervisorStatus: 0,
+  };
+  const coherentRedResult = parseContainedTapRun(coherentRed);
+  assert.equal(coherentRedResult.completed, true);
+  assert.equal(judgeCuaMutant(coherentRedResult, [], ["exact guard"]).killed, true);
+
   for (const mutation of [
     { ...contained, completed: false },
     { ...contained, error: new Error("synthetic") },
     { ...contained, signal: "SIGTERM" },
     { ...contained, timedOut: true },
     { ...contained, supervisorStatus: 1 },
+    { ...contained, status: 2 },
     { ...contained, finalActiveProcesses: 1 },
     { ...contained, containmentScope: "uncontained" },
   ]) {
@@ -191,4 +203,12 @@ test("CUA TAP scoring is inseparable from a completed zero-process Job receipt",
     assert.equal(result.containmentCompleted, false);
     assert.equal(result.completed, false);
   }
+
+  const incompleteTap = parseContainedTapRun({
+    ...contained,
+    stdout: tap({ failed: ["exact guard"], includeSummary: false }),
+    status: 1,
+  });
+  assert.equal(incompleteTap.containmentCompleted, true);
+  assert.equal(incompleteTap.completed, false);
 });

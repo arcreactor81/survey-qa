@@ -1,14 +1,15 @@
 /**
- * D47 — ONE SCREEN, THREE BOUND REPRESENTATIONS.
+ * D47 — ONE SCREEN, FOUR BOUND REPRESENTATIONS.
  *
- * The visual reader cannot safely reconcile a PNG, DOM projection and accessibility tree if
- * they are merely adjacent files. These tests exercise the real capture writer and real walk:
- * exact hashes/media types/epoch metadata pair them, Puppeteer's live `elementHandle()` never
- * reaches JSON, and every missing or truncated modality is named and counted.
+ * The visual reader cannot safely reconcile a PNG, PDF rendition, DOM projection and
+ * accessibility tree if they are merely adjacent files. These tests exercise the real capture
+ * writer and real walk: exact hashes/media types/epoch metadata pair them, Puppeteer's live
+ * `elementHandle()` never reaches JSON, and every missing or truncated modality is named and
+ * counted.
  *
- * The negative page is the evidence this gate can fail: screenshot, geometry and AX capture all
- * fail independently while the screen JSON still lands. If any catch becomes silent, its exact
- * failure kind/count assertion goes red.
+ * The negative page is the evidence this gate can fail: screenshot, geometry, AX and PDF
+ * capture all fail independently while the screen JSON still lands. If any catch becomes
+ * silent, its exact failure kind/count assertion goes red.
  */
 
 import { assert, assertEq, suite, test } from "../testkit.mjs";
@@ -65,6 +66,43 @@ const axTree = () => ({
   ],
 });
 
+/** Minimal PDF bytes for the CDP stub — enough to pass the non-empty check. */
+const STUB_PDF_BYTES = new TextEncoder().encode("%PDF-1.4-D47-STUB");
+
+/**
+ * A minimal CDP session stub that satisfies the bounded print protocol contract.
+ *
+ * Handles: Runtime.evaluate (font ready), Page.printToPDF (stream handle),
+ * IO.read (returns STUB_PDF_BYTES in one chunk with eof), IO.close, and detach().
+ */
+function stubCDPSession() {
+  const HANDLE = "stub-pdf-handle-d47";
+  let detached = false;
+  return {
+    async send(method, params) {
+      if (detached) throw new Error("CDP session already detached");
+      if (method === "Runtime.evaluate") {
+        return { result: { type: "boolean", value: true } };
+      }
+      if (method === "Page.printToPDF") {
+        return { stream: HANDLE };
+      }
+      if (method === "IO.read") {
+        // base64-encode the stub bytes so the decoder exercises the real path.
+        const b64 = btoa(String.fromCharCode(...STUB_PDF_BYTES));
+        return { data: b64, base64Encoded: true, eof: true };
+      }
+      if (method === "IO.close") {
+        return {};
+      }
+      throw new Error(`CDP stub received unexpected method: ${method}`);
+    },
+    async detach() {
+      detached = true;
+    },
+  };
+}
+
 function goodPage(s = screen()) {
   const snapshotOptions = [];
   return {
@@ -95,6 +133,13 @@ function goodPage(s = screen()) {
   };
 }
 
+/** goodPage WITH a working createCDPSession so PDF capture succeeds end to end. */
+function goodPageWithCDP(s = screen()) {
+  const page = goodPage(s);
+  page.createCDPSession = async () => stubCDPSession();
+  return page;
+}
+
 const cap = (env, runId) => ({ env, runId, attemptId: ATTEMPT_ID, pathId: PATH_ID, witnesses: [] });
 
 suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", () => {
@@ -114,7 +159,7 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
       { width: 1280, height: 900 },
     );
 
-    assertEq(epoch.kind, "v2-screen-capture-epoch/1.0.0");
+    assertEq(epoch.kind, "v2-screen-capture-epoch/1.1.0");
     assert(/^epoch_[a-f0-9]{24}$/.test(epoch.epochId), `epoch id is not opaque: ${epoch.epochId}`);
     const identityInputs = [
       runId,
@@ -148,7 +193,15 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
     assertEq(epoch.geometry.deviceScaleFactor, 1.25);
     assertEq(epoch.geometry.scrollY, 240);
     assertEq(epoch.geometry.source, "browser");
-    assertEq(epoch.captureFailureCount, 0, JSON.stringify(epoch.captureFailures));
+
+    // goodPage() has no createCDPSession, so the PDF modality is the one named failure.
+    assertEq(epoch.captureFailureCount, 1, JSON.stringify(epoch.captureFailures));
+    assertEq(epoch.captureFailures.length, 1);
+    assertEq(epoch.captureFailures[0].kind, "pdf-api-unavailable");
+    assert("pdf" in epoch, "v1.1.0 epoch must carry a pdf field");
+    assertEq(epoch.pdf.status, "failed");
+    assertEq(epoch.pdf.failure.kind, "pdf-api-unavailable");
+
     assertEq(epoch.screenshot.status, "captured");
     assertEq(epoch.accessibility.status, "captured");
     assertEq(epoch.accessibility.completeness, "complete");
@@ -204,7 +257,7 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
     );
   });
 
-  test("failed geometry, PNG and AX are three explicit failures; screen JSON is not lost", async () => {
+  test("failed geometry, PNG, AX and PDF are four explicit failures; screen JSON is not lost", async () => {
     const mod = await worker();
     const env = testEnv();
     const runId = mod.ids.mintRunId();
@@ -216,6 +269,7 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
         throw new Error("PNG transport down");
       },
       // accessibility is ABSENT on purpose — not a null/empty tree.
+      // createCDPSession is ABSENT on purpose — the PDF modality must name its own failure.
     };
     const epoch = await mod.driver.captureScreenEpoch(
       page,
@@ -226,15 +280,24 @@ suite("D47 — screenshot, screen JSON and Chrome AX are one hash-bound epoch", 
       { width: 1024, height: 768 },
     );
 
+    assertEq(epoch.kind, "v2-screen-capture-epoch/1.1.0");
     assertEq(epoch.screenJson.kind, "screen-json");
     assertEq(epoch.geometry.source, "configured-fallback");
     assertEq(epoch.geometry.deviceScaleFactor, null);
     assertEq(epoch.screenshot.status, "failed");
     assertEq(epoch.accessibility.status, "failed");
-    assertEq(epoch.captureFailureCount, 3, JSON.stringify(epoch.captureFailures));
+    assert("pdf" in epoch, "v1.1.0 epoch must carry a pdf field");
+    assertEq(epoch.pdf.status, "failed");
+    assertEq(epoch.pdf.failure.kind, "pdf-api-unavailable");
+    assertEq(epoch.captureFailureCount, 4, JSON.stringify(epoch.captureFailures));
     assertEq(
       epoch.captureFailures.map((f) => f.kind).sort().join(","),
-      ["accessibility-api-unavailable", "capture-metadata-failed", "screenshot-capture-failed"].sort().join(","),
+      [
+        "accessibility-api-unavailable",
+        "capture-metadata-failed",
+        "pdf-api-unavailable",
+        "screenshot-capture-failed",
+      ].sort().join(","),
     );
     const catalog = await mod.evidence.listCatalog(env, runId);
     assertEq(catalog.length, 1, "only the successfully captured screen JSON should be catalogued");
@@ -265,16 +328,135 @@ suite("D47 — the real walker preserves legacy ids and adds paired epochs", () 
       cap(env, runId),
     );
 
-    assertEq(obs.screenCaptureCount, 2, JSON.stringify(obs.screenCaptures));
-    assertEq(new Set(obs.screenCaptures.map((epoch) => epoch.epochId)).size, 2, "slot must participate in opaque epoch identity");
-    assertEq(obs.captureFailureCount, 0, JSON.stringify(obs.captureFailures));
+    // CAPTURE DIET: the after-action "final" epoch is no longer produced. Only the "before"
+    // epoch survives. The diet policy is recorded on the step.
+    assertEq(obs.screenCaptureCount, 1, JSON.stringify(obs.screenCaptures));
+    assertEq(new Set(obs.screenCaptures.map((epoch) => epoch.epochId)).size, 1, "one epoch, one unique identity");
+
+    // goodPage() has no createCDPSession: the single "before" epoch carries exactly one
+    // pdf-api-unavailable failure.
+    assertEq(obs.captureFailureCount, 1, JSON.stringify(obs.captureFailures));
+    assertEq(obs.captureFailures.length, 1);
+    for (const failure of obs.captureFailures) {
+      assertEq(failure.kind, "pdf-api-unavailable", `unexpected capture failure kind: ${failure.kind}`);
+    }
+    for (const epoch of obs.screenCaptures) {
+      assertEq(epoch.kind, "v2-screen-capture-epoch/1.1.0");
+      assert("pdf" in epoch, "v1.1.0 epoch must carry a pdf field");
+      assertEq(epoch.pdf.status, "failed");
+      assertEq(epoch.pdf.failure.kind, "pdf-api-unavailable");
+    }
+
     assertEq(obs.steps.length, 1);
     const evidence = obs.steps[0].evidence;
-    assertEq(evidence.screenCaptures.length, 2);
-    assertEq(evidence.screenshots.length, 2, "the legacy list remains and now names both exact screen epochs");
+    assertEq(evidence.screenCaptures.length, 1);
+    assertEq(evidence.screenshots.length, 1, "one screenshot from the single before epoch");
     assertEq(evidence.screenBefore, evidence.screenCaptures[0].screenJson.evidenceId);
-    assertEq(evidence.screenAfterAdvance, evidence.screenCaptures[1].screenJson.evidenceId);
-    assertEq(evidence.captureFailureCount, 0);
-    assertEq(evidence.captureFailures.length, 0, "present-and-empty means this reader checked every modality");
+    // With the diet, screenAfterAdvance is null (no after-action epoch produced).
+    assertEq(evidence.screenAfterAdvance, null, "no after-action epoch means no screenAfterAdvance legacy id");
+    // Step-level failure count: 1 epoch, 1 pdf-api-unavailable.
+    assertEq(evidence.captureFailureCount, 1);
+    assertEq(evidence.captureFailures.length, 1, "one slot's pdf-api-unavailable failure");
+    for (const failure of evidence.captureFailures) {
+      assertEq(failure.kind, "pdf-api-unavailable");
+    }
+    // DIET POLICY: the step records what was skipped and why.
+    const diet = obs.steps[0].captureDietApplied;
+    assert(Array.isArray(diet) && diet.length > 0, "capture diet applied is recorded on the step");
+    assertEq(diet[0].rule, "after-action-epoch-skip");
+    assertEq(diet[0].slot, "final", "on a terminal step, the skipped slot was 'final'");
+    assert(diet[0].modalities.includes("screenshot"), "screenshot was among the skipped modalities");
+    assert(diet[0].modalities.includes("accessibility"), "accessibility was among the skipped modalities");
+    // Walk-level diet count.
+    assertEq(obs.captureDietSkippedEpochs, 1, "one epoch skipped by diet on this single-step walk");
+  });
+});
+
+suite("D47 — PDF capture success path via CDP session stub", () => {
+  test("a page with createCDPSession produces a captured PDF ref with correct media type and hash", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const runId = mod.ids.mintRunId();
+    const rendered = screen();
+    const page = goodPageWithCDP(rendered);
+
+    const epoch = await mod.driver.captureScreenEpoch(
+      page,
+      cap(env, runId),
+      rendered,
+      "before",
+      5,
+      { width: 1280, height: 900 },
+    );
+
+    assertEq(epoch.kind, "v2-screen-capture-epoch/1.1.0");
+    // All four modalities succeeded: zero capture failures.
+    assertEq(epoch.captureFailureCount, 0, JSON.stringify(epoch.captureFailures));
+    assertEq(epoch.captureFailures.length, 0);
+
+    // Screenshot and AX still work.
+    assertEq(epoch.screenshot.status, "captured");
+    assertEq(epoch.accessibility.status, "captured");
+
+    // PDF succeeded: typed ref with the correct kind, media type and a real content hash.
+    assert("pdf" in epoch, "v1.1.0 epoch must carry a pdf field");
+    assertEq(epoch.pdf.status, "captured");
+    assertEq(epoch.pdf.ref.kind, "rendered-pdf");
+    assertEq(epoch.pdf.ref.mediaType, "application/pdf");
+    assert(/^[a-f0-9]{64}$/.test(epoch.pdf.ref.contentHash), `PDF ref missing sha256: ${epoch.pdf.ref.contentHash}`);
+    assert(epoch.pdf.ref.size > 0, "PDF ref size must be positive");
+
+    // The PDF evidence must resolve in the immutable catalogue.
+    const entry = await mod.evidence.getCatalogEntry(env, runId, epoch.pdf.ref.evidenceId);
+    assert(entry, "the PDF ref must resolve in the immutable catalogue");
+    const verified = await mod.evidence.getVerifiedEvidence(env, entry);
+    assert(verified.bytes.byteLength > 0, "verified PDF bytes must be non-empty");
+
+    // All four refs have distinct evidence ids.
+    const allRefs = [epoch.screenJson, epoch.screenshot.ref, epoch.accessibility.ref, epoch.pdf.ref];
+    assertEq(new Set(allRefs.map((r) => r.evidenceId)).size, 4, "all four modality refs must have distinct evidence ids");
+  });
+});
+
+/* ============================================================ capture concurrency
+ *
+ * The v44 phase clocks measured epoch capture at ~21s of every ~28s step: three heavy
+ * protocol reads (PNG, full AX tree, PDF print) made back-to-back, three epochs per step.
+ * The three reads now run CONCURRENTLY — each reads the same settled page, and the
+ * narrower startedAt..endedAt window makes the epoch's pairing claim MORE atomic. This
+ * pins the concurrency with injected latency: sequential would pay the SUM of the delays,
+ * concurrent pays roughly the slowest one.
+ */
+
+suite("D47 — the three heavy capture reads run concurrently, not back-to-back", () => {
+  test("an epoch over a slow page costs ~max(delays), not their sum", async () => {
+    const mod = await worker();
+    const env = testEnv();
+    const runId = mod.ids.mintRunId();
+    const rendered = screen();
+    const DELAY = 400;
+    const page = goodPage(rendered);
+    const slow = (v) => new Promise((resolve) => setTimeout(() => resolve(v), DELAY));
+    page.screenshot = () => slow(new TextEncoder().encode("PNG-D47"));
+    page.accessibility = { async snapshot() { return slow(axTree()); } };
+    page.createCDPSession = async () => stubCDPSession(); // PDF path exercised too
+
+    const t0 = Date.now();
+    const epoch = await mod.driver.captureScreenEpoch(
+      page,
+      cap(env, runId),
+      rendered,
+      "before",
+      1,
+      { width: 1280, height: 900 },
+    );
+    const elapsed = Date.now() - t0;
+
+    assertEq(epoch.screenshot.status, "captured", "the slow screenshot must still capture");
+    assertEq(epoch.accessibility.status, "captured", "the slow AX snapshot must still capture");
+    assert(
+      elapsed < DELAY * 2,
+      `two ${DELAY}ms reads cost ${elapsed}ms — back-to-back again; concurrent capture must pay ~max, not the sum`,
+    );
   });
 });

@@ -26,13 +26,18 @@
  * developer can perform. The alternative — a local runner — would have made every run
  * depend on someone's laptop being awake.
  *
- * NOT ONE LINE OF THE TRUST LOGIC IS MODIFIED OR SHIMMED. There is no fake `fs`, no
- * bundler alias, no monkey-patched hash. Every integrity check the judge makes — the
- * SHA-256 of each artifact against the signed catalogue, the Ed25519 attestation on the
- * RunRecord, the re-derivation of the sealed contract-revision id, the checklist binding,
- * the second uncached re-read in `attest()` — runs exactly as it does under node, against
- * the same bytes. What this module does is strictly I/O: pull bytes out of R2, put them
- * where the judge looks, and delete them afterwards.
+ * THE TRUST CHECKS ARE UNCHANGED AND NOW ENUMERATED:
+ *   1. Signed-manifest membership: the artifact name must be in the Ed25519-attested
+ *      RunRecord's evidence catalogue BEFORE any bytes are fetched.
+ *   2. Hash-at-read: fetched bytes are SHA-256'd and compared against the SIGNED
+ *      contentHash from the catalogue. A mismatch raises EvidenceIntegrityError.
+ *   3. Fresh attest re-fetch: attest() re-fetches bytes through the source (fresh,
+ *      never from the main cache) and re-hashes against the signed catalogue.
+ *
+ * The bytes arrive through an INJECTED SOURCE instead of a materialized directory because
+ * a 128 MB isolate cannot hold a 112.8 MB run twice. The source is dumb transport:
+ * name -> catalogue entry -> evidenceBlobKey(contentHash) -> R2 bucket get -> bytes.
+ * The store does all verification.
  *
  * ============================ WHAT IT REFUSES TO DO =============================
  *
@@ -67,75 +72,72 @@ let mountSeq = 0;
 /**
  * Materialize a run directory the judge recognises, judge it, then remove it.
  *
+ * A3b: ASYNC. The judge engine is fully async now — the store fetches artifact
+ * bytes through an injected source rather than reading them from a materialized
+ * directory. No artifacts directory is created. No artifact blobs are written to
+ * the memory-backed tmpdir. Only the metadata files (checklist, record, revision,
+ * registry) are materialized.
+ *
  * @param {object}   o
  * @param {string}   o.runId
  * @param {object}   o.checklist        the run's checklist (obligations + ambiguities)
  * @param {object}   o.record           the assembled RunRecordV2 (signed, or not)
  * @param {object}   o.revision         the SEALED ContractRevision the record names
- * @param {Array<{name: string, bytes: Uint8Array}>} o.artifacts  evidence blobs, by the
- *                   BASENAME the record's `evidence[].artifactRef` cites them by
+ * @param {Map<string,{contentHash:string,byteLength:number}>} o.catalogueDescriptors
+ *                   Names and catalogue-level metadata for every evidence entry. The
+ *                   authority uses these so manifestComplete covers the full set. The
+ *                   engine reads actual bytes through the injected source.
+ * @param {{names():string[],fetch(name:string):Promise<Uint8Array|null>}} o.source
+ *                   The async byte source the engine reads artifacts through. For the
+ *                   Worker this is the R2-backed source; for tests it may be a memory
+ *                   map.
  * @param {object|null} o.keyRegistry   pinned public keys for the RECORD's attestation
  * @param {object|null} o.signer        `{ privateKeyPem, keyId, signedAt }` for the
- *                                      JudgementRecord. Absent ⇒ nothing is signed.
+ *                                      JudgementRecord. Absent means nothing is signed.
  * @param {object|null} o.priorObservations  diagnostic cross-check only; never an input
  *                                      to a verdict.
  */
-export function judgeRunInIsolate({
+export async function judgeRunInIsolate({
   runId,
   checklist,
   record,
   revision,
-  artifacts,
+  catalogueDescriptors,
+  source,
   keyRegistry = null,
   signer = null,
   priorObservations = null,
 }) {
   const runDir = join(MOUNT_ROOT, `${runId}-${mountSeq++}`);
-  const artifactsDir = join(runDir, "artifacts");
   const recordPath = join(runDir, "run-record.v2.json");
   const revisionPath = join(runDir, "contract-revision.json");
   const registryPath = join(runDir, "key-registry.json");
+  // A3b: create the artifacts directory as an EMPTY directory. The authority's
+  // manifest check uses catalogueDescriptors (passed as preVerifiedArtifacts)
+  // instead of reading from disk, so no blobs need to be on disk. The empty
+  // directory satisfies existsSync checks in authority.mjs.
+  const artifactsDir = join(runDir, "artifacts");
 
   try {
     mkdirSync(artifactsDir, { recursive: true });
-    // `checklist.json` is what the judge's CLI contract calls the obligation set, and
-    // `loadEvidenceAuthority` is handed the parsed object as well — both are written so
-    // the directory is self-describing if it is ever dumped for a human.
     writeFileSync(join(runDir, "checklist.json"), JSON.stringify(checklist), "utf8");
     writeFileSync(recordPath, JSON.stringify(record), "utf8");
     writeFileSync(revisionPath, JSON.stringify(revision), "utf8");
     if (keyRegistry) writeFileSync(registryPath, JSON.stringify(keyRegistry), "utf8");
 
-    // A basename is all the judge resolves by, so two artifacts sharing one is not a
-    // cosmetic problem: the second write DESTROYS the first walk's evidence and the run
-    // then judges a smaller evidence set without saying so. It used to happen on every v2
-    // run, because each walk's artifactRef ended in `observation.json`. Refuse, loudly.
-    const written = new Set();
-    for (const a of artifacts) {
-      // Anything with a separator in it would escape the artifacts directory. The judge's
-      // own store re-checks this; refusing here means a malformed catalogue never reaches
-      // the filesystem at all.
-      const base = String(a.name).split("/").pop();
-      if (!base || base === "." || base === ".." || base.includes("\\")) continue;
-      if (written.has(base)) {
-        throw new Error(
-          `two catalogued artifacts both mount as ${base}; a basename is the judge's whole `
-          + 'identity for an artifact, so writing the second would silently delete the first',
-        );
-      }
-      written.add(base);
-      writeFileSync(join(artifactsDir, base), Buffer.from(a.bytes));
-    }
-
+    // A3b: ALL catalogue entries become preVerifiedArtifacts for the authority.
+    // The authority validates the manifest against this map. The engine then
+    // verifies actual bytes at read time through the injected source.
     const authority = loadEvidenceAuthority({
       runDir,
       checklist,
       runRecordPath: recordPath,
       keyRegistryPath: keyRegistry ? registryPath : null,
       contractRevisionPath: revisionPath,
+      preVerifiedArtifacts: catalogueDescriptors,
     });
 
-    const judged = judgeRun({ runDir, checklist, priorObservations, authority, signer });
+    const judged = await judgeRun({ runDir, checklist, priorObservations, authority, signer, source });
     return { judged, authority };
   } finally {
     try {

@@ -41,17 +41,46 @@ const HALF_READ = "(a) the STAGE refuses to evaluate an unfinished pass A, and e
 const BLOCK_LIMIT = "dense pass-A windows stop at the exact block limit while the character limit stays independent";
 const FAILURE_REPORTS = "an UNCAUGHT step failure still produces a report — the failure path used to produce none";
 
-const STRICT_PRIMARY = "malformed primary schemas and evidence terminalize without a second purchase";
+const STRICT_PRIMARY = "strictly malformed primary schemas terminalize without a second purchase";
+const PRIMARY_GROUNDING =
+  "row-local primary grounding failures are retained and counted without gaining authority";
+const TYPED_ROW_QUARANTINE =
+  "typed primary relational and evidence failures quarantine rows while the tail and synthesis continue";
+const SURVIVING_XREF_HANDLE =
+  "withholding an earlier xref preserves the surviving source handle through synthesis";
+const RAW_SEMANTIC_FAILURE =
+  "strict semantic failure retains exact raw output and corrupt authority is never retried";
+const UNPROVEN_TARGET =
+  "an unproven primary target is downgraded to one unresolved question without trusting its statement";
 const RAW_PRIMARY = "retained primary typed projection is re-decoded from raw output and cannot be laundered";
 const PRIMARY_LAUNDER = "primary paid success cannot be relabeled as retryable semantic failure";
 const SYNTHESIS_INVALID = "malformed or ungrounded synthesis rows terminalize and are never re-bought";
-const SYNTHESIS_WIRE = "the exact serialized provider request is gated before any synthesis purchase";
+const PRIMARY_LATE_WIRE =
+  "late Pass-A overflow blocks A-w1 before secrets and replay remains zero-call";
+const SYNTHESIS_WIRE =
+  "synthesis bounds aggregate retention, rejects unsafe cap, and counts full refused unit";
 const SYNTHESIS_RETAINED = "corrupt or incoherent retained synthesis authority terminalizes with zero new fetch";
 const SYNTHESIS_CROSS_ISSUE = "a fallback route receipt cannot bind its trigger and selected leg across different issues";
 const SYNTHESIS_SEPARATE_WAVE = "a relation split across windows is added once and resolves the qualified primary xref";
 const FALLBACK_CHAIN = "fallback retry authority rejects a missing Flash issue, extra Grok purchase, and ineligible trigger";
 const DOCUMENT_SOURCE_BYTES =
   "byte-different DOCX with identical parsed blocks is refused before Pass A buys anything";
+const HISTORICAL_PROGRESS_OWNERSHIP =
+  "counterproof: historical wrong canonical block ownership fails closed instead of guessing partial progress";
+const PRIMARY_PERSIST_RETRY =
+  "a before-commit write failure retries only immutable artifact bytes, never the model";
+const PRIMARY_PERSIST_EXHAUSTION =
+  "exhausted success storage stops the real stage, charges once, and Workflow re-entry buys nothing";
+const PRIMARY_EXACT_PREDECESSOR =
+  "a current-identity corrupt occupant cannot be overwritten by a paid Flash result";
+const PRIMARY_PREDECESSOR_HISTORY =
+  "a fallback-authority write retries identical bytes before Flash and never retries Grok";
+const SYNTHESIS_TRANSITION_HISTORY =
+  "synthesis fallback/retry transitions archive exact predecessors and accept an after-commit final target";
+const SYNTHESIS_EXACT_PREDECESSOR =
+  "a different valid synthesis CAS winner is never overwritten and exact losing paid bytes survive";
+const SYNTHESIS_RAW_SEMANTIC =
+  "strict synthesis semantic failure retains exact raw output and re-decodes it on reclaim";
 
 await runMutantSuite({
   title: "D22 — pass A is sliced across steps, resumes what landed, and fails by name",
@@ -59,6 +88,16 @@ await runMutantSuite({
   // workflow's extraction branch, and collateral damage elsewhere is worth seeing.
   filter: "",
   mutants: [
+    {
+      name: "historical progress ignores exact canonical window ownership",
+      breaks:
+        "a stale paid artifact from another source window can inflate the public accounted count " +
+        "even though it grants no semantic extraction authority",
+      file: PASS_A,
+      find: "blockIds.some((id, blockIndex) =>",
+      replace: "false && blockIds.some((id, blockIndex) =>",
+      kills: [HISTORICAL_PROGRESS_OWNERSHIP],
+    },
     {
       name: "document source authority trusts parsed equivalence instead of exact current bytes",
       breaks:
@@ -79,15 +118,30 @@ await runMutantSuite({
       kills: [BLOCK_LIMIT],
     },
     {
-      name: "the window walk goes back to ONE step",
+      name: "the all-window primary wire refusal no longer blocks earlier purchases",
       breaks:
-        "every wave reuses a single step name, which is the pre-fix shape: one step whose one " +
-        "timeout has to cover every serial 90 KB window in the document",
-      file: WORKFLOW,
-      find: "extract-pass-a-wave-${wave}",
-      replace: "extract-pass-a-global",
-      kills: [WAVES_NAMED_STOP],
+        "the all-window preflight finds a late refusal but the ordered walk still reads credentials " +
+        "and buys an earlier missing or retryable unit",
+      file: PASS_A,
+      find: "if (pendingPrimaryWireFailure !== null) {",
+      replace: "if (false) {",
+      kills: [PRIMARY_LATE_WIRE],
     },
+    {
+      name: "a retained late primary wire refusal is ignored on safe-cap replay",
+      breaks:
+        "after configuration drift makes the current body fit, a retained terminal late-window " +
+        "refusal no longer blocks an earlier missing unit from reading credentials or buying again",
+      file: PASS_A,
+      find: 'if (retained?.kind === "failed" && retained.terminal && retained.wireCeiling) {',
+      replace: "if (false) {",
+      kills: [PRIMARY_LATE_WIRE],
+    },
+    // Do not mutate the dynamic Workflow step name to a constant here. The supervisor rejects
+    // duplicate step identifiers before the D22 assertions can run, so that shape can only yield
+    // NO-RUN/SUPERVISOR_RECEIPT_INVALID rather than fail-capable product evidence. The live
+    // one-wave regression below exercises the same abandoned-window failure through the normal
+    // workflow path and must be killed by the named D22 assertion.
     {
       name: "the pass-A wave loop runs exactly one wave",
       breaks: "a document needing several windows is abandoned after the first",
@@ -120,9 +174,109 @@ await runMutantSuite({
       name: "persisted windows are never read back",
       breaks: "every wave re-buys the whole document — the duplicate spend this design removes",
       file: PASS_A,
-      find: "const obj = await env.EVIDENCE.get(windowKey(runId, n));",
-      replace: "const obj = null;",
+      find:
+        "  artifactKey: string,\n" +
+        "): Promise<PersistedWindow | FailedWindowArtifact | InvalidWindowArtifact | null> {\n" +
+        "  const obj = await env.EVIDENCE.get(artifactKey);",
+      replace:
+        "  artifactKey: string,\n" +
+        "): Promise<PersistedWindow | FailedWindowArtifact | InvalidWindowArtifact | null> {\n" +
+        "  const obj = null;",
       kills: [RESUME_FREE],
+    },
+    {
+      name: "a paid primary artifact gets no same-byte in-process storage retry",
+      breaks:
+        "a transient before-commit write failure turns one valid paid answer into a terminal stop " +
+        "instead of retrying only its already-serialized immutable bytes",
+      file: PASS_A,
+      find: "storageAttempt <= PASS_A_PRIMARY_ARTIFACT_PERSIST_ATTEMPTS;",
+      replace: "storageAttempt < PASS_A_PRIMARY_ARTIFACT_PERSIST_ATTEMPTS;",
+      kills: [PRIMARY_PERSIST_RETRY],
+    },
+    {
+      name: "paid primary persistence exhaustion discards its exact conflict artifact",
+      breaks:
+        "the canonical write can exhaust after a paid answer while the healthy append-only " +
+        "conflict namespace is never asked to retain the exact serialized target and receipt",
+      file: PASS_A,
+      find: "    const conflictKey = await persistPrimaryWindowCasConflict(env, runId, n, serialized);",
+      replace: '    const conflictKey = "fixture-conflict-retention-skipped";',
+      kills: [PRIMARY_PERSIST_EXHAUSTION],
+    },
+    {
+      name: "a paid primary replacement ignores the exact predecessor etag",
+      breaks:
+        "a concurrent newer window artifact is overwritten by the losing paid Flash result, " +
+        "erasing retained authority and hiding the CAS loser receipt",
+      file: PASS_A,
+      find: '            : { etagMatches: expected.etag },',
+      replace: "            : undefined,",
+      kills: [PRIMARY_EXACT_PREDECESSOR],
+    },
+    {
+      name: "a paid primary replacement discards its exact predecessor history",
+      breaks:
+        "a fallback-authorized receipt disappears when the canonical window key advances to " +
+        "the paid Flash result",
+      file: PASS_A,
+      find: "      await persistPrimaryWindowHistory(env, runId, n, expected.bodyText);",
+      replace: "      void expected.bodyText;",
+      kills: [PRIMARY_PREDECESSOR_HISTORY],
+    },
+    {
+      name: "a paid synthesis replacement ignores the exact predecessor etag",
+      breaks:
+        "a different retained synthesis authority is overwritten by the losing paid result, " +
+        "erasing canonical bytes and hiding the CAS loser receipt",
+      file: PASS_A,
+      find: "          : { etagMatches: synthesisExpected.etag },",
+      replace: "          : undefined,",
+      kills: [SYNTHESIS_EXACT_PREDECESSOR],
+    },
+    {
+      name: "a paid synthesis replacement discards its exact predecessor history",
+      breaks:
+        "fallback and retry receipts disappear when the canonical synthesis key advances",
+      file: PASS_A,
+      find: "      await persistPassASynthesisHistory(env, runId, synthesisExpected.bodyText);",
+      replace: "      void synthesisExpected.bodyText;",
+      kills: [SYNTHESIS_TRANSITION_HISTORY],
+    },
+    {
+      name: "a strict synthesis failure drops its rejected raw model output",
+      breaks:
+        "the terminal synthesis record names a decoder failure but discards the paid answer " +
+        "needed to reproduce it after live access ends",
+      file: PASS_A,
+      find: "          ...(semanticFailure ? { modelOutput: rawModelOutput } : {}),",
+      replace: "          ...{},",
+      kills: [SYNTHESIS_RAW_SEMANTIC],
+    },
+    {
+      name: "retained synthesis semantic failure is not replayed through the strict decoder",
+      breaks:
+        "a valid or laundered raw synthesis output can retain a false semantic-failure label " +
+        "without the current decoder proving the rejection",
+      file: PASS_A,
+      find: "        if (semanticReplayDetail === null) {",
+      replace: "        if (false) {",
+      kills: [SYNTHESIS_RAW_SEMANTIC],
+    },
+    {
+      name: "success-artifact persistence exhaustion escapes into Workflow retry",
+      breaks:
+        "a paid valid answer whose immutable bytes cannot be stored throws across the step boundary, " +
+        "allowing Workflow retry to buy the same model answer again",
+      file: PASS_A,
+      find:
+        "if (err instanceof PassAPrimaryPersistenceError) {\n" +
+        "        const detail = err.message.slice(0, 400);",
+      replace:
+        "if (err instanceof PassAPrimaryPersistenceError) {\n" +
+        "        throw err;\n" +
+        "        const detail = err.message.slice(0, 400);",
+      kills: [PRIMARY_PERSIST_EXHAUSTION],
     },
     {
       name: "the retained issue ceiling is ignored on artifact reclaim",
@@ -143,10 +297,10 @@ await runMutantSuite({
       file: PASS_A,
       find:
         "const durableTerminal =\n" +
-        "        !(err instanceof ModelCallError) || nonRetryablePrimaryFailure || attempts >= maxIssues;",
+        "        nonRetryablePrimaryFailure || attempts >= maxIssues;",
       replace:
         "const durableTerminal =\n" +
-        "        !(err instanceof ModelCallError) || attempts >= maxIssues;",
+        "        attempts >= maxIssues;",
       kills: ["a retained nonretryable Pass-A failure is never re-bought after the stage boundary"],
     },
     {
@@ -155,8 +309,8 @@ await runMutantSuite({
         "a resumed pass publishes a SHORTER diff than the pass that paid for it, with nothing " +
         "anywhere saying so — the silent-shortening class, reachable only through pass A",
       file: PASS_A,
-      find: "crossRefs: windowXrefs,",
-      replace: "crossRefs: [],",
+      find: "...landedWindow,",
+      replace: "...landedWindow, crossRefs: [],",
       kills: [XREFS],
     },
     {
@@ -181,7 +335,82 @@ await runMutantSuite({
       file: PASS_A,
       find: "if (item.quote.length === 0 || !block?.text.includes(item.quote)) {",
       replace: "if (item.quote.length === 0) {",
-      kills: [STRICT_PRIMARY],
+      kills: [PRIMARY_GROUNDING],
+    },
+    {
+      name: "primary grounding limitations disappear from the aggregate count",
+      breaks:
+        "rejected model rows stay absent from authority but the result reports zero withheld rows, " +
+        "making inspected coverage indistinguishable from never inspected",
+      file: PASS_A,
+      find: "const absorb = (unit: PersistedWindow): void => {",
+      replace:
+        "const absorb = (unit: PersistedWindow): void => { unit.primaryGroundingLimitations = [];",
+      kills: [PRIMARY_GROUNDING],
+    },
+    {
+      name: "a rejected primary row is laundered into the accepted projection",
+      breaks:
+        "a row that failed exact document grounding is returned as if it had grounded, so its " +
+        "claim can enter synthesis and merged contract authority",
+      file: PASS_A,
+      find: "if (!(error instanceof PassAPrimaryGroundingError)) throw error;",
+      replace:
+        "if (error instanceof PassAPrimaryGroundingError) return [{ row, sourceIndex: index }]; " +
+        "if (!(error instanceof PassAPrimaryGroundingError)) throw error;",
+      kills: [PRIMARY_GROUNDING],
+    },
+    {
+      name: "a none-observable primary rule needs no grounded unverifiable companion",
+      breaks:
+        "a hidden document mandate gains requirement and synthesis authority even though no separately " +
+        "grounded row explains that the browser cannot verify it",
+      file: PASS_A,
+      find: "if (linked) return [row];",
+      replace: "if (true) return [row];",
+      kills: [TYPED_ROW_QUARANTINE],
+    },
+    {
+      name: "an unresolved primary cross-reference may carry a target quote",
+      breaks:
+        "contradictory target evidence is retained as a valid unresolved row instead of becoming a " +
+        "counted row-local source-evidence limitation",
+      file: PASS_A,
+      find: "} else if (row.targetDocQuote !== null && row.targetDocQuote !== undefined) {",
+      replace: "} else if (false) {",
+      kills: [TYPED_ROW_QUARANTINE],
+    },
+    {
+      name: "typed empty or duplicate primary block ids terminalize the whole window",
+      breaks:
+        "a structurally decodable evidence-set error stops valid siblings and the unread document tail " +
+        "instead of withholding and counting only that row",
+      file: PASS_A,
+      find: 'if (value.some((id) => typeof id !== "string" || id.trim().length === 0)) {',
+      replace:
+        'if (value.length === 0 || new Set(value).size !== value.length || ' +
+        'value.some((id) => typeof id !== "string" || id.trim().length === 0)) {',
+      kills: [TYPED_ROW_QUARANTINE],
+    },
+    {
+      name: "a surviving cross-reference is reindexed after an earlier row is withheld",
+      breaks:
+        "synthesis receives a newly packed handle instead of the paid source-row ordinal, so a valid " +
+        "resolution can bind another row or fail after the original row 1 was rejected",
+      file: PASS_A,
+      find: "row.sourceXrefHandle!,",
+      replace: "`A-w${n}:x:001`,",
+      kills: [SURVIVING_XREF_HANDLE],
+    },
+    {
+      name: "a strict semantic failure drops its rejected raw model output",
+      breaks:
+        "the terminal record names a decoder failure but discards the paid answer needed to reproduce " +
+        "it after live access ends",
+      file: PASS_A,
+      find: "modelOutput: err instanceof ModelCallError ? null : rawModelOutput,",
+      replace: "modelOutput: null,",
+      kills: [RAW_SEMANTIC_FAILURE],
     },
     {
       name: "a resolved primary cross-reference need not quote its target",
@@ -189,7 +418,17 @@ await runMutantSuite({
       file: PASS_A,
       find: "if (targetQuote.length === 0 || !exactTarget.text.includes(targetQuote)) {",
       replace: "if (targetQuote.length === 0) {",
-      kills: [STRICT_PRIMARY],
+      kills: [UNPROVEN_TARGET],
+    },
+    {
+      name: "an unproven target keeps the model's target-derived statement",
+      breaks:
+        "a resolution whose target evidence failed is labelled with the very target-derived claim " +
+        "that the grounding check refused, laundering an unproved claim into the unresolved register",
+      file: PASS_A,
+      find: "statement: PASS_A_UNPROVEN_TARGET_STATEMENT,",
+      replace: "statement: row.statement,",
+      kills: [UNPROVEN_TARGET],
     },
     {
       name: "a failed primary artifact may retain an ok provider receipt",
@@ -200,10 +439,12 @@ await runMutantSuite({
       kills: [PRIMARY_LAUNDER],
     },
     {
-      name: "synthesis ignores the exact serialized request ceiling",
-      breaks: "the bounded reconciliation recreates the oversized provider request windowing removed",
+      name: "synthesis purchases after its bounded catalogue refuses",
+      breaks:
+        "an aggregate candidate catalogue proven larger than its cap falls through to credentials " +
+        "and a provider purchase with no complete retained synthesis input",
       file: PASS_A,
-      find: "if (context.wireBytes > maxBytes) {",
+      find: "if (context.wireFailureDetail !== null) {",
       replace: "if (false) {",
       kills: [SYNTHESIS_WIRE],
     },
@@ -243,8 +484,8 @@ await runMutantSuite({
       name: "a fallback chain may contain another Grok purchase",
       breaks: "one trigger can hide an independently purchased intervening Grok leg",
       file: PASS_A,
-      find: 'if (grokUsages.length !== 1) return "fallback chain contains an extra Grok purchase";',
-      replace: 'if (false) return "fallback chain contains an extra Grok purchase";',
+      find: 'if (primaryUsages.length !== 1) return "fallback chain contains an extra primary purchase";',
+      replace: 'if (false) return "fallback chain contains an extra primary purchase";',
       kills: [FALLBACK_CHAIN],
     },
     {
@@ -304,12 +545,18 @@ await runMutantSuite({
         "CAP_MODEL_CALLS on calls nobody ever made",
       file: STAGE,
       find:
-        "await chargeUsage(env, runId, result.accountingCalls, fence);\n\n" +
-        '  if (result.providerIndependence === "reduced-same-provider-fallback") {',
+        "  // nobody ever made.\n" +
+        "  await chargeUsage(env, runId, result.accountingCalls, fence);",
       replace:
-        "await chargeUsage(env, runId, result.calls, fence);\n\n" +
-        '  if (result.providerIndependence === "reduced-same-provider-fallback") {',
-      kills: [HALF_READ],
+        "  // nobody ever made.\n" +
+        "  await chargeUsage(env, runId, result.calls, fence);",
+      // re-aimed: the original kills target (HALF_READ) checks modelCalls.used count,
+      // but pushModelUsageStrict deduplicates by eventId so the count is identical
+      // regardless of whether calls or accountingCalls is passed. The new test defeats
+      // dedup by clearing checkpoint events, then checks that replay events carry nonzero
+      // originalCostUsd — which only accountingCalls replays provide (calls replays are
+      // pre-zeroed by replayUsage).
+      kills: ["reclaimed windows are charged to the ledger as replays preserving original cost"],
     },
     {
       name: "a receipted Flash result does not stop later pass-A windows",
@@ -366,6 +613,36 @@ await runMutantSuite({
       find: "await this.reportAndFinalize(step, runId, reportingFence);",
       replace: "void reportingFence;",
       kills: [FAILURE_REPORTS],
+    },
+    {
+      name: "a semantic synthesis rejection is instantly terminal again",
+      breaks:
+        "the exact bug that killed run v2r_01m04d7383hcmczq6df0c0xpxv: one imperfect combine " +
+        "answer dies on attempt 1 with the issue budget of 2 never consulted",
+      file: PASS_A,
+      find: "const terminal = (semanticFailure && issue >= maxIssues) || (",
+      replace: "const terminal = semanticFailure || (",
+      kills: ["a semantic synthesis rejection consumes the issue budget instead of terminalizing attempt 1"],
+    },
+    {
+      name: "a conflicting re-resolution rejects the whole synthesis again",
+      breaks:
+        "run-to-run variance in one window's resolution state kills the run and strands every " +
+        "grounded window rule, instead of dropping one counted row",
+      file: PASS_A,
+      find: "if (primary.resolvedToBlock !== null) {",
+      replace: "if (primary.resolvedToBlock !== null) { throw new Error(\"PASS_A_SYNTHESIS_OUTPUT_INVALID: cross-reference resolution has no exact primary source\"); }\n    if (false) {",
+      kills: ["a synthesis re-resolution of a window-resolved xref is dropped and counted, never fatal"],
+    },
+    {
+      name: "the dropped re-resolution is no longer counted",
+      breaks:
+        "the drop happens but leaves no counted trace — a silently-short limitation, the exact " +
+        "failure mode the standing rules forbid",
+      file: PASS_A,
+      find: "      additionsDroppedReResolutions.push({",
+      replace: "      void ({",
+      kills: ["a synthesis re-resolution of a window-resolved xref is dropped and counted, never fatal"],
     },
   ],
 });

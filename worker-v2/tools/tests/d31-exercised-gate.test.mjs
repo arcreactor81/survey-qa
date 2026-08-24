@@ -422,6 +422,69 @@ suite("D31 — `walks-blocked-by-site` requires EVIDENCE of blocking", () => {
     assertEq(mod.executeBatch.blockedStepCount(recovered), 1);
   });
 
+  // -------------------------------------------------------------------------
+  // THE SIDE DOOR THE ACCUSATION CAME BACK THROUGH (completion-path audit G4).
+  //
+  // `classifyEnding` arm 0 REQUIRES `outcome: "blocked"` to recognise the measured test-mode
+  // termination page — the survey printing "we are unable to accept your offer to participate
+  // ... Terminated at S80" beside a ">>" the walker pressed twelve times without the screen
+  // changing. So on that platform every CORRECTLY CLASSIFIED screen-out carries the exact
+  // outcome `BLOCKING_OUTCOMES` reads as proof the site refused us. The gate above stayed
+  // intact and its input was poisoned: a screener behaving exactly as documented was enough to
+  // publish `walks-blocked-by-site` about a healthy customer survey.
+  // -------------------------------------------------------------------------
+
+  test("A CORRECTLY CLASSIFIED SCREEN-OUT IS NOT PROOF THE SITE REFUSED US", async () => {
+    const mod = await worker();
+    const probe = walkRec({ outcome: "blocked", blockedSteps: 0, ending: { kind: "screened-out", evidence: ["Terminated at S80"] } });
+
+    assertEq(mod.executeBatch.hasBlockingEvidence([probe]), false, "the survey answered us; it did not refuse us");
+    assertEq(
+      mod.executeBatch.resolveStopReason({ done: true, pendingCases: 400, stopReason: null, walks: [probe] }),
+      "coverage-shortfall-unexercised",
+      "and the run keeps OUR name on the shortfall instead of accusing the customer's survey",
+    );
+  });
+
+  test("...and the same for a walk that reached the COMPLETION page wearing a dead forward control", async () => {
+    const mod = await worker();
+    const finished = walkRec({ outcome: "blocked", blockedSteps: 0, ending: { kind: "completed", evidence: ["Survey status: Complete"] } });
+    assertEq(mod.executeBatch.hasBlockingEvidence([finished]), false, "a walk that finished the survey was not refused by it");
+  });
+
+  test("COUNTERWEIGHT — a `blocked` walk that reached NO terminal ending still accuses", async () => {
+    const mod = await worker();
+    // The exemption is for endings REACHED, and only those. `stalled` says the walk stopped
+    // before the ending; `unclassified` says the walker could not tell. Neither is a page that
+    // answered us, so neither may buy an exemption — an exemption that covered them would make
+    // the accusation unreachable, which is the same disease inverted.
+    for (const kind of ["stalled", "unclassified"]) {
+      assertEq(
+        mod.executeBatch.hasBlockingEvidence([walkRec({ outcome: "blocked", blockedSteps: 0, ending: { kind, evidence: [] } })]),
+        true,
+        kind,
+      );
+    }
+    // ...and a row that predates typed endings is unchanged: absence is not an exemption.
+    const legacy = walkRec({ outcome: "blocked", blockedSteps: 0 });
+    delete legacy.ending;
+    assertEq(mod.executeBatch.hasBlockingEvidence([legacy]), true, "a walk with no ending field keeps counting exactly as before");
+  });
+
+  test("COUNTERWEIGHT — a MEASURED refusal mid-walk survives a terminal ending", async () => {
+    const mod = await worker();
+    // Only the OUTCOME arm is exempted. `blockedSteps` counts steps where the walker watched the
+    // survey refuse a non-probe answer — that refusal HAPPENED, and running on to a terminal page
+    // afterwards does not unhappen it. The termination page cannot forge one of these: its ">>"
+    // is present, so `whyBlocked` types those steps `advance-timeout`, which is not counted.
+    const refusedThenEnded = walkRec({ outcome: "blocked", blockedSteps: 1, ending: { kind: "screened-out", evidence: [] } });
+    assertEq(mod.executeBatch.hasBlockingEvidence([refusedThenEnded]), true);
+    assertEq(
+      mod.executeBatch.resolveStopReason({ done: true, pendingCases: 4, stopReason: null, walks: [refusedThenEnded] }),
+      "walks-blocked-by-site",
+    );
+  });
+
   test("A LEGACY RECORD WITH NO `blockedSteps` degrades to no-evidence, never to an accusation", async () => {
     const mod = await worker();
     const legacy = { ...walkRec({ outcome: "no-advance-control" }) };
@@ -447,6 +510,7 @@ suite("D31 — `walks-blocked-by-site` requires EVIDENCE of blocking", () => {
     const mod = await worker();
     const eb = mod.executeBatch;
     assertEq(JSON.stringify([...eb.EXEC_STOP_REASONS].sort()), JSON.stringify([
+      "browser-abort-cap",
       "browser-unavailable",
       "coverage-shortfall-unexercised",
       "executor-error",
@@ -454,9 +518,137 @@ suite("D31 — `walks-blocked-by-site` requires EVIDENCE of blocking", () => {
       "required-probe-capability-unsupported",
       "walks-blocked-by-site",
     ]));
-    // Neither may end in `-cap`: `run-workflow.ts#stopBucket`/`stopCompletion` key off that
-    // suffix to mean "a budget limit stopped us", and neither of these is a budget.
-    for (const r of eb.EXEC_STOP_REASONS) assert(!r.endsWith("-cap"), `${r} would be read as a budget cap`);
+    // Only `browser-abort-cap` may end in `-cap`: it IS a budget limit (consecutive hard
+    // aborts exhausted the internal retry budget). The other executor reasons are NOT budgets
+    // and must never acquire the suffix, because `run-workflow.ts#stopBucket`/`stopCompletion`
+    // key off `-cap` to mean "a budget limit stopped us".
+    const allowedCaps = new Set(["browser-abort-cap"]);
+    for (const r of eb.EXEC_STOP_REASONS) {
+      if (r.endsWith("-cap") && !allowedCaps.has(r)) {
+        assert(false, `${r} would be read as a budget cap but is not in the allowed set`);
+      }
+    }
+  });
+});
+
+// ===========================================================================
+// THE SECOND HALF OF THE SAME ACCUSATION (completion-path audit G5/G8).
+//
+// Refusing to SAY `walks-blocked-by-site` is not enough while the cases themselves are still
+// filed under a word that means the site stopped us. Both readers of a stop reason — the
+// checkpoint's coverage counts and the signed record's per-case statuses — mapped "any reason
+// that is not a `-cap`" to `blocked`. A run that stopped on our OWN shortfall therefore wrote
+// hundreds of cases we never drove into the record as refusals by the customer's survey, and
+// the axis blocker sentence read them straight back out as "blocked: 4xx".
+// ===========================================================================
+suite("D31 — our shortfall is not their refusal", () => {
+  test("only a reason that NAMES a site refusal produces `blocked`", async () => {
+    const mod = await worker();
+    const { unsettledBucketFor } = mod.contracts;
+
+    assertEq(unsettledBucketFor("walks-blocked-by-site"), "blocked", "the one accusation-grade code");
+    // ...and every other code this system can write is about OUR side of the run. Two of them
+    // are the run's OWN leftover labels (`run-workflow.ts`, the `leftover > 0` branch), and that
+    // branch already credits `counts["not-reached"]` directly — so under the old mapping the
+    // checkpoint filed those cases as never-reached while the signed record filed the very same
+    // cases as blocked by the site. One mapping, one answer.
+    for (const ours of [
+      "coverage-shortfall-unexercised",
+      "no-executable-work",
+      "batch-budget-exhausted",
+      "plan-missing",
+      "executor-error",
+      "browser-unavailable",
+      "required-probe-capability-unsupported",
+      "extraction-pass-a-waves-exhausted",
+      "empty-contract",
+      "workflow-error",
+    ]) {
+      assertEq(unsettledBucketFor(ours), "not-reached", ours);
+    }
+  });
+
+  test("the budget and clock readings are unchanged", async () => {
+    const mod = await worker();
+    const { unsettledBucketFor } = mod.contracts;
+    assertEq(unsettledBucketFor("wall-clock-cap"), "time-exhausted");
+    for (const cap of ["cost-cap", "batch-cap", "model-call-cap"]) {
+      assertEq(unsettledBucketFor(cap), "budget-exhausted", cap);
+    }
+    // No reason at all is still "we never got there", not an accusation and not a budget.
+    for (const nothing of [null, undefined, ""]) assertEq(unsettledBucketFor(nothing), "not-reached", JSON.stringify(nothing));
+  });
+
+  test("AN UNRECOGNISED REASON CODE DEGRADES TO `not-reached`, NEVER TO AN ACCUSATION", async () => {
+    const mod = await worker();
+    // The shape of the original defect: a denylist ("anything that is not a `-cap`") meant a new
+    // reason code invented anywhere, for any purpose, silently defaulted to blaming the customer.
+    // An allowlist defaults the other way, and "these cases were never settled" is true whatever
+    // stopped the run.
+    assertEq(mod.contracts.unsettledBucketFor("a-reason-nobody-has-written-yet"), "not-reached");
+    assertEq(
+      JSON.stringify([...mod.contracts.SITE_REFUSAL_REASON_CODES]),
+      JSON.stringify(["walks-blocked-by-site"]),
+      "the allowlist is one entry long, and adding to it is a deliberate act",
+    );
+  });
+
+  test("BOTH CALL SITES RESOLVE THROUGH IT — neither reader keeps a private copy of the mapping", async () => {
+    const { readFileSync } = await import("fs");
+    // The record's side is pinned behaviourally in D33 (the same fixture, one reason code
+    // apart). The checkpoint's side is pinned at source level for the reason amendment 3b in
+    // d56 gives: the executing-close step runs only inside a live Workflow engine. Both halves
+    // matter — `counts.blocked` is what `testAxisBlockers` prints, so a private copy here would
+    // let the run's own blocker sentence contradict the record it is published beside.
+    const wf = readFileSync("src/workflow/run-workflow.ts", "utf8");
+    assert(
+      /const stopBucket = \(reason: string\)[^=]*=>\s*\n?\s*unsettledBucketFor\(reason\);/.test(wf),
+      "run-workflow's stopBucket no longer delegates to the shared mapping",
+    );
+    const dv = readFileSync("src/workflow/stages/derive-verdicts.ts", "utf8");
+    assert(
+      /const status = unsettledBucketFor\(reason\);/.test(dv),
+      "derive-verdicts' unreachedFromCursor no longer delegates to the shared mapping",
+    );
+  });
+
+  test("BOTH READERS SHARE ONE MAPPING — the checkpoint's counts and the record cannot disagree", async () => {
+    const mod = await worker();
+    // `run-workflow.ts#stopBucket` and `derive-verdicts.ts#unreachedFromCursor` both delegate
+    // here. When they held two copies of the mapping, the run's own blocker sentence could
+    // contradict the signed record it was written beside. Every bucket this returns must be a
+    // real coverage bucket, or `stopBucket` would credit a key that does not exist and the
+    // ledger would silently stop reconciling.
+    for (const reason of ["walks-blocked-by-site", "wall-clock-cap", "cost-cap", "coverage-shortfall-unexercised", "browser-abort-cap", null]) {
+      const bucket = mod.contracts.unsettledBucketFor(reason);
+      assert(
+        mod.contracts.COVERAGE_BUCKETS.includes(bucket),
+        `${JSON.stringify(reason)} produced ${bucket}, which is not one of the seven coverage buckets`,
+      );
+    }
+  });
+
+  test("`browser-abort-cap` routes to `budget-exhausted` and `partial-budget` — an honest internal shortfall, not a site accusation", async () => {
+    const mod = await worker();
+    // The `-cap` suffix is load-bearing: `stopCompletion` maps it to `partial-budget` and
+    // `unsettledBucketFor` maps it to `budget-exhausted`. A code without the suffix would
+    // route to `not-reached` (unsettled bucket) and `partial-blocked` (test completion) —
+    // the latter accuses the site.
+    //
+    // THE ASSERTIONS GO THROUGH THE CONSTANT, NOT A STRING LITERAL. The first version of
+    // this test pinned the literal "browser-abort-cap", and the campaign proved that a
+    // mutant renaming the CONSTANT's value (dropping the suffix) survived: production would
+    // have routed the abort to a site accusation while this test kept checking a string
+    // nothing emits. What production emits is the constant — so the constant is what the
+    // routing assertions must consume.
+    const eb = mod.executeBatch;
+    assert(eb.EXEC_STOP_BROWSER_ABORT_CAP.endsWith("-cap"),
+      "the constant's value must keep the -cap suffix — it is what routes the stop to partial-budget instead of a site accusation");
+    assertEq(mod.contracts.unsettledBucketFor(eb.EXEC_STOP_BROWSER_ABORT_CAP), "budget-exhausted",
+      "consecutive hard aborts are an internal budget exhaustion, not a site refusal");
+    assert(typeof eb.HARD_ABORT_CONSECUTIVE_CAP === "number" && eb.HARD_ABORT_CONSECUTIVE_CAP > 0,
+      "HARD_ABORT_CONSECUTIVE_CAP must be a positive number");
+    assertEq(eb.HARD_ABORT_CONSECUTIVE_CAP, 3, "the cap must be 3 (matched the design intent)");
   });
 });
 

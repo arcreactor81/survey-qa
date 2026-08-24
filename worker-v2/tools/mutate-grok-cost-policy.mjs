@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Mutation evidence for the reviewed Grok 4.6 tier binding and max-tier flat ledger. */
+/** Mutation evidence for the reviewed Grok 4.5 tier binding and max-tier flat ledger. */
 
 import { runMutantSuite } from "./mutate-runner.mjs";
 
@@ -14,7 +14,7 @@ const MAX = "a self-consistent receipt digest still cannot understate max base o
 const ORDER = "integrated pass-A stage rejects bad pricing before Secrets Store and fetch";
 const IDENTITY = "source receipt tiers threshold and max all invalidate route and contract reuse identity";
 
-const RATE_GATE_THEN_KEY = [
+const RATE_GATE_THEN_PASS_A = [
   "  try {",
   "    await grokRateAttestation(env);",
   "  } catch (err) {",
@@ -23,15 +23,31 @@ const RATE_GATE_THEN_KEY = [
   '      `${err instanceof Error ? err.message : String(err)}. No Grok request was issued.`,',
   "    ));",
   "  }",
-  "  // Validate the closed cost policy before Secrets Store get(). A missing or malformed",
-  "  // price binding is a zero-I/O configuration refusal, not permission to touch a credential.",
-  '  const credential = await credentialCheck(env, "grok");',
-  "  if (credential) return settled(credential as StageResult<PassSummary>);",
+  "  // `runPassA` serializes and checks every possible primary body before its provider client",
+  "  // resolves a secret; synthesis does the same once its retained candidate context exists.",
+  "  // A missing binding therefore surfaces only after the no-purchase wire boundary has run.",
+  "  let result: Awaited<ReturnType<typeof runPassA>>;",
+  "  try {",
+  "    result = await runPassA(env, runId, doc, documentName, beat, options, onUnitStart);",
+  "  } catch (error) {",
+  "    if (error instanceof MissingCredential) {",
+  '      return settled(missingCredentialResult("grok", error) as StageResult<PassSummary>);',
+  "    }",
+  "    throw error;",
+  "  }",
 ].join("\n");
 
-const KEY_THEN_RATE_GATE = [
-  '  const credential = await credentialCheck(env, "grok");',
-  "  if (credential) return settled(credential as StageResult<PassSummary>);",
+const PASS_A_THEN_RATE_GATE = [
+  "  // MUTANT: Pass A may resolve its purchase credentials before the rate policy gate.",
+  "  let result: Awaited<ReturnType<typeof runPassA>>;",
+  "  try {",
+  "    result = await runPassA(env, runId, doc, documentName, beat, options, onUnitStart);",
+  "  } catch (error) {",
+  "    if (error instanceof MissingCredential) {",
+  '      return settled(missingCredentialResult("grok", error) as StageResult<PassSummary>);',
+  "    }",
+  "    throw error;",
+  "  }",
   "  try {",
   "    await grokRateAttestation(env);",
   "  } catch (err) {",
@@ -40,7 +56,6 @@ const KEY_THEN_RATE_GATE = [
   '      `${err instanceof Error ? err.message : String(err)}. No Grok request was issued.`,',
   "    ));",
   "  }",
-  "  // MUTANT: credential was resolved before the rate policy",
 ].join("\n");
 
 await runMutantSuite({
@@ -84,16 +99,16 @@ await runMutantSuite({
       breaks: "an unreviewed source label can activate paid calls",
       file: GROK,
       find:
-        '  if (value === "owner-dashboard-copy" || value === "authenticated-xai-catalogue") return value;',
-      replace: '  if (value !== undefined) return "owner-dashboard-copy";',
+        '  if (value === "owner-dashboard-copy" || value === "owner-console-confirmation" || value === "authenticated-xai-catalogue") return value;',
+      replace: '  if (value !== undefined) return "owner-console-confirmation";',
       kills: [REFUSE],
     },
     {
       name: "stage resolves the secret before validating pricing",
       breaks: "a malformed pricing policy performs credential I/O before its zero-I/O refusal",
       file: STAGE,
-      find: RATE_GATE_THEN_KEY,
-      replace: KEY_THEN_RATE_GATE,
+      find: RATE_GATE_THEN_PASS_A,
+      replace: PASS_A_THEN_RATE_GATE,
       kills: [ORDER],
     },
     {
@@ -111,6 +126,35 @@ await runMutantSuite({
       find: '  "GROK_LONG_CONTEXT_THRESHOLD_TOKENS",',
       replace: "",
       kills: [IDENTITY],
+    },
+
+    // -----------------------------------------------------------------------
+    // COST BOOKING MUTANTS — evidence the cost-booking fix can fail
+    // -----------------------------------------------------------------------
+
+    {
+      name: "zero-booking applied to timeouts too (widens non-billing to all errors)",
+      breaks: "a timeout still books the conservative ceiling",
+      file: "src/llm/chat.ts",
+      find: "  return status === 401 || status === 402 || status === 403;",
+      replace: "  return status === 401 || status === 402 || status === 403 || status === 408 || status >= 500;",
+      kills: ["HTTP 503 still books the conservative ceiling (negative control, server error)"],
+    },
+    {
+      name: "replay provenance dropped (usageSource marker removed from replay events)",
+      breaks: "a replayed usage event carries usageSource marker",
+      file: "src/store/usage.ts",
+      find: '      ...(boundedUsageSource === undefined ? {} : { usageSource: boundedUsageSource }),',
+      replace: '      // MUTANT: usageSource stripped from events',
+      kills: ["replayed usage event has usageSource 'reused-prior-artifact', costUsd 0, originalCostUsd preserved"],
+    },
+    {
+      name: "replay booked at current rates again (replay validation removed)",
+      breaks: "budget gate correctly ignores replay costs",
+      file: "src/store/usage.ts",
+      find: '    if (usageSource === "reused-prior-artifact" && event.costUsd !== 0) {',
+      replace: '    if (false) {',
+      kills: ["replay event with non-zero costUsd is rejected"],
     },
   ],
 });

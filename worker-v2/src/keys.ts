@@ -274,6 +274,62 @@ export const evidenceCatalogKey = (runId: string, evidenceId: string) =>
   k("runs", runId, "evidence", `${evidenceId}.json`);
 export const evidenceCatalogPrefix = (runId: string) => k("runs", runId, "evidence") + "/";
 
+/**
+ * SHARED CATALOGUE LISTING — materialised once per run after execution closes.
+ *
+ * THE LISTING IS THE MOST EXPENSIVE THING THE TAIL STAGES DO. Four of the five tail stages
+ * call `listCatalog` independently, each paying one R2 LIST plus one R2 GET per catalogue
+ * entry. On the v100 run with 9,340 entries that is ~5 minutes per stage for arithmetic that
+ * never reads a blob (derive-verdicts fetched the catalogue three times for 19 minutes total
+ * and never used it — bench-measured 22 Aug receipt). Persisting the listing once after
+ * execution closes lets subsequent stages read ONE R2 GET instead of a fan-out.
+ *
+ * VERSION-STAMPED so a code change that alters `assertCatalogBinding` invalidates any stale
+ * materialisation. Old runs and bench replay instances that predate the materialisation find
+ * no object at this key and fall through to the live LIST path transparently.
+ */
+export const catalogListingKey = (runId: string) =>
+  k("runs", runId, "catalog-listing.json");
+
+/**
+ * DERIVED ITEM RESULTS — persisted so the Workflow step state carries only a summary.
+ *
+ * The derive-verdicts step produces an `ItemResult[]` that the assembler consumes. At 588
+ * requirements with facet results the array can exceed several hundred KB, and the platform
+ * per-step state cap is 1 MiB. Persisting to R2 and returning only (count + hash) in the
+ * step state avoids the cap and keeps the Workflow engine's serialisation budget for the
+ * things only it can carry (proofs, phase transitions).
+ *
+ * The assembler reads this key instead of receiving the array through the step boundary.
+ */
+export const itemResultsKey = (runId: string) =>
+  k("runs", runId, "item-results.json");
+
+/**
+ * CAPTURE REF GUARD — prevents a Workflow re-execution from writing a second catalogue entry
+ * for the same artifactRef with different bytes.
+ *
+ * A retried step replays the same attemptId and step ordinals, so the observationRef names
+ * repeat by construction and the capture writes a second catalogue entry alongside the first.
+ * The guard key records the evidenceId of the FIRST capture at a given (sourceEvidenceId,
+ * artifactRef) pair. A subsequent capture with different bytes finds the guard, looks up the
+ * original entry, and returns it — making the capture idempotent at the ref level.
+ *
+ * The guard uses the sha-256 of the (sourceEvidenceId, artifactRef) pair as the key segment,
+ * so it is deterministic and collision-free within a run's evidence namespace.
+ */
+export const captureRefGuardKey = (runId: string, guardHash: string) =>
+  k("runs", runId, "capture-guards", `${guardHash}.json`);
+
+/**
+ * CUMULATIVE CROSS-RUN PROVIDER SPEND LEDGER — one object for the entire Worker lifetime.
+ *
+ * This is the durable authority for how much has been spent on each LLM provider across
+ * ALL runs, ever. Provider caps read from this object before every purchase.
+ * The key is intentionally OUTSIDE any run prefix so it is never deleted by run cleanup.
+ */
+export const providerCumulativeSpendKey = () => k("ledger", "provider-cumulative-spend.json");
+
 export const sweeperCursorKey = () => k("sweeper", "audit-cursor.json");
 export const retentionReportKey = (isoDay: string) => k("sweeper", "retention", `${isoDay}.json`);
 

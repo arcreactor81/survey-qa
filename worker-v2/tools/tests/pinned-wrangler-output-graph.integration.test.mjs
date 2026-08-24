@@ -68,7 +68,7 @@ let cachedPinnedWrangler;
 
 test(
   "pinned Wrangler keeps a rewritten transitive Text module inside an explicit outdir",
-  { timeout: 180_000 },
+  { timeout: 360_000 }, // raised with the child ceiling below (phaseD.3 measurement)
   (t) => {
     assert.equal(process.platform, "win32", "the checked-in Wrangler pin is a Windows adapter");
     assert.equal(process.arch, "x64", "the checked-in Wrangler pin is an x64 adapter");
@@ -142,7 +142,7 @@ test(
 
 test(
   "actual production pinned output graph keeps the local CUA adapter quarantined",
-  { timeout: 180_000 },
+  { timeout: 360_000 }, // raised with the child ceiling below (phaseD.3 measurement)
   (t) => {
     const roots = [];
     t.after(() => {
@@ -594,7 +594,10 @@ function runPinnedDryRun({
     cwd,
     encoding: "utf8",
     windowsHide: true,
-    timeout: 120_000,
+    // 240s, was 120s: at release 2026-08-24-phaseD.3 the three wrangler children ran
+    // 121-130s on a machine hot from the 2.6h w4 drill and were killed at the old
+    // ceiling; the same builds fit in isolation. Headroom, stated, not a loosened check.
+    timeout: 240_000,
     maxBuffer: MAX_WRANGLER_OUTPUT_BYTES,
     killSignal: "SIGTERM",
     env: childEnvironment,
@@ -787,7 +790,10 @@ function runPinnedBuild({ pinnedWrangler, cssText, roots }) {
     cwd: root,
     encoding: "utf8",
     windowsHide: true,
-    timeout: 120_000,
+    // 240s, was 120s: at release 2026-08-24-phaseD.3 the three wrangler children ran
+    // 121-130s on a machine hot from the 2.6h w4 drill and were killed at the old
+    // ceiling; the same builds fit in isolation. Headroom, stated, not a loosened check.
+    timeout: 240_000,
     maxBuffer: MAX_WRANGLER_OUTPUT_BYTES,
     killSignal: "SIGTERM",
     env: childEnvironment,
@@ -954,7 +960,10 @@ function runPinnedBuild({ pinnedWrangler, cssText, roots }) {
     cwd: root,
     encoding: "utf8",
     windowsHide: true,
-    timeout: 120_000,
+    // 240s, was 120s: at release 2026-08-24-phaseD.3 the three wrangler children ran
+    // 121-130s on a machine hot from the 2.6h w4 drill and were killed at the old
+    // ceiling; the same builds fit in isolation. Headroom, stated, not a loosened check.
+    timeout: 240_000,
     maxBuffer: MAX_WRANGLER_OUTPUT_BYTES,
     killSignal: "SIGTERM",
     env: childEnvironment,

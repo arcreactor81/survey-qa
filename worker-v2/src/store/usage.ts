@@ -41,6 +41,8 @@ export function modelUsage(
   outputTokens: number,
   costUsd: number,
   eventId?: string,
+  usageSource?: ModelCallUsageEvent["usageSource"],
+  originalCostUsd?: number,
 ): ModelCallUsageEvent {
   return {
     kind: "model-call",
@@ -50,6 +52,8 @@ export function modelUsage(
     outputTokens,
     costUsd,
     at: new Date().toISOString(),
+    ...(usageSource === undefined ? {} : { usageSource }),
+    ...(originalCostUsd === undefined ? {} : { originalCostUsd }),
   };
 }
 
@@ -126,22 +130,41 @@ export async function pushModelUsageStrict(
   events: ModelCallUsageEvent[],
 ): Promise<void> {
   if (events.length === 0) return;
+  const REPLAY_SOURCES: ReadonlySet<string> = new Set(["reused-prior-artifact", "rejected-before-generation"]);
   const normalized = events.map((event, index): ModelCallUsageEvent => {
     if (!isRecord(event) || event.kind !== "model-call") {
       invalid(`modelEvents[${index}]`, "expected a model-call event");
     }
-    exactKeys(
-      event,
-      `modelEvents[${index}]`,
-      event.eventId === undefined
-        ? ["kind", "model", "inputTokens", "outputTokens", "costUsd", "at"]
-        : ["kind", "eventId", "model", "inputTokens", "outputTokens", "costUsd", "at"],
-    );
+    const baseKeys = [
+      "kind",
+      ...(event.eventId === undefined ? [] : ["eventId"]),
+      "model", "inputTokens", "outputTokens", "costUsd", "at",
+      ...(event.usageSource === undefined ? [] : ["usageSource"]),
+      ...(event.originalCostUsd === undefined ? [] : ["originalCostUsd"]),
+    ];
+    exactKeys(event, `modelEvents[${index}]`, baseKeys);
     const eventId = event.eventId === undefined
       ? undefined
       : identityString(event.eventId, `modelEvents[${index}].eventId`, 500);
     const at = identityString(event.at, `modelEvents[${index}].at`, 100);
     assertIsoTimestamp(at, `modelEvents[${index}].at`);
+    const usageSource = event.usageSource === undefined
+      ? undefined
+      : identityString(event.usageSource, `modelEvents[${index}].usageSource`, 100);
+    if (usageSource !== undefined && !REPLAY_SOURCES.has(usageSource)) {
+      invalid(`modelEvents[${index}].usageSource`, "unknown model-call usage source");
+    }
+    // The membership check above is the proof; TypeScript cannot see through Set.has.
+    const boundedUsageSource = usageSource as ModelCallUsageEvent["usageSource"];
+    const originalCostUsd = event.originalCostUsd === undefined
+      ? undefined
+      : nonnegativeFinite(event.originalCostUsd, `modelEvents[${index}].originalCostUsd`);
+    if (usageSource === "reused-prior-artifact" && originalCostUsd === undefined) {
+      invalid(`modelEvents[${index}].originalCostUsd`, "replay events must carry the original paid cost");
+    }
+    if (usageSource === "reused-prior-artifact" && event.costUsd !== 0) {
+      invalid(`modelEvents[${index}].costUsd`, "replay events must book zero for this run");
+    }
     return {
       kind: "model-call",
       ...(eventId === undefined ? {} : { eventId }),
@@ -150,6 +173,8 @@ export async function pushModelUsageStrict(
       outputTokens: nonnegativeSafeInteger(event.outputTokens, `modelEvents[${index}].outputTokens`),
       costUsd: nonnegativeFinite(event.costUsd, `modelEvents[${index}].costUsd`),
       at,
+      ...(boundedUsageSource === undefined ? {} : { usageSource: boundedUsageSource }),
+      ...(originalCostUsd === undefined ? {} : { originalCostUsd }),
     };
   });
   const checkpoint = await updateCheckpoint(
@@ -168,11 +193,17 @@ export async function pushModelUsageStrict(
         "cost.usedUsd",
       );
       for (const event of normalized) {
+        const isReplay = REPLAY_SOURCES.has(event.usageSource ?? "");
         if (event.eventId !== undefined) {
           const existing = draft.usage.events.find(
             (candidate) => isRecord(candidate) && candidate.eventId === event.eventId,
           );
           if (existing !== undefined) {
+            // A replay event re-offering an already-settled live event: the live event's
+            // cost facts are the authority. Accept without requiring exact cost match because
+            // the replay deliberately carries costUsd: 0 while the settled event carries the
+            // real charge.
+            if (isReplay) continue;
             if (
               existing.kind !== "model-call" ||
               existing.model !== event.model ||
@@ -193,6 +224,9 @@ export async function pushModelUsageStrict(
           invalid("modelCalls.used", "cannot increment beyond the safe integer range");
         }
         draft.usage.modelCalls.used += 1;
+        // Replay and rejected-before-generation events book zero against this run's budget.
+        // Their costUsd is already validated as 0 above for replays; rejected events carry
+        // the cost the provider would have charged (always 0 for a pre-generation refusal).
         const eventMicros = conservativeUsdMicros(
           event.costUsd,
           `modelEvents.costUsd`,
@@ -204,6 +238,7 @@ export async function pushModelUsageStrict(
       }
       // Events retain their calculated cost. The cap counter is deliberately the sum of each
       // paid call's upward micro-dollar envelope, so no repeated tail can become headroom.
+      // Replay events carry costUsd: 0, so they contribute nothing to this run's budget.
       draft.usage.cost.usedUsd = usedMicros / USD_MICRO_SCALE;
     },
     { progressed: true, fence },
@@ -1228,13 +1263,14 @@ function assertSharedModelUsageVerifiable(usage: Usage, eventId: string): void {
     }
     if (event.kind === "browser-session") continue;
     if (event.kind !== "model-call") invalid(`events[${index}].kind`, "unknown usage event kind");
-    exactKeys(
-      event,
-      `events[${index}]`,
-      event.eventId === undefined
-        ? ["kind", "model", "inputTokens", "outputTokens", "costUsd", "at"]
-        : ["kind", "eventId", "model", "inputTokens", "outputTokens", "costUsd", "at"],
-    );
+    const verifierBaseKeys = [
+      "kind",
+      ...(event.eventId === undefined ? [] : ["eventId"]),
+      "model", "inputTokens", "outputTokens", "costUsd", "at",
+      ...(event.usageSource === undefined ? [] : ["usageSource"]),
+      ...(event.originalCostUsd === undefined ? [] : ["originalCostUsd"]),
+    ];
+    exactKeys(event, `events[${index}]`, verifierBaseKeys);
     if (event.eventId !== undefined) {
       const coreEventId = identityString(event.eventId, `events[${index}].eventId`, 500);
       if (coreEventIds.has(coreEventId)) invalid(`events[${index}].eventId`, "duplicate core settlement id");

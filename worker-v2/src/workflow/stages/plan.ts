@@ -145,6 +145,13 @@ export const PLAN_LIMITATION_CODES = {
   seedAuthorityWithheld: "sealed-positive-seed-authority-withheld",
   seedCardinalityWithheld: "seed-combinations-without-sealed-cardinality",
   seedBudgetExhausted: "seed-budget-exhausted",
+  /**
+   * Route rows whose destination directive could not be turned into a prefer hint (4A).
+   * The directive text was present but not recognized as a standard continuation form,
+   * or negation detection was ambiguous (4B). Emitted at zero so "all directives resolved"
+   * stays distinguishable from "no directives were seen".
+   */
+  documentedContinueRoutesUnstampable: "documented-continue-routes-unstampable",
 } as const;
 
 type ProbeCarrier = Partial<PlannedPath> & {
@@ -722,26 +729,327 @@ export interface SurvivalHintStamp {
   /** The document's wording, when a decision on the same carrier already carries it. */
   question_text?: string;
   avoid_labels: string[];
+  /** Labels the document states CONTINUE the survey — same channel, same evidence boundary. */
+  prefer_labels?: string[];
+  /**
+   * OUTCOME 1 (D1): answer CODES paired with their labels. A site rendering codes without
+   * verbatim labels can now be matched by exact code. Each entry is {label, code}; code is
+   * null when the route row had no code. CODES ARE EXACT-MATCH ONLY — they are platform-
+   * assigned identifiers (stated here, enforced in `driver.ts#codeMatches`). An unmatched
+   * code degrades to label-only matching, the pre-existing behavior.
+   */
+  avoid_codes?: Array<{ label: string; code: string | null }>;
+  prefer_codes?: Array<{ label: string; code: string | null }>;
+  /**
+   * OUTCOME 4 (D1): a documented-accepted value for a NUMERIC screener. Read from
+   * `BoundaryInputPayload` rows whose `expectedOutcome` is `"accepted"` — the document
+   * states this value is accepted, so a numeric filler prefers it over the blind midpoint.
+   * Provenance: `navigator-default:documented-accepted-value(...)`.
+   *
+   * Conflicting rows (both accepted and rejected outcomes for the same question's boundary)
+   * are recorded as a named refusal in `unstampable`, never guessed.
+   *
+   * Absent when no boundary rows with accepted outcomes exist for this question.
+   */
+  prefer_value?: {
+    value: string;
+    /** Which boundary row produced this value ("min"/"max"/etc.). */
+    bound: string;
+    /** Why this value was chosen — the derivation, stated in code. */
+    derivation: string;
+  };
 }
 
 const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 ? v : null);
+
+/**
+ * BRACKETED-DIRECTIVE CONVENTION (ASSUMPTION STATED, 4A).
+ *
+ * Many questionnaires use bracketed directives to express routing continuations:
+ * "[CONTINUE]", "[NEXT]", "[SKIP TO Q5]", "[PROCEED]", "[GO TO NEXT SECTION]".
+ * This recognizer handles the STRUCTURE of these directives — a bracketed phrase whose
+ * content is a continuation verb, optionally followed by a destination — without
+ * anchoring on any specific survey's vocabulary.
+ *
+ * Recognized forms (case-insensitive, brackets optional):
+ *   continue, next, proceed, go on, move on, advance,
+ *   skip (to X), go to (X), move to (X), continue to (X)
+ *
+ * Returns true only when the directive is recognizably a continuation.
+ * Returns false (not a crash, not a guess) when the directive is unrecognizable.
+ */
+export function isContinueDirective(text: string): boolean {
+  const s = text.replace(/^\s*\[?\s*|\s*\]?\s*$/g, "").trim().toLowerCase();
+  if (!s) return false;
+  // Simple continuation verbs.
+  if (/^(continue|next|proceed|go\s+on|move\s+on|advance)$/i.test(s)) return true;
+  // "continue to X", "skip to X", "go to X", "move to X", "proceed to X"
+  if (/^(continue|skip|go|move|proceed)\s+(to|on\s+to)\b/i.test(s)) return true;
+  // "next question", "next section", "next screen", "next page"
+  if (/^next\s+(question|section|screen|page)\b/i.test(s)) return true;
+  return false;
+}
+
+/**
+ * NEGATION DETECTION IN NORMATIVE STATEMENTS (ASSUMPTION STATED, 4B).
+ *
+ * A normative statement like "if the respondent does NOT select X, terminates" means X
+ * is the ONLY surviving answer. The common structural negation forms recognized here are:
+ *
+ *   - "does not select" / "do not select" / "did not select"
+ *   - "not selecting" / "not selected"
+ *   - "unless (they) select" / "unless (the respondent) select(s)"
+ *   - "other than" (before the answer reference)
+ *   - "anything but" / "anyone but" / "any ... but"
+ *   - "except" / "excluding"
+ *   - "fails to select" / "fail to select"
+ *
+ * Returns true when negation is structurally detected, false when not detected,
+ * null when the structure is ambiguous and the stamp should be refused.
+ */
+export function detectNegation(normativeStatement: string): boolean | null {
+  const s = normativeStatement.toLowerCase();
+  // Double negation ("does not NOT select") is ambiguous — check first.
+  const notCount = (s.match(/\bnot\b/g) || []).length;
+  if (notCount >= 2) return null;
+  // Clear structural negation patterns.
+  if (/\b(does|do|did)\s+not\s+(select|choose|pick|answer|indicate|check|mark)\b/.test(s)) return true;
+  if (/\bnot\s+(selecting|chosen|selected|checked|marked|picking|answering)\b/.test(s)) return true;
+  if (/\bunless\b.*\b(select|choose|pick|answer|indicate|check|mark)(s|ed|ing)?\b/.test(s)) return true;
+  if (/\bother\s+than\b/.test(s)) return true;
+  if (/\b(anything|anyone|any\b[^.]*)\s+but\b/.test(s)) return true;
+  if (/\bexcept\b/.test(s)) return true;
+  if (/\bexcluding\b/.test(s)) return true;
+  if (/\bfail(s)?\s+to\s+(select|choose|pick|answer)\b/.test(s)) return true;
+  return false;
+}
+
+/**
+ * Extract the raw destination phrase from an expectationGap detail string.
+ *
+ * The expander embeds the destination in a quoted string:
+ *   `the destination "[CONTINUE]" matches no question...`
+ * This extracts that embedded phrase so the plan can parse the directive.
+ */
+function extractDestinationPhrase(detail: string | null | undefined): string | null {
+  if (!detail) return null;
+  const m = /the destination\s+"((?:[^"\\]|\\.)*)"/. exec(detail);
+  if (m) {
+    try { return JSON.parse(`"${m[1]}"`); } catch { return m[1]!; }
+  }
+  return null;
+}
+
+/**
+ * A sealed route case's destination, read from TYPED fields only. This exists because the
+ * prose miners above it starve together: `buildTerminals` resolves a trigger only against a
+ * question's MINED option list, so a question whose options never mined (measured on the
+ * 2026-08-16 live run: S10 — 9 sealed terminate routes, 0 mined options, 0 hints stamped,
+ * every navigator-default walk screened out) contributes nothing, even though the sealed
+ * contract states the trigger verbatim in `routeAnswer.label`. A route case IS a resolved
+ * trigger: question = `targetQuestionId`, answer = `routeAnswer.label`, destination = the
+ * requirement's facet — `terminate` (a documented screen-out) or `skip-rule` (a documented
+ * continue). No prose is read; a route under any OTHER facet is skipped, never guessed.
+ */
+export interface SealedRouteDestination {
+  question: string;
+  label: string;
+  /** The document's answer CODE, when the route row carried one. Exact-match only (codes are
+   *  platform-assigned identifiers, never prose); null when the route had no code. */
+  code: string | null;
+  kind: "terminate" | "continue";
+}
+
+export function sealedRouteDestinations(revision: {
+  requirements: ScopedRequirement[];
+  facetInstances: FacetInstance[];
+}): {
+  routes: SealedRouteDestination[];
+  /** Route rows whose continue-directive could not be parsed into a prefer hint (4A/4B). */
+  continueDirectiveUnstampable: Array<{ label: string; question: string; directive: string; why: string }>;
+} {
+  const facetByLineage = new Map<string, string>();
+  for (const r of revision.requirements) facetByLineage.set(r.requirementLineageId, r.facet);
+  // 4B: normativeStatement by lineage, so negation detection can read the requirement's statement.
+  const normativeByLineage = new Map<string, string>();
+  for (const r of revision.requirements) {
+    if ((r as { normativeStatement?: string }).normativeStatement) {
+      normativeByLineage.set(r.requirementLineageId, (r as { normativeStatement?: string }).normativeStatement!);
+    }
+  }
+  // LABEL -> OWNING QUESTION, joined from the SEALED OPTION FACTS. A routing table's
+  // requirement is often scoped to a SECTION, not `question:X`, so its route rows carry
+  // no `targetQuestionId` — measured live 19 Aug 2026 (run v2r_01m0cy89mz80nf4g3z32j7f8sx):
+  // every typed S10 route ("Finance Manager → screenout" et al.) was dropped here and the
+  // walker picked among documented terminations by lottery. The option-set facets DO bind
+  // their question, and a route answer label that appears in exactly ONE question's
+  // asserted option table names its owner without any naming convention. An ambiguous
+  // label (asserted by several questions) is REFUSED, never guessed.
+  const labelOwners = new Map<string, Set<string>>();
+  for (const fi of revision.facetInstances) {
+    if (fi.case?.kind !== "option-set") continue;
+    const optionSet = (fi.case as { optionSet?: { asserted?: Array<{ label?: string | null }> } | null }).optionSet;
+    const owner = nonEmpty(fi.targetQuestionId);
+    if (!owner || !optionSet?.asserted) continue;
+    for (const o of optionSet.asserted) {
+      const label = nonEmpty(o?.label ?? null);
+      if (!label) continue;
+      const owners = labelOwners.get(label) ?? new Set<string>();
+      owners.add(owner);
+      labelOwners.set(label, owners);
+    }
+  }
+  // SECOND JOIN, stated assumption. The option-fact join above has the same hole one level
+  // up: the option-set chunk asserting a table's later rows can ITSELF be section-scoped
+  // (measured live, run v2r_01m0d1qf7baq2g9evn8mkje28n: rows 10-13 of S10's table —
+  // "Finance Manager", "Finance Director" et al. — were asserted by a section-scoped chunk,
+  // so those four routes still had no owner and first-option walked into "Finance
+  // Director → screenout"). Questionnaires commonly lead a section title with the question
+  // id ("S10. Which of the following…"); that is a CONVENTION, so it is accepted only when
+  // the leading token both matches the question-id shape AND names a question some BOUND
+  // facet instance already targets — the sealed world validates the token, never the
+  // corpus. No match: the row stays unowned and unstamped, a named shortfall rather than
+  // a guess.
+  const boundQuestions = new Set<string>();
+  for (const fi of revision.facetInstances) {
+    const q = nonEmpty(fi.targetQuestionId);
+    if (q) boundQuestions.add(q);
+  }
+  const scopeByLineage = new Map<string, string>();
+  for (const r of revision.requirements) {
+    if (typeof (r as { scope?: unknown }).scope === "string") {
+      scopeByLineage.set(r.requirementLineageId, (r as { scope?: string }).scope!);
+    }
+  }
+  const sectionScopeOwner = (lineageId: string): string | null => {
+    const scope = scopeByLineage.get(lineageId);
+    if (!scope || !scope.startsWith("section:")) return null;
+    const m = /^section:\s*([A-Za-z]{1,4}\d{1,4}[a-z]?)\b/.exec(scope);
+    const token = m?.[1] ?? null;
+    return token && boundQuestions.has(token) ? token : null;
+  };
+  const out: SealedRouteDestination[] = [];
+  const continueDirectiveUnstampable: Array<{ label: string; question: string; directive: string; why: string }> = [];
+  for (const fi of revision.facetInstances) {
+    if (fi.case?.kind !== "route") continue;
+    const label = nonEmpty(fi.case.routeAnswer?.label ?? null);
+    // OUTCOME 1 (D1): carry the route answer's CODE alongside the label. A survey whose
+    // site renders codes without verbatim labels now has a second matching key. Codes are
+    // EXACT-MATCH ONLY (they are platform-assigned identifiers, never prose — stated here,
+    // enforced in the driver's `codeMatches`). null when the route row had no code.
+    const code = nonEmpty(fi.case.routeAnswer?.code ?? null);
+    let question = nonEmpty(fi.targetQuestionId);
+    if (!question && label) {
+      const owners = labelOwners.get(label);
+      if (owners && owners.size === 1) question = [...owners][0]!;
+    }
+    if (!question) question = sectionScopeOwner(fi.requirementLineageId);
+    if (!question || !label) continue;
+    // THE ROW'S OWN BOUND DESTINATION OUTRANKS THE REQUIREMENT'S FACET. One obligation
+    // carries a whole routing table, so its single facet stamps every row — the live S10
+    // table's "[TERMINATE IMMEDIATELY]" rows inherited "skip-rule" from their obligation
+    // and became PREFER labels, steering run v2r_01m0cjew… into a documented termination
+    // (19 Aug 2026). A terminal binding is a terminate; a bound question id is a continue;
+    // an UNBOUND row must never steer positively — "the binder could not read it" is not
+    // "the document says go here". The facet arm survives only for terminates, where the
+    // worst case of over-avoiding is a filler picked elsewhere.
+    const dest = (fi.case as { expectedDestination?: { questionId?: string | null; terminal?: string | null } | null })
+      .expectedDestination;
+    if (dest?.terminal) out.push({ question, label, code, kind: "terminate" });
+    else if (nonEmpty(dest?.questionId ?? null)) out.push({ question, label, code, kind: "continue" });
+    else if (facetByLineage.get(fi.requirementLineageId) === "terminate") {
+      // 4B: NEGATION DETECTION. A terminate-facet requirement with a NEGATED selection
+      // condition ("if the respondent does NOT select X, terminates") inverts the meaning:
+      // X is the SURVIVING answer, so it becomes a PREFER hint, not an avoid.
+      // When negation detection is uncertain (returns null), the stamp is REFUSED into the
+      // limitation count — never stamp the wrong direction.
+      const statement = normativeByLineage.get(fi.requirementLineageId) ?? "";
+      const negated = detectNegation(statement);
+      if (negated === true) {
+        out.push({ question, label, code, kind: "continue" });
+      } else if (negated === null) {
+        // Ambiguous negation — refuse the stamp, count it.
+        continueDirectiveUnstampable.push({
+          label,
+          question,
+          directive: statement.slice(0, 200),
+          why: "ambiguous negation in the requirement's normative statement — refusing to stamp in either direction",
+        });
+      } else {
+        out.push({ question, label, code, kind: "terminate" });
+      }
+    }
+    // 4A: CONTINUE-DIRECTIVE ARM. A route case with NO bound destination (questionId null,
+    // terminal null) AND a facet that is skip-rule (or any non-terminate routing facet)
+    // may still carry a continue directive like "[CONTINUE]" or "[NEXT]". The directive
+    // is read from the expectation gap's detail (where the expander embedded the raw
+    // destination phrase) and parsed structurally. When the directive is recognizable as
+    // a continuation, the answer becomes a PREFER hint. When unrecognizable, NOTHING is
+    // emitted for that row and the limitation is counted.
+    else {
+      const facet = facetByLineage.get(fi.requirementLineageId);
+      // Only process route cases with routing-relevant facets and no bound destination.
+      if (facet && facet !== "terminate") {
+        const gapDetail = fi.expectationGap?.detail ?? null;
+        const phrase = extractDestinationPhrase(gapDetail);
+        if (phrase) {
+          if (isContinueDirective(phrase)) {
+            out.push({ question, label, code, kind: "continue" });
+          } else {
+            // Unrecognizable directive — emit nothing, count the limitation.
+            continueDirectiveUnstampable.push({
+              label,
+              question,
+              directive: phrase,
+              why: `the destination directive ${JSON.stringify(phrase)} is not recognized as a standard continuation form`,
+            });
+          }
+        }
+        // No phrase extractable from the gap detail: nothing to act on.
+      }
+    }
+  }
+  return { routes: out, continueDirectiveUnstampable };
+}
 
 /**
  * EVERY documented terminate trigger the model states at label level, per question — plus
  * the screen-outs that could NOT be resolved to a label, which are the stamp's own named
  * shortfall. Reads the three places `plan-core.js` emits trigger data (options[].terminates,
  * questions[].terminates, model.terminals) and dedupes; `buildTerminals` already folds the
- * first two into each other, so the union is defensive, not doctrinal.
+ * first two into each other, so the union is defensive, not doctrinal. Sealed route
+ * destinations are the fourth source and the only TYPED one: their terminate labels join
+ * `avoid`, their continue labels build `prefer` — minus any label the same question also
+ * documents as terminating, because a contract that states both ways is a conflict to
+ * sit out, not a hint to gamble on.
  */
-export function survivalAvoidIndex(model: unknown): {
+export function survivalAvoidIndex(
+  model: unknown,
+  routes: readonly SealedRouteDestination[] = [],
+): {
   avoid: Map<string, string[]>;
+  prefer: Map<string, string[]>;
+  /** OUTCOME 1 (D1): {label, code} pairs keyed by question, for code-based matching. */
+  avoidCodes: Map<string, Array<{ label: string; code: string | null }>>;
+  preferCodes: Map<string, Array<{ label: string; code: string | null }>>;
   unstampable: Array<{ terminal: string; question: string | null; why: string }>;
 } {
   const avoid = new Map<string, string[]>();
-  const put = (q: string, label: string): void => {
+  // OUTCOME 1 (D1): carry {label, code} pairs so the driver can match by exact code when
+  // the site renders codes without verbatim labels. Only routes carry codes; model-mined
+  // triggers are label-only (code = null).
+  const avoidCodes = new Map<string, Array<{ label: string; code: string | null }>>();
+  const preferCodes = new Map<string, Array<{ label: string; code: string | null }>>();
+  const putCode = (map: typeof avoidCodes, q: string, label: string, code: string | null): void => {
+    const held = map.get(q) ?? [];
+    if (!held.some((e) => e.label === label && e.code === code)) held.push({ label, code });
+    map.set(q, held);
+  };
+  const put = (q: string, label: string, code: string | null = null): void => {
     const held = avoid.get(q) ?? [];
     if (!held.includes(label)) held.push(label);
     avoid.set(q, held);
+    putCode(avoidCodes, q, label, code);
   };
   const m = (model ?? {}) as { questions?: unknown; terminals?: unknown };
   for (const row of Array.isArray(m.questions) ? m.questions : []) {
@@ -782,7 +1090,17 @@ export function survivalAvoidIndex(model: unknown): {
     }
     for (const a of answers) put(tq, a);
   }
-  return { avoid, unstampable };
+  for (const r of routes) if (r.kind === "terminate") put(r.question, r.label, r.code);
+  const prefer = new Map<string, string[]>();
+  for (const r of routes) {
+    if (r.kind !== "continue") continue;
+    if ((avoid.get(r.question) ?? []).includes(r.label)) continue;
+    const held = prefer.get(r.question) ?? [];
+    if (!held.includes(r.label)) held.push(r.label);
+    prefer.set(r.question, held);
+    putCode(preferCodes, r.question, r.label, r.code);
+  }
+  return { avoid, prefer, avoidCodes, preferCodes, unstampable };
 }
 
 /**
@@ -803,18 +1121,72 @@ export function survivalAvoidIndex(model: unknown): {
 export function stampSurvivalHints(
   carriers: Array<{ decisions?: PlannedDecision[]; [k: string]: unknown }>,
   model: unknown,
+  routes: readonly SealedRouteDestination[] = [],
+  facetInstances: readonly FacetInstance[] = [],
 ): {
   decisionsStamped: number;
   pathsStamped: number;
   /** question id -> the labels stamped, for the report and the tests. */
-  questions: Array<{ question: string; avoid_labels: string[] }>;
+  questions: Array<{ question: string; avoid_labels: string[]; prefer_labels?: string[] }>;
   /** Documented screen-outs this pass could NOT steer around, each with the reason. */
   unstampable: Array<{ terminal: string; question: string | null; why: string }>;
 } {
-  const { avoid, unstampable } = survivalAvoidIndex(model);
+  const { avoid, prefer, avoidCodes, preferCodes, unstampable } = survivalAvoidIndex(model, routes);
+
+  // OUTCOME 4 (D1): mine accepted boundary values per question. BoundaryInputPayload rows
+  // with `expectedOutcome: "accepted"` name a literal value the document states is accepted.
+  // When boundary rows for the SAME question carry conflicting outcomes (both accepted and
+  // rejected), that is a named refusal — the document contradicts itself and no value is
+  // preferred.
+  const preferValue = new Map<string, SurvivalHintStamp["prefer_value"]>();
+  {
+    const boundaryRows = new Map<string, Array<{ bound: string; value: string; outcome: string }>>();
+    for (const fi of facetInstances) {
+      if (fi.case?.kind !== "boundary") continue;
+      const bi = fi.case.boundaryInput;
+      if (!bi || !bi.value || bi.expectedOutcome === "unspecified") continue;
+      const question = nonEmpty(fi.targetQuestionId);
+      if (!question) continue;
+      const held = boundaryRows.get(question) ?? [];
+      held.push({ bound: bi.bound, value: bi.value, outcome: bi.expectedOutcome });
+      boundaryRows.set(question, held);
+    }
+    for (const [question, rows] of boundaryRows) {
+      const accepted = rows.filter((r) => r.outcome === "accepted");
+      const rejected = rows.filter((r) => r.outcome === "rejected");
+      if (accepted.length === 0) continue;
+      // Conflicting bounds: at least one accepted AND at least one rejected for the same
+      // question. This is a named refusal, not a guess.
+      if (rejected.length > 0) {
+        unstampable.push({
+          terminal: `boundary:${question}`,
+          question,
+          why: `boundary rows for this question carry both accepted (${accepted.map((r) => `${r.bound}=${r.value}`).join(",")}) ` +
+            `and rejected (${rejected.map((r) => `${r.bound}=${r.value}`).join(",")}) outcomes — ` +
+            `conflicting documented bounds, named refusal`,
+        });
+        continue;
+      }
+      // Pick the first accepted row. Derivation states which row and why.
+      const pick = accepted[0]!;
+      preferValue.set(question, {
+        value: pick.value,
+        bound: pick.bound,
+        derivation: `BoundaryInputPayload(bound="${pick.bound}", value="${pick.value}", expectedOutcome="accepted") ` +
+          `from the sealed contract's facet instances for question ${question}; ` +
+          `the document states this value is accepted`,
+      });
+    }
+  }
+  // One row per hinted question, avoid-map order first, prefer-only questions after,
+  // then boundary-only questions — all insertion-ordered from deterministic inputs, so a
+  // replan is byte-stable.
+  const hintedQuestions: string[] = [...avoid.keys()];
+  for (const q of prefer.keys()) if (!hintedQuestions.includes(q)) hintedQuestions.push(q);
+  for (const q of preferValue.keys()) if (!hintedQuestions.includes(q)) hintedQuestions.push(q);
   let decisionsStamped = 0;
   let pathsStamped = 0;
-  for (const carrier of avoid.size > 0 ? carriers : []) {
+  for (const carrier of hintedQuestions.length > 0 ? carriers : []) {
     if (!carrier || typeof carrier !== "object") continue;
     if (carrier["terminated_at"] != null) continue;
     const adjacency = carrier["adjacency"] as { side?: unknown } | null | undefined;
@@ -829,17 +1201,37 @@ export function stampSurvivalHints(
     }
     for (const d of decisions) {
       if (!d || d.case_action) continue;
-      const labels = avoid.get(String(d.question ?? ""));
-      if (!labels || labels.length === 0) continue;
-      d.avoid_labels = [...labels];
+      const q = String(d.question ?? "");
+      const labels = avoid.get(q);
+      const liked = prefer.get(q);
+      const pv = preferValue.get(q);
+      if ((!labels || labels.length === 0) && (!liked || liked.length === 0) && !pv) continue;
+      if (labels && labels.length > 0) d.avoid_labels = [...labels];
+      if (liked && liked.length > 0) d.prefer_labels = [...liked];
+      // OUTCOME 1 (D1): stamp code pairs so the driver can match by exact code.
+      // Only when at least one entry has a non-null code.
+      const ac = avoidCodes.get(q);
+      if (ac && ac.some((e) => e.code !== null)) d.avoid_codes = ac.map((e) => ({ ...e }));
+      const pc = preferCodes.get(q);
+      if (pc && pc.some((e) => e.code !== null)) d.prefer_codes = pc.map((e) => ({ ...e }));
+      // OUTCOME 4 (D1): stamp documented-accepted value for numeric screeners.
+      if (pv) d.prefer_value = { ...pv };
       decisionsStamped += 1;
     }
     // Path-level hints cover the screens NO decision binds; the driver matches them by
     // offered-label overlap only. Emitted in model question order, so a replan is byte-stable.
-    const hints: SurvivalHintStamp[] = [...avoid.entries()].map(([question, labels]) => ({
+    const hints: SurvivalHintStamp[] = hintedQuestions.map((question) => ({
       question,
       ...(wordingByQuestion.has(question) ? { question_text: wordingByQuestion.get(question)! } : {}),
-      avoid_labels: [...labels],
+      avoid_labels: [...(avoid.get(question) ?? [])],
+      ...(prefer.has(question) ? { prefer_labels: [...prefer.get(question)!] } : {}),
+      // OUTCOME 1 (D1): carry code pairs into path-level hints. Only emitted when at
+      // least one entry has a non-null code — model-mined triggers have code=null and
+      // emitting them would add noise without matching value.
+      ...((avoidCodes.get(question) ?? []).some((e) => e.code !== null) ? { avoid_codes: avoidCodes.get(question)!.map((e) => ({ ...e })) } : {}),
+      ...((preferCodes.get(question) ?? []).some((e) => e.code !== null) ? { prefer_codes: preferCodes.get(question)!.map((e) => ({ ...e })) } : {}),
+      // OUTCOME 4 (D1): carry documented-accepted value.
+      ...(preferValue.has(question) ? { prefer_value: { ...preferValue.get(question)! } } : {}),
     }));
     if (hints.length > 0) {
       carrier["survival_hints"] = hints;
@@ -849,7 +1241,11 @@ export function stampSurvivalHints(
   return {
     decisionsStamped,
     pathsStamped,
-    questions: [...avoid.entries()].map(([question, labels]) => ({ question, avoid_labels: [...labels] })),
+    questions: hintedQuestions.map((question) => ({
+      question,
+      avoid_labels: [...(avoid.get(question) ?? [])],
+      ...(prefer.has(question) ? { prefer_labels: [...prefer.get(question)!] } : {}),
+    })),
     unstampable,
   };
 }
@@ -990,7 +1386,13 @@ export async function planStage(
   // (so per-case clones inherit). Hints are INPUT, never EVIDENCE: `avoid_labels` /
   // `survival_hints` are unhashed, gate-invisible fields the driver reads only to pick
   // among its own navigator-default fillers. See `stampSurvivalHints`.
-  const survival = stampSurvivalHints([...plan.floor.paths, ...plan.exploration.queue], plan.model);
+  const sealedRoutes = sealedRouteDestinations(revision);
+  const survival = stampSurvivalHints(
+    [...plan.floor.paths, ...plan.exploration.queue],
+    plan.model,
+    sealedRoutes.routes,
+    revision.facetInstances,
+  );
 
   // ---- assignment: mandatory execution case -> the floor path that witnesses it ----
   const witnessMap: Record<string, string> = (plan.floor.coverage.witness_map ?? {}) as Record<string, string>;
@@ -1105,6 +1507,20 @@ export async function planStage(
         `zero here means every documented screen-out was stamped, not that nobody looked.`,
       count: survival.unstampable.length,
       questionIds: survival.unstampable.map((u) => `${u.terminal}${u.question ? ` (${u.question})` : ""} — ${u.why}`),
+    },
+    {
+      code: PLAN_LIMITATION_CODES.documentedContinueRoutesUnstampable,
+      what:
+        `${sealedRoutes.continueDirectiveUnstampable.length} route row(s) carry a destination directive that could ` +
+        `not be turned into a prefer hint: the directive text was not recognized as a standard continuation form, ` +
+        `or negation detection was ambiguous. A plan can never again report hint coverage as success while carrying ` +
+        `zero positive steering — this count makes the gap visible. ` +
+        `${survival.questions.filter((q) => (q.prefer_labels ?? []).length > 0).length} question(s) DO carry ` +
+        `prefer hints; zero there means the prefer channel is empty and only avoid-direction steering is active.`,
+      count: sealedRoutes.continueDirectiveUnstampable.length,
+      questionIds: sealedRoutes.continueDirectiveUnstampable.map(
+        (u) => `${u.question}: "${u.label}" — directive ${JSON.stringify(u.directive)} — ${u.why}`,
+      ),
     },
     {
       code: PLAN_LIMITATION_CODES.seedAuthorityWithheld,

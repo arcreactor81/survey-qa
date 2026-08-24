@@ -27,20 +27,20 @@ function env(overrides = {}) {
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     EXTRACT_MAX_ATTEMPTS: "1",
     DEEPSEEK_FALLBACK_MAX_ATTEMPTS: "1",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -223,8 +223,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
       assertEq(result.issuedCalls[1].status, "ok");
       assertEq(result.issuedCalls[1].model, "deepseek-v4-pro");
       assertEq(result.issuedCalls[1].callId, "call_b_fixture:fallback");
-      approx(result.issuedCalls[0].costUsd, 0.00028, "Flash official-rate cost");
-      approx(result.issuedCalls[1].costUsd, 0.00174, "Pro official-rate cost");
+      approx(result.issuedCalls[0].costUsd, 0.0011, "Flash official-rate cost");
+      approx(result.issuedCalls[1].costUsd, 0.0066, "Pro official-rate cost");
       assert(result.issuedCalls.every((row) => row.provider === "deepseek"),
         "Flash+Pro must not be projected as two independent providers");
     } finally {
@@ -251,9 +251,9 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
   test("a response must attest the exact requested model under the stored plan", async () => {
     const m = await mod();
     const flashOnlySpec = await m.deepseek.deepseekSpec(env({ DEEPSEEK_FALLBACK_MODE: "disabled" }));
-    assertEq(flashOnlySpec.unboundModelRateCeiling.inputUsdPerMTok, 0.435,
+    assertEq(flashOnlySpec.unboundModelRateCeiling.inputUsdPerMTok, 1.32,
       "unbound identity uses the maximum checked DeepSeek input rate even with fallback disabled");
-    assertEq(flashOnlySpec.unboundModelRateCeiling.outputUsdPerMTok, 0.87,
+    assertEq(flashOnlySpec.unboundModelRateCeiling.outputUsdPerMTok, 3.96,
       "unbound identity uses the maximum checked DeepSeek output rate even with fallback disabled");
     for (const [label, primaryReportedModel] of [
       ["different", "deepseek-v4-pro"],
@@ -275,8 +275,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
         assertEq(result.issuedCalls[0].outputTokens, 1000);
         approx(
           result.issuedCalls[0].costUsd,
-          (result.issuedCalls[0].inputTokens / 1e6) * 0.435 +
-            (result.issuedCalls[0].outputTokens / 1e6) * 0.87,
+          (result.issuedCalls[0].inputTokens / 1e6) * 1.32 +
+            (result.issuedCalls[0].outputTokens / 1e6) * 3.96,
           "unverified model purchase uses the maximum checked/configured DeepSeek rates",
         );
         assert(result.issuedCalls[0].detail.includes("response model identity mismatch"));
@@ -312,6 +312,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
 
   test("auth, balance and invalid-request failures never buy a doomed Pro call", async () => {
     const m = await mod();
+    // Definitive non-billing statuses (401/402/403) book zero; others keep the ceiling.
+    const NON_BILLING = new Set([401, 402, 403]);
     for (const [status, kind] of [
       [400, "invalid-request"],
       [401, "authentication"],
@@ -335,10 +337,24 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
         assertEq(error.fallbackAttempted, false, `HTTP ${status} must not buy Pro`);
         assertEq(error.issuedCalls.length, 1, `HTTP ${status} keeps only the actual Flash receipt`);
         assertEq(error.issuedCalls[0].attempts, 1, `HTTP ${status} stops primary retries immediately`);
-        assertEq(error.issuedCalls[0].usageSource, "conservative-ceiling");
-        assert(error.issuedCalls[0].inputTokens > 0, "unknown input is charged at the request-byte ceiling");
-        assertEq(error.issuedCalls[0].outputTokens, 1000, "unknown output is charged at max_tokens");
-        assert(error.issuedCalls[0].costUsd > 0, "missing provider usage is never serialized as free spend");
+        if (NON_BILLING.has(status)) {
+          // Definitive pre-generation refusal: zero tokens, zero cost, named source
+          assertEq(error.issuedCalls[0].usageSource, "rejected-before-generation",
+            `HTTP ${status} must be rejected-before-generation`);
+          assertEq(error.issuedCalls[0].inputTokens, 0, `HTTP ${status} books zero input tokens`);
+          assertEq(error.issuedCalls[0].outputTokens, 0, `HTTP ${status} books zero output tokens`);
+          assertEq(error.issuedCalls[0].costUsd, 0, `HTTP ${status} books zero cost`);
+        } else {
+          // Ambiguous status: conservative ceiling still applies
+          assertEq(error.issuedCalls[0].usageSource, "conservative-ceiling",
+            `HTTP ${status} must use conservative ceiling`);
+          assert(error.issuedCalls[0].inputTokens > 0,
+            `HTTP ${status} unknown input is charged at the request-byte ceiling`);
+          assertEq(error.issuedCalls[0].outputTokens, 1000,
+            `HTTP ${status} unknown output is charged at max_tokens`);
+          assert(error.issuedCalls[0].costUsd > 0,
+            `HTTP ${status} missing provider usage is never serialized as free spend`);
+        }
         assertEq(stub.requests.length, 1, `HTTP ${status} made exactly one provider request`);
       } finally {
         stub.restore();
@@ -386,7 +402,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
 
     const httpTimeout = new m.chat.ModelCallError(
       "fixture HTTP 408",
-      { callId: "c", role: "r", provider: "grok", model: "grok-4.6", status: "error",
+      { callId: "c", role: "r", provider: "grok", model: "grok-4.5", status: "error",
         inputTokens: 1, outputTokens: 1, costUsd: 1, latencyMs: 1, attempts: 1 },
       "timeout-or-network",
       408,
@@ -434,7 +450,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
           () => m.chat.chatJson(
             {
               provider: "grok",
-              model: "grok-4.6",
+              model: "grok-4.5",
               gatewaySuffix: "/v1",
               directBaseUrl: "https://fixture.invalid",
               apiKey: "fixture",
@@ -476,7 +492,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
         const error = await assertThrows(
           () => m.chat.chatJson(
             {
-              provider: "grok", model: "grok-4.6", gatewaySuffix: "/v1",
+              provider: "grok", model: "grok-4.5", gatewaySuffix: "/v1",
               directBaseUrl: "https://fixture.invalid", apiKey: "fixture",
               inputUsdPerMTok: 1, outputUsdPerMTok: 1, extraBody: {},
             },
@@ -500,7 +516,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
     try {
       await assertThrows(
         () => m.deepseek.deepseekJsonWithContinuity(
-          env({ DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK: "0.435" }),
+          env({ DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK: "1.32" }),
           opts(),
         ),
         "must be configured together",
@@ -622,7 +638,9 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
     ]);
     try {
       const result = await m.passB.runPassB(value, "run_failed_receipts", oneBlockDocument(), "fixture.docx");
-      assertEq(result.slice.done, false, "terminally failed unit cannot authorize a completed pass");
+      // B4: the walk completes even with terminal failed units. The failed unit's blocks
+      // remain unresolved and ride the payload as named limitations.
+      assertEq(result.slice.done, true, "B4: the walk completes despite a terminally failed chunk");
       assertEq(result.slice.terminalFailure, true, "terminal failure is accounted rather than retried forever");
       assertEq(result.issuedCalls.length, 1);
       const key = m.keys.k("runs", "run_failed_receipts", "extraction", "pass-b", "chunk-01.json");
@@ -656,7 +674,8 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
       assertEq(first.slice.done, false);
       assertEq(first.issuedCalls.length, 1);
       const second = await m.passB.runPassB(value, "run_retry_receipts", oneBlockDocument(), "fixture.docx");
-      assertEq(second.slice.done, false);
+      // B4: done=true even with terminal failures (no sweep, no remaining chunks).
+      assertEq(second.slice.done, true);
       assertEq(second.slice.terminalFailure, true);
       assertEq(second.issuedCalls.length, 1, "only the new retry purchase is charged this wave");
       assertEq(second.calls.length, 2, "prior receipt remains visible as zero-cost reclaimed provenance");
@@ -860,7 +879,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
         m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256,
       );
       assertEq(changed.result.state, "not-evaluated");
-      assertEq(changed.result.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+      assertEq(changed.result.reason, "COMPLETION_ARTIFACT_INVALID");
       assertEq(replay.requests.length, 0, "changed-plan occupied authority is refused without a re-buy");
       assertEq(
         await (await shared.get(m.keys.extractionPassKey(runId, "b"))).text(),
@@ -884,12 +903,12 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
 
     const exactReleasePolicy = [
       ["DEEPSEEK_MODEL", "deepseek-v4-flash"],
-      ["DEEPSEEK_INPUT_USD_PER_MTOK", "0.14"],
-      ["DEEPSEEK_OUTPUT_USD_PER_MTOK", "0.28"],
+      ["DEEPSEEK_INPUT_USD_PER_MTOK", "0.44"],
+      ["DEEPSEEK_OUTPUT_USD_PER_MTOK", "1.32"],
       ["DEEPSEEK_FALLBACK_MODEL", "deepseek-v4-pro"],
-      ["DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK", "0.435"],
-      ["DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK", "0.87"],
-      ["CAP_STANDARD_MAX_USD", "5"],
+      ["DEEPSEEK_FALLBACK_INPUT_USD_PER_MTOK", "1.32"],
+      ["DEEPSEEK_FALLBACK_OUTPUT_USD_PER_MTOK", "3.96"],
+      ["CAP_STANDARD_MAX_USD", "15"],
     ];
     const requireExactReleasePolicy = (source) => {
       for (const [key, expected] of exactReleasePolicy) {
@@ -900,7 +919,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
     requireExactReleasePolicy(config);
 
     const hostile = config.replace(
-      '"CAP_STANDARD_MAX_USD": "5"',
+      '"CAP_STANDARD_MAX_USD": "15"',
       '"CAP_STANDARD_MAX_USD": "30"',
     );
     let refusal = "";
@@ -916,7 +935,7 @@ suite("PROVIDER CONTINUITY - explicit DeepSeek Flash/Pro legs", () => {
   });
 });
 
-suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigger", () => {
+suite("PROVIDER ACTIVATION - Grok 4.5 + Pro, Flash only behind a retained trigger", () => {
   const extractionEnv = (overrides = {}) => env({
     EXTRACT_PASS_A_WINDOW_CHARS: "999999",
     EXTRACT_PASS_A_WINDOW_MAX_ISSUES: "1",
@@ -926,7 +945,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
     ...overrides,
   });
 
-  test("normal extraction buys exact Grok 4.6 plus Pro and zero Flash requests", async () => {
+  test("normal extraction buys exact Grok 4.5 plus Pro and zero Flash requests", async () => {
     const m = await mod();
     const value = extractionEnv();
     const stub = stubSequence([
@@ -937,7 +956,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       const passA = await m.passA.runPassA(value, "run_normal_route", oneBlockDocument(), "fixture.docx");
       const passB = await m.passB.runPassB(value, "run_normal_route", oneBlockDocument(), "fixture.docx");
       assertEq(stub.requests.length, 2);
-      assertEq(stub.requests[0].body.model, "grok-4.6");
+      assertEq(stub.requests[0].body.model, "grok-4.5");
       assertEq(stub.requests[1].body.model, "deepseek-v4-pro");
       assertEq(stub.requests.filter((request) => request.body.model === "deepseek-v4-flash").length, 0);
       assertEq(passA.providerIndependence, "independent");
@@ -946,10 +965,10 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
         ...passA,
         providerIndependence: "reduced-same-provider-fallback",
       }), null, "a stored independence label cannot override its trigger denominator");
-      assertEq(passA.routeReceipts[0].selected, "grok-4.6");
+      assertEq(passA.routeReceipts[0].selected, "grok-4.5");
       assertEq(passB.model, m.deepseek.deepseekPassBIdentity(value));
       approx(passA.issuedCalls[0].costUsd, 0.00064, "Grok conservative max-tier cost receipt");
-      approx(passB.issuedCalls[0].costUsd, 0.0001218, "exact Pro receipt");
+      approx(passB.issuedCalls[0].costUsd, 0.0004224, "exact Pro receipt");
     } finally {
       stub.restore();
     }
@@ -971,7 +990,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       try {
         const result = await m.passA.runPassA(value, `run_eligible_${label}`, oneBlockDocument(), "fixture.docx");
         assertEq(stub.requests.length, 2, `${label} makes one Grok and one Flash request`);
-        assertEq(stub.requests[0].body.model, "grok-4.6");
+        assertEq(stub.requests[0].body.model, "grok-4.5");
         assertEq(stub.requests[1].body.model, "deepseek-v4-flash");
         assertEq(result.providerIndependence, "reduced-same-provider-fallback");
         assertEq(m.passA.validatePassAProviderState(result), "reduced-same-provider-fallback");
@@ -994,7 +1013,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       try {
         const result = await m.passA.runPassA(value, `run_ineligible_${status}`, oneBlockDocument(), "fixture.docx");
         assertEq(stub.requests.length, 1, `HTTP ${status} must not activate Flash`);
-        assertEq(stub.requests[0].body.model, "grok-4.6");
+        assertEq(stub.requests[0].body.model, "grok-4.5");
         assertEq(result.routeReceipts.length, 0);
         assertEq(result.failedUnits.length, 1);
         const key = m.keys.k("runs", `run_ineligible_${status}`, "extraction", "pass-a", "window-01.json");
@@ -1009,7 +1028,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
 
   test("a missing or mismatched Grok response model cannot authorize Flash", async () => {
     const m = await mod();
-    for (const reportedModel of [undefined, "grok-4.6-latest", "grok-4.5"]) {
+    for (const reportedModel of [undefined, "grok-4.5-latest", "grok-4.6"]) {
       const value = extractionEnv({ EVIDENCE: memoryR2() });
       const stub = stubSequence([
         () => chatResponse(reportedModel, passAPayload(), 10, 5),
@@ -1025,6 +1044,21 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
         assertEq(result.routeReceipts.length, 0);
         assertEq(result.failedUnits.length, 1);
         assertEq(result.issuedCalls[0].usageSource, "unverified-model-rate-ceiling");
+        const key = m.keys.k(
+          "runs",
+          `run_unbound_model_${String(reportedModel)}`,
+          "extraction",
+          "pass-a",
+          "window-01.json",
+        );
+        const artifact = await (await value.EVIDENCE.get(key)).json();
+        assertEq(artifact.failureStage, "provider", "unbound identity remains an honest provider failure");
+        assertEq(artifact.terminal, true, "unbound identity cannot leave pending fallback authority");
+        assertEq(artifact.fallbackTrigger, null, "unbound identity mints no fallback trigger");
+        assertEq(artifact.usages.length, 1, "the paid unbound Grok attempt remains visible exactly once");
+        assertEq(artifact.usages[0].provider, "grok");
+        assertEq(artifact.usages[0].status, "error");
+        assertEq(artifact.usages[0].usageSource, "unverified-model-rate-ceiling");
       } finally {
         stub.restore();
       }
@@ -1060,7 +1094,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       assertEq(stub.requests.length, 1, "the injected crash happens before Flash");
       const resumed = await m.passA.runPassA(value, "run_restart_trigger", oneBlockDocument(), "fixture.docx");
       assertEq(stub.requests.length, 2, "restart buys only the pending Flash request");
-      assertEq(stub.requests[0].body.model, "grok-4.6");
+      assertEq(stub.requests[0].body.model, "grok-4.5");
       assertEq(stub.requests[1].body.model, "deepseek-v4-flash");
       assertEq(resumed.routeReceipts[0].selected, "deepseek-v4-flash");
       assertEq(resumed.accountingCalls.length, 2);
@@ -1074,15 +1108,15 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
     }
   });
 
-  test("Grok 4.6 rate/model attestation fails before any request", async () => {
+  test("Grok 4.5 rate/model attestation fails before any request", async () => {
     const m = await mod();
-    const alias = "grok-4.6-latest";
+    const alias = "grok-4.5-latest";
     const ownerReceipt = m.grok.grokRateReceiptCanonicalText(extractionEnv());
-    const aliasReceipt = ownerReceipt.replace('"model":"grok-4.6"', '"model":"grok-4.6-latest"');
+    const aliasReceipt = ownerReceipt.replace('"model":"grok-4.5"', '"model":"grok-4.5-latest"');
     assert(aliasReceipt !== ownerReceipt, "alias fixture must alter canonical model identity");
     const aliasDigest = createHash("sha256").update(aliasReceipt, "utf8").digest("hex");
     for (const override of [
-      { GROK_RATE_ATTESTED_MODEL: "grok-4.5" },
+      { GROK_RATE_ATTESTED_MODEL: "grok-4.6" },
       { GROK_RATE_ATTESTED_AT: "" },
       { GROK_INPUT_USD_PER_MTOK: undefined },
       {
@@ -1154,14 +1188,14 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       kind: m.passA.GROK_FALLBACK_TRIGGER_VERSION,
       failureKind: "rate-limited",
       httpStatus: 429,
-      grokModel: "grok-4.6",
+      grokModel: "grok-4.5",
       grokUsageEventId: grokEventId,
       detail: "fixture quota trigger",
     };
     const calls = [
       {
         eventId: grokEventId, callId: "call_a_1", role: "extract-pass-a", provider: "grok",
-        model: "grok-4.6", status: "error", inputTokens: 10, outputTokens: 10,
+        model: "grok-4.5", status: "error", inputTokens: 10, outputTokens: 10,
         costUsd: 0.00018, latencyMs: 0, attempts: 1, usageSource: "conservative-ceiling",
       },
       {
@@ -1178,7 +1212,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       providerIndependence: "reduced-same-provider-fallback",
       pass: "A",
       provider: "grok-primary/deepseek-flash-fallback",
-      model: "grok-4.6",
+      model: "grok-4.5",
       requirements: [], ambiguities: [], unverifiable: [], dispositions: [], constructs: [],
       failedUnits: [], calls, crossRefs: [],
       routeReceipts: [{ selected: "deepseek-v4-flash", trigger }],
@@ -1208,7 +1242,7 @@ suite("PROVIDER ACTIVATION - Grok 4.6 + Pro, Flash only behind a retained trigge
       `sha256:${"0".repeat(64)}`,
     );
     assertEq(result.state, "not-evaluated");
-    assertEq(result.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(result.reason, "COMPLETION_ARTIFACT_INVALID");
     assert(result.detail.includes("PASS_A_COMPLETED_ARTIFACT_INVALID"));
   });
 });

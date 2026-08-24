@@ -218,6 +218,15 @@ export function setPhase(draft: RunCheckpoint, name: PhaseName, state: PhaseStat
       p.state = state;
       p.observedAt = now;
       p.reasonCode = reasonCode;
+      // Direction 2: track phase wall-clock boundaries.
+      if (state === "active") {
+        p.startedAt = now;
+        p.endedAt = null;
+      } else if (state === "complete" || state === "stopped" || state === "skipped") {
+        p.endedAt = now;
+        // startedAt is left as-is — it was set when the phase became active.
+        // For phases that were never active (e.g. skipped), startedAt stays null.
+      }
     }
   }
   if (state === "active") draft.phase = name;

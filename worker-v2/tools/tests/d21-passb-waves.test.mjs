@@ -93,7 +93,20 @@ const CONSTRUCTS = [
  * accounting, the coercion layer) is the real code. The testkit only stubs platform modules;
  * this is the established place to cut.
  */
-function stubProvider({ failUnit = () => false, citeBlocks = true, validEmpty = false } = {}) {
+function boundedJsonlRows(user, startMarker, endMarker) {
+  const start = user.indexOf(startMarker);
+  if (start < 0) return null;
+  const end = user.indexOf(endMarker, start + startMarker.length);
+  assert(end > start, `missing JSONL end marker for ${startMarker}`);
+  return user
+    .slice(start + startMarker.length, end)
+    .trim()
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line));
+}
+
+function stubProvider({ failUnit = () => false, failBody = "upstream exploded", citeBlocks = true, validEmpty = false } = {}) {
   const original = globalThis.fetch;
   const requests = [];
   globalThis.fetch = async (url, init) => {
@@ -101,16 +114,32 @@ function stubProvider({ failUnit = () => false, citeBlocks = true, validEmpty = 
     const user = String(body.messages[1].content);
     const unit = (user.match(/Your chunk id for this call is: (\S+)/) ?? [])[1] ?? "PASS-A";
     const declaredChunk = (user.match(/Your chunk contains exactly \d+ blocks: ([^\n]+)/) ?? [])[1];
-    const sweepText = (user.match(/===== UNACCOUNTED BLOCKS =====\n([\s\S]*?)\n===== END =====/) ?? [])[1];
-    const blockIds = declaredChunk !== undefined
-      ? declaredChunk.split(",").map((value) => value.trim()).filter(Boolean)
-      : sweepText !== undefined
-        ? [...new Set([...sweepText.matchAll(/\[(b\d{4})\]/g)].map((match) => match[1]))]
-        : [];
+    const chunkRows = boundedJsonlRows(
+      user,
+      "===== YOUR SOURCE BLOCKS JSONL — EXTRACT AND DISPOSITION THESE BLOCKS =====",
+      "===== END YOUR SOURCE BLOCKS JSONL =====",
+    );
+    const sweepRows = boundedJsonlRows(
+      user,
+      "===== UNACCOUNTED SOURCE BLOCKS JSONL =====",
+      "===== END UNACCOUNTED SOURCE BLOCKS JSONL =====",
+    );
+    const sourceRows = chunkRows ?? sweepRows ?? [];
+    const blockIds = sourceRows.map((row) => String(row.block_id));
+    assertEq(new Set(blockIds).size, blockIds.length, "the bounded source JSONL has unique block ids");
+    if (declaredChunk !== undefined) {
+      const declaredIds = declaredChunk.split(",").map((value) => value.trim()).filter(Boolean);
+      assertEq(
+        JSON.stringify(blockIds),
+        JSON.stringify(declaredIds),
+        "the chunk declaration and bounded source JSONL name the same blocks in order",
+      );
+    }
+    const sourceText = new Map(sourceRows.map((row) => [String(row.block_id), String(row.text)]));
     requests.push({ url: String(url), unit, blockIds });
 
     if (failUnit(unit, requests.length)) {
-      return new Response("upstream exploded", { status: 502 });
+      return new Response(failBody, { status: 502 });
     }
 
     if (unit === "PASS-A") {
@@ -123,12 +152,7 @@ function stubProvider({ failUnit = () => false, citeBlocks = true, validEmpty = 
       });
     }
 
-    const exactQuote = (id) => {
-      const line = user.split("\n").find((value) => value.startsWith(`[${id}]`)) ?? "";
-      let quote = line.replace(/^\[b\d{4}\]\s*/, "");
-      if (quote.startsWith("(") && quote.includes(") ")) quote = quote.slice(quote.lastIndexOf(") ") + 2);
-      return quote;
-    };
+    const exactQuote = (id) => sourceText.get(id) ?? "";
     const obligations = citeBlocks && !validEmpty
       ? blockIds.map((id, i) => ({
           id: `${unit}-R${i + 1}`,
@@ -208,20 +232,20 @@ function sliceEnv(overrides = {}) {
     CF_AIG_ACCOUNT_ID: "fixture-account",
     CF_AIG_GATEWAY_ID: "fixture-gateway",
     XAI_API_KEY: "test-xai-key",
-    GROK_MODEL: "grok-4.6",
+    GROK_MODEL: "grok-4.5",
     GROK_RATE_BINDING_SCHEMA: "survey-qa-grok-rate-binding/1.0.0",
     GROK_RATE_POLICY: "max-known-text-tier/1.0.0",
-    GROK_RATE_SOURCE: "owner-dashboard-copy",
-    GROK_RATE_ATTESTED_MODEL: "grok-4.6",
-    GROK_RATE_ATTESTED_AT: "2026-08-13",
-    GROK_RATE_RECEIPT_SHA256: "be9305eacc767d81d123ca1cada22a89ca04f191f9dfe60c925106dfccde57b5",
+    GROK_RATE_SOURCE: "owner-console-confirmation",
+    GROK_RATE_ATTESTED_MODEL: "grok-4.5",
+    GROK_RATE_ATTESTED_AT: "2026-08-15",
+    GROK_RATE_RECEIPT_SHA256: "9bc864b4e87925b6bc7d4426e3a074d6f5b7e5c8b582e1e91e0b257a2618289e",
     GROK_CONTEXT_WINDOW_TOKENS: "500000",
     GROK_INPUT_USD_PER_MTOK: "2",
-    GROK_CACHED_INPUT_USD_PER_MTOK: "0.5",
+    GROK_CACHED_INPUT_USD_PER_MTOK: "0.3",
     GROK_OUTPUT_USD_PER_MTOK: "6",
     GROK_LONG_CONTEXT_THRESHOLD_TOKENS: "200000",
     GROK_LONG_CONTEXT_INPUT_USD_PER_MTOK: "4",
-    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "1",
+    GROK_LONG_CONTEXT_CACHED_INPUT_USD_PER_MTOK: "0.6",
     GROK_LONG_CONTEXT_OUTPUT_USD_PER_MTOK: "12",
     GROK_MAX_INPUT_USD_PER_MTOK: "4",
     GROK_MAX_OUTPUT_USD_PER_MTOK: "12",
@@ -303,6 +327,223 @@ test("a generous budget still does the whole fan-out in ONE wave — slicing is 
     });
     assertEq(out.slice.done, true, "a wave with real budget finishes the document");
     assertEq(out.slice.chunksIssued, 6, "all six chunks bought inside one wave");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("structured current-unit visibility is awaited before a Pass-B purchase", async () => {
+  const m = await mod();
+  const doc = docFor(1);
+
+  const successEnv = sliceEnv();
+  const successProvider = stubProvider();
+  const events = [];
+  try {
+    const result = await m.passB.runPassB(
+      successEnv, "run_d21_visible_before_purchase", doc, "synthetic.docx", undefined,
+      { budgetMs: 600_000 },
+      async (event) => {
+        assertEq(successProvider.requests.length, 0, "the observer must finish before the provider is called");
+        events.push(structuredClone(event));
+      },
+    );
+    assertEq(result.slice.done, true);
+    assert(events.length >= 2, "the read boundary and purchase boundary both stay visible");
+    assertEq(events.at(-1).stage, "secondary-chunks");
+    assertEq(events.at(-1).unit.name, "C01-b0001");
+    assertEq(events.at(-1).unit.sourceContext.firstBlockId, "b0001");
+    assert(events.at(-1).unit.sourceContext.preview.includes("Ask the respondent"));
+  } finally {
+    successProvider.restore();
+  }
+
+  const refusedEnv = sliceEnv();
+  const refusedProvider = stubProvider();
+  try {
+    await assertThrows(
+      () => m.passB.runPassB(
+        refusedEnv, "run_d21_visibility_refused", doc, "synthetic.docx", undefined,
+        { budgetMs: 600_000 },
+        async () => { throw new Error("visibility checkpoint unavailable"); },
+      ),
+      "visibility checkpoint unavailable",
+    );
+    assertEq(refusedProvider.requests.length, 0, "a failed pre-purchase visibility write must buy nothing");
+    const listed = await refusedEnv.EVIDENCE.list({
+      prefix: "v2/runs/run_d21_visibility_refused/extraction/pass-b/",
+    });
+    assertEq(listed.objects.length, 0, "a failed visibility callback may author no paid-unit artifact");
+  } finally {
+    refusedProvider.restore();
+  }
+});
+
+test("Pass-B heartbeat hides a raw provider response from the real status poll", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_MAX_ATTEMPTS: "1", EXTRACT_CHUNK_MAX_ISSUES: "1" });
+  const runId = m.ids.mintRunId();
+  await m.checkpoint.createCheckpoint(env, m.checkpoint.initialCheckpoint(env, runId, "standard", false));
+  await m.checkpoint.updateCheckpoint(env, runId, (draft) => {
+    m.checkpoint.setPhase(draft, "extracting", "active");
+  }, { progressed: true });
+  const sentinel = "RAW_PROVIDER_HEARTBEAT_SENTINEL_DO_NOT_EXPOSE";
+  const provider = stubProvider({ failUnit: () => true, failBody: sentinel });
+  try {
+    const result = await m.passB.runPassB(
+      env,
+      runId,
+      docFor(1),
+      "synthetic.docx",
+      async (message) => m.checkpoint.beat(env, runId, message, "extract-b"),
+      { budgetMs: 600_000 },
+    );
+    assertEq(result.slice.terminalFailure, true, "the fixture must cross the real provider-failure branch");
+    const response = await m.apiRuns.getStatus(
+      new Request(`https://fixture.invalid/api/v2/runs/${runId}/status`),
+      env,
+      runId,
+    );
+    const text = await response.text();
+    assert(!text.includes(sentinel), "raw provider response text must not cross heartbeatNote/status");
+    const status = JSON.parse(text);
+    assert(status.heartbeatNote.includes(
+      "A provider request for a document-reading unit did not complete successfully.",
+    ));
+  } finally {
+    provider.restore();
+  }
+});
+
+test("terminal Pass-B refusal keeps raw provider evidence internal across status, report-data and HTML", async () => {
+  const m = await mod();
+  const env = sliceEnv({
+    EXTRACT_MAX_ATTEMPTS: "1",
+    EXTRACT_CHUNK_MAX_ISSUES: "1",
+    EXTRACT_CHUNK_MAX_BLOCKS: "999999",
+    EXTRACT_CHUNK_CHARS: "999999",
+    EXTRACT_SWEEP_MAX_CALLS: "0",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999",
+    EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+  });
+  const runId = m.ids.mintRunId();
+  await m.checkpoint.createCheckpoint(env, m.checkpoint.initialCheckpoint(env, runId, "standard", false));
+  const fence = await m.checkpoint.claimOwnership(env, runId, runId, 0);
+  const { readFileSync } = await import("node:fs");
+  const path = await import("node:path");
+  const { REPO_ROOT } = await import("../testkit.mjs");
+  const documentBytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+  const documentSha256 = await m.hash.sha256Hex(documentBytes);
+  const documentKey = m.keys.inputDocumentKey(runId);
+  await env.EVIDENCE.put(documentKey, documentBytes);
+  await m.envelope.putEnvelope(env, {
+    schemaVersion: "v2-run-envelope/1.0.0",
+    kind: "survey-qa-v2-envelope",
+    runId,
+    createdAt: "2026-08-14T00:00:00.000Z",
+    instanceId: runId,
+    input: {
+      surveyUrl: "https://fixture.invalid/survey",
+      documentKey,
+      documentSha256,
+      documentName: "questionnaire.docx",
+      targetBuildId: null,
+      locale: "en",
+      viewports: ["desktop"],
+      contractSource: { mode: "extract" },
+    },
+    profile: "standard",
+    contractRevisionId: null,
+    recovery: null,
+    finalCompletion: null,
+  });
+  const passAHash = await (async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return Response.json({
+        model: body.model,
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        choices: [{
+          message: { content: JSON.stringify({
+            global_rules: [], cross_references: [], ambiguities: [], unverifiable_from_browser: [],
+          }) },
+          finish_reason: "stop",
+        }],
+      });
+    };
+    try {
+      const outcome = await m.extractStage.stagePassASlice(
+        env, runId, documentKey, "questionnaire.docx", fence, async () => {}, {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE, documentSha256,
+      );
+      assertEq(outcome.result.state, "evaluated", "the privacy fixture has canonical Pass-A authority");
+      return outcome.result.value.hash;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  })();
+  const sentinel = "RAW_TERMINAL_PASS_B_PROVIDER_BODY_SENTINEL_DO_NOT_EXPOSE";
+  const provider = stubProvider({ failUnit: () => true, failBody: sentinel });
+  try {
+    const stage = await m.extractStage.stagePassBSlice(
+      env,
+      runId,
+      documentKey,
+      "questionnaire.docx",
+      fence,
+      async (message) => m.checkpoint.beat(env, runId, message, "extract-b"),
+      { budgetMs: 600_000 },
+      m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+      passAHash,
+      documentSha256,
+    );
+    assertEq(stage.result.state, "not-evaluated");
+    // With B4, the walk completes (done=true) even with terminal failed units. Reconstruction
+    // then fails because unaccounted blocks cannot be covered (sweep capacity is zero).
+    assertEq(stage.result.reason, "COMPLETION_ARTIFACT_INVALID");
+    // The sentinel is still retained in the chunk artifact in R2 — verify internal evidence
+    // is kept without leaking into the stage result.
+    const chunkKeys = await env.EVIDENCE.list({
+      prefix: m.keys.k("runs", runId, "extraction", "pass-b") + "/",
+    });
+    const chunkArtifacts = await Promise.all(
+      chunkKeys.objects.filter((o) => o.key.includes("chunk-")).map(async (o) => {
+        const obj = await env.EVIDENCE.get(o.key);
+        return obj ? await obj.text() : "";
+      }),
+    );
+    assert(chunkArtifacts.some((text) => text.includes(sentinel)), "the retained internal evidence must contain the sentinel in the chunk artifact");
+    assert(!stage.result.detail.includes(sentinel), "the stage refusal prose must be closed");
+
+    const refusal = m.workflow.extractionPassRefusal("b", stage.result);
+    assert(refusal, "the real run-level refusal adapter must accept the terminal Pass-B result");
+    assert(!refusal.detail.includes(sentinel), "run-level refusal prose must not copy failed-unit detail");
+    await m.checkpoint.updateCheckpoint(env, runId, (draft) => {
+      m.checkpoint.setPhase(draft, "extracting", "stopped", refusal.reasonCode);
+      draft.contract = m.contracts.unavailableContract();
+      draft.completion.test = "failed";
+      draft.completion.reasonCode = refusal.reasonCode;
+      draft.error = refusal.detail;
+    }, { progressed: true, fence });
+    await m.checkpoint.beat(env, runId, refusal.detail, "extract-b-refused");
+
+    const statusText = await (await m.apiRuns.getStatus(
+      new Request("https://fixture.invalid/status"), env, runId,
+    )).text();
+    assert(!statusText.includes(sentinel), "terminal refusal beat/status must not expose raw provider evidence");
+
+    const finalized = await new m.workflow.SurveyRunWorkflowV2({}, env)
+      .reportAndFinalize(fakeStep(), runId, fence);
+    assertEq(finalized.completion.report, "complete", "the terminal Pass-B stop must publish an operational report");
+    const dataText = await (await m.apiReport.getReportData(
+      new Request("https://fixture.invalid/report-data"), env, runId,
+    )).text();
+    assert(!dataText.includes(sentinel), "failure report-data must not publish raw usage-event detail");
+    const html = await (await m.apiReport.getReport(
+      new Request("https://fixture.invalid/report"), env, runId,
+    )).text();
+    assert(!html.includes(sentinel), "failure-report HTML must not publish raw provider evidence");
   } finally {
     provider.restore();
   }
@@ -535,24 +776,29 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
     const documentSha256 = await m.hash.sha256Hex(documentBytes);
     await env.EVIDENCE.put(documentKey, documentBytes);
     const passAHash = await d51CompletePassA(m, env, runId, documentKey, documentSha256, fence);
-    const staleWhole = {
-      // Discriminating fixture: the exact current Pro-plan identity is held constant, so
-      // only the stale prompt can reject this payload. Provider-plan mismatch refusal is
-      // independently guarded in provider-continuity.test.mjs.
-      parserVersion: m.docxBlocks.DOCX_BLOCKS_VERSION,
-      promptVersion: "v2-extract-pass-b/1.3.0",
-      providerPlanIdentity: m.deepseek.deepseekPassBIdentity(env),
-      pass: "B",
-      provider: "deepseek",
-      model: m.deepseek.deepseekPassBIdentity(env),
-      requirements: [],
-      ambiguities: [],
-      unverifiable: [],
-      dispositions: [],
-      constructs: [],
-      failedUnits: [],
-      calls: [],
-    };
+    const seedProvider = stubProvider();
+    let staleWhole;
+    try {
+      const seeded = await m.extractStage.stagePassBSlice(
+        env,
+        runId,
+        documentKey,
+        "questionnaire.docx",
+        fence,
+        async () => {},
+        {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+        passAHash,
+        documentSha256,
+      );
+      assertEq(seeded.result.state, "evaluated", "the D51 fixture first seals exact current Pass-B authority");
+      staleWhole = await d51Read(env, m.keys.extractionPassKey(runId, "b"));
+    } finally {
+      seedProvider.restore();
+    }
+    // Every completion field and subordinate chunk/sweep artifact is current. Only the
+    // prompt identity is stale, so deleting that one guard cannot hide behind shape validation.
+    staleWhole.promptVersion = "v2-extract-pass-b/1.3.0";
     await d51Put(env, m.keys.extractionPassKey(runId, "b"), staleWhole);
     const provider = stubProvider();
     try {
@@ -569,7 +815,7 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
         documentSha256,
       );
       assertEq(outcome.result.state, "not-evaluated", "the stale occupied whole Pass-B key is refused");
-      assertEq(outcome.result.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+      assertEq(outcome.result.reason, "COMPLETION_ARTIFACT_INVALID");
       assertEq(provider.requests.length, 0, "immutable invalid whole-pass authority buys nothing");
       assertEq(
         JSON.stringify(await d51Read(env, m.keys.extractionPassKey(runId, "b"))),
@@ -579,6 +825,315 @@ test("D51-b pass B rejects stale chunk, sweep, and whole-pass artifacts and rese
     } finally {
       provider.restore();
     }
+
+    // The all-current control above is intentionally free to reconstruct before the immutable
+    // final-key collision. Prove the earlier occupancy guard is independently necessary: the same
+    // invalid whole-pass bytes in a fresh store with NO subordinate B artifacts must stop before a
+    // cache miss can authorize paid work or write new evidence.
+    const missingEnv = sliceEnv({
+      EXTRACT_CHUNK_MAX_BLOCKS: "999", EXTRACT_CHUNK_CHARS: "999999",
+      EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999", EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+    });
+    await m.checkpoint.createCheckpoint(
+      missingEnv,
+      m.checkpoint.initialCheckpoint(missingEnv, runId, "standard", false),
+    );
+    const missingFence = await m.checkpoint.claimOwnership(missingEnv, runId, runId, 0);
+    await missingEnv.EVIDENCE.put(documentKey, documentBytes);
+    const missingPassAHash = await d51CompletePassA(
+      m, missingEnv, runId, documentKey, documentSha256, missingFence,
+    );
+    await d51Put(missingEnv, m.keys.extractionPassKey(runId, "b"), staleWhole);
+    const occupiedBytes = await missingEnv.EVIDENCE
+      .get(m.keys.extractionPassKey(runId, "b"))
+      .then((object) => object.text());
+    const evidenceKeysBefore = [...missingEnv.EVIDENCE._store.keys()].sort();
+    assertEq(await missingEnv.EVIDENCE.get(d51ChunkKey(m, runId)), null, "the subordinate cache starts absent");
+
+    const missingProvider = stubProvider();
+    try {
+      const missingOutcome = await m.extractStage.stagePassBSlice(
+        missingEnv,
+        runId,
+        documentKey,
+        "questionnaire.docx",
+        missingFence,
+        async () => {},
+        {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE,
+        missingPassAHash,
+        documentSha256,
+      );
+      assertEq(missingOutcome.result.state, "not-evaluated", "occupied invalid authority is terminal before cache rebuild");
+      assertEq(missingOutcome.result.reason, "COMPLETION_ARTIFACT_INVALID");
+      assertEq(missingOutcome.slice.terminalFailure, true, "the refusal is a named terminal slice");
+      assertEq(missingProvider.requests.length, 0, "occupied invalid authority authorizes no replacement purchase");
+      assertEq(
+        await missingEnv.EVIDENCE.get(d51ChunkKey(m, runId)),
+        null,
+        "the absent subordinate remains absent",
+      );
+      assertEq(
+        JSON.stringify([...missingEnv.EVIDENCE._store.keys()].sort()),
+        JSON.stringify(evidenceKeysBefore),
+        "the refusal writes no chunk, sweep, history, or conflict evidence",
+      );
+      assertEq(
+        await missingEnv.EVIDENCE.get(m.keys.extractionPassKey(runId, "b")).then((object) => object.text()),
+        occupiedBytes,
+        "the occupied invalid completion bytes remain exact",
+      );
+    } finally {
+      missingProvider.restore();
+    }
+  }
+});
+
+test("chunk replacement archives exact predecessor and CAS-binds its strict-read etag", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "0" });
+  const runId = "run_d21_chunk_transition_cas";
+  const canonicalKey = d51ChunkKey(m, runId);
+  const staleBody = JSON.stringify({
+    ...d51CurrentChunk(m, env, runId),
+    parserVersion: "stale-parser/transition-fixture",
+  });
+  await env.EVIDENCE.put(canonicalKey, staleBody, {
+    httpMetadata: { contentType: "application/json" },
+  });
+  const predecessor = await env.EVIDENCE.get(canonicalKey);
+  assert(predecessor !== null);
+  const observedPuts = [];
+  const basePut = env.EVIDENCE.put.bind(env.EVIDENCE);
+  env.EVIDENCE.put = async (key, value, options = {}) => {
+    observedPuts.push({ key, options: structuredClone(options) });
+    return basePut(key, value, options);
+  };
+  const provider = stubProvider();
+  try {
+    const result = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(result.slice.done, true, "the fresh current-version chunk replaces the stale version");
+    const digest = await m.hash.sha256Hex(staleBody);
+    const historyKey = m.keys.k(
+      "runs", runId, "extraction", "pass-b", `chunk-01-history-${digest}.json`,
+    );
+    const history = await env.EVIDENCE.get(historyKey);
+    assert(history !== null, "the exact predecessor has an append-only history object");
+    assertEq(await history.text(), staleBody, "history preserves predecessor bytes verbatim");
+    const historyWrite = observedPuts.find((row) => row.key === historyKey);
+    assertEq(historyWrite?.options?.onlyIf?.etagDoesNotMatch, "*", "history is create-only");
+    const canonicalWrite = observedPuts.find((row) => row.key === canonicalKey);
+    assertEq(
+      canonicalWrite?.options?.onlyIf?.etagMatches,
+      predecessor.etag,
+      "replacement is bound to the exact strict-read predecessor etag",
+    );
+    assert(
+      observedPuts.findIndex((row) => row.key === historyKey) <
+        observedPuts.findIndex((row) => row.key === canonicalKey),
+      "history lands before the canonical replacement is attempted",
+    );
+  } finally {
+    provider.restore();
+  }
+});
+
+test("chunk CAS loser preserves exact paid bytes, leaves winner untouched, and grants zero credit", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "0" });
+  const runId = "run_d21_chunk_cas_loser";
+  const canonicalKey = d51ChunkKey(m, runId);
+  const basePut = env.EVIDENCE.put.bind(env.EVIDENCE);
+  let losingBody = null;
+  let winnerBody = null;
+  let attemptedOnlyIf = null;
+  env.EVIDENCE.put = async (key, value, options = {}) => {
+    if (key === canonicalKey && losingBody === null && options?.onlyIf) {
+      losingBody = String(value);
+      winnerBody = `${losingBody}\n`;
+      attemptedOnlyIf = structuredClone(options.onlyIf);
+      await basePut(key, winnerBody, { httpMetadata: { contentType: "application/json" } });
+    }
+    return basePut(key, value, options);
+  };
+  const provider = stubProvider();
+  try {
+    const result = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.countFor("C01-b0001"), 1, "the race occurs after exactly one paid call");
+    assertEq(attemptedOnlyIf?.etagDoesNotMatch, "*", "absence authorizes create-only, never overwrite");
+    assertEq(result.slice.terminalFailure, true, "a losing paid target terminalizes the slice");
+    assertEq(result.slice.chunksLanded, 0, "the losing target earns no landed credit");
+    assertEq(result.slice.chunksRemaining, 1, "the refused unit remains explicitly unaccounted");
+    assertEq(result.requirements.length, 0, "losing decoded obligations earn no coverage authority");
+    assertEq(result.issuedCalls.length, 1, "the physical purchase remains chargeable");
+    assert(result.failedUnits[0]?.detail.includes("PASS_B_UNIT_CANONICAL_CAS_CONFLICT"));
+    assert(losingBody !== null && winnerBody !== null);
+    const canonical = await env.EVIDENCE.get(canonicalKey);
+    assertEq(await canonical.text(), winnerBody, "the concurrent winner is untouched byte-for-byte");
+    const digest = await m.hash.sha256Hex(losingBody);
+    const conflictKey = m.keys.k(
+      "runs", runId, "extraction", "pass-b", `chunk-01-cas-conflict-${digest}.json`,
+    );
+    const conflict = await env.EVIDENCE.get(conflictKey);
+    assert(conflict !== null, "the losing paid artifact has deterministic conflict evidence");
+    assertEq(await conflict.text(), losingBody, "conflict evidence is the exact losing serialized artifact");
+    assertEq(
+      JSON.parse(losingBody).usages[0].eventId,
+      result.issuedCalls[0].eventId,
+      "failure-report inventory can reconcile the conflict artifact's top-level paid receipt",
+    );
+
+    provider.reset();
+    const replay = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.requests.length, 0, "canonical replay ignores conflict evidence and buys nothing");
+    assertEq(replay.slice.done, true, "the exact canonical winner remains the sole semantic authority");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("ambiguous chunk commit exact-rereads as success without conflict or rebuy", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "0" });
+  const runId = "run_d21_chunk_ambiguous_commit";
+  const canonicalKey = d51ChunkKey(m, runId);
+  const basePut = env.EVIDENCE.put.bind(env.EVIDENCE);
+  let injected = false;
+  env.EVIDENCE.put = async (key, value, options = {}) => {
+    if (key === canonicalKey && !injected && options?.onlyIf) {
+      injected = true;
+      const committed = await basePut(key, value, options);
+      assert(committed !== null, "the fixture commits before losing the put response");
+      throw new Error("fixture lost the successful canonical put response");
+    }
+    return basePut(key, value, options);
+  };
+  const provider = stubProvider();
+  try {
+    const result = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.countFor("C01-b0001"), 1, "ambiguous storage never repeats the provider call");
+    assertEq(result.slice.done, true, "exact canonical reread proves the committed target");
+    assertEq(result.slice.terminalFailure, false);
+    const listed = await env.EVIDENCE.list({
+      prefix: m.keys.k("runs", runId, "extraction", "pass-b") + "/",
+    });
+    assertEq(
+      listed.objects.filter((object) => object.key.includes("-cas-conflict-")).length,
+      0,
+      "an exact committed target is not mislabeled as a CAS loser",
+    );
+  } finally {
+    provider.restore();
+  }
+});
+
+test("sweep replacement archives exact predecessor and CAS-binds its strict-read etag", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "1" });
+  const runId = "run_d21_sweep_transition_cas";
+  await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m, env, runId));
+  const canonicalKey = d51SweepKey(m, runId);
+  const staleBody = JSON.stringify({
+    sweepId: "SWEEP01",
+    blockIds: ["b0001"],
+    parserVersion: "stale-parser/transition-fixture",
+    promptVersion: m.passB.PASS_B_VERSION,
+    status: "failed",
+    attempts: 99,
+    detail: "stale sweep bytes must survive replacement",
+  });
+  await env.EVIDENCE.put(canonicalKey, staleBody, {
+    httpMetadata: { contentType: "application/json" },
+  });
+  const predecessor = await env.EVIDENCE.get(canonicalKey);
+  assert(predecessor !== null);
+  const observedPuts = [];
+  const basePut = env.EVIDENCE.put.bind(env.EVIDENCE);
+  env.EVIDENCE.put = async (key, value, options = {}) => {
+    observedPuts.push({ key, options: structuredClone(options) });
+    return basePut(key, value, options);
+  };
+  const provider = stubProvider();
+  try {
+    const result = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.requests.length, 1, "the current chunk is reused and only the stale sweep is bought");
+    assertEq(provider.requests[0].unit, "SWEEP01");
+    assertEq(result.slice.done, true);
+    const digest = await m.hash.sha256Hex(staleBody);
+    const historyKey = m.keys.k(
+      "runs", runId, "extraction", "pass-b", `sweep01-history-${digest}.json`,
+    );
+    const history = await env.EVIDENCE.get(historyKey);
+    assert(history !== null);
+    assertEq(await history.text(), staleBody, "sweep predecessor bytes are retained verbatim");
+    const historyWrite = observedPuts.find((row) => row.key === historyKey);
+    assertEq(historyWrite?.options?.onlyIf?.etagDoesNotMatch, "*", "sweep history is create-only");
+    const canonicalWrite = observedPuts.find((row) => row.key === canonicalKey);
+    assertEq(canonicalWrite?.options?.onlyIf?.etagMatches, predecessor.etag);
+    assert(
+      observedPuts.findIndex((row) => row.key === historyKey) <
+        observedPuts.findIndex((row) => row.key === canonicalKey),
+      "sweep history lands before replacement",
+    );
+  } finally {
+    provider.restore();
+  }
+});
+
+test("sweep CAS loser preserves exact paid bytes, leaves winner untouched, and grants zero credit", async () => {
+  const m = await mod();
+  const env = sliceEnv({ EXTRACT_SWEEP_MAX_CALLS: "1" });
+  const runId = "run_d21_sweep_cas_loser";
+  await d51Put(env, d51ChunkKey(m, runId), d51CurrentChunk(m, env, runId));
+  const canonicalKey = d51SweepKey(m, runId);
+  const basePut = env.EVIDENCE.put.bind(env.EVIDENCE);
+  let losingBody = null;
+  let winnerBody = null;
+  let attemptedOnlyIf = null;
+  env.EVIDENCE.put = async (key, value, options = {}) => {
+    if (key === canonicalKey && losingBody === null && options?.onlyIf) {
+      losingBody = String(value);
+      winnerBody = `${losingBody}\n`;
+      attemptedOnlyIf = structuredClone(options.onlyIf);
+      await basePut(key, winnerBody, { httpMetadata: { contentType: "application/json" } });
+    }
+    return basePut(key, value, options);
+  };
+  const provider = stubProvider();
+  try {
+    const result = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.countFor("SWEEP01"), 1, "the race occurs after exactly one sweep purchase");
+    assertEq(attemptedOnlyIf?.etagDoesNotMatch, "*", "missing sweep authority is create-only");
+    assertEq(result.slice.terminalFailure, true);
+    assertEq(result.slice.done, false);
+    assertEq(result.slice.sweepRemaining, 1, "the losing sweep remains explicitly unaccounted");
+    assertEq(result.requirements.length, 0, "the losing sweep contributes no obligations");
+    assertEq(result.issuedCalls.length, 1, "the losing purchase remains chargeable");
+    assert(result.failedUnits.some((row) =>
+      row.unit === "SWEEP01" && row.detail.includes("PASS_B_UNIT_CANONICAL_CAS_CONFLICT")));
+    assert(losingBody !== null && winnerBody !== null);
+    const canonical = await env.EVIDENCE.get(canonicalKey);
+    assertEq(await canonical.text(), winnerBody, "the concurrent sweep winner is untouched");
+    const digest = await m.hash.sha256Hex(losingBody);
+    const conflictKey = m.keys.k(
+      "runs", runId, "extraction", "pass-b", `sweep01-cas-conflict-${digest}.json`,
+    );
+    const conflict = await env.EVIDENCE.get(conflictKey);
+    assert(conflict !== null);
+    assertEq(await conflict.text(), losingBody, "sweep conflict evidence preserves exact losing bytes");
+    assertEq(
+      JSON.parse(losingBody).usages[0].eventId,
+      result.issuedCalls[0].eventId,
+      "the sweep conflict exposes its charged receipt to bounded extraction inventory",
+    );
+
+    provider.reset();
+    const replay = await m.passB.runPassB(env, runId, docFor(1), "synthetic.docx");
+    assertEq(provider.requests.length, 0, "canonical sweep replay ignores conflict evidence");
+    assertEq(replay.slice.done, true);
+    assert(replay.requirements.some((row) => row.id === "SWEEP01-R1"));
+  } finally {
+    provider.restore();
   }
 });
 
@@ -630,7 +1185,7 @@ test("D51-e consolidation refuses stale pass A or pass B payloads", async () => 
       `sha256:${await m.hash.sha256Hex(staleABody)}`, `sha256:${"b".repeat(64)}`,
     );
     assertEq(staleA.state, "not-evaluated", "stale pass A cannot be merged");
-    assertEq(staleA.reason, "PASS_A_COMPLETION_ARTIFACT_INVALID");
+    assertEq(staleA.reason, "COMPLETION_ARTIFACT_INVALID");
     assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(runId)), null, "stale pass A writes no merged artifact");
   }
 
@@ -652,7 +1207,7 @@ test("D51-e consolidation refuses stale pass A or pass B payloads", async () => 
       `sha256:${await m.hash.sha256Hex(staleBBody)}`,
     );
     assertEq(staleB.state, "not-evaluated", "stale pass B cannot be merged");
-    assertEq(staleB.reason, "PASS_B_COMPLETION_ARTIFACT_INVALID");
+    assertEq(staleB.reason, "COMPLETION_ARTIFACT_INVALID");
     assertEq(await env.EVIDENCE.get(m.extractStage.mergedKey(runId)), null, "stale pass B writes no merged artifact");
   }
 });
@@ -747,7 +1302,9 @@ test("a chunk that keeps FAILING is re-bought a bounded number of times, not onc
     }
 
     assertEq(provider.countFor(doomed), 2, `the failing chunk must be bought EXACTLY twice, was bought ${provider.countFor(doomed)}`);
-    assertEq(last.slice.done, false, "a terminally failed chunk cannot be called a completed pass");
+    // With B4, the walk completes even with terminal failed units. The failed chunk's blocks
+    // remain unresolved and ride the payload as named limitations.
+    assertEq(last.slice.done, true, "B4: the walk completes despite a terminally failed chunk");
     assertEq(last.slice.terminalFailure, true, "the bounded refusal is terminal rather than another retry");
     assert(
       last.failedUnits.some((f) => f.unit === doomed),
@@ -785,6 +1342,23 @@ test("(c) the ledger sweep resumes too — its calls used to be written and neve
     );
     assertEq(again.slice.sweepCallsIssued, 0, "zero sweep calls issued on the second pass");
     assertEq(again.slice.done, true, "and it is immediately done");
+
+    // THE RESUME PATH, NOT THE ADOPTION PATH. Without the per-run sweep-resume read, the
+    // cross-run unit-reuse index would adopt the same run's sweep output and mask the gap.
+    // The two paths differ in their replay detail: resume says "already persisted", adoption
+    // says "adopted ... from prior run". Asserting on the detail proves the in-run resume
+    // path is live, not silently bypassed by cross-run adoption.
+    const sweepReplays = again.calls.filter(
+      (c) => c.usageSource === "reused-prior-artifact" && c.role?.startsWith("extract-pass-b-SWEEP"),
+    );
+    assert(sweepReplays.length > 0, "sweep replay events must exist on re-entry for the resume assertion to mean anything");
+    for (const replay of sweepReplays) {
+      assert(
+        replay.detail?.includes("already persisted"),
+        `sweep must resume from its persisted artifact, not fall through to cross-run adoption. ` +
+          `Got detail: ${replay.detail}`,
+      );
+    }
   } finally {
     provider.restore();
   }
@@ -925,7 +1499,7 @@ test("(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the fi
     // it finds, with no way to tell a whole read from a partial one.
     assertEq(first.slice.done, false, "a zero-budget wave over a real questionnaire cannot finish it");
     assertEq(first.result.state, "not-evaluated", "an unfinished pass is NOT an evaluated pass");
-    assertEq(first.result.reason, "PASS_B_INCOMPLETE", "and it says which incompleteness");
+    assertEq(first.result.reason, "INCOMPLETE", "and it says which incompleteness");
     assertEq(
       await env.EVIDENCE.get(m.keys.extractionPassKey(runId, "b")),
       null,
@@ -959,6 +1533,101 @@ test("(a) the STAGE refuses to evaluate an unfinished pass, and evaluates the fi
       `the run adds exactly the ${provider.requests.length} Pass-B call(s) it bought to the canonical ` +
         `${passABaselineCalls}-call Pass-A baseline, not one charge per reuse`,
     );
+  } finally {
+    provider?.restore();
+  }
+});
+
+test("reused chunks are charged to the ledger as replays preserving original cost", async () => {
+  // THE PROPERTY: chargeUsage receives `result.accountingCalls`, whose replay entries
+  // carry the ORIGINAL nonzero costUsd so the CAS settlement can write the correct
+  // `originalCostUsd` provenance. Passing `result.calls` (whose replays are pre-zeroed
+  // by `replayUsage`) would produce `originalCostUsd: 0`, losing the paid-cost provenance.
+  //
+  // WHY THE COUNT ASSERTION ABOVE DOES NOT CATCH THIS: pushModelUsageStrict deduplicates
+  // replay events by eventId, so the replay never reaches storage. Clear the events between
+  // waves to bypass dedup; then originalCostUsd on stored replays distinguishes the two paths.
+  const { m, env, runId, fence } = await stageBed({
+    EXTRACT_CHUNK_MAX_BLOCKS: "10", EXTRACT_CHUNK_CHARS: "2000",
+    EXTRACT_PASS_A_WINDOW_MAX_BLOCKS: "999999", EXTRACT_PASS_A_WINDOW_CHARS: "999999",
+  });
+  let provider;
+  try {
+    const { readFileSync } = await import("node:fs");
+    const path = await import("node:path");
+    const { REPO_ROOT } = await import("../testkit.mjs");
+    const bytes = readFileSync(path.join(REPO_ROOT, "public", "sample", "questionnaire.docx"));
+    const documentSha256 = await m.hash.sha256Hex(bytes);
+    const documentKey = m.keys.inputDocumentKey(runId);
+    await env.EVIDENCE.put(documentKey, bytes, { httpMetadata: { contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      return Response.json({
+        model: body.model,
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        choices: [{
+          message: { content: JSON.stringify({
+            global_rules: [], cross_references: [], ambiguities: [], unverifiable_from_browser: [],
+          }) },
+          finish_reason: "stop",
+        }],
+      });
+    };
+    let passA;
+    try {
+      passA = await m.extractStage.stagePassASlice(
+        env, runId, documentKey, "questionnaire.docx", fence, async () => {}, {},
+        m.docxBlocks.DOCUMENT_SEMANTICS_NONE, documentSha256,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assertEq(passA.result.state, "evaluated", "durable Pass-A authority (precondition)");
+    const passAHash = passA.result.value.hash;
+    provider = stubProvider();
+    const beat = async () => {};
+
+    // Wave 1: buy at least one chunk.
+    const first = await m.extractStage.stagePassBSlice(env, runId, documentKey, "questionnaire.docx", fence, beat, {
+      budgetMs: 0,
+    }, m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256);
+    assertEq(first.result.state, "not-evaluated", "wave 1 is incomplete (precondition)");
+
+    const cpAfter1 = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint;
+    const wave1Events = cpAfter1.usage.events.filter((e) => e.kind === "model-call");
+    const passBEvents = wave1Events.filter((e) => e.model && !e.model.startsWith("grok"));
+    assert(passBEvents.length >= 1, "wave 1 charged at least one Pass-B event (precondition)");
+    assert(passBEvents[0].costUsd > 0, "the first Pass-B purchase has nonzero cost (precondition)");
+
+    // Defeat deduplication: clear ALL events and counters to zero. Same crash-recovery
+    // scenario as the pass-A equivalent — model call billed and persisted as a chunk
+    // artifact, but the checkpoint event CAS never committed.
+    await m.checkpoint.updateCheckpoint(env, runId, (d) => {
+      d.usage.events = [];
+      d.usage.modelCalls.used = 0;
+      d.usage.cost.usedUsd = 0;
+    }, { progressed: true, fence });
+
+    // Wave 2: wave 1's chunk(s) are reclaimed, and the replay events now bypass dedup.
+    await m.extractStage.stagePassBSlice(env, runId, documentKey, "questionnaire.docx", fence, beat, {
+      budgetMs: 0,
+    }, m.docxBlocks.DOCUMENT_SEMANTICS_NONE, passAHash, documentSha256);
+
+    const cpAfter2 = (await m.checkpoint.loadCheckpoint(env, runId)).checkpoint;
+    const allEvents2 = cpAfter2.usage.events.filter((e) => e.kind === "model-call");
+    const replayEvents = allEvents2.filter((e) => e.usageSource === "reused-prior-artifact");
+    assert(replayEvents.length >= 1,
+      "with dedup defeated, at least one replay event is stored (precondition for the cost check)");
+    for (const event of replayEvents) {
+      assert(
+        event.originalCostUsd > 0,
+        `a replay event must carry the original paid cost as provenance (got ${event.originalCostUsd}). ` +
+          "If originalCostUsd is 0, chargeUsage received result.calls (pre-zeroed by replayUsage) " +
+          "instead of result.accountingCalls (which preserves the original cost for the CAS).",
+      );
+    }
   } finally {
     provider?.restore();
   }

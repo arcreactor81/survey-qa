@@ -386,10 +386,15 @@ suite("D38 — a limitation the reader named reaches the walk artifact", () => {
 
     const { obs } = await walk(mod, env, [s, s, s]);
 
-    assertEq((obs.readerLimitations ?? []).length, 1, JSON.stringify(obs.readerLimitations));
-    assertEq(obs.readerLimitations[0].kind, "grid-column-labels-unresolved");
-    assertEq(obs.readerLimitations[0].stepIndex, 0);
-    assertEq(obs.readerLimitationCount, 5, JSON.stringify(obs.readerLimitations));
+    // SCOPED TO SCREEN-RAISED LIMITATIONS. These fixtures feed the same screen three times, so
+    // the walk never advances and legitimately records its own walk-level limitation for the
+    // bounded re-press of an unresponsive page. That is a fact about the fixture, not about the
+    // lifting machinery this test pins, so it is excluded by kind rather than by count.
+    const lifted = (obs.readerLimitations ?? []).filter((l) => l.kind !== "silent-refusal-repressed");
+    assertEq(lifted.length, 1, JSON.stringify(obs.readerLimitations));
+    assertEq(lifted[0].kind, "grid-column-labels-unresolved");
+    assertEq(lifted[0].stepIndex, 0);
+    assertEq(lifted.reduce((n, l) => n + l.count, 0), 5, JSON.stringify(obs.readerLimitations));
   });
 
   test("a screen that raised NONE leaves the count at zero — 'we looked' stays different from 'nobody looked'", async () => {
@@ -400,7 +405,11 @@ suite("D38 — a limitation the reader named reaches the walk artifact", () => {
     const s = npsScreen();
 
     const { obs } = await walk(mod, env, [s, s, s]);
-    assertEq((obs.readerLimitations ?? null)?.length, 0, JSON.stringify(obs.readerLimitations));
-    assertEq(obs.readerLimitationCount, 0, JSON.stringify(obs.readerLimitationCount));
+    // The claim under test survives intact: the list is PRESENT (never absent, or a consumer
+    // cannot tell this from an older artifact) and carries nothing this screen raised.
+    assert(Array.isArray(obs.readerLimitations), "an absent list is not the same claim as an empty one");
+    const lifted = (obs.readerLimitations ?? []).filter((l) => l.kind !== "silent-refusal-repressed");
+    assertEq(lifted.length, 0, JSON.stringify(obs.readerLimitations));
+    assertEq(lifted.reduce((n, l) => n + l.count, 0), 0, JSON.stringify(obs.readerLimitations));
   });
 });

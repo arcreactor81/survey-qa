@@ -40,6 +40,17 @@ suite("D14a — active evidence never renders on the app origin", () => {
       assertEq(decision.contentType, "application/octet-stream", `${active} must be down-typed`);
       assert(decision.disposition.startsWith("attachment;"), `${active} must be an attachment`);
     }
+
+    assertEq(
+      d("application/pdf").disposition,
+      'attachment; filename="ev_abcdefghijkl.pdf"',
+      "a captured print rendition stays a download and has a usable local filename",
+    );
+    assertEq(
+      d("text/html").disposition,
+      'attachment; filename="ev_abcdefghijkl.bin"',
+      "target-controlled active content never gains an executable-looking filename",
+    );
   });
 
   test("the content endpoint down-types captured HTML and sandboxes it", async () => {

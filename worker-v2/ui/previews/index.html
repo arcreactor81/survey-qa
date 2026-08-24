@@ -680,10 +680,13 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
   margin-top: 12px; word-break: break-all;
 }
 
-/* ---- local-development honesty banner ----
-   The landing page describes six steps; four of them are placeholders. This banner is
-   what stops the description from reading as a claim. It is not decorative and must not
-   be quietened without the missing steps actually existing. */
+/* ---- honesty banner ----
+   Originally: four of the six steps were placeholders and this banner stopped the page's
+   description from reading as a claim. Those steps are built now and submission is on, so the
+   banner carries the caveat that IS still true: finality and publication are computed from the
+   sealed run and must not be promised by the landing page. It is not decorative, and it must not
+   be quietened ahead of the facts it describes. The class name is kept as `dev-banner` only
+   because renaming it buys nothing; it is not a dev-only element. */
 .dev-banner {
   max-width: 760px; margin: 26px 0 0; padding: 16px 18px;
   background: var(--wait-bg); border: 1px solid var(--lane-amb-border);
@@ -752,6 +755,86 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .run-card__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
 .run-card__headtext { min-width: 0; }
 .run-card .kicker { margin-bottom: 4px; }
+
+/* ---- committed browser activity: deliberately separate from QA coverage ----
+   Attempts, stable-screen changes, unique stable screens and checked cases have different
+   denominators. This card gives each its own label and explanation; there is no combined
+   progress bar that could turn movement into apparent coverage. */
+.activity-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 24px 30px 26px; margin: 0 0 18px; box-shadow: var(--shadow);
+}
+.activity-card__head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px 20px; flex-wrap: wrap;
+}
+.activity-card__head h2 { margin: 0; font-size: 24px; }
+.activity-card .kicker { margin-bottom: 4px; }
+.activity-card__lead { margin: 10px 0 0; max-width: 70ch; font-size: 13.5px; line-height: 1.58; color: var(--text); }
+.activity-inspection {
+  display: inline-flex; align-items: center; padding: 4px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--slate);
+  font-family: var(--mono); font-size: 10.5px; font-variant-numeric: tabular-nums;
+}
+.activity-metrics {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px; margin-top: 18px;
+}
+.activity-metric {
+  min-width: 0; padding: 13px 14px 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.activity-metric__label {
+  min-height: 2.5em; font-family: var(--mono); font-size: 10.5px; line-height: 1.25;
+  text-transform: uppercase; letter-spacing: 0.07em; color: var(--slate);
+}
+.activity-metric__value {
+  margin-top: 5px; color: var(--ink); font-family: var(--serif); font-size: 27px;
+  line-height: 1.05; font-variant-numeric: tabular-nums;
+}
+.activity-metric__explain { margin-top: 6px; color: var(--muted); font-size: 11.5px; line-height: 1.48; }
+.activity-support {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px; margin-top: 18px;
+}
+.activity-origins, .activity-limitations {
+  min-width: 0; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.activity-origins h3, .activity-limitations h3 {
+  margin: 0 0 8px; font-family: var(--mono); font-size: 10.5px; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--slate);
+}
+.activity-origins p, .activity-limitations p { margin: 0; font-size: 12px; line-height: 1.52; }
+.origin-list, .activity-limitations ul { margin: 0; padding-left: 19px; font-size: 12px; line-height: 1.65; }
+.origin-list .machine-code { overflow-wrap: anywhere; }
+.activity-walks {
+  margin-top: 18px; border-top: 1px solid var(--border); padding-top: 13px;
+}
+.activity-walks > summary {
+  cursor: pointer; color: var(--ink); font-size: 13px; font-weight: 600;
+}
+.activity-table-wrap { margin-top: 12px; overflow-x: auto; }
+.activity-table {
+  width: 100%; min-width: 720px; border-collapse: collapse;
+  color: var(--text); font-size: 11.5px; line-height: 1.45;
+}
+.activity-table th {
+  padding: 7px 9px; border-bottom: 2px solid var(--border); text-align: left;
+  color: var(--slate); font-family: var(--mono); font-size: 9.5px; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.activity-table td { padding: 8px 9px; border-bottom: 1px solid var(--table-border); vertical-align: top; }
+.activity-table td:first-child, .activity-table td:nth-child(3), .activity-table td:nth-child(4) {
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 820px) { .activity-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) {
+  .activity-card { padding: 22px 20px 24px; }
+  .activity-metrics, .activity-support { grid-template-columns: 1fr; }
+  .activity-metric__label { min-height: 0; }
+}
 .run-title {
   margin: 0; font-family: var(--serif); font-weight: 400; font-size: 32px;
   line-height: 1.12; letter-spacing: -0.01em; color: var(--ink);
@@ -797,6 +880,10 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .phase-step.is-stopped { background: var(--phase-stopped-bg); border-color: var(--phase-stopped-border); color: var(--phase-stopped-text); }
 .phase-step.is-unknown { background: var(--phase-unknown-bg); border-color: var(--phase-unknown-border); color: var(--phase-unknown-text); }
 .phase-rail-note { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+/* The "why the long step is quiet" line. Larger and in body colour than the tick note
+   above it: it is the answer to "is this stuck", which is the question a reader has ten
+   minutes into a run, and a 12px muted footnote is not where an answer belongs. */
+.phase-rail-note--quiet { font-size: 13px; color: var(--text); line-height: 1.55; max-width: 62ch; }
 @media (max-width: 820px) { .phase-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .phase-rail { grid-template-columns: 1fr; } }
 
@@ -827,6 +914,80 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
   background: var(--err-bg); border: 1px solid var(--err-border);
   border-radius: var(--radius-sm); padding: 10px 12px; word-break: break-word;
 }
+/* ---- the recorded cause, and where it came from ----------------------------
+ *
+ * THE PROVENANCE IS CARRIED BY STATIC STYLING ONLY. This machine reports reduced motion, so
+ * anything that distinguished a recovered cause from a first-hand one by animating would be
+ * invisible exactly where it is being checked. The difference is therefore carried three
+ * ways that survive with motion off and in both themes: the flag WORD (real DOM text, so a
+ * screen reader gets it too), the border STYLE (dashed for a reconstruction, solid for
+ * testimony), and the tint. */
+.cause {
+  margin: 16px 0 0; padding: 14px 16px; border-radius: var(--radius-sm);
+  border: 1px solid var(--site-border); border-left: 3px solid var(--bad);
+  background: var(--bad-bg);
+}
+.cause__head { margin: 0; font-size: 15px; font-weight: 700; color: var(--red-text); line-height: 1.35; }
+.cause__body { margin: 6px 0 0; font-size: 13px; color: var(--text); line-height: 1.55; max-width: 68ch; }
+.cause__said { margin: 10px 0 0; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.cause__said-label {
+  font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--slate);
+}
+.cause__refs { margin: 10px 0 0; font-size: 11.5px; color: var(--muted); }
+
+.provenance {
+  margin: 12px 0 0; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--border-strong);
+}
+.provenance__flag {
+  margin: 0; font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--slate);
+}
+.provenance__text { margin: 4px 0 0; font-size: 12.5px; color: var(--text); line-height: 1.55; max-width: 68ch; }
+/* SECOND-HAND. Dashed, because the block is a reconstruction and the border says so before
+   the words do. */
+.provenance--recovered {
+  border: 1px dashed var(--amber); background: var(--wait-bg);
+}
+.provenance--recovered .provenance__flag { color: var(--wait-text); font-weight: 700; }
+.provenance--recovered .provenance__text { color: var(--wait-text); }
+/* FIRST-HAND. Solid and quiet: the ordinary case needs no emphasis. */
+.provenance--firsthand { border-style: solid; }
+
+/* ---- what the checks could not cover ----------------------------------------
+ * Three states, three appearances, and none of them share one: a number found, an explicit
+ * none that was looked for, and a "never counted" whose zero means nothing at all. */
+.shortfall-list { display: grid; gap: 10px; }
+.shortfall-row {
+  border: 1px solid var(--border); border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm); background: var(--surface-2); padding: 12px 14px;
+}
+.shortfall-row__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.shortfall-row__name { font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.35; }
+.shortfall-row__count {
+  flex: none; font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em;
+  color: var(--slate); white-space: nowrap;
+}
+.shortfall-row__what { margin: 6px 0 0; font-size: 12.5px; color: var(--text); line-height: 1.55; }
+.shortfall-row__sub { margin: 5px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.shortfall-row .detail-meta { margin: 8px 0 0; }
+/* Found: it bit, so it is tinted like the other things that changed an outcome. */
+.shortfall-row[data-limitation-state="found"] {
+  border-left-color: var(--amber); background: var(--wait-bg);
+}
+.shortfall-row[data-limitation-state="found"] .shortfall-row__count { color: var(--wait-text); font-weight: 700; }
+/* Looked for, none found: a real, earned zero. Quiet, and NOT styled as a problem. */
+.shortfall-row[data-limitation-state="none-found"] { border-left-color: var(--border-strong); }
+/* Never counted: a zero that means nothing. Dashed, like every other "we were not told"
+   state on this page, so it can never be mistaken for the earned zero above. */
+.shortfall-row[data-limitation-state="never-counted"],
+.shortfall-row[data-limitation-state="not-reported"] {
+  border: 1px dashed var(--border-strong); background: transparent;
+}
+.shortfall-row[data-limitation-state="never-counted"] .shortfall-row__count,
+.shortfall-row[data-limitation-state="not-reported"] .shortfall-row__count { color: var(--muted); }
+
 .run-actions { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 
 /* ---- run details: nothing is deleted, it is one click down ---- */
@@ -897,6 +1058,32 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .completion-axis .axis-state { font-size: 15px; font-weight: 600; color: var(--ink); margin-top: 3px; }
 .completion-axis .axis-why { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
+/* THE ONE THAT IS HAPPENING NOW. Tinted, with the same thick left edge the banners use,
+   so "which of these two is running" is answerable without reading. Keyed off the state
+   the server recorded (data-outcome-state, set in tracker.js) and matched here by an
+   explicit two-word list: an unrecognised value can never light up by accident.
+   Testing and Report are independent — both may be lit at once, or neither.
+
+   DELIBERATELY STILL. No pulse, no glow-and-fade: the motion budget at the top of this
+   file allows exactly one moving thing on this page, the poll dot, and this machine
+   reports reduced motion anyway, so an animated cue would be invisible to the person who
+   asked for it. The tint, the edge and the colour carry the meaning on their own.
+   The left border thickens by 2px and the left padding gives back the same 2px, so
+   nothing beside it shifts when a run changes state. */
+.completion-axis[data-outcome-state="running"],
+.completion-axis[data-outcome-state="building"] {
+  background: var(--phase-active-bg);
+  border-color: var(--phase-active-border);
+  border-left-width: 3px;
+  padding-left: 13px;
+}
+.completion-axis[data-outcome-state="running"] .axis-name,
+.completion-axis[data-outcome-state="building"] .axis-name,
+.completion-axis[data-outcome-state="running"] .axis-state,
+.completion-axis[data-outcome-state="building"] .axis-state {
+  color: var(--phase-active-text);
+}
+
 /* banners */
 .banner {
   display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 12px;
@@ -940,6 +1127,10 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .integrity-suspect .denominator .d-value,
 .integrity-suspect .limit-value { color: var(--slate) !important; }
 .integrity-suspect .meter__fill { background: var(--slate) !important; }
+/* Same rule for the check-state bar: on a record that did not verify, a coloured picture
+   of the counts is a confident-looking claim about numbers nobody should act on. The bar
+   still shows the shape of the ledger; it stops speaking in states. */
+.integrity-suspect .propbar__seg { background: var(--slate) !important; }
 
 /* ---- phase chips ---- */
 .phases { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; list-style: none; }
@@ -1009,6 +1200,43 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
 .bucket-count { font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums; color: var(--ink); }
 .bucket-row.is-exercised { background: transparent; }
 .bucket-row.is-exercised .bucket-glyph { color: var(--neutral-strong-text); }
+
+/* Each state's glyph takes the colour its segment takes in the bar below, so the bar can
+   be read against these rows without a separate legend. Every value is an existing token
+   and every one of them is a *-text token, measured against the card at 5.5:1 or better —
+   the glyph is text and is held to the text threshold. The colour is still only
+   decoration: the glyph shape and the full word are what carry the state. */
+.bucket-row[data-check-state="not-reached"] .bucket-glyph { color: var(--phase-pending-text); }
+.bucket-row[data-check-state="proven-unreachable"] .bucket-glyph { color: var(--nbo-text); }
+.bucket-row[data-check-state="blocked"] .bucket-glyph { color: var(--negative-text); }
+.bucket-row[data-check-state="budget-exhausted"] .bucket-glyph,
+.bucket-row[data-check-state="time-exhausted"] .bucket-glyph { color: var(--phase-stopped-text); }
+.bucket-row[data-check-state="pending"] .bucket-glyph { color: var(--silent-text); }
+
+/* ---- the seven states, drawn to scale ----
+   A stacked share of the SAME fixed total the sum line underneath reports. It is about the
+   individual checks and nothing else; the requirement total in this block is a different
+   number and the two are never added together.
+   No transition and no animation, for the reason .meter has none: a bar that eases between
+   snapshots draws values the server never reported. Widths change by replacement. */
+.propbar {
+  display: flex; height: 10px; margin-top: 14px;
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
+  background: var(--meter-track); overflow: hidden;
+}
+/* Exact shares, never stretched to fill: flex-shrink is off so a ledger that falls short
+   of its total leaves a visible gap instead of being quietly normalized. min-width keeps a
+   single check from rounding away to nothing on a narrow screen. */
+.propbar__seg { flex: 0 0 auto; min-width: 2px; height: 100%; }
+.propbar__seg + .propbar__seg { box-shadow: inset 1px 0 0 var(--card); }
+.propbar__seg[data-check-state="exercised"] { background: var(--neutral-strong-text); }
+.propbar__seg[data-check-state="not-reached"] { background: var(--phase-pending-text); }
+.propbar__seg[data-check-state="proven-unreachable"] { background: var(--nbo-text); }
+.propbar__seg[data-check-state="blocked"] { background: var(--negative-text); }
+.propbar__seg[data-check-state="budget-exhausted"] { background: var(--phase-stopped-text); }
+.propbar__seg[data-check-state="time-exhausted"] { background: var(--phase-stopped-border); }
+.propbar__seg[data-check-state="pending"] { background: var(--silent-text); }
+
 .bucket-total {
   display: flex; justify-content: space-between; gap: 12px;
   margin-top: 10px; padding-top: 10px; border-top: 2px solid var(--border);
@@ -1155,6 +1383,109 @@ input[type="text"]:focus, input[type="url"]:focus, select:focus {
   font-family: var(--mono); font-size: 10.5px;
 }
 .motion-toggle:hover { border-color: var(--accent); }
+
+/* =====================================================================
+ * REGION 5b — phase timing strip, depth indicators, walk timeline.
+ * ===================================================================== */
+
+/* --- section labels --- */
+.section-label {
+  font-family: var(--mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--slate); margin-bottom: 8px;
+}
+
+/* --- phase timing strip --- */
+.phase-timing-section { margin: 18px 0; }
+.phase-timing-bar {
+  display: flex; height: 26px;
+  border-radius: var(--radius-sm); overflow: hidden;
+  margin-bottom: 8px; border: 1px solid var(--border);
+}
+.phase-timing-seg {
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 8px; letter-spacing: .04em;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 0 5px;
+  color: var(--ink);
+}
+.phase-timing-seg--done { background: var(--ok-bg); }
+.phase-timing-seg--active { background: var(--accent); color: var(--paper); }
+.phase-timing-seg--pending { background: var(--surface-2); color: var(--muted); }
+.phase-timing-legend {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.phase-timing-item { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.phase-glyph { font-size: 12px; width: 14px; text-align: center; }
+.phase-glyph--done { color: var(--ok); }
+.phase-glyph--active { color: var(--accent); }
+.phase-glyph--pending { color: var(--muted); }
+.phase-timing-name { color: var(--text); }
+.phase-timing-time { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
+/* --- depth indicators --- */
+.depth-section { margin: 18px 0; }
+.depth-tiles {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;
+}
+.depth-tile {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px; box-shadow: var(--shadow-sm);
+}
+.depth-tile__label {
+  font-family: var(--mono); font-size: 9px; text-transform: uppercase;
+  letter-spacing: .1em; color: var(--muted); margin-bottom: 3px;
+}
+.depth-tile__value {
+  font-family: "Instrument Serif", var(--serif); font-size: 28px;
+  color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.depth-tile__sub { font-size: 10px; color: var(--muted); margin-top: 3px; }
+
+/* --- walk timeline --- */
+.walk-timeline-section { margin: 22px 0; }
+.walk-timeline-list { list-style: none; padding: 0; }
+.walk-entry {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 16px; margin-bottom: 10px; box-shadow: var(--shadow-sm);
+}
+.walk-entry__header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.walk-entry__ordinal {
+  font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--ink);
+}
+.walk-entry__outcome {
+  font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
+  padding: 2px 7px; border-radius: var(--radius-pill);
+}
+.walk-outcome--completed { background: var(--ok-bg); border: 1px solid var(--done-border); color: var(--ok); }
+.walk-outcome--blocked { background: var(--wait-bg); border: 1px solid var(--amber); color: var(--amber); }
+.walk-outcome--step-cap { background: var(--primary-soft); border: 1px solid var(--accent); color: var(--accent); }
+.walk-entry__stats {
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  display: flex; gap: 10px;
+}
+.walk-entry__cases {
+  margin-top: 5px; display: flex; gap: 3px; flex-wrap: wrap;
+}
+.walk-entry__case-chip {
+  font-family: var(--mono); font-size: 8px; padding: 1px 5px;
+  background: var(--ok-bg); border: 1px solid var(--done-border); border-radius: 3px; color: var(--ok);
+}
+.walk-entry__case-chip--more {
+  background: var(--surface-2); border-color: var(--border); color: var(--muted);
+}
+.walk-entry__filmstrip {
+  display: flex; gap: 5px; margin-top: 8px; overflow-x: auto; padding-bottom: 3px;
+}
+.walk-entry__thumb {
+  width: 90px; min-width: 90px; aspect-ratio: 16/10;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 8px; color: var(--muted); text-align: center; padding: 3px;
+}
+.walk-entry__filmstrip-note {
+  font-size: 10px; color: var(--muted); font-style: italic; margin-top: 5px;
+}
 
 /* =====================================================================
  * REGION 6 — print. Warnings and denominators must survive export.

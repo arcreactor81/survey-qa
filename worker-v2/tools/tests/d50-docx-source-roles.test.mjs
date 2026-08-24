@@ -620,11 +620,40 @@ suite("D50 — row accounting never absorbs lifted origin-bearing blocks (blocke
     // SWEEP call cites whatever it is given.
     const original = globalThis.fetch;
     const requests = [];
+    const boundedSourceRows = (user, unit) => {
+      const [startMarker, endMarker] = unit.startsWith("SWEEP")
+        ? [
+            "===== UNACCOUNTED SOURCE BLOCKS JSONL =====",
+            "===== END UNACCOUNTED SOURCE BLOCKS JSONL =====",
+          ]
+        : [
+            "===== YOUR SOURCE BLOCKS JSONL — EXTRACT AND DISPOSITION THESE BLOCKS =====",
+            "===== END YOUR SOURCE BLOCKS JSONL =====",
+          ];
+      const start = user.indexOf(startMarker);
+      const end = user.indexOf(endMarker, start + startMarker.length);
+      assert(start >= 0 && end > start, `the ${unit} prompt exposes one bounded source JSONL section`);
+      return user
+        .slice(start + startMarker.length, end)
+        .trim()
+        .split(/\r?\n/)
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line));
+    };
     globalThis.fetch = async (_url, init) => {
       const body = JSON.parse(init.body);
       const user = String(body.messages[1].content);
       const unit = (user.match(/Your chunk id for this call is: (\S+)/) ?? [])[1] ?? "?";
-      const blockIds = [...new Set([...user.matchAll(/\[(b\d{4})\]/g)].map((m) => m[1]))];
+      const sourceRows = boundedSourceRows(user, unit);
+      const blockIds = sourceRows.map((row) => String(row.block_id));
+      assertEq(new Set(blockIds).size, blockIds.length, "the bounded source JSONL has unique block ids");
+      for (const row of sourceRows) {
+        assertEq(
+          String(row.text),
+          sourceText.get(String(row.block_id)),
+          "the fixture response remains byte-grounded in the exact prompt source row",
+        );
+      }
       requests.push({ unit, blockIds });
       const cite = unit.startsWith("SWEEP") ? blockIds : blockIds.filter((id) => id !== suggestionId);
       const payload = {

@@ -74,11 +74,11 @@ export interface Env {
   // --- namespace guard (required; absence is a deployment defect, never an implicit prod default) ---
   V2_PREFIX: string;
 
-  // --- retention posture (CONFIGURATION, never hardcoded) ---
+  // --- permanent retention attestation; runtime rejects any drift from 0/0/0 + permanent ---
   RETENTION_RAW_EVIDENCE_DAYS?: string;
   RETENTION_REPORT_DAYS?: string;
   RETENTION_CONTRACT_DAYS?: string;
-  RETENTION_MODE?: string; // "report-only" | "delete"
+  RETENTION_MODE?: string; // exactly "permanent" in deployed environments
   /** Objects the retention sweep may examine per cron tick. Keeps a tick bounded. */
   RETENTION_SCAN_BUDGET?: string;
 
@@ -202,6 +202,8 @@ export interface Env {
   GROK_MAX_INPUT_USD_PER_MTOK?: string;
   GROK_MAX_OUTPUT_USD_PER_MTOK?: string;
   DEEPSEEK_MODEL?: string;
+  /** Published maximum context size for the selected DeepSeek model, in tokens. */
+  DEEPSEEK_CONTEXT_WINDOW_TOKENS?: string;
   DEEPSEEK_REASONING_EFFORT?: string;
   DEEPSEEK_INPUT_USD_PER_MTOK?: string;
   DEEPSEEK_OUTPUT_USD_PER_MTOK?: string;
@@ -281,6 +283,8 @@ export interface Env {
    * lives in the synthesis R2 artifact, so Workflow retries and recovery share the ceiling.
    */
   EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES?: string;
+  /** Maximum UTF-8 bytes in any exact serialized extraction-model request. */
+  EXTRACT_MODEL_INPUT_MAX_BYTES?: string;
   /** Output ceiling per extraction call. Reasoning shares this budget on both providers. */
   EXTRACT_MAX_OUTPUT_TOKENS?: string;
   /** Attempts per extraction call. Two is the money rule, not a default worth raising. */

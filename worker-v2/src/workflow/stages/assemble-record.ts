@@ -26,6 +26,9 @@ import { readRunChecklist } from "./checklist-store";
 // storage key is how two readers come to disagree about where the run's own state lives.
 import { execProgressKey, type ExecProgress, type WalkRecord } from "./execute-batch";
 import { loadProgram, probeCapabilityLimitations, type PlanLimitation } from "./plan";
+import { filterCommittedEvidence, MissingWalkLedgerError, resolveRetryRecordings, type CommittedEvidenceResult } from "../../store/committed-evidence";
+import { CROSS_WINDOW_DISCOVERY_BLOCKER_KIND } from "../../../shared/cross-window-limitations.mjs";
+import { SOURCE_GROUNDING_BLOCKER_KIND } from "../../../shared/pass-a-grounding-limitations.mjs";
 
 // prettier-ignore
 // @ts-ignore -- untyped ESM, shared with the offline pipeline
@@ -133,6 +136,66 @@ export async function assembleRecord(
   // ONE extra R2 GET, not a LIST. `run-inputs.ts` explains why the catalogue is the expensive
   // load; this is a single keyed read and the only source of the run's load-crash facts.
   const walks = await executionWalks(env, runId);
+
+  // -----------------------------------------------------------------------
+  // THE COMMITTED-ATTEMPT EVIDENCE FILTER. Applied BEFORE the record is built and signed,
+  // so the record, its manifest root, the judge's mount, and everything downstream all
+  // agree on the same evidence set.
+  //
+  // WHY HERE AND NOT LATER. The record is the source of truth that every later reader
+  // binds to. If uncommitted-attempt evidence enters the record, the judge inherits it,
+  // the report shows it, and the manifest attests it — and the duplicate-evidence refusal
+  // fires on rows that were never part of a completed walk. Filtering at the source is
+  // the only fix that does not require coordination between three downstream consumers.
+  //
+  // WALKS = NULL means this run's execution ledger is unreadable. The filter REFUSES
+  // LOUDLY (throws MissingWalkLedgerError) rather than silently passing everything
+  // through. The caller catches that refusal and degrades to unfiltered evidence with a
+  // sentence that says what happened — the assembler's own EXECUTION_LEDGER_UNAVAILABLE
+  // blocker already handles this case on the record, so the right action is to pass the
+  // evidence through and let the blocker be emitted, not to prevent the record from being
+  // assembled at all.
+  //
+  // An empty walks array (no walks ran) is fine — it means nothing with an attemptId is
+  // committed, so only document-side evidence survives.
+  // -----------------------------------------------------------------------
+  let evidenceFilter: CommittedEvidenceResult;
+  try {
+    evidenceFilter = filterCommittedEvidence(inputs.evidence, walks);
+  } catch (err) {
+    if (err instanceof MissingWalkLedgerError) {
+      // The filter REFUSED, as it should. The assembler degrades to unfiltered evidence
+      // and emits its own EXECUTION_LEDGER_UNAVAILABLE blocker on the record. The sentence
+      // records the fact that filtering was not possible — distinguishable from "zero drops"
+      // (which would mean the filter ran and found nothing to drop).
+      console.error(
+        `assemble-record: ${runId} — committed-evidence filter refused: ${err.message}`,
+      );
+      evidenceFilter = {
+        kept: inputs.evidence,
+        droppedOrphans: [],
+        droppedByRef: [],
+        sentence: "committed-evidence filter could not run: walk ledger unavailable. Evidence passed unfiltered.",
+      };
+    } else {
+      throw err;
+    }
+  }
+  // RETRY-RECORDING SURVIVORS. A COMMITTED step retry leaves two rows per ref
+  // (both attempts committed, different bytes) — the committed filter rightly keeps
+  // both, but the signed record may carry only one per basename or the judge's
+  // authority refuses with MANIFEST_DUPLICATE_ARTIFACT (gate attempt #4: 20 pairs,
+  // measured). One deterministic rule — latest capture wins — shared with the
+  // judge's load path so the record and the mount can never disagree about which
+  // member survived.
+  const retryResolution = resolveRetryRecordings(evidenceFilter.kept);
+  const committedEvidence = retryResolution.resolved;
+  if (evidenceFilter.droppedOrphans.length > 0 || retryResolution.superseded.length > 0) {
+    console.log(
+      `assemble-record: ${runId} — ${evidenceFilter.sentence} ${retryResolution.sentence}`,
+    );
+  }
+
   const probeLimitations = await executionProbeLimitations(
     env,
     runId,
@@ -156,7 +219,7 @@ export async function assembleRecord(
   const targetIdentity = await resolveTargetIdentity({
     recorded: inputs.envelope?.input.targetBuildId ?? null,
     override: env.DEFAULT_TARGET_BUILD_ID ?? null,
-    catalog: inputs.evidence,
+    catalog: committedEvidence,
   });
   const unsigned = assembleRunRecordV2({
     runId,
@@ -164,7 +227,7 @@ export async function assembleRecord(
     revision: inputs.revision,
     contractHash: inputs.contractHash,
     observations: inputs.observations,
-    evidence: inputs.evidence,
+    evidence: committedEvidence,
     itemResults,
     // CLAIMS, BLOCKERS, ATTEMPTS, AMBIGUITIES AND TAXONOMY GAPS ARE NOT PASSED. The assembler
     // derives all five from the itemResults, observations, evidence, walks, revision and
@@ -178,14 +241,27 @@ export async function assembleRecord(
     planHash: inputs.checkpoint?.execution?.planRevisionId ?? null,
     startedAt,
     endedAt: new Date().toISOString(),
+    // THE COMMITTED-EVIDENCE FILTER COUNTS, surfaced on the record so downstream readers
+    // (the report, the judgement) can see how many orphan rows were excluded without
+    // re-running the filter themselves.
+    committedEvidenceFilter: {
+      totalInput: inputs.evidence.length,
+      kept: committedEvidence.length,
+      droppedOrphans: evidenceFilter.droppedOrphans.length,
+      droppedByRef: evidenceFilter.droppedByRef.length,
+      // COUNTED, NEVER SILENT: how many committed-retry recordings the record does
+      // NOT carry because a later capture of the same ref superseded them.
+      supersededRetryRecordings: retryResolution.superseded.length,
+      sentence: `${evidenceFilter.sentence} ${retryResolution.sentence}`,
+    },
   }) as Record<string, unknown>;
 
   return await signAndStore(env, runId, unsigned, {
     requirements: itemResults.length,
     observations: inputs.observations.length,
-    evidence: inputs.evidence.length,
+    evidence: committedEvidence.length,
     evaluatorId: ASSEMBLER_ID,
-    inputHash: `${inputs.revision.contractRevisionId}|obs:${inputs.observations.length}|ev:${inputs.evidence.length}`,
+    inputHash: `${inputs.revision.contractRevisionId}|obs:${inputs.observations.length}|ev:${committedEvidence.length}`,
   });
 }
 
@@ -302,7 +378,9 @@ async function signAndStore(
       claims: (record.claims as unknown[] | undefined)?.length ?? 0,
       blockers: (record.blockers as unknown[] | undefined)?.length ?? 0,
       coverageBlockers: (record.blockers as Array<{ kind?: unknown }> | undefined)?.filter(
-        (entry) => entry?.kind === "DOCUMENT_CROSS_WINDOW_DISCOVERY_INCOMPLETE",
+        (entry) =>
+          entry?.kind === CROSS_WINDOW_DISCOVERY_BLOCKER_KIND ||
+          entry?.kind === SOURCE_GROUNDING_BLOCKER_KIND,
       ).length ?? 0,
       attempts: (record.attempts as unknown[] | undefined)?.length ?? 0,
       ambiguities: (record.ambiguities as unknown[] | undefined)?.length ?? 0,

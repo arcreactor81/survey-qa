@@ -266,6 +266,23 @@ const STOP_LABEL = {
   "browser-error": "browser error",
   "agent-error": "agent error",
   cancelled: "cancelled",
+  // THE TWO THE v2 WALKER ACTUALLY WRITES (review B5). Missing from this table, they fell
+  // through to the raw token and the page printed "no-advance-control ×3, blocked ×1" —
+  // machine words, and the second one reads as an accusation against a survey that had
+  // correctly refused an invalid answer.
+  //
+  // `no-advance-control` IS NOT "screened out" AND MUST NOT SAY SO. It means only that the
+  // screen offered nothing further to press, which is what a finished survey, a screen-out
+  // page and a walk that never got in all record. Which of those it was is the ENDING's job,
+  // stated in its own sentence beside this one; a stop reason that claimed it would be the
+  // exact ambiguity this project spent the branch removing.
+  "no-advance-control": "the survey offered nothing further to press",
+  blocked: "the survey would not accept an answer we gave",
+  "blocked-after-probe": "the survey refused a deliberately incomplete answer, which is the survey working",
+  "step-cap": "we reached the limit we set on how many screens one attempt may visit",
+  "time-cap": "we reached the time limit we set for one attempt",
+  "per-case-timeout": "we reached the time limit we set for one attempt",
+  "load-crash": "the survey page did not load",
   other: "other",
 };
 
@@ -295,6 +312,27 @@ function pushWarning(warnings, code, message) {
  * @param {object} args.attestation     { state, reason, registryPath }
  * @param {object} args.options         { confidenceFloor, sources, generatedAt, evidenceAudit, fixtureNote }
  */
+/**
+ * THE SURVEY'S OWN WORDS, pulled off the end of the walker's stop sentence.
+ *
+ * `browser/driver.ts` appends `"; validation said: <message>"` (joining several with " | ")
+ * when a survey refuses an answer. That marker is written by code in THIS repository — it is
+ * not a convention of any survey platform — and this reader depends on nothing else about the
+ * sentence. If it is missing, this returns null and the caller says less; it never guesses at
+ * which part of an engineering sentence a customer was meant to see.
+ */
+function siteMessageFrom(outcomeDetail) {
+  if (typeof outcomeDetail !== "string") return null;
+  const marker = "; validation said: ";
+  const at = outcomeDetail.indexOf(marker);
+  if (at < 0) return null;
+  const said = outcomeDetail.slice(at + marker.length).trim();
+  if (!said) return null;
+  // Several messages are joined with " | "; the first is the one the respondent met first.
+  const first = said.split(" | ")[0].trim();
+  return first.length > 0 ? first : null;
+}
+
 export function buildReportView({ record, scorecard = null, attestation, options = {} }) {
   const warnings = [];
   const confidenceFloor = options.confidenceFloor ?? 0.8;
@@ -480,10 +518,111 @@ export function buildReportView({ record, scorecard = null, attestation, options
   /* ---------------- completion: two independent outcomes ---------------- */
   const stopReasons = new Map();
   for (const a of attempts) {
-    const r = a?.stop?.reason ?? "other";
+    // v1 nested this as `stop.reason`; v2's `AttemptRecordV2` writes a FLAT `stopReason`
+    // (worker-v2/src/types/record.ts, written by `deriveAttempts`). Reading only the nested
+    // shape counted EVERY v2 attempt as "other", so the page said "Recorded attempt stop
+    // reasons: other ×N" and the walker's own account of how each walk stopped — including
+    // the `no-advance-control` that a real completion lands on — was invisible to a reader.
+    // Both shapes are read; neither is defaulted into the other.
+    const r = a?.stop?.reason ?? a?.stopReason ?? "other";
     stopReasons.set(r, (stopReasons.get(r) || 0) + 1);
   }
   const limitStops = [...stopReasons.keys()].filter((r) => r === "budget-limit" || r === "time-limit");
+
+  /* ---------------- how far each attempt actually got ---------------- */
+  // WHERE THE ATTEMPTS ENDED, as the walker typed it from the final screen it was looking at
+  // (`AttemptRecordV2.ending`). This is the one fact a test run exists to establish and the
+  // page had no way to state: `stopReason` says the loop ran out of screens to press, which is
+  // ALSO what a walk that never got into the survey records. Only the ending separates them.
+  //
+  // NOTHING HERE INFERS. An attempt row that carries no ending is counted as `unstated` and
+  // said out loud; it is never read as a completion, and `unclassified` — the walker's own
+  // "the last page did not say which kind of ending this was" — is never folded into one
+  // either. A kind this reader does not know is counted BY NAME rather than dropped, because a
+  // silently shorter list is the failure this whole field exists to end.
+  /** "a, b and c" — a computed sentence still has to read as a sentence. */
+  const joinList = (parts) => {
+    const list = parts.filter(Boolean);
+    if (list.length <= 1) return list[0] ?? "";
+    return `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+  };
+
+  const ENDING_KINDS = ["completed", "screened-out", "stalled", "unclassified"];
+  const endingCounts = Object.fromEntries(ENDING_KINDS.map((k) => [k, 0]));
+  const unrecognisedEndings = new Map();
+  let endingsUnstated = 0;
+  for (const a of attempts) {
+    const kind = a?.ending && typeof a.ending === "object" ? a.ending.kind : null;
+    if (typeof kind !== "string" || kind.length === 0) endingsUnstated += 1;
+    else if (ENDING_KINDS.includes(kind)) endingCounts[kind] += 1;
+    else unrecognisedEndings.set(kind, (unrecognisedEndings.get(kind) ?? 0) + 1);
+  }
+  const unrecognised = [...unrecognisedEndings.entries()].map(([kind, count]) => ({ kind, count }));
+  const endingsStated = ENDING_KINDS.reduce((n, k) => n + endingCounts[k], 0) + unrecognised.reduce((n, u) => n + u.count, 0);
+
+  const ENDING_PHRASE = {
+    completed: (n) => `${n} reached the end of the survey`,
+    "screened-out": (n) => `${n} ${n === 1 ? "was" : "were"} screened out by the survey itself`,
+    stalled: (n) => `${n} stopped before reaching any ending`,
+    unclassified: (n) => `${n} ended on a page that did not say which kind of ending it was`,
+  };
+  const endingParts = ENDING_KINDS.filter((k) => endingCounts[k] > 0).map((k) => ENDING_PHRASE[k](endingCounts[k]));
+  for (const u of unrecognised) endingParts.push(`${u.count} recorded an ending this report does not recognise ("${u.kind}")`);
+  if (endingsUnstated > 0) {
+    endingParts.push(
+      `${endingsUnstated} recorded no ending at all, so this report cannot say where ${endingsUnstated === 1 ? "it" : "they"} stopped`,
+    );
+  }
+  const endingsHeadline =
+    attempts.length === 0
+      ? "No attempts are recorded in this run, so there is nothing to say about where they ended."
+      : endingsStated === 0
+        ? `None of the ${attempts.length} recorded attempt${attempts.length === 1 ? "" : "s"} states where it ended. This report does not guess.`
+        : `Of ${attempts.length} recorded attempt${attempts.length === 1 ? "" : "s"}: ${joinList(endingParts)}.`;
+
+  /* ---------------- how FAR the furthest attempt got ----------------
+   *
+   * "How far did we get?" is the first question anyone asks of a test run, and the page could
+   * not answer it: the number existed in the walk ledger and no surface carried it (review B4).
+   * `screensAdvanced` is now on the attempt row, so the deepest one can be named.
+   *
+   * ABSENT IS ABSENT. A row that predates the carry has no `screensAdvanced`, and it is skipped
+   * rather than read as 0 — a confident "we got 0 screens in" about a walk that drove 43 is the
+   * same defect as the ledger's own zeros, one layer up.
+   */
+  const depths = attempts
+    .map((a) => (typeof a?.screensAdvanced === "number" && Number.isFinite(a.screensAdvanced) ? a : null))
+    .filter(Boolean);
+  const deepestAttempt = depths.length
+    ? depths.reduce((best, a) => (a.screensAdvanced > best.screensAdvanced ? a : best))
+    : null;
+  const deepest = deepestAttempt
+    ? {
+        screens: deepestAttempt.screensAdvanced,
+        // WHAT THE SURVEY ITSELF SAID, when it said anything. The walker appends the site's
+        // own validation wording to `outcomeDetail` behind this exact marker (browser/driver.ts,
+        // the blocked branch). ASSUMPTION STATED, per CLAUDE.md: this reads a separator that
+        // code in this repo writes, not a convention of any survey platform — and when the
+        // marker is absent, which is every walk that stopped for any other reason, this is null
+        // and the sentence simply does not quote anything. The durable fix is a typed field on
+        // the walk record beside `outcomeDetail`; that belongs to the walker's own module.
+        siteMessage: siteMessageFrom(deepestAttempt.outcomeDetail),
+        measured: true,
+      }
+    : null;
+
+  const endings = {
+    stated: endingsStated,
+    unstated: endingsUnstated,
+    attempts: attempts.length,
+    counts: endingCounts,
+    unrecognised,
+    reachedAnEnd: endingCounts.completed > 0,
+    deepest,
+    /** Attempts whose row carries no depth at all — counted so the page cannot imply a zero. */
+    depthUnstated: attempts.length - depths.length,
+    headline: endingsHeadline,
+  };
 
   const reportComplete = total > 0 && missingResults.length === 0 && orphanResults.length === 0;
   const nonTerminal = total - exercised - coverageCounts["proven-unreachable"];
@@ -503,7 +642,9 @@ export function buildReportView({ record, scorecard = null, attestation, options
     "partial-time": "Testing partial — the run stopped at the wall-clock cap.",
     "partial-blocked": "Testing partial — one or more obligations were blocked from being exercised.",
     "partial-incomplete":
-      "Testing partial — obligations remain that were never exercised and were not proven unreachable. Untested items are not passes.",
+      // POLISH-5 (one of the three worst hits in the exempt audit view): "obligations" and
+      // "exercised" are both engineering words for things this page already has plain names for.
+      "Testing partial — requirements remain that were never tried and were not shown to be impossible to reach. Untested items are not passes.",
     unknown: "Testing state unknown — the contract denominator is not established.",
   };
 
@@ -521,7 +662,20 @@ export function buildReportView({ record, scorecard = null, attestation, options
   } else if (attempts.length === 0) {
     stoppingReason = "No attempts are recorded in this run.";
   } else {
-    stoppingReason = `No enforced limit was reached. Recorded attempt stop reasons: ${stopSummary}.`;
+    // ONE CLAUSE PER REASON, IN WORDS (review B5). This printed "Recorded attempt stop
+    // reasons: no-advance-control ×3, blocked ×1" — a machine tally directly above a plain
+    // sentence saying the same attempts were screened out, so the two lines read as
+    // contradicting each other about a survey that had behaved correctly throughout.
+    const stopClauses = [...stopReasons.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([reason, n]) =>
+        // "1 stopped because other" is not a sentence, and "other" is this table's word for
+        // "the row did not say". An attempt that stated no reason says exactly that.
+        reason === "other"
+          ? `${n} did not record why ${n === 1 ? "it" : "they"} stopped`
+          : `${n} stopped because ${STOP_LABEL[reason] ?? reason}`,
+      );
+    stoppingReason = `Nothing we set as a limit was reached. ${joinList(stopClauses)}.`;
   }
 
   /* ---------------- findings ------------------------------------------- */
@@ -892,6 +1046,7 @@ export function buildReportView({ record, scorecard = null, attestation, options
         state: testingState,
         headline: TESTING_SENTENCE[testingState],
         stoppingReason,
+        endings,
         stopSummary,
         exercised,
         total,

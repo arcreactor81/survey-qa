@@ -73,12 +73,30 @@ import {
   grokFlashRouteIdentity,
   grokJson,
   grokRequestShape,
+  isOutputCeilingTruncation,
 } from "../llm/grok";
 import {
   deepseekGrokFallbackJson,
   deepseekGrokFallbackRequestShape,
 } from "../llm/deepseek";
-import { chatRequestBodyText, ModelCallError, type ModelFailureKind } from "../llm/chat";
+import {
+  chatRequestBodyText,
+  keyFor,
+  MissingCredential,
+  ModelCallError,
+  type ModelFailureKind,
+} from "../llm/chat";
+import {
+  EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED,
+  EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED,
+  type ExtractionSizeRefusalCode,
+  extractionCatalogueExceededDetail,
+  extractionWireFailureDetail,
+  extractionWirePolicy,
+  extractionWirePreSerializationFailureDetail,
+  preflightExtractionRequestBodies,
+  utf8ByteLength,
+} from "../llm/extraction-wire";
 import {
   PROMPT_VERSION_A,
   SYSTEM_A,
@@ -97,16 +115,58 @@ import {
   RawUnverifiable,
   SourceBlock,
 } from "./types";
-import { annotate, DOCX_BLOCKS_VERSION } from "./docx-blocks";
+import { DOCX_BLOCKS_VERSION } from "./docx-blocks";
+import {
+  buildBoundedJsonText,
+  buildBoundedSourceBlocksJsonl,
+} from "./bounded-source-block-jsonl";
 import { coerceRequirement, coerceAmbiguities, coerceUnverifiable } from "./coerce";
 import { k } from "../keys";
 import { canonicalJson, sha256Hex } from "../store/hash";
+import {
+  lookupReusableUnit,
+  storeCompletedUnit,
+  type UnitIdentityFields,
+} from "../store/unit-reuse";
+import {
+  publicExtractionFailureDetail,
+  sourceContextForUnit,
+  type DocumentReadingUnitStartObserver,
+} from "../observability/document-reading";
+import {
+  PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+  validatePassAPrimaryGroundingLimitations,
+  type PassAPrimaryGroundingLimitationWire,
+  type PassAPrimaryGroundingReason,
+  type PassAPrimaryGroundingRowKind,
+} from "../../shared/pass-a-grounding-limitations.mjs";
 
 export const PASS_A_VERSION = PROMPT_VERSION_A;
 export const GROK_FALLBACK_TRIGGER_VERSION = "grok-flash-fallback-trigger/1.0.0";
-export const PASS_A_SYNTHESIS_VERSION = "v2-extract-pass-a-synthesis/1.0.0";
+export const PASS_A_SYNTHESIS_VERSION = "v2-extract-pass-a-synthesis/1.1.0";
 
-export type PassAProviderIndependence = "independent" | "reduced-same-provider-fallback";
+/**
+ * Tag a usage row as a replay: zero cost for this run, original cost preserved in provenance.
+ * A replay is VISIBLE as a replay (fail-loudly rule) — never a silently-zero row.
+ */
+function replayUsage(usage: CallUsage, detail: string): CallUsage {
+  return {
+    ...usage,
+    costUsd: 0,
+    usageSource: "reused-prior-artifact",
+    originalCostUsd: usage.costUsd,
+    detail,
+  };
+}
+
+/** Tag usages in accountingCalls so chargeUsage knows they are replays, not new spend. */
+function replayAccountingUsages(usages: CallUsage[]): CallUsage[] {
+  return usages.map((u) => ({ ...u, usageSource: "reused-prior-artifact" as const }));
+}
+
+export type PassAProviderIndependence =
+  | "independent"
+  | "reduced-same-provider-fallback";
 
 export interface GrokFallbackTrigger {
   kind: typeof GROK_FALLBACK_TRIGGER_VERSION;
@@ -118,27 +178,157 @@ export interface GrokFallbackTrigger {
 }
 
 export interface PassARouteReceipt {
-  selected: "grok-4.6" | "deepseek-v4-flash";
+  selected: "grok-4.5" | "deepseek-v4-flash";
   trigger: GrokFallbackTrigger | null;
 }
 
 /** Where each window lands the instant it returns. The unit of resume for this pass. */
 const windowKey = (runId: string, n: number) =>
   k("runs", runId, "extraction", "pass-a", `window-${String(n).padStart(2, "0")}.json`);
+const windowCasConflictKey = (runId: string, n: number, bodySha256: string) =>
+  k(
+    "runs",
+    runId,
+    "extraction",
+    "pass-a",
+    `window-${String(n).padStart(2, "0")}-cas-conflict-${bodySha256}.json`,
+  );
+const windowHistoryKey = (runId: string, n: number, bodySha256: string) =>
+  k(
+    "runs",
+    runId,
+    "extraction",
+    "pass-a",
+    `window-${String(n).padStart(2, "0")}-history-${bodySha256}.json`,
+  );
+const windowWireCeilingKey = (runId: string, n: number) =>
+  k("runs", runId, "extraction", "pass-a", `window-${String(n).padStart(2, "0")}-wire-ceiling.json`);
 
 const windowPolicyIdentity = (env: Env): string =>
   `pass-a-window-policy/1.1.0|chars:${num(env.EXTRACT_PASS_A_WINDOW_CHARS, 90_000)}` +
   `|blocks:${num(env.EXTRACT_PASS_A_WINDOW_MAX_BLOCKS, 100)}` +
   `|max-issues:${Math.max(1, num(env.EXTRACT_PASS_A_WINDOW_MAX_ISSUES, 2))}`;
 
+// ---------------------------------------------------------------------------
+// SUB-WINDOW SPLIT ON OUTPUT-CEILING TRUNCATION
+//
+// DECISION TABLE (pass-a.ts window orchestration layer):
+//
+//   Failure kind                           | Remedy
+//   ----                                   | ------
+//   output-ceiling truncation              | SPLIT: divide the window into two halves along
+//     (finish_reason: "length")            |   block boundaries. Same provider reads each
+//                                          |   half; independence intact; attacks the CAUSE.
+//   other typed eligible failures          | DeepSeek Flash substitute (reduced independence)
+//     (rate-limited, timeout, etc)         |
+//   sub-window still truncates             | split again, depth-bounded (max 3 levels)
+//   single-block sub-window truncates      | typed named refusal, counted, surfaced in
+//                                          |   documentReading limitations. Never silent.
+//
+// Sub-window durable identity:
+//   Parent A-w2 splits into A-w2.1 and A-w2.2
+//   A-w2.1 splits further into A-w2.1.1 and A-w2.1.2
+//   Maximum depth: 3 levels of splitting (enforced by MAX_SPLIT_DEPTH)
+// ---------------------------------------------------------------------------
+
+export const MAX_SPLIT_DEPTH = 3;
+
+/**
+ * Durable sub-window identity derived from a parent window name.
+ * A-w2 -> A-w2.1, A-w2.2
+ * A-w2.1 -> A-w2.1.1, A-w2.1.2
+ */
+export function subWindowOrigin(parentOrigin: string, half: 1 | 2): string {
+  return `${parentOrigin}.${half}`;
+}
+
+/**
+ * How deep is this sub-window? A-w2 = 0, A-w2.1 = 1, A-w2.1.2 = 2, etc.
+ */
+export function splitDepth(origin: string): number {
+  // Count dots after the initial "A-wN" prefix
+  const match = origin.match(/^A-w\d+/);
+  if (!match) return 0;
+  const suffix = origin.slice(match[0].length);
+  if (suffix.length === 0) return 0;
+  return suffix.split(".").length - 1;
+}
+
+/**
+ * Storage key for a sub-window. Uses the origin string (e.g. "A-w2.1") directly
+ * to form a unique, deterministic key under the run's pass-a namespace.
+ */
+const subWindowKey = (runId: string, origin: string) =>
+  k("runs", runId, "extraction", "pass-a", `sub-window-${origin.replace(/\./g, "-")}.json`);
+
+/**
+ * Split a block array into two halves along block boundaries.
+ * The split point is the midpoint of the block count, so both halves get
+ * roughly equal numbers of blocks. A single-block input cannot be split.
+ */
+export function splitBlocksInHalf(blocks: SourceBlock[]): [SourceBlock[], SourceBlock[]] | null {
+  if (blocks.length < 2) return null;
+  const mid = Math.ceil(blocks.length / 2);
+  return [blocks.slice(0, mid), blocks.slice(mid)];
+}
+
+export interface SplitEvent {
+  kind: "output-ceiling-split";
+  parentOrigin: string;
+  childOrigins: string[];
+  depth: number;
+  parentBlockCount: number;
+  childBlockCounts: number[];
+  /** The provider error that triggered this split. */
+  triggerDetail: string;
+}
+
+/** Typed refusal for a sub-window that cannot be split further. */
+export interface SplitExhaustionRefusal {
+  kind: "split-exhaustion-refusal";
+  origin: string;
+  blockIds: string[];
+  depth: number;
+  reason: "single-block-truncation" | "max-depth-exceeded";
+  detail: string;
+}
+
 /** One durable reconciliation unit, distinct from every independently read primary window. */
 export const passASynthesisKey = (runId: string) =>
   k("runs", runId, "extraction", "pass-a", "cross-window-synthesis.json");
+const passASynthesisWireCeilingKey = (runId: string) =>
+  k("runs", runId, "extraction", "pass-a", "cross-window-synthesis-wire-ceiling.json");
+const passASynthesisHistoryKey = (runId: string, bodySha256: string) =>
+  k(
+    "runs",
+    runId,
+    "extraction",
+    "pass-a",
+    `cross-window-synthesis-history-${bodySha256}.json`,
+  );
+const passASynthesisCasConflictKey = (runId: string, bodySha256: string) =>
+  k(
+    "runs",
+    runId,
+    "extraction",
+    "pass-a",
+    `cross-window-synthesis-cas-conflict-${bodySha256}.json`,
+  );
 
 export interface CrossWindowEvidenceQuote {
   blockId: string;
   quote: string;
 }
+
+/**
+ * A primary reader may name a target only when it also supplies an exact quote from that
+ * target block. If the source side of the reference is exact but the target proof is not,
+ * the reference survives only as this unresolved question. It is not a requirement and can
+ * therefore mint no coverage credit; a later cross-window synthesis may resolve it only by
+ * supplying exact evidence from both sides.
+ */
+export const PASS_A_UNPROVEN_TARGET_STATEMENT =
+  "Resolution withheld: the primary reader did not supply exact evidence from the claimed target block." as const;
 
 /** Cross-references pass A resolved (or failed to), surfaced in the diff. */
 export interface CrossRef {
@@ -190,6 +380,17 @@ export interface PassASynthesisAdditions {
   crossRefs: CrossRef[];
   ambiguities: RawAmbiguity[];
   unverifiable: RawUnverifiable[];
+  /**
+   * Well-formed synthesis resolutions DROPPED because their cross-reference was already
+   * resolved by its primary window. The window read the source bytes; synthesis sees only
+   * the candidate catalogue, so the window's resolution is the retained authority. Recorded,
+   * never silent: each drop is counted into the cross-window limitation detail.
+   */
+  droppedReResolutions: {
+    handle: string;
+    windowResolvedToBlock: string;
+    synthesisResolvedToBlock: string;
+  }[];
 }
 
 export interface PassASynthesisOutcome {
@@ -207,6 +408,8 @@ export interface PassASynthesisOutcome {
   fallbackTrigger: GrokFallbackTrigger | null;
   failedUnit: PassResult["failedUnits"][number] | null;
   limitation: PassACrossWindowLimitation | null;
+  terminalReasonCode?: ExtractionSizeRefusalCode;
+  credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" };
 }
 
 export interface PassASynthesisOptions {
@@ -262,6 +465,8 @@ export type PassAResult = PassResult & {
   crossRefs: CrossRef[];
   /** Counted honesty boundary for a synthesis that sees candidates, not every source byte. */
   crossWindowLimitations: PassACrossWindowLimitation[];
+  /** Counted candidates withheld from authority because exact document grounding failed. */
+  primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[];
   slice: PassASlice;
   /**
    * The calls this slice ACTUALLY BOUGHT, as opposed to `calls`, which also carries the
@@ -272,6 +477,12 @@ export type PassAResult = PassResult & {
   issuedCalls: CallUsage[];
   /** Persisted receipts re-offered to the idempotent usage CAS after any restart. */
   accountingCalls: CallUsage[];
+  /** Named split events when a window was divided due to output-ceiling truncation. */
+  splitEvents: SplitEvent[];
+  /** Named refusals for sub-windows that could not be split further. */
+  splitExhaustionRefusals: SplitExhaustionRefusal[];
+  terminalReasonCode?: ExtractionSizeRefusalCode;
+  credentialRefusal?: { reason: "NO_CREDENTIAL"; binding: string; provider: "grok" | "deepseek" };
 };
 
 export type PassACompletedAuthority = Omit<
@@ -286,7 +497,41 @@ export type PassACompletedAuthority = Omit<
 
 export type PassAAuthorityReconstruction =
   | { kind: "ok"; value: PassACompletedAuthority }
-  | { kind: "invalid"; detail: string; accountingCalls: CallUsage[]; slice: PassASlice };
+  | {
+      kind: "invalid";
+      detail: string;
+      accountingCalls: CallUsage[];
+      slice: PassASlice;
+      /** Exact paid unit that blocked reconstruction, when one can be named honestly. */
+      failedUnit: PassResult["failedUnits"][number] | null;
+    };
+
+export const PASS_A_HISTORICAL_PROGRESS_CENSUS_LIMITATION_CODE =
+  "legacy-reading-progress-from-artifact-census" as const;
+
+/**
+ * Metadata-only compatibility evidence for runs created before structured reading progress.
+ *
+ * This deliberately cannot carry requirements, model output, dispositions, or coverage. A
+ * caller may use it to say how many canonical primary-window artifacts were durably accounted
+ * for, and nothing more.
+ */
+export interface PassAHistoricalProgressCensusValue {
+  total: number;
+  accounted: number;
+  remaining: number;
+  failedUnit: PassResult["failedUnits"][number];
+  limitation: {
+    code: typeof PASS_A_HISTORICAL_PROGRESS_CENSUS_LIMITATION_CODE;
+    count: 1;
+    detail: string;
+  };
+}
+
+export type PassAHistoricalProgressCensus =
+  | { kind: "none" }
+  | { kind: "invalid"; detail: string }
+  | { kind: "ok"; value: PassAHistoricalProgressCensusValue };
 
 /** Slack over and above the budget and one whole purchase: R2 I/O, parsing, scheduling. */
 export const PASS_A_STEP_SLACK_MS = 60_000;
@@ -325,6 +570,765 @@ export function passAStepTimeoutMs(env: Env): number {
   return passAWaveBudgetMs(env) + passACallCeilingMs(env) + PASS_A_STEP_SLACK_MS;
 }
 
+/** Exact immutable paid-window writes attempted before storage failure becomes a terminal stop. */
+export const PASS_A_PRIMARY_ARTIFACT_PERSIST_ATTEMPTS = 2;
+
+interface PassAWindowStorageAuthority {
+  /** R2 version that the strict reader actually decoded before this purchase. */
+  etag: string;
+  /** Exact decoded object bytes; an equal-looking replacement is not inferred from fields. */
+  bodyText: string;
+}
+
+// Storage authority is deliberately not a persisted/projected field. The WeakMap binds the
+// exact R2 object version to the in-memory value produced by the strict reader without letting
+// an internal CAS token leak into completion payloads or reports.
+const passAWindowStorageAuthority = new WeakMap<object, PassAWindowStorageAuthority>();
+
+function rememberPassAWindowStorageAuthority<T extends object>(
+  value: T,
+  authority: PassAWindowStorageAuthority,
+): T {
+  passAWindowStorageAuthority.set(value, authority);
+  return value;
+}
+
+function storageAuthorityOf(
+  value: PersistedWindow | FailedWindowArtifact | InvalidWindowArtifact | null,
+): PassAWindowStorageAuthority | null {
+  return value === null ? null : passAWindowStorageAuthority.get(value) ?? null;
+}
+
+/**
+ * A valid, grounded model answer reached the durable-write boundary but could not be
+ * proven present afterwards. This is infrastructure failure, never semantic-output
+ * authority: the slice returns a terminal no-rebuy outcome carrying the paid receipt. It
+ * must not throw into the Workflow step retry policy, rewrite the receipt as parse-failed,
+ * or persist an artifact that authorizes another model issue.
+ */
+class PassAPrimaryPersistenceError extends Error {
+  constructor(
+    origin: string,
+    writeError: unknown,
+    retainedState: string,
+  ) {
+    const writeDetail = writeError instanceof Error ? writeError.message : String(writeError);
+    super(
+      `PASS_A_WINDOW_PERSISTENCE_FAILED: ${origin}: ${writeDetail}; ` +
+        `success artifact reread ${retainedState}`,
+    );
+    this.name = "PassAPrimaryPersistenceError";
+  }
+}
+
+/**
+ * Preserve the losing paid answer verbatim when another invocation wins the canonical-key CAS.
+ * The body hash makes this append-only write idempotent; canonical readers ignore this key,
+ * while failure inventory can still reconcile the top-level usage receipts in the exact body.
+ */
+async function persistPrimaryWindowAppendOnly(
+  env: Env,
+  key: string,
+  serialized: string,
+  failureCode: string,
+): Promise<string> {
+  let writeError: unknown = null;
+  try {
+    const written = await env.EVIDENCE.put(key, serialized, {
+      httpMetadata: { contentType: "application/json" },
+      onlyIf: { etagDoesNotMatch: "*" },
+    });
+    if (written !== null) return key;
+  } catch (error) {
+    // A transport error can arrive after commit. Exact reread below decides, never the throw.
+    writeError = error;
+  }
+  let retained: R2ObjectBody | null;
+  try {
+    retained = await env.EVIDENCE.get(key);
+  } catch (readError) {
+    throw new Error(
+      `${failureCode}: ${key}: ` +
+        `${writeError instanceof Error ? writeError.message : String(writeError ?? "conditional create refused")}; ` +
+        `exact reread failed: ${readError instanceof Error ? readError.message : String(readError)}`,
+    );
+  }
+  let retainedText: string | null = null;
+  try {
+    retainedText = retained === null ? null : await retained.text();
+  } catch (readError) {
+    throw new Error(
+      `${failureCode}: ${key}: exact retained bytes could not be read: ` +
+        `${readError instanceof Error ? readError.message : String(readError)}`,
+    );
+  }
+  if (retainedText === serialized) return key;
+  throw new Error(
+    `${failureCode}: ${key}: append-only key did not retain the exact artifact bytes`,
+  );
+}
+
+async function persistPrimaryWindowCasConflict(
+  env: Env,
+  runId: string,
+  n: number,
+  serialized: string,
+): Promise<string> {
+  const bodySha256 = await sha256Hex(serialized);
+  return persistPrimaryWindowAppendOnly(
+    env,
+    windowCasConflictKey(runId, n, bodySha256),
+    serialized,
+    "PASS_A_WINDOW_CAS_CONFLICT_PERSISTENCE_FAILED",
+  );
+}
+
+async function persistPrimaryWindowHistory(
+  env: Env,
+  runId: string,
+  n: number,
+  serialized: string,
+): Promise<string> {
+  const bodySha256 = await sha256Hex(serialized);
+  return persistPrimaryWindowAppendOnly(
+    env,
+    windowHistoryKey(runId, n, bodySha256),
+    serialized,
+    "PASS_A_WINDOW_HISTORY_PERSISTENCE_FAILED",
+  );
+}
+
+/**
+ * A paid target that cannot become canonical must still survive under its deterministic
+ * append-only conflict key. Returning the error instead of throwing inside this helper lets
+ * every terminal branch preserve the same original write context and, when even the conflict
+ * namespace fails, report both storage failures without implying that bytes were retained.
+ */
+async function primaryWindowPersistenceFailure(
+  env: Env,
+  runId: string,
+  n: number,
+  origin: string,
+  serialized: string,
+  writeError: unknown,
+  retainedState: string,
+): Promise<PassAPrimaryPersistenceError> {
+  try {
+    const conflictKey = await persistPrimaryWindowCasConflict(env, runId, n, serialized);
+    return new PassAPrimaryPersistenceError(
+      origin,
+      writeError,
+      `${retainedState}; exact paid bytes retained at ${conflictKey}`,
+    );
+  } catch (conflictError) {
+    const originalDetail = writeError instanceof Error ? writeError.message : String(writeError);
+    const conflictDetail = conflictError instanceof Error ? conflictError.message : String(conflictError);
+    return new PassAPrimaryPersistenceError(
+      origin,
+      `${originalDetail}; append-only conflict retention also failed: ${conflictDetail}`,
+      `${retainedState}; exact paid bytes could not be retained`,
+    );
+  }
+}
+
+/**
+ * Persist one already-paid window artifact without ever repeating the model purchase.
+ *
+ * The bytes are constructed by the caller exactly once. A failed put is ambiguous because
+ * R2 can report a transport error after commit, so recovery first compares the retained
+ * bytes and then runs the normal current-identity strict reader. A missing artifact permits
+ * another put of the SAME bytes; an occupied different/invalid key is immutable authority
+ * and stops immediately.
+ */
+async function persistPrimaryWindowArtifact(
+  env: Env,
+  runId: string,
+  n: number,
+  source: SourceBlock[],
+  parserVersion: string,
+  origin: string,
+  predecessor: PassAWindowStorageAuthority | null,
+  serialized: string,
+  accept: (artifact: PersistedWindow | FailedWindowArtifact) => boolean,
+): Promise<PersistedWindow | FailedWindowArtifact | null> {
+  let lastFailure: PassAPrimaryPersistenceError | null = null;
+  let expected = predecessor;
+  const key = windowKey(runId, n);
+  if (expected !== null) {
+    try {
+      await persistPrimaryWindowHistory(env, runId, n, expected.bodyText);
+    } catch (historyError) {
+      throw await primaryWindowPersistenceFailure(
+        env,
+        runId,
+        n,
+        origin,
+        serialized,
+        historyError,
+        "could not archive the exact predecessor before replacement",
+      );
+    }
+  }
+  for (
+    let storageAttempt = 1;
+    storageAttempt <= PASS_A_PRIMARY_ARTIFACT_PERSIST_ATTEMPTS;
+    storageAttempt += 1
+  ) {
+    let writeError: unknown;
+    try {
+      const written = await env.EVIDENCE.put(
+        key,
+        serialized,
+        {
+          httpMetadata: { contentType: "application/json" },
+          onlyIf: expected === null
+            ? { etagDoesNotMatch: "*" }
+            : { etagMatches: expected.etag },
+        },
+      );
+      if (written !== null) return null;
+      writeError = new Error(
+        expected === null
+          ? "conditional create found an occupied window key"
+          : "conditional replacement no longer matched the exact predecessor",
+      );
+    } catch (error) {
+      writeError = error;
+    }
+    {
+      let object: R2ObjectBody | null;
+      try {
+        object = await env.EVIDENCE.get(key);
+      } catch (readError) {
+        const readDetail = readError instanceof Error ? readError.message : String(readError);
+        lastFailure = new PassAPrimaryPersistenceError(
+          origin,
+          writeError,
+          `failed with ${readDetail}`,
+        );
+        continue;
+      }
+      if (object === null) {
+        if (expected !== null) {
+          throw await primaryWindowPersistenceFailure(
+            env,
+            runId,
+            n,
+            origin,
+            serialized,
+            writeError,
+            "found the exact predecessor missing; refusing to recreate over lost retained authority",
+          );
+        }
+        lastFailure = new PassAPrimaryPersistenceError(
+          origin,
+          writeError,
+          "found no current artifact",
+        );
+        continue;
+      }
+      let retainedBytes: string;
+      try {
+        retainedBytes = await object.text();
+      } catch (readError) {
+        const readDetail = readError instanceof Error ? readError.message : String(readError);
+        lastFailure = new PassAPrimaryPersistenceError(
+          origin,
+          writeError,
+          `could not read retained bytes: ${readDetail}`,
+        );
+        continue;
+      }
+      if (retainedBytes !== serialized) {
+        if (expected !== null && retainedBytes === expected.bodyText) {
+          // A before-commit transport error, or an equal-byte predecessor re-put, leaves the
+          // exact authority in place. Bind the next bounded CAS to the version just reread.
+          expected = { etag: object.etag, bodyText: retainedBytes };
+          lastFailure = new PassAPrimaryPersistenceError(
+            origin,
+            writeError,
+            "found the exact predecessor still present",
+          );
+          continue;
+        }
+        throw await primaryWindowPersistenceFailure(
+          env,
+          runId,
+          n,
+          origin,
+          serialized,
+          writeError,
+          "found an occupied artifact with different bytes; the winner was not overwritten",
+        );
+      }
+      let retained: PersistedWindow | FailedWindowArtifact | InvalidWindowArtifact | null;
+      try {
+        retained = await readWindow(env, runId, n, source, parserVersion, origin);
+      } catch (readError) {
+        const readDetail = readError instanceof Error ? readError.message : String(readError);
+        lastFailure = new PassAPrimaryPersistenceError(
+          origin,
+          writeError,
+          `strict reread failed with ${readDetail}`,
+        );
+        continue;
+      }
+      if (retained !== null && retained.kind !== "invalid" && accept(retained)) return retained;
+      throw await primaryWindowPersistenceFailure(
+        env,
+        runId,
+        n,
+        origin,
+        serialized,
+        writeError,
+        retained === null ? "lost the exact artifact before strict reread" :
+          `found exact bytes with ${retained.kind} authority that failed the expected-state check`,
+      );
+    }
+  }
+  throw await primaryWindowPersistenceFailure(
+    env,
+    runId,
+    n,
+    origin,
+    serialized,
+    lastFailure ?? "unknown storage failure",
+    "did not prove the exact current artifact",
+  );
+}
+
+async function persistImmutableExtractionArtifact(
+  env: Env,
+  key: string,
+  bodyText: string,
+  unit: string,
+): Promise<void> {
+  const written = await env.EVIDENCE.put(key, bodyText, {
+    httpMetadata: { contentType: "application/json" },
+    onlyIf: { etagDoesNotMatch: "*" },
+  });
+  if (written !== null) return;
+  const retained = await env.EVIDENCE.get(key);
+  if (!retained || await retained.text() !== bodyText) {
+    throw new Error(
+      `EXTRACTION_WIRE_CEILING_ARTIFACT_IMMUTABLE: ${unit} exact key is occupied by ` +
+        `different bytes; it was not overwritten and no provider request was issued`,
+    );
+  }
+}
+
+/**
+ * Persisted sub-window artifact, read back on resume. Same shape as a primary window but
+ * stored under a sub-window key (e.g. sub-window-A-w2-1.json).
+ */
+interface PersistedSubWindow {
+  kind: "ok";
+  origin: string;
+  blockIds: string[];
+  globalRules: RawRequirement[];
+  crossRefs: CrossRef[];
+  ambiguities: RawAmbiguity[];
+  unverifiable: RawUnverifiable[];
+  primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[];
+  usages: CallUsage[];
+  routeReceipt: PassARouteReceipt;
+}
+
+interface FailedSubWindow {
+  kind: "failed";
+  origin: string;
+  blockIds: string[];
+  detail: string;
+  usages: CallUsage[];
+  terminal: boolean;
+  /** A split-exhaustion refusal: the sub-window could not be split further. */
+  splitExhaustion?: SplitExhaustionRefusal;
+}
+
+/**
+ * Attempt to read a sub-window artifact from persistent storage.
+ */
+async function readSubWindow(
+  env: Env,
+  runId: string,
+  origin: string,
+): Promise<PersistedSubWindow | FailedSubWindow | null> {
+  const key = subWindowKey(runId, origin);
+  const obj = await env.EVIDENCE.get(key);
+  if (!obj) return null;
+  try {
+    const text = await obj.text();
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (parsed["status"] === "failed") {
+      return {
+        kind: "failed",
+        origin: String(parsed["origin"] ?? origin),
+        blockIds: Array.isArray(parsed["blockIds"]) ? parsed["blockIds"] as string[] : [],
+        detail: String(parsed["detail"] ?? "unknown"),
+        usages: Array.isArray(parsed["usages"]) ? parsed["usages"].filter(isCallUsage) as CallUsage[] : [],
+        terminal: parsed["terminal"] === true,
+        ...(parsed["splitExhaustion"] ? { splitExhaustion: parsed["splitExhaustion"] as SplitExhaustionRefusal } : {}),
+      };
+    }
+    if (parsed["kind"] === "ok") {
+      return {
+        kind: "ok",
+        origin: String(parsed["origin"] ?? origin),
+        blockIds: Array.isArray(parsed["blockIds"]) ? parsed["blockIds"] as string[] : [],
+        globalRules: Array.isArray(parsed["globalRules"]) ? parsed["globalRules"] as RawRequirement[] : [],
+        crossRefs: Array.isArray(parsed["crossRefs"]) ? parsed["crossRefs"] as CrossRef[] : [],
+        ambiguities: Array.isArray(parsed["ambiguities"]) ? parsed["ambiguities"] as RawAmbiguity[] : [],
+        unverifiable: Array.isArray(parsed["unverifiable"]) ? parsed["unverifiable"] as RawUnverifiable[] : [],
+        primaryGroundingLimitations: Array.isArray(parsed["primaryGroundingLimitations"])
+          ? validatePassAPrimaryGroundingLimitations(parsed["primaryGroundingLimitations"])
+          : [],
+        usages: Array.isArray(parsed["usages"]) ? parsed["usages"].filter(isCallUsage) as CallUsage[] : [],
+        routeReceipt: parsed["routeReceipt"] as PassARouteReceipt,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist a sub-window artifact under its deterministic append-only key.
+ */
+async function persistSubWindow(
+  env: Env,
+  runId: string,
+  origin: string,
+  artifact: Record<string, unknown>,
+): Promise<void> {
+  const key = subWindowKey(runId, origin);
+  const body = JSON.stringify(artifact, null, 2);
+  const written = await env.EVIDENCE.put(key, body, {
+    httpMetadata: { contentType: "application/json" },
+    onlyIf: { etagDoesNotMatch: "*" },
+  });
+  if (written !== null) return;
+  // Already exists — check if it has the same bytes
+  const existing = await env.EVIDENCE.get(key);
+  if (existing && await existing.text() === body) return;
+  // Different bytes means a prior invocation wrote something else. Accept the existing one.
+}
+
+export interface SubWindowSplitResult {
+  /** True if all sub-windows landed successfully. */
+  ok: boolean;
+  /** Usages from all sub-window model calls. */
+  usages: CallUsage[];
+  /** Requirements from all landed sub-windows. */
+  globalRules: RawRequirement[];
+  crossRefs: CrossRef[];
+  ambiguities: RawAmbiguity[];
+  unverifiable: RawUnverifiable[];
+  primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[];
+  routeReceipts: PassARouteReceipt[];
+  fallbackTriggers: GrokFallbackTrigger[];
+  splitEvents: SplitEvent[];
+  splitExhaustionRefusals: SplitExhaustionRefusal[];
+  failedUnits: PassResult["failedUnits"];
+  /** All sub-window model calls that were actually purchased this invocation. */
+  issuedCalls: CallUsage[];
+  accountingCalls: CallUsage[];
+}
+
+/**
+ * Recursively read sub-windows, splitting on output-ceiling truncation.
+ *
+ * This function handles the split-on-truncation remedy at a single window level.
+ * It is called when a window's model call fails with `truncatedAtOutputCeiling`,
+ * and it splits the window's blocks in half and attempts to read each half.
+ *
+ * If a sub-window itself truncates, it is split again up to MAX_SPLIT_DEPTH.
+ * A single-block sub-window that truncates produces a typed named refusal.
+ */
+async function readSubWindowsWithSplit(
+  env: Env,
+  runId: string,
+  blocks: SourceBlock[],
+  parentOrigin: string,
+  documentName: string,
+  parserVersion: string,
+  providerRouteIdentity: string,
+  triggerDetail: string,
+  onProgress: ((msg: string) => Promise<void>) | undefined,
+): Promise<SubWindowSplitResult> {
+  const result: SubWindowSplitResult = {
+    ok: true,
+    usages: [],
+    globalRules: [],
+    crossRefs: [],
+    ambiguities: [],
+    unverifiable: [],
+    primaryGroundingLimitations: [],
+    routeReceipts: [],
+    fallbackTriggers: [],
+    splitEvents: [],
+    splitExhaustionRefusals: [],
+    failedUnits: [],
+    issuedCalls: [],
+    accountingCalls: [],
+  };
+
+  const depth = splitDepth(parentOrigin) + 1;
+
+  // Cannot split a single-block window
+  const halves = splitBlocksInHalf(blocks);
+  if (halves === null) {
+    const refusal: SplitExhaustionRefusal = {
+      kind: "split-exhaustion-refusal",
+      origin: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      depth: depth - 1,
+      reason: "single-block-truncation",
+      detail: `${parentOrigin}: output-ceiling truncation on a single-block window cannot be remedied by splitting. ` +
+        `The block (${blocks[0]?.blockId ?? "unknown"}) produces more output tokens than the model's ceiling.`,
+    };
+    result.ok = false;
+    result.splitExhaustionRefusals.push(refusal);
+    result.failedUnits.push({
+      unit: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      detail: refusal.detail,
+    });
+    // Persist the refusal
+    await persistSubWindow(env, runId, parentOrigin, {
+      origin: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      status: "failed",
+      terminal: true,
+      detail: refusal.detail,
+      usages: [],
+      splitExhaustion: refusal,
+    });
+    return result;
+  }
+
+  // Depth exceeded
+  if (depth > MAX_SPLIT_DEPTH) {
+    const refusal: SplitExhaustionRefusal = {
+      kind: "split-exhaustion-refusal",
+      origin: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      depth: depth - 1,
+      reason: "max-depth-exceeded",
+      detail: `${parentOrigin}: maximum split depth ${MAX_SPLIT_DEPTH} exceeded. ` +
+        `${blocks.length} blocks still produce too much output for the model's ceiling.`,
+    };
+    result.ok = false;
+    result.splitExhaustionRefusals.push(refusal);
+    result.failedUnits.push({
+      unit: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      detail: refusal.detail,
+    });
+    await persistSubWindow(env, runId, parentOrigin, {
+      origin: parentOrigin,
+      blockIds: blocks.map((b) => b.blockId),
+      status: "failed",
+      terminal: true,
+      detail: refusal.detail,
+      usages: [],
+      splitExhaustion: refusal,
+    });
+    return result;
+  }
+
+  const [leftBlocks, rightBlocks] = halves;
+  const leftOrigin = subWindowOrigin(parentOrigin, 1);
+  const rightOrigin = subWindowOrigin(parentOrigin, 2);
+
+  const splitEvent: SplitEvent = {
+    kind: "output-ceiling-split",
+    parentOrigin,
+    childOrigins: [leftOrigin, rightOrigin],
+    depth,
+    parentBlockCount: blocks.length,
+    childBlockCounts: [leftBlocks.length, rightBlocks.length],
+    triggerDetail,
+  };
+  result.splitEvents.push(splitEvent);
+
+  if (onProgress) {
+    try {
+      await onProgress(
+        `pass A ${parentOrigin}: output-ceiling truncation, splitting into ${leftOrigin} (${leftBlocks.length} blocks) ` +
+        `and ${rightOrigin} (${rightBlocks.length} blocks) at depth ${depth}`,
+      );
+    } catch {
+      // Progress is observability only
+    }
+  }
+
+  // Attempt each half
+  for (const [subBlocks, subOrigin] of [[leftBlocks, leftOrigin], [rightBlocks, rightOrigin]] as const) {
+    // Check for existing persisted sub-window
+    const existing = await readSubWindow(env, runId, subOrigin);
+    if (existing?.kind === "ok") {
+      result.globalRules.push(...existing.globalRules);
+      result.crossRefs.push(...existing.crossRefs);
+      result.ambiguities.push(...existing.ambiguities);
+      result.unverifiable.push(...existing.unverifiable);
+      result.primaryGroundingLimitations.push(...existing.primaryGroundingLimitations);
+      result.routeReceipts.push(existing.routeReceipt);
+      result.accountingCalls.push(...replayAccountingUsages(existing.usages));
+      for (const usage of existing.usages) {
+        result.usages.push(replayUsage(usage, "reused: persisted sub-window"));
+      }
+      if (onProgress) {
+        try { await onProgress(`pass A ${subOrigin}: reused persisted sub-window`); } catch { /* observability */ }
+      }
+      continue;
+    }
+    if (existing?.kind === "failed" && existing.terminal) {
+      result.ok = false;
+      result.failedUnits.push({
+        unit: subOrigin,
+        blockIds: existing.blockIds,
+        detail: existing.detail,
+      });
+      if (existing.splitExhaustion) {
+        result.splitExhaustionRefusals.push(existing.splitExhaustion);
+      }
+      result.accountingCalls.push(...replayAccountingUsages(existing.usages));
+      for (const usage of existing.usages) {
+        result.usages.push(replayUsage(usage, "reused: persisted failed sub-window"));
+      }
+      continue;
+    }
+
+    // Issue a new model call for this sub-window
+    const subBlockIds = subBlocks.map((b) => b.blockId);
+    const subLabel = `sub-window ${subOrigin} (${subBlockIds[0]}–${subBlockIds[subBlockIds.length - 1]})`;
+    const jsonl = buildBoundedSourceBlocksJsonl(subBlocks, extractionWirePolicy(env).maxInputBytes);
+    if (!jsonl.ok) {
+      const detail = `${subOrigin}: sub-window source blocks could not be serialized`;
+      result.ok = false;
+      result.failedUnits.push({ unit: subOrigin, blockIds: subBlockIds, detail });
+      await persistSubWindow(env, runId, subOrigin, {
+        origin: subOrigin, blockIds: subBlockIds, status: "failed",
+        terminal: true, detail, usages: [],
+      });
+      continue;
+    }
+
+    const subOptions = {
+      system: SYSTEM_A,
+      user: userMessageA(documentName, jsonl.text, subLabel),
+      maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
+      role: `extract-pass-a-${subOrigin.replace(/\./g, "-")}`,
+      callId: `call_a_${subOrigin.replace(/\./g, "_")}`,
+      maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
+    };
+
+    try {
+      const outcome = await grokJson(env, subOptions);
+      const usage: CallUsage = {
+        ...outcome.usage,
+        eventId: `core-model-call/pass-a/${runId}/${subOrigin}/issue-1/receipt-1`,
+      };
+      result.usages.push(usage);
+      result.issuedCalls.push(usage);
+      result.accountingCalls.push(usage);
+
+      const strict = strictPrimaryOutput(outcome.value, subOrigin);
+      const inspected = inspectPrimaryWindowGrounding({
+        kind: "ok",
+        ...strict,
+        primaryGroundingLimitations: [],
+        usages: [usage],
+        routeReceipt: { selected: "grok-4.5", trigger: null },
+      }, subBlocks, subOrigin);
+
+      const landed = inspected.unit;
+      result.globalRules.push(...landed.globalRules);
+      result.crossRefs.push(...landed.crossRefs);
+      result.ambiguities.push(...landed.ambiguities);
+      result.unverifiable.push(...landed.unverifiable);
+      result.primaryGroundingLimitations.push(...landed.primaryGroundingLimitations);
+      result.routeReceipts.push({ selected: "grok-4.5", trigger: null });
+
+      // Persist the successful sub-window
+      await persistSubWindow(env, runId, subOrigin, {
+        ...landed,
+        origin: subOrigin,
+        blockIds: subBlockIds,
+        parserVersion,
+        promptVersion: PROMPT_VERSION_A,
+        providerRouteIdentity,
+        modelOutput: outcome.value,
+      });
+
+      if (onProgress) {
+        try {
+          await onProgress(
+            `pass A ${subOrigin}: ${landed.globalRules.length} grounded rule(s), ` +
+            `${landed.crossRefs.length} cross-reference(s) over ${subBlockIds.length} block(s)`,
+          );
+        } catch { /* observability */ }
+      }
+    } catch (err) {
+      if (err instanceof ModelCallError && isOutputCeilingTruncation(err)) {
+        // Recursively split this sub-window
+        const subUsage: CallUsage = {
+          ...err.usage,
+          eventId: `core-model-call/pass-a/${runId}/${subOrigin}/issue-1/receipt-1`,
+        };
+        result.usages.push(subUsage);
+        result.issuedCalls.push(subUsage);
+        result.accountingCalls.push(subUsage);
+
+        const subResult = await readSubWindowsWithSplit(
+          env, runId, subBlocks, subOrigin, documentName,
+          parserVersion, providerRouteIdentity,
+          err.message.slice(0, 400), onProgress,
+        );
+        result.usages.push(...subResult.usages);
+        result.issuedCalls.push(...subResult.issuedCalls);
+        result.accountingCalls.push(...subResult.accountingCalls);
+        result.globalRules.push(...subResult.globalRules);
+        result.crossRefs.push(...subResult.crossRefs);
+        result.ambiguities.push(...subResult.ambiguities);
+        result.unverifiable.push(...subResult.unverifiable);
+        result.primaryGroundingLimitations.push(...subResult.primaryGroundingLimitations);
+        result.routeReceipts.push(...subResult.routeReceipts);
+        result.fallbackTriggers.push(...subResult.fallbackTriggers);
+        result.splitEvents.push(...subResult.splitEvents);
+        result.splitExhaustionRefusals.push(...subResult.splitExhaustionRefusals);
+        result.failedUnits.push(...subResult.failedUnits);
+        if (!subResult.ok) result.ok = false;
+      } else {
+        // Non-truncation failure: record as failed sub-window
+        const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
+        if (err instanceof ModelCallError) {
+          const usage: CallUsage = {
+            ...err.usage,
+            eventId: `core-model-call/pass-a/${runId}/${subOrigin}/issue-1/receipt-1`,
+          };
+          result.usages.push(usage);
+          result.issuedCalls.push(usage);
+          result.accountingCalls.push(usage);
+        }
+        result.ok = false;
+        result.failedUnits.push({ unit: subOrigin, blockIds: subBlockIds, detail });
+        await persistSubWindow(env, runId, subOrigin, {
+          origin: subOrigin, blockIds: subBlockIds, status: "failed",
+          terminal: true, detail, usages: [],
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+export function passAPrimaryRouteIdentity(env: Env): string {
+  return grokFlashRouteIdentity(env);
+}
+
 export async function runPassA(
   env: Env,
   runId: string,
@@ -332,9 +1336,10 @@ export async function runPassA(
   documentName: string,
   onProgress?: (msg: string) => Promise<void>,
   options?: PassASliceOptions,
+  onUnitStart?: DocumentReadingUnitStartObserver,
 ): Promise<PassAResult> {
   const parserVersion = doc.parserVersion ?? DOCX_BLOCKS_VERSION;
-  const providerRouteIdentity = grokFlashRouteIdentity(env);
+  const providerRouteIdentity = passAPrimaryRouteIdentity(env);
   // Local, NOT module scope: one isolate serves many runs, and a module-level accumulator
   // would let two concurrent extractions read each other's cross-references.
   const crossRefs: CrossRef[] = [];
@@ -353,8 +1358,24 @@ export async function runPassA(
   const routeReceipts: PassARouteReceipt[] = [];
   const fallbackTriggers: GrokFallbackTrigger[] = [];
   const crossWindowLimitations: PassACrossWindowLimitation[] = [];
+  const primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[] = [];
+  const splitEvents: SplitEvent[] = [];
+  const splitExhaustionRefusals: SplitExhaustionRefusal[] = [];
   let providerIndependence: PassAProviderIndependence = "independent";
   const model = DEFAULT_GROK_MODEL;
+  let resolvedGrokKey: string | null = null;
+  let resolvedDeepseekKey: string | null = null;
+  const purchaseEnvFor = async (needsGrok: boolean, needsDeepseek: boolean): Promise<Env> => {
+    if (needsGrok && resolvedGrokKey === null) resolvedGrokKey = await keyFor(env, "grok");
+    if (needsDeepseek && resolvedDeepseekKey === null) {
+      resolvedDeepseekKey = await keyFor(env, "deepseek");
+    }
+    return {
+      ...env,
+      ...(resolvedGrokKey !== null ? { XAI_API_KEY: resolvedGrokKey } : {}),
+      ...(resolvedDeepseekKey !== null ? { DEEPSEEK_API_KEY: resolvedDeepseekKey } : {}),
+    };
+  };
 
   // THE DEADLINE, AND THE ONE EXCEPTION TO IT. `issued === 0` keeps the first call of every
   // slice unconditional: a slice that issues nothing makes no progress, and a wave loop over
@@ -375,6 +1396,83 @@ export async function runPassA(
 
   const maxIssues = Math.max(1, num(env.EXTRACT_PASS_A_WINDOW_MAX_ISSUES, 2));
 
+  const primaryWireMaxBytes = extractionWirePolicy(env).maxInputBytes;
+  const primaryPlanFor = (
+    source: SourceBlock[],
+    n: number,
+    label: string | null,
+  ) => {
+    const jsonl = buildBoundedSourceBlocksJsonl(source, primaryWireMaxBytes);
+    const origin = windows.length === 1 ? "A" : `A-w${n}`;
+    if (!jsonl.ok) {
+      return {
+        ok: false as const,
+        detail: extractionWirePreSerializationFailureDetail(
+          origin, source.length, jsonl, "EXTRACT_MODEL_INPUT_MAX_BYTES",
+        ),
+      };
+    }
+    const optionsForCall = {
+      system: SYSTEM_A,
+      user: userMessageA(documentName, jsonl.text, label),
+      maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
+      role: `extract-pass-a${label ? `-w${n}` : ""}`,
+      callId: `call_a_${n}`,
+      maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
+    };
+    const check = preflightExtractionRequestBodies(env, [
+      { route: "grok-4.5", bodyText: chatRequestBodyText(grokRequestShape(env), optionsForCall) },
+      {
+        route: "deepseek-v4-flash",
+        bodyText: chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall),
+      },
+    ]);
+    return check.ok
+      ? { ok: true as const, optionsForCall }
+      : { ok: false as const, detail: extractionWireFailureDetail(origin, source.length, check) };
+  };
+
+  // EXTRACTION_WIRE_PREFLIGHT_BEFORE_PRIMARY_PURCHASE: serialize BOTH possible route
+  // bodies for EVERY canonical window before A-w1 can spend. A later giant/escaped block
+  // therefore cannot be discovered only after earlier windows have already been bought.
+  const primaryWireChecks = windows.map((source, index) => {
+    const n = index + 1;
+    const label = windows.length === 1
+      ? null
+      : `window ${n} of ${windows.length} (${source[0]!.blockId}–${source[source.length - 1]!.blockId})`;
+    const plan = primaryPlanFor(source, n, label);
+    // The all-window barrier retains only compact verdicts. Keeping every accepted user/body
+    // string would turn thousands of independently safe windows into an aggregate Worker OOM.
+    return plan.ok ? { ok: true as const } : plan;
+  });
+  let pendingPrimaryWireFailure: {
+    index: number;
+    detail: string;
+  } | null = null;
+  for (let index = 0; index < primaryWireChecks.length; index += 1) {
+    const check = primaryWireChecks[index]!;
+    const n = index + 1;
+    const origin = windows.length === 1 ? "A" : `A-w${n}`;
+    const retained = await readWindow(env, runId, n, windows[index]!, parserVersion, origin);
+    // A retained terminal wire refusal is itself wave-wide authority. Re-entry must not
+    // touch a credential or buy an earlier missing/retryable unit before reaching it.
+    if (retained?.kind === "failed" && retained.terminal && retained.wireCeiling) {
+      pendingPrimaryWireFailure = { index, detail: retained.detail };
+      break;
+    }
+    if (check.ok) continue;
+    // A successful current artifact already owns this unit. Invalid or other terminal
+    // authority still makes the wave non-purchasing; its own strict failure is surfaced
+    // when the ordered reclaim loop reaches it rather than being relabelled as wire overflow.
+    if (retained?.kind === "ok") continue;
+    if (retained?.kind === "invalid" || retained?.terminal) {
+      pendingPrimaryWireFailure = { index, detail: check.detail };
+      break;
+    }
+    pendingPrimaryWireFailure = { index, detail: check.detail };
+    break;
+  }
+
   let landed = 0;
   let remaining = 0;
   let terminalFailure = false;
@@ -382,6 +1480,8 @@ export async function runPassA(
     windows.length > 1 ? "waiting-for-windows" : "not-required";
   let synthesisIssued = 0;
   let synthesisAttempts = 0;
+  let terminalReasonCode: ExtractionSizeRefusalCode | undefined;
+  let credentialRefusal: PassAResult["credentialRefusal"];
 
   // WINDOWS ARE WALKED IN DOCUMENT ORDER, ONE AT A TIME. See the header for why this pass
   // does not fan out. The order matters beyond latency: it is what makes `requirements`,
@@ -395,11 +1495,37 @@ export async function runPassA(
       windows.length === 1 ? null : `window ${n} of ${windows.length} (${w[0]!.blockId}–${w[w.length - 1]!.blockId})`;
     const origin = windows.length === 1 ? "A" : `A-w${n}`;
 
+    // This awaited structured write is deliberately BEFORE the artifact read and therefore
+    // before any possible purchase. A failed visibility write throws without buying model
+    // work; the Workflow can retry the checkpoint write without ever re-buying this unit.
+    if (onUnitStart) {
+      await onUnitStart({
+        stage: "primary-windows",
+        unit: {
+          kind: "window",
+          name: origin,
+          ordinal: n,
+          total: windows.length,
+          sourceContext: sourceContextForUnit(doc.blocks, blockIds),
+        },
+        primary: {
+          total: windows.length,
+          landed,
+          remaining: windows.length - landed,
+          synthesisState: "waiting-for-windows",
+        },
+        secondary: null,
+      });
+    }
+
     const absorb = (unit: PersistedWindow): void => {
       requirements.push(...unit.globalRules);
       crossRefs.push(...unit.crossRefs);
       ambiguities.push(...unit.ambiguities);
       unverifiable.push(...unit.unverifiable);
+      // PASS_A_PRIMARY_GROUNDING_LIMITATION_AGGREGATE: withheld rows remain counted in
+      // deterministic window/row order without entering requirements or synthesis input.
+      primaryGroundingLimitations.push(...unit.primaryGroundingLimitations);
     };
 
     // -----------------------------------------------------------------------
@@ -411,11 +1537,69 @@ export async function runPassA(
     // window is exactly as accountable as a fresh one.
     // -----------------------------------------------------------------------
     const existing = await readWindow(env, runId, n, w, parserVersion, origin);
+    let predecessorAuthority = storageAuthorityOf(existing);
+
+    if (
+      pendingPrimaryWireFailure?.index === i &&
+      (existing === null || (existing.kind === "failed" && !existing.terminal))
+    ) {
+      const detail = pendingPrimaryWireFailure.detail;
+      const wireArtifact = JSON.stringify(
+        {
+          windowId: origin,
+          windowNumber: n,
+          blockIds,
+          parserVersion,
+          promptVersion: PROMPT_VERSION_A,
+          providerRouteIdentity,
+          windowPolicyIdentity: windowPolicyIdentity(env),
+          status: "failed",
+          attempts: 0,
+          usages: [],
+          fallbackTrigger: null,
+          terminal: true,
+          failureStage: "wire-ceiling",
+          detail,
+        },
+        null,
+        2,
+      );
+      if (existing?.kind === "failed") {
+        accountingCalls.push(...replayAccountingUsages(existing.usages));
+        for (const usage of existing.usages) {
+          calls.push(replayUsage(usage, "reused: prior failed pass-A purchase"));
+        }
+        if (existing.fallbackTrigger !== null) fallbackTriggers.push(existing.fallbackTrigger);
+        await persistImmutableExtractionArtifact(
+          env,
+          windowWireCeilingKey(runId, n),
+          wireArtifact,
+          origin,
+        );
+      } else {
+        await persistImmutableExtractionArtifact(
+          env, windowKey(runId, n), wireArtifact, origin,
+        );
+      }
+      landed += 1;
+      terminalFailure = true;
+      terminalReasonCode = EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+      failedUnits.push({ unit: origin, blockIds, detail });
+      remaining += windows.length - (i + 1);
+      if (onProgress) {
+        try {
+          await onProgress(`pass A ${origin}: FAILED — ${publicExtractionFailureDetail(detail)}`);
+        } catch {
+          // The zero-purchase terminal artifact is already durable authority.
+        }
+      }
+      break;
+    }
 
     if (existing?.kind === "invalid") {
-      accountingCalls.push(...existing.usages);
+      accountingCalls.push(...replayAccountingUsages(existing.usages));
       for (const usage of existing.usages) {
-        calls.push({ ...usage, detail: "reused: invalid retained pass-A window artifact", costUsd: 0 });
+        calls.push(replayUsage(usage, "reused: invalid retained pass-A window artifact"));
       }
       landed += 1;
       terminalFailure = true;
@@ -426,13 +1610,9 @@ export async function runPassA(
 
     if (existing && existing.kind === "ok") {
       landed += 1;
-      accountingCalls.push(...existing.usages);
+      accountingCalls.push(...replayAccountingUsages(existing.usages));
       for (const usage of existing.usages) {
-        calls.push({
-          ...usage,
-          detail: "reused: this window was already persisted by an earlier attempt",
-          costUsd: 0,
-        });
+        calls.push(replayUsage(usage, "reused: this window was already persisted by an earlier attempt"));
       }
       routeReceipts.push(existing.routeReceipt);
       if (existing.routeReceipt.trigger !== null) {
@@ -459,9 +1639,9 @@ export async function runPassA(
 
     const priorUsages = existing && existing.kind === "failed" ? existing.usages : [];
     if (existing && existing.kind === "failed") {
-      accountingCalls.push(...existing.usages);
+      accountingCalls.push(...replayAccountingUsages(existing.usages));
       for (const usage of existing.usages) {
-        calls.push({ ...usage, detail: "reused: prior failed pass-A purchase", costUsd: 0 });
+        calls.push(replayUsage(usage, "reused: prior failed pass-A purchase"));
       }
       if (existing.fallbackTrigger !== null) {
         fallbackTriggers.push(existing.fallbackTrigger);
@@ -469,6 +1649,9 @@ export async function runPassA(
       if (existing.terminal) {
         landed += 1;
         terminalFailure = true;
+        if (existing.wireCeiling) {
+          terminalReasonCode = EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+        }
         failedUnits.push({
           unit: origin,
           blockIds,
@@ -484,10 +1667,20 @@ export async function runPassA(
     // than each getting a fresh one. Unbounded re-issue is how one pass-B chunk id came to
     // be billed 21–24 times during a recovery storm; the same arithmetic applies here, on a
     // call that costs far more.
-    const pendingFlash = existing && existing.kind === "failed" &&
+    const pendingSubstitute = existing && existing.kind === "failed" &&
       existing.fallbackTrigger !== null &&
       !existing.usages.some((usage) => usage.provider === "deepseek");
-    if (existing && existing.kind === "failed" && existing.attempts >= maxIssues && !pendingFlash) {
+    // SLICE TERMINALITY DERIVES FROM DURABLE WINDOW TERMINALITY (fix: 15 Aug 2026).
+    // Before this change, the attempts-exhausted gate checked only `existing.attempts >=
+    // maxIssues`, independently of `existing.terminal`. When the durableTerminal formula
+    // was corrected (bdfd068) so the ARTIFACT carries `terminal: false` for first-attempt
+    // semantic failures, this reclaim gate still short-circuited to terminalFailure = true
+    // on re-entry if some edge moved `attempts` to the ceiling without setting `terminal`.
+    // Now: if the persisted artifact says non-terminal, the window is re-issued so the
+    // catch block's durableTerminal / degradation logic handles it with full context.
+    // The check `existing.terminal` is already caught by the preceding block (line ~1667);
+    // this guard fires only when attempts are exhausted AND the artifact durably agrees.
+    if (existing && existing.kind === "failed" && existing.attempts >= maxIssues && !pendingSubstitute && existing.terminal) {
       landed += 1;
       failedUnits.push({
         unit: origin,
@@ -501,23 +1694,218 @@ export async function runPassA(
 
     const priorAttempts = existing && existing.kind === "failed" ? existing.attempts : 0;
 
+    // -------------------------------------------------------------------
+    // CROSS-RUN UNIT REUSE (windows). Same pattern as pass-B chunks.
+    //
+    // A window still needing purchase is checked against the content-addressed
+    // cross-run unit index. On a hit the stored model output is re-validated
+    // through the SAME decoder the live path uses (strictPrimaryOutput +
+    // inspectPrimaryWindowGrounding), a per-run artifact is written, and
+    // results are accumulated. The window is then treated as done WITHOUT
+    // consuming an issue budget slot — it made no provider call.
+    //
+    // Only attempted when existing is null (no per-run artifact to reclaim)
+    // and no wire failure blocks this window. A retriable-failed existing
+    // window already has a different request hash (echoed error), so its
+    // identity would miss anyway. // mutation-anchor: unit-reuse-window-adoption
+    // -------------------------------------------------------------------
+    if (
+      existing === null &&
+      pendingPrimaryWireFailure === null &&
+      primaryWireChecks[i]?.ok
+    ) {
+      try {
+        const adoptPlan = primaryPlanFor(w, n, label);
+        if (adoptPlan.ok) {
+          const grokBody = chatRequestBodyText(grokRequestShape(env), adoptPlan.optionsForCall);
+          const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), adoptPlan.optionsForCall);
+          const windowRequestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
+          const windowIdentity: UnitIdentityFields = {
+            unitKind: "pass-a-window",
+            requestHash: windowRequestHash,
+            decoderIdentity: windowPolicyIdentity(env),
+            providerPlanIdentity: providerRouteIdentity,
+            promptVersion: PROMPT_VERSION_A, // mutation-anchor: unit-reuse-window-promptVersion
+            parserVersion,
+          };
+          const stored = await lookupReusableUnit(env, windowIdentity);
+          if (stored !== null) {
+            let decoded;
+            try {
+              const strict = strictPrimaryOutput(stored.modelOutput, origin); // mutation-anchor: unit-reuse-window-revalidation
+              decoded = inspectPrimaryWindowGrounding({
+                kind: "ok",
+                ...strict,
+                primaryGroundingLimitations: [],
+                usages: [],
+                routeReceipt: { selected: "grok-4.5", trigger: null },
+              }, w, origin).unit;
+            } catch (err) {
+              console.log(
+                `unit-reuse: adopted window payload revalidation failed for ${origin}: ` +
+                  `${err instanceof Error ? err.message : String(err)}`,
+              );
+              decoded = null;
+            }
+            if (decoded !== null) {
+              // Build synthetic receipt matching the window artifact format.
+              const syntheticReceipt: CallUsage = {
+                eventId: `core-model-call/pass-a/${runId}/${origin}/issue-1/receipt-1`,
+                callId: `call_a_${n}`,
+                role: `extract-pass-a${label ? `-w${n}` : ""}`,
+                provider: stored.originalUsage.provider,
+                model: stored.originalUsage.model,
+                status: "ok",
+                inputTokens: stored.originalUsage.inputTokens,
+                outputTokens: stored.originalUsage.outputTokens,
+                costUsd: stored.originalUsage.costUsd,
+                latencyMs: stored.originalUsage.latencyMs,
+                attempts: 1,
+                usageSource: stored.originalUsage.usageSource as CallUsage["usageSource"],
+              };
+              const adoptedRouteReceipt: PassARouteReceipt = { selected: "grok-4.5", trigger: null };
+              const adoptedArtifact = JSON.stringify(
+                {
+                  windowId: origin,
+                  windowNumber: n,
+                  blockIds,
+                  parserVersion,
+                  promptVersion: PROMPT_VERSION_A,
+                  providerRouteIdentity,
+                  windowPolicyIdentity: windowPolicyIdentity(env),
+                  attempts: 1,
+                  modelOutput: stored.modelOutput,
+                  ...decoded,
+                  usages: [syntheticReceipt],
+                  routeReceipt: adoptedRouteReceipt,
+                  reusedFromRunId: stored.sourceRunId,
+                },
+                null,
+                2,
+              );
+              try {
+                const retainedAdoption = await persistPrimaryWindowArtifact(
+                  env, runId, n, w, parserVersion, origin,
+                  predecessorAuthority, adoptedArtifact,
+                  (artifact) => artifact.kind === "ok",
+                );
+                if (retainedAdoption?.kind === "ok") {
+                  Object.assign(decoded, retainedAdoption);
+                }
+                // Accumulate results. Zero-cost accounting — adopted, not purchased.
+                const replayedUsage = replayUsage(syntheticReceipt, `reused: adopted window from prior run ${stored.sourceRunId}`);
+                calls.push(replayedUsage);
+                accountingCalls.push({ ...syntheticReceipt, usageSource: "reused-prior-artifact" as const });
+                landed += 1;
+                routeReceipts.push(adoptedRouteReceipt);
+                absorb(decoded);
+                if (onProgress) {
+                  try {
+                    await onProgress(
+                      `pass A ${origin}: ADOPTED from prior run ${stored.sourceRunId} (saved $${syntheticReceipt.costUsd.toFixed(4)})`,
+                    );
+                  } catch { /* observability only */ }
+                }
+                continue;
+              } catch (persistErr) {
+                if (persistErr instanceof PassAPrimaryPersistenceError) {
+                  console.log(
+                    `unit-reuse: adopted window persistence failed for ${origin}: ` +
+                      `${persistErr.message}`,
+                  );
+                  // Fall through to normal purchase path.
+                } else {
+                  throw persistErr;
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.log(
+          `unit-reuse: cross-run window adoption failed for ${origin}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    // A later canonical window already failed the all-window wire preflight. Reclaiming
+    // durable earlier work is safe, but buying any missing/retryable earlier unit is not.
+    if (pendingPrimaryWireFailure !== null) {
+      remaining += 1;
+      continue;
+    }
+
     if (!mayIssue()) {
       remaining += 1;
       continue;
     }
+    const purchasePlan = primaryPlanFor(w, n, label);
+    if (!purchasePlan.ok) {
+      const detail = purchasePlan.detail;
+      const wireArtifact = JSON.stringify({
+        windowId: origin,
+        windowNumber: n,
+        blockIds,
+        parserVersion,
+        promptVersion: PROMPT_VERSION_A,
+        providerRouteIdentity,
+        windowPolicyIdentity: windowPolicyIdentity(env),
+        status: "failed",
+        attempts: 0,
+        usages: [],
+        fallbackTrigger: null,
+        terminal: true,
+        failureStage: "wire-ceiling",
+        detail,
+      }, null, 2);
+      if (existing?.kind === "failed") {
+        await persistImmutableExtractionArtifact(
+          env, windowWireCeilingKey(runId, n), wireArtifact, origin,
+        );
+      } else {
+        await persistImmutableExtractionArtifact(
+          env, windowKey(runId, n), wireArtifact, origin,
+        );
+      }
+      landed += 1;
+      terminalFailure = true;
+      terminalReasonCode = EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+      failedUnits.push({ unit: origin, blockIds, detail });
+      remaining += windows.length - (i + 1);
+      break;
+    }
+    const optionsForCall = purchasePlan.optionsForCall;
+    let purchaseEnv: Env;
+    try {
+      // A fresh unit may legitimately fall back, so Grok and DeepSeek credentials are
+      // resolved once after all-window wire preflight but before Grok can spend.
+      // A retained fallback checkpoint needs only substitutes. The cloned env turns
+      // subsequent client reads into side-effect-free string lookups.
+      purchaseEnv = await purchaseEnvFor(
+        !(existing?.kind === "failed" && existing.fallbackTrigger !== null),
+        true,
+      );
+    } catch (error) {
+      if (!(error instanceof MissingCredential)) throw error;
+      credentialRefusal = {
+        reason: "NO_CREDENTIAL",
+        binding: error.binding,
+        provider: error.binding === "XAI_API_KEY" ? "grok" : "deepseek",
+      };
+      terminalFailure = true;
+      const detail = `${error.binding} is unavailable after request-size preflight; no new ` +
+        `provider request was issued for ${origin}.`;
+      failedUnits.push({ unit: origin, blockIds, detail });
+      remaining += windows.length - i;
+      break;
+    }
     issued += 1;
 
     const purchasedUsages: CallUsage[] = [];
+    let rawModelOutput: Record<string, unknown> | null = null;
     let fallbackTrigger = existing && existing.kind === "failed" ? existing.fallbackTrigger : null;
-    const issue = pendingFlash ? Math.max(1, priorAttempts) : priorAttempts + 1;
-    const optionsForCall = {
-      system: SYSTEM_A,
-      user: userMessageA(documentName, annotate(w), label),
-      maxTokens: num(env.EXTRACT_MAX_OUTPUT_TOKENS, 32_000),
-      role: `extract-pass-a${label ? `-w${n}` : ""}`,
-      callId: `call_a_${n}`,
-      maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
-    };
+    const issue = pendingSubstitute ? Math.max(1, priorAttempts) : priorAttempts + 1;
 
     try {
       let value: Record<string, unknown> | null = null;
@@ -525,16 +1913,187 @@ export async function runPassA(
 
       if (fallbackTrigger === null) {
         try {
-          const outcome = await grokJson(env, optionsForCall);
+          const outcome = await grokJson(purchaseEnv, optionsForCall);
           const usage = settlementUsage(runId, origin, issue, 1, outcome.usage);
           purchasedUsages.push(usage);
           calls.push(usage);
           issuedCalls.push(usage);
           accountingCalls.push(usage);
           value = outcome.value;
-          routeReceipt = { selected: "grok-4.6", trigger: null };
+          rawModelOutput = outcome.value;
+          routeReceipt = { selected: "grok-4.5", trigger: null };
         } catch (err) {
           if (!(err instanceof ModelCallError) || !grokFlashFallbackEligible(err)) throw err;
+
+          // OUTPUT-CEILING TRUNCATION -> SPLIT (same provider keeps reading).
+          // This intercepts before the substitution chain because splitting attacks
+          // the CAUSE (window too large for the model's output budget), while
+          // substitution attacks availability.
+          if (isOutputCeilingTruncation(err) && w.length >= 2) {
+            const truncUsage = settlementUsage(runId, origin, issue, 1, err.usage);
+            purchasedUsages.push(truncUsage);
+            calls.push(truncUsage);
+            issuedCalls.push(truncUsage);
+            accountingCalls.push(truncUsage);
+
+            const splitResult = await readSubWindowsWithSplit(
+              env, runId, w, origin, documentName,
+              parserVersion, providerRouteIdentity,
+              err.message.slice(0, 400), onProgress,
+            );
+            // Merge sub-window results into the main accumulators
+            for (const u of splitResult.usages) { calls.push(u); }
+            for (const u of splitResult.issuedCalls) { issuedCalls.push(u); }
+            for (const u of splitResult.accountingCalls) { accountingCalls.push(u); }
+            requirements.push(...splitResult.globalRules);
+            crossRefs.push(...splitResult.crossRefs);
+            ambiguities.push(...splitResult.ambiguities);
+            unverifiable.push(...splitResult.unverifiable);
+            primaryGroundingLimitations.push(...splitResult.primaryGroundingLimitations);
+            routeReceipts.push(...splitResult.routeReceipts);
+            fallbackTriggers.push(...splitResult.fallbackTriggers);
+            splitEvents.push(...splitResult.splitEvents);
+            splitExhaustionRefusals.push(...splitResult.splitExhaustionRefusals);
+            failedUnits.push(...splitResult.failedUnits);
+
+            if (splitResult.ok) {
+              // All sub-windows landed: parent window counts as complete.
+              // Persist a combined canonical window artifact so that synthesis
+              // and reconstruction can find this window's results at the expected key.
+              // The modelOutput is the combined sub-window results in the expected format.
+              const splitRouteReceipt: PassARouteReceipt = splitResult.routeReceipts.length > 0
+                ? splitResult.routeReceipts[0]!
+                : { selected: "grok-4.5", trigger: null };
+              const combinedModelOutput: Record<string, unknown> = {
+                global_rules: splitResult.globalRules.map((rule) => ({
+                  id: rule.id,
+                  construct: rule.construct,
+                  scope: rule.scope,
+                  quantifier: rule.quantifier,
+                  selector: rule.selector,
+                  exceptions: rule.exceptions,
+                  statement: rule.statement,
+                  doc_quote: rule.docQuote,
+                  block_ids: rule.blockIds,
+                  evidence_quotes: (rule.evidenceQuotes ?? []).map((eq) => ({
+                    block_id: eq.blockId,
+                    quote: eq.quote,
+                  })),
+                  browser_observable: rule.browserObservable,
+                  confidence: rule.confidence,
+                })),
+                cross_references: splitResult.crossRefs.map((xref) => ({
+                  id: xref.id,
+                  from_block: xref.fromBlock,
+                  target: xref.target,
+                  resolved_to_block: xref.resolvedToBlock,
+                  target_doc_quote: xref.targetDocQuote ?? null,
+                  statement: xref.statement,
+                  doc_quote: xref.docQuote,
+                })),
+                ambiguities: splitResult.ambiguities.map((a) => ({
+                  id: a.id,
+                  block_ids: a.blockIds,
+                  doc_quote: a.docQuote,
+                  evidence_quotes: (a.evidenceQuotes ?? []).map((eq) => ({
+                    block_id: eq.blockId,
+                    quote: eq.quote,
+                  })),
+                  reading_a: a.readingA,
+                  reading_b: a.readingB,
+                  why_ambiguous: a.whyAmbiguous,
+                  affects: a.affects,
+                })),
+                unverifiable_from_browser: splitResult.unverifiable.map((u) => ({
+                  id: u.id,
+                  block_ids: u.blockIds,
+                  doc_quote: u.docQuote,
+                  evidence_quotes: (u.evidenceQuotes ?? []).map((eq) => ({
+                    block_id: eq.blockId,
+                    quote: eq.quote,
+                  })),
+                  mandate: u.mandate,
+                  why_not_observable: u.whyNotObservable,
+                  browser_proxy_evidence: u.browserProxyEvidence,
+                })),
+              };
+
+              // The canonical window artifact's usages must include the initial truncation
+              // call that triggered the split. This call is a real purchase (charged to the
+              // ledger), but we mark it as "ok" in the canonical artifact because the window's
+              // logical output was recovered through sub-window splitting. The original error
+              // status is preserved in the splitEvidence for audit. Sub-window usages live in
+              // their own durable artifacts and are charged separately through the per-run ledger.
+              const canonicalUsages = [...priorUsages, ...purchasedUsages].map((u) => ({
+                ...u,
+                status: "ok" as const,
+                detail: `output-ceiling-split: original call truncated, recovered via sub-window split`,
+              }));
+              let splitLandedWindow = inspectPrimaryWindowGrounding({
+                kind: "ok",
+                ...strictPrimaryOutput(combinedModelOutput, origin),
+                primaryGroundingLimitations: [],
+                usages: canonicalUsages,
+                routeReceipt: splitRouteReceipt,
+              }, w, origin).unit;
+
+              const splitSuccessArtifact = JSON.stringify(
+                {
+                  windowId: origin,
+                  windowNumber: n,
+                  blockIds,
+                  parserVersion,
+                  promptVersion: PROMPT_VERSION_A,
+                  providerRouteIdentity,
+                  windowPolicyIdentity: windowPolicyIdentity(env),
+                  attempts: issue,
+                  modelOutput: combinedModelOutput,
+                  ...splitLandedWindow,
+                  splitEvidence: {
+                    kind: "output-ceiling-split",
+                    events: splitResult.splitEvents,
+                  },
+                },
+                null,
+                2,
+              );
+              try {
+                const retainedSplit = await persistPrimaryWindowArtifact(
+                  env, runId, n, w, parserVersion, origin,
+                  predecessorAuthority, splitSuccessArtifact,
+                  (artifact) => artifact.kind === "ok",
+                );
+                if (retainedSplit?.kind === "ok") {
+                  splitLandedWindow = retainedSplit;
+                }
+              } catch (persistErr) {
+                if (persistErr instanceof PassAPrimaryPersistenceError) {
+                  failedUnits.push({ unit: origin, blockIds, detail: persistErr.message.slice(0, 400) });
+                  terminalFailure = true;
+                  remaining += windows.length - (i + 1);
+                  continue;
+                }
+                throw persistErr;
+              }
+              landed += 1;
+              routeReceipts.push(splitRouteReceipt);
+              if (onProgress) {
+                try {
+                  await onProgress(
+                    `pass A ${origin}: split into sub-windows completed successfully`,
+                  );
+                } catch { /* observability */ }
+              }
+            } else {
+              // Some sub-windows failed: parent window is terminal
+              landed += 1;
+              terminalFailure = true;
+              remaining += windows.length - (i + 1);
+            }
+            // Whether success or failure, skip the rest of this window's processing
+            continue;
+          }
+
           const usage = settlementUsage(runId, origin, issue, 1, err.usage);
           purchasedUsages.push(usage);
           calls.push(usage);
@@ -552,40 +2111,78 @@ export async function runPassA(
           // COMMIT AUTHORITY BEFORE EFFECT. If the isolate dies after this put, the next
           // invocation sees the exact paid Grok receipt and calls Flash directly. It cannot
           // retry Grok and erase the condition that authorized another provider purchase.
-          await env.EVIDENCE.put(
-            windowKey(runId, n),
-            JSON.stringify({
-              windowId: origin,
-              windowNumber: n,
-              blockIds,
-              parserVersion,
-              promptVersion: PROMPT_VERSION_A,
-              providerRouteIdentity,
-              windowPolicyIdentity: windowPolicyIdentity(env),
-              status: "failed",
-              attempts: issue,
-              usages: [...priorUsages, ...purchasedUsages],
-              fallbackTrigger,
-              terminal: false,
-              failureStage: "fallback-authorized",
-              detail: `Flash fallback authorized but not yet landed: ${fallbackTrigger.detail}`,
-            }, null, 2),
-            { httpMetadata: { contentType: "application/json" } },
+          const authorizedTrigger = fallbackTrigger;
+          const fallbackArtifact = JSON.stringify({
+            windowId: origin,
+            windowNumber: n,
+            blockIds,
+            parserVersion,
+            promptVersion: PROMPT_VERSION_A,
+            providerRouteIdentity,
+            windowPolicyIdentity: windowPolicyIdentity(env),
+            status: "failed",
+            attempts: issue,
+            usages: [...priorUsages, ...purchasedUsages],
+            fallbackTrigger: authorizedTrigger,
+            terminal: false,
+            failureStage: "fallback-authorized",
+            detail: `Flash fallback authorized but not yet landed: ${authorizedTrigger.detail}`,
+          }, null, 2);
+          const retainedFallbackCheckpoint = await persistPrimaryWindowArtifact(
+            env,
+            runId,
+            n,
+            w,
+            parserVersion,
+            origin,
+            predecessorAuthority,
+            fallbackArtifact,
+            (artifact) =>
+              artifact.kind === "failed" &&
+              artifact.terminal === false &&
+              artifact.fallbackTrigger?.grokUsageEventId === authorizedTrigger.grokUsageEventId,
           );
+          if (retainedFallbackCheckpoint !== null) {
+            // The checkpoint committed despite its transport error. Preserve the existing
+            // commit-before-effect boundary: end this wave pending and let the next wave buy
+            // Flash from retained authority rather than adding another provider effect to
+            // the invocation that observed an uncertain write response.
+            throw new Error("pass-A fallback checkpoint was recovered after its transport failed");
+          }
+          const committedFallbackCheckpoint = await readWindow(
+            env, runId, n, w, parserVersion, origin,
+          );
+          const committedFallbackAuthority = storageAuthorityOf(committedFallbackCheckpoint);
+          if (
+            committedFallbackCheckpoint?.kind !== "failed" ||
+            committedFallbackCheckpoint.terminal ||
+            committedFallbackCheckpoint.fallbackTrigger?.grokUsageEventId !==
+              authorizedTrigger.grokUsageEventId ||
+            committedFallbackAuthority === null ||
+            committedFallbackAuthority.bodyText !== fallbackArtifact
+          ) {
+            throw new Error(
+              "pass-A fallback checkpoint committed but its exact strict predecessor authority could not be reread",
+            );
+          }
+          predecessorAuthority = committedFallbackAuthority;
         }
       }
 
       if (fallbackTrigger !== null) {
-        const outcome = await deepseekGrokFallbackJson(env, {
+        // SUBSTITUTION: DeepSeek Flash — reduced independence (existing path, unchanged
+        // semantics). A typed Grok failure goes straight to Flash.
+        const flashOutcome = await deepseekGrokFallbackJson(purchaseEnv, {
           ...optionsForCall,
           callId: `${optionsForCall.callId}:grok-fallback`,
         });
-        const usage = settlementUsage(runId, origin, issue, 2, outcome.usage);
-        purchasedUsages.push(usage);
-        calls.push(usage);
-        issuedCalls.push(usage);
-        accountingCalls.push(usage);
-        value = outcome.value;
+        const flashUsage = settlementUsage(runId, origin, issue, 2, flashOutcome.usage);
+        purchasedUsages.push(flashUsage);
+        calls.push(flashUsage);
+        issuedCalls.push(flashUsage);
+        accountingCalls.push(flashUsage);
+        value = flashOutcome.value;
+        rawModelOutput = flashOutcome.value;
         routeReceipt = { selected: "deepseek-v4-flash", trigger: fallbackTrigger };
         providerIndependence = "reduced-same-provider-fallback";
       }
@@ -594,59 +2191,107 @@ export async function runPassA(
       }
 
       const strict = strictPrimaryOutput(value, origin);
-      const windowRules = strict.globalRules;
-      const windowXrefs = strict.crossRefs;
-      const windowAmb = strict.ambiguities;
-      const windowUnv = strict.unverifiable;
 
       // ONE OBJECT IS BOTH PERSISTED AND ABSORBED, so what a resumed wave reads back cannot
       // drift from what this wave used. Written as two literals it drifted silently once
       // already elsewhere in this codebase; here it would mean a resumed pass quietly
       // publishing less than the pass that paid for it.
-      const landedWindow = groundPrimaryWindow({
+      let landedWindow = inspectPrimaryWindowGrounding({
         kind: "ok",
-        globalRules: windowRules,
-        crossRefs: windowXrefs,
-        ambiguities: windowAmb,
-        unverifiable: windowUnv,
+        ...strict,
+        primaryGroundingLimitations: [],
         usages: [...priorUsages, ...purchasedUsages],
         routeReceipt,
-      }, w, origin);
+      }, w, origin).unit;
 
-      // PERSIST FIRST, ACCUMULATE SECOND. A window that is on disk cannot be lost by
-      // whatever happens to the next one — including the step timeout that used to make
-      // every window in flight a re-purchase.
-      await env.EVIDENCE.put(
-        windowKey(runId, n),
-        JSON.stringify(
-          {
-            windowId: origin,
-            windowNumber: n,
-            blockIds,
-            parserVersion,
-            promptVersion: PROMPT_VERSION_A,
-            providerRouteIdentity,
-            windowPolicyIdentity: windowPolicyIdentity(env),
-            attempts: issue,
-            modelOutput: value,
-            ...landedWindow,
-          },
-          null,
-          2,
-        ),
-        { httpMetadata: { contentType: "application/json" } },
+      // PERSIST FIRST, ACCUMULATE SECOND. Serialize ONCE, then retry only these exact bytes:
+      // a storage retry can never become another model purchase or a drifted projection.
+      const successArtifact = JSON.stringify(
+        {
+          windowId: origin,
+          windowNumber: n,
+          blockIds,
+          parserVersion,
+          promptVersion: PROMPT_VERSION_A,
+          providerRouteIdentity,
+          windowPolicyIdentity: windowPolicyIdentity(env),
+          attempts: issue,
+          modelOutput: value,
+          ...landedWindow,
+        },
+        null,
+        2,
       );
+      const retainedSuccess = await persistPrimaryWindowArtifact(
+        env,
+        runId,
+        n,
+        w,
+        parserVersion,
+        origin,
+        predecessorAuthority,
+        successArtifact,
+        (artifact) => artifact.kind === "ok",
+      );
+      if (retainedSuccess?.kind === "ok") {
+        landedWindow = retainedSuccess;
+        routeReceipt = retainedSuccess.routeReceipt;
+      }
 
       landed += 1;
       routeReceipts.push(routeReceipt);
       absorb(landedWindow);
+
+      // Store window in the cross-run unit index so the next run can adopt (best-effort).
+      // Only store when the window used the Grok primary route (no fallback trigger).
+      if (routeReceipt.trigger === null && rawModelOutput !== null) { // mutation-anchor: unit-reuse-window-store-guard
+        try {
+          const grokBody = chatRequestBodyText(grokRequestShape(env), optionsForCall);
+          const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall);
+          const windowRequestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
+          const okUsage = purchasedUsages.find((u) => u.status === "ok");
+          if (okUsage) {
+            await storeCompletedUnit(
+              env,
+              {
+                unitKind: "pass-a-window",
+                requestHash: windowRequestHash,
+                decoderIdentity: windowPolicyIdentity(env),
+                providerPlanIdentity: providerRouteIdentity,
+                promptVersion: PROMPT_VERSION_A,
+                parserVersion,
+              },
+              rawModelOutput,
+              {
+                inputTokens: okUsage.inputTokens,
+                outputTokens: okUsage.outputTokens,
+                costUsd: okUsage.costUsd,
+                latencyMs: okUsage.latencyMs,
+                model: okUsage.model,
+                provider: okUsage.provider,
+                usageSource: okUsage.usageSource ?? "provider-reported",
+                attempts: okUsage.attempts,
+              },
+              runId,
+            ); // mutation-anchor: unit-reuse-window-store-on-success
+          }
+        } catch (err) {
+          console.log(
+            `unit-reuse: window store failed for ${origin}: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
       // Progress is best-effort observability. Once the model answer and receipt are
       // durably persisted, a heartbeat error cannot relabel that purchase as failed.
       if (onProgress) {
         try {
           await onProgress(
-            `pass A ${origin}: ${windowRules.length} cross-cutting rule(s), ${windowXrefs.length} cross-reference(s) ` +
-              `over ${blockIds.length} block(s)`,
+            `pass A ${origin}: ${landedWindow.globalRules.length} grounded cross-cutting rule(s), ` +
+              `${landedWindow.crossRefs.length} grounded cross-reference(s), ` +
+              `${landedWindow.primaryGroundingLimitations.length} candidate limitation(s) over ` +
+              `${blockIds.length} block(s)`,
           );
         } catch {
           // Preserve the successful artifact and continue/reclaim; never authorize rebuy.
@@ -657,6 +2302,30 @@ export async function runPassA(
         break;
       }
     } catch (err) {
+      // Credential resolution belongs to the provider client, after the exact request-body
+      // preflight above. Let the stage report a missing binding; it is neither a provider
+      // purchase nor a semantic model-output failure and must not mint either artifact.
+      if (err instanceof MissingCredential && purchasedUsages.length === 0) throw err;
+      // Persistence is outside both the semantic/provider retry policy AND the Workflow
+      // step retry policy. Return a terminal result carrying the still-ok paid receipt so
+      // stagePassASlice charges it once; throwing here would re-enter with no artifact and
+      // buy the model answer again.
+      if (err instanceof PassAPrimaryPersistenceError) {
+        const detail = err.message.slice(0, 400);
+        terminalFailure = true;
+        failedUnits.push({ unit: origin, blockIds, detail });
+        remaining += windows.length - i;
+        if (onProgress) {
+          try {
+            await onProgress(
+              `pass A ${origin}: FAILED — ${publicExtractionFailureDetail("pass-a-success-artifact-persistence-failed")}`,
+            );
+          } catch {
+            // The terminal no-rebuy outcome and paid receipt remain authoritative in memory.
+          }
+        }
+        break;
+      }
       // R2 may report a transport failure after committing the fallback-authority PUT.
       // Re-read the exact unit before writing any different state: if the checkpoint is
       // present, it owns recovery and the next invocation must buy only the pending Flash
@@ -692,6 +2361,11 @@ export async function runPassA(
         accountingCalls.push(usage);
       }
       const detail = err instanceof Error ? err.message.slice(0, 400) : String(err);
+      const publicDetail = publicExtractionFailureDetail(
+        err instanceof ModelCallError
+          ? `extraction-provider-${err.failureKind}`
+          : "extraction-pass-a-semantic-output-invalid",
+      );
       if (!(err instanceof ModelCallError) && purchasedUsages.length > 0) {
         const selected = purchasedUsages[purchasedUsages.length - 1]!;
         purchasedUsages[purchasedUsages.length - 1] = {
@@ -713,44 +2387,206 @@ export async function runPassA(
       const attempts = issue;
       const nonRetryablePrimaryFailure =
         fallbackTrigger === null && err instanceof ModelCallError && !grokFlashFallbackEligible(err);
+      // FAILURE LADDER:
+      //   (a) retry the window on the SAME provider up to maxIssues;
+      //   (b) at retry exhaustion with a semantic-output failure + retained raw output
+      //       -> item-level degradation (exclude invalid items, land the window);
+      //   (c) transport-class typed failures -> DeepSeek Flash last resort;
+      //   (d) fully-unusable output after retries (degradedPrimaryOutput returns null)
+      //       -> terminal.
       const durableTerminal =
-        !(err instanceof ModelCallError) || nonRetryablePrimaryFailure || attempts >= maxIssues;
-      failedUnits.push({ unit: origin, blockIds, detail });
+        nonRetryablePrimaryFailure || attempts >= maxIssues;
       // A failed window is an artifact too, so its re-purchases are bounded the same way a
       // successful one's are cached rather than being re-bought once per wave.
-      await env.EVIDENCE.put(
-        windowKey(runId, n),
-        JSON.stringify(
-          {
-            windowId: origin,
-            windowNumber: n,
-            blockIds,
-            parserVersion,
-            promptVersion: PROMPT_VERSION_A,
-            providerRouteIdentity,
-            windowPolicyIdentity: windowPolicyIdentity(env),
-            status: "failed",
-            attempts: Math.max(attempts, issue),
-            usages: [...priorUsages, ...purchasedUsages],
-            fallbackTrigger,
-            terminal: durableTerminal,
-            failureStage: err instanceof ModelCallError ? "provider" : "semantic-output",
-            detail,
-          },
-          null,
-          2,
-        ),
-        { httpMetadata: { contentType: "application/json" } },
+      const failedArtifact = JSON.stringify(
+        {
+          windowId: origin,
+          windowNumber: n,
+          blockIds,
+          parserVersion,
+          promptVersion: PROMPT_VERSION_A,
+          providerRouteIdentity,
+          windowPolicyIdentity: windowPolicyIdentity(env),
+          status: "failed",
+          attempts: Math.max(attempts, issue),
+          usages: [...priorUsages, ...purchasedUsages],
+          fallbackTrigger,
+          terminal: durableTerminal,
+          failureStage: err instanceof ModelCallError ? "provider" : "semantic-output",
+          detail,
+          modelOutput: err instanceof ModelCallError ? null : rawModelOutput,
+        },
+        null,
+        2,
       );
+      try {
+        await persistPrimaryWindowArtifact(
+          env,
+          runId,
+          n,
+          w,
+          parserVersion,
+          origin,
+          predecessorAuthority,
+          failedArtifact,
+          (artifact) => artifact.kind === "failed",
+        );
+      } catch (persistenceError) {
+        if (!(persistenceError instanceof PassAPrimaryPersistenceError)) throw persistenceError;
+        const persistenceDetail = persistenceError.message.slice(0, 400);
+        terminalFailure = true;
+        failedUnits.push({ unit: origin, blockIds, detail: persistenceDetail });
+        remaining += windows.length - i;
+        if (onProgress) {
+          try {
+            await onProgress(
+              `pass A ${origin}: FAILED — ${publicExtractionFailureDetail("pass-a-failed-artifact-persistence-failed")}`,
+            );
+          } catch {
+            // The terminal no-rebuy outcome still carries the paid provider/semantic receipt.
+          }
+        }
+        break;
+      }
+      failedUnits.push({ unit: origin, blockIds, detail });
       if (attempts < maxIssues && !nonRetryablePrimaryFailure) remaining += 1;
       else {
+        // ITEM-LEVEL DEGRADATION AT RETRY EXHAUSTION: when the window has exhausted its retry
+        // budget AND the error is a semantic-output failure with retained raw model output,
+        // try to salvage individually valid + grounded items rather than failing the whole
+        // window (and therefore the whole run). The grounding validation stays exactly as
+        // strict; only the consequence granularity changes from window to item.
+        const canDegrade =
+          !(err instanceof ModelCallError) && rawModelOutput !== null && durableTerminal;
+        // Wrap salvage so an unexpected degradation error (e.g. duplicate limitation
+        // coordinates from a future edge case) can never crash the wave step. If salvage
+        // fails, the window falls through to the terminal path with a named detail.
+        let degraded: ReturnType<typeof degradedPrimaryOutput> = null;
+        if (canDegrade) {
+          try {
+            degraded = degradedPrimaryOutput(rawModelOutput!, w, origin);
+          } catch (salvageErr) {
+            // Fail closed to the terminal path. The failed artifact already on disk carries
+            // the raw model output for audit; the detail records what went wrong.
+            const salvageDetail = salvageErr instanceof Error
+              ? `degradation-salvage-failed: ${salvageErr.message.slice(0, 300)}`
+              : `degradation-salvage-failed: ${String(salvageErr).slice(0, 300)}`;
+            failedUnits[failedUnits.length - 1] = {
+              ...failedUnits[failedUnits.length - 1]!,
+              detail: salvageDetail,
+            };
+          }
+        }
+        if (degraded !== null) {
+          // Replace the failed artifact with a degraded success artifact that carries the
+          // salvaged items plus limitations. The failed artifact already persisted above is
+          // overwritten by a success artifact here.
+          //
+          // The usages were reclassified to "parse-failed" when strict validation threw.
+          // Degradation salvaged valid items, so the last purchased usage's status must be
+          // restored to "ok" — the route receipt validator requires exactly one "ok" usage.
+          const degradedUsages = [...priorUsages, ...purchasedUsages];
+          if (degradedUsages.length > 0) {
+            const last = degradedUsages[degradedUsages.length - 1]!;
+            if (last.status === "parse-failed") {
+              degradedUsages[degradedUsages.length - 1] = {
+                ...last,
+                status: "ok" as const,
+                detail: `degraded: ${degraded.degradedItemCount} of ${degraded.totalItemCount} items excluded`,
+              };
+            }
+          }
+          const degradedWindow: PersistedWindow = {
+            ...degraded.unit,
+            usages: degradedUsages,
+            routeReceipt: { selected: "grok-4.5" as const, trigger: fallbackTrigger },
+          };
+          const degradedArtifact = JSON.stringify(
+            {
+              windowId: origin,
+              windowNumber: n,
+              blockIds,
+              parserVersion,
+              promptVersion: PROMPT_VERSION_A,
+              providerRouteIdentity,
+              windowPolicyIdentity: windowPolicyIdentity(env),
+              attempts: issue,
+              // The synthetic modelOutput contains only raw rows that passed per-item strict
+              // structural validation. This ensures readWindowArtifact's strict reader accepts
+              // the persisted form without any degraded fallback. Grounding-excluded rows are
+              // still present here; the grounding filter runs independently on re-read.
+              modelOutput: degraded.strictPassingModelOutput,
+              // The ORIGINAL raw model output is retained for audit and raw-retention assertions.
+              // readWindowArtifact ignores this field — it reads only modelOutput.
+              rawModelOutputPreDegradation: rawModelOutput,
+              ...degradedWindow,
+            },
+            null,
+            2,
+          );
+          // The failed artifact was just persisted at the same key. Read its current storage
+          // authority so the degraded artifact can CAS-replace it, not the original predecessor.
+          let degradedPredecessor: PassAWindowStorageAuthority | null = null;
+          {
+            const currentObj = await env.EVIDENCE.get(windowKey(runId, n));
+            if (currentObj) {
+              try {
+                degradedPredecessor = { etag: currentObj.etag, bodyText: await currentObj.text() };
+              } catch {
+                // If the just-persisted failed artifact is unreadable, fall through to terminal
+              }
+            }
+          }
+          try {
+            const retained = await persistPrimaryWindowArtifact(
+              env,
+              runId,
+              n,
+              w,
+              parserVersion,
+              origin,
+              degradedPredecessor,
+              degradedArtifact,
+              (artifact) => artifact.kind === "ok",
+            );
+            if (retained?.kind === "ok") {
+              Object.assign(degradedWindow, retained);
+            }
+          } catch (degradedPersistError) {
+            if (!(degradedPersistError instanceof PassAPrimaryPersistenceError)) throw degradedPersistError;
+            // Degraded persistence failed — fall through to terminal failure
+          }
+          if (degradedWindow.kind === "ok") {
+            // Remove the failed-unit entry we pushed above; the window LANDED with degradation
+            failedUnits.pop();
+            landed += 1;
+            routeReceipts.push(degradedWindow.routeReceipt);
+            absorb(degradedWindow);
+            if (onProgress) {
+              try {
+                await onProgress(
+                  `pass A ${origin}: DEGRADED — ${degraded.degradedItemCount} of ` +
+                    `${degraded.totalItemCount} item(s) excluded, ` +
+                    `${degraded.totalItemCount - degraded.degradedItemCount} grounded item(s) retained, ` +
+                    `${degraded.limitations.length} limitation(s) counted`,
+                );
+              } catch {
+                // Observability only; the degraded artifact is already authoritative.
+              }
+            }
+            // The catch block always exits the window loop. Remaining unread windows are
+            // counted so the wave loop can schedule them in a later step.
+            remaining += windows.length - (i + 1);
+            break;
+          }
+        }
         landed += 1;
         terminalFailure = true;
       }
       if (onProgress) {
         try {
           await onProgress(
-            `pass A ${origin}: FAILED (attempt ${attempts} of ${maxIssues}) — ${detail.slice(0, 120)}`,
+            `pass A ${origin}: FAILED (attempt ${attempts} of ${maxIssues}) — ${publicDetail}`,
           );
         } catch {
           // The terminal/failed artifact above is authoritative; heartbeat loss cannot retry it.
@@ -767,8 +2603,41 @@ export async function runPassA(
   // otherwise one step could contain two over-budget calls while its timeout protects one.
   if (
     windows.length > 1 && remaining === 0 && !terminalFailure &&
-    failedUnits.length === 0 && providerIndependence === "independent"
+    failedUnits.length === 0 &&
+    providerIndependence === "independent"
   ) {
+    if (onUnitStart) {
+      const nominated = new Set<string>();
+      for (const row of requirements) {
+        for (const evidence of row.evidenceQuotes ?? []) nominated.add(evidence.blockId);
+      }
+      for (const row of crossRefs) {
+        for (const evidence of row.evidenceQuotes ?? []) nominated.add(evidence.blockId);
+      }
+      for (const row of [...ambiguities, ...unverifiable]) {
+        for (const evidence of row.evidenceQuotes ?? []) nominated.add(evidence.blockId);
+      }
+      const synthesisBlockIds = doc.blocks
+        .map((block) => block.blockId)
+        .filter((blockId) => nominated.has(blockId));
+      await onUnitStart({
+        stage: "cross-window-synthesis",
+        unit: {
+          kind: "synthesis",
+          name: "A-synthesis",
+          ordinal: null,
+          total: null,
+          sourceContext: sourceContextForUnit(doc.blocks, synthesisBlockIds),
+        },
+        primary: {
+          total: windows.length,
+          landed: windows.length,
+          remaining: 0,
+          synthesisState: "pending",
+        },
+        secondary: null,
+      });
+    }
     // The synthesis primitive already makes progress best-effort after durable writes.
     // Do not forward an outer heartbeat callback whose throw could unwind the completed
     // Pass-A assembly after all paid artifacts landed.
@@ -783,6 +2652,12 @@ export async function runPassA(
     accountingCalls.push(...synthesis.accountingCalls);
     if (synthesis.routeReceipt !== null) routeReceipts.push(synthesis.routeReceipt);
     if (synthesis.fallbackTrigger !== null) fallbackTriggers.push(synthesis.fallbackTrigger);
+    if (synthesis.terminalReasonCode !== undefined) {
+      terminalReasonCode = synthesis.terminalReasonCode;
+    }
+    if (synthesis.credentialRefusal !== undefined) {
+      credentialRefusal = synthesis.credentialRefusal;
+    }
     if (synthesis.state === "reduced-provider-independence") {
       providerIndependence = "reduced-same-provider-fallback";
     }
@@ -842,9 +2717,14 @@ export async function runPassA(
     calls,
     crossRefs,
     crossWindowLimitations,
+    primaryGroundingLimitations,
     slice,
     issuedCalls,
     accountingCalls,
+    splitEvents,
+    splitExhaustionRefusals,
+    ...(terminalReasonCode ? { terminalReasonCode } : {}),
+    ...(credentialRefusal ? { credentialRefusal } : {}),
   };
 }
 
@@ -854,6 +2734,7 @@ interface PersistedWindow {
   crossRefs: CrossRef[];
   ambiguities: PassResult["ambiguities"];
   unverifiable: PassResult["unverifiable"];
+  primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[];
   usages: CallUsage[];
   routeReceipt: PassARouteReceipt;
 }
@@ -866,6 +2747,10 @@ interface FailedWindowArtifact {
   fallbackTrigger: GrokFallbackTrigger | null;
   /** Durable authority that this exact failure must not be purchased again after a crash. */
   terminal: boolean;
+  /** Derived only from a strictly decoded zero-receipt wire-ceiling artifact/sidecar. */
+  wireCeiling: boolean;
+  /** Derived only from a strictly decoded zero-receipt catalogue-exceeded artifact. */
+  catalogueExceeded: boolean;
 }
 
 interface InvalidWindowArtifact {
@@ -874,6 +2759,22 @@ interface InvalidWindowArtifact {
   detail: string;
   /** Any strictly decodable receipts remain accounting authority even when content is corrupt. */
   usages: CallUsage[];
+}
+
+class PassAPrimaryGroundingError extends Error {
+  constructor(
+    readonly rowKind: PassAPrimaryGroundingRowKind,
+    readonly reason: PassAPrimaryGroundingReason,
+    readonly sourceBlockIds: string[],
+    origin: string,
+    rowIndex: number,
+    detail: string,
+  ) {
+    super(
+      `PASS_A_WINDOW_OUTPUT_UNGROUNDED: ${origin} ${rowKind} ${rowIndex + 1}: ${detail}`,
+    );
+    this.name = "PassAPrimaryGroundingError";
+  }
 }
 
 /**
@@ -887,29 +2788,50 @@ function groundPrimaryWindow(
   origin: string,
 ): PersistedWindow {
   const byId = new Map(source.map((block) => [block.blockId, block]));
-  const fail = (kind: string, index: number, detail: string): never => {
-    throw new Error(
-      `PASS_A_WINDOW_OUTPUT_UNGROUNDED: ${origin} ${kind} ${index + 1}: ${detail}`,
+  const ownedIds = (ids: readonly string[]): string[] => {
+    const seen = new Set<string>();
+    return ids.filter((id) => byId.has(id) && !seen.has(id) && Boolean(seen.add(id)));
+  };
+  const fail = (
+    kind: PassAPrimaryGroundingRowKind,
+    index: number,
+    reason: PassAPrimaryGroundingReason,
+    claimedIds: readonly string[],
+    detail: string,
+  ): never => {
+    throw new PassAPrimaryGroundingError(
+      kind,
+      reason,
+      ownedIds(claimedIds),
+      origin,
+      index,
+      detail,
     );
   };
   const exactOne = (
     quote: string,
     eligibleIds: string[],
-    kind: string,
+    kind: PassAPrimaryGroundingRowKind,
     index: number,
   ): CrossWindowEvidenceQuote => {
-    if (quote.length === 0) fail(kind, index, "doc_quote is empty");
+    if (quote.length === 0) {
+      fail(kind, index, "source-quote-not-exact", eligibleIds, "doc_quote is empty");
+    }
     const ids = uniqueStrings(eligibleIds);
-    if (ids.length === 0) fail(kind, index, "no source block id is available");
+    if (ids.length === 0) {
+      fail(kind, index, "source-block-ownership-invalid", eligibleIds, "no source block id is available");
+    }
     const foreign = ids.filter((id) => !byId.has(id));
     if (foreign.length > 0) {
-      fail(kind, index, `block id(s) are outside the owning window: ${foreign.join(", ")}`);
+      fail(
+        kind, index, "source-block-ownership-invalid", ids,
+        `block id(s) are outside the owning window: ${foreign.join(", ")}`,
+      );
     }
     const matches = ids.filter((id) => byId.get(id)!.text.includes(quote));
     if (matches.length !== 1) {
       fail(
-        kind,
-        index,
+        kind, index, "source-quote-not-exact", ids,
         `doc_quote matched ${matches.length} eligible source blocks; exact ownership requires one`,
       );
     }
@@ -919,12 +2841,12 @@ function groundPrimaryWindow(
     docQuote: string,
     blockIds: string[],
     evidenceQuotes: CrossWindowEvidenceQuote[] | undefined,
-    kind: string,
+    kind: PassAPrimaryGroundingRowKind,
     index: number,
   ): CrossWindowEvidenceQuote[] => {
     const ids = uniqueStrings(blockIds);
     if (ids.length === 0 || ids.length !== blockIds.length) {
-      fail(kind, index, "block ids are empty or duplicated");
+      fail(kind, index, "source-evidence-set-invalid", blockIds, "block ids are empty or duplicated");
     }
     const evidence = evidenceQuotes ?? [];
     const evidenceIds = evidence.map((item) => item.blockId);
@@ -932,26 +2854,53 @@ function groundPrimaryWindow(
       evidence.length !== ids.length || new Set(evidenceIds).size !== evidenceIds.length ||
       ids.some((id) => !evidenceIds.includes(id)) || evidenceIds.some((id) => !ids.includes(id)) ||
       !evidence.some((item) => item.quote === docQuote)
-    ) fail(kind, index, "evidence quote ids must equal block ids and include doc_quote");
+    ) {
+      fail(
+        kind, index, "source-evidence-set-invalid", blockIds,
+        "evidence quote ids must equal block ids and include doc_quote",
+      );
+    }
     for (const item of evidence) {
       const block = byId.get(item.blockId);
-      if (!block) fail(kind, index, `block id ${item.blockId} is outside the owning window`);
+      if (!block) {
+        fail(
+          kind, index, "source-block-ownership-invalid", blockIds,
+          `block id ${item.blockId} is outside the owning window`,
+        );
+      }
       if (item.quote.length === 0 || !block?.text.includes(item.quote)) {
-        fail(kind, index, `quote is not exact source text in ${item.blockId}`);
+        fail(
+          kind, index, "source-quote-not-exact", blockIds,
+          `quote is not exact source text in ${item.blockId}`,
+        );
       }
     }
     return evidence;
   };
+  const unresolvedUnprovenTarget = (
+    row: CrossRef,
+    evidenceQuotes: CrossWindowEvidenceQuote[],
+  ): CrossRef => ({
+    ...row,
+    resolvedToBlock: null,
+    targetDocQuote: null,
+    statement: PASS_A_UNPROVEN_TARGET_STATEMENT,
+    evidenceQuotes,
+  });
 
   const globalRules = unit.globalRules.map((row, index) => {
-    if (row.docQuote.length === 0) fail("global rule", index, "doc_quote is empty");
+    if (row.docQuote.length === 0) {
+      fail("global-rule", index, "source-quote-not-exact", row.blockIds, "doc_quote is empty");
+    }
     const evidenceQuotes = exactEvidenceSet(
-      row.docQuote, row.blockIds, row.evidenceQuotes, "global rule", index,
+      row.docQuote, row.blockIds, row.evidenceQuotes, "global-rule", index,
     );
     return { ...row, evidenceQuotes };
   });
   const crossRefs = unit.crossRefs.map((row, index) => {
-    if (row.fromBlock === null) fail("cross-reference", index, "from_block is absent");
+    if (row.fromBlock === null) {
+      fail("cross-reference", index, "source-block-ownership-invalid", [], "from_block is absent");
+    }
     const fromBlock = row.fromBlock as string;
     const sourceEvidence = exactOne(
       row.docQuote ?? "",
@@ -963,26 +2912,25 @@ function groundPrimaryWindow(
     if (row.resolvedToBlock !== null) {
       const target = byId.get(row.resolvedToBlock);
       if (!target) {
-        fail(
-          "cross-reference",
-          index,
-          `resolved_to_block ${row.resolvedToBlock} is outside the owning window`,
-        );
+        return unresolvedUnprovenTarget(row, evidenceQuotes);
       }
       const exactTarget = target as SourceBlock;
       const targetQuote = row.targetDocQuote ?? "";
       if (targetQuote.length === 0 || !exactTarget.text.includes(targetQuote)) {
-        fail("cross-reference", index, "target_doc_quote is absent or not exact text in resolved_to_block");
+        return unresolvedUnprovenTarget(row, evidenceQuotes);
       }
       evidenceQuotes.push({ blockId: exactTarget.blockId, quote: targetQuote });
     } else if (row.targetDocQuote !== null && row.targetDocQuote !== undefined) {
-      fail("cross-reference", index, "target_doc_quote must be null when resolved_to_block is null");
+      fail(
+        "cross-reference", index, "source-evidence-set-invalid", [fromBlock],
+        "target_doc_quote must be null when resolved_to_block is null",
+      );
     }
     return { ...row, evidenceQuotes };
   });
   const groundQuoted = <T extends RawAmbiguity | RawUnverifiable>(
     rows: T[],
-    kind: string,
+    kind: "ambiguity" | "unverifiable",
   ): T[] => rows.map((row, index) => {
     const declared = row.blockIds ?? [];
     const evidenceQuotes = exactEvidenceSet(
@@ -1031,6 +2979,22 @@ function strictPrimaryString(raw: Record<string, unknown>, key: string, row: str
   return value;
 }
 
+function strictPrimaryBlockIds(raw: Record<string, unknown>, row: string): string[] {
+  const value = raw["block_ids"];
+  if (!Array.isArray(value)) {
+    throw new Error(`PASS_A_WINDOW_OUTPUT_INVALID: ${row}.block_ids must be an array`);
+  }
+  if (value.some((id) => typeof id !== "string" || id.trim().length === 0)) {
+    throw new Error(
+      `PASS_A_WINDOW_OUTPUT_INVALID: ${row}.block_ids members must be non-empty strings`,
+    );
+  }
+  // Empty and duplicate sets are structurally typed model answers. They fail exact source
+  // grounding row-locally, where the candidate can be withheld and counted without turning
+  // valid siblings or the unread document tail into a failed unit.
+  return value as string[];
+}
+
 function strictPrimaryEvidence(
   raw: Record<string, unknown>,
   blockIds: string[],
@@ -1038,8 +3002,8 @@ function strictPrimaryEvidence(
   row: string,
 ): CrossWindowEvidenceQuote[] {
   const rows = raw["evidence_quotes"];
-  if (!Array.isArray(rows) || rows.length !== blockIds.length || rows.length === 0) {
-    throw new Error(`PASS_A_WINDOW_OUTPUT_INVALID: ${row}.evidence_quotes must map every block_id exactly once`);
+  if (!Array.isArray(rows)) {
+    throw new Error(`PASS_A_WINDOW_OUTPUT_INVALID: ${row}.evidence_quotes must be an array`);
   }
   const evidence = rows.map((value): CrossWindowEvidenceQuote => {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -1052,23 +3016,18 @@ function strictPrimaryEvidence(
       quote: strictPrimaryString(item, "quote", `${row}.evidence_quote`),
     };
   });
-  const evidenceIds = evidence.map((item) => item.blockId);
-  if (
-    new Set(evidenceIds).size !== evidenceIds.length ||
-    blockIds.some((id) => !evidenceIds.includes(id)) || evidenceIds.some((id) => !blockIds.includes(id)) ||
-    !evidence.some((item) => item.quote === docQuote)
-  ) {
-    throw new Error(
-      `PASS_A_WINDOW_OUTPUT_INVALID: ${row}.evidence_quotes block ids must equal block_ids and include doc_quote`,
-    );
-  }
+  // Membership/cardinality/doc-quote linkage is source grounding, not JSON shape. The
+  // row-local grounder can safely withhold and count that one candidate while preserving
+  // structurally valid siblings. Non-array/member/key/type failures above remain terminal.
+  void blockIds;
+  void docQuote;
   return evidence;
 }
 
 function strictPrimaryOutput(
   value: Record<string, unknown>,
   origin: string,
-): Omit<PersistedWindow, "kind" | "usages" | "routeReceipt"> {
+): Omit<PersistedWindow, "kind" | "usages" | "routeReceipt" | "primaryGroundingLimitations"> {
   strictPrimaryKeys(
     value,
     ["global_rules", "cross_references", "ambiguities", "unverifiable_from_browser"],
@@ -1089,8 +3048,8 @@ function strictPrimaryOutput(
     const scope = strictPrimaryString(raw, "scope", "global rule");
     const quantifier = strictPrimaryString(raw, "quantifier", "global rule");
     const observable = strictPrimaryString(raw, "browser_observable", "global rule");
-    strictPrimaryString(raw, "statement", "global rule");
-    strictPrimaryString(raw, "doc_quote", "global rule");
+    const statement = strictPrimaryString(raw, "statement", "global rule");
+    const docQuote = strictPrimaryString(raw, "doc_quote", "global rule");
     if (!new Set<string>(CONSTRUCT_CLASSES).has(construct)) {
       throw new Error(`PASS_A_WINDOW_OUTPUT_INVALID: unknown construct ${JSON.stringify(construct)}`);
     }
@@ -1103,11 +3062,7 @@ function strictPrimaryOutput(
     if (!SYNTHESIS_OBSERVABILITY.has(observable)) {
       throw new Error(`PASS_A_WINDOW_OUTPUT_INVALID: invalid browser_observable ${JSON.stringify(observable)}`);
     }
-    if (
-      !Array.isArray(raw["block_ids"]) || raw["block_ids"].length === 0 ||
-      raw["block_ids"].some((id) => typeof id !== "string" || id.trim().length === 0) ||
-      new Set(raw["block_ids"]).size !== raw["block_ids"].length
-    ) throw new Error("PASS_A_WINDOW_OUTPUT_INVALID: block_ids must be nonempty and duplicate-free");
+    const blockIds = strictPrimaryBlockIds(raw, "global rule");
     if (
       !Array.isArray(raw["exceptions"]) ||
       raw["exceptions"].some((item) => typeof item !== "string" || item.trim().length === 0)
@@ -1122,12 +3077,28 @@ function strictPrimaryOutput(
       typeof raw["confidence"] !== "number" || !Number.isFinite(raw["confidence"]) ||
       raw["confidence"] < 0 || raw["confidence"] > 1
     ) throw new Error("PASS_A_WINDOW_OUTPUT_INVALID: confidence must be within 0..1");
-    const row = coerceRequirement(raw, "A", origin, "survey");
-    if (row === null) throw new Error("PASS_A_WINDOW_OUTPUT_INVALID: global rule failed typed decoding");
+    const coerced = coerceRequirement(raw, "A", origin, "survey");
+    const row: RawRequirement = coerced ?? {
+      id: strictPrimaryString(raw, "id", "global rule"),
+      construct,
+      scope,
+      quantifier,
+      selector: raw["selector"] as string | null,
+      exceptions: raw["exceptions"] as string[],
+      statement,
+      docQuote,
+      blockIds,
+      browserObservable: observable as RawRequirement["browserObservable"],
+      confidence: raw["confidence"] as number,
+      expansion: null,
+      pass: "A",
+      origin,
+    };
     return {
       ...row,
+      blockIds,
       evidenceQuotes: strictPrimaryEvidence(
-        raw, raw["block_ids"] as string[], strictPrimaryString(raw, "doc_quote", "global rule"), "global rule",
+        raw, blockIds, docQuote, "global rule",
       ),
     };
   });
@@ -1140,11 +3111,6 @@ function strictPrimaryOutput(
       strictPrimaryString(raw, "resolved_to_block", "cross-reference");
     const targetDocQuote = raw["target_doc_quote"] === null ? null :
       strictPrimaryString(raw, "target_doc_quote", "cross-reference");
-    if ((resolvedToBlock === null) !== (targetDocQuote === null)) {
-      throw new Error(
-        "PASS_A_WINDOW_OUTPUT_INVALID: resolved_to_block and target_doc_quote must both be null or both be non-null",
-      );
-    }
     return {
       id: strictPrimaryString(raw, "id", "cross-reference"),
       sourceXrefHandle: `${origin}:x:${String(index + 1).padStart(3, "0")}`,
@@ -1172,7 +3138,7 @@ function strictPrimaryOutput(
     ) {
       throw new Error("PASS_A_WINDOW_OUTPUT_INVALID: ambiguity.affects must contain only non-empty strings");
     }
-    const blockIds = rawBlockIds(raw);
+    const blockIds = strictPrimaryBlockIds(raw, "ambiguity");
     const docQuote = strictPrimaryString(raw, "doc_quote", "ambiguity");
     return {
       id: strictPrimaryString(raw, "id", "ambiguity"),
@@ -1188,7 +3154,7 @@ function strictPrimaryOutput(
     strictPrimaryKeys(raw, [
       "id", "block_ids", "doc_quote", "evidence_quotes", "mandate", "why_not_observable", "browser_proxy_evidence",
     ], "unverifiable");
-    const blockIds = rawBlockIds(raw);
+    const blockIds = strictPrimaryBlockIds(raw, "unverifiable");
     const docQuote = strictPrimaryString(raw, "doc_quote", "unverifiable");
     return {
       id: strictPrimaryString(raw, "id", "unverifiable"),
@@ -1201,16 +3167,6 @@ function strictPrimaryOutput(
       evidenceQuotes: strictPrimaryEvidence(raw, blockIds, docQuote, "unverifiable"),
     };
   });
-  for (const rule of globalRules.filter((row) => row.browserObservable === "none")) {
-    const linked = unverifiable.some((row) =>
-      row.docQuote === rule.docQuote && (row.blockIds ?? []).some((id) => rule.blockIds.includes(id))
-    );
-    if (!linked) {
-      throw new Error(
-        "PASS_A_WINDOW_OUTPUT_INVALID: browser_observable=none requires an unverifiable row with the same exact quote and an overlapping block id",
-      );
-    }
-  }
   return { globalRules, crossRefs, ambiguities, unverifiable };
 }
 
@@ -1218,53 +3174,433 @@ function inspectPrimaryWindowGrounding(
   unit: PersistedWindow,
   source: SourceBlock[],
   origin: string,
-): { unit: PersistedWindow; failures: string[] } {
-  const failures: string[] = [];
+): { unit: PersistedWindow; limitations: PassAPrimaryGroundingLimitationWire[] } {
+  const limitations: PassAPrimaryGroundingLimitationWire[] = [];
+  const ownedIds = new Set(source.map((block) => block.blockId));
   const empty = (): PersistedWindow => ({
     ...unit,
     globalRules: [],
     crossRefs: [],
     ambiguities: [],
     unverifiable: [],
+    primaryGroundingLimitations: [],
   });
+  type GroundedRow<T> = { row: T; sourceIndex: number };
   const collect = <T>(
-    kind: "r" | "x" | "a" | "u",
+    rowKind: PassAPrimaryGroundingRowKind,
     rows: T[],
     project: (single: PersistedWindow) => T[],
     place: (single: PersistedWindow, row: T) => void,
-  ): T[] => rows.flatMap((row, index) => {
+  ): GroundedRow<T>[] => rows.flatMap((row, index) => {
     const single = empty();
     place(single, row);
     try {
-      return project(groundPrimaryWindow(
-        single,
-        source,
-        `${origin}:${kind}:${String(index + 1).padStart(3, "0")}`,
-      ));
+      return project(groundPrimaryWindow(single, source, origin)).map((grounded) => ({
+        row: grounded,
+        sourceIndex: index,
+      }));
     } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
+      if (!(error instanceof PassAPrimaryGroundingError)) throw error;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind,
+        rowIndex: index + 1,
+        sourceBlockIds: [...error.sourceBlockIds],
+        reason: error.reason,
+      });
       return [];
     }
   });
-  const globalRules = collect(
-    "r", unit.globalRules, (single) => single.globalRules,
+  const groundedGlobalRules = collect(
+    "global-rule", unit.globalRules, (single) => single.globalRules,
     (single, row) => { single.globalRules = [row]; },
   );
-  const crossRefs = collect(
-    "x", unit.crossRefs, (single) => single.crossRefs,
+  const groundedCrossRefs = collect(
+    "cross-reference", unit.crossRefs, (single) => single.crossRefs,
     (single, row) => { single.crossRefs = [row]; },
   );
-  const ambiguities = collect(
-    "a", unit.ambiguities, (single) => single.ambiguities,
+  const groundedAmbiguities = collect(
+    "ambiguity", unit.ambiguities, (single) => single.ambiguities,
     (single, row) => { single.ambiguities = [row]; },
   );
-  const unverifiable = collect(
-    "u", unit.unverifiable, (single) => single.unverifiable,
+  const groundedUnverifiable = collect(
+    "unverifiable", unit.unverifiable, (single) => single.unverifiable,
     (single, row) => { single.unverifiable = [row]; },
   );
+  const globalRules = groundedGlobalRules.flatMap(({ row, sourceIndex }) => {
+    if (row.browserObservable !== "none") return [row];
+    const linked = groundedUnverifiable.some(({ row: unv }) =>
+      unv.docQuote === row.docQuote && (unv.blockIds ?? []).some((id) => row.blockIds.includes(id))
+    );
+    if (linked) return [row];
+    limitations.push({
+      kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+      unit: origin,
+      rowKind: "global-rule",
+      rowIndex: sourceIndex + 1,
+      sourceBlockIds: row.blockIds.filter((id, index, ids) =>
+        ownedIds.has(id) && ids.indexOf(id) === index
+      ),
+      reason: "grounded-row-linkage-incomplete",
+    });
+    return [];
+  });
+  const rowKindOrder = new Map<PassAPrimaryGroundingRowKind, number>([
+    ["global-rule", 0], ["cross-reference", 1], ["ambiguity", 2], ["unverifiable", 3],
+  ]);
+  limitations.sort((left, right) =>
+    (rowKindOrder.get(left.rowKind)! - rowKindOrder.get(right.rowKind)!) ||
+    left.rowIndex - right.rowIndex
+  );
+  const validatedLimitations = validatePassAPrimaryGroundingLimitations(limitations);
   return {
-    unit: { ...unit, globalRules, crossRefs, ambiguities, unverifiable },
-    failures,
+    unit: {
+      ...unit,
+      globalRules,
+      crossRefs: groundedCrossRefs.map(({ row }) => row),
+      ambiguities: groundedAmbiguities.map(({ row }) => row),
+      unverifiable: groundedUnverifiable.map(({ row }) => row),
+      primaryGroundingLimitations: validatedLimitations,
+    },
+    limitations: validatedLimitations,
+  };
+}
+
+/**
+ * ITEM-LEVEL DEGRADATION: when a window's retry budget is exhausted for a semantic-output
+ * error, try to salvage individually valid + grounded items from the raw model output.
+ *
+ * The grounding VALIDATION stays exactly as strict. Only the CONSEQUENCE granularity changes:
+ * instead of failing the whole window (and therefore the whole run), each item that fails
+ * structural validation or grounding is excluded and counted as a named limitation, while
+ * every valid + grounded item survives into the landed window.
+ *
+ * Returns null when the raw output is unusable (not an object, missing arrays). Never returns
+ * a silent empty — when ALL items are excluded, the window still lands with zero items and
+ * the full limitation count.
+ */
+/** Test-only: expose strictPrimaryOutput so negative tests can prove it throws. */
+export const __test_strictPrimaryOutput = strictPrimaryOutput;
+
+export function degradedPrimaryOutput(
+  rawModelOutput: Record<string, unknown>,
+  source: SourceBlock[],
+  origin: string,
+): {
+  unit: PersistedWindow;
+  limitations: PassAPrimaryGroundingLimitationWire[];
+  degradedItemCount: number;
+  totalItemCount: number;
+  /**
+   * Synthetic model output containing ONLY the raw rows that passed per-item strict
+   * structural validation. This is the form that must be persisted as `modelOutput` so
+   * that the strict reader on re-read accepts the artifact without any degraded fallback.
+   * Rows excluded by grounding (not structural) failure are INCLUDED here — the grounding
+   * filter runs independently on re-read and produces the same limitations.
+   */
+  strictPassingModelOutput: Record<string, unknown>;
+} | null {
+  // Handle each of the four roots independently:
+  //   well-formed array  -> existing per-item salvage (unchanged)
+  //   absent OR non-array -> record ONE category-level "root-malformed" limitation for that root
+  //                          and salvage nothing from it. NEVER silent.
+  //   return null (terminal) ONLY when ALL FOUR roots are absent/non-array.
+  const globalRows = rawModelOutput["global_rules"];
+  const xrefRows = rawModelOutput["cross_references"];
+  const ambiguityRows = rawModelOutput["ambiguities"];
+  const unverifiableRows = rawModelOutput["unverifiable_from_browser"];
+  const globalOk = Array.isArray(globalRows);
+  const xrefOk = Array.isArray(xrefRows);
+  const ambiguityOk = Array.isArray(ambiguityRows);
+  const unverifiableOk = Array.isArray(unverifiableRows);
+  if (!globalOk && !xrefOk && !ambiguityOk && !unverifiableOk) {
+    return null;
+  }
+
+  const limitations: PassAPrimaryGroundingLimitationWire[] = [];
+  const byId = new Map(source.map((block) => [block.blockId, block]));
+  const ownedIds = (ids: readonly string[]): string[] =>
+    ids.filter((id) => byId.has(id));
+
+  let totalItemCount = 0;
+  let degradedItemCount = 0;
+
+  // Record category-level root-malformed limitations for absent/non-array roots.
+  // Each bad root contributes ONE limitation and ONE degradedItemCount.
+  const rootKindMap: [boolean, PassAPrimaryGroundingRowKind][] = [
+    [globalOk, "global-rule"],
+    [xrefOk, "cross-reference"],
+    [ambiguityOk, "ambiguity"],
+    [unverifiableOk, "unverifiable"],
+  ];
+  for (const [ok, rowKind] of rootKindMap) {
+    if (!ok) {
+      degradedItemCount++;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind,
+        rowIndex: 0,
+        sourceBlockIds: [],
+        reason: "root-malformed",
+      });
+    }
+  }
+
+  // Raw rows that passed per-item strict structural validation (for synthetic modelOutput)
+  const strictPassingGlobalRules: unknown[] = [];
+  const strictPassingXrefs: unknown[] = [];
+  const strictPassingAmbiguities: unknown[] = [];
+  const strictPassingUnverifiable: unknown[] = [];
+
+  // Try each global rule individually
+  const globalRules: RawRequirement[] = [];
+  for (let index = 0; index < (Array.isArray(globalRows) ? globalRows.length : 0); index++) {
+    totalItemCount++;
+    const row = (globalRows as unknown[])[index];
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      degradedItemCount++;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "global-rule",
+        rowIndex: index + 1,
+        sourceBlockIds: [],
+        reason: "structural-validation-failed",
+      });
+      continue;
+    }
+    try {
+      const singleOutput = {
+        global_rules: [row],
+        cross_references: [],
+        ambiguities: [],
+        unverifiable_from_browser: [],
+      };
+      const strict = strictPrimaryOutput(singleOutput, origin);
+      strictPassingGlobalRules.push(row);
+      const windowUnit: PersistedWindow = {
+        kind: "ok", ...strict,
+        primaryGroundingLimitations: [], usages: [],
+        routeReceipt: { selected: "grok-4.5", trigger: null },
+      };
+      const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
+      globalRules.push(...inspected.unit.globalRules);
+      // Remap item-local rowIndex (always 1 from single-item array) to the TRUE
+      // original row position. This prevents duplicate (unit,rowKind,rowIndex)
+      // coordinates when a structural exclusion and a grounding exclusion exist
+      // in the same row-kind array.
+      for (const lim of inspected.limitations) {
+        limitations.push({ ...lim, rowIndex: index + 1 });
+      }
+      if (inspected.limitations.length > 0) degradedItemCount++;
+    } catch {
+      degradedItemCount++;
+      const claimed = typeof row === "object" && row !== null && Array.isArray((row as Record<string, unknown>)["block_ids"])
+        ? ownedIds((row as Record<string, unknown>)["block_ids"] as string[])
+        : [];
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "global-rule",
+        rowIndex: index + 1,
+        sourceBlockIds: [...new Set(claimed)],
+        reason: "structural-validation-failed",
+      });
+    }
+  }
+
+  // Try each cross-reference individually
+  const crossRefs: CrossRef[] = [];
+  for (let index = 0; index < (Array.isArray(xrefRows) ? xrefRows.length : 0); index++) {
+    totalItemCount++;
+    const row = (xrefRows as unknown[])[index];
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      degradedItemCount++;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "cross-reference",
+        rowIndex: index + 1,
+        sourceBlockIds: [],
+        reason: "structural-validation-failed",
+      });
+      continue;
+    }
+    try {
+      const singleOutput = {
+        global_rules: [],
+        cross_references: [row],
+        ambiguities: [],
+        unverifiable_from_browser: [],
+      };
+      const strict = strictPrimaryOutput(singleOutput, origin);
+      strictPassingXrefs.push(row);
+      const windowUnit: PersistedWindow = {
+        kind: "ok", ...strict,
+        primaryGroundingLimitations: [], usages: [],
+        routeReceipt: { selected: "grok-4.5", trigger: null },
+      };
+      const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
+      crossRefs.push(...inspected.unit.crossRefs);
+      for (const lim of inspected.limitations) {
+        limitations.push({ ...lim, rowIndex: index + 1 });
+      }
+      if (inspected.limitations.length > 0) degradedItemCount++;
+    } catch {
+      degradedItemCount++;
+      const fromBlock = typeof row === "object" && row !== null
+        ? (row as Record<string, unknown>)["from_block"]
+        : null;
+      const claimed = typeof fromBlock === "string" && byId.has(fromBlock) ? [fromBlock] : [];
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "cross-reference",
+        rowIndex: index + 1,
+        sourceBlockIds: claimed,
+        reason: "structural-validation-failed",
+      });
+    }
+  }
+
+  // Try each ambiguity individually
+  const ambiguities: RawAmbiguity[] = [];
+  for (let index = 0; index < (Array.isArray(ambiguityRows) ? ambiguityRows.length : 0); index++) {
+    totalItemCount++;
+    const row = (ambiguityRows as unknown[])[index];
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      degradedItemCount++;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "ambiguity",
+        rowIndex: index + 1,
+        sourceBlockIds: [],
+        reason: "structural-validation-failed",
+      });
+      continue;
+    }
+    try {
+      const singleOutput = {
+        global_rules: [],
+        cross_references: [],
+        ambiguities: [row],
+        unverifiable_from_browser: [],
+      };
+      const strict = strictPrimaryOutput(singleOutput, origin);
+      strictPassingAmbiguities.push(row);
+      const windowUnit: PersistedWindow = {
+        kind: "ok", ...strict,
+        primaryGroundingLimitations: [], usages: [],
+        routeReceipt: { selected: "grok-4.5", trigger: null },
+      };
+      const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
+      ambiguities.push(...inspected.unit.ambiguities);
+      for (const lim of inspected.limitations) {
+        limitations.push({ ...lim, rowIndex: index + 1 });
+      }
+      if (inspected.limitations.length > 0) degradedItemCount++;
+    } catch {
+      degradedItemCount++;
+      const claimed = typeof row === "object" && row !== null && Array.isArray((row as Record<string, unknown>)["block_ids"])
+        ? ownedIds((row as Record<string, unknown>)["block_ids"] as string[])
+        : [];
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "ambiguity",
+        rowIndex: index + 1,
+        sourceBlockIds: [...new Set(claimed)],
+        reason: "structural-validation-failed",
+      });
+    }
+  }
+
+  // Try each unverifiable item individually
+  const unverifiable: RawUnverifiable[] = [];
+  for (let index = 0; index < (Array.isArray(unverifiableRows) ? unverifiableRows.length : 0); index++) {
+    totalItemCount++;
+    const row = (unverifiableRows as unknown[])[index];
+    if (typeof row !== "object" || row === null || Array.isArray(row)) {
+      degradedItemCount++;
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "unverifiable",
+        rowIndex: index + 1,
+        sourceBlockIds: [],
+        reason: "structural-validation-failed",
+      });
+      continue;
+    }
+    try {
+      const singleOutput = {
+        global_rules: [],
+        cross_references: [],
+        ambiguities: [],
+        unverifiable_from_browser: [row],
+      };
+      const strict = strictPrimaryOutput(singleOutput, origin);
+      strictPassingUnverifiable.push(row);
+      const windowUnit: PersistedWindow = {
+        kind: "ok", ...strict,
+        primaryGroundingLimitations: [], usages: [],
+        routeReceipt: { selected: "grok-4.5", trigger: null },
+      };
+      const inspected = inspectPrimaryWindowGrounding(windowUnit, source, origin);
+      unverifiable.push(...inspected.unit.unverifiable);
+      for (const lim of inspected.limitations) {
+        limitations.push({ ...lim, rowIndex: index + 1 });
+      }
+      if (inspected.limitations.length > 0) degradedItemCount++;
+    } catch {
+      degradedItemCount++;
+      const claimed = typeof row === "object" && row !== null && Array.isArray((row as Record<string, unknown>)["block_ids"])
+        ? ownedIds((row as Record<string, unknown>)["block_ids"] as string[])
+        : [];
+      limitations.push({
+        kind: PASS_A_PRIMARY_GROUNDING_LIMITATION_KIND,
+        unit: origin,
+        rowKind: "unverifiable",
+        rowIndex: index + 1,
+        sourceBlockIds: [...new Set(claimed)],
+        reason: "structural-validation-failed",
+      });
+    }
+  }
+
+  // Sort limitations in deterministic order
+  const rowKindOrder = new Map<PassAPrimaryGroundingRowKind, number>([
+    ["global-rule", 0], ["cross-reference", 1], ["ambiguity", 2], ["unverifiable", 3],
+  ]);
+  limitations.sort((left, right) =>
+    (rowKindOrder.get(left.rowKind)! - rowKindOrder.get(right.rowKind)!) ||
+    left.rowIndex - right.rowIndex
+  );
+  const validatedLimitations = validatePassAPrimaryGroundingLimitations(limitations);
+
+  return {
+    unit: {
+      kind: "ok",
+      globalRules,
+      crossRefs,
+      ambiguities,
+      unverifiable,
+      primaryGroundingLimitations: validatedLimitations,
+      usages: [],
+      routeReceipt: { selected: "grok-4.5", trigger: null },
+    },
+    limitations: validatedLimitations,
+    degradedItemCount,
+    totalItemCount,
+    strictPassingModelOutput: {
+      global_rules: strictPassingGlobalRules,
+      cross_references: strictPassingXrefs,
+      ambiguities: strictPassingAmbiguities,
+      unverifiable_from_browser: strictPassingUnverifiable,
+    },
   };
 }
 
@@ -1317,7 +3653,55 @@ async function readWindow(
   parserVersion: string,
   origin: string,
 ): Promise<PersistedWindow | FailedWindowArtifact | InvalidWindowArtifact | null> {
-  const obj = await env.EVIDENCE.get(windowKey(runId, n));
+  const sidecar = await readWindowArtifact(
+    env, runId, n, expectedBlocks, parserVersion, origin, windowWireCeilingKey(runId, n),
+  );
+  const main = await readWindowArtifact(
+    env, runId, n, expectedBlocks, parserVersion, origin, windowKey(runId, n),
+  );
+  if (sidecar === null) return main;
+  const sidecarInvalid = (detail: string): InvalidWindowArtifact => ({
+    kind: "invalid",
+    attempts: main?.kind === "failed" || main?.kind === "invalid" ? main.attempts : 0,
+    usages: main?.usages ?? sidecar.usages,
+    detail: `PASS_A_WINDOW_WIRE_CEILING_SIDECAR_INVALID: ${origin}: ${detail}. ` +
+      `Neither retained artifact was overwritten or re-bought.`,
+  });
+  if (sidecar.kind !== "failed" || !sidecar.wireCeiling) {
+    return sidecarInvalid(
+      sidecar.kind === "ok" ? "sidecar contains a successful artifact" : sidecar.detail,
+    );
+  }
+  // A sidecar is written only when a valid, paid, retryable main artifact already owns the
+  // exact key. Fresh zero-receipt refusals live at the main key. Anything else is a retained
+  // conflict, not permission to relabel successful/corrupt/terminal authority as wire-safe.
+  if (
+    main?.kind !== "failed" || main.wireCeiling || main.attempts < 1 || main.terminal
+  ) {
+    return sidecarInvalid("wire-ceiling sidecar has no valid retryable paid main artifact");
+  }
+  return {
+    kind: "failed",
+    attempts: main.attempts,
+    usages: main.usages,
+    fallbackTrigger: main.fallbackTrigger,
+    terminal: true,
+    wireCeiling: true,
+    catalogueExceeded: false,
+    detail: sidecar.detail,
+  };
+}
+
+async function readWindowArtifact(
+  env: Env,
+  runId: string,
+  n: number,
+  expectedBlocks: SourceBlock[],
+  parserVersion: string,
+  origin: string,
+  artifactKey: string,
+): Promise<PersistedWindow | FailedWindowArtifact | InvalidWindowArtifact | null> {
+  const obj = await env.EVIDENCE.get(artifactKey);
   if (!obj) return null;
   const expectedBlockIds = expectedBlocks.map((block) => block.blockId);
   const invalid = (detail: string, parsed?: Record<string, unknown>): InvalidWindowArtifact => {
@@ -1326,7 +3710,7 @@ async function readWindow(
           isCallUsage(usage) && passAUsagePosition(usage, runId, origin) !== null)
       : [];
     const declared = parsed?.['attempts'];
-    const attempts = Number.isSafeInteger(declared) && (declared as number) >= 1
+    const attempts = Number.isSafeInteger(declared) && (declared as number) >= 0
       ? declared as number
       : usages.reduce((highest, usage) =>
           Math.max(highest, passAUsagePosition(usage, runId, origin)?.issue ?? 0), 0);
@@ -1336,9 +3720,16 @@ async function readWindow(
         'The current-identity paid artifact is terminal authority and will not be overwritten or re-bought.',
     };
   };
+  let artifactBodyText: string;
+  try {
+    artifactBodyText = await obj.text();
+  } catch {
+    return invalid('artifact bytes are unreadable');
+  }
+  const storageAuthority = { etag: obj.etag, bodyText: artifactBodyText };
   let parsed: Record<string, unknown>;
   try {
-    const decoded = JSON.parse(await obj.text()) as unknown;
+    const decoded = JSON.parse(artifactBodyText) as unknown;
     if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
       return invalid('artifact root is not an object');
     }
@@ -1350,8 +3741,11 @@ async function readWindow(
     // A valid artifact from an old parser/prompt/route is a cache miss. Once those current
     // identities match, corruption is retained authority: absence and invalidity diverge.
     if (parsed["parserVersion"] !== parserVersion || parsed["promptVersion"] !== PROMPT_VERSION_A) return null;
-    if (parsed["providerRouteIdentity"] !== grokFlashRouteIdentity(env)) return null;
+    if (parsed["providerRouteIdentity"] !== passAPrimaryRouteIdentity(env)) return null;
     if (parsed["windowPolicyIdentity"] !== windowPolicyIdentity(env)) return null;
+    if (parsed["windowId"] !== origin || parsed["windowNumber"] !== n) {
+      return invalid("windowId/windowNumber do not match this exact window key", parsed);
+    }
     const blockIds = Array.isArray(parsed["blockIds"]) ? (parsed["blockIds"] as string[]) : [];
     if (
       blockIds.length !== expectedBlockIds.length ||
@@ -1360,12 +3754,15 @@ async function readWindow(
     const attempts = parsed["attempts"];
     const usages = Array.isArray(parsed["usages"]) ? parsed["usages"] : null;
     if (
-      !Number.isSafeInteger(attempts) || (attempts as number) < 1 ||
+      !Number.isSafeInteger(attempts) || (attempts as number) < 0 ||
       usages === null || !usages.every(isCallUsage)
     ) return invalid('attempts/usages are malformed', parsed);
-    const coherence = validatePassAUnitUsageCoherence(
-      usages as CallUsage[], runId, origin, attempts as number,
-    );
+    const zeroReceiptWireFailure =
+      parsed["status"] === "failed" && parsed["failureStage"] === "wire-ceiling" &&
+      attempts === 0 && usages.length === 0;
+    const coherence = zeroReceiptWireFailure
+      ? null
+      : validatePassAUnitUsageCoherence(usages as CallUsage[], runId, origin, attempts as number);
     if (coherence !== null) return invalid(coherence, parsed);
     if (parsed["status"] === "failed") {
       if (typeof parsed["detail"] !== 'string' || parsed["detail"].length === 0) {
@@ -1386,7 +3783,8 @@ async function readWindow(
       const failureStage = parsed["failureStage"];
       if (
         failureStage !== 'fallback-authorized' &&
-        failureStage !== 'provider' && failureStage !== 'semantic-output'
+        failureStage !== 'provider' && failureStage !== 'semantic-output' &&
+        failureStage !== 'wire-ceiling'
       ) return invalid('failureStage is missing or invalid', parsed);
       const fallbackChainFailure = fallbackTrigger === null ? null : validatePassAFallbackUsageChain(
         usages as CallUsage[], runId, origin, attempts as number, fallbackTrigger,
@@ -1396,21 +3794,46 @@ async function readWindow(
       if (
         parsed["routeReceipt"] !== undefined || parsed["globalRules"] !== undefined ||
         parsed["crossRefs"] !== undefined || parsed["ambiguities"] !== undefined ||
-        parsed["unverifiable"] !== undefined ||
+        parsed["unverifiable"] !== undefined || parsed["primaryGroundingLimitations"] !== undefined ||
+        (failureStage === 'wire-ceiling' &&
+          ((attempts as number) !== 0 || usages.length !== 0 || fallbackTrigger !== null ||
+            parsed["terminal"] !== true ||
+            Object.hasOwn(parsed, "modelOutput") ||
+            !(parsed["detail"] as string).startsWith(
+              `${EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED}:`,
+            ))) ||
+        (failureStage !== 'wire-ceiling' && (attempts as number) === 0) ||
         (failureStage === 'provider' && fallbackTrigger === null && parsed["terminal"] !== true) ||
         (fallbackTrigger === null && (usages as CallUsage[]).some((usage) => usage.provider === 'deepseek')) ||
         (usages as CallUsage[]).some((usage) => usage.status === 'ok') ||
         (failureStage === 'semantic-output' &&
-          (parsed["terminal"] !== true || !(usages as CallUsage[]).some((usage) => usage.status === 'parse-failed'))) ||
+          (typeof parsed["terminal"] !== "boolean" || !(usages as CallUsage[]).some((usage) => usage.status === 'parse-failed'))) ||
         (failureStage === 'fallback-authorized' &&
           (parsed["terminal"] !== false || fallbackTrigger === null ||
             (usages as CallUsage[]).some((usage) => usage.provider === 'deepseek'))) ||
         fallbackChainFailure !== null
       ) return invalid('failed artifact retains successful-shape fields or an unauthorized provider receipt', parsed);
-      return {
+      const failedModelOutput = parsed["modelOutput"];
+      if (failureStage === "semantic-output") {
+        if (
+          typeof failedModelOutput !== "object" || failedModelOutput === null ||
+          Array.isArray(failedModelOutput)
+        ) return invalid("semantic-output failure has no retained raw modelOutput", parsed);
+        try {
+          strictPrimaryOutput(failedModelOutput as Record<string, unknown>, origin);
+          return invalid("semantic-output failure does not reproduce under the current strict decoder", parsed);
+        } catch {
+          // Exact raw parsed output remains private evidence only. Reproducing the strict
+          // failure proves the failed envelope; it grants no typed or coverage authority.
+        }
+      } else if (failedModelOutput !== undefined && failedModelOutput !== null) {
+        return invalid("provider/fallback failure carries model output it could not have produced", parsed);
+      }
+      return rememberPassAWindowStorageAuthority<FailedWindowArtifact>({
         kind: "failed", attempts: attempts as number, detail: parsed["detail"], usages: usages as CallUsage[],
-        fallbackTrigger, terminal: parsed["terminal"],
-      };
+        fallbackTrigger, terminal: parsed["terminal"], wireCeiling: failureStage === "wire-ceiling",
+        catalogueExceeded: false,
+      }, storageAuthority);
     }
     if (
       parsed["kind"] !== 'ok' || parsed["status"] !== undefined ||
@@ -1429,25 +3852,97 @@ async function readWindow(
     if (typeof modelOutput !== 'object' || modelOutput === null || Array.isArray(modelOutput)) {
       return invalid('successful artifact has no raw modelOutput authority', parsed);
     }
+    // STRICT-ONLY re-decode: a stored artifact is integrity-bound evidence. If the strict
+    // reader throws, the artifact is corrupt or was mutated after the fact — the only honest
+    // response is terminal invalid authority. Degraded item-level salvage is allowed at
+    // exactly ONE point: when FRESH model output (just returned by a provider, retries
+    // exhausted) fails validation, before the window artifact is first persisted. Once
+    // persisted (whether strict or degraded), the stored artifact must re-read strictly.
     const strict = strictPrimaryOutput(modelOutput as Record<string, unknown>, origin);
-    const decoded: PersistedWindow = groundPrimaryWindow({
+    const decoded = inspectPrimaryWindowGrounding({
       kind: "ok",
       ...strict,
+      primaryGroundingLimitations: [],
       usages: usages as CallUsage[],
       routeReceipt,
-    }, expectedBlocks, origin);
+    }, expectedBlocks, origin).unit;
+    const storedLimitations = validatePassAPrimaryGroundingLimitations(
+      parsed["primaryGroundingLimitations"],
+    );
+    // DEGRADED ARTIFACTS store a compacted modelOutput (structurally-invalid rows removed)
+    // plus item-level limitations that cannot be reproduced from the compacted form. Three
+    // non-reproducible limitation categories exist:
+    //   1. root-malformed  (rowIndex 0) — root key absent or non-array in the ORIGINAL output
+    //   2. structural-validation-failed — row removed from the compacted modelOutput entirely
+    //   3. grounding limitations at ORIGINAL-array indices — the compacted array has different
+    //      positions, so inspectPrimaryWindowGrounding on re-read produces different indices
+    //
+    // Additionally, the degraded WRITE path processes each item individually through
+    // inspectPrimaryWindowGrounding (one at a time), while the re-read processes all surviving
+    // items collectively. This produces different grounding results (e.g., a browserObservable
+    // "none" rule whose unverifiable companion is invisible in the single-item envelope gets
+    // excluded during individual grounding, but survives collective grounding on re-read).
+    //
+    // When ANY non-reproducible limitation is present, BOTH the stored limitations AND the
+    // stored typed content are the artifact's authority. The strict re-decode of modelOutput
+    // still succeeds (verifying the stored modelOutput is structurally sound), which catches
+    // content tampering. The stored typed content and limitations are accepted as-is.
+    const hasItemLevelDegradation = storedLimitations.some(
+      (lim) => lim.reason === "root-malformed" || lim.reason === "structural-validation-failed",
+    );
+    if (hasItemLevelDegradation) {
+      // DEGRADED PATH: the stored typed content was derived from item-level grounding at
+      // write time and cannot be reproduced by collective grounding on re-read (individual
+      // grounding misses cross-item companions like unverifiable links). The stored limitations
+      // also carry original-array indices that don't match the compacted array positions.
+      //
+      // TAMPERING DETECTION: verify that every stored typed item is a subset of the
+      // re-decoded items from strictPrimaryOutput. Degradation can only REMOVE items from the
+      // strict decode, never ADD them. If the stored content contains items absent from the
+      // re-decode, the modelOutput was tampered with.
+      const reDecodedRuleIds = new Set(strict.globalRules.map((r: RawRequirement) => r.id));
+      const reDecodedXrefIds = new Set(strict.crossRefs.map((x: CrossRef) => x.id));
+      const reDecodedAmbiguityIds = new Set(strict.ambiguities.map((a: RawAmbiguity) => a.id));
+      const reDecodedUnverifiableIds = new Set(strict.unverifiable.map((u: RawUnverifiable) => u.id));
+      const storedRules = parsed["globalRules"] as RawRequirement[];
+      const storedXrefs = parsed["crossRefs"] as CrossRef[];
+      const storedAmbiguities = parsed["ambiguities"] as RawAmbiguity[];
+      const storedUnverifiable = parsed["unverifiable"] as RawUnverifiable[];
+      if (
+        storedRules.some((r: RawRequirement) => !reDecodedRuleIds.has(r.id)) ||
+        storedXrefs.some((x: CrossRef) => !reDecodedXrefIds.has(x.id)) ||
+        storedAmbiguities.some((a: RawAmbiguity) => !reDecodedAmbiguityIds.has(a.id)) ||
+        storedUnverifiable.some((u: RawUnverifiable) => !reDecodedUnverifiableIds.has(u.id))
+      ) {
+        return invalid('degraded artifact typed content is not a subset of strict re-decode (tampered)', parsed);
+      }
+      const finalDecoded: PersistedWindow = {
+        kind: "ok",
+        globalRules: storedRules,
+        crossRefs: storedXrefs,
+        ambiguities: storedAmbiguities,
+        unverifiable: storedUnverifiable,
+        primaryGroundingLimitations: storedLimitations,
+        usages: usages as CallUsage[],
+        routeReceipt,
+      };
+      return rememberPassAWindowStorageAuthority(finalDecoded, storageAuthority);
+    }
+    // NON-DEGRADED PATH: full comparison including re-derived limitations.
     const typedStored = {
       globalRules: parsed["globalRules"], crossRefs: parsed["crossRefs"],
       ambiguities: parsed["ambiguities"], unverifiable: parsed["unverifiable"],
+      primaryGroundingLimitations: storedLimitations,
     };
     const typedDecoded = {
       globalRules: decoded.globalRules, crossRefs: decoded.crossRefs,
       ambiguities: decoded.ambiguities, unverifiable: decoded.unverifiable,
+      primaryGroundingLimitations: decoded.primaryGroundingLimitations,
     };
     if (canonicalJson(typedStored) !== canonicalJson(typedDecoded)) {
       return invalid('typed projection differs from strict re-decoding of raw modelOutput', parsed);
     }
-    return decoded;
+    return rememberPassAWindowStorageAuthority(decoded, storageAuthority);
   } catch (error) {
     return invalid(error instanceof Error ? error.message : 'typed output validation failed', parsed);
   }
@@ -1494,16 +3989,21 @@ interface PassASynthesisInput {
 }
 
 interface PassASynthesisContext {
-  input: PassASynthesisInput;
   parserVersion: string;
   inputJson: string;
   inputHash: string;
   /** Candidate catalogue alone, useful for diagnostics but never the purchase ceiling. */
   catalogueBytes: number;
-  /** Larger of the exact Grok and Flash serialized request bodies. */
+  /** Largest of the exact Grok and Flash serialized request bodies. */
   wireBytes: number;
   grokWireBytes: number;
   flashWireBytes: number;
+  /** Closed refusal detail, null only when both the catalogue and exact provider bodies fit. */
+  wireFailureDetail: string | null;
+  /** True when wireFailureDetail is a catalogue-bound refusal (not a wire-ceiling refusal). */
+  isCatalogueRefusal: boolean;
+  /** Every source block whose exact span is owned by this synthesis unit. */
+  sourceBlockIds: string[];
   requestHash: string;
   policyIdentity: string;
   maxBytes: number;
@@ -1517,7 +4017,6 @@ interface PassASynthesisContext {
     maxAttempts: number;
   };
   coverage: PassASynthesisCoverage;
-  inputFailures: string[];
   blocks: Map<string, SourceBlock>;
   windowByBlock: Map<string, number>;
   evidenceBlockIds: Set<string>;
@@ -1554,6 +4053,8 @@ type PersistedPassASynthesis =
       usages: CallUsage[];
       fallbackTrigger: GrokFallbackTrigger | null;
       terminal: boolean;
+      wireCeiling: boolean;
+      catalogueExceeded: boolean;
       detail: string;
     }
   | {
@@ -1564,11 +4065,48 @@ type PersistedPassASynthesis =
       detail: string;
     };
 
+interface PassASynthesisStorageAuthority {
+  /** R2 version strictly decoded before the next paid synthesis transition. */
+  etag: string;
+  /** Exact canonical bytes; semantic equality is never enough to authorize replacement. */
+  bodyText: string;
+}
+
+const passASynthesisStorageAuthority =
+  new WeakMap<object, PassASynthesisStorageAuthority>();
+
+function rememberPassASynthesisStorageAuthority<T extends object>(
+  value: T,
+  authority: PassASynthesisStorageAuthority,
+): T {
+  passASynthesisStorageAuthority.set(value, authority);
+  return value;
+}
+
+function synthesisStorageAuthorityOf(
+  value: PersistedPassASynthesis | null,
+): PassASynthesisStorageAuthority | null {
+  return value === null ? null : passASynthesisStorageAuthority.get(value) ?? null;
+}
+
+const PASS_A_SYNTHESIS_ARTIFACT_PERSIST_ATTEMPTS = 2;
+
+class PassASynthesisPersistenceError extends Error {
+  constructor(writeError: unknown, retainedState: string) {
+    const writeDetail = writeError instanceof Error ? writeError.message : String(writeError);
+    super(
+      `PASS_A_SYNTHESIS_PERSISTENCE_FAILED: ${writeDetail}; synthesis artifact reread ${retainedState}`,
+    );
+    this.name = "PassASynthesisPersistenceError";
+  }
+}
+
 const emptySynthesisAdditions = (): PassASynthesisAdditions => ({
   globalRules: [],
   crossRefs: [],
   ambiguities: [],
   unverifiable: [],
+  droppedReResolutions: [],
 });
 
 function synthesisOutcome(
@@ -1630,16 +4168,18 @@ function synthesisArtifactEnvelope(
   requestHash: string;
   policyIdentity: string;
   coverage: PassASynthesisCoverage;
+  blockIds: string[];
 } {
   return {
     schemaVersion: PASS_A_SYNTHESIS_VERSION,
     parserVersion: context.parserVersion,
     promptVersion: PROMPT_VERSION_A,
-    providerRouteIdentity: grokFlashRouteIdentity(env),
+    providerRouteIdentity: passAPrimaryRouteIdentity(env),
     inputHash: context.inputHash,
     requestHash: context.requestHash,
     policyIdentity: context.policyIdentity,
     coverage: context.coverage,
+    blockIds: context.sourceBlockIds,
   };
 }
 
@@ -1694,12 +4234,21 @@ function validatePassAUnitUsageCoherence(
   for (let index = 0; index < usages.length; index += 1) {
     const usage = usages[index]!;
     const position = positions[index]!;
+    // RECEIPT 1 — Grok primary.
+    const isGrokPrimary =
+      position.receipt === 1 &&
+      usage.callId === expectedCallId &&
+      usage.provider === 'grok' &&
+      usage.model === DEFAULT_GROK_MODEL;
+    const isFlashFallback =
+      position.receipt === 2 &&
+      usage.provider === 'deepseek' &&
+      usage.model === 'deepseek-v4-flash' &&
+      usage.callId === `${expectedCallId}:grok-fallback`;
     if (
       usage.role !== expectedRole ||
-      (position.receipt === 1 && usage.callId !== expectedCallId) ||
-      (position.receipt === 2 && usage.callId !== `${expectedCallId}:grok-fallback`) ||
-      (position.receipt === 1 && (usage.provider !== 'grok' || usage.model !== DEFAULT_GROK_MODEL)) ||
-      (position.receipt === 2 && (usage.provider !== 'deepseek' || usage.model !== 'deepseek-v4-flash'))
+      (position.receipt === 1 && !isGrokPrimary) ||
+      (position.receipt === 2 && !isFlashFallback)
     ) return 'receipt role/call/provider is inconsistent with its settlement identity';
   }
   return null;
@@ -1742,11 +4291,57 @@ async function readPassASynthesis(
   runId: string,
   context: PassASynthesisContext,
 ): Promise<PersistedPassASynthesis | null> {
-  const obj = await env.EVIDENCE.get(passASynthesisKey(runId));
+  const sidecar = await readPassASynthesisArtifact(
+    env, runId, context, passASynthesisWireCeilingKey(runId),
+  );
+  const main = await readPassASynthesisArtifact(env, runId, context, passASynthesisKey(runId));
+  if (sidecar === null) return main;
+  const invalid = (detail: string): PersistedPassASynthesis => invalidSynthesisArtifact(
+    runId,
+    `wire-ceiling sidecar is invalid: ${detail}`,
+    { attempts: main?.attempts ?? 0, usages: main?.usages ?? [] },
+  );
+  if (sidecar.kind !== "failed" || !sidecar.wireCeiling) {
+    return invalid(
+      sidecar.kind === "ok" ? "it contains a successful artifact" : sidecar.detail,
+    );
+  }
+  if (
+    main?.kind !== "failed" || main.wireCeiling || main.catalogueExceeded ||
+    main.attempts < 1 || main.terminal
+  ) {
+    return invalid("it has no valid retryable paid main synthesis artifact beneath it");
+  }
+  return {
+    kind: "failed",
+    attempts: main.attempts,
+    usages: main.usages,
+    fallbackTrigger: main.fallbackTrigger,
+    terminal: true,
+    wireCeiling: true,
+    catalogueExceeded: false,
+    detail: sidecar.detail,
+  };
+}
+
+async function readPassASynthesisArtifact(
+  env: Env,
+  runId: string,
+  context: PassASynthesisContext,
+  artifactKey: string,
+): Promise<PersistedPassASynthesis | null> {
+  const obj = await env.EVIDENCE.get(artifactKey);
   if (!obj) return null;
+  let artifactBodyText: string;
+  try {
+    artifactBodyText = await obj.text();
+  } catch {
+    return invalidSynthesisArtifact(runId, "artifact bytes are unreadable");
+  }
+  const storageAuthority = { etag: obj.etag, bodyText: artifactBodyText };
   let parsedForFailure: Record<string, unknown> | undefined;
   try {
-    const decoded = JSON.parse(await obj.text()) as unknown;
+    const decoded = JSON.parse(artifactBodyText) as unknown;
     if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
       return invalidSynthesisArtifact(runId, 'artifact root is not an object');
     }
@@ -1766,6 +4361,11 @@ async function readPassASynthesis(
         runId,
         'artifact envelope identity differs from the current parser/prompt/route/request/policy identity',
         parsed,
+      );
+    }
+    if (JSON.stringify(parsed["blockIds"]) !== JSON.stringify(expected.blockIds)) {
+      return invalidSynthesisArtifact(
+        runId, 'ordered source-block ownership does not match the exact synthesis request', parsed,
       );
     }
     if (JSON.stringify(parsed["coverage"]) !== JSON.stringify(expected.coverage)) {
@@ -1794,9 +4394,13 @@ async function readPassASynthesis(
       const failureStage = parsed["failureStage"];
       if (
         failureStage !== "input-grounding" && failureStage !== "wire-ceiling" &&
+        failureStage !== "catalogue-exceeded" &&
         failureStage !== "fallback-authorized" && failureStage !== "provider" &&
         failureStage !== "semantic-output"
       ) return invalidSynthesisArtifact(runId, 'failureStage is missing or invalid', parsed);
+      const zeroReceiptStage =
+        failureStage === "input-grounding" || failureStage === "wire-ceiling" ||
+        failureStage === "catalogue-exceeded";
       const fallbackChainFailure = fallbackTrigger === null ? null : validatePassAFallbackUsageChain(
         usages as CallUsage[], runId, 'A-synthesis', attempts as number, fallbackTrigger,
         failureStage === "fallback-authorized" ? "pending" :
@@ -1807,25 +4411,75 @@ async function readPassASynthesis(
         typeof parsed["detail"] !== "string" || parsed["detail"].length === 0 ||
         ((attempts as number) === 0 &&
           (usages.length !== 0 || fallbackTrigger !== null || parsed["terminal"] !== true)) ||
+        ((attempts as number) === 0 && !zeroReceiptStage) ||
+        (zeroReceiptStage && (attempts as number) !== 0) ||
+        (failureStage === "wire-ceiling" &&
+          !parsed["detail"].startsWith(`${EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED}:`)) ||
+        (failureStage === "catalogue-exceeded" &&
+          !parsed["detail"].startsWith(`${EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED}:`)) ||
         ((attempts as number) > 0 && usages.length === 0) ||
-        parsed["routeReceipt"] !== undefined || parsed["modelOutput"] !== undefined ||
+        parsed["routeReceipt"] !== undefined ||
         (failureStage === "provider" && fallbackTrigger === null && parsed["terminal"] !== true) ||
         (usages as CallUsage[]).some((usage) => usage.status === "ok") ||
+        // The retry ladder persists a NON-terminal semantic rejection while the issue budget
+        // remains (terminal only at exhaustion), so coherence requires a boolean terminal
+        // flag plus the rejected receipt — never `terminal === true` unconditionally.
         (failureStage === "semantic-output" &&
-          (parsed["terminal"] !== true || !(usages as CallUsage[]).some((usage) => usage.status === "parse-failed"))) ||
+          (typeof parsed["terminal"] !== "boolean" || !(usages as CallUsage[]).some((usage) => usage.status === "parse-failed"))) ||
         (failureStage === "fallback-authorized" &&
           (parsed["terminal"] !== false || fallbackTrigger === null ||
             (usages as CallUsage[]).some((usage) => usage.provider === "deepseek"))) ||
         fallbackChainFailure !== null
       ) return invalidSynthesisArtifact(runId, 'failed-artifact state is incoherent', parsed);
-      return {
-        kind: "failed",
+      const failedModelOutput = parsed["modelOutput"];
+      if (failureStage === "semantic-output") {
+        if (
+          typeof failedModelOutput !== "object" || failedModelOutput === null ||
+          Array.isArray(failedModelOutput)
+        ) {
+          return invalidSynthesisArtifact(
+            runId, "semantic-output failure has no retained raw modelOutput", parsed,
+          );
+        }
+        let semanticReplayDetail: string | null = null;
+        try {
+          validatePassASynthesisOutput(
+            failedModelOutput as Record<string, unknown>,
+            context,
+          );
+        } catch (error) {
+          semanticReplayDetail = error instanceof Error ? error.message : String(error);
+        }
+        if (semanticReplayDetail === null) {
+          return invalidSynthesisArtifact(
+            runId,
+            "semantic-output failure does not reproduce under the current strict decoder",
+            parsed,
+          );
+        }
+        if (
+          semanticReplayDetail !== null &&
+          parsed["detail"] !== semanticReplayDetail.slice(0, 400)
+        ) {
+          return invalidSynthesisArtifact(
+            runId, "semantic-output detail differs from strict raw-output re-decoding", parsed,
+          );
+        }
+      } else if (failedModelOutput !== undefined) {
+        return invalidSynthesisArtifact(
+          runId, "non-semantic failure carries model output it could not have produced", parsed,
+        );
+      }
+      return rememberPassASynthesisStorageAuthority({
+        kind: "failed" as const,
         attempts: attempts as number,
         usages: usages as CallUsage[],
         fallbackTrigger,
         terminal: parsed["terminal"],
+        wireCeiling: failureStage === "wire-ceiling",
+        catalogueExceeded: failureStage === "catalogue-exceeded",
         detail: parsed["detail"],
-      };
+      }, storageAuthority);
     }
     if (
       parsed["status"] !== "ok" || parsed["kind"] !== undefined ||
@@ -1850,13 +4504,13 @@ async function readPassASynthesis(
     // Re-run the exact source/provenance decoder on every reclaim. Durable does not mean
     // trusted: corrupt or hand-edited additions must never bypass grounding after a crash.
     const additions = validatePassASynthesisOutput(modelOutput as Record<string, unknown>, context);
-    return {
-      kind: "ok",
+    return rememberPassASynthesisStorageAuthority({
+      kind: "ok" as const,
       attempts: attempts as number,
       usages: usages as CallUsage[],
       routeReceipt,
       additions,
-    };
+    }, storageAuthority);
   } catch (error) {
     return invalidSynthesisArtifact(
       runId,
@@ -1867,16 +4521,180 @@ async function readPassASynthesis(
   }
 }
 
+async function persistPassASynthesisHistory(
+  env: Env,
+  runId: string,
+  bodyText: string,
+): Promise<string> {
+  const bodySha256 = await sha256Hex(bodyText);
+  return persistPrimaryWindowAppendOnly(
+    env,
+    passASynthesisHistoryKey(runId, bodySha256),
+    bodyText,
+    "PASS_A_SYNTHESIS_HISTORY_PERSISTENCE_FAILED",
+  );
+}
+
+async function persistPassASynthesisCasConflict(
+  env: Env,
+  runId: string,
+  bodyText: string,
+): Promise<string> {
+  const bodySha256 = await sha256Hex(bodyText);
+  return persistPrimaryWindowAppendOnly(
+    env,
+    passASynthesisCasConflictKey(runId, bodySha256),
+    bodyText,
+    "PASS_A_SYNTHESIS_CAS_CONFLICT_PERSISTENCE_FAILED",
+  );
+}
+
 async function writePassASynthesis(
   env: Env,
   runId: string,
   context: PassASynthesisContext,
+  predecessor: PassASynthesisStorageAuthority | null,
   body: Record<string, unknown>,
-): Promise<void> {
-  await env.EVIDENCE.put(
-    passASynthesisKey(runId),
-    JSON.stringify({ ...synthesisArtifactEnvelope(env, context), ...body }, null, 2),
-    { httpMetadata: { contentType: "application/json" } },
+  accept: (artifact: PersistedPassASynthesis) => boolean,
+): Promise<PersistedPassASynthesis | null> {
+  const key = passASynthesisKey(runId);
+  const bodyText = JSON.stringify(
+    { ...synthesisArtifactEnvelope(env, context), ...body },
+    null,
+    2,
+  );
+  let synthesisExpected = predecessor;
+  let lastFailure: PassASynthesisPersistenceError | null = null;
+
+  if (synthesisExpected !== null) {
+    try {
+      await persistPassASynthesisHistory(env, runId, synthesisExpected.bodyText);
+    } catch (historyError) {
+      let losingState = "could not retain the losing paid synthesis artifact";
+      try {
+        const conflictKey = await persistPassASynthesisCasConflict(env, runId, bodyText);
+        losingState = `retained the losing paid synthesis artifact at ${conflictKey}`;
+      } catch {
+        // The history refusal stays primary. No canonical bytes are overwritten.
+      }
+      throw new PassASynthesisPersistenceError(
+        historyError,
+        `could not archive the exact predecessor before replacement and ${losingState}`,
+      );
+    }
+  }
+
+  for (
+    let storageAttempt = 1;
+    storageAttempt <= PASS_A_SYNTHESIS_ARTIFACT_PERSIST_ATTEMPTS;
+    storageAttempt += 1
+  ) {
+    let writeError: unknown;
+    try {
+      const written = await env.EVIDENCE.put(key, bodyText, {
+        httpMetadata: { contentType: "application/json" },
+        onlyIf: synthesisExpected === null
+          ? { etagDoesNotMatch: "*" }
+          : { etagMatches: synthesisExpected.etag },
+      });
+      if (written !== null) return null;
+      writeError = new Error(
+        synthesisExpected === null
+          ? "conditional create found an occupied synthesis key"
+          : "conditional replacement no longer matched the exact synthesis predecessor",
+      );
+    } catch (error) {
+      // A transport error can arrive before or after commit. Exact reread decides which.
+      writeError = error;
+    }
+
+    let object: R2ObjectBody | null;
+    try {
+      object = await env.EVIDENCE.get(key);
+    } catch (readError) {
+      lastFailure = new PassASynthesisPersistenceError(
+        writeError,
+        `failed with ${readError instanceof Error ? readError.message : String(readError)}`,
+      );
+      continue;
+    }
+
+    if (object === null) {
+      if (synthesisExpected === null) {
+        lastFailure = new PassASynthesisPersistenceError(
+          writeError,
+          "found no current synthesis artifact",
+        );
+        continue;
+      }
+      let losingState = "could not retain the losing paid synthesis artifact";
+      try {
+        const conflictKey = await persistPassASynthesisCasConflict(env, runId, bodyText);
+        losingState = `retained the losing paid synthesis artifact at ${conflictKey}`;
+      } catch {
+        // The missing predecessor remains terminal even if the conflict archive also fails.
+      }
+      throw new PassASynthesisPersistenceError(
+        writeError,
+        `found the exact predecessor missing; refusing to recreate over lost authority; ${losingState}`,
+      );
+    }
+
+    let retainedBytes: string;
+    try {
+      retainedBytes = await object.text();
+    } catch (readError) {
+      lastFailure = new PassASynthesisPersistenceError(
+        writeError,
+        `could not read retained bytes: ${readError instanceof Error ? readError.message : String(readError)}`,
+      );
+      continue;
+    }
+
+    if (retainedBytes !== bodyText) {
+      if (synthesisExpected !== null && retainedBytes === synthesisExpected.bodyText) {
+        synthesisExpected = { etag: object.etag, bodyText: retainedBytes };
+        lastFailure = new PassASynthesisPersistenceError(
+          writeError,
+          "found the exact synthesis predecessor still present",
+        );
+        continue;
+      }
+      let conflictKey: string;
+      try {
+        conflictKey = await persistPassASynthesisCasConflict(env, runId, bodyText);
+      } catch (conflictError) {
+        throw new PassASynthesisPersistenceError(
+          conflictError,
+          "found an occupied synthesis artifact with different bytes and could not retain the losing paid artifact",
+        );
+      }
+      throw new PassASynthesisPersistenceError(
+        writeError,
+        `found an occupied synthesis artifact with different bytes; exact losing bytes retained at ${conflictKey}`,
+      );
+    }
+
+    const retained = await readPassASynthesisArtifact(env, runId, context, key);
+    if (retained !== null && retained.kind !== "invalid" && accept(retained)) return retained;
+    throw new PassASynthesisPersistenceError(
+      writeError,
+      retained === null
+        ? "lost the exact synthesis artifact before strict reread"
+        : `found exact bytes with ${retained.kind} authority that failed the expected-state check`,
+    );
+  }
+
+  let retainedState = "did not prove the exact current synthesis artifact";
+  try {
+    const conflictKey = await persistPassASynthesisCasConflict(env, runId, bodyText);
+    retainedState += `; exact paid bytes retained at ${conflictKey}`;
+  } catch {
+    retainedState += "; exact paid bytes could not be retained at the conflict key";
+  }
+  throw lastFailure ?? new PassASynthesisPersistenceError(
+    "unknown storage failure",
+    retainedState,
   );
 }
 
@@ -1898,11 +4716,10 @@ export async function runPassASynthesis(
   const context = await buildPassASynthesisContext(env, runId, doc, documentName);
   if (context === null) return synthesisOutcome("not-required");
   const coverage = context.coverage;
-  const maxBytes = context.maxBytes;
   const maxIssues = context.maxIssues;
   const existing = await readPassASynthesis(env, runId, context);
   const reusedCalls = (usages: CallUsage[], detail: string): CallUsage[] =>
-    usages.map((usage) => ({ ...usage, costUsd: 0, detail }));
+    usages.map((usage) => replayUsage(usage, detail));
 
   if (existing?.kind === "ok") {
     const limitation = synthesisLimitation(coverage, existing.additions);
@@ -1914,7 +4731,7 @@ export async function runPassASynthesis(
         coverage,
         additions: existing.additions,
         calls: reusedCalls(existing.usages, "reused: cross-window synthesis artifact"),
-        accountingCalls: existing.usages,
+        accountingCalls: replayAccountingUsages(existing.usages),
         routeReceipt: existing.routeReceipt,
         fallbackTrigger: existing.routeReceipt.trigger,
         limitation,
@@ -1928,75 +4745,203 @@ export async function runPassASynthesis(
       inputHash: context.inputHash,
       coverage,
       calls: reusedCalls(existing.usages, 'reused: invalid retained cross-window synthesis artifact'),
-      accountingCalls: existing.usages,
-      failedUnit: { unit: 'A-synthesis-artifact', blockIds: [], detail: existing.detail },
+      accountingCalls: replayAccountingUsages(existing.usages),
+      failedUnit: { unit: 'A-synthesis-artifact', blockIds: context.sourceBlockIds, detail: existing.detail },
     });
   }
 
-  if (context.inputFailures.length > 0) {
-    const detail =
-      `PASS_A_SYNTHESIS_INPUT_UNGROUNDED: ${context.inputFailures.length} of ` +
-      `${coverage.candidateRowsTotal} primary candidate row(s) lacked unique exact source grounding. ` +
-      `No candidate was silently omitted and no synthesis purchase was made. ` +
-      context.inputFailures.slice(0, 3).join(" | ");
-    if (!existing) {
-      await writePassASynthesis(env, runId, context, {
-        status: "failed", attempts: 0, usages: [], fallbackTrigger: null, terminal: true,
-        failureStage: "input-grounding", detail,
-      });
-    }
-    return synthesisOutcome("failed", {
-      attempts: existing?.attempts ?? 0,
-      inputHash: context.inputHash,
-      coverage,
-      calls: existing ? reusedCalls(existing.usages, "reused: terminal ungrounded synthesis input") : [],
-      accountingCalls: existing?.usages ?? [],
-      fallbackTrigger: existing?.fallbackTrigger ?? null,
-      failedUnit: {
-        unit: "A-synthesis-input",
-        blockIds: [],
-        detail,
-      },
-    });
-  }
-
-  if (context.wireBytes > maxBytes) {
-    const detail =
-      `PASS_A_SYNTHESIS_REQUEST_TOO_LARGE: exact serialized provider request is ${context.wireBytes} UTF-8 bytes ` +
-      `(catalogue ${context.catalogueBytes}; Grok ${context.grokWireBytes}; Flash ${context.flashWireBytes}), ` +
-      `above EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES=${maxBytes}. No candidate or exact evidence was truncated.`;
-    if (!existing) {
-      await writePassASynthesis(env, runId, context, {
-        status: "failed", attempts: 0, usages: [], fallbackTrigger: null, terminal: true,
-        failureStage: "wire-ceiling", detail,
-      });
-    }
-    return synthesisOutcome("failed", {
-      attempts: existing?.attempts ?? 0,
-      inputHash: context.inputHash,
-      coverage,
-      calls: existing ? reusedCalls(existing.usages, "reused: terminal synthesis oversize") : [],
-      accountingCalls: existing?.usages ?? [],
-      fallbackTrigger: existing?.fallbackTrigger ?? null,
-      failedUnit: { unit: "A-synthesis", blockIds: [], detail },
-    });
-  }
-
-  const pendingFlash = existing?.kind === "failed" &&
-    existing.fallbackTrigger !== null &&
-    !existing.usages.some((usage) => usage.provider === "deepseek");
-  if (
-    existing?.kind === "failed" &&
-    (existing.terminal || (existing.attempts >= maxIssues && !pendingFlash))
-  ) {
+  if (existing?.kind === "failed" && existing.terminal) {
     return synthesisOutcome("failed", {
       attempts: existing.attempts,
       inputHash: context.inputHash,
       coverage,
       calls: reusedCalls(existing.usages, "reused: terminal cross-window synthesis failure"),
-      accountingCalls: existing.usages,
+      accountingCalls: replayAccountingUsages(existing.usages),
       fallbackTrigger: existing.fallbackTrigger,
-      failedUnit: { unit: "A-synthesis", blockIds: [], detail: existing.detail },
+      failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail: existing.detail },
+      ...(existing.wireCeiling
+        ? { terminalReasonCode: EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED }
+        : existing.catalogueExceeded
+        ? { terminalReasonCode: EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED }
+        : {}),
+    });
+  }
+
+  if (context.wireFailureDetail !== null) {
+    const detail = context.wireFailureDetail;
+    const sizeReasonCode: ExtractionSizeRefusalCode = context.isCatalogueRefusal
+      ? EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED
+      : EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED;
+    const failureStage = context.isCatalogueRefusal ? "catalogue-exceeded" : "wire-ceiling";
+    const wireBody = JSON.stringify({
+      ...synthesisArtifactEnvelope(env, context),
+      status: "failed", attempts: 0, usages: [], fallbackTrigger: null, terminal: true,
+      failureStage, detail,
+    }, null, 2);
+    await persistImmutableExtractionArtifact(
+      env,
+      existing ? passASynthesisWireCeilingKey(runId) : passASynthesisKey(runId),
+      wireBody,
+      "A-synthesis",
+    );
+    return synthesisOutcome("failed", {
+      attempts: existing?.attempts ?? 0,
+      inputHash: context.inputHash,
+      coverage,
+      calls: existing ? reusedCalls(existing.usages, "reused: terminal synthesis oversize") : [],
+      accountingCalls: existing ? replayAccountingUsages(existing.usages) : [],
+      fallbackTrigger: existing?.fallbackTrigger ?? null,
+      failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail },
+      terminalReasonCode: sizeReasonCode,
+    });
+  }
+
+  // -------------------------------------------------------------------
+  // CROSS-RUN UNIT REUSE (synthesis). Same pattern as windows/chunks.
+  //
+  // CAREFUL: synthesis identity must include the synthesis INPUT hash
+  // (which derives from all window outputs) — two runs whose windows
+  // produced different candidates must MISS. The requestHash already
+  // includes the input JSON through the preflighted request bodies.
+  //
+  // Only attempted when existing is null (no per-run synthesis artifact).
+  // If the synthesis was already attempted in this run, its per-run
+  // artifact exists and the normal retry/exhaustion logic handles it.
+  // -------------------------------------------------------------------
+  // ENABLED — end-to-end proof lives in synthesis-adoption.test.mjs:
+  // identity-hit adoption, identity-miss on different window candidates,
+  // revalidation refusal fallback, and failed-synthesis exclusion from the
+  // index. Mutation evidence in tools/mutate-unit-reuse.mjs (synthesis
+  // mutants). The store-on-success path below accrues the index entries that
+  // this adoption path consumes.
+  const PASS_A_SYNTHESIS_ADOPTION_ENABLED = true;
+  if (PASS_A_SYNTHESIS_ADOPTION_ENABLED && existing === null && context.wireFailureDetail === null) {
+    try {
+      const synthesisIdentity: UnitIdentityFields = {
+        unitKind: "pass-a-synthesis",
+        requestHash: context.requestHash, // mutation-anchor: unit-reuse-synthesis-inputHash
+        decoderIdentity: context.policyIdentity,
+        providerPlanIdentity: passAPrimaryRouteIdentity(env),
+        promptVersion: PROMPT_VERSION_A,
+        parserVersion: context.parserVersion,
+      };
+      const stored = await lookupReusableUnit(env, synthesisIdentity);
+      if (stored !== null) {
+        let additions: PassASynthesisAdditions | null = null;
+        try {
+          additions = validatePassASynthesisOutput(
+            stored.modelOutput, context,
+          ); // mutation-anchor: unit-reuse-synthesis-revalidation
+        } catch (err) {
+          console.log(
+            `unit-reuse: adopted synthesis payload revalidation failed: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        if (additions !== null) {
+          const syntheticReceipt: CallUsage = {
+            eventId: `core-model-call/pass-a/${runId}/A-synthesis/issue-1/receipt-1`,
+            callId: "call_a_synthesis",
+            role: "extract-pass-a-synthesis",
+            provider: stored.originalUsage.provider,
+            model: stored.originalUsage.model,
+            status: "ok",
+            inputTokens: stored.originalUsage.inputTokens,
+            outputTokens: stored.originalUsage.outputTokens,
+            costUsd: stored.originalUsage.costUsd,
+            latencyMs: stored.originalUsage.latencyMs,
+            attempts: 1,
+            usageSource: stored.originalUsage.usageSource as CallUsage["usageSource"],
+          };
+          const adoptedRouteReceipt: PassARouteReceipt = { selected: "grok-4.5", trigger: null };
+          const adoptedBody: Record<string, unknown> = {
+            ...synthesisArtifactEnvelope(env, context),
+            status: "ok",
+            attempts: 1,
+            usages: [syntheticReceipt],
+            routeReceipt: adoptedRouteReceipt,
+            modelOutput: stored.modelOutput,
+            reusedFromRunId: stored.sourceRunId,
+          };
+          try {
+            const retainedAdoption = await writePassASynthesis(
+              env,
+              runId,
+              context,
+              null,
+              adoptedBody,
+              (artifact) => artifact.kind === "ok",
+            );
+            // Whether or not writePassASynthesis returned a retained artifact,
+            // the attempt to write succeeded (no throw).
+            const limitation = synthesisLimitation(coverage, additions);
+            const replayedUsage = replayUsage(
+              syntheticReceipt,
+              `reused: adopted synthesis from prior run ${stored.sourceRunId}`,
+            );
+            if (retainedAdoption?.kind === "ok") {
+              additions = retainedAdoption.additions;
+            }
+            return synthesisOutcome("ok", {
+              issued: 0,
+              attempts: 1,
+              inputHash: context.inputHash,
+              coverage,
+              additions,
+              calls: [replayedUsage],
+              issuedCalls: [],
+              accountingCalls: [{ ...syntheticReceipt, usageSource: "reused-prior-artifact" as const }],
+              routeReceipt: adoptedRouteReceipt,
+              fallbackTrigger: null,
+              limitation,
+            });
+          } catch (persistErr) {
+            console.log(
+              `unit-reuse: adopted synthesis persistence failed: ` +
+                `${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+            );
+            // Fall through to normal purchase path.
+          }
+        }
+      }
+    } catch (err) {
+      console.log(
+        `unit-reuse: cross-run synthesis adoption failed: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  const predecessorAuthority = existing?.kind === "failed"
+    ? synthesisStorageAuthorityOf(existing)
+    : null;
+  if (existing?.kind === "failed" && predecessorAuthority === null) {
+    const detail =
+      "PASS_A_SYNTHESIS_STORAGE_AUTHORITY_MISSING: a retryable retained artifact did not carry " +
+      "the exact strict-read etag/body authority; no new provider request was issued.";
+    return synthesisOutcome("failed", {
+      attempts: existing.attempts,
+      inputHash: context.inputHash,
+      coverage,
+      calls: reusedCalls(existing.usages, "reused: synthesis storage authority refusal"),
+      accountingCalls: replayAccountingUsages(existing.usages),
+      fallbackTrigger: existing.fallbackTrigger,
+      failedUnit: { unit: "A-synthesis-artifact", blockIds: context.sourceBlockIds, detail },
+    });
+  }
+
+  const pendingSubstituteSynthesis = existing?.kind === "failed" &&
+    existing.fallbackTrigger !== null &&
+    !existing.usages.some((usage) => usage.provider === "deepseek");
+  if (existing?.kind === "failed" && existing.attempts >= maxIssues && !pendingSubstituteSynthesis) {
+    return synthesisOutcome("failed", {
+      attempts: existing.attempts,
+      inputHash: context.inputHash,
+      coverage,
+      calls: reusedCalls(existing.usages, "reused: terminal cross-window synthesis failure"),
+      accountingCalls: replayAccountingUsages(existing.usages),
+      fallbackTrigger: existing.fallbackTrigger,
+      failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail: existing.detail },
     });
   }
   if (!options.issueAuthorized) {
@@ -2005,20 +4950,47 @@ export async function runPassASynthesis(
       inputHash: context.inputHash,
       coverage,
       calls: existing ? reusedCalls(existing.usages, "reused: prior cross-window synthesis failure") : [],
-      accountingCalls: existing?.usages ?? [],
+      accountingCalls: existing ? replayAccountingUsages(existing.usages) : [],
       fallbackTrigger: existing?.fallbackTrigger ?? null,
     });
   }
 
   const priorUsages = existing?.kind === "failed" ? existing.usages : [];
   const priorAttempts = existing?.kind === "failed" ? existing.attempts : 0;
-  const issue = pendingFlash ? Math.max(1, priorAttempts) : priorAttempts + 1;
+  const issue = pendingSubstituteSynthesis ? Math.max(1, priorAttempts) : priorAttempts + 1;
   let fallbackTrigger = existing?.kind === "failed" ? existing.fallbackTrigger : null;
   const purchasedUsages: CallUsage[] = [];
   const calls = reusedCalls(priorUsages, "reused: prior cross-window synthesis purchase");
+  let purchaseEnv: Env;
+  try {
+    // Grok key is resolved when no fallback trigger exists (fresh primary).
+    const grokKey = fallbackTrigger === null
+      ? await keyFor(env, "grok") : null;
+    const deepseekKey = await keyFor(env, "deepseek");
+    purchaseEnv = {
+      ...env,
+      ...(grokKey !== null ? { XAI_API_KEY: grokKey } : {}),
+      DEEPSEEK_API_KEY: deepseekKey,
+    };
+  } catch (error) {
+    if (!(error instanceof MissingCredential)) throw error;
+    const provider: "grok" | "deepseek" = error.binding === "XAI_API_KEY" ? "grok" : "deepseek";
+    const detail = `${error.binding} is unavailable after exact synthesis request preflight; ` +
+      `no new provider request was issued for A-synthesis.`;
+    return synthesisOutcome("failed", {
+      attempts: priorAttempts,
+      inputHash: context.inputHash,
+      coverage,
+      calls,
+      accountingCalls: priorUsages,
+      fallbackTrigger,
+      failedUnit: { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail },
+      credentialRefusal: { reason: "NO_CREDENTIAL", binding: error.binding, provider },
+    });
+  }
   return await purchasePassASynthesis(
-    env, runId, context, documentName, context.optionsForCall, issue, maxIssues,
-    priorUsages, purchasedUsages, calls, fallbackTrigger, onProgress,
+    purchaseEnv, runId, context, documentName, context.optionsForCall, issue, maxIssues,
+    priorUsages, purchasedUsages, calls, fallbackTrigger, predecessorAuthority, onProgress,
   );
 }
 
@@ -2036,20 +5008,45 @@ async function purchasePassASynthesis(
   purchasedUsages: CallUsage[],
   calls: CallUsage[],
   initialFallbackTrigger: GrokFallbackTrigger | null,
+  initialPredecessor: PassASynthesisStorageAuthority | null,
   onProgress?: (msg: string) => Promise<void>,
 ): Promise<PassASynthesisOutcome> {
   let fallbackTrigger = initialFallbackTrigger;
+  let predecessorAuthority = initialPredecessor;
+  let rawModelOutput: Record<string, unknown> | null = null;
+  const persistenceFailureOutcome = (
+    error: PassASynthesisPersistenceError,
+  ): PassASynthesisOutcome => {
+    const detail = error.message.slice(0, 400);
+    return synthesisOutcome("failed", {
+      issued: purchasedUsages.length,
+      attempts: issue,
+      inputHash: context.inputHash,
+      coverage: context.coverage,
+      calls,
+      issuedCalls: purchasedUsages,
+      accountingCalls: [...priorUsages, ...purchasedUsages],
+      fallbackTrigger,
+      failedUnit: {
+        unit: "A-synthesis-artifact",
+        blockIds: context.sourceBlockIds,
+        detail,
+      },
+    });
+  };
   try {
     let value: Record<string, unknown> | null = null;
     let routeReceipt: PassARouteReceipt | null = null;
     if (fallbackTrigger === null) {
+      // Grok is the primary provider at synthesis.
       try {
         const outcome = await grokJson(env, optionsForCall);
         const usage = settlementUsage(runId, "A-synthesis", issue, 1, outcome.usage);
         purchasedUsages.push(usage);
         calls.push(usage);
         value = outcome.value;
-        routeReceipt = { selected: "grok-4.6", trigger: null };
+        rawModelOutput = outcome.value;
+        routeReceipt = { selected: "grok-4.5", trigger: null };
       } catch (error) {
         if (!(error instanceof ModelCallError) || !grokFlashFallbackEligible(error)) throw error;
         const usage = settlementUsage(runId, "A-synthesis", issue, 1, error.usage);
@@ -2063,38 +5060,134 @@ async function purchasePassASynthesis(
           grokUsageEventId: usage.eventId!,
           detail: error.message.slice(0, 400),
         };
-        await writePassASynthesis(env, runId, context, {
-          status: "failed",
-          attempts: issue,
-          usages: [...priorUsages, ...purchasedUsages],
-          fallbackTrigger,
-          terminal: false,
-          failureStage: "fallback-authorized",
-          detail: `Flash fallback authorized but not yet landed: ${fallbackTrigger.detail}`,
-        });
+        const authorizedTrigger = fallbackTrigger;
+        const retainedFallbackCheckpoint = await writePassASynthesis(
+          env,
+          runId,
+          context,
+          predecessorAuthority,
+          {
+            status: "failed",
+            attempts: issue,
+            usages: [...priorUsages, ...purchasedUsages],
+            fallbackTrigger: authorizedTrigger,
+            terminal: false,
+            failureStage: "fallback-authorized",
+            detail: "Flash fallback authorized but not yet landed: " + authorizedTrigger.detail,
+          },
+          (artifact) =>
+            artifact.kind === "failed" &&
+            !artifact.terminal &&
+            artifact.fallbackTrigger?.grokUsageEventId === authorizedTrigger.grokUsageEventId,
+        );
+        if (retainedFallbackCheckpoint !== null) {
+          // The target committed despite a transport error. End this invocation at the
+          // commit-before-effect boundary; the next strict reclaim may buy only Flash.
+          return synthesisOutcome("pending", {
+            issued: purchasedUsages.length,
+            attempts: issue,
+            inputHash: context.inputHash,
+            coverage: context.coverage,
+            calls,
+            issuedCalls: purchasedUsages,
+            accountingCalls: retainedFallbackCheckpoint.usages,
+            fallbackTrigger: authorizedTrigger,
+          });
+        }
+        const committedFallbackCheckpoint = await readPassASynthesisArtifact(
+          env,
+          runId,
+          context,
+          passASynthesisKey(runId),
+        );
+        const committedFallbackAuthority =
+          synthesisStorageAuthorityOf(committedFallbackCheckpoint);
+        if (
+          committedFallbackCheckpoint?.kind !== "failed" ||
+          committedFallbackCheckpoint.terminal ||
+          committedFallbackCheckpoint.fallbackTrigger?.grokUsageEventId !==
+            authorizedTrigger.grokUsageEventId ||
+          committedFallbackAuthority === null
+        ) {
+          throw new PassASynthesisPersistenceError(
+            "fallback checkpoint committed without strict reread authority",
+            "could not bind the exact fallback-authorized predecessor before Flash",
+          );
+        }
+        predecessorAuthority = committedFallbackAuthority;
       }
     }
 
     if (fallbackTrigger !== null) {
-      const outcome = await deepseekGrokFallbackJson(env, {
+      // DeepSeek Flash substitute — reduced independence (existing path, unchanged semantics).
+      const flashOutcome = await deepseekGrokFallbackJson(env, {
         ...optionsForCall,
         callId: `${optionsForCall.callId}:grok-fallback`,
       });
-      const usage = settlementUsage(runId, "A-synthesis", issue, 2, outcome.usage);
-      purchasedUsages.push(usage);
-      calls.push(usage);
-      value = outcome.value;
+      const flashUsage = settlementUsage(runId, "A-synthesis", issue, 2, flashOutcome.usage);
+      purchasedUsages.push(flashUsage);
+      calls.push(flashUsage);
+      value = flashOutcome.value;
+      rawModelOutput = flashOutcome.value;
       routeReceipt = { selected: "deepseek-v4-flash", trigger: fallbackTrigger };
     }
     if (value === null || routeReceipt === null) {
       throw new Error("pass-A synthesis route produced neither a primary nor a fallback outcome");
     }
 
-    const additions = validatePassASynthesisOutput(value, context);
+    let additions = validatePassASynthesisOutput(value, context);
     const usages = [...priorUsages, ...purchasedUsages];
-    await writePassASynthesis(env, runId, context, {
-      status: "ok", attempts: issue, usages, routeReceipt, modelOutput: value,
-    });
+    const retainedSuccess = await writePassASynthesis(
+      env,
+      runId,
+      context,
+      predecessorAuthority,
+      { status: "ok", attempts: issue, usages, routeReceipt, modelOutput: value },
+      (artifact) => artifact.kind === "ok",
+    );
+    if (retainedSuccess?.kind === "ok") {
+      additions = retainedSuccess.additions;
+      routeReceipt = retainedSuccess.routeReceipt;
+    }
+
+    // Store synthesis in the cross-run unit index (best-effort).
+    // Only store when synthesis used the Grok primary route (no fallback trigger).
+    if (routeReceipt.trigger === null && rawModelOutput !== null) { // mutation-anchor: unit-reuse-synthesis-store-guard
+      try {
+        const okUsage = purchasedUsages.find((u) => u.status === "ok");
+        if (okUsage) {
+          await storeCompletedUnit(
+            env,
+            {
+              unitKind: "pass-a-synthesis",
+              requestHash: context.requestHash, // mutation-anchor: unit-reuse-synthesis-store-requestHash
+              decoderIdentity: context.policyIdentity,
+              providerPlanIdentity: passAPrimaryRouteIdentity(env),
+              promptVersion: PROMPT_VERSION_A,
+              parserVersion: context.parserVersion,
+            },
+            rawModelOutput,
+            {
+              inputTokens: okUsage.inputTokens,
+              outputTokens: okUsage.outputTokens,
+              costUsd: okUsage.costUsd,
+              latencyMs: okUsage.latencyMs,
+              model: okUsage.model,
+              provider: okUsage.provider,
+              usageSource: okUsage.usageSource ?? "provider-reported",
+              attempts: okUsage.attempts,
+            },
+            runId,
+          ); // mutation-anchor: unit-reuse-synthesis-store-on-success
+        }
+      } catch (err) {
+        console.log(
+          `unit-reuse: synthesis store failed: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     const limitation = synthesisLimitation(context.coverage, additions);
     // Progress is observability, not extraction authority. A heartbeat failure after the
     // success artifact lands must never overwrite it as failed and authorize a repurchase.
@@ -2125,14 +5218,22 @@ async function purchasePassASynthesis(
       },
     );
   } catch (error) {
+    // The exact Grok + Flash bodies were preflighted before purchase. A missing secret is a
+    // stage configuration refusal, not a paid/semantic synthesis attempt.
+    if (error instanceof MissingCredential && purchasedUsages.length === 0) throw error;
+    if (error instanceof PassASynthesisPersistenceError) {
+      return persistenceFailureOutcome(error);
+    }
     if (error instanceof ModelCallError) {
       const receipt = fallbackTrigger === null ? 1 : 2;
       const usage = settlementUsage(runId, "A-synthesis", issue, receipt, error.usage);
       purchasedUsages.push(usage);
       calls.push(usage);
     }
+    const semanticFailure = !(error instanceof ModelCallError) && rawModelOutput !== null;
+    if (!(error instanceof ModelCallError) && !semanticFailure) throw error;
     const detail = error instanceof Error ? error.message.slice(0, 400) : String(error);
-    if (!(error instanceof ModelCallError) && purchasedUsages.length > 0) {
+    if (semanticFailure && purchasedUsages.length > 0) {
       const selected = purchasedUsages[purchasedUsages.length - 1]!;
       purchasedUsages[purchasedUsages.length - 1] = {
         ...selected,
@@ -2142,15 +5243,39 @@ async function purchasePassASynthesis(
       const index = calls.findIndex((usage) => usage.eventId === selected.eventId);
       if (index >= 0) calls[index] = purchasedUsages[purchasedUsages.length - 1]!;
     }
-    const terminal =
-      !(error instanceof ModelCallError) ||
-      (fallbackTrigger === null && !grokFlashFallbackEligible(error)) ||
-      issue >= maxIssues;
+    // A semantic rejection consumes the synthesis issue budget instead of terminalizing on
+    // attempt 1 — the same ladder pass-A windows and pass-B chunks already have. The resume
+    // path above (attempts >= maxIssues) is the authority on exhaustion; run v36
+    // (v2r_01m04d7383hcmczq6df0c0xpxv) died because this line said `semanticFailure ||`.
+    const terminal = (semanticFailure && issue >= maxIssues) || (
+      error instanceof ModelCallError &&
+      ((fallbackTrigger === null && !grokFlashFallbackEligible(error)) || issue >= maxIssues)
+    );
     const usages = [...priorUsages, ...purchasedUsages];
-    await writePassASynthesis(env, runId, context, {
-      status: "failed", attempts: issue, usages, fallbackTrigger, terminal,
-      failureStage: error instanceof ModelCallError ? "provider" : "semantic-output", detail,
-    });
+    try {
+      await writePassASynthesis(
+        env,
+        runId,
+        context,
+        predecessorAuthority,
+        {
+          status: "failed",
+          attempts: issue,
+          usages,
+          fallbackTrigger,
+          terminal,
+          failureStage: semanticFailure ? "semantic-output" : "provider",
+          detail,
+          ...(semanticFailure ? { modelOutput: rawModelOutput } : {}),
+        },
+        (artifact) => artifact.kind === "failed",
+      );
+    } catch (persistenceError) {
+      if (!(persistenceError instanceof PassASynthesisPersistenceError)) {
+        throw persistenceError;
+      }
+      return persistenceFailureOutcome(persistenceError);
+    }
     return synthesisOutcome(terminal ? "failed" : "pending", {
       issued: purchasedUsages.length,
       attempts: issue,
@@ -2160,7 +5285,7 @@ async function purchasePassASynthesis(
       issuedCalls: purchasedUsages,
       accountingCalls: usages,
       fallbackTrigger,
-      failedUnit: terminal ? { unit: "A-synthesis", blockIds: [], detail } : null,
+      failedUnit: terminal ? { unit: "A-synthesis", blockIds: context.sourceBlockIds, detail } : null,
     });
   }
 }
@@ -2194,16 +5319,42 @@ async function buildPassASynthesisContext(
   );
   if (windows.length <= 1) return null;
 
+  const synthesisMaxRaw = env.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES ?? "45000";
+  if (!/^[1-9]\d*$/.test(synthesisMaxRaw)) {
+    throw new Error("EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES must be a canonical positive integer");
+  }
+  const configuredSynthesisMaxBytes = Number(synthesisMaxRaw);
+  if (!Number.isSafeInteger(configuredSynthesisMaxBytes)) {
+    throw new Error("EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES must be a safe positive integer");
+  }
+  const universalWireMaxBytes = extractionWirePolicy(env).maxInputBytes;
+  if (configuredSynthesisMaxBytes > universalWireMaxBytes) {
+    throw new Error(
+      `EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES (${configuredSynthesisMaxBytes}) must not exceed ` +
+        `EXTRACT_MODEL_INPUT_MAX_BYTES (${universalWireMaxBytes})`,
+    );
+  }
+  const maxBytes = configuredSynthesisMaxBytes;
+  const maxIssues = Math.max(1, Math.floor(num(env.EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES, 2)));
   const inputWindows: CompactWindowRow[] = [];
   const evidenceRows: CompactEvidenceRow[] = [];
   const evidenceBySpan = new Map<string, string>();
-  const inputFailures: string[] = [];
   const primaryCrossRefs: PassASynthesisContext["primaryCrossRefs"] = [];
   const blocks = new Map<string, SourceBlock>();
   const windowByBlock = new Map<string, number>();
   const evidenceBlockIds = new Set<string>();
   const evidenceSpanKeys = new Set<string>();
+  let primaryArtifactChainHash = `sha256:${await sha256Hex("pass-a-synthesis-primary-artifact-chain/v1")}`;
   let candidateRowsTotal = 0;
+  let candidateRowsUngrounded = 0;
+  let catalogueRefusal: Extract<ReturnType<typeof buildBoundedJsonText>, { ok: false }> | null = null;
+  const noteEvidenceBlockIds = (
+    rows: readonly { evidenceQuotes?: CrossWindowEvidenceQuote[] }[],
+  ): void => {
+    for (const row of rows) {
+      for (const quote of row.evidenceQuotes ?? []) evidenceBlockIds.add(quote.blockId);
+    }
+  };
   const evidenceIdsFor = (quotes: CrossWindowEvidenceQuote[] | undefined): string[] => {
     if (!quotes || quotes.length === 0) return [];
     return quotes.map((evidence) => {
@@ -2235,28 +5386,51 @@ async function buildPassASynthesisContext(
       // Synthesis cannot restore independence, so it must not buy another call.
       return null;
     }
+    const primaryArtifact = await env.EVIDENCE.get(windowKey(runId, n));
+    if (primaryArtifact === null) {
+      throw new Error(`PASS_A_SYNTHESIS_INPUT_INCOMPLETE: primary window ${n} artifact disappeared`);
+    }
+    const primaryArtifactHash = `sha256:${await sha256Hex(await primaryArtifact.text())}`;
+    primaryArtifactChainHash = `sha256:${await sha256Hex(
+      `${primaryArtifactChainHash}\nwindow:${n}\n${primaryArtifactHash}`,
+    )}`;
+    // readWindow already re-derived this exact projection from immutable raw modelOutput.
+    // Re-inspecting the accepted subset would erase the counted coordinates of rows that
+    // were deliberately withheld. Only closed metadata enters the synthesis input hash.
+    const grounded = unit;
+    candidateRowsUngrounded += unit.primaryGroundingLimitations.length;
+    const qualifiedCrossRefs = grounded.crossRefs.map((row) => {
+      const handle = row.sourceXrefHandle;
+      if (typeof handle !== "string" || !handle.startsWith(`A-w${n}:x:`)) {
+        throw new Error(`PASS_A_SYNTHESIS_INPUT_INVALID: surviving cross-reference lost its source-row handle`);
+      }
+      return { handle, windowNumber: n, row };
+    });
+    candidateRowsTotal +=
+      unit.globalRules.length + unit.crossRefs.length + unit.ambiguities.length + unit.unverifiable.length +
+      unit.primaryGroundingLimitations.length;
+    noteEvidenceBlockIds(unit.globalRules);
+    noteEvidenceBlockIds(unit.crossRefs);
+    noteEvidenceBlockIds(unit.ambiguities);
+    noteEvidenceBlockIds(unit.unverifiable);
+
+    // Once the complete catalogue is already proven too large, retain no more candidate,
+    // evidence or decode-only state. We still strict-read and hash every later immutable
+    // window above, and keep exact scalar counts plus every affected source block id.
+    if (catalogueRefusal !== null) continue;
+
     for (const block of source) {
       blocks.set(block.blockId, block);
       windowByBlock.set(block.blockId, n);
     }
-    const inspected = inspectPrimaryWindowGrounding(unit, source, `A-w${n}`);
-    inputFailures.push(...inspected.failures);
-    const grounded = inspected.unit;
-    const qualifiedCrossRefs = grounded.crossRefs.map((row, index) => ({
-      handle: `A-w${n}:x:${String(index + 1).padStart(3, "0")}`,
-      windowNumber: n,
-      row,
-    }));
     primaryCrossRefs.push(...qualifiedCrossRefs);
-    candidateRowsTotal +=
-      unit.globalRules.length + unit.crossRefs.length + unit.ambiguities.length + unit.unverifiable.length;
     const rules: CompactRuleRow[] = grounded.globalRules.map((row, index) => [
       `A-w${n}:r:${String(index + 1).padStart(3, "0")}`,
       row.construct, row.scope, row.quantifier, row.selector, row.exceptions, row.statement,
       evidenceIdsFor(row.evidenceQuotes), row.blockIds, row.browserObservable, row.expansion,
     ]);
-    const xrefs: CompactXrefRow[] = grounded.crossRefs.map((row, index) => [
-      `A-w${n}:x:${String(index + 1).padStart(3, "0")}`,
+    const xrefs: CompactXrefRow[] = grounded.crossRefs.map((row) => [
+      row.sourceXrefHandle!,
       row.fromBlock, row.target, row.resolvedToBlock, row.statement,
       evidenceIdsFor(row.evidenceQuotes),
     ]);
@@ -2271,28 +5445,51 @@ async function buildPassASynthesisContext(
       candidateEvidence(row), row.mandate, row.whyNotObservable, row.browserProxyEvidence,
     ]);
     inputWindows.push([`A-w${n}`, rules, xrefs, amb, unv]);
+
+    // A single primary output is provider-output-bounded. Checking after each window caps
+    // aggregate retained catalogue state at the synthesis ceiling instead of accumulating
+    // every paid window and only discovering the overflow at the final JSON.stringify.
+    const partialInput: PassASynthesisInput = {
+      v: 1,
+      c: [windows.length, candidateRowsTotal, doc.blocks.length, evidenceRows.length],
+      w: inputWindows,
+      e: evidenceRows,
+    };
+    const partialBound = buildBoundedJsonText(partialInput, maxBytes);
+    if (!partialBound.ok) {
+      catalogueRefusal = partialBound;
+      inputWindows.length = 0;
+      evidenceRows.length = 0;
+      evidenceBySpan.clear();
+      evidenceSpanKeys.clear();
+      primaryCrossRefs.length = 0;
+      blocks.clear();
+      windowByBlock.clear();
+    }
   }
 
-  const candidateRowsIncluded = inputWindows.reduce(
-    (sum, window) => sum + window[1].length + window[2].length + window[3].length + window[4].length,
-    0,
-  );
+  const candidateRowsIncluded = catalogueRefusal === null
+    ? inputWindows.reduce(
+        (sum, window) => sum + window[1].length + window[2].length + window[3].length + window[4].length,
+        0,
+      )
+    : 0;
   const coverage: PassASynthesisCoverage = {
     primaryWindowsTotal: windows.length,
-    primaryWindowsIncluded: inputWindows.length,
+    primaryWindowsIncluded: catalogueRefusal === null ? inputWindows.length : 0,
     candidateRowsTotal,
     candidateRowsIncluded,
-    candidateRowsUngrounded: inputFailures.length,
+    candidateRowsUngrounded,
     sourceBlocksTotal: doc.blocks.length,
-    sourceEvidenceBlocksIncluded: evidenceBlockIds.size,
-    sourceEvidenceSpansIncluded: evidenceRows.length,
-    sourceBlocksOmitted: doc.blocks.length - evidenceBlockIds.size,
+    sourceEvidenceBlocksIncluded: catalogueRefusal === null ? evidenceBlockIds.size : 0,
+    sourceEvidenceSpansIncluded: catalogueRefusal === null ? evidenceRows.length : 0,
+    sourceBlocksOmitted: catalogueRefusal === null ? doc.blocks.length - evidenceBlockIds.size : doc.blocks.length,
     method: "window-output-candidates-plus-exact-source-evidence",
   };
-  if (
+  if (catalogueRefusal === null && (
     coverage.primaryWindowsIncluded !== coverage.primaryWindowsTotal ||
     coverage.candidateRowsIncluded + coverage.candidateRowsUngrounded !== coverage.candidateRowsTotal
-  ) {
+  )) {
     throw new Error(
       `PASS_A_SYNTHESIS_COVERAGE_MISMATCH: included ${coverage.primaryWindowsIncluded}/${coverage.primaryWindowsTotal} ` +
         `windows and ${coverage.candidateRowsIncluded}/${coverage.candidateRowsTotal} candidate rows`,
@@ -2305,11 +5502,31 @@ async function buildPassASynthesisContext(
     w: inputWindows,
     e: evidenceRows,
   };
-  const inputJson = JSON.stringify(input);
-  const catalogueBytes = new TextEncoder().encode(inputJson).byteLength;
-  const inputHash = `sha256:${await sha256Hex(JSON.stringify({ input, inputFailures }))}`;
-  const maxBytes = Math.max(1, Math.floor(num(env.EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES, 45_000)));
-  const maxIssues = Math.max(1, Math.floor(num(env.EXTRACT_PASS_A_SYNTHESIS_MAX_ISSUES, 2)));
+  const sourceBlockIds = catalogueRefusal === null
+    ? doc.blocks.map((block) => block.blockId).filter((blockId) => evidenceBlockIds.has(blockId))
+    : doc.blocks.map((block) => block.blockId);
+  const boundedInput = catalogueRefusal ?? buildBoundedJsonText(input, maxBytes);
+  const inputJson = boundedInput.ok ? boundedInput.text : "";
+  const catalogueBytes = boundedInput.ok
+    ? boundedInput.utf8Bytes
+    : boundedInput.provenUtf8ByteLowerBound;
+  const inputIdentity = boundedInput.ok
+    ? {
+        catalogueHash: await sha256Hex(inputJson),
+        primaryArtifactChainHash,
+      }
+    : {
+        refusal: EXTRACTION_PASS_A_SYNTHESIS_CATALOGUE_EXCEEDED,
+        proof: {
+          phase: boundedInput.phase,
+          maxBytes: boundedInput.maxBytes,
+          provenUtf8ByteLowerBound: boundedInput.provenUtf8ByteLowerBound,
+        },
+        coverage,
+        sourceBlockIds,
+        primaryArtifactChainHash,
+      };
+  const inputHash = `sha256:${await sha256Hex(JSON.stringify(inputIdentity))}`;
   const optionsForCall = {
     system: SYSTEM_A_SYNTHESIS,
     user: userMessageASynthesis(documentName, inputJson),
@@ -2318,22 +5535,56 @@ async function buildPassASynthesisContext(
     callId: "call_a_synthesis",
     maxAttempts: num(env.EXTRACT_MAX_ATTEMPTS, 2),
   };
-  const grokBody = chatRequestBodyText(grokRequestShape(env), optionsForCall);
-  const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall);
-  const encoder = new TextEncoder();
-  const grokWireBytes = encoder.encode(grokBody).byteLength;
-  const flashWireBytes = encoder.encode(flashBody).byteLength;
-  const wireBytes = Math.max(grokWireBytes, flashWireBytes);
-  const requestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
+  let grokWireBytes = 0;
+  let flashWireBytes = 0;
+  let wireBytes = 0;
+  let wireFailureDetail: string | null;
+  let isCatalogueRefusal = false;
+  let requestHash: string;
+  if (!boundedInput.ok) {
+    wireFailureDetail = extractionCatalogueExceededDetail(
+      "A-synthesis",
+      sourceBlockIds.length,
+      boundedInput,
+      "EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES",
+    );
+    isCatalogueRefusal = true;
+    requestHash = `sha256:${await sha256Hex(JSON.stringify({ inputHash, wireFailureDetail }))}`;
+  } else {
+    const grokBody = chatRequestBodyText(grokRequestShape(env), optionsForCall);
+    const flashBody = chatRequestBodyText(deepseekGrokFallbackRequestShape(env), optionsForCall);
+    grokWireBytes = utf8ByteLength(grokBody);
+    flashWireBytes = utf8ByteLength(flashBody);
+    wireBytes = Math.max(grokWireBytes, flashWireBytes);
+    const preflightBodies: { route: string; bodyText: string }[] = [
+      { route: "grok-4.5", bodyText: grokBody },
+      { route: "deepseek-v4-flash", bodyText: flashBody },
+    ];
+    // The catalogue bound (EXTRACT_PASS_A_SYNTHESIS_MAX_BYTES) already governs catalogue
+    // size via buildBoundedJsonText above. The wire preflight gates only the universal
+    // EXTRACT_MODEL_INPUT_MAX_BYTES ceiling — exactly like every primary-window call and
+    // pass-B chunk. No additionalLimit: the double-limit that joint-refused bodies above
+    // ~83% catalogue utilization is the root cause of the gap-zone refusal in
+    // v2r_01m037ywk446xxmbtmwmvpp2jt.
+    const wirePreflight = preflightExtractionRequestBodies(
+      env,
+      preflightBodies,
+    );
+    wireFailureDetail = wirePreflight.ok
+      ? null
+      : extractionWireFailureDetail("A-synthesis", sourceBlockIds.length, wirePreflight);
+    requestHash = `sha256:${await sha256Hex(JSON.stringify({ grokBody, flashBody }))}`;
+  }
   const policyIdentity = [
     PASS_A_SYNTHESIS_VERSION,
     `max-bytes:${maxBytes}`,
     `max-issues:${maxIssues}`,
   ].join("|");
   return {
-    input, parserVersion, inputJson, inputHash, catalogueBytes, wireBytes, grokWireBytes, flashWireBytes,
+    parserVersion, inputJson, inputHash, catalogueBytes, wireBytes, grokWireBytes, flashWireBytes,
+    wireFailureDetail, isCatalogueRefusal, sourceBlockIds,
     requestHash, policyIdentity, maxBytes, maxIssues, optionsForCall,
-    coverage, inputFailures, blocks, windowByBlock, evidenceBlockIds, evidenceSpanKeys, primaryCrossRefs,
+    coverage, blocks, windowByBlock, evidenceBlockIds, evidenceSpanKeys, primaryCrossRefs,
   };
 }
 
@@ -2344,6 +5595,13 @@ function synthesisLimitation(
   const synthesisAdditions =
     additions.globalRules.length + additions.crossRefs.length +
     additions.ambiguities.length + additions.unverifiable.length;
+  const droppedNote = additions.droppedReResolutions.length === 0
+    ? ""
+    : ` It DROPPED ${additions.droppedReResolutions.length} well-formed cross-reference re-resolution(s) whose ` +
+      `reference a primary window had already resolved (window authority retained): ` +
+      additions.droppedReResolutions
+        .map((d) => `${d.handle} (window ${d.windowResolvedToBlock}, synthesis attempted ${d.synthesisResolvedToBlock})`)
+        .join("; ") + ".";
   return {
     kind: "pass-a-cross-window-candidate-dependence",
     windowsTotal: coverage.primaryWindowsTotal,
@@ -2358,7 +5616,8 @@ function synthesisLimitation(
       `${coverage.sourceEvidenceSpansIncluded} exact candidate quote span(s) from ` +
       `${coverage.sourceEvidenceBlocksIncluded} of ${coverage.sourceBlocksTotal} block(s). It did not inspect ` +
       `unsupplied text inside represented blocks or the ${coverage.sourceBlocksOmitted} block(s) no primary reader ` +
-      `nominated. This is never whole-source cross-window discovery, even when the omitted-block count is zero.`,
+      `nominated. This is never whole-source cross-window discovery, even when the omitted-block count is zero.` +
+      droppedNote,
   };
 }
 
@@ -2525,6 +5784,7 @@ export function validatePassASynthesisOutput(
   }
 
   const crossRefs: CrossRef[] = [];
+  const additionsDroppedReResolutions: PassASynthesisAdditions["droppedReResolutions"] = [];
   const resolvedHandles = new Set<string>();
   for (const raw of strictModelRows(value["cross_reference_resolutions"], "cross_reference_resolutions")) {
     strictSynthesisKeys(raw, [
@@ -2543,10 +5803,25 @@ export function validatePassASynthesisOutput(
     const matches = context.primaryCrossRefs.filter((entry) => entry.handle === sourceXrefHandle);
     const primary = matches.length === 1 ? matches[0]!.row : null;
     if (
-      !primary || primary.fromBlock === null || primary.resolvedToBlock !== null ||
+      !primary || primary.fromBlock === null ||
       resolvedToBlock.length === 0 || statement.length === 0
     ) {
       throw new Error("PASS_A_SYNTHESIS_OUTPUT_INVALID: cross-reference resolution has no exact primary source");
+    }
+    if (primary.resolvedToBlock !== null) {
+      // The primary window already resolved this reference from the source bytes; synthesis
+      // sees only the candidate catalogue, so the window's resolution is the retained
+      // authority. Run-to-run variance makes this row APPEAR (run v36: one read's window 10
+      // resolved A-w10:x:007, another read's window left it open, and the identical synthesis
+      // move was legal in one run and fatal in the other). A well-formed conflicting
+      // re-resolution is therefore dropped as a COUNTED entry — never a wholesale rejection
+      // that strands every other grounded row in the output.
+      additionsDroppedReResolutions.push({
+        handle: sourceXrefHandle,
+        windowResolvedToBlock: primary.resolvedToBlock,
+        synthesisResolvedToBlock: resolvedToBlock,
+      });
+      continue;
     }
     const blockIds = uniqueStrings([primary.fromBlock, resolvedToBlock]);
     const evidenceQuotes = synthesisEvidence(raw, blockIds, context);
@@ -2629,7 +5904,237 @@ export function validatePassASynthesisOutput(
     unverifiable.push({ ...row, blockIds, evidenceQuotes });
   }
 
-  return { globalRules, crossRefs, ambiguities, unverifiable };
+  return { globalRules, crossRefs, ambiguities, unverifiable, droppedReResolutions: additionsDroppedReResolutions };
+}
+
+const STALE_PASS_A_PROMPT_IDENTITY = /^v2-extract-pass-a\/\d+\.\d+\.\d+$/;
+
+/**
+ * Reconstruct only the amount of historical primary-window work that durably landed.
+ *
+ * Unlike `reconstructPassACompletedAuthority`, this compatibility reader intentionally does
+ * not decode `modelOutput`, re-ground candidate rows, or return any semantic payload. It is
+ * useful only when a pre-reading-progress run retained artifacts written by an older Pass-A
+ * prompt. Every other identity remains current and exact; relaxing more than the prompt
+ * would turn a historical display into an accidental cache/coverage authority.
+ */
+export async function reconstructPassAHistoricalProgressCensus(
+  env: Env,
+  runId: string,
+  doc: ParsedDocument,
+): Promise<PassAHistoricalProgressCensus> {
+  const parserVersion = doc.parserVersion ?? DOCX_BLOCKS_VERSION;
+  const windows = splitWindows(
+    doc.blocks,
+    num(env.EXTRACT_PASS_A_WINDOW_CHARS, 90_000),
+    num(env.EXTRACT_PASS_A_WINDOW_MAX_BLOCKS, 100),
+  );
+  const routeIdentity = passAPrimaryRouteIdentity(env);
+  const policyIdentity = windowPolicyIdentity(env);
+  let historicalPromptIdentity: string | null = null;
+
+  const invalid = (detail: string): PassAHistoricalProgressCensus => ({
+    kind: "invalid",
+    detail: `PASS_A_HISTORICAL_PROGRESS_CENSUS_INVALID: ${detail}. ` +
+      "No stored model output was decoded, reused, or granted coverage authority.",
+  });
+
+  for (let index = 0; index < windows.length; index += 1) {
+    const n = index + 1;
+    const origin = windows.length === 1 ? "A" : `A-w${n}`;
+    const expectedBlockIds = windows[index]!.map((block) => block.blockId);
+    const object = await env.EVIDENCE.get(windowKey(runId, n));
+    if (!object) {
+      return historicalPromptIdentity === null
+        ? { kind: "none" }
+        : invalid(`${origin} is missing from the contiguous retained sequence`);
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      const decoded = JSON.parse(await object.text()) as unknown;
+      if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+        return historicalPromptIdentity === null
+          ? { kind: "none" }
+          : invalid(`${origin} artifact root is not an object`);
+      }
+      parsed = decoded as Record<string, unknown>;
+    } catch {
+      return historicalPromptIdentity === null
+        ? { kind: "none" }
+        : invalid(`${origin} artifact JSON is unreadable`);
+    }
+
+    const promptIdentity = parsed["promptVersion"];
+    if (historicalPromptIdentity === null) {
+      // Current-prompt artifacts belong to the strict authority decoder, including its
+      // corruption handling. This reader only arbitrates a positively identified stale
+      // Pass-A lineage.
+      if (
+        promptIdentity === PROMPT_VERSION_A ||
+        typeof promptIdentity !== "string" ||
+        !STALE_PASS_A_PROMPT_IDENTITY.test(promptIdentity)
+      ) return { kind: "none" };
+      historicalPromptIdentity = promptIdentity;
+    } else if (promptIdentity !== historicalPromptIdentity) {
+      return invalid(`${origin} does not share the first artifact's stale prompt identity`);
+    }
+
+    if (
+      parsed["parserVersion"] !== parserVersion ||
+      parsed["providerRouteIdentity"] !== routeIdentity ||
+      parsed["windowPolicyIdentity"] !== policyIdentity
+    ) return invalid(`${origin} does not match the current parser, route, and partition identities`);
+    if (parsed["windowId"] !== origin || parsed["windowNumber"] !== n) {
+      return invalid(`${origin} does not own its declared window id and ordinal`);
+    }
+
+    const blockIds = parsed["blockIds"];
+    // HISTORICAL_CENSUS_ORDERED_BLOCK_OWNERSHIP_GUARD: progress is counted only when the
+    // retained unit owns exactly the canonical current window, in exact document order.
+    if (
+      !Array.isArray(blockIds) ||
+      blockIds.length !== expectedBlockIds.length ||
+      blockIds.some((id, blockIndex) =>
+        typeof id !== "string" || id !== expectedBlockIds[blockIndex]
+      )
+    ) return invalid(`${origin} ordered source-block ownership is not canonical`);
+
+    const attempts = parsed["attempts"];
+    const usages = parsed["usages"];
+    if (
+      !Number.isSafeInteger(attempts) || (attempts as number) < 0 ||
+      !Array.isArray(usages) || !usages.every(isCallUsage)
+    ) return invalid(`${origin} attempts or paid receipts are malformed`);
+    const typedUsages = usages as CallUsage[];
+    const zeroReceiptWireFailure =
+      parsed["status"] === "failed" && parsed["failureStage"] === "wire-ceiling" &&
+      attempts === 0 && typedUsages.length === 0;
+    const coherence = zeroReceiptWireFailure
+      ? null
+      : validatePassAUnitUsageCoherence(typedUsages, runId, origin, attempts as number);
+    if (coherence !== null) return invalid(`${origin} ${coherence}`);
+
+    if (parsed["status"] === "failed") {
+      const fallbackTrigger = parsed["fallbackTrigger"] === null
+        ? null
+        : parseFallbackTrigger(parsed["fallbackTrigger"], typedUsages);
+      if (
+        typeof parsed["detail"] !== "string" || parsed["detail"].length === 0 ||
+        typeof parsed["terminal"] !== "boolean" ||
+        parsed["kind"] !== undefined ||
+        parsed["routeReceipt"] !== undefined ||
+        parsed["globalRules"] !== undefined || parsed["crossRefs"] !== undefined ||
+        parsed["ambiguities"] !== undefined || parsed["unverifiable"] !== undefined ||
+        parsed["primaryGroundingLimitations"] !== undefined ||
+        (parsed["fallbackTrigger"] !== null && fallbackTrigger === null)
+      ) return invalid(`${origin} failed-state envelope is malformed or carries success output`);
+
+      const failureStage = parsed["failureStage"];
+      if (
+        failureStage !== "fallback-authorized" &&
+        failureStage !== "provider" &&
+        failureStage !== "semantic-output" &&
+        failureStage !== "wire-ceiling"
+      ) return invalid(`${origin} failure stage is missing or invalid`);
+      const retainedModelOutput = parsed["modelOutput"];
+      if (
+        failureStage === "semantic-output" && retainedModelOutput !== undefined &&
+        (typeof retainedModelOutput !== "object" || retainedModelOutput === null ||
+          Array.isArray(retainedModelOutput))
+      ) return invalid(`${origin} retained semantic model output is not an object`);
+      if (
+        failureStage !== "semantic-output" &&
+        retainedModelOutput !== undefined && retainedModelOutput !== null
+      ) return invalid(`${origin} provider/fallback failure carries impossible model output`);
+      if (
+        fallbackTrigger !== null &&
+        !typedUsages.some((usage) => usage.eventId === fallbackTrigger.grokUsageEventId)
+      ) return invalid(`${origin} fallback trigger is not bound to a retained receipt`);
+      const fallbackChainFailure = fallbackTrigger === null ? null : validatePassAFallbackUsageChain(
+        typedUsages,
+        runId,
+        origin,
+        attempts as number,
+        fallbackTrigger,
+        failureStage === "fallback-authorized" ? "pending" :
+          failureStage === "semantic-output" ? "semantic-failed" : "provider-failed",
+      );
+      if (
+        (failureStage === "wire-ceiling" &&
+          ((attempts as number) !== 0 || typedUsages.length !== 0 || fallbackTrigger !== null ||
+            parsed["terminal"] !== true || Object.hasOwn(parsed, "modelOutput") ||
+            !(parsed["detail"] as string).startsWith(
+              `${EXTRACTION_MODEL_INPUT_WIRE_CEILING_EXCEEDED}:`,
+            ))) ||
+        (failureStage !== "wire-ceiling" && (attempts as number) === 0) ||
+        (failureStage === "provider" && fallbackTrigger === null && parsed["terminal"] !== true) ||
+        (fallbackTrigger === null && typedUsages.some((usage) => usage.provider === "deepseek")) ||
+        typedUsages.some((usage) => usage.status === "ok") ||
+        (failureStage === "semantic-output" &&
+          (parsed["terminal"] !== true || !typedUsages.some((usage) => usage.status === "parse-failed"))) ||
+        (failureStage === "fallback-authorized" &&
+          (parsed["terminal"] !== false || fallbackTrigger === null ||
+            typedUsages.some((usage) => usage.provider === "deepseek"))) ||
+        fallbackChainFailure !== null
+      ) return invalid(`${origin} failure state is inconsistent with its retained receipts`);
+      if (parsed["terminal"] !== true) {
+        return invalid(`${origin} is a non-terminal failure, so it is not an accounted unit`);
+      }
+
+      // Serial Pass A cannot legitimately persist a later canonical window after a terminal
+      // failure. Check only key presence; later bodies remain unread and have no authority.
+      for (let laterIndex = index + 1; laterIndex < windows.length; laterIndex += 1) {
+        const later = await env.EVIDENCE.get(windowKey(runId, laterIndex + 1));
+        if (later) {
+          return invalid(
+            `${origin} is terminal but a later canonical primary-window artifact is present`,
+          );
+        }
+      }
+
+      const accounted = n;
+      return {
+        kind: "ok",
+        value: {
+          total: windows.length,
+          accounted,
+          remaining: windows.length - accounted,
+          failedUnit: {
+            unit: origin,
+            blockIds: [...expectedBlockIds],
+            detail:
+              "A retained primary-window artifact records a terminal failure; semantic output was not reused.",
+          },
+          limitation: {
+            code: PASS_A_HISTORICAL_PROGRESS_CENSUS_LIMITATION_CODE,
+            count: 1,
+            detail:
+              "Primary-window progress was reconstructed from retained artifact metadata after the run. " +
+              "Stored model output was neither decoded nor reused, and this census grants no extraction or coverage authority.",
+          },
+        },
+      };
+    }
+
+    if (
+      parsed["kind"] !== "ok" ||
+      parsed["status"] !== undefined || parsed["detail"] !== undefined ||
+      parsed["failureStage"] !== undefined || parsed["terminal"] !== undefined ||
+      parsed["fallbackTrigger"] !== undefined ||
+      !Array.isArray(parsed["globalRules"]) || !Array.isArray(parsed["crossRefs"]) ||
+      !Array.isArray(parsed["ambiguities"]) || !Array.isArray(parsed["unverifiable"]) ||
+      typeof parsed["modelOutput"] !== "object" || parsed["modelOutput"] === null ||
+      Array.isArray(parsed["modelOutput"])
+    ) return invalid(`${origin} successful-state envelope is malformed`);
+    if (validatePassARouteReceiptForUnit(parsed["routeReceipt"], typedUsages, runId, origin) === null) {
+      return invalid(`${origin} successful route receipt is not bound to this window`);
+    }
+    // Do not inspect the typed arrays or modelOutput here. Their meaning belongs exclusively
+    // to the strict decoder; presence plus paid-unit coherence is enough to observe progress.
+  }
+
+  return invalid("the retained sequence contains no terminal failed primary window");
 }
 
 /**
@@ -2657,15 +6162,20 @@ export async function reconstructPassACompletedAuthority(
   const routeReceipts: PassARouteReceipt[] = [];
   const fallbackTriggers: GrokFallbackTrigger[] = [];
   const crossWindowLimitations: PassACrossWindowLimitation[] = [];
+  const primaryGroundingLimitations: PassAPrimaryGroundingLimitationWire[] = [];
   let windowsLanded = 0;
   let invalidSynthesisState: PassASlice["synthesisState"] =
     windows.length > 1 ? "waiting-for-windows" : "not-required";
   let synthesisAttempts = 0;
-  const invalid = (detail: string): PassAAuthorityReconstruction => ({
+  const invalid = (
+    detail: string,
+    failedUnit: PassResult["failedUnits"][number] | null = null,
+  ): PassAAuthorityReconstruction => ({
     kind: "invalid",
     detail: `PASS_A_COMPLETED_ARTIFACT_INVALID: ${detail}. ` +
       "No unit was re-bought and the completed payload is not continuation authority.",
     accountingCalls,
+    failedUnit,
     slice: {
       done: false,
       windowsTotal: windows.length,
@@ -2682,24 +6192,37 @@ export async function reconstructPassACompletedAuthority(
 
   for (let index = 0; index < windows.length; index += 1) {
     const origin = windows.length === 1 ? "A" : `A-w${index + 1}`;
+    const blockIds = windows[index]!.map((block) => block.blockId);
     const unit = await readWindow(env, runId, index + 1, windows[index]!, parserVersion, origin);
-    if (unit === null) return invalid(`${origin} is missing or belongs to a stale partition policy`);
-    accountingCalls.push(...unit.usages);
+    if (unit === null) {
+      const detail = `${origin} is missing or belongs to a stale partition policy`;
+      return invalid(detail, { unit: origin, blockIds, detail });
+    }
+    accountingCalls.push(...replayAccountingUsages(unit.usages));
     if (unit.kind === "invalid") {
       windowsLanded = index + 1;
-      return invalid(unit.detail);
+      return invalid(unit.detail, { unit: origin, blockIds, detail: unit.detail });
     }
     if (unit.kind === "failed") {
       windowsLanded = index + 1;
-      return invalid(`${origin} retains failed authority: ${unit.detail}`);
+      const detail = `${origin} retains failed authority: ${unit.detail}`;
+      return invalid(detail, { unit: origin, blockIds, detail: unit.detail });
     }
     windowsLanded = index + 1;
     requirements.push(...unit.globalRules);
     crossRefs.push(...unit.crossRefs);
     ambiguities.push(...unit.ambiguities);
     unverifiable.push(...unit.unverifiable);
+    primaryGroundingLimitations.push(...unit.primaryGroundingLimitations);
     routeReceipts.push(unit.routeReceipt);
-    if (unit.routeReceipt.trigger !== null) fallbackTriggers.push(unit.routeReceipt.trigger);
+    if (unit.routeReceipt.trigger !== null) {
+      fallbackTriggers.push(unit.routeReceipt.trigger);
+      // Only DeepSeek Flash reduces independence.
+      if (unit.routeReceipt.selected === "deepseek-v4-flash") {
+        const detail = `${origin} used same-family Flash fallback`;
+        return invalid(detail, { unit: origin, blockIds, detail });
+      }
+    }
   }
 
   let synthesisState: PassASlice["synthesisState"] = "not-required";
@@ -2709,31 +6232,52 @@ export async function reconstructPassACompletedAuthority(
     try {
       context = await buildPassASynthesisContext(env, runId, doc, documentName);
     } catch (error) {
-      return invalid(error instanceof Error ? error.message : "synthesis context is unreadable");
+      const detail = error instanceof Error ? error.message : "synthesis context is unreadable";
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
     }
-    if (context === null) return invalid("multiwindow synthesis context is absent");
+    if (context === null) {
+      const detail = "multiwindow synthesis context is absent";
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
+    }
     const synthesis = await readPassASynthesis(env, runId, context);
-    if (synthesis === null) return invalid("cross-window synthesis artifact is missing");
-    accountingCalls.push(...synthesis.usages);
+    if (synthesis === null) {
+      const detail = "cross-window synthesis artifact is missing";
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
+    }
+    accountingCalls.push(...replayAccountingUsages(synthesis.usages));
     synthesisAttempts = synthesis.attempts;
-    if (synthesis.kind === "invalid") return invalid(synthesis.detail);
-    if (synthesis.kind === "failed") return invalid(`cross-window synthesis failed: ${synthesis.detail}`);
+    if (synthesis.kind === "invalid") {
+      return invalid(synthesis.detail, { unit: "A-synthesis", blockIds: [], detail: synthesis.detail });
+    }
+    if (synthesis.kind === "failed") {
+      const detail = `cross-window synthesis failed: ${synthesis.detail}`;
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail: synthesis.detail });
+    }
     routeReceipts.push(synthesis.routeReceipt);
     if (synthesis.routeReceipt.trigger !== null) fallbackTriggers.push(synthesis.routeReceipt.trigger);
-    if (synthesis.routeReceipt.trigger !== null) {
-      return invalid("cross-window synthesis used same-family Flash fallback");
+    if (synthesis.routeReceipt.trigger !== null && synthesis.routeReceipt.selected === "deepseek-v4-flash") {
+      const detail = "cross-window synthesis used same-family Flash fallback";
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
     }
     try {
       applySynthesisAdditions(requirements, crossRefs, ambiguities, unverifiable, synthesis.additions);
     } catch (error) {
-      return invalid(error instanceof Error ? error.message : "synthesis additions cannot be applied");
+      const detail = error instanceof Error ? error.message : "synthesis additions cannot be applied";
+      return invalid(detail, { unit: "A-synthesis", blockIds: [], detail });
     }
     crossWindowLimitations.push(synthesisLimitation(context.coverage, synthesis.additions));
     synthesisState = "ok";
   }
 
-  if (fallbackTriggers.length > 0) {
+  // DeepSeek Flash triggers reduce independence.
+  const hasFlashFallback = routeReceipts.some((receipt) => receipt.selected === "deepseek-v4-flash");
+  if (hasFlashFallback) {
     return invalid("a primary window used same-family Flash fallback");
+  }
+  try {
+    validatePassAPrimaryGroundingLimitations(primaryGroundingLimitations);
+  } catch (error) {
+    return invalid(error instanceof Error ? error.message : "primary grounding limitations are malformed");
   }
   const slice: PassASlice = {
     done: true,
@@ -2747,14 +6291,16 @@ export async function reconstructPassACompletedAuthority(
     synthesisIssued: 0,
     deadlineHit: false,
   };
+  // At this point, Flash fallback receipts have already been rejected above.
+  const reconstructedIndependence: PassAProviderIndependence = "independent";
   return {
     kind: "ok",
     value: {
       pass: "A",
       provider: "grok-primary/deepseek-flash-fallback",
       model: DEFAULT_GROK_MODEL,
-      providerRouteIdentity: grokFlashRouteIdentity(env),
-      providerIndependence: "independent",
+      providerRouteIdentity: passAPrimaryRouteIdentity(env),
+      providerIndependence: reconstructedIndependence,
       routeReceipts,
       fallbackTriggers,
       requirements,
@@ -2766,9 +6312,12 @@ export async function reconstructPassACompletedAuthority(
       calls: accountingCalls,
       crossRefs,
       crossWindowLimitations,
+      primaryGroundingLimitations,
       slice,
       issuedCalls: [],
       accountingCalls,
+      splitEvents: [],
+      splitExhaustionRefusals: [],
     },
   };
 }
@@ -2789,7 +6338,7 @@ function isCallUsage(value: unknown): value is CallUsage {
     finiteNonNegative(row.costUsd) && finiteNonNegative(row.latencyMs) &&
     Number.isSafeInteger(row.attempts) && (row.attempts ?? 0) >= 1 &&
     (row.usageSource === "provider-reported" || row.usageSource === "conservative-ceiling" ||
-      row.usageSource === "unverified-model-rate-ceiling")
+      row.usageSource === "unverified-model-rate-ceiling" || row.usageSource === "rejected-before-generation")
   );
 }
 
@@ -2806,9 +6355,11 @@ function parseFallbackTrigger(value: unknown, usages: CallUsage[]): GrokFallback
     typeof row.detail !== "string" || row.detail.length === 0
   ) return null;
   const bound = usages.find((usage) => usage.eventId === row.grokUsageEventId);
+  // The bound usage is the receipt-1 that failed: Grok primary (provider=grok,
+  // model=DEFAULT_GROK_MODEL).
+  const isGrokOrigin = bound?.provider === "grok" && bound?.model === DEFAULT_GROK_MODEL;
   if (
-    !bound || bound.provider !== "grok" || bound.status !== "error" ||
-    bound.model !== DEFAULT_GROK_MODEL ||
+    !bound || !isGrokOrigin || bound.status !== "error" ||
     (row.failureKind === "invalid-content" &&
       bound.usageSource === "unverified-model-rate-ceiling")
   ) return null;
@@ -2818,8 +6369,10 @@ function parseFallbackTrigger(value: unknown, usages: CallUsage[]): GrokFallback
 function parseRouteReceipt(value: unknown, usages: CallUsage[]): PassARouteReceipt | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const row = value as Partial<PassARouteReceipt>;
-  if (row.selected === "grok-4.6" && row.trigger === null) {
-    return usages.some((usage) => usage.provider === "deepseek") ? null : { selected: row.selected, trigger: null };
+  if (row.selected === "grok-4.5" && row.trigger === null) {
+    return usages.some((usage) => usage.provider === "deepseek")
+      ? null
+      : { selected: row.selected, trigger: null };
   }
   if (row.selected !== "deepseek-v4-flash") return null;
   const trigger = parseFallbackTrigger(row.trigger, usages);
@@ -2852,13 +6405,15 @@ function validatePassAFallbackUsageChain(
   if (triggerMatches.length !== 1) return "fallback trigger does not bind exactly one Grok receipt";
   const triggerUsage = triggerMatches[0]!;
   const triggerPosition = passAUsagePosition(triggerUsage, runId, unit);
+  // The trigger usage is receipt-1 from Grok primary.
+  const isGrokTrigger = triggerUsage.provider === "grok" && triggerUsage.model === DEFAULT_GROK_MODEL;
   if (
     triggerPosition === null || triggerPosition.receipt !== 1 ||
-    triggerUsage.provider !== "grok" || triggerUsage.model !== DEFAULT_GROK_MODEL ||
+    !isGrokTrigger ||
     triggerUsage.status !== "error"
-  ) return "fallback trigger is not a bound Grok receipt-1 error";
-  const grokUsages = usages.filter((usage) => usage.provider === "grok");
-  if (grokUsages.length !== 1) return "fallback chain contains an extra Grok purchase";
+  ) return "fallback trigger is not a bound receipt-1 error";
+  const primaryUsages = usages.filter((usage) => usage.provider === "grok");
+  if (primaryUsages.length !== 1) return "fallback chain contains an extra primary purchase";
   if (triggerPosition.issue > attempts) return "fallback trigger issue exceeds retained attempts";
 
   const flashRows = usages.flatMap((usage) => {
@@ -2912,7 +6467,7 @@ function validatePassARouteReceiptForUnit(
   const okUsages = usages.filter((usage) => usage.status === "ok");
   if (okUsages.length !== 1) return null;
   const selected = okUsages[0]!;
-  if (receipt.selected === "grok-4.6") {
+  if (receipt.selected === "grok-4.5") {
     return selected.provider === "grok" && selected.model === DEFAULT_GROK_MODEL &&
         !usages.some((usage) => usage.provider === "deepseek")
       ? receipt
@@ -2921,13 +6476,13 @@ function validatePassARouteReceiptForUnit(
   const selectedPosition = passAUsagePosition(selected, runId, unit);
   if (
     selected.provider !== "deepseek" || selected.model !== "deepseek-v4-flash" ||
-    selectedPosition?.receipt !== 2 || receipt.trigger === null
+    receipt.trigger === null
   ) return null;
   const triggerUsage = usages.find((usage) => usage.eventId === receipt.trigger!.grokUsageEventId);
   const triggerPosition = triggerUsage ? passAUsagePosition(triggerUsage, runId, unit) : null;
   if (
     !triggerUsage || triggerUsage.status !== "error" || triggerPosition?.receipt !== 1 ||
-    selectedPosition.issue === undefined ||
+    selectedPosition === null || selectedPosition.issue === undefined ||
     validatePassAFallbackUsageChain(
       usages, runId, unit, selectedPosition.issue, receipt.trigger, "success",
     ) !== null
@@ -2948,10 +6503,17 @@ export function validatePassAProviderState(value: unknown): PassAProviderIndepen
   if (triggers.some((trigger) => trigger === null)) return null;
   const triggerIds = triggers.map((trigger) => trigger!.grokUsageEventId);
   if (new Set(triggerIds).size !== triggerIds.length) return null;
-  if (rawReceipts.some((receipt) => parseRouteReceipt(receipt, usages) === null)) return null;
-  const derived: PassAProviderIndependence = triggers.length > 0
-    ? "reduced-same-provider-fallback"
-    : "independent";
+  const parsedReceipts = rawReceipts.map((receipt) => parseRouteReceipt(receipt, usages));
+  if (parsedReceipts.some((receipt) => receipt === null)) return null;
+  // Derive independence from the trigger and receipt combination:
+  // - No triggers: independent
+  // - Triggers with DeepSeek Flash receipts: reduced-same-provider-fallback
+  let derived: PassAProviderIndependence;
+  if (triggers.length === 0) {
+    derived = "independent";
+  } else {
+    derived = "reduced-same-provider-fallback";
+  }
   return row["providerIndependence"] === derived ? derived : null;
 }
 

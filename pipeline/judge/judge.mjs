@@ -65,7 +65,7 @@ const signer = signKeyPath
   ? { privateKeyPem: readFileSync(resolve(signKeyPath), 'utf8'), keyId: argOf('--key-id', 'judge-key-1'), signedAt: argOf('--signed-at', new Date().toISOString()) }
   : null;
 
-const out = judgeRun({ runDir, checklist, priorObservations, authority, signer });
+const out = await judgeRun({ runDir, checklist, priorObservations, authority, signer });
 
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, 'verdicts.json'), `${JSON.stringify(out, null, 2)}\n`, 'utf8');

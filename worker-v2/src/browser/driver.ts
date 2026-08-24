@@ -51,10 +51,12 @@ import {
   LABEL_SELECTOR,
   READ_SCREEN,
   clearValueScript,
+  commitValueScript,
   fillRefusalFor,
   isTextEntry,
   isValueEntry,
   selectOptionScript,
+  readValueScript,
   setValueScript,
 } from "./page-script";
 import type {
@@ -65,9 +67,12 @@ import type {
   BlockedReason,
   ControlState,
   PathObservation,
+  PdfCapture,
+  PdfCaptureFailureKind,
   PerformedAction,
   RenderedScreen,
   ScreenCaptureEpoch,
+  CaptureDietEntry,
   ScreenCaptureFailure,
   ScreenCaptureGeometry,
   StepObservation,
@@ -79,6 +84,7 @@ import {
   captureAccessibilitySnapshot,
   captureFailure,
   capturePathObservation,
+  captureRenderedPdfRef,
   captureScreenJsonRef,
   captureScreenshotRef,
 } from "./capture";
@@ -98,12 +104,24 @@ export interface ElementHandleLike {
   dispose?(): Promise<void>;
 }
 
+/** Public Puppeteer CDP surface used by the bounded, handle-owning PDF adapter. */
+export interface PdfProtocolSessionLike {
+  send(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { timeout: number },
+  ): Promise<unknown>;
+  detach(): Promise<void>;
+}
+
 export interface PageLike {
   goto(url: string, opts?: unknown): Promise<unknown>;
   evaluate(script: string): Promise<unknown>;
   evaluateOnNewDocument(script: string): Promise<unknown>;
   $$(selector: string): Promise<ElementHandleLike[]>;
   screenshot(opts?: unknown): Promise<Uint8Array | ArrayBuffer | string>;
+  /** Optional so adapters without the public, handle-owning CDP seam produce a named limitation. */
+  createCDPSession?(): Promise<PdfProtocolSessionLike>;
   /** Optional only so pre-pivot test doubles and old adapters fail visibly rather than crash. */
   accessibility?: { snapshot(opts?: { interestingOnly?: boolean }): Promise<unknown | null> };
   setViewport(vp: { width: number; height: number; deviceScaleFactor?: number }): Promise<void>;
@@ -127,6 +145,44 @@ export interface WalkOptions {
   applyHistoryShim: boolean;
   /** ms to wait for the screen to change after pressing Next before calling it blocked. */
   advanceTimeoutMs: number;
+  /** Bound on ONE screen read before it is recorded as hung (default READ_SCREEN_TIMEOUT_MS). */
+  readTimeoutMs?: number;
+  /**
+   * Ceiling on waiting for a WITHHELD forward control to open — a forced-exposure / minimum-dwell
+   * gate (see `awaitForwardRelease`). A SAFETY BOUND, never a duration estimate: the wait ends the
+   * moment the control opens. Default `FORWARD_RELEASE_MAX_WAIT_MS`; operators raise it with
+   * `EXEC_FORWARD_RELEASE_MAX_WAIT_MS` for an instrument whose gates are longer than the default.
+   */
+  forwardReleaseMaxWaitMs?: number;
+  /**
+   * Poll interval and terminal-screen patience for the same wait. INJECTABLE FOR THE SAME REASON
+   * `readTimeoutMs` is: a fixture must be able to exercise the real decision procedure in
+   * milliseconds instead of sleeping real seconds inside every mutant run. Production passes
+   * nothing and gets the defaults, which are asserted by their own test so a mutant that weakens
+   * production timing still dies.
+   */
+  forwardReleasePollMs?: number;
+  forwardReleaseTerminalMaxWaitMs?: number;
+  /**
+   * How many SILENT re-presses a swallowed advance earns — the site neither moved nor
+   * complained after the first press. INJECTABLE FOR THE SAME REASON the forward-release
+   * timings are: a fixture must exercise the real decision procedure in milliseconds, and
+   * a mutant that weakens the production default must die against a pin test.
+   * Default `SILENT_REFUSAL_MAX_PRESSES`.
+   */
+  silentRefusalMaxPresses?: number;
+  /** Bound on EVERY page call before it rejects as hung (default PAGE_CALL_TIMEOUT_MS). */
+  pageCallTimeoutMs?: number;
+  /**
+   * FROM WHICH STEP the retry variant applies (default 0 — every step, today's behaviour).
+   * The 2026-08-17 v47 run measured the defect this closes: a walk screened out at screen
+   * ~12 on an unlabelled later screener, and its pivots — varying EVERY navigator default —
+   * changed the steered answer at screener #1 too, disqualified on screen 1, and never
+   * reached the screen they existed to re-try. A pivot now replays the proven answers
+   * verbatim (variant 0) below this step and varies only from here on: the screens the
+   * first walk survived are evidence, not degrees of freedom.
+   */
+  variantFromStep?: number;
   /**
    * BOUNDED SCREEN-OUT RETRY: which deterministic filler variant this walk uses. 0 (or
    * absent) is today's defaults, byte-for-byte; `execute-batch.ts` sets the durable pivot
@@ -143,6 +199,51 @@ export interface WalkOptions {
    * random draw — the same inputs walk the same walk on every Workflow step replay.
    */
   variant?: number;
+  /**
+   * STARTUP PHASE INSTRUMENTATION — so the executor knows WHERE the walk hung.
+   *
+   * Called at two transitions inside `walkPath`:
+   *   - `"survey-load"` after `page.goto` resolves (success OR failure);
+   *   - `"first-read"` after the first screen read in the step loop completes.
+   *
+   * The `"page-create"` phase is OUTSIDE `walkPath` (the executor calls `newPage` before
+   * entering the driver), so the executor timestamps that one itself.
+   *
+   * When the walk hangs between two callbacks, the LAST callback that fired names the phase
+   * that completed; the NEXT phase is the one that hung. When NO callback fires, the hang
+   * is in the pre-goto setup (viewport, evaluateOnNewDocument) — effectively page-create's
+   * tail, but the executor already has its own timestamp for page creation.
+   */
+  onStartupPhase?: (phase: "survey-load" | "first-read") => void;
+  /**
+   * PER-WALK PROGRESS WATCHDOG — the executor's stall detector, signalling INTO the walk.
+   *
+   * Called at the END of every completed step (after the step observation is pushed), so the
+   * executor can maintain a "last progress" timestamp OUTSIDE the walk's own await chain. A
+   * page call that wedges inside the step loop blocks the in-loop deadline check; this
+   * callback is the only way the executor learns that the walk is still making forward
+   * progress.
+   *
+   * When no callback has fired for the configured stall window, the executor closes the PAGE
+   * (not the browser) from its own timer callback. Every pending page call then receives a
+   * disconnect error and resolves, the step loop catches it, the walk exits, and everything
+   * recorded up to the stall is committed as a partial observation.
+   */
+  onStepCompleted?: (stepIndex: number) => void;
+  /**
+   * ABORT SIGNAL — the executor's stall detector telling the walk to stop.
+   *
+   * A mutable object. When `aborted` becomes true, the step loop exits at its next check and
+   * the walk returns its partial observation with outcome "walk-stalled". The executor sets
+   * this BEFORE closing the page, so the walk can distinguish a stall-abort from an ordinary
+   * page error.
+   *
+   * WHY MUTABLE AND NOT A PROMISE. A promise is part of the await chain — it has to be
+   * raced against every page call, which means threading it through every call site. The
+   * mutable flag is polled at two points (the loop top and every catch site) and costs nothing
+   * when it is false, which is every step of every healthy walk.
+   */
+  abortSignal?: { aborted: boolean; reason?: string };
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -155,7 +256,26 @@ const norm = (s: string): string =>
 
 const PROBE_TEXT = "QA-PROBE";
 
-/** Label match: exact first, then containment either way. Never fuzzy scoring. */
+/**
+ * The none-style option lexicon shared by the exclusion-screener defaults (the in-group
+ * heuristic and the fragmented-groups shortcut). A linguistic convention, stated: it only
+ * re-orders which INVENTED filler is clicked — input, never evidence.
+ */
+const NONE_STYLE_OPTION = /\bnone of the above\b|\bnone of these\b|^\s*none\b|\bnot applicable\b|\bn\/a\b/i;
+// A text control whose label reads as a specify prompt ("Others (Please Specify)"). A
+// linguistic convention like NONE_STYLE_OPTION — stated, used only to steer the harness's
+// own fillers, never as evidence. Measured live (run v2r_01m0d5x1h5z8xjxw6tdvnee771,
+// B10): the allocation split wrote "0" into the grid's specify TEXT cell, and the site's
+// pairing rule then demanded a real specify answer forever — while the probe round proved
+// the distinction on the wire (the % cells transform non-numeric input, the specify cell
+// keeps it).
+const SPECIFY_STYLE_LABEL = /\bplease specify\b|\(specify\)|\bspecify\b/i;
+
+/**
+ * Label match for the POSITIVE (select/prefer) path: exact first, then containment
+ * either way. Never fuzzy scoring. This is the original containment-based matching
+ * that is correct for select/request semantics.
+ */
 function labelMatches(optionLabel: string, wanted: string): boolean {
   const a = norm(optionLabel);
   const b = norm(wanted);
@@ -163,6 +283,44 @@ function labelMatches(optionLabel: string, wanted: string): boolean {
   if (a === b) return true;
   if (a.includes(b) && b.length >= 3) return true;
   if (b.includes(a) && a.length >= 3) return true;
+  return false;
+}
+
+/**
+ * AVOID-SIDE LABEL MATCH (4D). Stricter than the positive path: an avoid label must
+ * match the full option label, not merely be a substring of it.
+ *
+ * RULES (explicit, stated):
+ *   1. Exact normalized equality: "Hospital" matches "Hospital" (case/punct insensitive).
+ *   2. Token-superset boundary match: the option label IS the avoid label possibly with
+ *      punctuation/casing differences. This handles forms like "Hospital." or "(Hospital)".
+ *   3. Substring containment of a LONGER DIFFERENT label does NOT match: an avoid label
+ *      "Hospital" must NOT flag "IDN / Health system (i.e., a group of hospital(s) and
+ *      clinic(s))". The option carries additional semantic content, making it a different
+ *      answer.
+ *
+ * ASSUMPTION STATED: this only applies to avoid-direction matching. The positive select
+ * path keeps containment because a planned label "Director of ops" should match an option
+ * rendered as "Director of operations" or vice versa.
+ */
+function avoidLabelMatches(optionLabel: string, avoidLabel: string): boolean {
+  const a = norm(optionLabel);
+  const b = norm(avoidLabel);
+  if (!a || !b) return false;
+  // Rule 1: exact normalized equality.
+  if (a === b) return true;
+  // Rule 2: same token count AND same token set — i.e. the two labels are the same words,
+  // possibly reordered (punctuation/casing already normalized away by norm()). DELIBERATELY
+  // STRICTER than a fluff-tolerant superset: an option label with ANY extra token is a
+  // different answer and is never flagged. "(Hospital)" matches "Hospital" via rule 1 after
+  // normalization; "a group of hospital(s) and clinic(s)" never matches "Hospital".
+  const aTokens = a.split(" ").filter(Boolean);
+  const bTokens = b.split(" ").filter(Boolean);
+  if (aTokens.length === bTokens.length) {
+    // Same token count: require every token matches (handles reordering).
+    const bSet = new Set(bTokens);
+    if (aTokens.every((t) => bSet.has(t))) return true;
+  }
   return false;
 }
 
@@ -216,11 +374,16 @@ const MIN_WORDING_TOKENS = 4;
 export function questionWordingScore(wording: string | null | undefined, screen: RenderedScreen): number {
   const w = tokenSet(String(wording ?? ""));
   if (w.size < MIN_WORDING_TOKENS) return 0;
+  // USE STRIPPED TEXT: the platform's question-skip-menu select renders question ids into
+  // `visibleText`, and each one is a token that inflates the heading set (lowering precision)
+  // and pollutes the full-text set. `stripNavigationWidgetText` removes the menu block, leaving
+  // the question's own text intact — so precision measures the question, not the platform chrome.
+  const strippedVisible = stripNavigationWidgetText(screen);
   const headingText =
-    screen.questionText && screen.questionText.length > 0 ? screen.questionText : screen.visibleText.slice(0, 600);
+    screen.questionText && screen.questionText.length > 0 ? screen.questionText : strippedVisible.slice(0, 600);
   const heading = tokenSet(headingText);
   if (heading.size === 0) return 0;
-  const full = tokenSet(`${screen.questionText ?? ""} ${screen.instructionText ?? ""} ${screen.visibleText ?? ""}`);
+  const full = tokenSet(`${screen.questionText ?? ""} ${screen.instructionText ?? ""} ${strippedVisible}`);
   let inHeading = 0;
   let inFull = 0;
   for (const t of w) {
@@ -460,6 +623,84 @@ async function read(page: PageLike): Promise<RenderedScreen> {
   return (await page.evaluate(READ_SCREEN)) as RenderedScreen;
 }
 
+/**
+ * A screen read that HANGS (a wedged page or a CDP call that never resolves) must become a
+ * rejection the step loop's existing screen-read-failed path can record — steps so far
+ * retained, outcome "error", capture failure counted — never a silent stall that only the
+ * per-case axe can end by destroying the whole observation. Measured healthy reads take
+ * ~300ms; the bound is two orders of magnitude above that. The 2026-08-17 run
+ * v2r_01m067zf40z4788yb60c380vgp hung EVERY walk that crossed the screener (12 of 12
+ * crossing attempts, 0 screens recorded) while every walk ending at the screener returned —
+ * a deterministic stall somewhere in the crossing step this bound exists to name.
+ */
+export const READ_SCREEN_TIMEOUT_MS = 30_000;
+
+/**
+ * NO PAGE CALL MAY HANG A WALK — the invariant, at its one seam. The 2026-08-17 runs proved
+ * the hang class survives point-fixes: with all five screen READS bounded, the first v42
+ * walk still hung and was zeroed, because clicks, choice readbacks and screenshot captures
+ * are page calls too, and any of them can wedge on a dead target after a navigation
+ * (Browser Rendering holds the connection; the call never resolves). walkPath therefore
+ * wraps its page so EVERY promise-returning method rejects after this bound instead of
+ * hanging; each call site's existing failure path (a click records ok:false, a capture
+ * records a counted failure, a read records screen-read-failed) absorbs the rejection. The
+ * bound sits above every legitimate call duration (goto's own timeout is 45s) and below the
+ * per-case axe, so a wedged call degrades the STEP while the walk still returns evidence.
+ */
+export const PAGE_CALL_TIMEOUT_MS = 60_000;
+
+/** The one timer every hang bound shares: resolve/reject passthrough, reject after ms. */
+function boundPromise<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${what} hung for ${ms}ms without resolving`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
+export function boundPageCalls(page: PageLike, ms: number): PageLike {
+  const boundMethods = <T extends object>(obj: T, label: string): T =>
+    new Proxy(obj, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        const name = String(prop);
+        // Nested method-bearing objects are page-call surfaces too (`accessibility.snapshot`).
+        if (name === "accessibility" && value && typeof value === "object") {
+          return boundMethods(value as object, `${label}.accessibility`);
+        }
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          const out = (value as (...a: unknown[]) => unknown).apply(obj, args);
+          if (!out || typeof (out as Promise<unknown>).then !== "function") return out;
+          let p = boundPromise(out as Promise<unknown>, ms, `${label}.${name}`);
+          // Element handles returned by `$$` carry their own page calls (click/type/focus);
+          // a wedged handle call hangs a walk exactly as a wedged page call does.
+          if (name === "$$") {
+            p = p.then((handles) =>
+              Array.isArray(handles)
+                ? handles.map((h) => (h && typeof h === "object" ? boundMethods(h as object, `${label}.handle`) : h))
+                : handles,
+            );
+          }
+          return p;
+        };
+      },
+    });
+  return boundMethods(page as object, "page") as PageLike;
+}
+
+function boundedRead(page: PageLike, ms: number, what: string): Promise<RenderedScreen> {
+  return boundPromise(read(page), ms, what);
+}
+
 const READ_CAPTURE_GEOMETRY = String.raw`(() => {
   const root = document.documentElement;
   const body = document.body;
@@ -486,6 +727,50 @@ export const ACCESSIBILITY_CAPTURE_LIMITS: Readonly<{
   maxDepth: 64,
   maxValueChars: 16_384,
   maxSerializedBytes: 1_500_000,
+});
+
+/** Hard browser-side bounds for the visibility-only PDF rendition. */
+export const PDF_CAPTURE_LIMITS: Readonly<{
+  timeoutMs: number;
+  maxBytes: number;
+  maxDocumentWidth: number;
+  maxDocumentHeight: number;
+  maxDocumentArea: number;
+}> = Object.freeze({
+  timeoutMs: 5_000,
+  maxBytes: 8 * 1024 * 1024,
+  maxDocumentWidth: 50_000,
+  maxDocumentHeight: 50_000,
+  maxDocumentArea: 250_000_000,
+});
+
+/** Each protocol read is bounded independently as well as by the total PDF deadline. */
+export const PDF_PROTOCOL_READ_CHUNK_BYTES = 64 * 1024;
+const PDF_PROTOCOL_CLEANUP_TIMEOUT_MS = 1_000;
+
+const PDF_FONT_READY_EXPRESSION =
+  "document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : Promise.resolve(true)";
+
+// These are the exact normalized defaults produced by Puppeteer 1.1.0 for
+// `{ format: "a4", printBackground: true }`, plus stream transfer mode.
+const PDF_PRINT_TO_PDF_PARAMS: Readonly<Record<string, unknown>> = Object.freeze({
+  transferMode: "ReturnAsStream",
+  landscape: false,
+  displayHeaderFooter: false,
+  headerTemplate: "",
+  footerTemplate: "",
+  printBackground: true,
+  scale: 1,
+  paperWidth: 8.27,
+  paperHeight: 11.7,
+  marginTop: 0,
+  marginBottom: 0,
+  marginLeft: 0,
+  marginRight: 0,
+  pageRanges: "",
+  preferCSSPageSize: false,
+  generateTaggedPDF: true,
+  generateDocumentOutline: false,
 });
 
 type AccessibilityLimitKind = Extract<
@@ -711,14 +996,283 @@ async function shoot(page: PageLike): Promise<ScreenshotAttempt> {
   }
 }
 
-function captureFailureRow(
-  kind: ScreenCaptureFailure["kind"],
+export interface PdfAttempt {
+  bytes: Uint8Array | null;
+  kind: PdfCaptureFailureKind | null;
+  detail: string | null;
+}
+
+type PdfCapturePolicy = typeof PDF_CAPTURE_LIMITS;
+
+const effectivePdfPolicy = (requested: Partial<PdfCapturePolicy>): PdfCapturePolicy => ({
+  timeoutMs: Math.max(1, Math.floor(requested.timeoutMs ?? PDF_CAPTURE_LIMITS.timeoutMs)),
+  maxBytes: Math.max(1, Math.floor(requested.maxBytes ?? PDF_CAPTURE_LIMITS.maxBytes)),
+  maxDocumentWidth: Math.max(1, Math.floor(requested.maxDocumentWidth ?? PDF_CAPTURE_LIMITS.maxDocumentWidth)),
+  maxDocumentHeight: Math.max(1, Math.floor(requested.maxDocumentHeight ?? PDF_CAPTURE_LIMITS.maxDocumentHeight)),
+  maxDocumentArea: Math.max(1, Math.floor(requested.maxDocumentArea ?? PDF_CAPTURE_LIMITS.maxDocumentArea)),
+});
+
+const isPdfTimeoutError = (err: unknown): boolean => {
+  if ((typeof err !== "object" || err === null) && typeof err !== "function") return false;
+  const value = err as { name?: unknown; message?: unknown };
+  if (value.name === "TimeoutError") return true;
+  return typeof value.message === "string" && /\b(?:timeout|timed out)\b/i.test(value.message);
+};
+
+class PdfCaptureTimeoutError extends Error {
+  override readonly name = "TimeoutError";
+}
+
+const remainingPdfTimeout = (deadline: number, phase: string): number => {
+  const remaining = Math.floor(deadline - Date.now());
+  if (remaining <= 0) throw new PdfCaptureTimeoutError(`PDF ${phase} exceeded the total capture deadline`);
+  return remaining;
+};
+
+/**
+ * `Page.createCDPSession()` has no per-call timeout option. Observe its late settlement and
+ * dispose a session that arrives after the total deadline, so the timeout branch never creates
+ * an unhandled rejection or an ownerless protocol session.
+ */
+async function awaitPdfPromiseBeforeDeadline<T>(
+  operation: Promise<T>,
+  deadline: number,
+  phase: string,
+  onLateValue?: (value: T) => Promise<void>,
+): Promise<T> {
+  const timeoutMs = Math.max(1, Math.floor(deadline - Date.now()));
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const observed = operation.then(
+    async (value) => {
+      if (timedOut) {
+        if (onLateValue) {
+          try {
+            await onLateValue(value);
+          } catch {
+            // The late value is already unusable. Observation prevents an unhandled cleanup
+            // rejection; the owning page/browser teardown remains the final containment layer.
+          }
+        }
+        throw new PdfCaptureTimeoutError(`PDF ${phase} completed after the total capture deadline`);
+      }
+      return value;
+    },
+    (error: unknown) => {
+      throw error;
+    },
+  );
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(new PdfCaptureTimeoutError(`PDF ${phase} exceeded the total capture deadline`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([observed, timeout]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
+const decodePdfProtocolChunk = (data: string, base64Encoded: boolean): Uint8Array => {
+  if (!base64Encoded) return new TextEncoder().encode(data);
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+};
+
+/**
+ * Capture one bounded print rendition. Exported so the timeout/size/dimension refusal paths can
+ * be tested with small bounds; production calls it with the frozen five-second/eight-MiB policy.
+ */
+export async function capturePdfBytes(
+  page: PageLike,
+  geometry: ScreenCaptureGeometry,
+  requested: Partial<PdfCapturePolicy> = {},
+): Promise<PdfAttempt> {
+  if (typeof page.createCDPSession !== "function") {
+    return {
+      bytes: null,
+      kind: "pdf-api-unavailable",
+      detail:
+        "this browser adapter exposes no public Puppeteer createCDPSession API; " +
+        "an unbounded page.pdf fallback is intentionally not used",
+    };
+  }
+
+  const policy = effectivePdfPolicy(requested);
+  const width = geometry.documentWidth;
+  const height = geometry.documentHeight;
+  if (
+    geometry.source !== "browser" ||
+    width === null ||
+    height === null ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    width > policy.maxDocumentWidth ||
+    height > policy.maxDocumentHeight ||
+    width * height > policy.maxDocumentArea
+  ) {
+    return {
+      bytes: null,
+      kind: "pdf-capture-dimension-limit",
+      detail:
+        `PDF capture refused before createCDPSession: document geometry ${String(width)}x${String(height)} ` +
+        `(source ${geometry.source}) is unavailable or exceeds ` +
+        `${policy.maxDocumentWidth}x${policy.maxDocumentHeight}/${policy.maxDocumentArea} CSS pixels squared`,
+    };
+  }
+
+  const deadline = Date.now() + policy.timeoutMs;
+  const createSession = page.createCDPSession;
+  let session: PdfProtocolSessionLike | null = null;
+  let handle: string | null = null;
+  let handleCloseIssued = false;
+  let outcome: PdfAttempt = {
+    bytes: null,
+    kind: "pdf-capture-failed",
+    detail: "Puppeteer PDF protocol capture ended without a classified outcome",
+  };
+  try {
+    session = await awaitPdfPromiseBeforeDeadline(
+      createSession.call(page),
+      deadline,
+      "CDP session creation",
+      async (lateSession) => lateSession.detach(),
+    );
+    const send = async (method: string, params: Record<string, unknown>): Promise<unknown> =>
+      session!.send(method, params, { timeout: remainingPdfTimeout(deadline, method) });
+
+    const fontResult = await send("Runtime.evaluate", {
+      expression: PDF_FONT_READY_EXPRESSION,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    if (plainObject(fontResult) && fontResult.exceptionDetails !== undefined) {
+      throw new Error("document.fonts.ready failed before PDF capture");
+    }
+
+    const printed = await send("Page.printToPDF", { ...PDF_PRINT_TO_PDF_PARAMS });
+    if (!plainObject(printed) || typeof printed.stream !== "string" || printed.stream.length === 0) {
+      throw new Error("Page.printToPDF returned no protocol stream handle");
+    }
+    handle = printed.stream;
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const row = await send("IO.read", { handle, size: PDF_PROTOCOL_READ_CHUNK_BYTES });
+      if (
+        !plainObject(row) ||
+        typeof row.data !== "string" ||
+        typeof row.eof !== "boolean" ||
+        (row.base64Encoded !== undefined && typeof row.base64Encoded !== "boolean")
+      ) {
+        throw new Error("IO.read returned an invalid PDF stream row");
+      }
+      const base64Encoded = row.base64Encoded === true;
+      const available = policy.maxBytes - total;
+      const definitelyOversize = base64Encoded
+        ? row.data.length > Math.ceil(available / 3) * 4
+        : row.data.length > available;
+      if (definitelyOversize) {
+        outcome = {
+          bytes: null,
+          kind: "pdf-capture-size-limit",
+          detail: `Puppeteer PDF stream exceeded the ${policy.maxBytes}-byte evidence cap; its protocol handle was closed`,
+        };
+        break;
+      }
+      const chunk = decodePdfProtocolChunk(row.data, base64Encoded);
+      if (chunk.byteLength > available) {
+        outcome = {
+          bytes: null,
+          kind: "pdf-capture-size-limit",
+          detail: `Puppeteer PDF stream exceeded the ${policy.maxBytes}-byte evidence cap; its protocol handle was closed`,
+        };
+        break;
+      }
+      total += chunk.byteLength;
+      if (chunk.byteLength > 0) chunks.push(chunk);
+      if (row.eof) {
+        if (total === 0) {
+          outcome = { bytes: null, kind: "pdf-capture-empty", detail: "Puppeteer PDF stream yielded zero bytes" };
+        } else {
+          const bytes = new Uint8Array(total);
+          let offset = 0;
+          for (const part of chunks) {
+            bytes.set(part, offset);
+            offset += part.byteLength;
+          }
+          outcome = { bytes, kind: null, detail: null };
+        }
+        break;
+      }
+    }
+  } catch (err) {
+    if (isPdfTimeoutError(err)) {
+      outcome = {
+        bytes: null,
+        kind: "pdf-capture-timeout",
+        detail: `Puppeteer PDF capture exceeded its ${policy.timeoutMs}ms total deadline: ${errorText(err)}`,
+      };
+    } else {
+      outcome = {
+        bytes: null,
+        kind: "pdf-capture-failed",
+        detail: `Puppeteer PDF protocol capture failed: ${errorText(err)}`,
+      };
+    }
+  }
+
+  let cleanupError: unknown = null;
+  // Cleanup has a separate short bound: when IO.read consumes the full five-second operation
+  // deadline, reusing that expired deadline would reduce IO.close to a token 1ms attempt.
+  const cleanupDeadline = Date.now() + Math.min(PDF_PROTOCOL_CLEANUP_TIMEOUT_MS, policy.timeoutMs);
+  // PDF_PROTOCOL_HANDLE_COMPLETE_CLEANUP: every acquired print handle is closed exactly once,
+  // including EOF success, overflow, read failure and timeout. PDF remains visibility-only.
+  if (session !== null && handle !== null && !handleCloseIssued) {
+    handleCloseIssued = true;
+    try {
+      await session.send("IO.close", { handle }, { timeout: Math.max(1, Math.floor(cleanupDeadline - Date.now())) });
+    } catch (error) {
+      cleanupError = error;
+    }
+  }
+  if (session !== null) {
+    try {
+      await awaitPdfPromiseBeforeDeadline(session.detach(), cleanupDeadline, "CDP session detach");
+    } catch (error) {
+      cleanupError ??= error;
+    }
+  }
+  if (outcome.bytes !== null && cleanupError !== null) {
+    return isPdfTimeoutError(cleanupError)
+      ? {
+          bytes: null,
+          kind: "pdf-capture-timeout",
+          detail: `Puppeteer PDF cleanup exceeded its ${policy.timeoutMs}ms total deadline: ${errorText(cleanupError)}`,
+        }
+      : {
+          bytes: null,
+          kind: "pdf-capture-failed",
+          detail: `Puppeteer PDF cleanup failed: ${errorText(cleanupError)}`,
+        };
+  }
+  return outcome;
+}
+
+function captureFailureRow<K extends ScreenCaptureFailure["kind"]>(
+  kind: K,
   detail: string,
   stepIndex: number,
   slot: string,
   at = new Date().toISOString(),
   count = 1,
-): ScreenCaptureFailure {
+): ScreenCaptureFailure & { kind: K } {
   return { kind, detail, count, at, stepIndex, slot };
 }
 
@@ -771,6 +1325,7 @@ const captureIds = (epoch: ScreenCaptureEpoch): string[] => {
   const ids = [epoch.screenJson.evidenceId];
   if (epoch.screenshot.status === "captured") ids.push(epoch.screenshot.ref.evidenceId);
   if (epoch.accessibility.status === "captured") ids.push(epoch.accessibility.ref.evidenceId);
+  if ("pdf" in epoch && epoch.pdf.status === "captured") ids.push(epoch.pdf.ref.evidenceId);
   return ids;
 };
 
@@ -877,7 +1432,7 @@ async function prepareAccessibility(
 }
 
 /**
- * Capture one logical screen epoch across all three modalities.
+ * Capture one logical screen epoch across all four modalities.
  *
  * Browser protocol calls are sequential, never falsely called atomic: `startedAt`/`endedAt`
  * bound that window. They are intentionally made before any R2 writes, so storage latency does
@@ -913,9 +1468,21 @@ export async function captureScreenEpoch(
     geometryAttempt.failure.stepIndex = stepIndex;
     geometryAttempt.failure.slot = slot;
   }
-  const screenshotAttempt = await shoot(page);
-  const screenshotAttemptedAt = new Date().toISOString();
-  const accessibilityPrepared = await prepareAccessibility(page, stepIndex, slot);
+  // THE THREE HEAVY PROTOCOL CALLS RUN CONCURRENTLY. Each is a READ of the same settled
+  // page — a PNG, the AX tree, a PDF print — and the v44 phase clocks measured them at
+  // ~21s of every ~28s step when made back-to-back (three epochs per step, ~7s per epoch,
+  // sequential inside each). Concurrency also NARROWS the startedAt/endedAt window the
+  // epoch claims its modalities were captured within — the pairing gets more atomic, not
+  // less. Geometry stays first: the PDF print takes its page dimensions from it.
+  const [screenshotSettled, accessibilityPrepared, pdfSettled] = await Promise.all([
+    shoot(page).then((attempt) => ({ attempt, attemptedAt: new Date().toISOString() })),
+    prepareAccessibility(page, stepIndex, slot),
+    capturePdfBytes(page, geometryAttempt.geometry).then((attempt) => ({ attempt, attemptedAt: new Date().toISOString() })),
+  ]);
+  const screenshotAttempt = screenshotSettled.attempt;
+  const screenshotAttemptedAt = screenshotSettled.attemptedAt;
+  const pdfAttempt = pdfSettled.attempt;
+  const pdfAttemptedAt = pdfSettled.attemptedAt;
   // End the browser capture window before writing anything to evidence storage.
   const endedAt = new Date().toISOString();
 
@@ -945,6 +1512,35 @@ export async function captureScreenEpoch(
           stepIndex,
           slot,
           screenshotAttemptedAt,
+        ),
+      };
+    }
+  }
+
+  let pdf: PdfCapture;
+  if (!pdfAttempt.bytes || pdfAttempt.kind) {
+    pdf = {
+      status: "failed",
+      failure: captureFailureRow(
+        pdfAttempt.kind ?? "pdf-capture-empty",
+        pdfAttempt.detail ?? "Puppeteer returned no usable PDF bytes",
+        stepIndex,
+        slot,
+        pdfAttemptedAt,
+      ),
+    };
+  } else {
+    try {
+      pdf = { status: "captured", ref: await captureRenderedPdfRef(cap, pdfAttempt.bytes, slot, stepIndex) };
+    } catch (err) {
+      pdf = {
+        status: "failed",
+        failure: captureFailureRow(
+          "pdf-evidence-write-failed",
+          `PDF was captured but its immutable evidence write failed: ${errorText(err)}`,
+          stepIndex,
+          slot,
+          pdfAttemptedAt,
         ),
       };
     }
@@ -1096,10 +1692,13 @@ export async function captureScreenEpoch(
   const captureFailures: ScreenCaptureFailure[] = [
     ...(geometryAttempt.failure ? [geometryAttempt.failure] : []),
     ...(screenshot.status === "failed" ? [screenshot.failure] : []),
+    // PDF_FAILURES_ARE_COUNTED_VISIBILITY_LIMITATIONS: PDF does not decide QA eligibility,
+    // but every failed rendition remains an explicit epoch/walk failure with a summed count.
+    ...(pdf.status === "failed" ? [pdf.failure] : []),
     ...(accessibility.status === "failed" ? [accessibility.failure] : accessibility.limitations),
   ];
   return {
-    kind: "v2-screen-capture-epoch/1.0.0",
+    kind: "v2-screen-capture-epoch/1.1.0",
     epochId,
     stepIndex,
     slot,
@@ -1113,6 +1712,7 @@ export async function captureScreenEpoch(
     geometry: geometryAttempt.geometry,
     screenJson,
     screenshot,
+    pdf,
     accessibility,
     captureFailures,
     captureFailureCount: sumCaptureFailures(captureFailures),
@@ -1225,6 +1825,10 @@ async function typeIdx(
     if (!h) return { ok: false, detail: "no-control-at-index" };
     await h.click();
     await h.type(value, { delay: 8 });
+    // COMMIT before reading back: the submit click is programmatic and never blurs the
+    // input, so without an explicit change/blur a site that syncs its posted field on
+    // `change` posts the STALE value (measured live at S70 — see commitValueScript).
+    await page.evaluate(commitValueScript(idx));
     const got = await readValueAt(page, idx);
     // Only the UNAMBIGUOUS discard is reported: we asked for something and the control kept
     // nothing. A control that trimmed, truncated or reformatted the value still took it, and
@@ -1340,10 +1944,17 @@ const choiceReceiptDetail = (
   `${detail}; ${exactChoiceReadback(idx, type, got, expected) ? "exact-choice-readback" : "choice-readback-unavailable-or-mismatched"}`;
 
 /**
+ * How long a mask gets to revert a set value before we call the set verified. Late mask
+ * re-initialisation was measured on the live S150 numeric grid; the beat must outlast a
+ * queued microtask/short timer without materially slowing walks (sets are rare).
+ */
+const SET_VERIFY_DELAY_MS = 250;
+
+/**
  * Set a value on a control that cannot be typed into — see `page-script.ts#setValueScript` for
  * why a slider and a date picker need this route and keystrokes will not do.
  */
-async function setIdx(
+export async function setIdx(
   page: PageLike,
   idx: number,
   value: string,
@@ -1353,7 +1964,39 @@ async function setIdx(
       | { ok?: boolean; reason?: string | null; got?: string | null }
       | null;
     if (!out || typeof out !== "object") return { ok: false, detail: "set-value returned nothing" };
-    if (out.ok === true) return { ok: true, detail: "set-value(+input,+change)", discarded: false, got: out.got ?? undefined };
+    if (out.ok === true) {
+      // A MASK CAN REVERT AFTER THE SYNCHRONOUS READBACK PASSES. The live S150 numeric
+      // grid cell held "1" at set time and "-" by the advance click (run v2r_01m0c4hv…,
+      // 2026-08-19) — the mask re-initialises on a later tick and the server received
+      // nothing. Verify after a beat; on revert, set ONCE more; a second revert is the
+      // control's final answer and is recorded as a refusal, never as success.
+      await new Promise((resolve) => setTimeout(resolve, SET_VERIFY_DELAY_MS));
+      const check = (await page.evaluate(readValueScript(idx))) as { got?: string | null } | null;
+      const held = check && typeof check === "object" ? String(check.got ?? "") : "";
+      if (held === value) return { ok: true, detail: "set-value(+input,+change,+blur; verified after delay)", discarded: false, got: held };
+      const again = (await page.evaluate(setValueScript(idx, value))) as
+        | { ok?: boolean; got?: string | null }
+        | null;
+      await new Promise((resolve) => setTimeout(resolve, SET_VERIFY_DELAY_MS));
+      const recheck = (await page.evaluate(readValueScript(idx))) as { got?: string | null } | null;
+      const heldNow = recheck && typeof recheck === "object" ? String(recheck.got ?? "") : "";
+      if (again?.ok === true && heldNow === value) {
+        return {
+          ok: true,
+          detail: `set-value survived after one re-set (the control reverted "${value}" to "${held}" once — a mask re-initialised over it)`,
+          discarded: false,
+          got: heldNow,
+        };
+      }
+      return {
+        ok: false,
+        detail:
+          `value reverted after set: the control accepted "${value}" then held "${held}", ` +
+          `and after one re-set holds "${heldNow}" — the mask keeps discarding it`,
+        discarded: true,
+        got: heldNow,
+      };
+    }
     return {
       ok: false,
       detail: `set-value rejected: ${out.reason ?? "unknown"} — the control holds "${out.got ?? ""}"`,
@@ -2157,6 +2800,282 @@ function exactLatticeRepair(
   return "solved";
 }
 
+// ---------------------------------------------------------------------------
+// DISPLAYED PER-ROW CEILINGS ON AN ALLOCATION — read off the screen, never remembered
+// ---------------------------------------------------------------------------
+
+/**
+ * A per-row upper bound THE SCREEN ITSELF SHOWS beside an allocation cell.
+ *
+ * THE CLASS (docs/FORWARD-SCAN.md §3.4): a sum-to-100 allocation whose rows carry a
+ * carried-forward cap — "this row may not exceed what you gave it earlier" — with the
+ * prior value piped onto the same screen as a read-only column. The validation-driven
+ * numeric recovery puts the whole 100 in the FIRST cell (amendment 7's measured shape);
+ * where that row's displayed cap is below 100 the site rejects the split for ever and the
+ * walk stalls on a screen whose own answer was visible the whole time.
+ *
+ * WHAT IS AND IS NOT CONSULTED — the boundary, stated where it is enforced:
+ *   - ONLY what this screen displays: a read-only cell whose whole content is a number,
+ *     sitting in the same row as an allocation input, or a limit the site's own validation
+ *     states in words.
+ *   - NEVER cross-screen memory of an earlier answer, never a question id, never a column
+ *     name. The walker does not know that a column headed "Current scenario" pipes an
+ *     earlier question, and it must never need to.
+ *   - A bound that is not displayed is NOT INVENTED. No witness means no ceiling, and the
+ *     split degrades to the existing 100-first behaviour with a receipt naming why.
+ */
+export interface DisplayedRowCeiling {
+  /** The allocation input this bound applies to. */
+  idx: number;
+  /** The largest value the screen says this row may take. */
+  ceiling: number;
+  /** How the screen said so, quoted for the receipt. */
+  via: string;
+}
+
+/**
+ * A cell whose ENTIRE content is a number — a bare "40", "40%", " 40 " — and nothing else.
+ *
+ * The strictness is the whole point. A row head reading "PCV15" and a column called
+ * "Product 3" both contain digits and neither is a bound; a piped prior-answer cell
+ * contains the number and only the number. Requiring the whole content keeps the detector
+ * from inventing a ceiling out of a product name, which is the one failure this class
+ * cannot afford: a wrong cap silently reshapes an answer instead of failing loudly.
+ */
+const BARE_NUMBER_CELL_RE = /^\s*(\d+(?:\.\d+)?)\s*%?\s*$/;
+
+/**
+ * A limit the site states IN WORDS in its own validation message.
+ *
+ * ASSUMPTION STATED (CLAUDE.md north star): English limit phrasing. A site that rejects in
+ * another language, or with a bare "invalid entry", states no bound this pattern can read,
+ * and the detector then reports none rather than guessing — the read-only-cell signal above
+ * carries no language assumption at all and still applies. This signal is ORDERING INPUT
+ * ONLY: it may re-order where the allocation's mass is placed, and it is never recorded as
+ * evidence about the survey (the same boundary survival hints are held to).
+ */
+const STATED_LIMIT_RE =
+  /(?:less\s+than\s+or\s+equal\s+to|no\s+more\s+than|not\s+more\s+than|not\s+greater\s+than|cannot\s+exceed|must\s+not\s+exceed|at\s+most|maximum(?:\s+of)?|max(?:\s+of)?|up\s+to|<=|≤)\s*(\d+(?:\.\d+)?)/gi;
+
+/** Case- and space-insensitive comparison key for a row label. */
+const rowKey = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
+
+/**
+ * The per-row ceilings this screen DISPLAYS for the given allocation inputs.
+ *
+ * Three independent structural signals, each stating its own association assumption. A
+ * target with no witness simply does not appear in the result — absence here means "this
+ * screen displayed no bound for that row", never "that row is unbounded in fact".
+ *
+ *   (a) GRID ROW CO-MEMBERSHIP — the table's own row groups them, not us. A read-only (or
+ *       disabled) cell holding a bare number, in the same `grid.rows[]` entry as exactly one
+ *       allocation input, is that row's displayed cap. This is the strongest signal
+ *       available because the association is the document's markup rather than a heuristic,
+ *       and it carries no language or platform assumption.
+ *   (b) DOM ADJACENCY — for an allocation not marked up as a table. A read-only cell holding
+ *       a bare number within 2 control indices of an allocation input, and nearer to that
+ *       input than to any other, reads as the same row. ASSUMPTION STATED: reading order
+ *       tracks visual rows. This is the same adjacency the option-linked-specify detector
+ *       already relies on, and it is used only when (a) found nothing for that input.
+ *   (c) THE SITE'S OWN WORDS — a validation segment that names exactly one row and states
+ *       exactly one limit. Verbatim only: the segment must contain the row's label and a
+ *       limit phrase, and a segment naming two rows or two numbers is ambiguous and refused.
+ *
+ * Where a row shows SEVERAL read-only numbers the smallest is taken, because satisfying the
+ * smallest satisfies whichever of them is the real cap — conservative in the safe direction,
+ * and the count travels in `via` so the receipt does not overclaim which column was read.
+ */
+export function displayedRowCeilings(
+  screen: RenderedScreen,
+  targetIdxs: number[],
+  validationMessages: readonly string[],
+): DisplayedRowCeiling[] {
+  if (targetIdxs.length < 2) return [];
+  const targets = new Set(targetIdxs);
+  const byIdx = new Map(screen.controls.map((c) => [c.idx, c]));
+  const found = new Map<number, DisplayedRowCeiling>();
+
+  // A read-only/disabled control whose whole displayed value is a number. `readOnly` and
+  // `disabled` are exactly the two states that say "shown, not answerable" — which is what
+  // a piped carry-forward column is.
+  const bareNumberAt = (idx: number): number | null => {
+    const c = byIdx.get(idx);
+    if (!c || targets.has(idx)) return null;
+    if (!(c.readOnly || c.disabled)) return null;
+    const m = BARE_NUMBER_CELL_RE.exec(String(c.value ?? ""));
+    return m ? Number(m[1]) : null;
+  };
+
+  // ---- (a) the table's own row ----
+  const rowLabelFor = new Map<number, string>();
+  // Inputs the TABLE has already spoken for. Whatever it said — a bound, or a refusal on an
+  // ambiguous row — adjacency does not get to second-guess it: the markup's own grouping
+  // outranks a guess from reading order, and overriding a refusal would reinstate exactly the
+  // ambiguity the refusal exists to report.
+  const insideGrid = new Set<number>();
+  for (const row of screen.grid?.rows ?? []) {
+    const idxs = row.cells.map((cell) => cell.idx);
+    const rowTargets = idxs.filter((i) => targets.has(i));
+    for (const i of rowTargets) insideGrid.add(i);
+    // TWO allocation inputs in one row and the association is genuinely ambiguous: which of
+    // them does the read-only number cap? Refused rather than guessed.
+    if (rowTargets.length !== 1) continue;
+    const target = rowTargets[0]!;
+    if (row.label) rowLabelFor.set(target, row.label);
+    const numbers = idxs.map(bareNumberAt).filter((n): n is number => n !== null);
+    if (numbers.length === 0) continue;
+    const ceiling = Math.min(...numbers);
+    found.set(target, {
+      idx: target,
+      ceiling,
+      via:
+        `a read-only cell showing ${tidy(ceiling)} in this input's own grid row` +
+        (numbers.length > 1 ? ` (the smallest of ${numbers.length} read-only numbers in that row)` : "") +
+        (row.label ? ` (row "${row.label}")` : ""),
+    });
+  }
+
+  // ---- (b) DOM adjacency, only where the grid said nothing ----
+  for (const target of targetIdxs) {
+    if (found.has(target) || insideGrid.has(target)) continue;
+    let best: { idx: number; n: number } | null = null;
+    for (let d = 1; d <= 2; d++) {
+      for (const cand of [target - d, target + d]) {
+        const n = bareNumberAt(cand);
+        if (n === null) continue;
+        // NEARER TO ANOTHER ALLOCATION INPUT than to this one: it is that row's cell, not
+        // this one's. Ties go to no one — an equidistant witness names no row.
+        const nearest = targetIdxs.reduce(
+          (a, t) => (Math.abs(cand - t) < Math.abs(cand - a) ? t : a),
+          targetIdxs[0]!,
+        );
+        if (nearest !== target) continue;
+        if (targetIdxs.some((t) => t !== target && Math.abs(cand - t) === Math.abs(cand - target))) continue;
+        if (best === null) best = { idx: cand, n };
+        else if (n < best.n) best = { idx: cand, n };
+      }
+      if (best) break;
+    }
+    if (best) {
+      found.set(target, {
+        idx: target,
+        ceiling: best.n,
+        via: `a read-only cell showing ${tidy(best.n)} adjacent to this input (control #${best.idx})`,
+      });
+    }
+  }
+
+  // ---- (c) the site's own words ----
+  //
+  // ORDERING INPUT, NEVER EVIDENCE. A segment must name exactly one of these rows and state
+  // exactly one limit; anything else is ambiguous and is refused rather than apportioned.
+  const labelled = targetIdxs
+    .map((idx) => ({ idx, label: rowLabelFor.get(idx) ?? byIdx.get(idx)?.label ?? "" }))
+    // A one- or two-character row label ("%", "X") matches almost any sentence and would
+    // bind a limit to the wrong row; too short to identify a row is too short to use.
+    .filter((r) => rowKey(r.label).length >= 3);
+  for (const message of validationMessages) {
+    for (const segment of String(message).split(/(?<=[.!?])\s+|[;\n]/)) {
+      const limits = [...segment.matchAll(STATED_LIMIT_RE)];
+      if (limits.length !== 1) continue;
+      const named = labelled.filter((r) => rowKey(segment).includes(rowKey(r.label)));
+      if (named.length !== 1) continue;
+      const target = named[0]!;
+      const ceiling = Number(limits[0]![1]);
+      if (!Number.isFinite(ceiling)) continue;
+      const existing = found.get(target.idx);
+      // The site's stated limit is authoritative over an inferred adjacency when it is
+      // TIGHTER; where both are shown, the tighter one is the one that must hold.
+      if (existing && existing.ceiling <= ceiling) continue;
+      found.set(target.idx, {
+        idx: target.idx,
+        ceiling,
+        via: `the site's own validation stating a limit of ${tidy(ceiling)} for row "${target.label}"`,
+      });
+    }
+  }
+
+  return targetIdxs.map((i) => found.get(i)).filter((c): c is DisplayedRowCeiling => c !== undefined);
+}
+
+/**
+ * WHERE THE MASS GOES — the ceiling-aware allocation split.
+ *
+ * `how` is `null` when the screen displayed NO usable bound: the caller then keeps the
+ * existing 100-first receipt byte for byte, so a screen with nothing to be ceiling-aware
+ * about behaves exactly as it did before this existed.
+ *
+ *   - SOME ROW SHOWS NO CEILING: the whole total goes on the FIRST such row in DOM order
+ *     and every other row takes 0. Zero satisfies every displayed cap at once, so this
+ *     lands one write that no stated bound can reject.
+ *   - EVERY ROW SHOWS A CEILING: fill largest-ceiling-first, ties by DOM order, each row
+ *     taking as much as its own displayed cap allows until the total is placed. Deterministic
+ *     and, when the caps admit any solution at all, it finds one.
+ *   - THE CAPS CANNOT REACH THE TOTAL: no split satisfies them, so rather than write a
+ *     knowingly-rejected answer the split DEGRADES to the existing 100-first behaviour and
+ *     says so — the arithmetic travels in the receipt for the run to report.
+ */
+export function ceilingAwareAllocationSplit(
+  targetIdxs: number[],
+  total: number,
+  ceilings: DisplayedRowCeiling[],
+): { values: Map<number, string>; how: string | null } {
+  const EPS = 1e-9;
+  const firstTakesAll = (): Map<number, string> =>
+    new Map(targetIdxs.map((idx, i) => [idx, i === 0 ? tidy(total) : "0"]));
+
+  const usable = ceilings.filter((c) => Number.isFinite(c.ceiling) && c.ceiling >= 0 && targetIdxs.includes(c.idx));
+  if (usable.length === 0) return { values: firstTakesAll(), how: null };
+
+  const cap = new Map(usable.map((c) => [c.idx, c]));
+  const shown = usable.map((c) => `#${c.idx} <= ${tidy(c.ceiling)} (${c.via})`).join("; ");
+  const free = targetIdxs.filter((idx) => !cap.has(idx));
+
+  if (free.length > 0) {
+    const winner = free[0]!;
+    return {
+      values: new Map(targetIdxs.map((idx) => [idx, idx === winner ? tidy(total) : "0"])),
+      how:
+        `${tidy(total)} placed on cell #${winner}, the first cell this screen shows no ceiling for, ` +
+        `and 0 in every other cell, so each displayed per-row ceiling holds — displayed bounds: ${shown}`,
+    };
+  }
+
+  // Every row is capped. Largest cap first: the greedy that succeeds whenever the caps admit
+  // any assignment, because taking the most from the roomiest row can never strand a total
+  // that a different order could have reached.
+  const order = [...targetIdxs].sort(
+    (a, b) => (cap.get(b)!.ceiling - cap.get(a)!.ceiling) || (a - b),
+  );
+  const values = new Map<number, string>(targetIdxs.map((idx) => [idx, "0"]));
+  let left = total;
+  for (const idx of order) {
+    if (left <= EPS) break;
+    // Whole units only: this recovery writes into text cells whose granularity nothing on
+    // the screen declares, and a fractional share is a value the site never asked for.
+    const take = Math.min(left, Math.floor(cap.get(idx)!.ceiling));
+    if (take <= EPS) continue;
+    values.set(idx, tidy(take));
+    left -= take;
+  }
+  if (left > EPS) {
+    return {
+      values: firstTakesAll(),
+      how:
+        `every cell on this screen shows a ceiling and together they allow at most ` +
+        `${tidy(total - left)}, below the ${tidy(total)} this allocation must reach — no split satisfies ` +
+        `the displayed bounds, so the existing first-cell split stands and the shortfall is reported ` +
+        `rather than papered over — displayed bounds: ${shown}`,
+    };
+  }
+  return {
+    values,
+    how:
+      `${tidy(total)} distributed largest-ceiling-first because every cell on this screen shows a ` +
+      `ceiling — displayed bounds: ${shown}`,
+  };
+}
+
 /**
  * PLANNER-DRIVEN SURVIVAL HINTS — the additive stimulus channel that keeps the option
  * DEFAULT from volunteering a documented screen-out answer.
@@ -2185,11 +3104,80 @@ export interface SurvivalHint {
   question?: string;
   question_text?: string;
   avoid_labels: string[];
+  /** Labels the document states CONTINUE the survey; same channel, same boundary. */
+  prefer_labels?: string[];
+  /**
+   * OUTCOME 1 (D1): {label, code} pairs for code-based matching. An offered option matches
+   * a hint by normalized label OR exact code (CODES ARE EXACT-MATCH ONLY — they are platform-
+   * assigned identifiers, never prose; stated here, enforced in `codeMatches` below). When
+   * absent or empty, label-only matching applies — the pre-existing behavior.
+   */
+  avoid_codes?: Array<{ label: string; code: string | null }>;
+  prefer_codes?: Array<{ label: string; code: string | null }>;
+  /**
+   * OUTCOME 4 (D1): a documented-accepted numeric value from BoundaryInputPayload. When a
+   * screen's bound question has boundary rows whose expectedOutcome is "accepted", the
+   * numeric default filler prefers this value over the blind midpoint. Same evidence
+   * boundary: the value is input, never evidence. Absent when no boundary rows exist.
+   */
+  prefer_value?: { value: string; bound: string; derivation: string };
+}
+
+/**
+ * OUTCOME 1 (D1): does an option's code match a hint code? EXACT MATCH ONLY. Codes are
+ * platform-assigned identifiers (Confirmit renders them as DOM `value` attributes, Decipher
+ * as `name` suffixes) and may be numeric strings, short slugs, or GUIDs — normalizing them
+ * would lose distinctions ("01" vs "1"). ASSUMPTION STATED: a match means the site's option
+ * represents the same answer the document's route row names. A code without a corresponding
+ * option is an unmatched code and DOES NOT steer — it degrades to label-only matching.
+ */
+function codeMatches(optionCode: string | null | undefined, wantedCode: string | null): boolean {
+  if (!optionCode || !wantedCode) return false;
+  return String(optionCode) === String(wantedCode);
+}
+
+/**
+ * OUTCOME 1 (D1): does an option match ANY hint entry by label OR code? The code arm is
+ * tried first (exact, no normalization); the label arm is the pre-existing `labelMatches`.
+ * Both arms are independent: an option matching by code but not label still matches, and
+ * vice versa.
+ */
+function hintEntryMatchesOption(
+  optionLabel: string,
+  optionCode: string | null | undefined,
+  entries: ReadonlyArray<{ label: string; code: string | null }> | undefined,
+  labels: readonly string[],
+): boolean {
+  // Code arm: exact match against any entry's code.
+  if (entries && entries.length > 0) {
+    for (const e of entries) {
+      if (codeMatches(optionCode, e.code)) return true;
+    }
+  }
+  // Label arm: the pre-existing normalized match.
+  for (const wanted of labels) {
+    if (labelMatches(optionLabel, wanted)) return true;
+  }
+  return false;
 }
 
 /** Non-empty strings only; everything else in a hint row is noise, never a crash. */
 const hintLabels = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
+
+/** Sanitize a code-pair array from a hint row. Unknown shapes degrade to []. */
+const hintCodePairs = (v: unknown): Array<{ label: string; code: string | null }> => {
+  if (!Array.isArray(v)) return [];
+  const out: Array<{ label: string; code: string | null }> = [];
+  for (const e of v) {
+    if (!e || typeof e !== "object") continue;
+    const label = (e as Record<string, unknown>)["label"];
+    if (typeof label !== "string" || label.trim().length === 0) continue;
+    const code = (e as Record<string, unknown>)["code"];
+    out.push({ label, code: typeof code === "string" && code.trim().length > 0 ? code : null });
+  }
+  return out;
+};
 
 /** The path's `survival_hints`, sanitized once per walk. Unknown shapes degrade to []. */
 export function survivalHintsOf(path: unknown): SurvivalHint[] {
@@ -2199,9 +3187,38 @@ export function survivalHintsOf(path: unknown): SurvivalHint[] {
   for (const row of raw) {
     if (!row || typeof row !== "object") continue;
     const labels = hintLabels((row as Record<string, unknown>)["avoid_labels"]);
-    if (labels.length === 0) continue;
+    const liked = hintLabels((row as Record<string, unknown>)["prefer_labels"]);
+    // OUTCOME 4 (D1): a hint row that carries ONLY a prefer_value (no labels/codes) is
+    // still useful — it steers the numeric filler. Keep it even when labels are empty.
+    const pvRawCheck = (row as Record<string, unknown>)["prefer_value"];
+    const hasPv = pvRawCheck && typeof pvRawCheck === "object" &&
+      typeof (pvRawCheck as Record<string, unknown>)["value"] === "string" &&
+      (pvRawCheck as Record<string, unknown>)["value"];
+    if (labels.length === 0 && liked.length === 0 && !hasPv) continue;
     const q = (row as Record<string, unknown>)["question"];
-    out.push({ ...(typeof q === "string" ? { question: q } : {}), avoid_labels: labels });
+    // OUTCOME 1 (D1): carry code pairs through sanitization.
+    const ac = hintCodePairs((row as Record<string, unknown>)["avoid_codes"]);
+    const pc = hintCodePairs((row as Record<string, unknown>)["prefer_codes"]);
+    // OUTCOME 4 (D1): carry prefer_value through sanitization.
+    const pvRaw = (row as Record<string, unknown>)["prefer_value"];
+    const pv =
+      pvRaw && typeof pvRaw === "object" &&
+      typeof (pvRaw as Record<string, unknown>)["value"] === "string" &&
+      (pvRaw as Record<string, unknown>)["value"]
+        ? {
+            value: String((pvRaw as Record<string, unknown>)["value"]),
+            bound: String((pvRaw as Record<string, unknown>)["bound"] ?? ""),
+            derivation: String((pvRaw as Record<string, unknown>)["derivation"] ?? ""),
+          }
+        : undefined;
+    out.push({
+      ...(typeof q === "string" ? { question: q } : {}),
+      avoid_labels: labels,
+      ...(liked.length > 0 ? { prefer_labels: liked } : {}),
+      ...(ac.length > 0 ? { avoid_codes: ac } : {}),
+      ...(pc.length > 0 ? { prefer_codes: pc } : {}),
+      ...(pv ? { prefer_value: pv } : {}),
+    });
   }
   return out;
 }
@@ -2209,8 +3226,10 @@ export function survivalHintsOf(path: unknown): SurvivalHint[] {
 /**
  * The avoid labels in force for THIS screen. A bound decision speaks for itself
  * (`avoid_labels`, stamped from the same terminate data); an unbound screen consults the
- * path's hints, and a hint applies only when its labels overlap what the screen OFFERS —
- * matching a hint for one screen against another would steer fillers on a guess.
+ * path's hints, and a hint applies only when its labels/codes overlap what the screen
+ * OFFERS — matching a hint for one screen against another would steer fillers on a guess.
+ *
+ * OUTCOME 1 (D1): the overlap check now also tests exact code matches via `codeMatches`.
  */
 export function survivalAvoidLabels(
   decision: PlannedDecision | null,
@@ -2219,16 +3238,334 @@ export function survivalAvoidLabels(
 ): string[] {
   if (decision) return hintLabels((decision as Record<string, unknown>)["avoid_labels"]);
   if (pathHints.length === 0) return [];
-  const offered = screen.optionGroups.flatMap((g) => g.options.map((o) => o.label));
-  if (offered.length === 0) return [];
+  const offeredOptions = screen.optionGroups.flatMap((g) => g.options);
+  if (offeredOptions.length === 0) return [];
   const out: string[] = [];
   for (const hint of pathHints) {
     const labels = hintLabels(hint?.avoid_labels);
     if (labels.length === 0) continue;
-    if (!labels.some((a) => offered.some((o) => labelMatches(o, a)))) continue;
+    // OUTCOME 1 (D1): overlap check uses both label and code matching.
+    const codes = hint.avoid_codes;
+    const overlaps = offeredOptions.some((o) => hintEntryMatchesOption(o.label, o.code, codes, labels));
+    if (!overlaps) continue;
     for (const l of labels) if (!out.includes(l)) out.push(l);
   }
   return out;
+}
+
+/**
+ * OUTCOME 1 (D1): the avoid CODES in force for THIS screen, for code-based flagging.
+ * Same precedence as `survivalAvoidLabels`: a bound decision speaks for itself; an unbound
+ * screen consults path hints by offered overlap. Returns {label, code} pairs so the option
+ * default can flag by exact code as well as by normalized label.
+ */
+export function survivalAvoidCodes(
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+  screen: RenderedScreen,
+): Array<{ label: string; code: string | null }> {
+  if (decision) return hintCodePairs((decision as Record<string, unknown>)["avoid_codes"]);
+  if (pathHints.length === 0) return [];
+  const offeredOptions = screen.optionGroups.flatMap((g) => g.options);
+  if (offeredOptions.length === 0) return [];
+  const out: Array<{ label: string; code: string | null }> = [];
+  for (const hint of pathHints) {
+    const labels = hintLabels(hint?.avoid_labels);
+    const codes = hint.avoid_codes;
+    if (labels.length === 0 && (!codes || codes.length === 0)) continue;
+    const overlaps = offeredOptions.some((o) => hintEntryMatchesOption(o.label, o.code, codes, labels));
+    if (!overlaps) continue;
+    for (const e of codes ?? []) {
+      if (!out.some((x) => x.label === e.label && x.code === e.code)) out.push(e);
+    }
+  }
+  return out;
+}
+
+/**
+ * OUTCOME 1 (D1): the prefer CODES in force for THIS screen, for code-based preference.
+ */
+export function survivalPreferCodes(
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+  screen: RenderedScreen,
+): Array<{ label: string; code: string | null }> {
+  if (decision) return hintCodePairs((decision as Record<string, unknown>)["prefer_codes"]);
+  if (pathHints.length === 0) return [];
+  const offeredOptions = screen.optionGroups.flatMap((g) => g.options);
+  if (offeredOptions.length === 0) return [];
+  const out: Array<{ label: string; code: string | null }> = [];
+  for (const hint of pathHints) {
+    const liked = hintLabels(hint?.prefer_labels);
+    const codes = hint.prefer_codes;
+    if (liked.length === 0 && (!codes || codes.length === 0)) continue;
+    const rowLabels = [...hintLabels(hint?.avoid_labels), ...liked];
+    const allCodes = [...(hint.avoid_codes ?? []), ...(codes ?? [])];
+    const overlaps = offeredOptions.some((o) => hintEntryMatchesOption(o.label, o.code, allCodes, rowLabels));
+    if (!overlaps) continue;
+    for (const e of codes ?? []) {
+      if (!out.some((x) => x.label === e.label && x.code === e.code)) out.push(e);
+    }
+  }
+  return out;
+}
+
+/**
+ * OUTCOME 4 (D1): the documented-accepted VALUE in force for THIS screen's numeric controls.
+ * Same precedence: a bound decision speaks for itself; an unbound screen consults path hints.
+ * For path hints, ANY hint row with a prefer_value is considered (not just ones with label
+ * overlap — a boundary row may have NO label/code stamps at all if the question only has
+ * boundary facets, not route facets). When multiple hint rows carry a prefer_value, the first
+ * one wins (deterministic from insertion order). Returns null when no documented-accepted
+ * value exists.
+ */
+export function survivalPreferValue(
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+): { value: string; bound: string; derivation: string } | null {
+  if (decision) {
+    const pv = (decision as Record<string, unknown>)["prefer_value"];
+    if (pv && typeof pv === "object" &&
+        typeof (pv as Record<string, unknown>)["value"] === "string" &&
+        (pv as Record<string, unknown>)["value"]) {
+      return {
+        value: String((pv as Record<string, unknown>)["value"]),
+        bound: String((pv as Record<string, unknown>)["bound"] ?? ""),
+        derivation: String((pv as Record<string, unknown>)["derivation"] ?? ""),
+      };
+    }
+    return null;
+  }
+  for (const hint of pathHints) {
+    if (hint.prefer_value) return hint.prefer_value;
+  }
+  return null;
+}
+
+/**
+ * The prefer labels in force for THIS screen — `survivalAvoidLabels`' twin for the labels
+ * the document states CONTINUE the survey. Same precedence (a bound decision speaks for
+ * itself; an unbound screen consults the path's hints) and the SAME applicability rule: a
+ * path-level hint row speaks only when its own labels/codes overlap what the screen OFFERS —
+ * avoid and prefer together, since either half identifies the row's screen. Same evidence
+ * boundary too: a prefer label re-orders which invented answer the option default clicks,
+ * never joins `select`, and never overrides an avoid flag (a label both stamped and flagged
+ * is a conflict the index already resolved by dropping it from prefer).
+ *
+ * OUTCOME 1 (D1): overlap now also checks exact code matches via `codeMatches`.
+ */
+export function survivalPreferLabels(
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+  screen: RenderedScreen,
+): string[] {
+  if (decision) return hintLabels((decision as Record<string, unknown>)["prefer_labels"]);
+  if (pathHints.length === 0) return [];
+  const offeredOptions = screen.optionGroups.flatMap((g) => g.options);
+  if (offeredOptions.length === 0) return [];
+  const out: string[] = [];
+  for (const hint of pathHints) {
+    const liked = hintLabels(hint?.prefer_labels);
+    if (liked.length === 0) continue;
+    const rowLabels = [...hintLabels(hint?.avoid_labels), ...liked];
+    // OUTCOME 1 (D1): overlap check uses both label and code matching.
+    const allCodes = [...(hint.avoid_codes ?? []), ...(hint.prefer_codes ?? [])];
+    const overlaps = offeredOptions.some((o) => hintEntryMatchesOption(o.label, o.code, allCodes, rowLabels));
+    if (!overlaps) continue;
+    for (const l of liked) if (!out.includes(l)) out.push(l);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// OPTION-LINKED SPECIFY INPUTS — structural detection
+// ---------------------------------------------------------------------------
+
+/**
+ * DOES A LABEL SUGGEST "SPECIFY" / "OTHER" WORDING?
+ *
+ * ASSUMPTION STATED (CLAUDE.md north star): Confirmit, Decipher and Qualtrics all use
+ * variations of "Other (Please Specify)", "Other, specify", "Other:", etc. for their
+ * open-ended option text boxes. This is a convention, not a standard. A platform that
+ * names its specify box something else (a different language, "Please elaborate") will
+ * not be caught here, and the input will be filled normally — the old behaviour, which
+ * is wrong only when filling auto-selects a parent option. When uncertain, prefer not
+ * catching: the cost of a false negative (filling an unlinked input) is one wasted
+ * answer; the cost of a false positive (refusing to fill a standalone text input) is
+ * a required field left blank that blocks the survey.
+ */
+const SPECIFY_LABEL_RE = /\b(specify|other\b.*specify|please\s+specify|open[\s-]?ended|andere|précis)/i;
+
+/**
+ * Detect text inputs that are ASSOCIATED with a choice option.
+ *
+ * Returns a Map from text-input control index to the option control index it is
+ * associated with. Three independent structural signals, any one sufficient:
+ *
+ *   (a) LABEL CONTAINMENT: the text input's own label contains specify/other wording
+ *       AND its idx is within 2 of an option in any group on this screen (DOM adjacency
+ *       corroborates the label — a standalone "Other" text field with no nearby radio is
+ *       not option-linked);
+ *   (b) SHARED NAME PREFIX: the text input's `name` attribute shares a non-trivial prefix
+ *       with an option group's `name` (e.g. "S10_other" shares prefix "S10" with the
+ *       "S10" radio group);
+ *   (c) IDX ADJACENCY WITH SPECIFY LABEL: the text input is immediately adjacent (idx
+ *       difference <= 1) to the LAST option in a group whose label matches specify wording.
+ *
+ * When multiple signals point to different options, the nearest one wins. When NO signal
+ * fires, the input is not in the map and will be filled normally.
+ */
+export function detectOptionLinkedSpecifyInputs(screen: RenderedScreen): Map<number, number> {
+  const result = new Map<number, number>();
+  const textControls = screen.controls.filter(
+    (c) => c.visible && !c.disabled && !c.readOnly && isTextEntry(c.type),
+  );
+  if (textControls.length === 0 || screen.optionGroups.length === 0) return result;
+
+  // Build a flat list of all option indices across all groups
+  const allOptionIdxs = new Set<number>();
+  for (const g of screen.optionGroups) {
+    for (const o of g.options) allOptionIdxs.add(o.idx);
+  }
+
+  for (const tc of textControls) {
+    let bestOptionIdx: number | null = null;
+    let bestDistance = Infinity;
+
+    // Signal (a): specify-like label AND DOM adjacency to an option
+    if (SPECIFY_LABEL_RE.test(tc.label)) {
+      for (const g of screen.optionGroups) {
+        for (const o of g.options) {
+          const dist = Math.abs(tc.idx - o.idx);
+          if (dist <= 2 && dist < bestDistance) {
+            bestDistance = dist;
+            bestOptionIdx = o.idx;
+          }
+        }
+      }
+    }
+
+    // Signal (b): shared name prefix with an option group.
+    //
+    // The text control's name starts with the group name followed by a separator
+    // character (underscore, dot, hyphen, colon, bracket, dollar). Examples:
+    //   "S10_other" starts with group "S10" + separator "_"  -> match
+    //   "Q5_specify" starts with group "Q5" + separator "_"  -> match
+    //   "comment" does NOT start with group "Q1"             -> no match
+    //
+    // The previous approach (strip trailing non-alpha from both names, compare)
+    // broke on short group names: "Q5" stripped to "Q" (length 1), failing a
+    // minimum-length guard, so the documented example never matched.
+    if (bestOptionIdx === null && tc.name) {
+      for (const g of screen.optionGroups) {
+        const groupName = g.name === "(unnamed)" ? null : g.name;
+        if (!groupName || groupName.length < 1) continue;
+        const tcLower = tc.name.toLowerCase();
+        const gLower = groupName.toLowerCase();
+        const sepChar = tcLower.length > gLower.length ? tcLower[gLower.length] : undefined;
+        if (
+          sepChar !== undefined &&
+          tcLower.startsWith(gLower) &&
+          /[_\-.:$[\]]/.test(sepChar)
+        ) {
+          // Find the nearest option in this group
+          for (const o of g.options) {
+            const dist = Math.abs(tc.idx - o.idx);
+            if (dist < bestDistance) {
+              bestDistance = dist;
+              bestOptionIdx = o.idx;
+            }
+          }
+        }
+      }
+    }
+
+    // Signal (c): adjacent to the LAST option in a group whose label is specify-like
+    if (bestOptionIdx === null) {
+      for (const g of screen.optionGroups) {
+        const lastOpt = g.options[g.options.length - 1];
+        if (!lastOpt) continue;
+        if (SPECIFY_LABEL_RE.test(lastOpt.label) && Math.abs(tc.idx - lastOpt.idx) <= 1) {
+          bestOptionIdx = lastOpt.idx;
+          bestDistance = Math.abs(tc.idx - lastOpt.idx);
+        }
+      }
+    }
+
+    if (bestOptionIdx !== null) {
+      result.set(tc.idx, bestOptionIdx);
+    }
+  }
+  return result;
+}
+
+/**
+ * VERIFY CHOICE GROUPS AFTER ALL INTERACTIONS — before advancing.
+ *
+ * THE DEFECT THIS CLOSES: after clicking an option AND filling text inputs, the checked
+ * state of a choice group may have changed due to platform auto-selection (e.g. filling
+ * an "Other (Please Specify)" text box auto-selects its parent radio). This re-reads the
+ * choice groups from the post-action screen and compares with what the walker clicked.
+ *
+ * A mismatch is a named, evidenced observation recording BOTH hypotheses:
+ *   - the walker's own side effect (filling a linked specify input)
+ *   - a site behaviour (the platform auto-selected on text input)
+ * The walk does NOT silently advance a wrong answer.
+ */
+export function verifyChoiceGroupsAfterInteraction(
+  before: RenderedScreen,
+  afterAction: RenderedScreen,
+  actions: PerformedAction[],
+): PerformedAction[] {
+  const observations: PerformedAction[] = [];
+
+  // Find click-option AND select-grid-cell actions that recorded exact-choice-readback.
+  // SELECT-GRID-CELL READBACK RECEIPT: grid cells are verified through the same post-
+  // interaction check as click-option actions. A grid cell whose choice readback was exact
+  // at click time but overwritten by a later interaction (a linked text input auto-selecting
+  // its parent option, or a distinct-column repick) is the same defect class as a regular
+  // option group, and the receipt must say so.
+  const clickActions = actions.filter(
+    (a) => a.ok && (a.kind === "click-option" || a.kind === "select-grid-cell") && a.choiceReadback,
+  );
+  if (clickActions.length === 0) return observations;
+
+  // For each option group on the after-action screen, check if its checked state still
+  // matches what the click actions established
+  for (const afterGroup of afterAction.optionGroups) {
+    if (afterGroup.kind !== "radio") continue; // checkboxes accumulate, not overwrite
+    const checkedAfter = afterGroup.options.filter((o) => o.checked).map((o) => o.idx);
+    // Find the click action that targeted this group
+    const groupClick = clickActions.find((a) =>
+      afterGroup.options.some((o) => o.idx === a.targetIdx),
+    );
+    if (!groupClick || !groupClick.choiceReadback || groupClick.targetIdx === null) continue;
+    const intendedIdx: number = groupClick.targetIdx;
+    // If the clicked option is no longer the one checked, something changed it
+    if (checkedAfter.length > 0 && !checkedAfter.includes(intendedIdx)) {
+      const checkedLabels = afterGroup.options
+        .filter((o) => o.checked)
+        .map((o) => `#${o.idx} "${o.label.slice(0, 60)}"`)
+        .join(", ");
+      const intendedLabel = groupClick.targetLabel ?? `#${intendedIdx}`;
+      observations.push({
+        kind: groupClick.kind,
+        targetIdx: intendedIdx,
+        targetLabel: intendedLabel,
+        targetCode: groupClick.targetCode,
+        value: null,
+        ok: false,
+        detail:
+          `choice-group-verification-mismatch: the walker clicked option #${intendedIdx} ` +
+          `("${intendedLabel}") and verified it was checked, but after all interactions the ` +
+          `group's checked state is now [${checkedLabels}] — possible causes: (a) filling a ` +
+          `linked specify/other text input auto-selected its parent option, overwriting the ` +
+          `planned selection; (b) a platform-side behaviour changed the selection. This ` +
+          `mismatch is recorded, not silently submitted`,
+      });
+    }
+  }
+  return observations;
 }
 
 /** Apply one decision to the screen in front of us. Returns what was actually done. */
@@ -2239,6 +3576,30 @@ async function applyDecision(
   pathHints: readonly SurvivalHint[] = [],
   /** BOUNDED SCREEN-OUT RETRY filler variant (WalkOptions.variant). 0 = today's defaults. */
   variant = 0,
+  /**
+   * RECOVERY AFTER A VALIDATION REJECTION: the failed advance's validation messages, empty
+   * when this is not a recovery. Non-empty does two things in the value loop: (1) bypasses
+   * the already-answered skip — the site's own validation is ground truth that whatever the
+   * fields hold is NOT an answer (measured live 2026-08-17, S70 "Years at organization":
+   * the page pre-fills "-", valueIsUserSupplied believes it, and validation says "Please
+   * enter a number." forever); (2) STEERS the derivation — the first recovery re-typed the
+   * text probe into that semantically numeric text input and was rejected again, so when
+   * the message demands a number, a text input derives a small integer instead of prose
+   * (a linguistic convention, stated; the message is quoted in the receipt).
+   */
+  revalidateValidation: readonly string[] = [],
+  /**
+   * WHICH MECHANISM A NUMERIC RECOVERY USES TO FILL A TEXT INPUT. "set" is the S70 lesson:
+   * a wedged input mask reverts keystrokes while value+events was accepted by the live
+   * server. "type" is the B10 lesson — the exact opposite wiring: a scripted allocation
+   * grid kept every set value in el.value (so readback verified "ok" four times) while the
+   * state it actually submits listens only to real key events, and the site's own total
+   * stayed 0 (run v2r_01m0cp6grt3sbyscj6d6vk89qb, screen 68). Neither mechanism is right
+   * for every widget, so the walk FLIPS this on a second recovery round instead of
+   * assuming; both attempts travel in the receipts. The fill-level type->set retry below
+   * still covers the reverse direction when typing is transformed.
+   */
+  numericFillVia: "set" | "type" = "set",
 ): Promise<{ actions: PerformedAction[]; notOffered: string[]; unfillable: UnfillableControl[] }> {
   const actions: PerformedAction[] = [];
   const notOffered: string[] = [];
@@ -2286,9 +3647,16 @@ async function applyDecision(
   }));
   const hasRequestedNativeSelectMatch = selectOwners.some((owner) => owner.controlIdxs.length > 0);
   // ---- survival hints in force here: consumed ONLY by the option default below ----
-  // Computed once, up front, so the ONE-consumer rule is auditable: `avoid` appears in the
-  // option default and nowhere else. See `survivalAvoidLabels` for the evidence boundary.
+  // Computed once, up front, so the ONE-consumer rule is auditable: `avoid` and `prefer`
+  // appear in the option default and nowhere else. See `survivalAvoidLabels` /
+  // `survivalPreferLabels` for the evidence boundary.
   const avoid = survivalAvoidLabels(decision, pathHints, screen);
+  const prefer = survivalPreferLabels(decision, pathHints, screen);
+  // OUTCOME 1 (D1): code-pair sets for code-based flagging/preference.
+  const avoidCodeEntries = survivalAvoidCodes(decision, pathHints, screen);
+  const preferCodeEntries = survivalPreferCodes(decision, pathHints, screen);
+  // OUTCOME 4 (D1): documented-accepted value for numeric controls.
+  const numericPreferValue = survivalPreferValue(decision, pathHints);
 
   // ---- constant-sum ("allocate 100 points") groups: claimed BEFORE the grid and value passes ----
   //
@@ -2379,9 +3747,94 @@ async function applyDecision(
   if (screen.grid && screen.grid.rows.length > 0) {
     const m = /grid:answer-every-row with "(.+?)"/.exec(strategy);
     const wantColumn = m ? m[1] : (wanted[0] ?? null);
-    for (const row of screen.grid.rows) {
+    const gridRows = screen.grid.rows;
+    type GridRowState = (typeof gridRows)[number];
+    /**
+     * WHAT THE FIRST-PASS RULE WOULD ANSWER EACH ROW WITH — the documented column when the row
+     * offers it, else the row's first cell. Computed for the WHOLE GRID before any cell is
+     * clicked, because the distinct-column re-pick below is a cross-row decision and cannot be
+     * taken one row at a time. Answering row by row with no sibling awareness is exactly the
+     * shape that put both rows of a best/worst pair on column 1.
+     */
+    const firstPass = gridRows.map((row) => {
       const wantedCell = wantColumn ? row.cells.find((c) => c.column && labelMatches(c.column, wantColumn)) : null;
-      const cell = wantedCell ?? row.cells[0];
+      return {
+        row,
+        wantedCell: wantedCell ?? null,
+        /** Position in this row's OWN cells; -1 when the row offers none. */
+        at: wantedCell ? row.cells.indexOf(wantedCell) : row.cells.length > 0 ? 0 : -1,
+      };
+    });
+    const placed = firstPass.filter((p) => p.at >= 0);
+    /**
+     * A column's identity for "two rows took the same one": the label when the reader captured
+     * one, the position otherwise. Position is meaningful because `CLASSIFY_TABLE_GRID_SRC`
+     * certifies a grid ONLY when it is built from distinct native radio row groups in one table,
+     * so cell k is the same column in every row; a grid whose columns are unlabelled already
+     * travels as a named reader limitation.
+     */
+    const columnKey = (row: GridRowState, at: number): string => row.cells[at]?.column ?? `#${at}`;
+    /**
+     * DISTINCT-COLUMN RE-PICK — VALIDATION-DRIVEN RECOVERY ONLY.
+     *
+     * A cross-row constraint is invisible in the DOM. Some grids forbid two rows taking the SAME
+     * column — a "best" row and a "worst" row that may not name the same item is the common
+     * shape — and nothing on the page declares it. The first-pass rule above answers every row
+     * with the same column DELIBERATELY and must keep doing so: the wide rating grids this walk
+     * has already passed are legal that way, and changing the first pass would put a conquered
+     * shape back at risk for a constraint most grids do not have.
+     *
+     * ASSUMPTION, STATED: when the site rejects a submit and two or more rows of a CHOICE grid
+     * sit on one column, the repeat is a CANDIDATE cause, worth one different experiment. The
+     * trigger is the OBSERVABLE PAIR — validation standing, rows sharing a column — and never
+     * the validation's words. "Best"/"worst" is one questionnaire's vocabulary, not a class, and
+     * matching on it would hard-anchor the walker on the instrument in front of it. When the
+     * repeat was not the cause, the answers are merely different rather than wrong, and the
+     * round's receipts still carry the site's own message for the next diagnosis.
+     *
+     * DETECTED OVER THE COLUMNS THIS PASS WOULD LAND ON, not over the bits the page currently
+     * holds. In the measured shape those are the same thing (a rejected full-page-POST re-renders
+     * with the rejected radios still checked), but reading only the checked bits would miss a
+     * site that clears its grid on rejection — and, the reason it decides the design, a later
+     * recovery round re-derives its picks from the same plan and would collapse an earlier
+     * round's distinct answers back onto one column.
+     *
+     * DEGRADES, NEVER GUESSES: distinctness is achievable only when the grid offers at least one
+     * column per answerable row. With fewer columns than rows the assignment spreads as far as
+     * the grid allows and EVERY receipt names the shortfall.
+     */
+    const choiceGrid =
+      placed.length > 1 &&
+      placed.every((p) =>
+        p.row.cells.every((c) => {
+          const t = actuation(c.idx)?.type;
+          return t === "radio" || t === "checkbox";
+        }),
+      );
+    const firstPassKeys = placed.map((p) => columnKey(p.row, p.at));
+    const keyCount = new Map<string, number>();
+    for (const key of firstPassKeys) keyCount.set(key, (keyCount.get(key) ?? 0) + 1);
+    /** Rows sitting on a column some OTHER row also took. Zero, or two or more. */
+    const sharedRowCount = firstPassKeys.filter((key) => (keyCount.get(key) ?? 0) > 1).length;
+    const distinctRepick = revalidateValidation.length > 0 && choiceGrid && sharedRowCount > 1;
+    const widestRow = Math.max(...gridRows.map((row) => row.cells.length));
+    const distinctAchievable = widestRow >= placed.length;
+    /**
+     * Row k takes column `base + k`, cycled over its own cells, with `base` the column the first
+     * answerable row already wanted — so the plan's documented column survives on the row that
+     * asked for it wherever the arithmetic allows. Deterministic, and IDEMPOTENT: a later round
+     * recomputes the same base from the same plan and re-lands the same assignment rather than
+     * oscillating between two of them.
+     */
+    const base = placed[0]?.at ?? 0;
+    const assignment = placed.map((p, ordinal) => ({
+      row: p.row,
+      wantedCell: p.wantedCell,
+      firstPassAt: p.at,
+      at: distinctRepick ? (base + ordinal) % p.row.cells.length : p.at,
+    }));
+    for (const { row, wantedCell, firstPassAt, at } of assignment) {
+      const cell = row.cells[at];
       if (!cell) continue;
       // The allocation pass already answered this row's input — a click on a filled number
       // cell is not an answer and must not be recorded as one. Same shape as the option-group
@@ -2399,12 +3852,21 @@ async function applyDecision(
           : r.ok;
       // THE FALLBACK IS NAMED. Taking cells[0] because no column matched is a DIFFERENT act
       // from answering the documented column, and it used to be recorded identically — which
-      // is how a shifted column parse produced wrong answers that read like right ones.
+      // is how a shifted column parse produced wrong answers that read like right ones. A
+      // distinct-column re-pick is a THIRD act, and it carries its own reason: a reader must be
+      // able to tell an invented spread from a documented answer without re-deriving either.
       const how =
-        wantColumn && !wantedCell
-          ? `grid:no-column-matched "${wantColumn}" — fell back to the row's first cell` +
-            (row.cells.some((c) => c.column === null) ? " (this grid's columns are unlabelled — see readerLimitations)" : "")
-          : null;
+        distinctRepick
+          ? `grid:distinct-column-repick: validation standing and ${sharedRowCount} rows share a column — ` +
+            `re-picked row ${JSON.stringify(row.label)} to column ${JSON.stringify(cell.column ?? `#${at + 1}`)} for distinctness` +
+            (wantedCell && at !== firstPassAt ? ` (this displaces the documented column ${JSON.stringify(wantColumn)})` : "") +
+            (distinctAchievable
+              ? ""
+              : ` (LIMITATION: this grid offers ${widestRow} columns for ${placed.length} answerable rows, so the rows cannot all differ — they are spread as far as the grid allows and some still repeat)`)
+          : wantColumn && !wantedCell
+            ? `grid:no-column-matched "${wantColumn}" — fell back to the row's first cell` +
+              (row.cells.some((c) => c.column === null) ? " (this grid's columns are unlabelled — see readerLimitations)" : "")
+            : null;
       actions.push({
         kind: "select-grid-cell",
         targetIdx: cell.idx,
@@ -2451,6 +3913,32 @@ async function applyDecision(
     if (matches.length === 0) continue;
     for (const { w, opt } of matches) {
       if (!opt) continue;
+      if (opt.checked && revalidateValidation.length > 0) {
+        // THE SITE'S VALIDATION OUTRANKS THE DOM'S CHECKED BIT — see the identical rule in
+        // the navigator-default loop below (the S40 shape). A held selection the site
+        // rejects is re-actuated through its label when one exists.
+        const viaLabel = typeof opt.labelIndex === "number" && opt.labelIndex >= 0;
+        const r = await clickIdx(
+          page,
+          opt.idx,
+          viaLabel ? { actuatedVia: "label", labelIndex: opt.labelIndex } : opt,
+        );
+        const choiceReadback = r.ok ? await readChoiceAt(page, opt.idx) : null;
+        actions.push({
+          kind: "click-option",
+          targetIdx: opt.idx,
+          targetLabel: opt.label,
+          targetCode: opt.code,
+          value: w,
+          ok: r.ok && exactChoiceReadback(opt.idx, g.kind, choiceReadback, g),
+          detail:
+            `revalidate-reactuate(${viaLabel ? "label-click" : "element-click"}): the site's validation ` +
+            `rejects the held selection (` +
+            choiceReceiptDetail(r.detail, opt.idx, g.kind, choiceReadback, g) + `)`,
+          choiceReadback,
+        });
+        continue;
+      }
       if (opt.checked) {
         const checkedGroupIdxs = g.options.filter((candidate) => candidate.checked).map((candidate) => candidate.idx);
         const choiceReadback: NonNullable<PerformedAction["choiceReadback"]> = {
@@ -2503,8 +3991,108 @@ async function applyDecision(
   // ---- default: nothing requested matched, so answer enough to advance ----
   const answeredSomething = actions.some((a) => a.ok && a.kind !== "type-text");
   if (!answeredSomething && !screen.grid && !hasRequestedNativeSelectMatch) {
+    // FRAGMENTED EXCLUSION SCREENER (assumption stated; measured live 2026-08-17). The S50
+    // affiliation screen renders as EIGHT one-checkbox groups — one per disqualifying
+    // company — plus the exclusive "None of the above" as its OWN radio group. A per-group
+    // default walks the groups in order, clicks the first company checkbox and stops; the
+    // none-option two groups down is never considered, and the walk screens out. When a
+    // screen carries two or more checkbox groups and an unflagged none-style option exists
+    // ANYWHERE on it (whatever its own group's kind), the invented answer is that option
+    // alone, with every other group left deliberately blank — ticking any company alongside
+    // it would contradict the exclusive answer. Skipped whenever a documented prefer-label
+    // matches any option on the screen, on retry variants (a pivot exists to try a
+    // DIFFERENT answer), and on screens with fewer than two checkbox groups (the in-group
+    // heuristic below covers the single-group shape).
+    const screenOptionRows = screen.optionGroups.flatMap((g) => g.options.map((o) => ({ group: g, option: o })));
+    const checkboxGroupCount = screen.optionGroups.filter((g) => g.kind === "checkbox").length;
+    // 4C: CODE UNIQUENESS. The code arm may only fire when option codes are DISTINCT across
+    // the screen's option rows. On screens where codes are NOT unique (every checkbox group
+    // carried value "1"), code "1" matches every option, flagging everything and disabling
+    // the None-of-the-above rescue. ASSUMPTION STATED: codes are platform-assigned identifiers
+    // and should be unique within a screen; when they are not, the code arm is inert and
+    // matching falls back to label-only.
+    const allScreenCodes = screenOptionRows.map((r) => r.option.code).filter((c): c is string => typeof c === "string" && c.length > 0);
+    const screenCodesDistinct = allScreenCodes.length === 0 || new Set(allScreenCodes).size === allScreenCodes.length;
+    // OUTCOME 1 (D1): notFlagged checks label matching.
+    // 4D: avoid-side uses avoidLabelMatches (stricter, no substring containment).
+    // 4C: notFlagged is label-only so a code collision can never disable the exclusion rescue.
+    const notFlagged = (o: { label: string; code?: string | null }): boolean =>
+      !avoid.some((a) => avoidLabelMatches(o.label, a));
+    // A documented prefer-label anywhere on the screen outranks everything — including on
+    // fragmented screens where the per-group loop would answer an EARLIER group and stop
+    // before ever reaching the preferred option's group.
+    // OUTCOME 1 (D1): prefer match checks both label and code.
+    // 4C: prefer code arm also guarded by screen code distinctness.
+    const preferAcrossScreen =
+      checkboxGroupCount >= 2 && (prefer.length > 0 || preferCodeEntries.length > 0)
+        ? screenOptionRows.find(
+            ({ option: o }) =>
+              answerable(o) && notFlagged(o) &&
+              (prefer.some((p) => labelMatches(o.label, p)) ||
+               (screenCodesDistinct && preferCodeEntries.some((e) => codeMatches(o.code, e.code)))),
+          )
+        : undefined;
+    const noneAcrossScreen =
+      !preferAcrossScreen && variant === 0 && checkboxGroupCount >= 2
+        ? screenOptionRows.find(({ option: o }) => answerable(o) && notFlagged(o) && NONE_STYLE_OPTION.test(o.label))
+        : undefined;
+    const screenLevelPick = preferAcrossScreen ?? noneAcrossScreen;
+    if (screenLevelPick) {
+      const target = screenLevelPick.option;
+      const r = await clickIdx(page, target.idx, target);
+      const choiceReadback = r.ok ? await readChoiceAt(page, target.idx) : null;
+      const label = preferAcrossScreen
+        ? `documented-continue-option(${JSON.stringify(target.label)}; fragmented-groups)`
+        : `exclusive-none-option(${JSON.stringify(target.label)}; fragmented-groups)`;
+      actions.push({
+        kind: "click-option",
+        targetIdx: target.idx,
+        targetLabel: target.label,
+        targetCode: target.code,
+        value: null,
+        ok: r.ok && exactChoiceReadback(target.idx, screenLevelPick.group.kind, choiceReadback, screenLevelPick.group),
+        detail:
+          `navigator-default:${label} (` +
+          choiceReceiptDetail(r.detail, target.idx, screenLevelPick.group.kind, choiceReadback, screenLevelPick.group) +
+          `)`,
+        choiceReadback,
+      });
+    } else
     for (const g of screen.optionGroups) {
-      if (g.options.some((o) => o.checked)) continue;
+      const checkedHere = g.options.filter((o) => o.checked);
+      if (checkedHere.length > 0) {
+        // THE SITE'S VALIDATION OUTRANKS THE DOM'S CHECKED BIT (the S40 shape, run
+        // v2r_01m0d2sxehnjcyd18qttmvp7wh: "Yes" read back checked while the site said
+        // "Please select an answer" — a platform can register a selection through its own
+        // handlers, and a checked control the site rejects means those handlers never
+        // fired). Under a standing validation the held option is RE-ACTUATED, through its
+        // label when one exists — a different code path than the element click that just
+        // failed. With no validation the skip stands: re-dispatching events on held state
+        // would invent a change the page never made.
+        if (revalidateValidation.length === 0) continue;
+        const held = checkedHere[0]!;
+        const viaLabel = typeof held.labelIndex === "number" && held.labelIndex >= 0;
+        const r = await clickIdx(
+          page,
+          held.idx,
+          viaLabel ? { actuatedVia: "label", labelIndex: held.labelIndex } : held,
+        );
+        const choiceReadback = r.ok ? await readChoiceAt(page, held.idx) : null;
+        actions.push({
+          kind: "click-option",
+          targetIdx: held.idx,
+          targetLabel: held.label,
+          targetCode: held.code,
+          value: null,
+          ok: r.ok && exactChoiceReadback(held.idx, g.kind, choiceReadback, g),
+          detail:
+            `revalidate-reactuate(${viaLabel ? "label-click" : "element-click"}): the site's validation ` +
+            `rejects the held selection (` +
+            choiceReceiptDetail(r.detail, held.idx, g.kind, choiceReadback, g) + `)`,
+          choiceReadback,
+        });
+        continue;
+      }
       // `answerable`, NOT `visible` — see the comment on answerable(). This is the line that
       // made a 0-10 NPS score unreachable and answered "Don't know" instead.
       const first = g.options.find((o) => answerable(o));
@@ -2513,7 +4101,12 @@ async function applyDecision(
       // screen-out label. A hint may re-order which filler is picked — it may NEVER refuse
       // an answer: when every answerable option is flagged, today's position-1 choice
       // stands, because a filler that keeps walking beats a stall on a hint.
-      const flagged = (o: (typeof g.options)[number]): boolean => avoid.some((a) => labelMatches(o.label, a));
+      // OUTCOME 1 (D1): flagged checks label and code matching.
+      // 4D: avoid-side uses avoidLabelMatches (stricter, no substring containment).
+      // 4C: code arm only fires when screen codes are distinct.
+      const flagged = (o: (typeof g.options)[number]): boolean =>
+        avoid.some((a) => avoidLabelMatches(o.label, a)) ||
+        (screenCodesDistinct && avoidCodeEntries.some((e) => codeMatches(o.code, e.code)));
       // ---- BOUNDED SCREEN-OUT RETRY: the Nth eligible option, AFTER hint filtering ----
       //
       // The first walk's position-1 pick (below) reached a documented screen-out, so the
@@ -2526,7 +4119,8 @@ async function applyDecision(
       // `retry-N` tag — a pivot filler is still an invented answer.
       if (variant > 0) {
         const answerableOpts = g.options.filter((o) => answerable(o));
-        const nonFlagged = avoid.length > 0 ? answerableOpts.filter((o) => !flagged(o)) : answerableOpts;
+        const hasAvoidHintsInner = avoid.length > 0 || (screenCodesDistinct && avoidCodeEntries.length > 0);
+        const nonFlagged = hasAvoidHintsInner ? answerableOpts.filter((o) => !flagged(o)) : answerableOpts;
         const eligible = nonFlagged.length > 0 ? nonFlagged : answerableOpts;
         const pick = Math.min(variant, eligible.length - 1);
         const alt = eligible[pick]!;
@@ -2548,7 +4142,36 @@ async function applyDecision(
         if (g.kind === "radio") continue;
         break;
       }
-      const preferred = avoid.length > 0 ? g.options.find((o) => answerable(o) && !flagged(o)) : first;
+      // A documented CONTINUE answer outranks first-non-flagged: when the plan knows an
+      // answer the document states keeps the survey going, the filler takes it instead of
+      // betting on whichever unflagged option is closest to position 1 — undocumented
+      // options can terminate too. Never an avoid-flagged option: prefer re-orders among
+      // survivors, it does not overrule a documented screen-out.
+      // OUTCOME 1 (D1): prefer match checks both label and code.
+      // 4C: prefer code arm guarded by screen code distinctness.
+      const preferredByDoc =
+        (prefer.length > 0 || preferCodeEntries.length > 0)
+          ? g.options.find((o) => answerable(o) && !flagged(o) &&
+              (prefer.some((p) => labelMatches(o.label, p)) ||
+               (screenCodesDistinct && preferCodeEntries.some((e) => codeMatches(o.code, e.code)))))
+          : undefined;
+      // EXCLUSION-SCREENER DEFAULT (assumption stated, CLAUDE.md discipline). A multi-select
+      // whose options are affiliations/conditions with an exclusive "None of the above" row
+      // is a universal screener shape: every listed option disqualifies and the none-option
+      // is the only survivable invented answer. Three live pivots on the 2026-08-17 run drew
+      // company options at such a screen and all screened out while "None of the above"
+      // (sealed as row 99) sat unpicked. When the navigator must INVENT a multi-select
+      // answer and no documented prefer-label matched, it now prefers a none-style option.
+      // The match is a linguistic convention (a small English lexicon) — stated here, used
+      // ONLY to re-order which invented filler is clicked (input, never evidence), skipped
+      // whenever a documented hint or avoid flag speaks, and inert on single-select groups.
+      const exclusionNone =
+        !preferredByDoc && g.kind === "checkbox"
+          ? g.options.find((o) => answerable(o) && !flagged(o) && NONE_STYLE_OPTION.test(o.label))
+          : undefined;
+      const hasAvoidHints = avoid.length > 0 || (screenCodesDistinct && avoidCodeEntries.length > 0);
+      const preferred =
+        preferredByDoc ?? exclusionNone ?? (hasAvoidHints ? g.options.find((o) => answerable(o) && !flagged(o)) : first);
       const chosen = preferred ?? first;
       // The labels actually steered around, in DOM order — named in the detail so a reader
       // can see WHY this filler is not position-1. Empty when the pick equals position-1.
@@ -2568,13 +4191,20 @@ async function applyDecision(
         targetCode: chosen.code,
         value: null,
         ok: r.ok && exactChoiceReadback(chosen.idx, g.kind, choiceReadback, g),
-        // BOTH shapes keep the `navigator-default:` prefix — countDefaults and the ending's
+        // ALL shapes keep the `navigator-default:` prefix — countDefaults and the ending's
         // provenance line key off it, and a hint-steered filler is still an invented answer.
         detail:
-          avoided.length > 0
-            ? `navigator-default:first-non-flagged-option(avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}) (` +
-              choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`
-            : `navigator-default:first-option (` + choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`,
+          preferredByDoc && chosen === preferredByDoc
+            ? `navigator-default:documented-continue-option(${JSON.stringify(chosen.label)}${
+                avoided.length > 0 ? `; avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}` : ""
+              }) (` + choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`
+            : exclusionNone && chosen === exclusionNone
+              ? `navigator-default:exclusive-none-option(${JSON.stringify(chosen.label)}) (` +
+                choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`
+            : avoided.length > 0
+              ? `navigator-default:first-non-flagged-option(avoided ${avoided.map((s) => JSON.stringify(s)).join(", ")}) (` +
+                choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`
+              : `navigator-default:first-option (` + choiceReceiptDetail(r.detail, chosen.idx, g.kind, choiceReadback, g) + `)`,
         choiceReadback,
       });
       if (g.kind === "radio") continue;
@@ -2744,13 +4374,102 @@ async function applyDecision(
   //
   // The set is now every VALUE control plus the two we deliberately refuse, because a refusal
   // that is never reached is never recorded. `fillRefusalFor` decides which is which.
+
+  // ---- OPTION-LINKED SPECIFY INPUTS: detect and skip ----
+  //
+  // THE DEFECT THIS CLOSES (all 433 cases on the first real walk, analysis class d): a text
+  // input bound to a choice option (Confirmit's "Other (Please Specify)") auto-selects its
+  // parent option when filled. The navigator-default filler typed "QA-PROBE" into it, Confirmit
+  // auto-checked "Other", and the already-selected role radio was silently overwritten. Every
+  // path terminated at the screener.
+  //
+  // DETECTION IS STRUCTURAL — three independent signals, any one sufficient:
+  //   (a) LABEL + ADJACENCY: the text input's label contains "specify"/"other" wording AND
+  //       its idx is within 2 of an option in any group (DOM adjacency corroborates the label);
+  //   (b) SHARED NAME PREFIX: the text input's `name` starts with an option group's `name`
+  //       followed by a separator (e.g. "S10_other" starts with group "S10" + "_");
+  //   (c) IDX ADJACENCY WITH SPECIFY LABEL: the text input is immediately adjacent (idx
+  //       difference <= 1) to the LAST option in a group whose label matches specify wording.
+  //
+  // ASSUMPTION STATED (CLAUDE.md north star): these heuristics detect the common pattern where
+  // a text input is structurally associated with a choice option. When the association is
+  // UNCERTAIN (none of the signals fire), the input is filled normally — the old behaviour.
+  // When association IS detected but the plan did not select that option, the input is NOT
+  // filled, and the skip is recorded as a named observation. This is the direction the failure
+  // has to point: not filling an unassociated input leaves the screen as-is; filling an
+  // associated one overwrites an already-made selection.
+  const optionLinkedSpecifyIdxs = detectOptionLinkedSpecifyInputs(screen);
+  // Which option indices in any group were actually selected (clicked) by the actions above?
+  const clickedOptionIdxs = new Set(
+    actions
+      .filter((a) => a.ok && (a.kind === "click-option" || a.kind === "select-grid-cell"))
+      .map((a) => a.targetIdx),
+  );
+
   const valueControls = screen.controls.filter(
     (c) => c.visible && !c.disabled && !c.readOnly && (isValueEntry(c.type) || fillRefusalFor(c.type) !== null),
   );
+  // ALLOCATION-AWARE NUMERIC RECOVERY. When validation demands numbers and MULTIPLE text
+  // cells share the screen, all-ones cannot satisfy a sum constraint: the live B10
+  // percentage-allocation grid (run v2r_01m0ceth…, 2026-08-19) rejected three "1"s
+  // forever because its cells must total 100. One hundred in the first cell and zero in
+  // the rest is valid arithmetic for any sum-to-100 allocation and stays a legal number
+  // everywhere else; a single lone cell keeps the least-committed "1".
+  const screenNumericDemanded =
+    revalidateValidation.length > 0 && revalidateValidation.some((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m));
+  const numericRecoveryIdxs = screenNumericDemanded
+    ? valueControls
+        .filter(
+          (c) => isTextEntry(c.type) && String(c.type).toLowerCase() !== "number" && fillRefusalFor(c.type) === null &&
+            !SPECIFY_STYLE_LABEL.test(c.label ?? ""),
+        )
+        .map((c) => c.idx)
+    : [];
+  const numericRecoveryTargets = numericRecoveryIdxs.length;
+  // CEILING-AWARE PLACEMENT (docs/FORWARD-SCAN.md §3.4). Where the screen DISPLAYS a per-row
+  // cap beside these cells — a piped read-only column, or a limit the validation states in
+  // words — the whole 100 must not land on a row whose shown cap is smaller. The bounds come
+  // off THIS screen only; when it shows none, `how` is null and the split below is the
+  // pre-existing first-cell behaviour, unchanged.
+  const ALLOCATION_RECOVERY_TOTAL = 100;
+  const ceilingPlan =
+    numericRecoveryTargets > 1
+      ? ceilingAwareAllocationSplit(
+          numericRecoveryIdxs,
+          ALLOCATION_RECOVERY_TOTAL,
+          displayedRowCeilings(screen, numericRecoveryIdxs, revalidateValidation),
+        )
+      : { values: new Map<number, string>(), how: null };
+  let numericRecoveryOrdinal = 0;
   for (const c of valueControls) {
     // Already claimed by the constant-sum pass above — answered as a group, or named
     // unfillable as a group. Either way this loop has nothing to add.
     if (allocationClaimed.has(c.idx)) continue;
+
+    // ---- OPTION-LINKED SPECIFY: do not fill unless its parent option IS the selection ----
+    //
+    // A text input bound to a choice option (e.g. "Other (Please Specify)") auto-selects
+    // its parent option when filled. When the plan gave no explicit text_entry for this
+    // screen, fill the specify box ONLY if its parent option was actually selected.
+    const linkedOption = optionLinkedSpecifyIdxs.get(c.idx);
+    if (linkedOption !== undefined && decision?.text_entry?.value === undefined) {
+      if (!clickedOptionIdxs.has(linkedOption)) {
+        actions.push({
+          kind: "refuse-fill",
+          targetIdx: c.idx,
+          targetLabel: c.label,
+          targetCode: null,
+          value: null,
+          ok: true, // the REFUSAL succeeded — not filling is the correct act
+          detail:
+            `option-linked-specify-skip: this text input is associated with option #${linkedOption} ` +
+            `which is NOT the selected answer — filling it would auto-select that option and overwrite ` +
+            `the already-made choice`,
+        });
+        continue;
+      }
+    }
+
     // ---- a control this harness will not, or cannot, answer ----
     const refusal = fillRefusalFor(c.type);
     if (refusal) {
@@ -2784,11 +4503,80 @@ async function applyDecision(
     // skip off `value.length > 0` would skip every slider on every survey for ever and record
     // the screen as answered. `valueIsUserSupplied` is the reader's answer to exactly that;
     // where it is absent (an older reader) the old test is the honest fallback.
-    const alreadyAnswered = c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0);
+    // A PLACEHOLDER IS NOT AN ANSWER (assumption stated). The live survey pre-fills "-"
+    // into numeric text fields via its own script, which makes the reader's
+    // valueIsUserSupplied heuristic (value differs from the markup default) believe a user
+    // typed it. On S70 that skip left the field for validation to reject; on S80 the site
+    // TERMINATED the respondent outright on the unanswered field — no validation round, so
+    // the recovery bypass never fires. A current value consisting only of punctuation and
+    // whitespace is treated as unanswered on the FIRST pass: no real answer is a lone
+    // dash, and the worst case is re-typing over a site-provided placeholder.
+    const placeholderValue = typeof c.value === "string" && c.value.length > 0 && /^[\s\-–—.·*_/\\]+$/.test(c.value);
+    const alreadyAnswered =
+      revalidateValidation.length > 0 || placeholderValue
+        ? false
+        : (c.valueIsUserSupplied ?? !!(c.value && c.value.length > 0));
     if (alreadyAnswered) continue;
 
     const planned = decision?.text_entry?.value;
-    const derived = navigatorValueFor(c, variant);
+    // The validation message steers the recovery derivation: "Please enter a number." on a
+    // text-typed input means the probe text can never land. A small positive integer is the
+    // least-committed number for a field whose bounds the markup does not declare.
+    const numericDemanded = screenNumericDemanded;
+    const derived =
+      numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== "number" &&
+      SPECIFY_STYLE_LABEL.test(c.label ?? "")
+        ? // A SPECIFY-STYLE TEXT CELL IS NOT A NUMERIC ALLOCATION TARGET. It is CLEARED so
+          // the allocation stands alone: a number in the specify box trips the platform's
+          // specify-pairing rule, and the harness must undo the value it wrote itself.
+          {
+            value: "",
+            how: "a specify-style text cell is not a numeric allocation target — cleared so the allocation stands alone",
+            via: "type" as const,
+          }
+        : numericDemanded && isTextEntry(c.type) && String(c.type).toLowerCase() !== "number"
+        ? // via SET, not keyboard: the recovery runs on a field a mask may already have
+          // wedged, and the set path (value + input/change events) is the one the live
+          // server verifiably accepted on this exact shape.
+          (() => {
+            // WITH a displayed ceiling the share is bound to the CELL (a cap belongs to a
+            // row, never to a position); with none, the ordinal walk below is kept exactly
+            // as it was so a screen showing no bounds behaves byte for byte as before.
+            const allocationValue =
+              numericRecoveryTargets > 1
+                ? ceilingPlan.how !== null
+                  ? ceilingPlan.values.get(c.idx) ?? "0"
+                  : numericRecoveryOrdinal++ === 0
+                  ? "100"
+                  : "0"
+                : "1";
+            const allocationNote =
+              numericRecoveryTargets > 1
+                ? ceilingPlan.how !== null
+                  ? `; ${numericRecoveryTargets} numeric cells share this screen — allocation split under the ceilings this screen displays: ${ceilingPlan.how}`
+                  : `; ${numericRecoveryTargets} numeric cells share this screen — allocation split (100 first, 0 rest) so a sum constraint can hold`
+                : "";
+            return {
+              value: allocationValue,
+              how: `the site's validation demands a number (${JSON.stringify(revalidateValidation.find((m) => /\bnumber\b|\bnumeric\b|\bdigits?\b/i.test(m)))})${allocationNote}`,
+              via: numericFillVia,
+            };
+          })()
+        // OUTCOME 4 (D1): when a documented-accepted value exists for this screen and the
+        // control is a number or range input, prefer that value over the blind midpoint.
+        // The derivation is stated in the provenance string. Same evidence boundary: this
+        // is still an invented answer (navigator-default prefix), only a better-informed one.
+        : (() => {
+            if (numericPreferValue && (c.type === "number" || c.type === "range")) {
+              return {
+                value: numericPreferValue.value,
+                how: `documented-accepted-value(${JSON.stringify(numericPreferValue.value)}, ` +
+                  `bound="${numericPreferValue.bound}"; ${numericPreferValue.derivation})`,
+                via: (c.type === "range" ? "set" : "type") as "type" | "set",
+              };
+            }
+            return navigatorValueFor(c, variant);
+          })();
     if (planned === undefined && !derived) {
       // NO RULE IS NOT "NOTHING TO ANSWER". The type is one the reader classes as fillable and
       // this harness has no value for it — said out loud rather than passed over.
@@ -2809,7 +4597,20 @@ async function applyDecision(
     // value, never the mechanism. Typing a documented date into a date input would be discarded
     // exactly as the harness's own filler was.
     const via = derived ? derived.via : isTextEntry(c.type) ? "type" : "set";
-    const r = via === "set" ? await setIdx(page, c.idx, value) : await typeIdx(page, c.idx, value);
+    let r = via === "set" ? await setIdx(page, c.idx, value) : await typeIdx(page, c.idx, value);
+    let fillDetail = r.detail;
+    // THE CONTROL TRANSFORMED WHAT WAS TYPED: the live S70 input mask reverts non-matching
+    // keyboard input (typed "QA-PROBE", read back "-"), and once wedged the server rejected
+    // even later valid keystrokes — while the SET path (value + input/change events) was
+    // ACCEPTED by the same live field. When the keyboard readback disagrees with what was
+    // typed, retry ONCE via set; both attempts are recorded in the receipt.
+    if (via !== "set" && r.ok && r.got !== undefined && r.got !== value) {
+      const setRetry = await setIdx(page, c.idx, value);
+      fillDetail =
+        `keyboard-type read back ${JSON.stringify(r.got)} for ${JSON.stringify(value)} — the control transformed it; ` +
+        `retried via set-value (${setRetry.detail})`;
+      r = setRetry;
+    }
     actions.push({
       kind: via === "set" ? "set-value" : "type-text",
       targetIdx: c.idx,
@@ -2820,7 +4621,7 @@ async function applyDecision(
       // WHOSE VALUE THIS WAS, AND HOW IT WAS DERIVED. A planned answer and a filler the harness
       // invented to get past a screen are different evidence, and a `blocked` that follows one
       // of them means something very different from a `blocked` that follows the other.
-      detail: planned === undefined ? `navigator-default:${derived!.how} (${r.detail})` : r.detail,
+      detail: planned === undefined ? `navigator-default:${derived!.how} (${fillDetail})` : fillDetail,
     });
     // THE CONTROL'S OWN VERDICT ON THE VALUE. Sanitised away, or refused outright, is a fact
     // about this walk that has to travel — otherwise the next thing that happens is a `blocked`
@@ -2845,6 +4646,60 @@ async function applyDecision(
 }
 
 /**
+ * MULTI-QUESTION SCREENS: fill each visible question root as its OWN sub-screen.
+ *
+ * Measured live 19 Aug 2026 (run v2r_01m0dcadeay20nhmh5wap22dag, screen 75): the conjoint
+ * block renders four distinct questions (hAttC20x1..x4) on one page, and the walk stopped
+ * at the one-question refusal with 80% of the survey unreached. The reader already scopes
+ * each root's control indexes, so each root can take the same per-type navigator defaults
+ * a single-question screen gets — SCOPED, so screen-level heuristics (the fragmented
+ * exclusion pre-pass, allocation counting) can never leak across questions. Control idx
+ * values are page-global, so clicks land on the right elements unchanged.
+ *
+ * WHAT THIS DOES NOT CHANGE: planned decisions still never bind on a multi-root screen —
+ * filling here is TRAVERSAL, not witnessing, and no case coverage can be earned from it.
+ * The walk records the standing limitation either way. Grids inside roots are not
+ * re-scoped (assumption stated: a root-level allocation grid keeps whole-screen handling);
+ * a roots list without control indexes still refuses, exactly as before.
+ */
+async function applyAcrossQuestionRoots(
+  page: PageLike,
+  screen: RenderedScreen,
+  decision: PlannedDecision | null,
+  pathHints: readonly SurvivalHint[],
+  variant: number,
+  revalidateValidation: readonly string[] = [],
+  numericFillVia: "set" | "type" = "set",
+): Promise<{ actions: PerformedAction[]; notOffered: string[]; unfillable: UnfillableControl[] }> {
+  const roots = (Array.isArray(screen.questionRoots) ? screen.questionRoots : [])
+    .filter((r) => Array.isArray(r?.controlIdxs) && r.controlIdxs.length > 0);
+  if (roots.length < 2) {
+    return await applyDecision(page, screen, decision, pathHints, variant, revalidateValidation, numericFillVia);
+  }
+  const out = {
+    actions: [] as PerformedAction[],
+    notOffered: [] as string[],
+    unfillable: [] as UnfillableControl[],
+  };
+  for (const root of roots) {
+    const owned = new Set<number>(root.controlIdxs as number[]);
+    const sub: RenderedScreen = {
+      ...screen,
+      grid: null,
+      controls: screen.controls.filter((c) => owned.has(c.idx)),
+      optionGroups: screen.optionGroups
+        .map((g) => ({ ...g, options: g.options.filter((o) => owned.has(o.idx)) }))
+        .filter((g) => g.options.length > 0),
+    };
+    const filled = await applyDecision(page, sub, decision, pathHints, variant, revalidateValidation, numericFillVia);
+    out.actions.push(...filled.actions);
+    out.notOffered.push(...filled.notOffered);
+    out.unfillable.push(...filled.unfillable);
+  }
+  return out;
+}
+
+/**
  * THE CONTROL THAT ADVANCES THE SURVEY — and WHICH RULE FOUND IT.
  *
  * The second rule is a FALLBACK, and until it was named it was also a disguise. On the live
@@ -2857,6 +4712,13 @@ async function applyDecision(
  * now says so in the record, because a press chosen by elimination and a press chosen by
  * identity are different acts and were previously indistinguishable afterwards.
  */
+/**
+ * Direction-only glyphs that NAME a back control. Hoisted so the withheld-forward reader
+ * below applies exactly the same direction convention the resolver does — two readers
+ * disagreeing about what "<<" means would be a defect that only showed up on live pages.
+ */
+const symbolicBack = (label: string): boolean => /^(?:<+|‹|«|←|⬅|◀|⏪)$/u.test(label.trim());
+
 export type AdvanceControlResolution =
   | { kind: "none"; candidates: [] }
   | { kind: "unique"; control: { idx: number; label: string; via: string }; candidates: Array<{ idx: number; label: string; via: string }> }
@@ -2876,7 +4738,6 @@ export function resolveAdvanceControl(screen: RenderedScreen): AdvanceControlRes
   // Defense in depth for artifacts read before the page classifier learned direction-only
   // glyphs: `<<`/left-arrow is Back evidence, never an unknown button eligible to become the
   // sole-forward candidate. This is a generic direction convention, not a platform selector.
-  const symbolicBack = (label: string): boolean => /^(?:<+|‹|«|←|⬅|◀|⏪)$/u.test(label.trim());
   const only = cands.filter((b) => b.role !== "back" && !symbolicBack(b.label)).map((b) => ({
     idx: b.idx,
     label: b.label,
@@ -2900,13 +4761,413 @@ function nextButton(screen: RenderedScreen): { idx: number; label: string; via: 
 }
 
 /**
+ * A FORWARD CONTROL THE PAGE IS HOLDING BACK IS NOT A FORWARD CONTROL THE PAGE LACKS.
+ *
+ * MEASURED LIVE 19 Aug 2026 (run `v2r_01m0dj2vcznwcw8krwxhyw5qan`, screen 42, question C20):
+ * the page rendered its `>>` control with `visible: false` and printed "You will be allowed to
+ * proceed in 15 seconds" — a forced-exposure gate, the standard way a conjoint or ad-test screen
+ * makes a respondent look at the stimulus before answering. `resolveAdvanceControl` only ever
+ * considers controls operable AT THE INSTANT OF THE READ, so the walk concluded "no control
+ * advances this screen", ended, and reported an ending on a screen that would have opened by
+ * itself a few seconds later, with 79% of the survey unreached.
+ *
+ * THE ASSUMPTION, STATED: a control that is PRESENT in the page but not operable, and that would
+ * be a forward candidate if it were operable, is evidence that this screen HAS a way on and is
+ * withholding it. That is a fact about the DOM, not about a platform and not about a language —
+ * nothing here reads the countdown's words, which would only work on an English page.
+ *
+ * WHAT IT DOES NOT ASSUME: that the control will ever open, and — the point the owner made
+ * binding on 19 Aug 2026 — HOW LONG it takes. THIS survey's gate is 15 seconds; that number
+ * appears NOWHERE in this code. The mechanism polls until the page opens the control or a ceiling
+ * elapses, so a survey with a 5-second gate costs 5 seconds, a survey with a 45-second gate costs
+ * 45, and a survey with no gate at all costs nothing. The ceiling is a safety bound, not a
+ * duration estimate, and an operator can raise it (`EXEC_FORWARD_RELEASE_MAX_WAIT_MS`) without a
+ * code change.
+ *
+ * NOTHING HERE READS THE COUNTDOWN'S WORDS. Not on the way in (the trigger is the DOM state of
+ * the control) and not on the way out (release is proved by the control becoming resolvable).
+ * A gate whose page is written in German, or which prints no countdown at all, behaves the same.
+ *
+ * WHEN THE CEILING WINS the walk ends exactly where it ended before — but with the withheld
+ * control NAMED in the outcome and counted as a reader limitation, so a gate that never opens can
+ * never be read as a thank-you page that simply had nothing left to press.
+ */
+/** How often to look again. A gate that opens is noticed within one interval of opening. */
+export const FORWARD_RELEASE_POLL_MS = 3_000;
+/**
+ * The DEFAULT ceiling, deliberately generous: it exists to stop an infinite wait, not to predict
+ * any survey's dwell. Override per deployment with `EXEC_FORWARD_RELEASE_MAX_WAIT_MS`.
+ *
+ * FIVE MINUTES BY OWNER INSTRUCTION (21 Aug 2026): forced-viewing gates are survey-authored
+ * and unbounded in principle — a five-minute stimulus dwell is a design choice some
+ * instruments make, and a walk that gives up at 90s on such a survey reports a wall that
+ * does not exist. The cost of the larger ceiling is bounded and stated: it is paid ONLY on a
+ * screen that still has a withheld forward control after answering (never on terminal-looking
+ * screens, which keep the short cap below), and the walk deadline still outranks it.
+ */
+export const FORWARD_RELEASE_MAX_WAIT_MS = 300_000;
+/**
+ * THE SHORT PATIENCE FOR A SCREEN THAT LOOKS LIKE AN ENDING, and the discrimination is stated
+ * because it is a real trade: a screen with NOTHING LEFT TO ANSWER is what every completed walk
+ * ends on, and a thank-you page that ships a hidden Next in its platform template would otherwise
+ * cost the full ceiling on every walk of every run.
+ *
+ * SO: no answerable controls => this short cap, UNLESS the page's own prose keeps changing between
+ * polls. A ticking countdown rewrites its text (MEASURED: "…in 15 seconds" -> "…in 10 seconds"
+ * while the screen SIGNATURE stayed byte-identical, run v2r_01m0dj2vcznwcw8krwxhyw5qan step 42),
+ * and that change is proof the page is still working, which restores the full ceiling. A static
+ * page has nothing to wait for.
+ *
+ * STATED LIMITATION: a control-free screen that gates its Next on a SILENT timer — no visible
+ * countdown, no other changing text — gets only the short cap, and if its gate is longer than
+ * that the walk ends with the withheld control named. That is a named limitation, not a wrong
+ * answer, and it is the price of not delaying every real completion page.
+ */
+export const FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS = 9_000;
+export const FORWARD_CONTROL_WITHHELD = "forward-control-withheld";
+/**
+ * How many extra presses a SILENT refusal earns — the site neither moved nor complained. Small on
+ * purpose: this is for a control that was momentarily inert, not for hammering a dead page.
+ */
+export const SILENT_REFUSAL_MAX_PRESSES = 3;
+export const SILENT_REFUSAL_REPRESSED = "silent-refusal-repressed";
+
+/**
+ * Result of a silent-refusal re-press attempt. Used by both the main step loop and the
+ * recovery loop — the SAME mechanism, same bound, same receipts, never a second constant
+ * that can drift from the first. The recovery loop's stall at C20-style dwell gates was
+ * measured in run v2r_01m0enh6bjc1en2bgesvcnt5jc: after the main loop exhausted its 3
+ * presses (~16.5s) a re-arming 15s gate won the race, the walk fell into recovery, and
+ * recovery pressed once with a 600ms wait — six times short of one advance window — while
+ * the gate sat one press from opening.
+ */
+export type SilentRefusalResult = {
+  /** The freshest screen read during the refusal handling (null if no read succeeded). */
+  screen: RenderedScreen | null;
+  /** Movement signals detected, if any. Empty when the survey did not advance. */
+  movementSignals: AdvanceSignal[];
+  /** Whether the survey advanced during the silent-refusal wait. */
+  advanced: boolean;
+  /** How many re-presses were fired. */
+  silentPresses: number;
+  /** Total wall-clock ms the re-press loop waited. */
+  silentWaitedMs: number;
+  /** Actions recorded during the refusal handling — every re-press is receipted. */
+  actions: PerformedAction[];
+  /**
+   * True when the forward control BECAME HIDDEN during the wait — shape 2 flipping to shape 1
+   * on a platform re-render. The caller must hand the returned `screen` to `awaitForwardRelease`
+   * rather than burning another press against a control the respondent can no longer reach.
+   */
+  shapeFlipped: boolean;
+};
+
+/**
+ * THE BOUNDED SILENT-REFUSAL RE-PRESS — a press that produced neither movement nor complaint
+ * is waited out and re-pressed, bounded by a press count and by the walk deadline.
+ *
+ * SHARED BY THE MAIN STEP LOOP AND THE RECOVERY LOOP. The defect this closes: the recovery
+ * loop had NO silent-refusal mechanism at all — after its press the only wait was sleep(600),
+ * roughly 6x short of one advance window. When a dwell gate re-armed after a rejected submit,
+ * the recovery pressed once, saw no movement, and the walk stalled.
+ *
+ * THE CADENCE IS THE ADVANCE WINDOW ITSELF, not a knob of its own. Waiting before re-pressing
+ * is exactly "give this submit another advance window", so `advanceTimeoutMs` is the honest
+ * unit: production waits its real 3.5s between presses, and a fixture that declares a short
+ * advance window pays a short wait instead of a real-time one.
+ *
+ * SHAPE FLIP DETECTION: if during the re-press wait the control BECOMES hidden (shape 2
+ * flipping to shape 1 on a platform re-render), the loop returns `shapeFlipped: true` rather
+ * than burning a press against a control the respondent can no longer reach. The caller must
+ * hand the returned screen to `awaitForwardRelease`, which is the mechanism for shape 1.
+ *
+ * NOTHING HERE READS THE COUNTDOWN. The trigger is the absence of both movement and complaint,
+ * which is platform- and language-neutral. A site that is merely slow benefits identically.
+ */
+export async function silentRefusalRepress(
+  page: PageLike,
+  /** The screen BEFORE the press that was swallowed — the advance baseline. */
+  baseline: RenderedScreen,
+  /** The screen AFTER the press that was swallowed — must already show no new validation. */
+  afterPress: RenderedScreen,
+  opts: {
+    advanceTimeoutMs: number;
+    readTimeoutMs?: number;
+    deadline: number;
+    silentRefusalMaxPresses?: number;
+    forwardReleaseMaxWaitMs?: number;
+    forwardReleasePollMs?: number;
+    forwardReleaseTerminalMaxWaitMs?: number;
+  },
+  what: string,
+): Promise<SilentRefusalResult> {
+  const maxPresses = Math.max(0, Math.floor(opts.silentRefusalMaxPresses ?? SILENT_REFUSAL_MAX_PRESSES));
+  const pollMs = Math.max(1, Math.floor(opts.advanceTimeoutMs));
+  const out: SilentRefusalResult = {
+    screen: afterPress,
+    movementSignals: [],
+    advanced: false,
+    silentPresses: 0,
+    silentWaitedMs: 0,
+    actions: [],
+    shapeFlipped: false,
+  };
+  const started = Date.now();
+  while (
+    out.silentPresses < maxPresses &&
+    Date.now() + pollMs < opts.deadline
+  ) {
+    await sleep(pollMs);
+    out.silentWaitedMs = Date.now() - started;
+    let fresh: RenderedScreen | null = null;
+    try {
+      fresh = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `silent-refusal re-read on ${what}`);
+    } catch {
+      break;
+    }
+    // It may have moved on its own while we waited — never press through a late advance.
+    const late = advanceSignals(baseline, fresh);
+    if (late.length > 0) {
+      out.screen = fresh;
+      out.movementSignals = late;
+      out.advanced = true;
+      break;
+    }
+    // The site found its voice: this is a real rejection and belongs to the recovery ladder.
+    // Compare against `afterPress` (the screen immediately after the swallowed press), NOT
+    // `baseline` (which may already carry validation from a previous round). The entry
+    // condition of this helper guarantees `afterPress` has no validation — that absence is
+    // what "silence" means. Any validation appearing in a later read IS the site finding its
+    // voice, even if the same text was on a previous round's screen.
+    if (newValidationMessages(afterPress, fresh).length > 0) {
+      out.screen = fresh;
+      break;
+    }
+    // SHAPE FLIP: the control that was visible when this loop began has become hidden — the
+    // platform re-rendered and started a new forced-exposure timer. Pressing a hidden control
+    // is useless; the caller must hand this screen to `awaitForwardRelease` which is the
+    // mechanism for shape 1 (hidden forward control). Stated assumption: a control that goes
+    // from visible to hidden is re-arming, not disappearing. If it genuinely disappeared,
+    // awaitForwardRelease will run its own bounded wait and the walk ends with the limitation
+    // named — the same outcome, just slower.
+    const again = resolveAdvanceControl(fresh);
+    if (again.kind === "none") {
+      // The control is no longer visible or is no longer there. Check if there is a withheld
+      // forward control — that is the shape-1 signal.
+      if (withheldForwardControls(fresh).length > 0) {
+        out.screen = fresh;
+        out.shapeFlipped = true;
+        break;
+      }
+      // No control at all — the page layout changed unexpectedly. Stop and let the caller
+      // decide what to do with no forward control.
+      out.screen = fresh;
+      break;
+    }
+    if (again.kind !== "unique") break;
+    const press = await clickIdx(page, again.control.idx);
+    out.silentPresses += 1;
+    out.actions.push({
+      kind: "click-next",
+      targetIdx: again.control.idx,
+      targetLabel: again.control.label,
+      targetCode: null,
+      value: null,
+      ok: press.ok,
+      detail:
+        `silent-refusal re-press ${out.silentPresses} after ${out.silentWaitedMs}ms — the previous press produced ` +
+        `neither movement nor any validation message, so the answer was not what the site refused ` +
+        `(${press.detail}) via ${again.control.via}`,
+    });
+    if (!press.ok) break;
+    await sleep(Math.min(pollMs, 1_000));
+    try {
+      const settled = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `silent-refusal settle read on ${what}`);
+      const moved = advanceSignals(baseline, settled);
+      out.screen = settled;
+      if (moved.length > 0) {
+        out.movementSignals = moved;
+        out.advanced = true;
+        break;
+      }
+    } catch {
+      break;
+    }
+  }
+  out.silentWaitedMs = Date.now() - started;
+  return out;
+}
+
+export type WithheldForwardControl = { idx: number; label: string; why: string };
+
+export type ForwardReleaseWait = {
+  /** The forward-eligible controls this screen had, and could not be pressed. */
+  withheld: WithheldForwardControl[];
+  waitedMs: number;
+  polls: number;
+  /** The bound this wait was actually held to, after the terminal-looking discrimination. */
+  ceilingMs: number;
+  /** True only when a re-read actually produced a resolvable advance control. */
+  released: boolean;
+  /** The freshest screen this wait read, or null when it never re-read one. */
+  screen: RenderedScreen | null;
+};
+
+/** The screen's own prose — what a page rewrites while it is counting down. */
+const screenProse = (s: RenderedScreen): string =>
+  `${s.questionText ?? ""}\n${s.instructionText ?? ""}\n${s.visibleText ?? ""}`;
+
+export function withheldForwardControls(screen: RenderedScreen): WithheldForwardControl[] {
+  return screen.buttons
+    .filter((b) => !b.visible || b.disabled)
+    .filter((b) => b.role === "next" || (b.role !== "back" && !symbolicBack(b.label)))
+    .map((b) => ({
+      idx: b.idx,
+      label: b.label,
+      why: !b.visible && b.disabled ? "present but hidden and disabled" : !b.visible ? "present but hidden" : "present but disabled",
+    }));
+}
+
+/**
+ * Wait, boundedly, for a withheld forward control to open. Returns without waiting at all when
+ * the screen has no withheld forward control — a screen that genuinely has no way on must still
+ * cost nothing, because that is what the last screen of every completed walk looks like.
+ */
+export async function awaitForwardRelease(
+  page: PageLike,
+  screen: RenderedScreen,
+  opts: {
+    readTimeoutMs?: number;
+    deadline: number;
+    forwardReleaseMaxWaitMs?: number;
+    forwardReleasePollMs?: number;
+    forwardReleaseTerminalMaxWaitMs?: number;
+  },
+  what: string,
+): Promise<ForwardReleaseWait> {
+  const withheld = withheldForwardControls(screen);
+  const out: ForwardReleaseWait = { withheld, waitedMs: 0, polls: 0, ceilingMs: 0, released: false, screen: null };
+  if (withheld.length === 0) return out;
+  const configured = Math.max(0, Math.floor(opts.forwardReleaseMaxWaitMs ?? FORWARD_RELEASE_MAX_WAIT_MS));
+  const pollMs = Math.max(1, Math.floor(opts.forwardReleasePollMs ?? FORWARD_RELEASE_POLL_MS));
+  const terminalCap = Math.max(0, Math.floor(opts.forwardReleaseTerminalMaxWaitMs ?? FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS));
+  // See FORWARD_RELEASE_TERMINAL_LOOKING_MAX_WAIT_MS: nothing left to answer means this looks
+  // like an ending, and an ending must not cost the full ceiling on every walk.
+  let ceiling = answerableControls(screen).length === 0 ? Math.min(configured, terminalCap) : configured;
+  let prose = screenProse(screen);
+  const started = Date.now();
+  while (
+    Date.now() - started + pollMs <= ceiling &&
+    Date.now() + pollMs < opts.deadline
+  ) {
+    await sleep(pollMs);
+    out.polls += 1;
+    out.waitedMs = Date.now() - started;
+    let fresh: RenderedScreen | null = null;
+    try {
+      fresh = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `forward-release poll on ${what}`);
+    } catch {
+      // A read we could not make is not a release we can prove. Stop and report the wait.
+      break;
+    }
+    out.screen = fresh;
+    if (resolveAdvanceControl(fresh).kind !== "none") {
+      out.released = true;
+      out.ceilingMs = ceiling;
+      return out;
+    }
+    // Nothing left to wait FOR: the screen no longer holds a forward control back, so further
+    // polling would just be latency on a genuine dead end.
+    if (withheldForwardControls(fresh).length === 0) break;
+    // PROOF OF LIFE. A page rewriting its own prose between polls is a page still working, so a
+    // screen that looked terminal earns back the full ceiling. Never shortens a ceiling.
+    const freshProse = screenProse(fresh);
+    if (freshProse !== prose) ceiling = configured;
+    prose = freshProse;
+  }
+  out.waitedMs = Date.now() - started;
+  out.ceilingMs = ceiling;
+  return out;
+}
+
+/**
  * Movement evidence relative to the POST-ACTION baseline. Select/radio answer state is
  * deliberately absent: an answer can change state without navigation. Progress is accepted
  * only when its numeric value increases.
  */
+/**
+ * WHO the screen is asking about, independent of shape. Two CONSECUTIVE questions of the
+ * same widget shape (the live S70 "Years at organization" -> S80 "Years at title": one
+ * text input each, identical chrome) produce BYTE-IDENTICAL 4886-char screenSignatures,
+ * the form POST changes neither URL nor history, and every advance between them was
+ * declared "did not advance" — measured across five runs on 2026-08-17. Control NAMES and
+ * LABELS distinguish them; control VALUES and checked states are deliberately excluded so
+ * answering (or a validation re-render of the same screen) can never fake an advance.
+ */
+const questionIdentityOf = (s: RenderedScreen): string =>
+  JSON.stringify([
+    s.questionText ?? "",
+    s.controls.filter((c) => c.name || c.label).map((c) => [c.name ?? "", String(c.label ?? "").slice(0, 80)]),
+  ]);
+
 export function advanceSignals(before: RenderedScreen, after: RenderedScreen): AdvanceSignal[] {
+  const NAVIGATION_CONTROL_TYPES = new Set(["hidden", "button", "submit", "reset", "image"]);
+  const interactiveOf = (s: RenderedScreen) =>
+    s.controls.filter(
+      (c) =>
+        c.visible !== false &&
+        !NAVIGATION_CONTROL_TYPES.has(String(c.type ?? "")) &&
+        !isPlatformNavigationWidget(c, s),
+    );
+  // THE SITE'S OWN REJECTION OUTRANKS EVERY STRUCTURAL MOVEMENT SIGNAL. A failed submit on
+  // a full-page-POST platform re-renders the SAME question with a validation banner, and
+  // the banner mutates everything the structural signals watch: it adds/removes elements
+  // (screen-signature and question-identity change) and the POST itself grows
+  // history.length — measured live 19 Aug 2026 (local jump harness, B10): six consecutive
+  // rejected submits each read as an advance, so the recovery that would have answered the
+  // validation never ran. A re-render keeps the ANSWERABLE control skeleton (names and
+  // labels of non-hidden, non-navigation controls); a genuine advance to a new question
+  // changes it. So: validation visible AND the same answerable skeleton => not an advance,
+  // whatever else moved. Stated limitation: a next question that renders with a validation
+  // banner already up AND an identical answerable skeleton would be misread as a re-render;
+  // the walk then re-answers it and the bounded recovery rounds carry it forward, visibly.
+  if (
+    (after.validationMessages ?? []).length > 0 &&
+    JSON.stringify(interactiveOf(after).map((c) => [c.name ?? "", String(c.label ?? "").slice(0, 80)])) ===
+      JSON.stringify(interactiveOf(before).map((c) => [c.name ?? "", String(c.label ?? "").slice(0, 80)]))
+  ) {
+    return [];
+  }
   const out: AdvanceSignal[] = [];
   if (after.screenSignature !== before.screenSignature) out.push("screen-signature-changed");
+  if (questionIdentityOf(after) !== questionIdentityOf(before)) out.push("question-identity-changed");
+  // TEXT-ONLY SCREENS HAVE ONLY THEIR TEXT AS IDENTITY. Two consecutive control-less
+  // interstitials (the live iCongo "you have qualified" -> iSecA section intro, measured
+  // 2026-08-18 run v2r_01m08r1rvjkkne4sdhr18a42pf walk 2) rendered identical structure —
+  // identical screenSignature, identical (empty) question identity, progress text the
+  // reader could not parse as a widget — and every advance between them read as "did not
+  // advance" while the real survey moved on. On a screen with NO interactive controls,
+  // nothing the walker does can change the text except actual navigation, so a text
+  // change IS movement. Gated to interactive-control-less pairs: a validation re-render
+  // of an answerable screen can never fake an advance through this signal.
+  //
+  // INTERACTIVE means answerable. The same live interstitials carry 17 HIDDEN platform
+  // controls (__state, __seqno, __version — form plumbing, visible:false), measured
+  // 2026-08-19 on run v2r_01m0ca98… where a controls.length===0 gate never opened and
+  // the walk stalled at the doorstep a second time. And the three controls that survive
+  // a visible/hidden filter — the test-mode jump-menu select, __bck and __fwd
+  // button/submit inputs (run v2r_01m0ccpe…, same day) — are NAVIGATION, not answers.
+  // Hidden plumbing, navigation buttons and platform jump widgets cannot be answered,
+  // so none of them can disqualify a screen from being text-only. Stated limitation: a
+  // self-updating control-less screen (a ticking counter) would also register; that
+  // failure mode is visible in evidence as an advance whose screens share their prose.
+  const interactiveControls = (s: RenderedScreen): number => interactiveOf(s).length;
+  if (
+    interactiveControls(before) === 0 &&
+    interactiveControls(after) === 0 &&
+    ((before.questionText ?? "") !== (after.questionText ?? "") ||
+      (before.visibleText ?? "") !== (after.visibleText ?? ""))
+  ) out.push("info-screen-text-changed");
   if (after.url !== before.url) out.push("url-changed");
   if (
     before.historyLength !== null && before.historyLength !== undefined &&
@@ -2919,6 +5180,43 @@ export function advanceSignals(before: RenderedScreen, after: RenderedScreen): A
     typeof after.progress.now === "number" && Number.isFinite(after.progress.now) &&
     after.progress.now > before.progress.now
   ) out.push("progress-value-increased");
+  /**
+   * THE SITE'S OWN POSITION COUNTER, WHEN IT IS PROSE RATHER THAN A WIDGET.
+   *
+   * MEASURED LIVE 20 Aug 2026 (run `v2r_01m0eddha4xfq66xhynfmaq2cw`, screen 54, question D10):
+   * the walk pressed forward three times and the survey MOVED each time — "Survey progress: 39%"
+   * became 43% and then 44%. Every structural signal above stayed silent, because the D-section
+   * repeats one question shape: the screen signature was byte-identical, the question identity
+   * unchanged, the URL unchanged, `historyLength` pinned at 50, and no validation appeared. The
+   * walk recorded `advance-timeout` and stopped, reporting 54 screens, while the respondent it
+   * was imitating had genuinely gone further into the survey.
+   *
+   * The existing numeric signal above could not help: this platform renders progress as a `div`
+   * whose `now`/`max` are null, so the only place the position lives is the sentence itself.
+   *
+   * THE RULE, AND WHY IT IS SAFE: take the first number in the progress text on each side and
+   * require it to INCREASE. The baseline is the POST-ACTION screen, so a counter that moves when
+   * an answer is entered has already moved before this comparison — what is left is navigation.
+   * Requiring an increase, rather than any change, keeps a re-render that merely reworded itself
+   * from reading as movement.
+   *
+   * STATED LIMITATION: a position indicator carrying NO number, or one that does not increase
+   * between two screens, produces no signal here and the walk falls back to the structural
+   * signals exactly as before. This adds evidence; it never removes any.
+   */
+  const progressTextNumber = (p: RenderedScreen["progress"]): number | null => {
+    if (!p?.present || typeof p.text !== "string") return null;
+    const m = /-?\d+(?:\.\d+)?/.exec(p.text);
+    if (!m) return null;
+    const n = Number(m[0]);
+    return Number.isFinite(n) ? n : null;
+  };
+  const beforeProgressText = progressTextNumber(before.progress);
+  const afterProgressText = progressTextNumber(after.progress);
+  if (
+    beforeProgressText !== null && afterProgressText !== null &&
+    afterProgressText > beforeProgressText
+  ) out.push("progress-text-increased");
   return out;
 }
 
@@ -2978,6 +5276,48 @@ const normMsg = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim
  * banner, a toast and a live region that was there when the page loaded. A message that was
  * already on the screen before we touched it witnesses nothing about what we typed.
  */
+/**
+ * DEMANDS THE SITE HAS MADE DO NOT EXPIRE BECAUSE THE NEXT READ FORGOT THEM.
+ *
+ * MEASURED LIVE 20 Aug 2026 (run `v2r_01m0e6axg4phhm8wzeh3a3fxw5`, screen 54, question D10):
+ * an allocation grid demanded "Please enter numeric answers for … Please ensure the sum of your
+ * answers equals 100". Recovery round 1 derived that correctly and set 100/0/0/0/0. The page then
+ * re-rendered with an EMPTY validation list, so round 2 — which re-derived from the newest
+ * messages only — saw no demand at all, fell back to the generic text default, and typed
+ * "QA-PROBE" into the same five numeric cells, throwing away the answer round 1 had got right.
+ * Round 3 set the numbers again. The ladder oscillated instead of converging and the step ended
+ * `advance-timeout` with the survey still holding at 39%.
+ *
+ * THE RULE: a demand the site has made STANDS for the rest of this step. Rounds accumulate
+ * demands rather than replacing them, so a numeric demand and a later pairing demand are both
+ * satisfied, and no round may regress a cell the site already constrained back to probe text.
+ *
+ * WHY THIS ALSO FIXES THE LADDER'S OWN LOGIC, not just the fill: the round loop stops when the
+ * validation key stops CHANGING. A demand list that collapsed to empty and back looked like
+ * change on every round, so the ladder kept spending rounds re-deriving. Standing demands make
+ * the key stable, which is what lets the bounded keyboard-flip round (the B10 lesson) actually
+ * fire — round 2 now re-enters the SAME numeric values by real key events instead of inventing
+ * new text.
+ *
+ * WHAT IT DOES NOT DO: decide that a demand has been withdrawn. Nothing generic can read
+ * supersession out of prose, so this never drops a demand — it only ever adds. The honest cost is
+ * that a demand which genuinely stopped applying is still satisfied; satisfying a constraint the
+ * site no longer cares about is harmless, while dropping one it does care about is the defect
+ * above. Newest messages are ordered FIRST so any first-match derivation still follows the site's
+ * latest word.
+ */
+export function mergeStandingDemands(standing: readonly string[], latest: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of [...latest, ...standing]) {
+    const key = normMsg(m);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(m);
+  }
+  return out;
+}
+
 function newValidationMessages(before: RenderedScreen | null, after: RenderedScreen | null): string[] {
   const had = new Set((before?.validationMessages ?? []).map(normMsg).filter(Boolean));
   const seen = new Set<string>();
@@ -3038,13 +5378,68 @@ const SCREENOUT_MARKERS: readonly RegExp[] = [
   /\bquota\s+(is\s+)?(full|closed)\b/i,
   /\bwe\s+are\s+(unable|not\s+able)\s+to\s+(continue|proceed)\b/i,
   /\bthank\s+you\s+for\s+your\s+interest\b/i,
+  // ASSUMPTION STATED: "unable/not able to accept" in a context of participation/research is a
+  // screen-out, not a completion. The Confirmit termination page says "we are unable to accept
+  // your offer to participate" — which the verb-family above did not cover because it required
+  // "continue" or "proceed". The wider verb family "accept" is platform-neutral: Decipher,
+  // Qualtrics and Confirmit all use it in decline-to-participate wording. A false positive on a
+  // genuine completion page would require the word "accept" in a turn-away sentence, which
+  // completion pages do not carry (they say "received" or "recorded", never "accept").
+  /\b(unable|not\s+able)\s+to\s+accept\b/i,
+  // ASSUMPTION STATED: "terminated" as a status word (often in Confirmit debug output or
+  // vendor-stamped terminal pages). Generalizable: any survey whose terminal page contains a
+  // status label reading "terminated" is reporting a screen-out, not a completion.
+  /\bstatus[:\s]+terminated\b/i,
 ];
 
+/**
+ * MEASURED GAP, CLOSED (completion-path audit, 19 Aug 2026 §1.3 C3). This lexicon had five
+ * entries against the screen-out lexicon's ten, and the gap was not symmetric in consequence:
+ * an unmatched screen-out page falls to the structural arm and is still typed, while an
+ * unmatched COMPLETION page is `unclassified` — the one ending the deliverable is about,
+ * lost to a synonym. The six wordings the audit checked and this lexicon missed:
+ *
+ *   "Thank you for your participation."             — `participating` was here, `participation` was not
+ *   "You have successfully completed the survey."   — no adverb slot between "have" and "completed"
+ *   "Your answers have been saved."                 — `response`/`responses` only, not `answers`
+ *   "This is the end of the survey."                — covered by nothing
+ *   "Thank you for your feedback."                  — covered by nothing
+ *   "Survey status: Complete"                       — `survey (is )?complete` needs adjacency; `status: ` intervenes
+ *
+ * The last one matters most: it is the platform's own status stamp, the mirror of the
+ * `status[:\s]+terminated` entry the screen-out lexicon already carries, and the one line the
+ * measured test-mode END pages are known to print.
+ *
+ * STILL AN ASSUMPTION ABOUT WORDS, AND STILL SECOND (CLAUDE.md, the north star). Every entry
+ * below is a phrase a page prints about ITS OWN COMPLETION, never one a rejection page prints
+ * on its way to turning someone away — and `SCREENOUT_MARKERS` is consulted first regardless,
+ * so a page carrying both wordings is still a screen-out. A terminal page that says none of
+ * this is `unclassified` and counted, exactly as before: widening the lexicon adds recognised
+ * wordings, and never a default.
+ */
 const COMPLETION_MARKERS: readonly RegExp[] = [
-  /\bthank\s+you\s+for\s+(completing|taking\s+part|participating|your\s+time)\b/i,
-  /\byour\s+responses?\s+(have|has)\s+been\s+(recorded|received|submitted|saved)\b/i,
+  /\bthank\s+you\s+for\s+(completing|taking\s+part|participating|participation|your\s+participation|your\s+time|your\s+feedback|your\s+input|your\s+responses?|your\s+answers?)\b/i,
+  /\byour\s+(responses?|answers?|submission|entry)\s+(have|has)\s+been\s+(recorded|received|submitted|saved|stored|captured)\b/i,
   /\b(survey|questionnaire|interview)\s+(is\s+)?complete(d)?\b/i,
-  /\byou\s+have\s+(now\s+)?completed\b/i,
+  // The vendor status stamp, mirroring `status[:\s]+terminated` in the screen-out lexicon.
+  // Generalizable for the same reason that one is: a terminal page whose status label reads
+  // "complete" is reporting a completion, whoever built the page.
+  /\bstatus[:\s]+complete(d)?\b/i,
+  /\byou\s+have\s+(now\s+)?(successfully\s+)?(completed|finished)\b/i,
+  /\b(you\s+have\s+)?reached\s+the\s+end\s+of\s+(the|this)\s+(survey|questionnaire|interview)\b/i,
+  // "This is the end of the survey." / "End of survey." THE ARTICLE IS OPTIONAL, the NOUN is not.
+  //
+  // MEASURED LIVE 20 Aug 2026 (run `v2r_01m0f1zccejfmq8fd02r7xq8kv`, screen 81): the walk
+  // traversed the whole instrument and landed on a page reading "End of survey / End of test
+  // link." The older pattern required "the end of THE survey", so it did not match, no completion
+  // wording was found, and the structural arm below then classified a COMPLETED survey as a
+  // rejection page — a positive wrong claim about the one outcome this system exists to report.
+  //
+  // The original caution still holds and is preserved: what must never be matched is a bare "the
+  // end", which appears in ordinary prose. That risk lives in the ARTICLE being the only anchor,
+  // not in the noun — "end of survey" still names the instrument and still only reaches this
+  // lexicon on a screen with no forward control and nothing left to answer.
+  /\b(this\s+is\s+)?(the\s+)?end\s+of\s+(the\s+|this\s+)?(survey|questionnaire|interview)\b/i,
   /\bsubmission\s+(received|complete)\b/i,
 ];
 
@@ -3055,6 +5450,211 @@ const firstMatch = (text: string, res: readonly RegExp[]): string | null => {
   }
   return null;
 };
+
+/**
+ * OUTCOME 3 (D1): IS THIS A MID-WALK TERMINATION ANNOUNCEMENT?
+ *
+ * The door-map measured that choosing a terminating answer on a test link shows an
+ * interstitial announcing termination (e.g. "Survey status: Terminated at S10") which the
+ * walker clicks through as an unlabeled navigator-default step. On a live link that walk is
+ * dead at screener end, but the walk record says nothing about it.
+ *
+ * REUSES THE EXISTING SCREENOUT_MARKERS LEXICON — does NOT invent a new one. The existing
+ * lexicon is calibrated for terminal pages; a mid-walk screen matching the SAME patterns is
+ * an announcement of termination, not a terminal page (the screen still has a forward
+ * control — otherwise classifyEnding would type it). The detection is LABELING ONLY: it does
+ * not change navigation behavior.
+ *
+ * Returns a receipt when the screen's text matches a screenout marker, or null otherwise.
+ * The receipt carries the matched text and, when the text names a question id token that
+ * matches a sealed question, that id.
+ */
+export interface TerminationAnnouncement {
+  /** The screenout-marker text that matched. */
+  matchedText: string;
+  /** Which lexicon entry matched (index into SCREENOUT_MARKERS). */
+  lexiconIndex: number;
+  /** When the announcement text names a question id token that matches a sealed question on
+   *  this walk, that id. null otherwise. */
+  questionToken: string | null;
+}
+
+export function detectTerminationAnnouncement(
+  screen: RenderedScreen,
+  walkQuestionIds: readonly string[],
+): TerminationAnnouncement | null {
+  const text = `${screen.questionText ?? ""}\n${screen.visibleText ?? ""}`;
+  // Try each SCREENOUT_MARKERS entry. SAME lexicon, same order, same precision —
+  // no entries added, no entries removed. A mid-walk screen that says none of this
+  // is not an announcement, just as a terminal page that says none of this is
+  // unclassified.
+  for (let i = 0; i < SCREENOUT_MARKERS.length; i++) {
+    const m = SCREENOUT_MARKERS[i]!.exec(text);
+    if (!m) continue;
+    // When the screen text names a question id token that matches a sealed question,
+    // extract it. ASSUMPTION STATED: the pattern `Terminated at X` or `status: Terminated`
+    // followed by a question token is a platform convention (measured on Confirmit).
+    // The token shape is the same as the section-scope owner in plan.ts.
+    let questionToken: string | null = null;
+    const tokenMatch = /\bat\s+([A-Za-z]{1,4}\d{1,4}[a-z]?)\b/i.exec(text);
+    if (tokenMatch) {
+      const candidate = tokenMatch[1]!;
+      if (walkQuestionIds.includes(candidate)) questionToken = candidate;
+    }
+    return { matchedText: m[0], lexiconIndex: i, questionToken };
+  }
+  return null;
+}
+
+/**
+ * IS THIS CONTROL A PLATFORM NAVIGATION WIDGET — NOT A SURVEY QUESTION?
+ *
+ * ASSUMPTION STATED (CLAUDE.md north star): platform-chrome/navigation widgets live
+ * OUTSIDE the question form and serve navigation, not data collection. The test link's
+ * "QUESTION SKIP MENU" dropdown is the measured example: a `<select>` whose options
+ * are question identifiers or URLs, sitting outside any question scope, that the
+ * structural terminal-page arm must not count as "answerable".
+ *
+ * THREE STRUCTURAL SIGNALS, any one sufficient:
+ *
+ *   (a) JUMP SEMANTICS: a `<select>` whose option codes or labels are predominantly
+ *       URLs, question references (Q1, S10, etc.), or page numbers — navigation
+ *       destinations, not survey answers;
+ *   (b) UNLABELLED BY QUESTION: the control has no label or its label matches common
+ *       navigation wording ("skip", "jump", "go to", "navigate", "question menu");
+ *   (c) OUTSIDE THE QUESTION FORM: the control's name or id contains "skip", "jump",
+ *       "nav", "menu", "goto" — platform-side naming conventions for navigation
+ *       widgets, not survey question controls.
+ *
+ * When uncertain, the control is kept as answerable — the wording markers remain the
+ * primary arm, and a false negative here only means the structural corroboration does
+ * not fire, which is the safe direction (the ending stays `unclassified` rather than
+ * being wrongly classified as `screened-out`).
+ */
+export function isPlatformNavigationWidget(
+  c: ControlState,
+  _screen: RenderedScreen,
+): boolean {
+  // Only select controls can be navigation jump menus
+  if (c.type !== "select" && c.tag !== "select") return false;
+
+  const options = c.options ?? [];
+
+  // Signal (a): jump semantics — options that look like question IDs, URLs, or page numbers
+  if (options.length >= 2) {
+    const jumpLike = options.filter((o) => {
+      const code = String(o.code ?? "");
+      const label = String(o.label ?? "");
+      // URL-shaped: starts with http, #, or /
+      if (/^(https?:|#|\/)/.test(code) || /^(https?:|#|\/)/.test(label)) return true;
+      // Question-id-shaped: Q1, S10, P3, etc. — a letter followed by digits
+      if (/^[A-Za-z]\d+$/.test(code.trim())) return true;
+      // Page-number-shaped: pure digits in the code AND the label is also numeric
+      // or matches the code. Survey answer dropdowns have numeric codes ("1"-"5")
+      // but descriptive labels ("Strongly agree"); a navigation page selector's
+      // label IS the page number. Without corroboration from the label, a numeric
+      // code alone is not a navigation signal — it is the norm for Likert scales,
+      // rating questions, and numbered-choice dropdowns across all survey platforms.
+      if (/^\d+$/.test(code.trim()) && code.trim().length <= 4) {
+        const tLabel = label.trim();
+        if (/^\d+$/.test(tLabel) || tLabel === code.trim()) return true;
+      }
+      return false;
+    });
+    // If more than half the usable options look like navigation destinations, it is a jump menu
+    const usable = options.filter((o) => !o.disabled && o.hidden !== true && o.placeholder !== true);
+    if (usable.length > 0 && jumpLike.length > usable.length / 2) return true;
+  }
+
+  // Signal (b): navigation wording in the label
+  const label = (c.label ?? "").toLowerCase();
+  if (/\b(skip|jump|go\s*to|navigate|question\s*(skip\s*)?menu)\b/.test(label)) return true;
+
+  // Signal (c): platform naming in the name/id attributes
+  const nameOrId = `${c.name ?? ""} ${c.id ?? ""}`.toLowerCase();
+  if (/\b(skip|jump|nav|menu|goto)\b/.test(nameOrId)) return true;
+
+  return false;
+}
+
+/**
+ * STRIP TEXT CONTRIBUTED BY PLATFORM NAVIGATION WIDGETS FROM THE SCREEN'S VISIBLE TEXT.
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE. A platform's "QUESTION SKIP MENU" select renders its option
+ * labels — which are QUESTION IDS — into `visibleText` via `document.body.innerText`. MEASURED
+ * on the v98 run: `tokenOnScreen` (in verify-observations.ts) and `questionWordingScore` (here)
+ * both scan `visibleText` for sealed question ids, and on EVERY screen the skip menu donated 23+
+ * false-positive sealed ids to the text. The verifier's `screenIdentity` union was then never a
+ * singleton, so `screenIsQuestion` returned false for every target on every screen, and all 12
+ * exercised cases came back `STEP_NOT_BOUND_TO_TARGET_QUESTION`.
+ *
+ * THE FIX IS STRUCTURAL, NOT PLATFORM-SPECIFIC. Any `<select>` that `isPlatformNavigationWidget`
+ * classifies as a navigation control has its option labels collected; consecutive lines in
+ * `visibleText` that consist entirely of those labels are stripped. The remaining text still
+ * carries the question's own id (e.g. "S10" printed as the question heading), and nothing else
+ * sealed — so `tokenOnScreen` finds a singleton and binding proceeds.
+ *
+ * ASSUMPTION STATED (CLAUDE.md): the navigation widget's option labels appear as CONSECUTIVE
+ * LINES in `visibleText` because a `<select>` renders its options as text in `innerText`. If a
+ * platform scatters navigation destinations across the DOM instead of listing them in a select,
+ * this function will not detect them and binding will refuse — which is the safe direction.
+ *
+ * WHAT IT DOES NOT STRIP, and why. A navigation label that also appears ELSEWHERE in the text
+ * (e.g. "S10" printed as the question heading AND listed in the skip menu) survives: only the
+ * contiguous block of menu lines is removed. The legitimate heading occurrence stays, which is
+ * what the token scanner needs.
+ */
+export function stripNavigationWidgetText(screen: RenderedScreen): string {
+  const vt = screen.visibleText ?? "";
+  if (!Array.isArray(screen.controls) || screen.controls.length === 0) return vt;
+
+  // Collect option labels from all navigation widget selects on this screen.
+  const navLabels = new Set<string>();
+  for (const c of screen.controls) {
+    if (!isPlatformNavigationWidget(c, screen)) continue;
+    for (const o of c.options ?? []) {
+      const label = String(o.label ?? "").trim();
+      if (label.length > 0) navLabels.add(label);
+    }
+  }
+  if (navLabels.size === 0) return vt;
+
+  // Strip contiguous blocks of lines where EVERY line is either empty/whitespace or a
+  // navigation label. A block must contain at least 3 navigation labels to be stripped —
+  // a single label line matching by coincidence is not a menu block, it is a survey word.
+  const lines = vt.split("\n");
+  const result: string[] = [];
+  let blockStart = -1;
+  let blockNavCount = 0;
+
+  const flushBlock = (end: number): void => {
+    if (blockStart >= 0 && blockNavCount >= 3) {
+      // Drop the block — do NOT add those lines to result.
+    } else if (blockStart >= 0) {
+      // Too few nav labels — keep the block as-is.
+      for (let j = blockStart; j < end; j++) result.push(lines[j]!);
+    }
+    blockStart = -1;
+    blockNavCount = 0;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i]!.trim();
+    const isNavLabel = navLabels.has(trimmed);
+    const isBlank = trimmed.length === 0;
+
+    if (isNavLabel || (isBlank && blockStart >= 0)) {
+      if (blockStart < 0) blockStart = i;
+      if (isNavLabel) blockNavCount++;
+    } else {
+      flushBlock(i);
+      result.push(lines[i]!);
+    }
+  }
+  flushBlock(lines.length);
+
+  return result.join("\n");
+}
 
 /**
  * TYPE THE ENDING OF THIS WALK FROM WHAT THE FINAL SCREEN SHOWED.
@@ -3085,6 +5685,20 @@ const firstMatch = (text: string, res: readonly RegExp[]): string | null => {
  * instruments, the completion page reports `progress.now: null`. A conjunction requiring 100%
  * would have classified every real completion as unknown.
  */
+/**
+ * CONTROLS A RESPONDENT COULD STILL ANSWER on this screen — the one definition, shared by the
+ * ending classifier and by the forward-release wait, so "this screen looks like an ending" means
+ * the same thing in both. Platform navigation widgets (a question-jump menu) are excluded: they
+ * are a way to move, never a question to answer.
+ */
+export function answerableControls(screen: RenderedScreen): RenderedScreen["controls"] {
+  return screen.controls.filter(
+    (c) => !c.disabled && !c.readOnly && (c.operable ?? c.visible) &&
+      (isValueEntry(c.type) || c.type === "radio" || c.type === "checkbox" || c.type === "select") &&
+      !isPlatformNavigationWidget(c, screen),
+  );
+}
+
 export function classifyEnding(
   final: RenderedScreen | null,
   ctx: {
@@ -3101,19 +5715,83 @@ export function classifyEnding(
      */
     navigatorDefaults?: number;
     unfillable?: UnfillableControl[];
+    /**
+     * CRASH-AS-SCREENOUT GUARD. When true, the walk ended because of a browser or page crash —
+     * an infrastructure event, not a site decision — so the final screen is not trustworthy
+     * evidence. A blank or error page after a crash can match screenout markers or the
+     * structural-rejection arm (arm 2b: only back buttons, no answerable controls), and
+     * classifying that as `screened-out` would publish an accusation against the survey on
+     * the basis of a crashed page. The ending is `crashed` and its evidence names the crash,
+     * never the screen text.
+     *
+     * Optional so older callers are unaffected — absent means "not crashed", and no existing
+     * call site produces a false positive.
+     */
+    crashed?: boolean;
+    /**
+     * MID-WALK TERMINATION ANNOUNCEMENTS DETECTED ON INTERMEDIATE SCREENS.
+     *
+     * When the walker detects a SCREENOUT_MARKERS match on a screen that still has a forward
+     * control (so classifyEnding would not type it from the final screen), the announcement is
+     * recorded per-step. Surfacing it here makes the termination banner visible in the ending
+     * evidence — a consumer reading the ending can see that the survey announced termination
+     * mid-walk without having to re-read every step artifact. On a `crashed` ending the
+     * announcements still surface: they are per-step facts recorded BEFORE the crash, so they
+     * remain trustworthy even when the final screen is not.
+     *
+     * Optional: older callers and walks with no announcements omit it; absence is never "none".
+     */
+    terminationAnnouncements?: Array<{ stepIndex: number; matchedText: string; questionToken: string | null }>;
   },
 ): WalkEnding {
+  // TERMINATION BANNERS DETECTED MID-WALK, rendered once so every ending kind can carry them.
+  // They are per-step facts recorded BEFORE any crash, so they stay trustworthy on a
+  // `crashed` ending even though the final screen does not.
+  const announcementLines = (ctx.terminationAnnouncements ?? []).map(
+    (ann) =>
+      `mid-walk termination announcement on step ${ann.stepIndex}: the screen said ${JSON.stringify(ann.matchedText)}` +
+      (ann.questionToken ? ` (at question ${ann.questionToken})` : ""),
+  );
+
   if (!final) {
+    // CRASH WITHOUT A FINAL SCREEN: the walk crashed before capturing anything, or the page
+    // was destroyed. When the crash flag is set, this is `crashed`, not `unclassified`.
+    if (ctx.crashed) {
+      return {
+        kind: "crashed",
+        evidence: [
+          `this walk crashed (outcome "${ctx.outcome}") and captured no final screen — the ending is a browser/page failure, not a site decision`,
+          ...announcementLines,
+        ],
+      };
+    }
     return {
       kind: "unclassified",
-      evidence: [`this walk captured no final screen (outcome "${ctx.outcome}"), so there is nothing to read an ending from`],
+      evidence: [
+        `this walk captured no final screen (outcome "${ctx.outcome}"), so there is nothing to read an ending from`,
+        ...announcementLines,
+      ],
+    };
+  }
+
+  // CRASH GUARD: when the walk crashed, the final screen is unreliable evidence. A crashed
+  // page may show error text that matches screenout markers, or it may show a blank page
+  // whose structural signals (only back buttons, no controls) match the rejection arm.
+  // Neither is evidence about the survey. The ending is `crashed` and the reader can see
+  // the final screen in the artifact if they want to inspect what the crash produced.
+  if (ctx.crashed) {
+    return {
+      kind: "crashed",
+      evidence: [
+        `this walk crashed (outcome "${ctx.outcome}") — the final screen's text is not trustworthy evidence for ending classification`,
+        `the screen was captured but its content may reflect a browser or page failure, not a survey decision`,
+        ...announcementLines,
+      ],
     };
   }
 
   const advance = nextButton(final);
-  const answerable = final.controls.filter(
-    (c) => !c.disabled && !c.readOnly && (c.operable ?? c.visible) && (isValueEntry(c.type) || c.type === "radio" || c.type === "checkbox" || c.type === "select"),
-  );
+  const answerable = answerableControls(final);
   /**
    * THE PROVENANCE LINE THAT TRAVELS WITH EVERY ENDING. Not decoration: the fix that widened
    * the walker's input types also made it likelier to reach a terminal page, and the value it
@@ -3133,6 +5811,10 @@ export function classifyEnding(
         named.map((u) => `${u.type}${u.label ? ` "${u.label.slice(0, 40)}"` : ""} (${u.reason})`).join("; "),
     );
   }
+  // TERMINATION BANNERS DETECTED MID-WALK: rendered once at the top of this function so
+  // the crashed/no-final early returns carry them too; here they join every other ending's
+  // provenance.
+  provenance.push(...announcementLines);
   const text = `${final.questionText ?? ""}\n${final.visibleText ?? ""}`;
   const screenout = firstMatch(text, SCREENOUT_MARKERS);
   const completion = firstMatch(text, COMPLETION_MARKERS);
@@ -3143,6 +5825,22 @@ export function classifyEnding(
     final.progress.max > 0 &&
     final.progress.now >= final.progress.max;
 
+  // ---- 0. a termination page wearing a dead forward control ----
+  // Measured live (run v2r_01m07qpwcjamfpcs89frs3syjs, screen 15): the test-mode
+  // termination page prints "unable to accept ... Terminated at S80" AND renders a ">>"
+  // the walker clicked twelve times without the screen ever changing. "Still offering a
+  // way on" is a claim about BEHAVIOUR, not markup: an advance control this walk measured
+  // inert (outcome "blocked") does not contradict the page's own termination wording.
+  if (advance && screenout && ctx.outcome === "blocked") {
+    return {
+      kind: "screened-out",
+      evidence: [
+        `the final screen says: ${JSON.stringify(screenout)}`,
+        `a forward control is rendered but this walk MEASURED it inert: outcome "blocked" — the screen never changed after pressing it`,
+        ...provenance,
+      ],
+    };
+  }
   // ---- 1. the survey was still offering a way on ----
   if (advance) {
     return {
@@ -3171,13 +5869,48 @@ export function classifyEnding(
   }
 
   // ---- 2. turned away ----
+  // STRUCTURAL TERMINAL-PAGE SIGNAL (ASSUMPTION STATED): a page that has no forward control, no
+  // answerable controls, and whose ONLY visible buttons are back-classified is structurally a
+  // rejection page — the survey is saying "you cannot go forward, you can only go back". This
+  // is platform-neutral: Confirmit, Qualtrics and Decipher all produce this shape on their
+  // disqualification pages. A genuine completion page typically has NO visible buttons at all
+  // (the survey is done) or has a "close" / "redirect" button, never a back button.
+  //
+  // This signal is a CORROBORATOR that elevates an `unclassified` ending to `screened-out` when
+  // wording markers are absent but the structure says "terminal rejection". It is NOT used alone
+  // when the page also carries completion wording or a full progress indicator — those take
+  // priority in arm 3.
+  const visibleButtons = final.buttons.filter((b) => b.visible && !b.disabled);
+  const onlyBackVisible = visibleButtons.length > 0 && visibleButtons.every((b) => b.role === "back");
+
   if (screenout) {
+    return {
+      kind: "screened-out", // wording-matched screen-out (arm 2)
+      evidence: [
+        `no enabled control advances the final screen`,
+        `the final screen says: "${screenout}"`,
+        ...(onlyBackVisible ? [`structural corroboration: the only visible button(s) are back controls — the page offers no way forward`] : []),
+        ...(completion ? [`it also carries completion wording ("${completion}") — screen-out pages usually thank you too, which is why that is not read as a completion`] : []),
+        ...provenance,
+      ],
+    };
+  }
+
+  // ---- 2b. structural screen-out: no wording matched, but the page's shape says "turned away" ----
+  // WHEN THIS FIRES: no wording marker matched, no completion wording matched, the page has no
+  // progress indicator reading full, and the only visible buttons are back controls with zero
+  // answerable controls. This is a rejection page that used wording this reader does not know —
+  // a different language, a bare "Session closed", an image — and the structure is what names it.
+  // Without this arm, such a page would be `unclassified` and a reader would have to re-open the
+  // screen capture to discover it was a screen-out.
+  if (onlyBackVisible && answerable.length === 0 && !completion && !progressFull) {
     return {
       kind: "screened-out",
       evidence: [
         `no enabled control advances the final screen`,
-        `the final screen says: "${screenout}"`,
-        ...(completion ? [`it also carries completion wording ("${completion}") — screen-out pages usually thank you too, which is why that is not read as a completion`] : []),
+        `no screen-out wording matched, but structural signals indicate a rejection page: ` +
+          `the only visible button(s) are back controls and the page has no answerable controls`,
+        `this classification is structural, not textual — the wording on this page is not in this reader's lexicon`,
         ...provenance,
       ],
     };
@@ -3192,18 +5925,46 @@ export function classifyEnding(
         ...(completion ? [`the final screen says: "${completion}"`] : []),
         ...(progressFull ? [`the progress indicator reads ${final.progress.now}/${final.progress.max}`] : []),
         `${answerable.length} answerable control(s) remain on it`,
+        // THE CONTRADICTION THIS ARM RESOLVES, SAID OUT LOUD RATHER THAN SWALLOWED. Arm 2b
+        // reads "the only way off this page is backwards" as a rejection shape, and defers to
+        // completion wording when both are present (its own comment says so). That deference
+        // is a JUDGEMENT CALL on conflicting evidence, and a reader who disagrees can only
+        // disagree if the losing evidence is on the record beside the winning one.
+        ...(onlyBackVisible
+          ? [
+              `NOTE — the only visible button(s) on this page are back controls, which is the shape of a ` +
+                `rejection page; the completion wording above is what this reader weighed more heavily, and a ` +
+                `reader who disagrees should re-open the screen capture`,
+            ]
+          : []),
         ...provenance,
       ],
     };
   }
 
   // ---- 4. an ending this reader cannot name ----
+  //
+  // A WITHHELD WAY FORWARD IS REPORTED HERE AS EVIDENCE, NOT PROMOTED TO A KIND. A hidden or
+  // disabled Next on the final screen is a strong hint the walk stopped BEFORE the ending rather
+  // than at it — but a real thank-you page whose wording this reader does not know can carry a
+  // hidden Next from the same platform template, and turning that into `stalled` would be a
+  // POSITIVE WRONG CLAIM about a survey that actually completed. `unclassified` plus the named
+  // control is the honest shape: the fact is visible, and nothing is asserted from it.
+  const withheldForward = withheldForwardControls(final);
   return {
     kind: "unclassified",
     evidence: [
       `no enabled control advances the final screen, and nothing on it says which kind of ending this is: no ` +
         `screen-out wording, no completion wording, and ${final.progress.present ? "a progress indicator this reader could not read a value from" : "no progress indicator"}`,
       `${answerable.length} answerable control(s) remain on it`,
+      ...(withheldForward.length > 0
+        ? [
+            `${withheldForward.length} forward control(s) are PRESENT on this screen and out of reach (` +
+              withheldForward.map((w) => `#${w.idx} ${JSON.stringify(w.label)} ${w.why}`).join("; ") +
+              `) — a screen still holding a way forward may be one this walk stopped before rather than at, so this ` +
+              `ending is unnamed and NOT a completion`,
+          ]
+        : []),
       `outcome "${ctx.outcome}"`,
       ...provenance,
     ],
@@ -3230,6 +5991,9 @@ export async function walkPath(
   opts: WalkOptions,
   cap: CaptureContext,
 ): Promise<PathObservation> {
+  // The no-page-call-may-hang invariant is applied HERE, not at each call site, so every
+  // caller and every future page call inherits it. See boundPageCalls.
+  page = boundPageCalls(page, opts.pageCallTimeoutMs ?? PAGE_CALL_TIMEOUT_MS);
   const startedAt = new Date().toISOString();
   const t0 = Date.now();
   const pageErrors: string[] = [];
@@ -3238,6 +6002,7 @@ export async function walkPath(
   const steps: StepObservation[] = [];
   const screenCaptures: ScreenCaptureEpoch[] = [];
   const captureFailures: ScreenCaptureFailure[] = [];
+  let captureDietSkippedEpochs = 0;
   const recordEpoch = (epoch: ScreenCaptureEpoch): ScreenCaptureEpoch => {
     screenCaptures.push(epoch);
     captureFailures.push(...epoch.captureFailures);
@@ -3305,6 +6070,10 @@ export async function walkPath(
     outcome = "error";
     outcomeDetail = `navigation failed: ${String(err).slice(0, 300)}`;
   }
+  // STARTUP PHASE INSTRUMENTATION: the survey URL has been requested (or failed). The executor
+  // uses this to distinguish "hung during page.goto" from "hung after goto but before the first
+  // screen read", so a dead start names the sub-phase that actually hung.
+  opts.onStartupPhase?.("survey-load");
   await sleep(400);
 
   let stepIndex = 0;
@@ -3313,6 +6082,9 @@ export async function walkPath(
   // a screenSignature, and revisits may answer them differently; neither is collapsed here.
   const traversedTransitions = new Map<string, number>();
   const recentTransitionBases: string[] = [];
+  // Whether the LAST step's post-advance epoch was deduped into "the next step's before".
+  // A walk that then ends without a next step owes that final screen a backfill capture.
+  let lastAdvancedEpochSkipped = false;
   let remaining: PlannedDecision[] = Array.isArray(path.decisions) ? [...path.decisions] : [];
   // EVERY question on this walk, including the ones already answered. A screen naming a
   // question whose decision has been used is evidence about which screen this is NOT, and the
@@ -3323,8 +6095,12 @@ export async function walkPath(
   const pathHints = survivalHintsOf(path);
   // BOUNDED SCREEN-OUT RETRY: the walk-level filler variant, applied to EVERY
   // navigator-default choice on this walk (the main pass and the recovery pass alike) so
-  // one attempt is one coherent variant. See WalkOptions.variant for the contract.
+  // one attempt is one coherent variant. See WalkOptions.variant for the contract, and
+  // WalkOptions.variantFromStep for WHERE it starts applying: steps below that index
+  // replay the proven variant-0 answers so a pivot re-tries the failing screen, not the
+  // screens the first walk already survived.
   const fillerVariant = opts.variant ?? 0;
+  const variantFromStep = Math.max(0, opts.variantFromStep ?? 0);
   let bindingRefusalCount = 0;
   // WHAT THE READER COULD NOT DO, LIFTED TO THE WALK. A limitation named on screen 7 and
   // buried in screen 7's payload is a limitation nobody reads. Summed as well as listed,
@@ -3341,6 +6117,10 @@ export async function walkPath(
   const unfillableControls: Array<UnfillableControl & { stepIndex: number }> = [];
   /** How many answers on this walk the harness invented. See PathObservation. */
   let navigatorDefaultAnswerCount = 0;
+  /** OUTCOME 3 (D1): how many steps crossed a mid-walk termination announcement. */
+  let terminationAnnouncementCount = 0;
+  /** Collected termination announcements with step indices, for ending evidence (defect 2). */
+  const terminationAnnouncements: Array<{ stepIndex: number; matchedText: string; questionToken: string | null }> = [];
   const countDefaults = (as: PerformedAction[]): void => {
     for (const a of as) if (a.ok && typeof a.detail === "string" && a.detail.startsWith("navigator-default")) navigatorDefaultAnswerCount += 1;
   };
@@ -3350,14 +6130,38 @@ export async function walkPath(
       .map((u) => `<control type="${u.type}">${u.label ? ` "${u.label.slice(0, 60)}"` : ""}${u.required ? " (required)" : ""} — ${u.detail}`)
       .join("; ");
 
-  while (stepIndex < opts.maxSteps && Date.now() < opts.deadline && outcome !== "error") {
+  while (stepIndex < opts.maxSteps && Date.now() < opts.deadline && outcome !== "error" && !opts.abortSignal?.aborted) {
     const stepT0 = Date.now();
     const errAt = pageErrors.length;
+    // Reset per step: only the dedup site below may set this, so an early-exit branch
+    // (no-advance, blocked, load-crash) can never leave a stale skip from a PRIOR step
+    // and trigger a spurious backfill after the loop.
+    lastAdvancedEpochSkipped = false;
+    // Per-phase wall clocks — see StepObservation.phaseMs. Accumulated, never inferred.
+    let phaseReadMs = 0;
+    let phaseActMs = 0;
+    let phaseAdvanceMs = 0;
+    let phaseCaptureMs = 0;
+    const timed = async <T>(fn: () => Promise<T>, add: (ms: number) => void): Promise<T> => {
+      const t = Date.now();
+      try {
+        return await fn();
+      } finally {
+        add(Date.now() - t);
+      }
+    };
 
     let before: RenderedScreen;
     try {
-      before = await read(page);
+      before = await timed(
+        () => boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read before step ${stepIndex}`),
+        (ms) => (phaseReadMs += ms),
+      );
     } catch (err) {
+      // PER-WALK PROGRESS WATCHDOG: if the abort signal fired, this error is the page closure
+      // the executor triggered — not a site problem. Break cleanly so the post-loop stall
+      // detection assigns outcome "walk-stalled" with all steps recorded up to this point.
+      if (opts.abortSignal?.aborted) break;
       recordCaptureFailure(
         captureFailureRow(
           "screen-read-failed",
@@ -3370,6 +6174,12 @@ export async function walkPath(
       outcomeDetail = `screen read failed: ${String(err).slice(0, 300)}`;
       break;
     }
+
+    // STARTUP PHASE INSTRUMENTATION: the first screen has been read. After this point the
+    // walk has STARTED — it has a screen to act on. Any hang from here on is an ordinary
+    // mid-walk hang, not a startup failure. The callback fires exactly once (step 0) so the
+    // executor can disarm its startup budget timer without per-step overhead.
+    if (stepIndex === 0) opts.onStartupPhase?.("first-read");
 
     for (const ce of before.collectedErrors ?? []) {
       const line = `${ce.kind}: ${ce.message}${ce.source ? ` @ ${ce.source}:${ce.line ?? "?"}` : ""}`;
@@ -3433,7 +6243,7 @@ export async function walkPath(
     }
 
     const beforeCapture = recordEpoch(
-      await captureScreenEpoch(page, cap, before, "before", stepIndex, opts.viewport),
+      await timed(() => captureScreenEpoch(page, cap, before, "before", stepIndex, opts.viewport), (ms) => (phaseCaptureMs += ms)),
     );
     const beforeEv = beforeCapture.screenJson.evidenceId;
 
@@ -3443,8 +6253,17 @@ export async function walkPath(
     // or clicking; the pending decision stays pending and the walk cannot earn coverage.
     const rootCount = multiQuestionRootCount(before);
     const initialNavigation = resolveAdvanceControl(before);
+    // PER-ROOT TRAVERSAL: a multi-root screen whose reader scoped each root's controls is
+    // filled root-by-root with navigator defaults (see applyAcrossQuestionRoots) instead of
+    // ending the walk — the conjoint block at screen 75 stopped the deep walk with 80% of
+    // the survey unreached. Decisions still never bind here, coverage is never earned here,
+    // and the standing limitation is still recorded. A multi-root screen WITHOUT scoped
+    // control indexes keeps the hard refusal: acting on it would be guessing ownership.
+    const scopedRoots = (Array.isArray(before.questionRoots) ? before.questionRoots : [])
+      .filter((r) => Array.isArray(r?.controlIdxs) && r.controlIdxs.length > 0);
+    const multiRootTraversal = rootCount >= 2 && scopedRoots.length >= 2;
     const initialStop =
-      rootCount >= 2
+      rootCount >= 2 && !multiRootTraversal
         ? {
             kind: MULTI_QUESTION_ACTUATION_UNSUPPORTED,
             count: rootCount,
@@ -3481,30 +6300,65 @@ export async function walkPath(
         consoleErrors: consoleErrors.slice(),
         evidence: stepEvidence(beforeEv, null, [beforeCapture]),
         wallMs: Date.now() - stepT0,
+        phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
       });
       outcome = initialStop.kind;
       outcomeDetail = initialStop.detail;
       break;
     }
 
+    if (multiRootTraversal) {
+      recordReaderLimitation(
+        MULTI_QUESTION_ACTUATION_UNSUPPORTED,
+        `screen ${stepIndex} exposes ${rootCount} distinct visible question roots; filled per-root with ` +
+          `navigator defaults to traverse — planned decisions do not bind here and earn no coverage`,
+        rootCount,
+      );
+    }
+
     // A REFUSED DECISION IS NOT CONSUMED. `splice` runs only on an actual binding, so a
     // decision this screen could not be identified as stays pending and is offered to every
     // later screen — which is the whole repair: the Q7 decision that used to be eaten by an
     // earlier screen's similar option label now survives to reach the real Q7.
-    const binding = bindDecision(before, remaining, walkQuestionIds);
+    // On a multi-root traversal screen NOTHING binds: a one-question binder choosing an
+    // owner among several questions would be a guess, and a guess that consumed a sealed
+    // decision would starve the real question downstream.
+    const binding = multiRootTraversal
+      ? { match: null, refusals: [] as ReturnType<typeof bindDecision>["refusals"] }
+      : bindDecision(before, remaining, walkQuestionIds);
     const matched = binding.match;
     const decision = matched?.decision ?? null;
     if (matched) remaining.splice(matched.index, 1);
     bindingRefusalCount += binding.refusals.length;
 
-    const { actions, notOffered, unfillable } = await applyDecision(page, before, decision, pathHints, fillerVariant);
+    // OUTCOME 3 (D1): detect mid-walk termination announcements BEFORE acting. A screen
+    // whose text matches a SCREENOUT_MARKERS entry while the walk is still mid-survey is
+    // announcing termination. This is LABELING ONLY — does not change navigation.
+    const stepAnnouncement = detectTerminationAnnouncement(before, walkQuestionIds);
+    if (stepAnnouncement) {
+      terminationAnnouncementCount += 1;
+      terminationAnnouncements.push({
+        stepIndex,
+        matchedText: stepAnnouncement.matchedText,
+        questionToken: stepAnnouncement.questionToken,
+      });
+    }
+
+    const stepVariant = stepIndex >= variantFromStep ? fillerVariant : 0;
+    const { actions, notOffered, unfillable } = await timed(
+      () => applyAcrossQuestionRoots(page, before, decision, pathHints, stepVariant),
+      (ms) => (phaseActMs += ms),
+    );
     for (const u of unfillable) unfillableControls.push({ ...u, stepIndex });
     countDefaults(actions);
 
     const stepReadFailures: ScreenCaptureFailure[] = [];
     let afterAction: RenderedScreen | null = null;
     try {
-      afterAction = await read(page);
+      afterAction = await timed(
+        () => boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `screen read after acting on step ${stepIndex}`),
+        (ms) => (phaseReadMs += ms),
+      );
     } catch (err) {
       const failure = recordCaptureFailure(
         captureFailureRow(
@@ -3518,27 +6372,90 @@ export async function walkPath(
       afterAction = null;
     }
 
-    const navigation = resolveAdvanceControl(afterAction ?? before);
+    // ---- POST-INTERACTION CHOICE VERIFICATION ----
+    //
+    // THE DEFECT THIS CLOSES (analysis class d): after all interactions, the checked option
+    // may differ from what the walker intended — a side-effect of typing into a specify box
+    // (or any other platform behaviour). Re-read the choice groups and compare: a mismatch
+    // is a named observation (possible site defect OR walker side effect — both hypotheses
+    // recorded) and the walk records the discrepancy rather than silently advancing a wrong
+    // answer.
+    if (afterAction) {
+      const choiceVerifications = verifyChoiceGroupsAfterInteraction(before, afterAction, actions);
+      for (const v of choiceVerifications) {
+        actions.push(v);
+        if (!v.ok) {
+          recordReaderLimitation(
+            "choice-group-state-changed-after-interaction",
+            v.detail ?? "choice group state changed after interaction",
+            1,
+          );
+        }
+      }
+    }
+
+    let navigation = resolveAdvanceControl(afterAction ?? before);
+    // A SCREEN THAT IS HOLDING ITS WAY FORWARD BACK IS NOT A SCREEN WITHOUT ONE. See
+    // `awaitForwardRelease`: a forced-exposure gate hides Next for a few seconds, and reading the
+    // screen once at that instant reported the end of the survey on screen 42 of 200-odd. Only
+    // run on a screen this step actually re-read — waiting on the PRE-ACTION read would be
+    // deciding from a screen the walk has since changed.
+    let forwardRelease: ForwardReleaseWait | null = null;
+    if (navigation.kind === "none" && afterAction) {
+      forwardRelease = await timed(
+        () => awaitForwardRelease(page, afterAction!, opts, `step ${stepIndex}`),
+        (ms) => (phaseAdvanceMs += ms),
+      );
+      if (forwardRelease.screen) {
+        afterAction = forwardRelease.screen;
+        navigation = resolveAdvanceControl(afterAction);
+      }
+      if (forwardRelease.withheld.length > 0 && !forwardRelease.released) {
+        recordReaderLimitation(
+          FORWARD_CONTROL_WITHHELD,
+          `screen ${stepIndex} kept ${forwardRelease.withheld.length} forward control(s) out of reach for the whole ` +
+            `${forwardRelease.waitedMs}ms this walk waited across ${forwardRelease.polls} re-read(s) ` +
+            `(ceiling ${forwardRelease.ceilingMs}ms): ` +
+            forwardRelease.withheld.map((w) => `#${w.idx} ${JSON.stringify(w.label)} ${w.why}`).join("; "),
+          forwardRelease.withheld.length,
+        );
+      }
+    }
     const nb = navigation.kind === "unique" ? navigation.control : null;
-    const afterActionCapture = afterAction
-      ? recordEpoch(
-          await captureScreenEpoch(
-            page,
-            cap,
-            afterAction,
-            navigation.kind === "none" ? "final" : "after-action",
-            stepIndex,
-            opts.viewport,
-          ),
-        )
+    // CAPTURE DIET: the after-action epoch is SKIPPED. It captured the SAME page as the
+    // "before" epoch with only the walker's own input state changed (a dropdown selected, a
+    // text field filled). That costs one full screenshot + PDF + AX tree + screen JSON +
+    // four R2 evidence writes per step — measured at ~20-22s on production runs — and no
+    // verdict consumer reads it:
+    //
+    //   - The judge spine explicitly excludes screenAfterAction (v2-observation.mjs line 365)
+    //   - The verifier reads the INLINE screenAfterAction RenderedScreen for validation
+    //     messages, which is preserved (it comes from the cheap boundedRead(), not the epoch)
+    //   - The vision system loses one screenshot per step but retains the "before" epoch
+    //
+    // The inline `afterAction` RenderedScreen stays in the StepObservation at full fidelity.
+    // Only the heavy-artifact epoch (PNG/PDF/AX/evidence-JSON) is skipped.
+    const afterActionCapture: Awaited<ReturnType<typeof captureScreenEpoch>> | null = null;
+    const afterActionDiet: CaptureDietEntry | null = afterAction
+      ? {
+          slot: navigation.kind === "none" ? "final" : "after-action",
+          modalities: ["screen-json", "screenshot", "accessibility", "rendered-pdf"],
+          rule: "after-action-epoch-skip",
+          reason:
+            "the after-action epoch captures the same page as the before epoch with only " +
+            "the walker's input state changed; no verdict consumer reads it; the inline " +
+            "screenAfterAction RenderedScreen is preserved at full fidelity",
+        }
       : null;
+    if (afterActionDiet) captureDietSkippedEpochs += 1;
     if (navigation.kind === "ambiguous") {
       const detail =
         `screen ${stepIndex} exposes ${navigation.candidates.length} usable forward candidates after answers were applied: ` +
         navigation.candidates.map((row) => `#${row.idx} ${JSON.stringify(row.label)} via ${row.via}`).join("; ");
       recordReaderLimitation(NAVIGATION_FORWARD_AMBIGUOUS, detail, navigation.candidates.length);
-      const afterEv = afterActionCapture?.screenJson.evidenceId ?? null;
-      const stepCaptures = [beforeCapture, ...(afterActionCapture ? [afterActionCapture] : [])];
+      // afterActionCapture is null under the capture diet — no after-action epoch is produced.
+      const afterEv: string | null = null;
+      const stepCaptures = [beforeCapture];
       steps.push({
         stepIndex,
         decisionQuestion: decision ? String(decision.question ?? "") : null,
@@ -3561,6 +6478,9 @@ export async function walkPath(
         consoleErrors: consoleErrors.slice(),
         evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
         wallMs: Date.now() - stepT0,
+        phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
+        ...(stepAnnouncement ? { terminationAnnouncement: stepAnnouncement } : {}),
+        captureDietApplied: afterActionDiet ? [afterActionDiet] : [],
       });
       outcome = NAVIGATION_FORWARD_AMBIGUOUS;
       outcomeDetail = detail;
@@ -3569,8 +6489,9 @@ export async function walkPath(
     if (!nb) {
       // No control advances the survey: either the end, or a dead end. Both are recorded
       // as what they are — the absence of an advance control on THIS complete screen.
-      const afterEv = afterActionCapture?.screenJson.evidenceId ?? null;
-      const stepCaptures = [beforeCapture, ...(afterActionCapture ? [afterActionCapture] : [])];
+      // afterActionCapture is null under the capture diet — no after-action epoch is produced.
+      const afterEv: string | null = null;
+      const stepCaptures = [beforeCapture];
       steps.push({
         stepIndex,
         decisionQuestion: decision ? String(decision.question ?? "") : null,
@@ -3598,6 +6519,9 @@ export async function walkPath(
         consoleErrors: consoleErrors.slice(),
         evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
         wallMs: Date.now() - stepT0,
+        phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
+        ...(stepAnnouncement ? { terminationAnnouncement: stepAnnouncement } : {}),
+        captureDietApplied: afterActionDiet ? [afterActionDiet] : [],
       });
       outcome = "no-advance-control";
       // NAME THE UNANSWERED CONTROL, OR THIS SENTENCE IS A NORMAL ENDING.
@@ -3610,6 +6534,14 @@ export async function walkPath(
       // here, where an `outcome`-reading consumer cannot miss it.
       outcomeDetail =
         `screen ${stepIndex} offered no enabled control that advances the survey` +
+        // A WITHHELD WAY ON IS THE OPPOSITE OF AN ENDING, so it is said first and said loudly:
+        // the sentence above is word-for-word what a thank-you page produces.
+        (forwardRelease && forwardRelease.withheld.length > 0
+          ? ` — BUT ${forwardRelease.withheld.length} FORWARD CONTROL(S) ARE PRESENT ON IT AND OUT OF REACH (` +
+            forwardRelease.withheld.map((w) => `#${w.idx} ${JSON.stringify(w.label)} ${w.why}`).join("; ") +
+            `), STILL out of reach after ${forwardRelease.waitedMs}ms of waiting across ${forwardRelease.polls} ` +
+            `re-read(s), so this is a screen the survey did not open, not the end of the survey`
+          : "") +
         (unfillable.length > 0
           ? ` — AND THE WALKER LEFT ${unfillable.length} CONTROL(S) ON IT UNANSWERED, so this is not necessarily the ` +
             `end of the survey: ${nameUnfilled(unfillable)}`
@@ -3617,6 +6549,7 @@ export async function walkPath(
       break;
     }
 
+    const tAdvance0 = Date.now();
     const clickRes = await clickIdx(page, nb.idx);
     actions.push({
       kind: "click-next",
@@ -3629,7 +6562,16 @@ export async function walkPath(
       // named itself and a press chosen by elimination are different evidence — the second is
       // how a reader that could not classify a single SurveyJS button still advanced screen 1
       // and looked healthy doing it.
-      detail: `${clickRes.detail} via ${nb.via}`,
+      // AND WHETHER THIS WALK HAD TO WAIT FOR THE CONTROL TO OPEN. A press on a control the page
+      // withheld is a different act from a press on one it offered, and a run that silently waited
+      // 15 seconds per screen should say so in its own receipts.
+      detail:
+        `${clickRes.detail} via ${nb.via}` +
+        (forwardRelease && forwardRelease.released
+          ? `; the page WITHHELD this control (${forwardRelease.withheld.map((w) => `#${w.idx} ${w.why}`).join("; ")}) ` +
+            `and forward control enabled after ~${Math.round(forwardRelease.waitedMs / 1000)}s of polling ` +
+            `(${forwardRelease.waitedMs}ms, ${forwardRelease.polls} re-read(s), ceiling ${forwardRelease.ceilingMs}ms)`
+          : ""),
     });
 
     // Did the survey move? The baseline is AFTER answers were applied, so answer-only state
@@ -3646,7 +6588,10 @@ export async function walkPath(
     while (Date.now() < waitUntil) {
       await sleep(180);
       try {
-        after = await read(page);
+        // The poll read's bound is its own remaining window: a hung read must not hold the
+        // advance wait past `advanceTimeoutMs`, and a rejection here is already a counted,
+        // survivable poll failure.
+        after = await boundedRead(page, Math.max(1_000, waitUntil - Date.now()), `advance poll read on step ${stepIndex}`);
       } catch (err) {
         pollReadFailureCount += 1;
         lastPollReadFailure = err;
@@ -3672,27 +6617,107 @@ export async function walkPath(
       );
       stepReadFailures.push(failure);
     }
+    /**
+     * A SUBMIT THE SITE NEITHER ACCEPTED NOR COMPLAINED ABOUT IS NOT A WRONG ANSWER.
+     *
+     * MEASURED LIVE 20 Aug 2026 (run `v2r_01m0enh6bjc1en2bgesvcnt5jc`, screen 45, question C20
+     * "SCREEN 2 of 4"): the walk answered the best/worst grid correctly — the distinct-column
+     * repick fired and the readbacks confirm two different columns checked — pressed forward, and
+     * nothing happened. No movement, and NO validation message either. The screen's own words say
+     * why: "You will be allowed to proceed in 4 seconds" before the press, "…in 0 seconds" after
+     * it. The press landed during a minimum-dwell gate and was ignored.
+     *
+     * THIS IS THE SECOND SHAPE OF THE GATE. On the first C20 screen the platform HID its forward
+     * control, which `awaitForwardRelease` waits out. Here it leaves the control visible and
+     * simply ignores the press, so nothing up to this point notices — and the walk then spent its
+     * recovery rounds re-deriving an answer that was already right.
+     *
+     * THE RULE: silence is not rejection. When a press produces neither movement nor a new
+     * complaint, re-answering is the wrong response; waiting and pressing again is the right one.
+     * Bounded by presses AND by the same configured ceiling, and abandoned the moment the site
+     * DOES complain — a real validation belongs to the answer-recovery ladder below, not here.
+     *
+     * NOTHING HERE READS THE COUNTDOWN. The trigger is the absence of both movement and
+     * complaint, which is platform- and language-neutral. A site that is merely slow benefits
+     * identically, and each re-press re-checks for movement first so a late advance is never
+     * pressed through.
+     */
+    let silentPresses = 0;
+    let silentWaitedMs = 0;
+    if (!advanced && after && newValidationMessages(advanceBaseline, after).length === 0) {
+      const refusal = await silentRefusalRepress(
+        page, advanceBaseline, after, opts, `step ${stepIndex}`,
+      );
+      silentPresses = refusal.silentPresses;
+      silentWaitedMs = refusal.silentWaitedMs;
+      actions.push(...refusal.actions);
+      if (refusal.advanced) {
+        after = refusal.screen;
+        movementSignals = refusal.movementSignals;
+        advanced = true;
+      } else if (refusal.shapeFlipped && refusal.screen) {
+        // THE CONTROL FLIPPED FROM VISIBLE TO HIDDEN — shape 2 became shape 1. Hand off to
+        // `awaitForwardRelease`, which is the mechanism that waits for a withheld control.
+        const held = await awaitForwardRelease(page, refusal.screen, opts, `step ${stepIndex} shape-flip`);
+        if (held.screen) {
+          after = held.screen;
+          const nav = resolveAdvanceControl(held.screen);
+          if (nav.kind === "unique") {
+            const press = await clickIdx(page, nav.control.idx);
+            actions.push({
+              kind: "click-next",
+              targetIdx: nav.control.idx,
+              targetLabel: nav.control.label,
+              targetCode: null,
+              value: null,
+              ok: press.ok,
+              detail: `shape-flip re-press after silent-refusal detected hidden control, waited ${held.waitedMs}ms (${press.detail}) via ${nav.control.via}`,
+            });
+            if (press.ok) {
+              await sleep(Math.min(opts.advanceTimeoutMs, 1_000));
+              try {
+                const settled = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `shape-flip settle on step ${stepIndex}`);
+                const moved = advanceSignals(advanceBaseline, settled);
+                after = settled;
+                if (moved.length > 0) {
+                  movementSignals = moved;
+                  advanced = true;
+                }
+              } catch { /* survivable — the step records what happened */ }
+            }
+          }
+        }
+        if (held.withheld.length > 0 && !held.released) {
+          recordReaderLimitation(
+            FORWARD_CONTROL_WITHHELD,
+            `screen ${stepIndex} silent-refusal shape-flip kept ${held.withheld.length} forward control(s) out of reach for ` +
+              `${held.waitedMs}ms across ${held.polls} re-read(s)`,
+            held.withheld.length,
+          );
+        }
+      } else {
+        // Neither advanced nor shape-flipped — update `after` with the freshest screen.
+        if (refusal.screen) after = refusal.screen;
+      }
+      if (silentPresses > 0) {
+        recordReaderLimitation(
+          SILENT_REFUSAL_REPRESSED,
+          `screen ${stepIndex} refused a press without moving and without saying anything; the walk waited ` +
+            `${silentWaitedMs}ms and pressed ${silentPresses} more time(s) before ${advanced ? "the survey moved" : "giving up on it"}`,
+          silentPresses,
+        );
+      }
+    }
     if (advanced) {
       const receipt = [...actions].reverse().find((action) => action.kind === "click-next");
       if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${movementSignals.join("+")}`;
     }
+    phaseAdvanceMs += Date.now() - tAdvance0;
     const afterWasRead = after !== null;
     if (!after) after = afterAction;
 
-    // Never pair a CURRENT PNG/AX tree with the stale `afterAction` JSON fallback. If every
-    // post-submit read failed, the missing epoch is named above and `afterEv` stays null.
-    const afterCapture = afterWasRead && after
-      ? recordEpoch(
-          await captureScreenEpoch(page, cap, after, advanced ? "advanced" : "blocked", stepIndex, opts.viewport),
-        )
-      : null;
-    const afterEv = afterCapture?.screenJson.evidenceId ?? null;
-    const stepCaptures = [
-      beforeCapture,
-      ...(afterActionCapture ? [afterActionCapture] : []),
-      ...(afterCapture ? [afterCapture] : []),
-    ];
-
+    // Cycle detection FIRST: whether this transition repeats decides whether the walk
+    // continues, and that decision feeds the epoch dedup directly below.
     let repeatedTransition: { firstStep: number; from: string; to: string } | null = null;
     if (advanced && after) {
       const transitionBase = JSON.stringify([
@@ -3714,6 +6739,33 @@ export async function walkPath(
       recentTransitionBases.push(transitionBase);
       if (recentTransitionBases.length > 2) recentTransitionBases.shift();
     }
+
+    // THE POST-ADVANCE EPOCH IS THE NEXT STEP'S BEFORE-EPOCH — the same screen, captured
+    // twice about a second apart. The v44 phase clocks measured epoch capture at ~21s of
+    // every ~28s step, one third of it this duplicate, so mid-walk it is SKIPPED: the next
+    // iteration's before-epoch is the visual evidence for this screen. A walk that ENDS on
+    // an advanced screen has no next iteration — the post-loop backfill below captures that
+    // final screen instead (tracked by lastAdvancedEpochSkipped). A BLOCKED screen keeps
+    // its epoch here: it is this step's terminal visual state, owned by no later step.
+    const walkWillContinue =
+      advanced && !repeatedTransition && stepIndex + 1 < opts.maxSteps && Date.now() < opts.deadline;
+    lastAdvancedEpochSkipped = Boolean(afterWasRead && after && advanced && walkWillContinue);
+    // Never pair a CURRENT PNG/AX tree with the stale `afterAction` JSON fallback. If every
+    // post-submit read failed, the missing epoch is named above and `afterEv` stays null.
+    const afterCapture = afterWasRead && after && !lastAdvancedEpochSkipped
+      ? recordEpoch(
+          await timed(
+            () => captureScreenEpoch(page, cap, after!, advanced ? "advanced" : "blocked", stepIndex, opts.viewport),
+            (ms) => (phaseCaptureMs += ms),
+          ),
+        )
+      : null;
+    const afterEv = afterCapture?.screenJson.evidenceId ?? null;
+    const stepCaptures = [
+      beforeCapture,
+      ...(afterActionCapture ? [afterActionCapture] : []),
+      ...(afterCapture ? [afterCapture] : []),
+    ];
 
     steps.push({
       stepIndex,
@@ -3741,6 +6793,9 @@ export async function walkPath(
       consoleErrors: consoleErrors.slice(),
       evidence: stepEvidence(beforeEv, afterEv, stepCaptures, stepReadFailures),
       wallMs: Date.now() - stepT0,
+      phaseMs: { read: phaseReadMs, act: phaseActMs, advance: phaseAdvanceMs, capture: phaseCaptureMs },
+      ...(stepAnnouncement ? { terminationAnnouncement: stepAnnouncement } : {}),
+      captureDietApplied: afterActionDiet ? [afterActionDiet] : [],
     });
 
     if (repeatedTransition) {
@@ -3776,82 +6831,268 @@ export async function walkPath(
       // precedence — the bound decision's own `avoid_labels`, else the path's hints by
       // offered-label overlap. This is an input-stamping site, not a new consumer: the
       // option default inside `applyDecision` remains the ONE consumer of hints.
-      const recovery = await applyDecision(
-        page,
-        after ?? before,
-        {
-          question: decision?.question ?? "",
-          select: decision?.select ?? [],
-          source: "recovery",
-          avoid_labels: survivalAvoidLabels(decision, pathHints, after ?? before),
-        } as PlannedDecision,
-        pathHints,
-        fillerVariant,
-      );
+      const recovery = {
+        actions: [] as PerformedAction[],
+        notOffered: [] as string[],
+        unfillable: [] as UnfillableControl[],
+      };
       const recoveryReadFailures: ScreenCaptureFailure[] = [];
+      const recoveryRoundCaptures: NonNullable<Awaited<ReturnType<typeof captureScreenEpoch>>>[] = [];
       let recoveryBaseline: RenderedScreen | null = null;
-      try {
-        recoveryBaseline = await read(page);
-      } catch (err) {
-        recoveryReadFailures.push(recordCaptureFailure(
-          captureFailureRow(
-            "screen-read-failed",
-            `screen JSON read failed after recovery answers on step ${stepIndex}: ${errorText(err)}`,
-            stepIndex,
-            "recovery-after-action",
-          ),
-        ));
-      }
-      const recoveryNavigation = recoveryBaseline ? resolveAdvanceControl(recoveryBaseline) : { kind: "none" as const, candidates: [] };
-      const recoveryAmbiguity = recoveryNavigation.kind === "ambiguous"
-        ? `screen ${stepIndex} exposes ${recoveryNavigation.candidates.length} usable forward candidates after recovery answers`
-        : null;
-      let recoveryClicked = false;
-      if (recoveryNavigation.kind === "unique") {
-        const again = await clickIdx(page, recoveryNavigation.control.idx);
-        recoveryClicked = again.ok;
-        recovery.actions.push({
-          kind: "click-next",
-          targetIdx: recoveryNavigation.control.idx,
-          targetLabel: recoveryNavigation.control.label,
-          targetCode: null,
-          value: null,
-          ok: again.ok,
-          detail: `recovery-after-block (${again.detail}) via ${recoveryNavigation.control.via}`,
-        });
-      } else if (recoveryAmbiguity) {
-        recordReaderLimitation(NAVIGATION_FORWARD_AMBIGUOUS, recoveryAmbiguity, recoveryNavigation.candidates.length);
-      }
-      if (recoveryClicked) await sleep(600);
       let recovered: RenderedScreen | null = null;
-      try {
-        recovered = await read(page);
-      } catch (err) {
-        const failure = recordCaptureFailure(
-          captureFailureRow(
-            "screen-read-failed",
-            `screen JSON read failed after recovery on step ${stepIndex}: ${errorText(err)}`,
-            stepIndex,
-            "recovery",
-          ),
+      let recoveryClicked = false;
+      let recoveryMovement: string[] = [];
+      let recoveryAmbiguity: string | null = null;
+      // BOUNDED RECOVERY ROUNDS, EACH DERIVED FROM THE SITE'S NEWEST VALIDATION. One round
+      // was not enough twice over, in opposite directions, on the SAME live screen (B10):
+      // (1) the block's first validation said only "Please provide an answer", so the one
+      // round derived probe text — and the numeric-sum demand only appeared in the NEXT
+      // validation, which nothing ever read (run v2r_01m0cy89mz80nf4g3z32j7f8sx); (2) a
+      // set-value fill read back "ok" while the widget's submitted state listened only to
+      // real key events (run v2r_01m0cp6grt3sbyscj6d6vk89qb). So: up to three rounds. A
+      // round re-derives when the validation CHANGED since the last round; when it did not
+      // change and set-path fills were tried, the last round re-enters the same values by
+      // keyboard (the S70 mask lesson holds in the other direction — that flip is bounded
+      // to once); when neither applies, more rounds would repeat the same experiment, and
+      // the walk stops with the receipts saying exactly what was tried.
+      let roundScreen: RenderedScreen | null = after ?? before;
+      let roundValidation: readonly string[] = roundScreen?.validationMessages ?? [];
+      let priorValidationKey: string | null = null;
+      let setFillsSeen = false;
+      let flippedToKeyboard = false;
+      let roundsRun = 0;
+      const RECOVERY_ROUND_CAP = 3;
+      for (let round = 1; round <= RECOVERY_ROUND_CAP; round++) {
+        const validationKey = JSON.stringify([...roundValidation].sort());
+        let fillVia: "set" | "type" = "set";
+        if (round > 1) {
+          const changed = validationKey !== priorValidationKey;
+          if (!changed) {
+            if (setFillsSeen && !flippedToKeyboard) { fillVia = "type"; flippedToKeyboard = true; }
+            else break;
+          }
+        }
+        priorValidationKey = validationKey;
+        roundsRun = round;
+        const filled = await applyAcrossQuestionRoots(
+          page,
+          roundScreen ?? before,
+          {
+            question: decision?.question ?? "",
+            select: decision?.select ?? [],
+            source: "recovery",
+            avoid_labels: survivalAvoidLabels(decision, pathHints, roundScreen ?? before),
+            // OUTCOME 2 (D1): the recovery re-pick now carries prefer_labels alongside
+            // avoid_labels. Pre-fix the recovery stamped avoid only, so a recovery on a
+            // screener lost documented-continue steering and picked by luck of ordering
+            // (door-map: two walks survived S10 only via recovery, by luck). Same provenance
+            // discipline: the pick records a counted navigator-default provenance.
+            prefer_labels: survivalPreferLabels(decision, pathHints, roundScreen ?? before),
+            // OUTCOME 1 (D1): code pairs for code-based matching on recovery too.
+            avoid_codes: survivalAvoidCodes(decision, pathHints, roundScreen ?? before),
+            prefer_codes: survivalPreferCodes(decision, pathHints, roundScreen ?? before),
+          } as PlannedDecision,
+          pathHints,
+          stepVariant,
+          // The advance failed AND the site printed validation messages: whatever the value
+          // fields hold is not an answer, so the round's value loop must re-derive rather
+          // than trust the already-answered skip — steered by every demand the site has made
+          // in this step, newest first (see mergeStandingDemands). NOT by the latest read
+          // alone: a re-render that prints no messages is not the site withdrawing them.
+          roundValidation,
+          fillVia,
         );
-        recoveryReadFailures.push(failure);
+        recovery.actions.push(...filled.actions);
+        recovery.notOffered.push(...filled.notOffered);
+        recovery.unfillable.push(...filled.unfillable);
+        if (filled.actions.some((a) =>
+          (a.kind === "set-value" && a.ok) || String(a.detail ?? "").includes("retried via set-value"))) {
+          setFillsSeen = true;
+        }
+        recoveryBaseline = null;
+        try {
+          recoveryBaseline = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `recovery baseline read on step ${stepIndex} round ${round}`);
+        } catch (err) {
+          recoveryReadFailures.push(recordCaptureFailure(
+            captureFailureRow(
+              "screen-read-failed",
+              `screen JSON read failed after recovery answers on step ${stepIndex} round ${round}: ${errorText(err)}`,
+              stepIndex,
+              "recovery-after-action",
+            ),
+          ));
+        }
+        let recoveryNavigation: AdvanceControlResolution = recoveryBaseline
+          ? resolveAdvanceControl(recoveryBaseline)
+          : { kind: "none" as const, candidates: [] };
+        // The same gate can re-arm after a rejected submit: the platform re-renders the screen and
+        // starts its forced-exposure timer again. Without this, a recovery round would read "no way
+        // on" and end the walk as blocked on a screen that was about to open.
+        if (recoveryNavigation.kind === "none" && recoveryBaseline) {
+          const held = await awaitForwardRelease(page, recoveryBaseline, opts, `step ${stepIndex} recovery round ${round}`);
+          if (held.screen) {
+            recoveryBaseline = held.screen;
+            recoveryNavigation = resolveAdvanceControl(recoveryBaseline);
+          }
+          if (held.withheld.length > 0 && !held.released) {
+            recordReaderLimitation(
+              FORWARD_CONTROL_WITHHELD,
+              `screen ${stepIndex} recovery round ${round} kept ${held.withheld.length} forward control(s) out of reach for ` +
+                `the whole ${held.waitedMs}ms this walk waited across ${held.polls} re-read(s): ` +
+                held.withheld.map((w) => `#${w.idx} ${JSON.stringify(w.label)} ${w.why}`).join("; "),
+              held.withheld.length,
+            );
+          }
+        }
+        if (recoveryNavigation.kind === "ambiguous") {
+          recoveryAmbiguity = `screen ${stepIndex} exposes ${recoveryNavigation.candidates.length} usable forward candidates after recovery answers`;
+          break;
+        }
+        recoveryClicked = false;
+        if (recoveryNavigation.kind === "unique") {
+          const again = await clickIdx(page, recoveryNavigation.control.idx);
+          recoveryClicked = again.ok;
+          recovery.actions.push({
+            kind: "click-next",
+            targetIdx: recoveryNavigation.control.idx,
+            targetLabel: recoveryNavigation.control.label,
+            targetCode: null,
+            value: null,
+            ok: again.ok,
+            detail: `recovery-after-block round ${round}${fillVia === "type" ? " keyboard-flip" : ""} (${again.detail}) via ${recoveryNavigation.control.via}`,
+          });
+        }
+        if (recoveryClicked) await sleep(600);
         recovered = null;
+        try {
+          recovered = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `recovery read on step ${stepIndex} round ${round}`);
+        } catch (err) {
+          recoveryReadFailures.push(recordCaptureFailure(
+            captureFailureRow(
+              "screen-read-failed",
+              `screen JSON read failed after recovery on step ${stepIndex} round ${round}: ${errorText(err)}`,
+              stepIndex,
+              "recovery",
+            ),
+          ));
+          recovered = null;
+        }
+        const roundCapture = recovered
+          ? recordEpoch(
+              await captureScreenEpoch(page, cap, recovered, "recovery", stepIndex, opts.viewport),
+            )
+          : null;
+        if (roundCapture) recoveryRoundCaptures.push(roundCapture);
+        recoveryMovement =
+          recoveryClicked && recoveryBaseline && recovered ? advanceSignals(recoveryBaseline, recovered) : [];
+        if (recoveryMovement.length > 0) {
+          const receipt = [...recovery.actions].reverse().find((action) => action.kind === "click-next");
+          if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${recoveryMovement.join("+")}`;
+          break;
+        }
+        // RECOVERY SILENT-REFUSAL RE-PRESS — the SAME bounded mechanism the main step loop uses.
+        // Without this the recovery loop pressed once with a 600ms wait, roughly 6x short of one
+        // advance window, and a re-arming dwell gate won the race every time (measured: ~50% stall
+        // rate at C20-style screens, walks stopping at 42-47 screens with "0 patience polls").
+        // The shared helper `silentRefusalRepress` uses the same constants and the same press-count
+        // bound as the main loop, so the two sites cannot drift.
+        if (recoveryClicked && recoveryBaseline && recovered && recoveryMovement.length === 0) {
+          // THE GUARD IS TIGHTER THAN THE MAIN LOOP'S. The main loop checks for NEW validation
+          // relative to its advance baseline (which typically has none). In recovery, the
+          // baseline often ALREADY carries validation — that is why recovery entered in the first
+          // place. Checking only for NEW validation would let the re-press loop fire on a screen
+          // that is STILL COMPLAINING with the same message. "Silence is not rejection" means the
+          // site said NOTHING AT ALL — neither moved nor showed ANY validation. A repeated
+          // complaint is still a complaint and belongs to the next recovery round's re-derivation.
+          if ((recovered.validationMessages ?? []).length === 0) {
+            const refusal = await silentRefusalRepress(
+              page, recoveryBaseline, recovered, opts, `step ${stepIndex} recovery round ${round}`,
+            );
+            recovery.actions.push(...refusal.actions);
+            if (refusal.advanced) {
+              recovered = refusal.screen;
+              recoveryMovement = refusal.movementSignals as string[];
+              const receipt = [...recovery.actions].reverse().find((action) => action.kind === "click-next");
+              if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${recoveryMovement.join("+")}`;
+              if (refusal.silentPresses > 0) {
+                recordReaderLimitation(
+                  SILENT_REFUSAL_REPRESSED,
+                  `screen ${stepIndex} recovery round ${round} refused a press without moving and without saying anything; ` +
+                    `the walk waited ${refusal.silentWaitedMs}ms and pressed ${refusal.silentPresses} more time(s) before the survey moved`,
+                  refusal.silentPresses,
+                );
+              }
+              break;
+            }
+            if (refusal.shapeFlipped && refusal.screen) {
+              // Shape 2 flipped to shape 1: the control became hidden. Hand to awaitForwardRelease
+              // rather than burning a press against a control the respondent can no longer reach.
+              const held = await awaitForwardRelease(page, refusal.screen, opts, `step ${stepIndex} recovery round ${round} shape-flip`);
+              if (held.screen) {
+                recoveryBaseline = held.screen;
+                const nav = resolveAdvanceControl(held.screen);
+                if (nav.kind === "unique") {
+                  const press = await clickIdx(page, nav.control.idx);
+                  recovery.actions.push({
+                    kind: "click-next",
+                    targetIdx: nav.control.idx,
+                    targetLabel: nav.control.label,
+                    targetCode: null,
+                    value: null,
+                    ok: press.ok,
+                    detail: `recovery shape-flip re-press round ${round} after silent-refusal detected hidden control, waited ${held.waitedMs}ms (${press.detail}) via ${nav.control.via}`,
+                  });
+                  if (press.ok) {
+                    await sleep(Math.min(opts.advanceTimeoutMs, 1_000));
+                    try {
+                      const settled = await boundedRead(page, opts.readTimeoutMs ?? READ_SCREEN_TIMEOUT_MS, `recovery shape-flip settle on step ${stepIndex} round ${round}`);
+                      const moved = advanceSignals(recoveryBaseline, settled);
+                      recovered = settled;
+                      if (moved.length > 0) {
+                        recoveryMovement = moved as string[];
+                        const receipt = [...recovery.actions].reverse().find((action) => action.kind === "click-next");
+                        if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${recoveryMovement.join("+")}`;
+                      }
+                    } catch { /* survivable — the step records what happened */ }
+                  }
+                }
+              }
+              if (held.withheld.length > 0 && !held.released) {
+                recordReaderLimitation(
+                  FORWARD_CONTROL_WITHHELD,
+                  `screen ${stepIndex} recovery round ${round} shape-flip kept ${held.withheld.length} forward control(s) out of reach ` +
+                    `for ${held.waitedMs}ms across ${held.polls} re-read(s)`,
+                  held.withheld.length,
+                );
+              }
+              if (recoveryMovement.length > 0) break;
+            }
+            if (refusal.silentPresses > 0) {
+              recordReaderLimitation(
+                SILENT_REFUSAL_REPRESSED,
+                `screen ${stepIndex} recovery round ${round} refused a press without moving and without saying anything; ` +
+                  `the walk waited ${refusal.silentWaitedMs}ms and pressed ${refusal.silentPresses} more time(s) before giving up on it`,
+                refusal.silentPresses,
+              );
+            }
+            // Update recovered with the freshest screen the refusal loop saw.
+            if (refusal.screen) recovered = refusal.screen;
+          }
+        }
+        if (!recoveryClicked) break;
+        roundScreen = recovered ?? roundScreen;
+        // STANDING DEMANDS, NOT THE LATEST READ. See mergeStandingDemands: the D10 grid answered
+        // a numeric demand correctly in round 1, the page re-rendered with an empty validation
+        // list, and the old assignment handed round 2 an empty demand set — which re-derived the
+        // numeric cells as free text and destroyed the right answer.
+        roundValidation = mergeStandingDemands(roundValidation, recovered?.validationMessages ?? []);
       }
-      const recoveredCapture = recovered
-        ? recordEpoch(
-            await captureScreenEpoch(page, cap, recovered, "recovery", stepIndex, opts.viewport),
-          )
+      const recoveryAdvanced = recoveryMovement.length > 0;
+      const lastRoundCapture = recoveryRoundCaptures.length > 0
+        ? recoveryRoundCaptures[recoveryRoundCaptures.length - 1]!
         : null;
-      const recoveredEv = recoveredCapture?.screenJson.evidenceId ?? null;
-      const recoveryMovement =
-        recoveryClicked && recoveryBaseline && recovered ? advanceSignals(recoveryBaseline, recovered) : [];
-      if (recoveryMovement.length > 0) {
-        const receipt = [...recovery.actions].reverse().find((action) => action.kind === "click-next");
-        if (receipt) receipt.detail = `${receipt.detail ?? "click-next"}; advance-proof:${recoveryMovement.join("+")}`;
-      }
       const recoveryBeforeCapture = afterCapture ?? afterActionCapture ?? beforeCapture;
-      const recoveryCaptures = [recoveryBeforeCapture, ...(recoveredCapture ? [recoveredCapture] : [])];
+      const recoveryCaptures = [recoveryBeforeCapture, ...recoveryRoundCaptures];
       steps.push({
         stepIndex: stepIndex + 0.5,
         decisionQuestion: decision ? String(decision.question ?? "") : null,
@@ -3865,17 +7106,22 @@ export async function walkPath(
         actions: recovery.actions,
         requestedButNotOffered: recovery.notOffered,
         unfillableControls: recovery.unfillable,
-        advanced: recoveryMovement.length > 0,
-        blocked: recoveryClicked && recoveryMovement.length === 0,
+        advanced: recoveryAdvanced,
+        blocked: recoveryClicked && !recoveryAdvanced,
         blockedReason:
           recoveryAmbiguity
             ? NAVIGATION_FORWARD_AMBIGUOUS
-            : recoveryClicked && recoveryMovement.length === 0
+            : recoveryClicked && !recoveryAdvanced
               ? whyBlocked(recoveryBaseline, recoveryBaseline, recovered)
             : null,
         pageErrors: pageErrors.slice(errAt),
         consoleErrors: [],
-        evidence: stepEvidence(null, recoveredEv, recoveryCaptures, recoveryReadFailures),
+        evidence: stepEvidence(
+          null,
+          lastRoundCapture?.screenJson.evidenceId ?? null,
+          recoveryCaptures,
+          recoveryReadFailures,
+        ),
         wallMs: 0,
       });
       for (const u of recovery.unfillable) unfillableControls.push({ ...u, stepIndex: stepIndex + 0.5 });
@@ -3884,25 +7130,54 @@ export async function walkPath(
         outcomeDetail = recoveryAmbiguity;
         break;
       }
-      if (!recoveryClicked || recoveryMovement.length === 0) {
+      if (!recoveryClicked || !recoveryAdvanced) {
         outcome = wasProbe ? "blocked-after-probe" : "blocked";
         // SAME RULE AS ABOVE, and it matters more here: "the survey did not advance even after a
         // valid answer" is a claim that the answer WAS valid. If the walker left a control on
         // that screen unanswered, it was not, and the sentence would blame the survey for the
         // harness's own gap.
         const unfilledHere = [...unfillable, ...recovery.unfillable];
+        const latestValidation = (recovered ?? after)?.validationMessages ?? [];
         outcomeDetail =
           `the survey did not advance from screen ${stepIndex} even after a valid answer` +
+          (roundsRun > 1 ? ` — ${roundsRun} recovery rounds each re-derived from the site's newest validation` : "") +
+          (flippedToKeyboard ? `; a second recovery re-entered the numeric values by keyboard and the screen still did not advance` : "") +
           (unfilledHere.length > 0
             ? ` — THOUGH THE WALKER LEFT ${unfilledHere.length} CONTROL(S) ON IT UNANSWERED, so "a valid answer" ` +
               `overstates what was submitted: ${nameUnfilled(unfilledHere)}`
             : "") +
-          (after?.validationMessages.length ? `; validation said: ${after.validationMessages.join(" | ")}` : "");
+          (latestValidation.length ? `; validation said: ${latestValidation.join(" | ")}` : "");
         break;
       }
     }
+    // PER-WALK PROGRESS WATCHDOG: the step completed — tell the executor so it can reset its
+    // stall timer. This fires AFTER the step observation is pushed and BEFORE the loop counter
+    // increments, so the executor's stall window is measured from the last completed step, and
+    // a step that hangs mid-way is caught by the stall detector, not by the step-completion
+    // callback.
+    opts.onStepCompleted?.(stepIndex);
 
     stepIndex += 1;
+  }
+
+  // PER-WALK PROGRESS WATCHDOG: the abort signal was set by the executor's stall detector.
+  // The walk returns its partial observation with outcome "walk-stalled" — everything recorded
+  // up to the stall is committed, never discarded.
+  //
+  // WHY THIS OVERRIDES ANY NON-ERROR OUTCOME. When the executor's watchdog fires BEFORE the
+  // step loop, the while condition (`!opts.abortSignal?.aborted`) prevents entry and the
+  // outcome stays "completed" — which this block catches. When the watchdog fires MID-STEP
+  // and the catch block breaks cleanly, the outcome is also "completed". But when the watchdog
+  // fires after a step already set a terminal outcome ("no-advance-control", "blocked", etc.),
+  // the step's own outcome is HONEST — the walk really did hit that condition — so only
+  // "completed" is overridden. An "error" is NOT overridden because the error is the stall's
+  // own page-close error, and the catch-abort check in the step loop already handles that path.
+  if (opts.abortSignal?.aborted && outcome === "completed") {
+    outcome = "walk-stalled";
+    outcomeDetail =
+      `walk stalled: no step completed for the configured stall window` +
+      (opts.abortSignal.reason ? ` (${opts.abortSignal.reason})` : "") +
+      ` — ${steps.length} step(s) were recorded before the stall and are committed as a partial observation`;
   }
 
   if (outcome === "completed" && stepIndex >= opts.maxSteps) {
@@ -3914,17 +7189,60 @@ export async function walkPath(
     outcomeDetail = "walk hit its wall-clock budget";
   }
 
+  // BACKFILL THE FINAL SCREEN'S EPOCH. When the last step ADVANCED, its post-advance epoch
+  // was deduped on the promise that the next step's before-epoch would capture the same
+  // screen — but the walk ended, so no next step exists and the promise must be kept here.
+  // The page still shows that screen (nothing acted after the advance), so this is the same
+  // capture at the same moment class, under the existing "final" slot.
+  if (lastAdvancedEpochSkipped) {
+    const lastStep = steps[steps.length - 1];
+    const finalScreen = lastStep?.screenAfterAdvance;
+    if (lastStep && finalScreen) {
+      recordEpoch(await captureScreenEpoch(page, cap, finalScreen, "final", lastStep.stepIndex, opts.viewport));
+    }
+  }
+
   // HOW THIS WALK ENDED, typed from the final screen. Computed for EVERY outcome, not only the
   // terminal ones: a walk that hit a cap or a block has an ending too — `stalled` — and leaving
   // the field off those artifacts would make "we did not classify it" and "it did not end"
   // indistinguishable again, one level up from the defect this closes.
   const unbound = remaining.length;
+  // CRASH-AS-SCREENOUT GUARD: outcomes whose final screen is not trustworthy evidence.
+  // `error`: a driver-level error (screen read failed, page operation threw).
+  // `load-crash`: the site's JS threw during load and rendered no interactive control.
+  // `walk-stalled`: the stall watchdog closed the page externally.
+  // In all three cases the final screen may show a blank page, an error page, or the last
+  // screen before the crash — none of which is evidence about the survey's screening logic.
+  // classifyEnding receives `crashed: true` so it returns `crashed` instead of reading the
+  // screen text as a survey decision.
+  const crashedOutcome = outcome === "error" || outcome === "load-crash" || outcome === "walk-stalled";
   const ending = classifyEnding(finalScreenOf(steps), {
     outcome,
     unboundDecisions: unbound,
     navigatorDefaults: navigatorDefaultAnswerCount,
     unfillable: unfillableControls,
+    crashed: crashedOutcome,
+    terminationAnnouncements,
   });
+
+  // OUTCOME DETAIL HONESTY (4-outcomeDetail). The hidden-forward-control inference —
+  // "so this is a screen the survey did not open, not the end of the survey" — fires on
+  // every no-advance-control screen that has withheld forward controls. On terminate/
+  // screened-out pages this is WRONG: the ending classification already speaks for itself,
+  // and the inference contradicts it. When the ending is screened-out or completed,
+  // the inference text is stripped from outcomeDetail because the ending's own evidence
+  // is the authoritative statement about what kind of screen it is.
+  if (
+    outcomeDetail &&
+    (ending.kind === "screened-out" || ending.kind === "completed") &&
+    outcomeDetail.includes("so this is a screen the survey did not open, not the end of the survey")
+  ) {
+    // Strip the hidden-forward-control inference clause.
+    outcomeDetail = outcomeDetail.replace(
+      /\s*—\s*BUT\s+\d+\s+FORWARD CONTROL\(S\) ARE PRESENT ON IT AND OUT OF REACH \([^)]*\),\s*STILL out of reach after \d+ms of waiting across \d+ re-read\(s\), so this is a screen the survey did not open, not the end of the survey/,
+      "",
+    );
+  }
 
   const obs: PathObservation = {
     kind: "v2-path-observation/1.0.0",
@@ -3964,6 +7282,9 @@ export async function walkPath(
     unfillableControls,
     unfillableControlCount: unfillableControls.length,
     navigatorDefaultAnswerCount,
+    // OUTCOME 3 (D1): how many steps crossed a mid-walk termination announcement.
+    terminationAnnouncementCount,
+    captureDietSkippedEpochs,
     // New reader: present-but-empty means every attempted visual/AX capture completed. Older
     // artifacts omit all four fields and therefore never masquerade as checked-and-clean.
     screenCaptures,

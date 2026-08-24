@@ -369,7 +369,7 @@ function validateManifestRow(row: VisualWorkEpochRow): IneligibleVisualEpochInpu
     !boundedNonempty(row.slot, 200) ||
     !nonnegativeInteger(row.walkOrdinal, 100_000) ||
     !nonnegativeInteger(row.epochOrdinal, 500_000) ||
-    !nonnegativeInteger(row.stepIndex, 1_000_000) ||
+    !stepOrdinal(row.stepIndex, 1_000_000) ||
     !validTimestamp(row.startedAt) ||
     !validTimestamp(row.endedAt) ||
     !validTimestamp(row.screenReadAt) ||
@@ -476,7 +476,9 @@ export function parseAccessibilitySnapshotArtifact(bytes: Uint8Array): Accessibi
   ]);
   literal(root.kind, "v2-accessibility-snapshot/1.0.0", "$.kind");
   const epochId = stringValue(root.epochId, "$.epochId", 500, true);
-  const stepIndex = integerValue(root.stepIndex, "$.stepIndex", 0, 1_000_000);
+  // Same domain as `stepOrdinal`: whole steps or the walker's recovery interleave (k + 0.5).
+  if (!stepOrdinal(root.stepIndex, 1_000_000)) schema("$.stepIndex");
+  const stepIndex = root.stepIndex as number;
   const slot = stringValue(root.slot, "$.slot", 200, true);
   const scope = parseScope(root.scope, "$.scope");
   const capturedAt = timestampValue(root.capturedAt, "$.capturedAt");
@@ -739,7 +741,9 @@ function validAccessibilityState(value: VisualWorkEpochRow["accessibility"], ste
 
 function validFailure(value: ScreenCaptureFailure, step: number, slot: string): boolean {
   return isRecord(value) && hasExactKeys(value, ["kind", "detail", "count", "at", "stepIndex", "slot"]) &&
-    FAILURE_KINDS.includes(value.kind) && boundedNonempty(value.detail, MAX_TEXT) &&
+    // PDF is visibility-only and never impersonates a missing screen or AX channel. Its
+    // named failures travel in the manifest's limitationKinds, outside these modalities.
+    (FAILURE_KINDS as readonly ScreenCaptureFailure["kind"][]).includes(value.kind) && boundedNonempty(value.detail, MAX_TEXT) &&
     nonnegativeInteger(value.count, 1_000_000) && value.count > 0 && validTimestamp(value.at) &&
     value.stepIndex === step && value.slot === slot;
 }
@@ -919,6 +923,21 @@ function boundedNonempty(value: unknown, max: number): value is string {
 
 function nonnegativeInteger(value: unknown, max: number): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= max;
+}
+
+/**
+ * Step ordinals are whole steps (k) or the walker's recovery interleave (k + 0.5): the driver
+ * records the recovery it runs after a blocked step as `stepIndex + 0.5` by design. Accept
+ * exactly the writer's domain — halves and nothing finer.
+ */
+function stepOrdinal(value: unknown, max: number): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= max &&
+    Number.isSafeInteger(value * 2)
+  );
 }
 
 function finite(value: unknown): value is number {

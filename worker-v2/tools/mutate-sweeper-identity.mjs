@@ -135,9 +135,10 @@ await runMutantSuite({
       name: "the workflow no longer records a target identity",
       breaks: "the wiring point: the envelope stays null and every signed record is silent again",
       file: WORKFLOW,
-      find: '      await step.do("record-target-identity", async () => {\n        const identity = await ensureRecordedTargetIdentity(this.env, runId);',
+      // Re-anchored: PROJECTION_POLICY was added as step.do's second arg (drifted from pre-PROJECTION_POLICY source)
+      find: '      await step.do("record-target-identity", PROJECTION_POLICY, async () => {\n        const identity = await ensureRecordedTargetIdentity(this.env, runId);',
       replace:
-        '      await step.do("record-target-identity-removed", async () => {\n' +
+        '      await step.do("record-target-identity-removed", PROJECTION_POLICY, async () => {\n' +
         '        const identity = { outcome: "skipped", targetBuildId: null, note: "removed by mutation" };',
       kills: ["THE WIRING: the workflow records the identity BEFORE it derives or assembles anything"],
     },

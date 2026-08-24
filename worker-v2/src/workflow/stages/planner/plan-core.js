@@ -1071,7 +1071,25 @@ function defaultAnswer(model, Q, c) {
   for (const [, X] of model.questions) for (const r of X.base.requires || []) if (r.question === Q.id) for (const a of r.anyOf) gateWanted.add(a);
   const gating = usable.filter((o) => gateWanted.has(o.text));
   if (gating.length) return { select: Q.multi ? gating.map((o) => o.text) : [gating[0].text], source: 'default:keeps-downstream-in-base' };
-  if (usable.length) return { select: [usable[0].text], source: 'default:first-non-terminating' };
+  if (usable.length) {
+    // EXCLUSION-SCREENER DEFAULT (assumption stated; mirrors browser/driver.ts's navigator
+    // heuristic one layer down). A multi-select whose options are disqualifying
+    // affiliations with an exclusive "None of the above" row is a universal screener
+    // shape, and when this question's terminate rules were extracted WITHOUT labels the
+    // `terminating` filter above knows nothing — measured live 2026-08-17: the planner's
+    // first-usable default put "A marketing or market research firm" into `select`, the
+    // walk replayed it identically every attempt (plan answers are never varied), and the
+    // run screened out at that screen with the none-option sitting unpicked. The match is
+    // a small English lexicon; it only re-orders which INVENTED default the plan names,
+    // never overrides a documented terminate (those never enter `usable`), and is inert
+    // on single-select questions.
+    const NONE_STYLE = /\bnone of the above\b|\bnone of these\b|^\s*none\b|\bnot applicable\b|\bn\/a\b/i;
+    if (Q.multi) {
+      const none = usable.find((o) => NONE_STYLE.test(o.text));
+      if (none) return { select: [none.text], source: 'default:exclusive-none-option' };
+    }
+    return { select: [usable[0].text], source: 'default:first-non-terminating' };
+  }
   if (Q.options.length) { const f = Q.options.find((o) => !excluded.has(o.text)) || Q.options[0]; return { select: [f.text], source: 'default:only-remaining' }; }
   if (Q.grid && Q.grid_columns.length) return {
     select: [],

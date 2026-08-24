@@ -21,6 +21,7 @@ import { getContractRevision } from "../store/contract-revision";
 import { checkRecordIntegrity } from "../store/record-integrity";
 import { readReportPointer } from "../store/publish";
 import type { RunRecordV2 } from "../types/record";
+import { publicOperationalFailureDetail } from "../observability/document-reading";
 
 /**
  * GET /api/v2/runs/:id/report
@@ -87,6 +88,11 @@ export async function getReport(_req: Request, env: Env, runId: string): Promise
   // NOT a normal partial outcome — it is an internal inconsistency, and it gets its own
   // reasonCode so it can never be mistaken for an honest "the run stopped early".
   const inconsistent = cp.completion.report === "complete";
+  const operationalReason = cp.completion.reasonCode ??
+    cp.failure?.reasonCode ??
+    cp.phases.find((phase) => phase.state === "stopped")?.reasonCode ??
+    (inconsistent ? "report-artifact-missing" : "report-unavailable");
+  const operationalMessage = publicOperationalFailureDetail(operationalReason);
   return json(
     {
       state: inconsistent ? "report-artifact-missing" : "no-final-report",
@@ -98,7 +104,8 @@ export async function getReport(_req: Request, env: Env, runId: string): Promise
       phases: cp.phases,
       contract: cp.contract,
       counts: cp.counts,
-      error: cp.error,
+      message: operationalMessage,
+      error: operationalMessage,
     },
     { status: 200 },
   );

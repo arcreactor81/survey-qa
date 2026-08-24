@@ -40,6 +40,8 @@ import { renderReportHtml as renderReportHtmlUntyped } from "../../../pipeline/r
 // sealed. Importing it is what keeps the two answers one answer.
 // @ts-ignore -- untyped ESM from pipeline/report
 import { sealedContractRevision as sealedContractRevisionUntyped } from "../../../pipeline/report/lib/judgement-record.mjs";
+// @ts-ignore -- untyped ESM from pipeline/report
+import { buildTrustStatements as buildTrustStatementsUntyped } from "../../../pipeline/report/lib/publication.mjs";
 // @ts-ignore -- bundled as a Text module; see `rules` in wrangler.jsonc
 import reportCssUntyped from "../../../pipeline/report/report.css";
 import { checkRecordIntegrity } from "../store/record-integrity";
@@ -342,6 +344,17 @@ export interface RenderedReport {
  */
 export { NotRenderable as NotARunRecord } from "./renderable";
 export const assertRecordShape = assertRenderable;
+
+// Re-exported for the mutation harness. The trust card's counting logic lives in
+// publication.mjs (pipeline), and tests that exercise it through the esbuild bundle see
+// mutations applied by the mutant plugin — tests that import the pipeline file directly do not.
+export const buildTrustStatements = buildTrustStatementsUntyped as (input: {
+  attestation: { state: string; reason?: string | null };
+  evidenceAudit: Map<string, { state: string; href?: string; note?: string }> | null;
+  evidenceCount: number;
+  revision: { sealed: boolean; humanReviewed?: boolean; revisionId?: string | null; sealedAt?: string | null };
+  resultReview: { state: string; headline?: string | null; policyVersion?: string | null };
+}) => Array<{ id: string; label: string; state: string; tone: string; value: string; scope: string; detail: string | null }>;
 
 /**
  * Header attestation state, delegated to the ONE record-integrity checker

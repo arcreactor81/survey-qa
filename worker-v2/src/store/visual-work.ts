@@ -16,6 +16,7 @@
 import { assertV2Key } from "../keys";
 import type {
   AccessibilityCapture,
+  PdfCapture,
   ScreenArtifactRef,
   ScreenCaptureEpoch,
   ScreenCaptureFailure,
@@ -23,6 +24,7 @@ import type {
   ScreenCaptureScope,
   ScreenshotCapture,
 } from "../browser/types";
+import { isPdfCaptureFailureKind } from "../browser/types";
 import type { Env } from "../types/env";
 import type { EvidenceCatalogEntry } from "../types/record";
 import { getBoundCatalogEntry, getVerifiedEvidence } from "./evidence";
@@ -783,7 +785,7 @@ function validateEpochRow(value: unknown, index: number): VisualWorkEpochRow {
   const walkArtifact = validateBinding(root.walkArtifact, `${path}.walkArtifact`, `EV-${pathId}-observation`);
   const epochOrdinal = nonnegativeInteger(root.epochOrdinal, `${path}.epochOrdinal`, MAX_EPOCHS);
   const epochId = nonempty(root.epochId, `${path}.epochId`, 500);
-  const stepIndex = nonnegativeInteger(root.stepIndex, `${path}.stepIndex`, 1_000_000);
+  const stepIndex = stepOrdinal(root.stepIndex, `${path}.stepIndex`, 1_000_000);
   const slot = nonempty(root.slot, `${path}.slot`, 200);
   const scope = validateScope(root.scope, `${path}.scope`);
   const startedAt = timestamp(root.startedAt, `${path}.startedAt`);
@@ -947,6 +949,8 @@ const PATH_OBSERVATION_KEYS = [
   "unfillableControls",
   "unfillableControlCount",
   "navigatorDefaultAnswerCount",
+  "terminationAnnouncementCount",
+  "captureDietSkippedEpochs",
   "screenCaptures",
   "screenCaptureCount",
   "captureFailures",
@@ -1084,27 +1088,89 @@ export function validatePathObservationBytes(bytes: Uint8Array): void {
   parsePathObservation(bytes);
 }
 
+/**
+ * The read-only screen-capture projection that `screens.ts` uses to project epochs.
+ * Named distinctly from the internal `ParsedPathObservation` so the API import is
+ * explicit about which subset it consumes.
+ */
+export interface DecodedPathObservationScreenCaptures {
+  runId: string;
+  pathId: string;
+  attemptId: string;
+  planRevisionId: string;
+  screenCapturesFieldPresent: boolean;
+  screenCaptures: ScreenCaptureEpoch[];
+  walkCaptureFailures: ScreenCaptureFailure[];
+  countIssues: string[];
+}
+
+/**
+ * Strict decode of a PathObservation's screen capture epochs for the screens API.
+ * Returns the same validated parse as `validatePathObservationBytes`, projected into
+ * the shape `screens.ts` consumes.
+ */
+export function decodePathObservationScreenCaptures(bytes: Uint8Array): DecodedPathObservationScreenCaptures {
+  const parsed = parsePathObservation(bytes);
+  return {
+    runId: parsed.runId,
+    pathId: parsed.pathId,
+    attemptId: parsed.attemptId,
+    planRevisionId: parsed.planRevisionId,
+    screenCapturesFieldPresent: parsed.captureFieldPresent,
+    screenCaptures: parsed.epochs,
+    walkCaptureFailures: parsed.walkCaptureFailures,
+    countIssues: parsed.countIssues,
+  };
+}
+
+function validatePdf(value: unknown, path: string, stepIndex: number, slot: string): PdfCapture {
+  const root = plainObject(value, path);
+  const status = oneOf(root.status, ["captured", "failed"] as const, `${path}.status`);
+  if (status === "captured") {
+    exactKeys(root, path, ["status", "ref"]);
+    return { status, ref: validateArtifactRef(root.ref, `${path}.ref`, "rendered-pdf") };
+  }
+  exactKeys(root, path, ["status", "failure"]);
+  const failure = validateFailure(root.failure, `${path}.failure`, stepIndex, slot);
+  if (!isPdfCaptureFailureKind(failure.kind)) {
+    invalid(`${path}.failure.kind`, "must be a PDF capture failure kind");
+  }
+  return { status, failure: failure as ScreenCaptureFailure & { kind: typeof failure.kind } } as PdfCapture;
+}
+
+const EPOCH_V1_KEYS = [
+  "kind",
+  "epochId",
+  "stepIndex",
+  "slot",
+  "scope",
+  "startedAt",
+  "endedAt",
+  "screenReadAt",
+  "screenSignatureHash",
+  "geometry",
+  "screenJson",
+  "screenshot",
+  "accessibility",
+  "captureFailures",
+  "captureFailureCount",
+] as const;
+
+const EPOCH_V1_1_KEYS = [...EPOCH_V1_KEYS, "pdf"] as const;
+
 function parseCaptureEpoch(value: unknown, path: string): { epoch: ScreenCaptureEpoch; countIssues: string[] } {
-  const root = object(value, path, [
-    "kind",
-    "epochId",
-    "stepIndex",
-    "slot",
-    "scope",
-    "startedAt",
-    "endedAt",
-    "screenReadAt",
-    "screenSignatureHash",
-    "geometry",
-    "screenJson",
-    "screenshot",
-    "accessibility",
-    "captureFailures",
-    "captureFailureCount",
-  ]);
-  literal(root.kind, "v2-screen-capture-epoch/1.0.0", `${path}.kind`);
+  // Peek at the kind to decide which key set is valid.
+  const peeked = plainObject(value, path);
+  const kind = oneOf(
+    peeked.kind,
+    ["v2-screen-capture-epoch/1.0.0", "v2-screen-capture-epoch/1.1.0"] as const,
+    `${path}.kind`,
+  );
+  const isV1_1 = kind === "v2-screen-capture-epoch/1.1.0";
+  const allowedKeys = isV1_1 ? [...EPOCH_V1_1_KEYS] : [...EPOCH_V1_KEYS];
+  const root = object(value, path, allowedKeys);
   const epochId = nonempty(root.epochId, `${path}.epochId`, 500);
-  const stepIndex = nonnegativeInteger(root.stepIndex, `${path}.stepIndex`, 1_000_000);
+  const stepIndex = stepOrdinal(root.stepIndex, `${path}.stepIndex`, 1_000_000);
   const slot = nonempty(root.slot, `${path}.slot`, 200);
   const scope = validateScope(root.scope, `${path}.scope`);
   const startedAt = timestamp(root.startedAt, `${path}.startedAt`);
@@ -1132,6 +1198,37 @@ function parseCaptureEpoch(value: unknown, path: string): { epoch: ScreenCapture
       break;
     }
   }
+
+  if (isV1_1) {
+    const pdf = validatePdf(root.pdf, `${path}.pdf`, stepIndex, slot);
+    if (pdf.status === "failed") {
+      if (!captureFailures.some((candidate) => canonicalJson(candidate) === canonicalJson(pdf.failure))) {
+        countIssues.push("captureFailures:missing-modality-failure");
+      }
+    }
+    return {
+      epoch: {
+        kind: "v2-screen-capture-epoch/1.1.0",
+        epochId,
+        stepIndex,
+        slot,
+        scope,
+        startedAt,
+        endedAt,
+        screenReadAt,
+        screenSignatureHash,
+        geometry,
+        screenJson,
+        screenshot,
+        pdf,
+        accessibility,
+        captureFailures,
+        captureFailureCount,
+      },
+      countIssues,
+    };
+  }
+
   return {
     epoch: {
       kind: "v2-screen-capture-epoch/1.0.0",
@@ -1244,6 +1341,9 @@ function validateStepsEnvelope(value: unknown, path: string): void {
       "consoleErrors",
       "evidence",
       "wallMs",
+      "phaseMs",
+      "terminationAnnouncement",
+      "captureDietApplied",
     ]);
     for (const key of Object.keys(step)) if (!allowed.has(key)) invalid(`${stepPath}.${key}`, "unknown step field");
     for (const required of [
@@ -1265,7 +1365,7 @@ function validateStepsEnvelope(value: unknown, path: string): void {
     ]) {
       if (!hasOwn(step, required)) invalid(stepPath, `missing required step field ${required}`);
     }
-    nonnegativeInteger(step.stepIndex, `${stepPath}.stepIndex`, 1_000_000);
+    stepOrdinal(step.stepIndex, `${stepPath}.stepIndex`, 1_000_000);
     nullableString(step.decisionQuestion, `${stepPath}.decisionQuestion`, 1_000);
     oneOf(step.decisionSource, ["plan", "navigator-default", "probe", "recovery"] as const, `${stepPath}.decisionSource`);
     if (hasOwn(step, "bindingVia")) nullableString(step.bindingVia, `${stepPath}.bindingVia`, MAX_TEXT);
@@ -1304,6 +1404,8 @@ function validateOptionalPathFields(root: Record<string, unknown>): void {
     "readerLimitationCount",
     "unfillableControlCount",
     "navigatorDefaultAnswerCount",
+    "terminationAnnouncementCount",
+    "captureDietSkippedEpochs",
   ]) {
     if (hasOwn(root, field)) nonnegativeInteger(root[field], `$artifact.${field}`, Number.MAX_SAFE_INTEGER);
   }
@@ -1311,7 +1413,7 @@ function validateOptionalPathFields(root: Record<string, unknown>): void {
     arrayValue(root.readerLimitations, "$artifact.readerLimitations", MAX_FAILURES).forEach((value, index) => {
       const path = `$artifact.readerLimitations[${index}]`;
       const row = object(value, path, ["stepIndex", "kind", "detail", "count"]);
-      nonnegativeInteger(row.stepIndex, `${path}.stepIndex`, 1_000_000);
+      stepOrdinal(row.stepIndex, `${path}.stepIndex`, 1_000_000);
       nonempty(row.kind, `${path}.kind`, 500);
       nonempty(row.detail, `${path}.detail`, MAX_TEXT);
       positiveInteger(row.count, `${path}.count`, 1_000_000);
@@ -1341,7 +1443,7 @@ function validateOptionalPathFields(root: Record<string, unknown>): void {
         `${path}.reason`,
       );
       nonempty(row.detail, `${path}.detail`, MAX_TEXT);
-      nonnegativeInteger(row.stepIndex, `${path}.stepIndex`, 1_000_000);
+      stepOrdinal(row.stepIndex, `${path}.stepIndex`, 1_000_000);
     });
   }
 }
@@ -1418,7 +1520,11 @@ function validateArtifactRef<K extends ScreenArtifactRef["kind"]>(
     "size",
   ]);
   literal(root.kind, expectedKind, `${path}.kind`);
-  const expectedMedia = expectedKind === "screenshot" ? "image/png" : "application/json";
+  const expectedMedia = expectedKind === "screenshot"
+    ? "image/png"
+    : expectedKind === "rendered-pdf"
+      ? "application/pdf"
+      : "application/json";
   literal(root.mediaType, expectedMedia, `${path}.mediaType`);
   return {
     kind: expectedKind,
@@ -1487,6 +1593,13 @@ const FAILURE_KINDS = [
   "screenshot-capture-failed",
   "screenshot-capture-empty",
   "screenshot-evidence-write-failed",
+  "pdf-api-unavailable",
+  "pdf-capture-timeout",
+  "pdf-capture-failed",
+  "pdf-capture-empty",
+  "pdf-capture-size-limit",
+  "pdf-capture-dimension-limit",
+  "pdf-evidence-write-failed",
   "accessibility-api-unavailable",
   "accessibility-snapshot-failed",
   "accessibility-snapshot-empty",
@@ -1509,7 +1622,7 @@ function validateFailure(
   const detail = nonempty(root.detail, `${path}.detail`, MAX_TEXT);
   const count = positiveInteger(root.count, `${path}.count`, 1_000_000);
   const at = timestamp(root.at, `${path}.at`);
-  const stepIndex = nonnegativeInteger(root.stepIndex, `${path}.stepIndex`, 1_000_000);
+  const stepIndex = stepOrdinal(root.stepIndex, `${path}.stepIndex`, 1_000_000);
   const slot = nonempty(root.slot, `${path}.slot`, 200);
   if (expectedStepIndex !== undefined && expectedStepIndex !== stepIndex) {
     invalid(`${path}.stepIndex`, "does not bind its capture epoch");
@@ -1968,6 +2081,25 @@ function nonnegativeInteger(value: unknown, path: string, max: number): number {
     invalid(path, `must be an integer from 0 through ${max}`);
   }
   return value as number;
+}
+
+/**
+ * Step ordinals are whole steps (k) or the walker's recovery interleave (k + 0.5): the driver
+ * records the recovery it runs after a blocked step as `stepIndex + 0.5` by design, so a strict
+ * boundary demanding integers here rejects every legal recovery walk as corrupt. Accept exactly
+ * the writer's domain — halves and nothing finer; 2.25, NaN, and negatives still fail.
+ */
+function stepOrdinal(value: unknown, path: string, max: number): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > max ||
+    !Number.isSafeInteger(value * 2)
+  ) {
+    invalid(path, `must be a whole or half step ordinal from 0 through ${max}`);
+  }
+  return value;
 }
 
 function positiveInteger(value: unknown, path: string, max: number): number {

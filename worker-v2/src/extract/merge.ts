@@ -709,6 +709,20 @@ export async function mergePasses(
     diff.counts.notBrowserVerifiable > 0
       ? `${diff.counts.notBrowserVerifiable} mandate(s) cannot be confirmed by a browser at all; they are recorded and excluded from browser verdicts.`
       : `Every mandate found is observable from a browser.`,
+    // AMBIGUITY FUNNEL — honest accounting so a reader of the diff summary knows how many
+    // extraction ambiguities exist, how many are sealed, and how many are undispositioned.
+    diff.counts.ambiguities > 0
+      ? `${diff.counts.ambiguities} ambiguity reading(s) recorded by extraction; ${rows.filter((r) => r.requirement.assertionStatus === "ambiguous").length} requirement(s) sealed as AMBIGUOUS; ${disputed.length} sealed as DISPUTED. Ambiguities that bind to no sealed requirement are carried to the sealed record as extraction-declared questions.`
+      : `No ambiguous readings were recorded by either extraction pass.`,
+    // ENTAILED OVER-CLAIMS — model-derived normative statements are not document-quoted.
+    // The audit measured ENTAILED statements containing "exactly N" claims that contradict
+    // the document's actual option counts. This warning makes the distinction visible.
+    (() => {
+      const entailed = rows.filter((r) => r.requirement.assertionStatus === "entailed");
+      return entailed.length > 0
+        ? `${entailed.length} of ${rows.length} requirement(s) are ENTAILED: their normativeStatement is model-derived prose (not the document's own words) and may contain inaccurate quantifiers such as "exactly N" when the document lists a different count. The document quote (displayQuote) is the verbatim text; the statement is a model summary of what the quote obliges.`
+        : `No requirements are entailed.`;
+    })(),
   ];
 
   // A widened or collapsed identity is a fact about the DOCUMENT — a mandate it states once

@@ -23,24 +23,108 @@
  */
 
 import type { Env } from "../../types/env";
+import { unsettledBucketFor } from "../../types/contracts";
 import { judgementKey, recordKey } from "../../keys";
 import { getContractRevision } from "../../store/contract-revision";
-import { ArtifactNameCollision, loadRunInputs, loadArtifactBytes, signingKeys, type RunInputs } from "./run-inputs";
+import { ArtifactNameCollision, loadRunInputs, loadArtifactBytesStreaming, buildR2Source, signingKeys, type RunInputs, type StreamingArtifactResult } from "./run-inputs";
 import { stageNotEvaluated, type StageResult } from "../gates";
+import { itemResultsKey } from "../../keys";
+import { sha256Hex } from "../../store/hash";
 import type { ItemResult } from "../../types/record";
+import { filterCommittedEvidence, MissingWalkLedgerError, type CommittedEvidenceResult } from "../../store/committed-evidence";
+// The execution ledger's key and shape — the committed-evidence filter needs the walk
+// records and the R2 key to load them. Imported from execute-batch rather than re-spelled.
+import { execProgressKey, type ExecProgress, type WalkRecord } from "./execute-batch";
 
 // @ts-ignore -- untyped ESM, shared with the offline pipeline
 import { aggregate, rejectModelDerivedVerdicts, AGGREGATOR_ID } from "./assemble-record.mjs";
 // @ts-ignore -- untyped ESM
 import { judgeRunInIsolate, publicRegistryFor } from "./judge-runtime.mjs";
+// @ts-ignore -- untyped ESM — engine-side budget errors caught below
+import { EngineRetainedBudgetExceeded, SingleArtifactTooLarge } from "../../../../pipeline/judge/lib/evidence-store.mjs";
 // @ts-ignore -- untyped ESM
 import { checklistFromExtraction, checklistFromRevision } from "./checklist-projection.mjs";
 import { runChecklistKey, readRunChecklist } from "./checklist-store";
 
+/**
+ * The walk ledger for the committed-evidence filter, loaded the same way assemble-record
+ * loads it — one keyed R2 GET, same key, same shape.
+ *
+ * WHY DUPLICATED. The assembler's `executionWalks` is a private function (not exported),
+ * and rightly so — assemble-record.ts owns the record's walk facts. The judge needs the
+ * same ledger for a DIFFERENT reason: to filter evidence before mounting it. A shared
+ * helper would couple two stages whose independence is the point, so the read is restated
+ * once here with the same semantics: null means "missing or unreadable", and the committed-
+ * evidence filter refuses loudly on null.
+ */
+async function executionWalks(env: Env, runId: string): Promise<WalkRecord[] | null> {
+  const obj = await env.EVIDENCE.get(execProgressKey(runId));
+  if (!obj) return null;
+  try {
+    const progress = (await obj.json()) as ExecProgress;
+    return progress?.kind === "v2-execution-progress/1.0.0" && Array.isArray(progress.walks)
+      ? progress.walks
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface DerivedVerdicts {
+  /**
+   * THE FULL ITEM RESULTS ARRAY.
+   *
+   * Direct callers (tests, dev endpoints, replay) receive this in memory. The Workflow
+   * step body STRIPS this field before returning through `step.do` so the step state
+   * carries only the summary (the platform per-step state cap is 1 MiB; with 588
+   * requirements the full ItemResult[] array was several hundred KB). The array is also
+   * persisted to R2 at `itemResultsKey(runId)` so the assembler step can load it without
+   * receiving it through the Workflow boundary.
+   */
   itemResults: ItemResult[];
+  /** Content hash of the persisted itemResults JSON for verification. */
+  itemResultsHash: string;
   /** For the checkpoint's phase note; each is a sentence a report can print verbatim. */
   summary: { requirements: number; cases: number; byVerdict: Record<string, number> };
+}
+
+/**
+ * THE WORKFLOW-SAFE SUBSET of DerivedVerdicts that fits within the 1 MiB step state cap.
+ *
+ * `step.do("derive-verdicts", ...)` returns this through the Workflow boundary instead of
+ * the full `DerivedVerdicts`. The assembler loads the full itemResults from R2 via
+ * `loadDerivedItemResults(env, runId)`.
+ */
+export interface DerivedVerdictsSummary {
+  itemResultsHash: string;
+  summary: DerivedVerdicts["summary"];
+}
+
+/**
+ * Strip the full itemResults array from a stage result, keeping only the summary.
+ * The result type changes from StageResult<DerivedVerdicts> to StageResult<DerivedVerdictsSummary>
+ * so the Workflow step state stays small.
+ */
+export function summarizeDerivedVerdicts(
+  result: StageResult<DerivedVerdicts>,
+): StageResult<DerivedVerdictsSummary> {
+  if (result.state !== "evaluated") return result;
+  const { itemResults: _stripped, ...rest } = result.value;
+  return { ...result, value: rest };
+}
+
+/**
+ * LOAD THE PERSISTED ITEM RESULTS from R2.
+ *
+ * This is the read path for the assembler (and any consumer that receives only the
+ * summary through the Workflow step boundary). The derive-verdicts step persists the
+ * full array to `itemResultsKey(runId)` before returning.
+ * Returns null when the key is absent (old runs that pre-date this change).
+ */
+export async function loadDerivedItemResults(env: Env, runId: string): Promise<ItemResult[] | null> {
+  const obj = await env.EVIDENCE.get(itemResultsKey(runId));
+  if (!obj) return null;
+  return JSON.parse(await obj.text()) as ItemResult[];
 }
 
 /**
@@ -48,7 +132,13 @@ export interface DerivedVerdicts {
  * SEALED revision rather than from what happened to be observed.
  */
 export async function deriveItemResults(env: Env, runId: string): Promise<StageResult<DerivedVerdicts>> {
-  const inputs = await loadRunInputs(env, runId);
+  // THE AGGREGATOR NEVER READS THE EVIDENCE CATALOGUE. Its job is arithmetic over a
+  // tri-state verifier decision and a sealed denominator — `observations` and `revision`,
+  // nothing more. Loading the catalogue cost 19 minutes across three attempts on the real
+  // v100 run (9 340 entries, ~5 minutes per fetch, all three fetches discarded — bench-
+  // measured 22 Aug receipt). `catalog: false` is the fix: `loadRunInputs` returns
+  // `evidence: []` and never touches R2's evidence prefix.
+  const inputs = await loadRunInputs(env, runId, { catalog: false });
   if (!inputs.revision) {
     return stageNotEvaluated<DerivedVerdicts>(
       "NO_SEALED_CONTRACT",
@@ -71,10 +161,21 @@ export async function deriveItemResults(env: Env, runId: string): Promise<StageR
   const byVerdict: Record<string, number> = {};
   for (const r of itemResults) byVerdict[r.verdict] = (byVerdict[r.verdict] ?? 0) + 1;
 
+  // PERSIST THE FULL ARRAY TO R2 so the Workflow step state carries only the summary.
+  // The platform per-step state cap is 1 MiB; with 588 requirements the full
+  // ItemResult[] was several hundred KB. The assembler loads from R2 via
+  // `loadDerivedItemResults(env, runId)` instead of receiving it through the boundary.
+  const serialized = JSON.stringify(itemResults);
+  const itemResultsHash = await sha256Hex(serialized);
+  await env.EVIDENCE.put(itemResultsKey(runId), serialized, {
+    httpMetadata: { contentType: "application/json" },
+  });
+
   return {
     state: "evaluated",
     value: {
       itemResults,
+      itemResultsHash,
       summary: {
         requirements: itemResults.length,
         cases: itemResults.reduce((n, r) => n + r.facetResults.length, 0),
@@ -99,14 +200,13 @@ function unreachedFromCursor(inputs: RunInputs): Record<string, string> {
   const cursor = inputs.checkpoint?.execution ?? null;
   const reason = inputs.checkpoint?.completion.reasonCode ?? null;
   if (!cursor || cursor.pendingCaseIds.length === 0) return {};
-  const status =
-    reason === "wall-clock-cap"
-      ? "time-exhausted"
-      : reason && reason.endsWith("-cap")
-        ? "budget-exhausted"
-        : reason
-          ? "blocked"
-          : "not-reached";
+  // OUR SHORTFALL IS NOT THEIR REFUSAL. This read "any reason code that is not a `-cap`" as
+  // `blocked`, which in a signed record means "the site stopped us here" — so a run that
+  // stopped on `coverage-shortfall-unexercised` wrote hundreds of cases we NEVER DROVE into
+  // the record as refusals by the customer's survey. `unsettledBucketFor` (types/contracts.ts)
+  // holds the mapping once, shared with the checkpoint's own `stopBucket`, so the record and
+  // the run's blocker sentence cannot say different things about the same cases.
+  const status = unsettledBucketFor(reason);
   return Object.fromEntries(cursor.pendingCaseIds.map((id) => [id, status]));
 }
 
@@ -126,6 +226,20 @@ export interface MintedJudgement {
   checklistSource: "extraction" | "revision-projection";
   ambiguitiesAvailable: boolean;
   artifacts: number;
+  /** How many identical catalogue rows were collapsed before judging (retried steps record twice). */
+  duplicatesCollapsed: number;
+  /**
+   * How many catalogue rows were superseded by a live recording of a retried step.
+   * null when no superseded recordings were found — distinguishable from zero.
+   */
+  supersededRecordings: number | null;
+  /** Plain sentence surfaced on the report alongside duplicatesCollapsed. */
+  supersededNote: string | null;
+  /**
+   * EVIDENCE ENTRIES THAT COULD NOT BE LOADED — named limitations carried to the report.
+   * Zero means every entry loaded successfully.
+   */
+  evidenceLimitations: number;
 }
 
 /**
@@ -193,12 +307,67 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
       sourceDocument: inputs.envelope?.input.documentName ?? null,
     });
 
+  // -----------------------------------------------------------------------
+  // THE COMMITTED-ATTEMPT EVIDENCE FILTER — applied on the judge side too, so the judge's
+  // mount contains exactly the same evidence the signed record was built from. Without this
+  // the judge would re-inherit orphan rows from killed attempts and either collide on them
+  // (the v99/v100 defect) or judge evidence the record does not carry.
+  //
+  // The walk ledger is loaded the same way assemble-record loads it: one keyed R2 GET.
+  // A missing ledger makes the filter REFUSE LOUDLY (throw MissingWalkLedgerError). The
+  // caller catches that refusal and degrades to unfiltered evidence with a log — the
+  // record was already assembled with the filter's output (or its own degradation), so
+  // the judge using unfiltered evidence when the ledger is missing is an honest fallback,
+  // not a silent pass-through.
+  // -----------------------------------------------------------------------
+  const walks = await executionWalks(env, runId);
+  let evidenceFilter: CommittedEvidenceResult;
+  try {
+    evidenceFilter = filterCommittedEvidence(inputs.evidence, walks);
+  } catch (err) {
+    if (err instanceof MissingWalkLedgerError) {
+      console.error(
+        `mint-judgement: ${runId} — committed-evidence filter refused: ${err.message}`,
+      );
+      evidenceFilter = {
+        kept: inputs.evidence,
+        droppedOrphans: [],
+        droppedByRef: [],
+        sentence: "committed-evidence filter could not run: walk ledger unavailable. Evidence passed unfiltered.",
+      };
+    } else {
+      throw err;
+    }
+  }
+  const committedEvidence = evidenceFilter.kept;
+  if (evidenceFilter.droppedOrphans.length > 0) {
+    console.log(
+      `mint-judgement: ${runId} — ${evidenceFilter.sentence}`,
+    );
+  }
+
+  // A3 — MEMORY-SAFE JUDGING: use the streaming loader to bound residency.
+  //
+  // The streaming loader splits artifacts into engine-read (JSON, written to tmpdir) and
+  // hash-verify-only (PNGs, etc., hashed and released). This bounds the memory footprint:
+  // instead of ~530MB of blobs in a single array, only the ~60-200MB of observation JSONs
+  // stays resident, and the ~9,000 step PNGs are verified in 24-entry batches.
+  //
   // A catalogue whose basenames collide cannot be judged honestly: the mount would lose
   // evidence and the signed manifest would double-count it. Saying so is the right outcome;
   // judging the survivors would report a smaller evidence set as if it were the whole one.
-  let artifacts: Array<{ name: string; bytes: Uint8Array }>;
+  let streamResult: StreamingArtifactResult;
   try {
-    artifacts = await loadArtifactBytes(env, inputs.evidence);
+    streamResult = await loadArtifactBytesStreaming(env, committedEvidence);
+    // Surface limitations as log so they are visible in Workflow step output,
+    // but do NOT block the judging — the run proceeds with the artifacts it has.
+    if (streamResult.limitations.length > 0) {
+      console.log(
+        `v2 ${runId}: ${streamResult.limitations.length} evidence limitation(s): ` +
+          streamResult.limitations.slice(0, 5).map((l) => l.reason).join("; ") +
+          (streamResult.limitations.length > 5 ? ` (and ${streamResult.limitations.length - 5} more)` : ""),
+      );
+    }
   } catch (err) {
     if (err instanceof ArtifactNameCollision) {
       return stageNotEvaluated<MintedJudgement>("EVIDENCE_NAME_COLLISION", err.message);
@@ -215,22 +384,54 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
     ? publicRegistryFor(keys.recordKeyPem, keys.recordKeyId)
     : null;
 
-  const { judged } = judgeRunInIsolate({
-    runId,
-    checklist,
-    record,
-    revision,
-    artifacts,
-    keyRegistry,
-    signer: keys.judgementKeyPem
-      ? { privateKeyPem: keys.judgementKeyPem, keyId: keys.judgementKeyId, signedAt: new Date().toISOString() }
-      : null,
-  }) as { judged: JudgeOutput };
+  // A3b — BUILD THE R2-BACKED SOURCE AND CATALOGUE DESCRIPTORS.
+  //
+  // The engine-read descriptors carry catalogue metadata (name, contentHash, byteLength)
+  // but NO bytes. The R2-backed source fetches bytes on demand when the engine reads them.
+  // All catalogue entries (engine-read + hash-verify-only) are passed to the authority as
+  // preVerifiedArtifacts so manifestComplete covers the full set.
+  const r2Source = buildR2Source(env, streamResult.engineRead);
+  const catalogueDescriptors = new Map<string, { contentHash: string; byteLength: number }>();
+  for (const d of streamResult.engineRead) {
+    catalogueDescriptors.set(d.name, { contentHash: d.contentHash, byteLength: d.byteLength });
+  }
+  for (const [name, pv] of streamResult.preVerifiedHashes) {
+    catalogueDescriptors.set(name, { contentHash: pv.contentHash, byteLength: pv.byteLength });
+  }
+
+  let judged: JudgeOutput;
+  try {
+    const result = await judgeRunInIsolate({
+      runId,
+      checklist,
+      record,
+      revision,
+      // A3b: catalogue descriptors for the authority's manifest check.
+      catalogueDescriptors,
+      // A3b: R2-backed source for the engine's async byte reads.
+      source: r2Source,
+      keyRegistry,
+      signer: keys.judgementKeyPem
+        ? { privateKeyPem: keys.judgementKeyPem, keyId: keys.judgementKeyId, signedAt: new Date().toISOString() }
+        : null,
+    }) as { judged: JudgeOutput };
+    judged = result.judged;
+  } catch (err: unknown) {
+    // A3b — engine-side budget errors become named stageNotEvaluated results.
+    if (err instanceof EngineRetainedBudgetExceeded) {
+      return stageNotEvaluated<MintedJudgement>("ENGINE_RETAINED_BUDGET_EXCEEDED", (err as Error).message);
+    }
+    if (err instanceof SingleArtifactTooLarge) {
+      return stageNotEvaluated<MintedJudgement>("SINGLE_ARTIFACT_TOO_LARGE", (err as Error).message);
+    }
+    throw err;
+  }
 
   await env.EVIDENCE.put(judgementKey(runId), JSON.stringify(judged.judgement), {
     httpMetadata: { contentType: "application/json" },
   });
 
+  const totalArtifacts = streamResult.engineRead.length + streamResult.preVerifiedHashes.size;
   return {
     state: "evaluated",
     value: {
@@ -248,7 +449,15 @@ export async function mintJudgement(env: Env, runId: string): Promise<StageResul
       },
       checklistSource: fromExtraction ? "extraction" : "revision-projection",
       ambiguitiesAvailable: !!checklist.ambiguitiesAvailable,
-      artifacts: artifacts.length,
+      artifacts: totalArtifacts,
+      // A retried step records its captures twice; identical rows are collapsed before the
+      // collision check. Zero when the catalogue had no duplicates.
+      duplicatesCollapsed: streamResult.duplicatesCollapsed,
+      // Superseded recordings: same (basename, ref), different hash — resolved by verifying
+      // which blob exists in storage. null when no superseded recordings were found.
+      supersededRecordings: streamResult.supersededRecordings,
+      supersededNote: streamResult.supersededNote,
+      evidenceLimitations: streamResult.limitations.length,
     },
     proof: {
       evaluatorId: "pipeline/judge",

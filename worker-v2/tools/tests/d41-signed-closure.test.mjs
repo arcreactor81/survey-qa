@@ -741,7 +741,7 @@ suite("D41 — the fields the record declared empty while the data sat in its in
     assertEq(crash.stopReason, "load-crash", "the stop reason is the driver's own closed word");
     assertEq(crash.startedAt, "2026-08-08T02:51:49.200Z", "start is end minus duration — both recorded, neither guessed");
     assertEq(crash.endedAt, "2026-08-08T02:51:49.600Z");
-    assertEq(crash.derivedBy, "v2-attempt-projection/1.0.0");
+    assertEq(crash.derivedBy, "v2-attempt-projection/1.2.0");
 
     assertEq(retry.attemptNumber, 2, "the retry is the second walk of its path");
     assertEq(retry.ok, true);
