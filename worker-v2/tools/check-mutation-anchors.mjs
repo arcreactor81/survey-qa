@@ -150,7 +150,14 @@ for (const campaign of campaigns) {
 // not, and it cost a 2.5-hour inspection restart).
 // ---------------------------------------------------------------------------
 const registeredNames = new Set();
-const testFileDirs = [join(V2, "tools", "tests"), join(V2, "ui")];
+const testFileDirs = [
+  join(V2, "tools", "tests"),
+  join(V2, "ui"),
+  // Track 1: mutation kills may name tests in the judge selftests, which live
+  // in the pipeline (outside worker-v2). Scanning them keeps the anchor checker
+  // honest about kill names that reach across the boundary.
+  resolve(V2, "..", "pipeline", "judge", "selftest"),
+];
 for (const dir of testFileDirs) {
   let files = [];
   try { files = readdirSync(dir).filter((f) => f.endsWith(".mjs")); } catch { continue; }

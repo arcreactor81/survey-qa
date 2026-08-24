@@ -189,7 +189,33 @@ export function nullAuthority(reasonCode, detail) {
     ambiguityBinding: { signed: false, perAmbiguity: new Map(), findings: [], detail: { localAmbiguities: null, signedTokens: 0 } },
     contractItems: new Map(),
     contractAssumptions: null,
+    contractFacetInstances: new Map(),
   };
+}
+
+/**
+ * Track 1 — index FacetInstances by their owning requirement id.
+ *
+ * The sealed ContractRevision's facetInstances (materialised by expand.ts and
+ * projected through v2-record.mjs#caseLedgerRows) carry typed payloads the
+ * compiler can mint expectations from without prose parsing. This index groups
+ * them by `requirementLineageId` (= `itemId` = the obligation id), so the
+ * compiler can look up "what typed cases does this obligation have?".
+ *
+ * @returns {Map<string, object[]>}  requirementLineageId -> array of case rows
+ */
+function buildFacetInstanceIndex(view) {
+  const out = new Map();
+  const instances = view && view.contract && Array.isArray(view.contract.facetInstances)
+    ? view.contract.facetInstances
+    : [];
+  for (const fi of instances) {
+    const key = fi.requirementLineageId || fi.itemId;
+    if (!key) continue;
+    if (!out.has(key)) out.set(key, []);
+    out.get(key).push(fi);
+  }
+  return out;
 }
 
 /** Re-exported so callers do not grow a second definition of the root. */
@@ -447,6 +473,18 @@ export function loadEvidenceAuthority({
     // reads. See contract-binding.mjs.
     contractAssumptions: Array.isArray(view.contract && view.contract.assumptions)
       ? view.contract.assumptions : null,
+    // TYPED PAYLOADS FROM THE SEALED REVISION (Track 1 — deterministic minting).
+    //
+    // The sealed ContractRevision's FacetInstances carry typed payloads —
+    // optionSet, routeAnswer, expectedDestination, boundaryInput — that the
+    // expander materialised from the document. These are INSIDE the signed
+    // revision digest (they are part of `semanticContractBody`), so they are
+    // signed data, not unsigned enrichment.
+    //
+    // Keyed by requirementLineageId (= the obligation id = the contractItem id),
+    // each entry is an array of case-ledger rows for that requirement. The
+    // compiler reads these to mint typed expectations without prose parsing.
+    contractFacetInstances: buildFacetInstanceIndex(view),
     /** Which record shape produced this authority. Diagnostic, never a gate. */
     recordShape: isRunRecordV2(record) ? 'run-record/2' : 'run-record/1',
   };

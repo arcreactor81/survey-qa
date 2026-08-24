@@ -543,7 +543,7 @@ const PRIOR_TO_AXIS = {
  * A3b: async — attestAll and tripwires are async.
  */
 export async function judgeObligation(obligation, ctx, ambIndex, prior = null) {
-  const { expectation, ruleId } = compileObligation(obligation, ctx.docIndex);
+  const { expectation, ruleId, unmintableDetail: mintDetail } = compileObligation(obligation, ctx.docIndex);
   const precedence = precedenceFor(obligation.id, ambIndex);
 
   let predicateResult = null;
@@ -580,6 +580,10 @@ export async function judgeObligation(obligation, ctx, ambIndex, prior = null) {
     reason: d.reason,
     withheld: d.withheld || null,
     note: d.note || null,
+
+    // Track 1: when an obligation has no typed expectation, name the family
+    // so the report can say WHAT kind of obligation was not assessed.
+    unmintableDetail: !expectation ? (mintDetail || null) : null,
 
     // --- how it was derived, in full -------------------------------------
     expectation: expectation || null,
