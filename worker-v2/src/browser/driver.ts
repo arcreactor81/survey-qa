@@ -5653,6 +5653,18 @@ export function classifyEnding(
      */
     navigatorDefaults?: number;
     unfillable?: UnfillableControl[];
+    /**
+     * MID-WALK TERMINATION ANNOUNCEMENTS DETECTED ON INTERMEDIATE SCREENS.
+     *
+     * When the walker detects a SCREENOUT_MARKERS match on a screen that still has a forward
+     * control (so classifyEnding would not type it from the final screen), the announcement is
+     * recorded per-step. Surfacing it here makes the termination banner visible in the ending
+     * evidence — a consumer reading the ending can see that the survey announced termination
+     * mid-walk without having to re-read every step artifact.
+     *
+     * Optional: older callers and walks with no announcements omit it; absence is never "none".
+     */
+    terminationAnnouncements?: Array<{ stepIndex: number; matchedText: string; questionToken: string | null }>;
   },
 ): WalkEnding {
   if (!final) {
@@ -5682,6 +5694,18 @@ export function classifyEnding(
       `${named.length} control(s) on this walk were NOT answered: ` +
         named.map((u) => `${u.type}${u.label ? ` "${u.label.slice(0, 40)}"` : ""} (${u.reason})`).join("; "),
     );
+  }
+  // TERMINATION BANNERS DETECTED MID-WALK. These are facts the walker already recorded on
+  // intermediate steps; surfacing them in the ending evidence makes the termination visible
+  // to a reader of the ending without re-reading every step artifact.
+  const announcements = ctx.terminationAnnouncements ?? [];
+  if (announcements.length > 0) {
+    for (const ann of announcements) {
+      provenance.push(
+        `mid-walk termination announcement on step ${ann.stepIndex}: the screen said ${JSON.stringify(ann.matchedText)}` +
+          (ann.questionToken ? ` (at question ${ann.questionToken})` : ""),
+      );
+    }
   }
   const text = `${final.questionText ?? ""}\n${final.visibleText ?? ""}`;
   const screenout = firstMatch(text, SCREENOUT_MARKERS);
@@ -5987,6 +6011,8 @@ export async function walkPath(
   let navigatorDefaultAnswerCount = 0;
   /** OUTCOME 3 (D1): how many steps crossed a mid-walk termination announcement. */
   let terminationAnnouncementCount = 0;
+  /** Collected termination announcements with step indices, for ending evidence (defect 2). */
+  const terminationAnnouncements: Array<{ stepIndex: number; matchedText: string; questionToken: string | null }> = [];
   const countDefaults = (as: PerformedAction[]): void => {
     for (const a of as) if (a.ok && typeof a.detail === "string" && a.detail.startsWith("navigator-default")) navigatorDefaultAnswerCount += 1;
   };
@@ -6201,7 +6227,14 @@ export async function walkPath(
     // whose text matches a SCREENOUT_MARKERS entry while the walk is still mid-survey is
     // announcing termination. This is LABELING ONLY — does not change navigation.
     const stepAnnouncement = detectTerminationAnnouncement(before, walkQuestionIds);
-    if (stepAnnouncement) terminationAnnouncementCount += 1;
+    if (stepAnnouncement) {
+      terminationAnnouncementCount += 1;
+      terminationAnnouncements.push({
+        stepIndex,
+        matchedText: stepAnnouncement.matchedText,
+        questionToken: stepAnnouncement.questionToken,
+      });
+    }
 
     const stepVariant = stepIndex >= variantFromStep ? fillerVariant : 0;
     const { actions, notOffered, unfillable } = await timed(
@@ -7071,6 +7104,7 @@ export async function walkPath(
     unboundDecisions: unbound,
     navigatorDefaults: navigatorDefaultAnswerCount,
     unfillable: unfillableControls,
+    terminationAnnouncements,
   });
 
   const obs: PathObservation = {
