@@ -642,6 +642,12 @@ const FILES = [
   // = byte-identical, lane can never emit fail, model-call failure demotes to named insufficient,
   // flags never change verdict counts. Evidence they can fail: tools/mutate-model-verifier.mjs.
   "./tests/d59-model-verifier-lane.test.mjs",
+  // D60 — SCREENER-STEERING DEFECT CHAIN (4A–4D + reporting + outcomeDetail). Four defects
+  // from the 24 Aug run where 73/73 walks screened out. The continue-directive arm (4A),
+  // negation detection (4B), code-uniqueness guard (4C), avoid-label strictness (4D),
+  // the unstampable-directive limitation, and the outcomeDetail honesty fix.
+  // Evidence they can fail: tools/mutate-survival-hints.mjs (extended).
+  "./tests/d60-screener-steering-chain.test.mjs",
 ];
 
 export async function runVerification({

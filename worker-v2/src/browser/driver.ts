@@ -271,7 +271,11 @@ const NONE_STYLE_OPTION = /\bnone of the above\b|\bnone of these\b|^\s*none\b|\b
 // keeps it).
 const SPECIFY_STYLE_LABEL = /\bplease specify\b|\(specify\)|\bspecify\b/i;
 
-/** Label match: exact first, then containment either way. Never fuzzy scoring. */
+/**
+ * Label match for the POSITIVE (select/prefer) path: exact first, then containment
+ * either way. Never fuzzy scoring. This is the original containment-based matching
+ * that is correct for select/request semantics.
+ */
 function labelMatches(optionLabel: string, wanted: string): boolean {
   const a = norm(optionLabel);
   const b = norm(wanted);
@@ -279,6 +283,44 @@ function labelMatches(optionLabel: string, wanted: string): boolean {
   if (a === b) return true;
   if (a.includes(b) && b.length >= 3) return true;
   if (b.includes(a) && a.length >= 3) return true;
+  return false;
+}
+
+/**
+ * AVOID-SIDE LABEL MATCH (4D). Stricter than the positive path: an avoid label must
+ * match the full option label, not merely be a substring of it.
+ *
+ * RULES (explicit, stated):
+ *   1. Exact normalized equality: "Hospital" matches "Hospital" (case/punct insensitive).
+ *   2. Token-superset boundary match: the option label IS the avoid label possibly with
+ *      punctuation/casing differences. This handles forms like "Hospital." or "(Hospital)".
+ *   3. Substring containment of a LONGER DIFFERENT label does NOT match: an avoid label
+ *      "Hospital" must NOT flag "IDN / Health system (i.e., a group of hospital(s) and
+ *      clinic(s))". The option carries additional semantic content, making it a different
+ *      answer.
+ *
+ * ASSUMPTION STATED: this only applies to avoid-direction matching. The positive select
+ * path keeps containment because a planned label "Director of ops" should match an option
+ * rendered as "Director of operations" or vice versa.
+ */
+function avoidLabelMatches(optionLabel: string, avoidLabel: string): boolean {
+  const a = norm(optionLabel);
+  const b = norm(avoidLabel);
+  if (!a || !b) return false;
+  // Rule 1: exact normalized equality.
+  if (a === b) return true;
+  // Rule 2: same token count AND same token set — i.e. the two labels are the same words,
+  // possibly reordered (punctuation/casing already normalized away by norm()). DELIBERATELY
+  // STRICTER than a fluff-tolerant superset: an option label with ANY extra token is a
+  // different answer and is never flagged. "(Hospital)" matches "Hospital" via rule 1 after
+  // normalization; "a group of hospital(s) and clinic(s)" never matches "Hospital".
+  const aTokens = a.split(" ").filter(Boolean);
+  const bTokens = b.split(" ").filter(Boolean);
+  if (aTokens.length === bTokens.length) {
+    // Same token count: require every token matches (handles reordering).
+    const bSet = new Set(bTokens);
+    if (aTokens.every((t) => bSet.has(t))) return true;
+  }
   return false;
 }
 
@@ -3963,21 +4005,31 @@ async function applyDecision(
     // heuristic below covers the single-group shape).
     const screenOptionRows = screen.optionGroups.flatMap((g) => g.options.map((o) => ({ group: g, option: o })));
     const checkboxGroupCount = screen.optionGroups.filter((g) => g.kind === "checkbox").length;
-    // OUTCOME 1 (D1): notFlagged checks both label and code matching.
+    // 4C: CODE UNIQUENESS. The code arm may only fire when option codes are DISTINCT across
+    // the screen's option rows. On screens where codes are NOT unique (every checkbox group
+    // carried value "1"), code "1" matches every option, flagging everything and disabling
+    // the None-of-the-above rescue. ASSUMPTION STATED: codes are platform-assigned identifiers
+    // and should be unique within a screen; when they are not, the code arm is inert and
+    // matching falls back to label-only.
+    const allScreenCodes = screenOptionRows.map((r) => r.option.code).filter((c): c is string => typeof c === "string" && c.length > 0);
+    const screenCodesDistinct = allScreenCodes.length === 0 || new Set(allScreenCodes).size === allScreenCodes.length;
+    // OUTCOME 1 (D1): notFlagged checks label matching.
+    // 4D: avoid-side uses avoidLabelMatches (stricter, no substring containment).
+    // 4C: notFlagged is label-only so a code collision can never disable the exclusion rescue.
     const notFlagged = (o: { label: string; code?: string | null }): boolean =>
-      !avoid.some((a) => labelMatches(o.label, a)) &&
-      !avoidCodeEntries.some((e) => codeMatches(o.code, e.code));
+      !avoid.some((a) => avoidLabelMatches(o.label, a));
     // A documented prefer-label anywhere on the screen outranks everything — including on
     // fragmented screens where the per-group loop would answer an EARLIER group and stop
     // before ever reaching the preferred option's group.
     // OUTCOME 1 (D1): prefer match checks both label and code.
+    // 4C: prefer code arm also guarded by screen code distinctness.
     const preferAcrossScreen =
       checkboxGroupCount >= 2 && (prefer.length > 0 || preferCodeEntries.length > 0)
         ? screenOptionRows.find(
             ({ option: o }) =>
               answerable(o) && notFlagged(o) &&
               (prefer.some((p) => labelMatches(o.label, p)) ||
-               preferCodeEntries.some((e) => codeMatches(o.code, e.code))),
+               (screenCodesDistinct && preferCodeEntries.some((e) => codeMatches(o.code, e.code)))),
           )
         : undefined;
     const noneAcrossScreen =
@@ -4049,10 +4101,12 @@ async function applyDecision(
       // screen-out label. A hint may re-order which filler is picked — it may NEVER refuse
       // an answer: when every answerable option is flagged, today's position-1 choice
       // stands, because a filler that keeps walking beats a stall on a hint.
-      // OUTCOME 1 (D1): flagged checks both label and code matching.
+      // OUTCOME 1 (D1): flagged checks label and code matching.
+      // 4D: avoid-side uses avoidLabelMatches (stricter, no substring containment).
+      // 4C: code arm only fires when screen codes are distinct.
       const flagged = (o: (typeof g.options)[number]): boolean =>
-        avoid.some((a) => labelMatches(o.label, a)) ||
-        avoidCodeEntries.some((e) => codeMatches(o.code, e.code));
+        avoid.some((a) => avoidLabelMatches(o.label, a)) ||
+        (screenCodesDistinct && avoidCodeEntries.some((e) => codeMatches(o.code, e.code)));
       // ---- BOUNDED SCREEN-OUT RETRY: the Nth eligible option, AFTER hint filtering ----
       //
       // The first walk's position-1 pick (below) reached a documented screen-out, so the
@@ -4065,7 +4119,8 @@ async function applyDecision(
       // `retry-N` tag — a pivot filler is still an invented answer.
       if (variant > 0) {
         const answerableOpts = g.options.filter((o) => answerable(o));
-        const nonFlagged = avoid.length > 0 ? answerableOpts.filter((o) => !flagged(o)) : answerableOpts;
+        const hasAvoidHintsInner = avoid.length > 0 || (screenCodesDistinct && avoidCodeEntries.length > 0);
+        const nonFlagged = hasAvoidHintsInner ? answerableOpts.filter((o) => !flagged(o)) : answerableOpts;
         const eligible = nonFlagged.length > 0 ? nonFlagged : answerableOpts;
         const pick = Math.min(variant, eligible.length - 1);
         const alt = eligible[pick]!;
@@ -4093,11 +4148,12 @@ async function applyDecision(
       // options can terminate too. Never an avoid-flagged option: prefer re-orders among
       // survivors, it does not overrule a documented screen-out.
       // OUTCOME 1 (D1): prefer match checks both label and code.
+      // 4C: prefer code arm guarded by screen code distinctness.
       const preferredByDoc =
         (prefer.length > 0 || preferCodeEntries.length > 0)
           ? g.options.find((o) => answerable(o) && !flagged(o) &&
               (prefer.some((p) => labelMatches(o.label, p)) ||
-               preferCodeEntries.some((e) => codeMatches(o.code, e.code))))
+               (screenCodesDistinct && preferCodeEntries.some((e) => codeMatches(o.code, e.code)))))
           : undefined;
       // EXCLUSION-SCREENER DEFAULT (assumption stated, CLAUDE.md discipline). A multi-select
       // whose options are affiliations/conditions with an exclusive "None of the above" row
@@ -4113,8 +4169,9 @@ async function applyDecision(
         !preferredByDoc && g.kind === "checkbox"
           ? g.options.find((o) => answerable(o) && !flagged(o) && NONE_STYLE_OPTION.test(o.label))
           : undefined;
+      const hasAvoidHints = avoid.length > 0 || (screenCodesDistinct && avoidCodeEntries.length > 0);
       const preferred =
-        preferredByDoc ?? exclusionNone ?? (avoid.length > 0 ? g.options.find((o) => answerable(o) && !flagged(o)) : first);
+        preferredByDoc ?? exclusionNone ?? (hasAvoidHints ? g.options.find((o) => answerable(o) && !flagged(o)) : first);
       const chosen = preferred ?? first;
       // The labels actually steered around, in DOM order — named in the detail so a reader
       // can see WHY this filler is not position-1. Empty when the pick equals position-1.
@@ -7167,6 +7224,25 @@ export async function walkPath(
     crashed: crashedOutcome,
     terminationAnnouncements,
   });
+
+  // OUTCOME DETAIL HONESTY (4-outcomeDetail). The hidden-forward-control inference —
+  // "so this is a screen the survey did not open, not the end of the survey" — fires on
+  // every no-advance-control screen that has withheld forward controls. On terminate/
+  // screened-out pages this is WRONG: the ending classification already speaks for itself,
+  // and the inference contradicts it. When the ending is screened-out or completed,
+  // the inference text is stripped from outcomeDetail because the ending's own evidence
+  // is the authoritative statement about what kind of screen it is.
+  if (
+    outcomeDetail &&
+    (ending.kind === "screened-out" || ending.kind === "completed") &&
+    outcomeDetail.includes("so this is a screen the survey did not open, not the end of the survey")
+  ) {
+    // Strip the hidden-forward-control inference clause.
+    outcomeDetail = outcomeDetail.replace(
+      /\s*—\s*BUT\s+\d+\s+FORWARD CONTROL\(S\) ARE PRESENT ON IT AND OUT OF REACH \([^)]*\),\s*STILL out of reach after \d+ms of waiting across \d+ re-read\(s\), so this is a screen the survey did not open, not the end of the survey/,
+      "",
+    );
+  }
 
   const obs: PathObservation = {
     kind: "v2-path-observation/1.0.0",

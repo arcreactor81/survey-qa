@@ -178,7 +178,7 @@ const MULTI_ROW_REVISION = {
 
 suite("sealedRouteDestinations: per-answer labels", () => {
   test("extracts terminate destinations with verbatim labels", () => {
-    const routes = sealedRouteDestinations(MULTI_ROW_REVISION);
+    const { routes } = sealedRouteDestinations(MULTI_ROW_REVISION);
     const terminates = routes.filter((r) => r.kind === "terminate");
     assertEq(terminates.length, 2, "two terminate routes");
     const labels = terminates.map((r) => r.label).sort();
@@ -187,7 +187,7 @@ suite("sealedRouteDestinations: per-answer labels", () => {
   });
 
   test("extracts continue destinations with verbatim labels", () => {
-    const routes = sealedRouteDestinations(MULTI_ROW_REVISION);
+    const { routes } = sealedRouteDestinations(MULTI_ROW_REVISION);
     const continues = routes.filter((r) => r.kind === "continue");
     assertEq(continues.length, 1, "one continue route");
     assertEq(continues[0].label, "Healthcare");
@@ -214,14 +214,14 @@ suite("sealedRouteDestinations: per-answer labels", () => {
         },
       ],
     };
-    const routes = sealedRouteDestinations(revision);
+    const { routes } = sealedRouteDestinations(revision);
     assertEq(routes.length, 0, "code-only route has no label, so produces no route destination");
   });
 });
 
 suite("survivalAvoidIndex: sealed routes build avoid and prefer maps", () => {
   test("terminate routes become avoid entries", () => {
-    const routes = sealedRouteDestinations(MULTI_ROW_REVISION);
+    const { routes } = sealedRouteDestinations(MULTI_ROW_REVISION);
     const { avoid } = survivalAvoidIndex({}, routes);
     const q5Avoid = avoid.get("Q5") ?? [];
     assert(q5Avoid.includes("Market research"), "Market research is avoided");
@@ -229,7 +229,7 @@ suite("survivalAvoidIndex: sealed routes build avoid and prefer maps", () => {
   });
 
   test("continue routes become prefer entries", () => {
-    const routes = sealedRouteDestinations(MULTI_ROW_REVISION);
+    const { routes } = sealedRouteDestinations(MULTI_ROW_REVISION);
     const { prefer } = survivalAvoidIndex({}, routes);
     const q5Prefer = prefer.get("Q5") ?? [];
     assert(q5Prefer.includes("Healthcare"), "Healthcare is preferred");
@@ -256,7 +256,7 @@ suite("survivalAvoidIndex: sealed routes build avoid and prefer maps", () => {
         },
       ],
     };
-    const routes = sealedRouteDestinations(revision);
+    const { routes } = sealedRouteDestinations(revision);
     const { avoid, prefer } = survivalAvoidIndex({}, routes);
     assert((avoid.get("Q1") ?? []).includes("Conflicted"), "Conflicted is in avoid");
     assert(!(prefer.get("Q1") ?? []).includes("Conflicted"), "Conflicted is NOT in prefer");
@@ -265,7 +265,7 @@ suite("survivalAvoidIndex: sealed routes build avoid and prefer maps", () => {
 
 suite("stampSurvivalHints: full path from route labels to decision stamps", () => {
   test("stamps avoid_labels and prefer_labels on matching decisions", () => {
-    const routes = sealedRouteDestinations(MULTI_ROW_REVISION);
+    const { routes } = sealedRouteDestinations(MULTI_ROW_REVISION);
     const carriers = [
       {
         id: "path-1",
@@ -289,7 +289,7 @@ suite("stampSurvivalHints: full path from route labels to decision stamps", () =
   });
 
   test("does not stamp decisions with case_action (sealed stimulus)", () => {
-    const routes = sealedRouteDestinations(MULTI_ROW_REVISION);
+    const { routes } = sealedRouteDestinations(MULTI_ROW_REVISION);
     const carriers = [
       {
         id: "path-2",
@@ -347,7 +347,7 @@ suite("code-only route answers: the label gap is visible, not silent", () => {
         },
       ],
     };
-    const routes = sealedRouteDestinations(revision);
+    const { routes } = sealedRouteDestinations(revision);
     assertEq(routes.length, 0, "no destination without a label");
   });
 });
@@ -510,7 +510,7 @@ suite("anchor cleaner on route labels: cleaning feeds correct steering", () => {
         },
       ],
     };
-    const routes = sealedRouteDestinations(revision);
+    const { routes } = sealedRouteDestinations(revision);
     assertEq(routes.length, 1);
     assertEq(routes[0].label, "Market research");
     assertEq(routes[0].kind, "terminate");
