@@ -176,6 +176,7 @@ $MutationHarnesses = @(
   "mutate-grok-rate-attestation.mjs",
   "mutate-input-coverage.mjs",
   "mutate-keyspace.mjs",
+  "mutate-model-verifier.mjs",
   "mutate-openai-computer-use.mjs",
   "mutate-option-set.mjs",
   "mutate-p0-honesty-blockers.mjs",
@@ -212,7 +213,7 @@ $MutationHarnesses = @(
 $MutationLibraries = @(
   "mutate-runner.mjs"
 )
-if ($MutationHarnesses.Count -ne 50 -or $MutationLibraries.Count -ne 1) {
+if ($MutationHarnesses.Count -ne 51 -or $MutationLibraries.Count -ne 1) {
   throw "Mutation manifest cardinality changed"
 }
 $MutationDeclared = @($MutationHarnesses + $MutationLibraries)

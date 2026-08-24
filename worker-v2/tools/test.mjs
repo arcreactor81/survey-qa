@@ -638,6 +638,10 @@ const FILES = [
   // terminationAnnouncements arg from classifyEnding; revert the render-html.mjs label
   // ordering.
   "./tests/d59-ending-outcome-labels.test.mjs",
+  // D59 — MODEL VERIFIER LANE v1. The copy family, flags only. Four properties: disabled gate
+  // = byte-identical, lane can never emit fail, model-call failure demotes to named insufficient,
+  // flags never change verdict counts. Evidence they can fail: tools/mutate-model-verifier.mjs.
+  "./tests/d59-model-verifier-lane.test.mjs",
 ];
 
 export async function runVerification({

@@ -1262,7 +1262,7 @@ suite("MUTATION EXECUTION CONTRACT — exact guards and closed release census", 
     );
   });
 
-  test("release manifests account set-equal for all 50 mutation-pattern files", () => {
+  test("release manifests account set-equal for all 51 mutation-pattern files", () => {
     const deploy = readFileSync(DEPLOY_PATH, "utf8");
     const harnesses = parsePowerShellArray(deploy, "MutationHarnesses");
     const libraries = parsePowerShellArray(deploy, "MutationLibraries");
@@ -1270,7 +1270,7 @@ suite("MUTATION EXECUTION CONTRACT — exact guards and closed release census", 
       .filter((name) => /^mutate-[A-Za-z0-9._-]+\.mjs$/u.test(name))
       .sort();
 
-    assertEq(harnesses.length, 50, "all actual harnesses remain mandatory");
+    assertEq(harnesses.length, 51, "all actual harnesses remain mandatory");
     assertEq(libraries.length, 1, "only the shared runner is library-only");
     assertEq(libraries[0], "mutate-runner.mjs");
     assert(!harnesses.includes("mutate-runner.mjs"), "library cannot pass as a harness");
