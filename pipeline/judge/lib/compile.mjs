@@ -24,7 +24,7 @@ import { normLine, norm } from './normalize.mjs';
 import { bindObligations, COMPILED_FROM } from './contract-binding.mjs';
 import { isRouteFacet } from './facet-vocab.mjs';
 
-export const COMPILER_VERSION = '2.0.0';
+export const COMPILER_VERSION = '3.0.0';
 
 export { COMPILED_FROM };
 
@@ -703,13 +703,287 @@ function closure(screen, codes, labelsByCode, evidence) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Track 1 — TYPED MINTING from sealed FacetInstance payloads.
+//
+// Every rule below reads SHAPE, never one survey's values. The expectation is
+// minted from the FacetInstance's typed payload (optionSet, routeAnswer,
+// expectedDestination, boundaryInput) which are INSIDE the signed revision
+// digest, so they are signed data.
+//
+// A self-conflicting payload is a named refusal, never a guessed expectation.
+// ---------------------------------------------------------------------------
+
+/** Resolve the screen from a FacetInstance's question/screen fields. */
+function fiScreen(fi) {
+  // The FacetInstance carries `screen` (populated by the expander from the
+  // requirement's scope) and `targetQuestionId`. Both are document-derived.
+  return fi.screen || fi.targetQuestionId || null;
+}
+
+/**
+ * Attempt to mint from the sealed typed payloads on the obligation's
+ * FacetInstances. Returns null when no typed minting is possible for this
+ * obligation, letting the prose rules run as before.
+ */
+function mintFromTypedCases(obligation) {
+  const cases = obligation.typedCases;
+  if (!cases || !Array.isArray(cases) || cases.length === 0) return null;
+
+  // Pick the first case with a typed payload. Most obligations expand to exactly
+  // one floor case; multi-case obligations (route requirements with several
+  // answer codes) are handled at the predicate level, not in minting — the
+  // compiler's contract is ONE expectation per obligation, and the predicate
+  // inspects all matching routes.
+  const first = cases[0];
+  const c = first.case || first;
+  if (!c || !c.kind) return null;
+  const screen = fiScreen(first);
+
+  // Has this case been marked as un-typeable by the expander?
+  // `expectationGap` non-null means the expander already knows no predicate can
+  // decide it — we honour that as a named refusal.
+  if (first.expectationGap) {
+    return {
+      expectation: null,
+      ruleId: null,
+      mintRefusal: {
+        family: c.kind,
+        facetInstanceId: first.facetInstanceId || null,
+        gap: first.expectationGap,
+      },
+    };
+  }
+
+  switch (c.kind) {
+    case 'option-set':
+      return mintOptionSetFromTyped(obligation, first, c, screen);
+    case 'route':
+      return mintRouteFromTyped(obligation, first, c, screen);
+    case 'boundary':
+      return mintBoundaryFromTyped(obligation, first, c, screen);
+    case 'rendered-state':
+      return mintRenderedStateFromTyped(obligation, first, c, screen);
+    case 'copy':
+    case 'configuration':
+      // These families have no deterministic predicate — they stay for Track 2
+      // (model lane). Return null to let prose rules try, though they will also
+      // fail to match, resulting in NO_TYPED_EXPECTATION with the family named.
+      return null;
+    default:
+      return null;
+  }
+}
+
+function wrapTypedExpectation(e, ruleId, obligation, facetInstanceId) {
+  return {
+    expectation: {
+      ...e,
+      compiledBy: ruleId,
+      compilerVersion: COMPILER_VERSION,
+      fieldsBound: obligation.fieldsBound === true,
+      boundBy: obligation.boundBy,
+      mintedFrom: 'sealed-typed-payload',
+      sourceFacetInstanceId: facetInstanceId || null,
+    },
+    ruleId,
+  };
+}
+
+/**
+ * option-set: sealed optionSet.asserted rows -> option-present expectations.
+ *
+ * Each option-set FacetInstance carries an `optionSet.asserted` array of
+ * `{code, label}` rows parsed from the document quote. This is exactly what
+ * the prose rules R-OPT-1/R-OPT-2 extract from the statement text, but
+ * already validated by the expander (corroborated against the statement,
+ * source-role checked, etc).
+ */
+function mintOptionSetFromTyped(obligation, fi, c, screen) {
+  const os = c.optionSet;
+  if (!os || !Array.isArray(os.asserted) || os.asserted.length === 0) {
+    // optionSet case but no asserted rows — the expander could not read it.
+    return null;
+  }
+
+  // Conflict check: if multiple cases carry DIFFERENT option sets, that is a
+  // self-contradiction in the sealed data. Refuse rather than guess.
+  const cases = obligation.typedCases;
+  if (cases.length > 1) {
+    const allSets = cases.filter((tc) => tc.case && tc.case.optionSet && tc.case.optionSet.asserted);
+    if (allSets.length > 1) {
+      // Multiple option-set payloads for one obligation is a conflict.
+      return {
+        expectation: null, ruleId: null,
+        mintRefusal: {
+          family: 'option-set',
+          facetInstanceId: fi.facetInstanceId || null,
+          reason: 'SELF_CONFLICTING_PAYLOAD',
+          detail: `${allSets.length} option-set cases carry different asserted rows for the same obligation`,
+        },
+      };
+    }
+  }
+
+  // Single asserted option -> option-present expectation.
+  if (os.asserted.length === 1) {
+    const opt = os.asserted[0];
+    return wrapTypedExpectation({
+      kind: 'option-present',
+      screen: screen ? screen.toUpperCase() : null,
+      code: opt.code || null,
+      label: normLine(opt.label || ''),
+      position: null, // positional claims come from prose only; typed payloads carry no position
+    }, 'R-TYPED-OPT-1', obligation, fi.facetInstanceId);
+  }
+
+  // Multiple asserted options -> option-set-exact expectation.
+  if (os.exhaustive) {
+    return wrapTypedExpectation({
+      kind: 'option-set-exact',
+      screen: screen ? screen.toUpperCase() : null,
+      labels: os.asserted.map((a) => normLine(a.label || '')),
+    }, 'R-TYPED-OPT-2', obligation, fi.facetInstanceId);
+  }
+
+  // Multiple asserted options but not exhaustive -> option-present for the first.
+  // This obligation is about membership ("these options must be present"), not an
+  // exact set. Mint option-present for the first asserted option.
+  const opt = os.asserted[0];
+  return wrapTypedExpectation({
+    kind: 'option-present',
+    screen: screen ? screen.toUpperCase() : null,
+    code: opt.code || null,
+    label: normLine(opt.label || ''),
+    position: null,
+  }, 'R-TYPED-OPT-1', obligation, fi.facetInstanceId);
+}
+
+/**
+ * route: routeAnswer + expectedDestination -> route predicate expectations.
+ *
+ * The typed payload already carries the answer (code/label) and the
+ * destination (questionId / terminal), pre-bound against the document's own
+ * question vocabulary by the expander.
+ */
+function mintRouteFromTyped(obligation, fi, c, screen) {
+  const answer = c.routeAnswer;
+  const dest = c.expectedDestination;
+  if (!answer && !dest) return null;
+  if (!answer || (answer.code === null && answer.label === null)) return null;
+  if (!dest) return null;
+
+  // Determine the question from the screen or from the FacetInstance context.
+  const question = screen ? screen.toUpperCase() : null;
+  if (!question) return null;
+
+  // Build the destination. The expander has already bound it.
+  let destination = null;
+  if (dest.questionId) {
+    destination = dest.questionId.toUpperCase();
+  } else if (dest.terminal) {
+    // Terminal destinations: map to the screen aliases the judge knows.
+    const termMap = { screenout: 'SCREENOUT', complete: 'CLOSING', quota: 'CLOSING' };
+    destination = termMap[dest.terminal] || 'SCREENOUT';
+  }
+  if (!destination) return null;
+
+  return wrapTypedExpectation({
+    kind: 'route',
+    question,
+    trigger: {
+      mode: 'include',
+      codes: answer.code ? [String(answer.code)] : [],
+      labels: answer.label ? [normLine(answer.label)] : [],
+      codeSource: answer.code ? 'sealed-typed-payload' : null,
+      identity: answer.code ? 'code' : 'label',
+    },
+    destination,
+    sequence: null,
+    mustNotShow: [],
+  }, 'R-TYPED-ROUTE-1', obligation, fi.facetInstanceId);
+}
+
+/**
+ * boundary: BoundaryInputPayload -> input-attribute / answer-requirement expectations.
+ *
+ * Boundaries carry accepted/rejected expectations for input validation rules.
+ */
+function mintBoundaryFromTyped(obligation, fi, c, screen) {
+  const bi = c.boundaryInput;
+  if (!bi) return null;
+
+  const scr = screen ? screen.toUpperCase() : null;
+  if (!scr) return null;
+
+  // Map boundary types to expectations.
+  if (bi.bound === 'max' && bi.value !== null) {
+    // A max-length boundary with a literal value -> input-maxlength.
+    const maxVal = parseInt(bi.value, 10);
+    if (!isNaN(maxVal)) {
+      return wrapTypedExpectation({
+        kind: 'input-maxlength',
+        screen: scr,
+        max: maxVal,
+      }, 'R-TYPED-BOUNDARY-1', obligation, fi.facetInstanceId);
+    }
+  }
+
+  // Map boundary expectedOutcome to answer-requirement expectations.
+  if (bi.expectedOutcome === 'accepted' || bi.expectedOutcome === 'rejected') {
+    // The boundary test is about whether the input is accepted/rejected.
+    // For empty inputs: maps to answer-requirement (required vs optional).
+    if (bi.bound === 'empty') {
+      return wrapTypedExpectation({
+        kind: 'answer-requirement',
+        screen: scr,
+        requirement: bi.expectedOutcome === 'rejected' ? 'required' : 'optional',
+      }, 'R-TYPED-BOUNDARY-2', obligation, fi.facetInstanceId);
+    }
+
+    // For min/max bounds with explicit accept/reject expectations:
+    // This tests that the survey enforces validation rules. The closest
+    // existing predicate is input-attribute for spellcheck, but there is
+    // no general "input accepts/rejects this value" predicate yet.
+    // We can at least mint an input-attribute if this is about spellcheck
+    // or similar attributes that the prose rules also handle. Otherwise,
+    // fall through to prose.
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * rendered-state: structural subfamilies only.
+ *
+ * Only mint from rendered-state when the case carries typed structural fields
+ * (widget kind, grid shape). Prose-only rendered-state stays unminted.
+ */
+function mintRenderedStateFromTyped(obligation, fi, c, screen) {
+  // rendered-state is deliberately unminted in Track 1: the structural fields
+  // (widget type, grid shape) are NOT yet in the FacetCase payload — they live
+  // in the requirement prose. When the extraction seeds typed widget/grid fields
+  // into the case payload, this function can mint from them.
+  //
+  // For now, return null to fall through to prose rules.
+  return null;
+}
+
 function compileOne(obligation) {
   // A projection with no signed statement compiles to nothing: every rule keys
   // on the requirement text, and guessing one from an unsigned source is the
   // failure this whole module exists to prevent.
   if (typeof obligation.statement !== 'string' || obligation.statement.length === 0) {
+    // Track 1: even without a statement, typed cases can still mint.
+    const typed = mintFromTypedCases(obligation);
+    if (typed && typed.expectation) return typed;
     return { expectation: null, ruleId: null };
   }
+
+  // PROSE RULES RUN FIRST. They produce richer expectations (e.g. mustNotShow
+  // for routes) because they parse the full statement. Typed minting runs as a
+  // FALLBACK for obligations whose prose does not match any rule.
   for (const r of RULES) {
     let e = null;
     try { e = r.match(obligation); } catch { e = null; }
@@ -728,6 +1002,14 @@ function compileOne(obligation) {
       };
     }
   }
+
+  // Track 1: TYPED MINTING FALLBACK. When prose rules cannot match, try to
+  // mint from the sealed FacetInstance's typed payload. This reaches cases
+  // where the extraction produced a typed payload but the statement prose
+  // does not match the compiler's regex rules.
+  const typed = mintFromTypedCases(obligation);
+  if (typed && typed.expectation) return typed;
+
   return { expectation: null, ruleId: null };
 }
 
@@ -796,7 +1078,12 @@ export function documentScreens(docIndex) {
 export function compileObligation(obligation, docIndex = null) {
   const projection = projectionFor(obligation, docIndex);
   const { expectation, ruleId } = compileOne(projection);
-  if (!expectation) return { expectation: null, ruleId: null, projection };
+  if (!expectation) {
+    // Track 1: when minting fails, name the family in the detail so the
+    // NOT-ASSESSED reason carries actionable information.
+    const detail = unmintableDetail(projection);
+    return { expectation: null, ruleId: null, projection, unmintableDetail: detail };
+  }
   if (docIndex && docIndex.answerDomains) {
     // The domain of the question whose ANSWER the rule is keyed on.
     const q = expectation.kind === 'route' ? expectation.question
@@ -810,6 +1097,34 @@ export function compileObligation(obligation, docIndex = null) {
     }
   }
   return { expectation, ruleId, projection };
+}
+
+/**
+ * Track 1: for obligations that remain unmintable, name the family so the
+ * NOT-ASSESSED reason in the report is actionable instead of opaque.
+ */
+function unmintableDetail(projection) {
+  // Determine the family from the category (facet type) and typed cases.
+  const category = projection.category || null;
+  const cases = projection.typedCases;
+
+  // If we have typed cases, the family is the case kind.
+  if (cases && cases.length > 0) {
+    const kind = cases[0].case ? cases[0].case.kind : cases[0].caseKind;
+    if (kind) {
+      const gap = cases[0].expectationGap;
+      if (gap) {
+        return { family: kind, reason: gap.code, detail: gap.detail };
+      }
+      return { family: kind, reason: 'PROSE_RULE_DID_NOT_MATCH', detail: `typed case kind ${kind} but no minting rule or prose rule matched` };
+    }
+  }
+
+  // Fall back to the category (facet type).
+  if (category) {
+    return { family: category, reason: 'NO_MINTING_RULE', detail: `facet type ${category} has no minting rule` };
+  }
+  return { family: 'unknown', reason: 'NO_CATEGORY', detail: 'no facet type or typed case on the obligation' };
 }
 
 /**

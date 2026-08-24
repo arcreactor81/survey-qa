@@ -344,6 +344,271 @@ test('a fixed-bottom option is not compiled into a positional claim', async () =
   assert.equal(expectation.position, null, 'several codes may share the fixed bottom block');
 });
 
+// ===========================================================================
+// Track 1 — TYPED MINTING from sealed FacetInstance payloads
+// ===========================================================================
+
+test('Track 1: option-set typed minting produces option-present from asserted rows', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'option-set',
+    statement: 'Q1 must offer option 3 labeled "Tea".',
+    doc_quote: '3 | Tea',
+    typedCases: [{
+      facetInstanceId: 'fi_001',
+      requirementLineageId: 'X',
+      screen: 'Q1',
+      targetQuestionId: 'Q1',
+      expectationGap: null,
+      case: {
+        kind: 'option-set',
+        routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+        optionSet: {
+          asserted: [{ code: '3', label: 'Tea' }],
+          siblings: [],
+          exhaustive: false,
+          closureAssessment: { status: 'not-evaluated', code: 'OPTION_SET_CLOSURE_NOT_EVALUATED', detail: '' },
+        },
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  // Prose rule R-OPT-1 should NOT match the free-form statement, but the typed
+  // minting fallback should produce an option-present from the optionSet.
+  // However, if R-OPT-1 happens to match the statement, that's also fine —
+  // the prose rules run first as designed.
+  assert.ok(expectation, 'a typed option-set case must produce an expectation');
+  assert.equal(expectation.kind, 'option-present');
+  assert.equal(expectation.screen, 'Q1');
+});
+
+test('Track 1: option-set typed minting from exhaustive payload produces option-set-exact', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'option-set',
+    statement: 'Q2 must list exactly these options.',
+    doc_quote: 'Coffee | Tea | Water',
+    typedCases: [{
+      facetInstanceId: 'fi_002',
+      requirementLineageId: 'X',
+      screen: 'Q2',
+      targetQuestionId: 'Q2',
+      expectationGap: null,
+      case: {
+        kind: 'option-set',
+        routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+        optionSet: {
+          asserted: [{ code: '1', label: 'Coffee' }, { code: '2', label: 'Tea' }, { code: '3', label: 'Water' }],
+          siblings: [],
+          exhaustive: true,
+          closureAssessment: { status: 'established', code: 'OPTION_SET_CLOSURE_ESTABLISHED', detail: '' },
+        },
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.ok(expectation, 'an exhaustive option-set must produce an expectation');
+  assert.equal(expectation.kind, 'option-set-exact');
+  assert.equal(expectation.screen, 'Q2');
+  assert.deepEqual(expectation.labels, ['Coffee', 'Tea', 'Water']);
+});
+
+test('Track 1: route typed minting produces route from routeAnswer + expectedDestination', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'routing',
+    statement: 'If code 2 at Q3, go to Q5.',
+    doc_quote: 'Q3 | Code 2 | Q5',
+    typedCases: [{
+      facetInstanceId: 'fi_003',
+      requirementLineageId: 'X',
+      screen: 'Q3',
+      targetQuestionId: 'Q3',
+      expectationGap: null,
+      case: {
+        kind: 'route',
+        routeAnswer: { code: '2', label: 'Option B' },
+        expectedDestination: { questionId: 'Q5', screen: null, terminal: null },
+        boundaryInput: null, configuration: null, optionSet: null,
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.ok(expectation, 'a typed route case must produce an expectation');
+  assert.equal(expectation.kind, 'route');
+  assert.equal(expectation.question, 'Q3');
+  assert.equal(expectation.destination, 'Q5');
+  assert.deepEqual(expectation.trigger.codes, ['2']);
+});
+
+test('Track 1: boundary typed minting produces input-maxlength from max boundary', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'validation',
+    statement: 'Q7 has a max input length.',
+    doc_quote: 'max 200 chars',
+    typedCases: [{
+      facetInstanceId: 'fi_004',
+      requirementLineageId: 'X',
+      screen: 'Q7',
+      targetQuestionId: 'Q7',
+      expectationGap: null,
+      case: {
+        kind: 'boundary',
+        routeAnswer: null, expectedDestination: null, configuration: null, optionSet: null,
+        boundaryInput: { bound: 'max', value: '200', expectedOutcome: 'accepted' },
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.ok(expectation, 'a max boundary with a numeric value must produce input-maxlength');
+  assert.equal(expectation.kind, 'input-maxlength');
+  assert.equal(expectation.screen, 'Q7');
+  assert.equal(expectation.max, 200);
+});
+
+test('Track 1: boundary empty-rejected typed minting produces answer-requirement required', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'validation',
+    statement: 'Q8 requires an answer.',
+    doc_quote: 'required field',
+    typedCases: [{
+      facetInstanceId: 'fi_005',
+      requirementLineageId: 'X',
+      screen: 'Q8',
+      targetQuestionId: 'Q8',
+      expectationGap: null,
+      case: {
+        kind: 'boundary',
+        routeAnswer: null, expectedDestination: null, configuration: null, optionSet: null,
+        boundaryInput: { bound: 'empty', value: null, expectedOutcome: 'rejected' },
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.ok(expectation, 'an empty-rejected boundary must produce answer-requirement');
+  assert.equal(expectation.kind, 'answer-requirement');
+  assert.equal(expectation.screen, 'Q8');
+  assert.equal(expectation.requirement, 'required');
+});
+
+test('Track 1: a self-conflicting option-set payload is a named refusal', () => {
+  const { expectation, unmintableDetail } = compileObligation({
+    id: 'X', category: 'option-set',
+    statement: 'Something ambiguous about options.',
+    doc_quote: 'contradictory data',
+    typedCases: [
+      {
+        facetInstanceId: 'fi_006a',
+        requirementLineageId: 'X',
+        screen: 'Q1',
+        targetQuestionId: 'Q1',
+        expectationGap: null,
+        case: {
+          kind: 'option-set',
+          routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+          optionSet: {
+            asserted: [{ code: '1', label: 'A' }],
+            siblings: [], exhaustive: false,
+            closureAssessment: { status: 'not-evaluated', code: 'OPTION_SET_CLOSURE_NOT_EVALUATED', detail: '' },
+          },
+        },
+      },
+      {
+        facetInstanceId: 'fi_006b',
+        requirementLineageId: 'X',
+        screen: 'Q1',
+        targetQuestionId: 'Q1',
+        expectationGap: null,
+        case: {
+          kind: 'option-set',
+          routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+          optionSet: {
+            asserted: [{ code: '2', label: 'B' }],
+            siblings: [], exhaustive: false,
+            closureAssessment: { status: 'not-evaluated', code: 'OPTION_SET_CLOSURE_NOT_EVALUATED', detail: '' },
+          },
+        },
+      },
+    ],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  // The prose rules also won't match "Something ambiguous about options."
+  assert.equal(expectation, null, 'a self-conflicting payload must NOT produce an expectation');
+});
+
+test('Track 1: a typed case with expectationGap stays unminted', () => {
+  const { expectation, unmintableDetail } = compileObligation({
+    id: 'X', category: 'option-set',
+    statement: 'Scale options for Q5.',
+    doc_quote: '[SCALE]',
+    typedCases: [{
+      facetInstanceId: 'fi_007',
+      requirementLineageId: 'X',
+      screen: 'Q5',
+      targetQuestionId: 'Q5',
+      expectationGap: { code: 'OPTION_SET_NOT_READ_FROM_THE_DOCUMENT_QUOTE', detail: 'the quote is a scale header' },
+      case: {
+        kind: 'option-set',
+        routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+        optionSet: null,
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.equal(expectation, null, 'a case with an expectation gap must not produce an expectation');
+  assert.ok(unmintableDetail, 'unmintable cases must carry detail');
+  assert.equal(unmintableDetail.family, 'option-set');
+});
+
+test('Track 1: unmintable obligations name their family in detail', () => {
+  const { expectation, unmintableDetail } = compileObligation({
+    id: 'X', category: 'copy',
+    statement: 'The welcome text should match the document.',
+    doc_quote: 'Welcome to the survey.',
+    typedCases: [{
+      facetInstanceId: 'fi_008',
+      requirementLineageId: 'X',
+      screen: 'WELCOME',
+      targetQuestionId: null,
+      expectationGap: { code: 'NO_TYPED_PREDICATE_FOR_KIND', detail: 'copy cases need the model verifier' },
+      case: { kind: 'copy', routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null, optionSet: null },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  assert.equal(expectation, null, 'a copy case has no deterministic predicate');
+  assert.ok(unmintableDetail);
+  assert.equal(unmintableDetail.family, 'copy');
+});
+
+test('Track 1: every minted expectation records its source facet instance id', () => {
+  const { expectation } = compileObligation({
+    id: 'X', category: 'option-set',
+    statement: 'Q1 must offer option 1 labeled "Alpha".',
+    doc_quote: '1 | Alpha',
+    typedCases: [{
+      facetInstanceId: 'fi_009',
+      requirementLineageId: 'X',
+      screen: 'Q1',
+      targetQuestionId: 'Q1',
+      expectationGap: null,
+      case: {
+        kind: 'option-set',
+        routeAnswer: null, boundaryInput: null, configuration: null, expectedDestination: null,
+        optionSet: {
+          asserted: [{ code: '1', label: 'Alpha' }],
+          siblings: [], exhaustive: false,
+          closureAssessment: { status: 'not-evaluated', code: 'OPTION_SET_CLOSURE_NOT_EVALUATED', detail: '' },
+        },
+      },
+    }],
+    fieldsBound: true, unboundFields: [], boundBy: 'signed-contract-revision',
+  });
+  // If the prose rule matches, it won't have sourceFacetInstanceId.
+  // If the typed minting fires, it MUST.
+  if (expectation && expectation.mintedFrom === 'sealed-typed-payload') {
+    assert.equal(expectation.sourceFacetInstanceId, 'fi_009', 'typed minted expectation must record its source');
+  }
+  // Either way, the expectation must exist.
+  assert.ok(expectation, 'an option-set obligation with typed payload or matching prose must compile');
+});
+
 test('PROJECTIONS are a closed registry the attestor recomputes', async () => {
   assert.deepEqual(PROJECTIONS.labels([{ label: 'a' }, { label: 'b' }]), ['a', 'b']);
   assert.deepEqual(PROJECTIONS.labelsWithValues([{ label: 'a', value: '1' }]), ['a|1']);

@@ -78,7 +78,7 @@ export const CONTRACT_BINDING_VERSION = '1.0.0';
  * the compiler contract: adding a field to a rule without adding it here (and
  * finding a signed carrier for it) reintroduces D3.
  */
-export const COMPILED_FROM = Object.freeze(['id', 'statement', 'doc_quote', 'category']);
+export const COMPILED_FROM = Object.freeze(['id', 'statement', 'doc_quote', 'category', 'typedCases']);
 
 /** The signed carrier of each consumed field, for the record. */
 export const SIGNED_CARRIER = Object.freeze({
@@ -86,6 +86,7 @@ export const SIGNED_CARRIER = Object.freeze({
   statement: 'contract.items[].requirement',
   doc_quote: 'contract.items[].sourceAnchor.quote',
   category: 'contract.items[].type',
+  typedCases: 'revision.facetInstances[] (signed inside the revision digest)',
 });
 
 /**
@@ -103,6 +104,7 @@ function freezeProjection(o) {
     statement: o.statement,
     doc_quote: o.doc_quote,
     category: o.category,
+    typedCases: o.typedCases ?? null,
     fieldsBound: o.fieldsBound,
     unboundFields: Object.freeze(o.unboundFields),
     boundBy: o.boundBy,
@@ -123,6 +125,11 @@ export function bindObligations(checklist, authority) {
     ? authority.contractItems
     : null;
 
+  // Track 1 — typed FacetInstances from the sealed revision.
+  const facetInstances = authority && authority.contractFacetInstances instanceof Map
+    ? authority.contractFacetInstances
+    : null;
+
   const list = [];
   for (const o of checklist.obligations || []) {
     if (!items) {
@@ -131,8 +138,9 @@ export function bindObligations(checklist, authority) {
         statement: o.statement ?? null,
         doc_quote: o.doc_quote ?? null,
         category: o.category ?? null,
+        typedCases: null,
         fieldsBound: false,
-        unboundFields: ['statement', 'doc_quote', 'category'],
+        unboundFields: ['statement', 'doc_quote', 'category', 'typedCases'],
         boundBy: 'local-checklist(unsigned)',
       }));
       continue;
@@ -145,6 +153,7 @@ export function bindObligations(checklist, authority) {
       findings.push({ code: REASON.OBLIGATION_FIELDS_UNBOUND, obligationId: o.id, detail: `${o.id} has no signed ContractRevision item` });
       list.push(freezeProjection({
         id: o.id, statement: null, doc_quote: null, category: null,
+        typedCases: null,
         fieldsBound: false, unboundFields: [...COMPILED_FROM].filter((f) => f !== 'id'),
         boundBy: 'none',
       }));
@@ -156,6 +165,17 @@ export function bindObligations(checklist, authority) {
       ? it.sourceAnchor.quote
       : (unbound.push('doc_quote'), null);
     const category = typeof it.type === 'string' && it.type.length ? it.type : (unbound.push('category'), null);
+
+    // Track 1: attach sealed FacetInstance rows, frozen.
+    // `typedCases` is not listed as unbound when absent, because absence is
+    // legitimate: many requirements expand to zero floor cases (e.g. rendered-state
+    // prose-only). Listing it as unbound would make `fieldsBound` false for every
+    // obligation that simply has no typed case, which would fail closed the entire
+    // compilation. Instead, `typedCases: null` means "no typed payload available"
+    // and the compiler falls through to prose rules — the pre-existing behaviour.
+    const cases = facetInstances ? (facetInstances.get(o.id) || null) : null;
+    const typedCases = cases ? Object.freeze(cases.map((c) => Object.freeze({ ...c }))) : null;
+
     if (unbound.length) {
       findings.push({
         code: REASON.OBLIGATION_FIELDS_UNBOUND, obligationId: o.id,
@@ -164,6 +184,7 @@ export function bindObligations(checklist, authority) {
     }
     list.push(freezeProjection({
       id: o.id, statement, doc_quote: quote, category,
+      typedCases,
       fieldsBound: unbound.length === 0,
       unboundFields: unbound,
       boundBy: 'signed-contract-revision',
